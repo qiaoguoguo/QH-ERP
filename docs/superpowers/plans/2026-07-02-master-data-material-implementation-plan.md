@@ -427,7 +427,7 @@ public enum MaterialSourceType {
 
 - [ ] **步骤 5：补错误码**
 
-修改 `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`, add enum values:
+修改 `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`，新增枚举值：
 
 ```java
 MASTER_DATA_CODE_EXISTS(HttpStatus.CONFLICT, "主数据编码已存在"),
@@ -1815,7 +1815,7 @@ const supportedMenuPaths = new Set([
 
 - [ ] **步骤 6：注册新增 Element Plus 组件**
 
-修改 `apps/web/src/main.ts` to add components used by new pages:
+修改 `apps/web/src/main.ts`，注册新增页面使用的组件：
 
 ```ts
 import { ElDrawer, ElTree } from 'element-plus'
@@ -1856,7 +1856,7 @@ git commit -m "接入基础资料与物料前端基础能力"
   - `apps/web/src/modules/master/warehouses/WarehouseListView.vue`
   - `apps/web/src/modules/master/suppliers/SupplierListView.vue`
   - `apps/web/src/modules/master/customers/CustomerListView.vue`
-  - corresponding `.spec.ts` files
+  - 对应的 `.spec.ts` 文件
 
 - [ ] **步骤 1：写单位页面失败测试**
 
@@ -1900,6 +1900,8 @@ describe('计量单位页', () => {
     await wrapper.find('[data-test="create-record"]').trigger('click')
     await wrapper.find('input[name="record-code"]').setValue('PCS')
     await wrapper.find('input[name="record-name"]').setValue('件')
+    await wrapper.find('input[name="record-precision-scale"]').setValue('0')
+    await wrapper.find('input[name="record-sort-order"]').setValue('1')
     await wrapper.find('[data-test="submit-record"]').trigger('click')
     await flushPromises()
     expect(apiMock.units.create).toHaveBeenCalledWith(expect.objectContaining({ code: 'PCS', name: '件', precisionScale: 0, sortOrder: 1 }))
@@ -1907,6 +1909,18 @@ describe('计量单位页', () => {
     const readonly = mountPage(['master:unit:view'])
     await flushPromises()
     expect(readonly.find('[data-test="create-record"]').exists()).toBe(false)
+  })
+
+  it('缺失精度或排序时不提交表单', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('[data-test="create-record"]').trigger('click')
+    await wrapper.find('input[name="record-code"]').setValue('PCS')
+    await wrapper.find('input[name="record-name"]').setValue('件')
+    await wrapper.find('[data-test="submit-record"]').trigger('click')
+    await flushPromises()
+    expect(apiMock.units.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('精度和排序为必填')
   })
 })
 ```
@@ -1931,7 +1945,22 @@ const canUpdate = computed(() => authStore.hasPermission('master:unit:update'))
 const filters = reactive({ keyword: '', status: undefined as MasterDataStatus | undefined })
 const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
 const records = ref<MasterRecord[]>([])
-const form = reactive({ code: '', name: '', precisionScale: 0, sortOrder: 1, status: 'ENABLED' as MasterDataStatus, remark: '' })
+const form = reactive({
+  code: '',
+  name: '',
+  precisionScale: undefined as number | undefined,
+  sortOrder: undefined as number | undefined,
+  status: 'ENABLED' as MasterDataStatus,
+  remark: '',
+})
+
+function validateUnitForm() {
+  if (form.precisionScale === undefined || form.sortOrder === undefined) {
+    ElMessage.error('精度和排序为必填')
+    return false
+  }
+  return true
+}
 ```
 
 模板必须包含：
@@ -1945,7 +1974,7 @@ const form = reactive({ code: '', name: '', precisionScale: 0, sortOrder: 1, sta
 </MasterDataTableView>
 ```
 
-提交时调用 `masterDataApi.units.create()` 或 `update()`；保存成功后关闭弹窗并刷新列表；保存失败时展示 `errorMessage(caught)`，并保持弹窗打开。
+提交前先调用 `validateUnitForm()`；校验通过后，将用户显式输入的 `precisionScale` 和 `sortOrder` 转为数字并提交给 `masterDataApi.units.create()` 或 `update()`；保存成功后关闭弹窗并刷新列表；保存失败时展示 `errorMessage(caught)`，并保持弹窗打开。
 
 - [ ] **步骤 4：复制并调整仓库、供应商、客户页面**
 
@@ -2029,9 +2058,22 @@ describe('物料分类页', () => {
     await wrapper.find('[data-test="create-category"]').trigger('click')
     await wrapper.find('input[name="category-code"]').setValue('SEMI')
     await wrapper.find('input[name="category-name"]').setValue('半成品')
+    await wrapper.find('input[name="category-sort-order"]').setValue('1')
     await wrapper.find('[data-test="submit-category"]').trigger('click')
     await flushPromises()
     expect(apiMock.categories.create).toHaveBeenCalledWith(expect.objectContaining({ code: 'SEMI', name: '半成品', parentId: null, sortOrder: 1, status: 'ENABLED' }))
+  })
+
+  it('缺失排序时不提交分类表单', async () => {
+    const wrapper = mountPage()
+    await flushPromises()
+    await wrapper.find('[data-test="create-category"]').trigger('click')
+    await wrapper.find('input[name="category-code"]').setValue('SEMI')
+    await wrapper.find('input[name="category-name"]').setValue('半成品')
+    await wrapper.find('[data-test="submit-category"]').trigger('click')
+    await flushPromises()
+    expect(apiMock.categories.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('排序为必填')
   })
 
   it('没有创建权限时隐藏新增按钮', async () => {
@@ -2070,14 +2112,35 @@ npm test -- MaterialCategoryView.spec.ts MaterialItemListView.spec.ts
 
 - [ ] **步骤 4：实现物料分类页**
 
-创建 `MaterialCategoryView.vue`:
+创建 `MaterialCategoryView.vue`：
 
 - 使用 `masterDataApi.categories.list({ page: 1, pageSize: 100, keyword, status })` 加载分类。
 - 根据 `parentId` 在前端组装树形结构。
 - 展示左侧分类树和右侧表格。
-- 表单字段：code、name、parentId、sortOrder、status、remark，其中 sortOrder 必填。
+- 表单字段：code、name、parentId、sortOrder、status、remark，其中 sortOrder 必填，初始化为空值，提交前校验，payload 必须来自用户显式输入。
 - 权限：`master:material-category:create`、`master:material-category:update`。
 - 停用操作使用 `window.confirm('确认停用物料分类“名称”？')` 二次确认。
+
+必要表单状态和校验：
+
+```ts
+const form = reactive({
+  code: '',
+  name: '',
+  parentId: null as string | number | null,
+  sortOrder: undefined as number | undefined,
+  status: 'ENABLED' as MasterDataStatus,
+  remark: '',
+})
+
+function validateCategoryForm() {
+  if (form.sortOrder === undefined) {
+    ElMessage.error('排序为必填')
+    return false
+  }
+  return true
+}
+```
 
 - [ ] **步骤 5：实现物料档案页**
 
