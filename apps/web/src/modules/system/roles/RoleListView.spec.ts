@@ -42,7 +42,15 @@ function createTestRouter() {
   })
 }
 
-async function mountRoles(permissions = ['system:role:view', 'system:role:create', 'system:role:update', 'system:role:assign-permission']) {
+async function mountRoles(
+  permissions = [
+    'system:role:view',
+    'system:permission:view',
+    'system:role:create',
+    'system:role:update',
+    'system:role:assign-permission',
+  ],
+) {
   const pinia = createPinia()
   setActivePinia(pinia)
   const router = createTestRouter()
@@ -116,5 +124,26 @@ describe('角色管理页', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="configure-permission"]').exists()).toBe(false)
+  })
+
+  it('缺少角色查看或权限树查看权限时隐藏权限配置入口', async () => {
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    const { wrapper } = await mountRoles(['system:role:view', 'system:role:assign-permission'])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="configure-permission"]').exists()).toBe(false)
+  })
+
+  it('角色启停失败时展示错误并保留页面状态', async () => {
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.disable.mockRejectedValue(new Error('角色已被使用，不能停用'))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { wrapper } = await mountRoles()
+    await flushPromises()
+
+    await wrapper.find('[data-test="disable-role"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('角色已被使用，不能停用')
   })
 })

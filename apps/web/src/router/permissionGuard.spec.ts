@@ -87,6 +87,20 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('forbidden')
   })
 
+  it('多权限路由缺少任一权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({
+      user,
+      menus: [],
+      permissions: ['system:role:view', 'system:role:assign-permission'],
+    })
+
+    await router.push('/accounts/roles/1/permissions')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+  })
+
   it('恢复会话失败时清理旧状态并跳转登录页', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('未登录')))
     const router = createQhErpRouter()

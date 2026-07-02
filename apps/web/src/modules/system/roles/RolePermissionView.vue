@@ -49,9 +49,12 @@ async function savePermissions() {
   error.value = ''
   saving.value = true
   try {
-    const permissionIds = [...selectedIds.value].sort((left, right) => Number(left) - Number(right))
+    const permissionIds = withAncestors(selectedIds.value, permissions.value).sort(
+      (left, right) => Number(left) - Number(right),
+    )
     await accountPermissionApi.roles.savePermissions(roleId.value, { permissionIds })
     originalIds.value = [...permissionIds]
+    selectedIds.value = [...permissionIds]
     success.value = '权限已保存'
   } catch (caught) {
     error.value = errorMessage(caught)
@@ -65,6 +68,27 @@ function cancel() {
     return
   }
   void router.push({ name: 'system-roles' })
+}
+
+function withAncestors(values: Array<string | number>, tree: PermissionNode[]) {
+  const parentById = new Map<string, string | number | null | undefined>()
+  const collect = (nodes: PermissionNode[]) => {
+    nodes.forEach((node) => {
+      parentById.set(String(node.id), node.parentId)
+      collect(node.children ?? [])
+    })
+  }
+  collect(tree)
+
+  const expanded = new Set<string | number>(values)
+  values.forEach((value) => {
+    let parent = parentById.get(String(value))
+    while (parent !== null && parent !== undefined) {
+      expanded.add(parent)
+      parent = parentById.get(String(parent))
+    }
+  })
+  return Array.from(expanded)
 }
 
 onMounted(loadData)

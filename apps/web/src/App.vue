@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuNode } from './shared/api/accountPermissionApi'
 import { useAuthStore } from './stores/authStore'
@@ -12,6 +12,7 @@ const isLogin = computed(() => route.name === 'login')
 const supportedMenuPaths = new Set(['/accounts/users', '/system/users', '/accounts/roles', '/system/roles'])
 const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
+const logoutError = ref('')
 
 function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
   return menus
@@ -31,12 +32,19 @@ function menuIndex(menu: MenuNode) {
 }
 
 async function logout() {
-  await authStore.logout()
-  await router.replace('/login')
+  logoutError.value = ''
+  try {
+    await authStore.logout()
+  } catch (error) {
+    authStore.clearSession()
+    logoutError.value = error instanceof Error ? error.message : '退出失败，本地会话已清理'
+  }
+  await router.replace({ name: 'login', query: { loggedOut: '1' } })
 }
 </script>
 
 <template>
+  <el-alert v-if="logoutError" class="global-alert" type="warning" :title="logoutError" show-icon :closable="false" />
   <router-view v-if="isLogin" />
 
   <el-container v-else class="app-shell">
@@ -73,7 +81,7 @@ async function logout() {
         </div>
         <div class="header-user">
           <span>{{ displayName }}</span>
-          <el-button link type="primary" @click="logout">退出</el-button>
+          <el-button data-test="logout-button" link type="primary" @click="logout">退出</el-button>
         </div>
       </el-header>
 

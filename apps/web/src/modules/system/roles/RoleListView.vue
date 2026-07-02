@@ -39,7 +39,12 @@ const formErrors = reactive({
 
 const canCreate = computed(() => authStore.hasPermission('system:role:create'))
 const canUpdate = computed(() => authStore.hasPermission('system:role:update'))
-const canAssignPermission = computed(() => authStore.hasPermission('system:role:assign-permission'))
+const canAssignPermission = computed(
+  () =>
+    authStore.hasPermission('system:role:view') &&
+    authStore.hasPermission('system:permission:view') &&
+    authStore.hasPermission('system:role:assign-permission'),
+)
 
 async function loadRoles() {
   loading.value = true
@@ -149,12 +154,20 @@ async function changeStatus(role: RoleRecord) {
   if (!window.confirm(`确认${nextAction}角色“${role.name}”？`)) {
     return
   }
-  if (role.status === 'DISABLED') {
-    await accountPermissionApi.roles.enable(role.id)
-  } else {
-    await accountPermissionApi.roles.disable(role.id)
+  loading.value = true
+  error.value = ''
+  try {
+    if (role.status === 'DISABLED') {
+      await accountPermissionApi.roles.enable(role.id)
+    } else {
+      await accountPermissionApi.roles.disable(role.id)
+    }
+    await loadRoles()
+  } catch (caught) {
+    error.value = errorMessage(caught)
+  } finally {
+    loading.value = false
   }
-  await loadRoles()
 }
 
 function configurePermissions(role: RoleRecord) {

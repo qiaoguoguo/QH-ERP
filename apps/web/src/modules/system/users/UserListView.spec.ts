@@ -128,7 +128,6 @@ describe('用户管理页', () => {
 
   it('关键操作打开弹窗或调用接口', async () => {
     apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -138,9 +137,65 @@ describe('用户管理页', () => {
     await wrapper.find('[data-test="assign-role"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('分配角色')
+  })
+
+  it('重置密码使用弹窗输入的新密码', async () => {
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    const wrapper = mountUsers()
+    await flushPromises()
 
     await wrapper.find('[data-test="reset-password"]').trigger('click')
     await flushPromises()
-    expect(apiMock.users.resetPassword).toHaveBeenCalledWith(1, expect.objectContaining({ newPassword: expect.any(String) }))
+
+    await wrapper.find('input[name="new-password"]').setValue('NewStrong@2026')
+    await wrapper.find('input[name="confirm-password"]').setValue('NewStrong@2026')
+    await wrapper.find('[data-test="submit-reset-password"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.users.resetPassword).toHaveBeenCalledWith(1, { newPassword: 'NewStrong@2026' })
+  })
+
+  it('重置密码弱密码不提交并显示校验提示', async () => {
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    const wrapper = mountUsers()
+    await flushPromises()
+
+    await wrapper.find('[data-test="reset-password"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="new-password"]').setValue('weak')
+    await wrapper.find('input[name="confirm-password"]').setValue('weak')
+    await wrapper.find('[data-test="submit-reset-password"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('密码至少 8 位，并包含大小写字母、数字和特殊字符')
+    expect(apiMock.users.resetPassword).not.toHaveBeenCalled()
+  })
+
+  it('用户启停失败时展示错误提示', async () => {
+    apiMock.users.list.mockResolvedValue({ items: [disabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.enable.mockRejectedValue(new Error('账号状态已变化'))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const wrapper = mountUsers()
+    await flushPromises()
+
+    await wrapper.find('[data-test="enable-user"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('账号状态已变化')
+  })
+
+  it('角色分配失败时保留弹窗并展示错误提示', async () => {
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.update.mockRejectedValue(new Error('角色已停用'))
+    const wrapper = mountUsers()
+    await flushPromises()
+
+    await wrapper.find('[data-test="assign-role"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="submit-role-assignment"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('角色已停用')
+    expect(wrapper.text()).toContain('分配角色')
   })
 })

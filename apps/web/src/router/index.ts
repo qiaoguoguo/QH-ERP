@@ -8,6 +8,7 @@ declare module 'vue-router' {
     guestOnly?: boolean
     requiresAuth?: boolean
     requiredPermission?: string
+    requiredPermissions?: string[]
   }
 }
 
@@ -56,7 +57,10 @@ const routes: RouteRecordRaw[] = [
     path: '/accounts/roles/:id/permissions',
     name: 'system-role-permissions',
     alias: '/system/roles/:id/permissions',
-    meta: { requiresAuth: true, requiredPermission: 'system:role:assign-permission' },
+    meta: {
+      requiresAuth: true,
+      requiredPermissions: ['system:role:view', 'system:permission:view', 'system:role:assign-permission'],
+    },
     component: () => import('../modules/system/roles/RolePermissionView.vue'),
   },
   {
@@ -83,6 +87,11 @@ export function createQhErpRouter() {
     }
 
     const authStore = useAuthStore()
+    if (to.meta.guestOnly && to.query.loggedOut === '1') {
+      authStore.clearSession()
+      return true
+    }
+
     if (!authStore.currentUser) {
       try {
         await authStore.fetchCurrentUser()
@@ -107,7 +116,11 @@ export function createQhErpRouter() {
       return { name: 'login', query: { redirect: to.fullPath } }
     }
 
-    if (to.meta.requiredPermission && !authStore.hasPermission(to.meta.requiredPermission)) {
+    const requiredPermissions = [
+      ...(to.meta.requiredPermission ? [to.meta.requiredPermission] : []),
+      ...(to.meta.requiredPermissions ?? []),
+    ]
+    if (requiredPermissions.some((permission) => !authStore.hasPermission(permission))) {
       return { name: 'forbidden', query: { from: to.fullPath } }
     }
 

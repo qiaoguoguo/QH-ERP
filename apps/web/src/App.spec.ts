@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import { createQhErpRouter } from './router'
 import { useAuthStore } from './stores/authStore'
@@ -41,5 +41,38 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('用户管理')
     expect(wrapper.text()).toContain('角色管理')
+  })
+
+  it('退出失败时仍清理本地会话并跳转登录页', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useAuthStore()
+    store.setSession({
+      user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: [],
+    })
+    vi.spyOn(store, 'logout').mockImplementation(async () => {
+      store.clearSession()
+      throw new Error('退出接口失败')
+    })
+    const router = createQhErpRouter()
+    const replaceSpy = vi.spyOn(router, 'replace')
+    router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    await wrapper.find('[data-test="logout-button"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(store.currentUser).toBeNull()
+    expect(replaceSpy).toHaveBeenCalledWith({ name: 'login', query: { loggedOut: '1' } })
+    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    expect(wrapper.text()).toContain('退出接口失败')
   })
 })

@@ -24,8 +24,10 @@ const loading = ref(true)
 const error = ref('')
 const formVisible = ref(false)
 const roleDialogVisible = ref(false)
+const resetPasswordVisible = ref(false)
 const editingUser = ref<UserRecord | null>(null)
 const roleTarget = ref<UserRecord | null>(null)
+const resetPasswordTarget = ref<UserRecord | null>(null)
 const form = reactive({
   username: '',
   displayName: '',
@@ -36,6 +38,14 @@ const form = reactive({
   roleIds: [] as Array<string | number>,
 })
 const formError = ref('')
+const actionError = ref('')
+const roleDialogError = ref('')
+const resetPasswordError = ref('')
+const actionLoading = ref(false)
+const resetPasswordForm = reactive({
+  newPassword: '',
+  confirmPassword: '',
+})
 
 const canCreate = computed(() => authStore.hasPermission('system:user:create'))
 const canUpdate = computed(() => authStore.hasPermission('system:user:update'))
@@ -150,10 +160,47 @@ async function saveUser() {
 }
 
 async function resetPassword(user: UserRecord) {
-  if (!window.confirm(`确认重置用户“${user.displayName}”的密码？`)) {
+  resetPasswordTarget.value = user
+  resetPasswordForm.newPassword = ''
+  resetPasswordForm.confirmPassword = ''
+  resetPasswordError.value = ''
+  resetPasswordVisible.value = true
+}
+
+function validatePassword() {
+  if (
+    resetPasswordForm.newPassword.length < 8 ||
+    !/[A-Z]/.test(resetPasswordForm.newPassword) ||
+    !/[a-z]/.test(resetPasswordForm.newPassword) ||
+    !/\d/.test(resetPasswordForm.newPassword) ||
+    !/[^A-Za-z0-9]/.test(resetPasswordForm.newPassword)
+  ) {
+    resetPasswordError.value = '密码至少 8 位，并包含大小写字母、数字和特殊字符'
+    return false
+  }
+  if (resetPasswordForm.newPassword !== resetPasswordForm.confirmPassword) {
+    resetPasswordError.value = '两次输入的新密码不一致'
+    return false
+  }
+  resetPasswordError.value = ''
+  return true
+}
+
+async function submitResetPassword() {
+  if (!resetPasswordTarget.value || !validatePassword()) {
     return
   }
-  await accountPermissionApi.users.resetPassword(user.id, { newPassword: 'Qherp@2026!' })
+  actionLoading.value = true
+  try {
+    await accountPermissionApi.users.resetPassword(resetPasswordTarget.value.id, {
+      newPassword: resetPasswordForm.newPassword,
+    })
+    resetPasswordVisible.value = false
+  } catch (caught) {
+    resetPasswordError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 async function changeStatus(user: UserRecord) {
@@ -161,17 +208,26 @@ async function changeStatus(user: UserRecord) {
   if (!window.confirm(`确认${nextAction}用户“${user.displayName}”？`)) {
     return
   }
-  if (user.status === 'DISABLED') {
-    await accountPermissionApi.users.enable(user.id)
-  } else {
-    await accountPermissionApi.users.disable(user.id)
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    if (user.status === 'DISABLED') {
+      await accountPermissionApi.users.enable(user.id)
+    } else {
+      await accountPermissionApi.users.disable(user.id)
+    }
+    await loadUsers()
+  } catch (caught) {
+    actionError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
   }
-  await loadUsers()
 }
 
 async function openRoleDialog(user: UserRecord) {
   roleTarget.value = user
   form.roleIds = user.roles?.map((role) => role.id) ?? []
+  roleDialogError.value = ''
   await loadRoles()
   roleDialogVisible.value = true
 }
@@ -180,15 +236,23 @@ async function saveRoleAssignment() {
   if (!roleTarget.value) {
     return
   }
-  await accountPermissionApi.users.update(roleTarget.value.id, {
-    displayName: roleTarget.value.displayName,
-    phone: roleTarget.value.phone ?? '',
-    email: roleTarget.value.email ?? '',
-    status: roleTarget.value.status,
-    roleIds: form.roleIds,
-  })
-  roleDialogVisible.value = false
-  await loadUsers()
+  actionLoading.value = true
+  roleDialogError.value = ''
+  try {
+    await accountPermissionApi.users.update(roleTarget.value.id, {
+      displayName: roleTarget.value.displayName,
+      phone: roleTarget.value.phone ?? '',
+      email: roleTarget.value.email ?? '',
+      status: roleTarget.value.status,
+      roleIds: form.roleIds,
+    })
+    roleDialogVisible.value = false
+    await loadUsers()
+  } catch (caught) {
+    roleDialogError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 onMounted(loadUsers)
@@ -223,6 +287,7 @@ onMounted(loadUsers)
     </el-card>
 
     <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
+    <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
     <el-alert v-if="loading" class="state-alert" type="info" title="用户数据加载中" :closable="false" />
 
     <el-card class="table-card" shadow="never">
@@ -302,13 +367,38 @@ onMounted(loadUsers)
     </el-dialog>
 
     <el-dialog v-model="roleDialogVisible" title="分配角色" width="520px">
+      <el-alert v-if="roleDialogError" class="form-alert" type="error" :title="roleDialogError" :closable="false" />
       <p class="dialog-summary">当前用户：{{ roleTarget?.displayName }}</p>
       <el-select v-model="form.roleIds" multiple placeholder="选择角色" style="width: 100%">
         <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
       </el-select>
       <template #footer>
         <el-button @click="roleDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveRoleAssignment">保存</el-button>
+        <el-button data-test="submit-role-assignment" type="primary" :loading="actionLoading" @click="saveRoleAssignment">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="resetPasswordVisible" title="重置密码" width="520px">
+      <el-alert v-if="resetPasswordError" class="form-alert" type="error" :title="resetPasswordError" :closable="false" />
+      <p class="dialog-summary">当前用户：{{ resetPasswordTarget?.displayName }}</p>
+      <el-form label-position="top">
+        <el-form-item label="新密码">
+          <el-input v-model="resetPasswordForm.newPassword" name="new-password" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="resetPasswordForm.confirmPassword" name="confirm-password" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="resetPasswordVisible = false">取消</el-button>
+        <el-button
+          data-test="submit-reset-password"
+          type="primary"
+          :loading="actionLoading"
+          @click="submitResetPassword"
+        >
+          保存
+        </el-button>
       </template>
     </el-dialog>
   </section>

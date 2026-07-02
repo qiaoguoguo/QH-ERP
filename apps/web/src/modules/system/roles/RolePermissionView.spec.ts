@@ -96,7 +96,7 @@ describe('角色权限配置页', () => {
     await wrapper.find('[data-test="save-permissions"]').trigger('click')
     await flushPromises()
 
-    expect(apiMock.roles.savePermissions).toHaveBeenCalledWith('1', { permissionIds: [2, 3] })
+    expect(apiMock.roles.savePermissions).toHaveBeenCalledWith('1', { permissionIds: [1, 2, 3] })
     expect(wrapper.text()).toContain('权限已保存')
   })
 
