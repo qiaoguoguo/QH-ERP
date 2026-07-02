@@ -107,6 +107,7 @@ describe('计量单位列表页', () => {
     ['1.5'],
     ['-1'],
     ['1e309'],
+    ['abc'],
   ])('精度为非法数字 %s 时不提交并保持新增弹窗', async (precisionScale) => {
     const wrapper = mountUnits()
     await flushPromises()
@@ -129,6 +130,7 @@ describe('计量单位列表页', () => {
     ['1.2'],
     ['-1'],
     ['1e309'],
+    ['abc'],
   ])('排序为非法数字 %s 时不提交并保持新增弹窗', async (sortOrder) => {
     const wrapper = mountUnits()
     await flushPromises()
@@ -145,6 +147,38 @@ describe('计量单位列表页', () => {
     expect(wrapper.text()).toContain('排序必须为整数')
     expect(wrapper.text()).toContain('新增单位')
     expect(apiMock.units.create).not.toHaveBeenCalled()
+  })
+
+  it('编辑单位时精度为 NaN 类输入不提交 update 并保持弹窗', async () => {
+    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    const wrapper = mountUnits()
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-record"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="record-precision-scale"]').setValue('abc')
+    await wrapper.find('[data-test="submit-record"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('精度必须为非负整数')
+    expect(wrapper.text()).toContain('编辑单位')
+    expect(apiMock.units.update).not.toHaveBeenCalled()
+  })
+
+  it('编辑单位时排序为 NaN 类输入不提交 update 并保持弹窗', async () => {
+    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    const wrapper = mountUnits()
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-record"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="record-sort-order"]').setValue('abc')
+    await wrapper.find('[data-test="submit-record"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('排序必须为整数')
+    expect(wrapper.text()).toContain('编辑单位')
+    expect(apiMock.units.update).not.toHaveBeenCalled()
   })
 
   it('支持关键词查询、重置和分页请求', async () => {
