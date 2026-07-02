@@ -37,8 +37,9 @@ public class AuditService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<AuditLogResponse> list(String action, String targetType, int page, int pageSize) {
-		QueryParts queryParts = queryParts(action, targetType);
+	public PageResponse<AuditLogResponse> list(String operatorKeyword, String targetType, String action,
+			OffsetDateTime startAt, OffsetDateTime endAt, int page, int pageSize) {
+		QueryParts queryParts = queryParts(operatorKeyword, targetType, action, startAt, endAt);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from sys_audit_log " + queryParts.where(),
 				Long.class, queryParts.args().toArray());
 
@@ -56,16 +57,29 @@ public class AuditService {
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
-	private QueryParts queryParts(String action, String targetType) {
+	private QueryParts queryParts(String operatorKeyword, String targetType, String action, OffsetDateTime startAt,
+			OffsetDateTime endAt) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
-		if (hasText(action)) {
-			conditions.add("action = ?");
-			args.add(action);
+		if (hasText(operatorKeyword)) {
+			conditions.add("operator_username ilike ?");
+			args.add("%" + operatorKeyword + "%");
 		}
 		if (hasText(targetType)) {
 			conditions.add("target_type = ?");
 			args.add(targetType);
+		}
+		if (hasText(action)) {
+			conditions.add("action = ?");
+			args.add(action);
+		}
+		if (startAt != null) {
+			conditions.add("created_at >= ?");
+			args.add(startAt);
+		}
+		if (endAt != null) {
+			conditions.add("created_at <= ?");
+			args.add(endAt);
 		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		return new QueryParts(where, args);

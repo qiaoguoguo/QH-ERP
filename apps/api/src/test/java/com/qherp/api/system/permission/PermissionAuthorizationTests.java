@@ -16,6 +16,8 @@ import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 
@@ -50,6 +52,27 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		ResponseEntity<String> audit = get("/api/admin/audit-logs?page=1&pageSize=20", admin);
 		assertThat(audit.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(audit.getBody()).contains("\"items\"");
+	}
+
+	@Test
+	void auditLogQueryFiltersByOperatorKeywordAndCreatedAtRange() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+		insertAuditLog("admin", "TASK4_AUDIT_FILTER", "TASK4_AUDIT", now.minusMinutes(10));
+		insertAuditLog("other-operator", "TASK4_AUDIT_FILTER", "TASK4_AUDIT", now.minusMinutes(10));
+		insertAuditLog("admin", "TASK4_AUDIT_FILTER", "TASK4_AUDIT", now.minusDays(2));
+
+		ResponseEntity<String> audit = get("/api/admin/audit-logs?operatorKeyword=adm&targetType=TASK4_AUDIT"
+				+ "&action=TASK4_AUDIT_FILTER&startAt=" + now.minusHours(1) + "&endAt=" + now.plusHours(1)
+				+ "&page=1&pageSize=20", admin);
+
+		assertThat(audit.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode data = data(audit);
+		assertThat(data.get("total").longValue()).isOne();
+		JsonNode item = data.get("items").get(0);
+		assertThat(item.get("operatorUsername").asText()).isEqualTo("admin");
+		assertThat(item.get("action").asText()).isEqualTo("TASK4_AUDIT_FILTER");
+		assertThat(item.get("targetType").asText()).isEqualTo("TASK4_AUDIT");
 	}
 
 	@Test
@@ -105,6 +128,17 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 
 	private long permissionId(String code) {
 		return this.jdbcTemplate.queryForObject("select id from sys_permission where code = ?", Long.class, code);
+	}
+
+	private void insertAuditLog(String operatorUsername, String action, String targetType, OffsetDateTime createdAt) {
+		this.jdbcTemplate.update("""
+				insert into sys_audit_log (
+					operator_username, action, target_type, target_id, target_summary,
+					request_method, request_path, ip_address, result, created_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				""", operatorUsername, action, targetType, "task4-audit-filter", "审计过滤测试", "GET",
+				"/api/admin/audit-logs", "127.0.0.1", "SUCCESS", createdAt);
 	}
 
 	private AuthenticatedSession login(String username, String password) {
