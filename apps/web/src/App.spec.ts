@@ -43,7 +43,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('角色管理')
   })
 
-  it('退出失败时仍清理本地会话并跳转登录页', async () => {
+  it('退出失败时保留当前会话和路由并显示错误提示', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     const store = useAuthStore()
@@ -52,10 +52,7 @@ describe('ERP 应用骨架', () => {
       menus: [],
       permissions: [],
     })
-    vi.spyOn(store, 'logout').mockImplementation(async () => {
-      store.clearSession()
-      throw new Error('退出接口失败')
-    })
+    vi.spyOn(store, 'logout').mockRejectedValue(new Error('退出接口失败'))
     const router = createQhErpRouter()
     const replaceSpy = vi.spyOn(router, 'replace')
     router.push('/')
@@ -70,10 +67,11 @@ describe('ERP 应用骨架', () => {
     await flushPromises()
     await flushPromises()
 
-    expect(store.currentUser).toBeNull()
-    expect(replaceSpy).toHaveBeenCalledWith({ name: 'login', query: { loggedOut: '1' } })
-    await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
+    expect(store.currentUser?.username).toBe('admin')
+    expect(router.currentRoute.value.name).toBe('home')
+    expect(replaceSpy).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('退出接口失败')
+    expect(wrapper.find('[data-test="logout-button"]').attributes('disabled')).toBeUndefined()
   })
 
   it('退出提交中禁用退出入口并显示加载态', async () => {

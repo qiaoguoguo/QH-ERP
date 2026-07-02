@@ -37,11 +37,8 @@ export const useAuthStore = defineStore('auth', {
       this.setCsrf(result.csrf)
     },
     async logout() {
-      try {
-        await accountPermissionApi.logout()
-      } finally {
-        this.clearSession()
-      }
+      await accountPermissionApi.logout()
+      this.clearSession()
     },
     async fetchCurrentUser() {
       try {

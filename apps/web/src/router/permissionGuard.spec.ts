@@ -67,6 +67,17 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('home')
   })
 
+  it('访问登录页即使带旧退出标记也会按真实后端 session 恢复', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiResponse(adminSession)))
+    const router = createQhErpRouter()
+
+    await router.push({ path: '/login', query: { loggedOut: '1' } })
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('home')
+    expect(useAuthStore().currentUser?.username).toBe('admin')
+  })
+
   it('已登录访问登录页时跳转首页', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['system:user:view'] })

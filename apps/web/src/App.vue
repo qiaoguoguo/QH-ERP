@@ -40,13 +40,12 @@ async function logout() {
   logoutLoading.value = true
   try {
     await authStore.logout()
+    await router.replace({ name: 'login' })
   } catch (error) {
-    authStore.clearSession()
-    logoutError.value = error instanceof Error ? error.message : '退出失败，本地会话已清理'
+    logoutError.value = error instanceof Error ? error.message : '退出失败，请重试'
   } finally {
     logoutLoading.value = false
   }
-  await router.replace({ name: 'login', query: { loggedOut: '1' } })
 }
 </script>
 

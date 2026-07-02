@@ -116,6 +116,22 @@ describe('认证状态 store', () => {
     expect(store.permissions).toEqual([])
   })
 
+  it('退出接口失败时保留当前用户、菜单和权限', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ token: 'logout-csrf', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }))
+      .mockResolvedValueOnce(apiFailure('AUTH_LOGOUT_FAILED'))
+    vi.stubGlobal('fetch', fetcher)
+    const store = useAuthStore()
+    store.setSession(adminSession)
+
+    await expect(store.logout()).rejects.toThrow('未登录或会话已失效')
+
+    expect(store.currentUser?.username).toBe('admin')
+    expect(store.menus).toEqual(adminSession.menus)
+    expect(store.permissions).toEqual(['system:user:view'])
+  })
+
   it('拉取当前用户后更新本地会话，并按权限码判断权限', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiResponse(adminSession)))
     const store = useAuthStore()

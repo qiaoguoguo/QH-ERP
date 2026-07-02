@@ -87,11 +87,6 @@ export function createQhErpRouter() {
     }
 
     const authStore = useAuthStore()
-    if (to.meta.guestOnly && to.query.loggedOut === '1') {
-      authStore.clearSession()
-      return true
-    }
-
     if (!authStore.currentUser) {
       try {
         await authStore.fetchCurrentUser()
