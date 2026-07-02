@@ -2,6 +2,7 @@ package com.qherp.api.common;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
@@ -46,6 +47,17 @@ public class GlobalExceptionHandler {
 				details, request);
 	}
 
+	@ExceptionHandler(HttpMessageNotReadableException.class)
+	public ResponseEntity<ApiResponse<Void>> handleHttpMessageNotReadableException(
+			HttpMessageNotReadableException exception, HttpServletRequest request) {
+		BusinessException businessException = businessCause(exception);
+		if (businessException != null) {
+			return handleBusinessException(businessException, request);
+		}
+		return build(HttpStatus.BAD_REQUEST, ApiErrorCode.VALIDATION_ERROR, ApiErrorCode.VALIDATION_ERROR.message(),
+				List.of(), request);
+	}
+
 	@ExceptionHandler(AuthenticationException.class)
 	public ResponseEntity<ApiResponse<Void>> handleAuthenticationException(AuthenticationException exception,
 			HttpServletRequest request) {
@@ -68,6 +80,17 @@ public class GlobalExceptionHandler {
 
 	private ApiErrorDetail toErrorDetail(FieldError error) {
 		return new ApiErrorDetail(error.getField(), error.getDefaultMessage());
+	}
+
+	private BusinessException businessCause(Throwable exception) {
+		Throwable current = exception;
+		while (current != null) {
+			if (current instanceof BusinessException businessException) {
+				return businessException;
+			}
+			current = current.getCause();
+		}
+		return null;
 	}
 
 	private ResponseEntity<ApiResponse<Void>> build(HttpStatus httpStatus, ApiErrorCode errorCode, String message,
