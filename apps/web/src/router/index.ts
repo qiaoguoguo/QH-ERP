@@ -1,3 +1,4 @@
+import { h } from 'vue'
 import { createMemoryHistory, createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/authStore'
 
@@ -13,7 +14,7 @@ declare module 'vue-router' {
 }
 
 const placeholder = (title: string, description: string) => ({
-  template: `<section><h1>${title}</h1><p>${description}</p></section>`,
+  render: () => h('section', [h('h1', title), h('p', description)]),
 })
 
 const routes: RouteRecordRaw[] = [

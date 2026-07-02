@@ -94,6 +94,19 @@ function changePage(page: number) {
   void loadUsers()
 }
 
+function normalizeRoleIds(roleIds: Array<string | number>) {
+  return roleIds.map((roleId) => {
+    if (typeof roleId === 'string' && /^\d+$/.test(roleId)) {
+      return Number(roleId)
+    }
+    return roleId
+  })
+}
+
+function setFormRoleIds(roleIds: Array<string | number>) {
+  form.roleIds = normalizeRoleIds(roleIds)
+}
+
 async function openCreate() {
   editingUser.value = null
   Object.assign(form, {
@@ -136,6 +149,7 @@ async function saveUser() {
     return
   }
 
+  const roleIds = normalizeRoleIds(form.roleIds)
   formSubmitting.value = true
   try {
     if (editingUser.value) {
@@ -144,7 +158,7 @@ async function saveUser() {
         phone: form.phone,
         email: form.email,
         status: form.status,
-        roleIds: form.roleIds,
+        roleIds,
       })
     } else {
       await accountPermissionApi.users.create({
@@ -154,7 +168,7 @@ async function saveUser() {
         email: form.email,
         initialPassword: form.initialPassword,
         status: form.status,
-        roleIds: form.roleIds,
+        roleIds,
       })
     }
     formVisible.value = false
@@ -243,6 +257,7 @@ async function saveRoleAssignment() {
   if (!roleTarget.value) {
     return
   }
+  const roleIds = normalizeRoleIds(form.roleIds)
   actionLoading.value = true
   roleDialogError.value = ''
   try {
@@ -251,7 +266,7 @@ async function saveRoleAssignment() {
       phone: roleTarget.value.phone ?? '',
       email: roleTarget.value.email ?? '',
       status: roleTarget.value.status,
-      roleIds: form.roleIds,
+      roleIds,
     })
     roleDialogVisible.value = false
     await loadUsers()
@@ -353,7 +368,7 @@ onMounted(loadUsers)
           <el-input v-model="form.displayName" name="user-form-display-name" />
         </el-form-item>
         <el-form-item v-if="!editingUser" label="初始密码">
-          <el-input v-model="form.initialPassword" type="password" show-password />
+          <el-input v-model="form.initialPassword" name="user-form-initial-password" type="password" show-password />
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status">
@@ -362,7 +377,7 @@ onMounted(loadUsers)
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
-          <el-select v-model="form.roleIds" multiple placeholder="选择角色">
+          <el-select :model-value="form.roleIds" multiple placeholder="选择角色" @update:model-value="setFormRoleIds">
             <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
           </el-select>
         </el-form-item>
@@ -384,7 +399,13 @@ onMounted(loadUsers)
     <el-dialog v-model="roleDialogVisible" title="分配角色" width="520px">
       <el-alert v-if="roleDialogError" class="form-alert" type="error" :title="roleDialogError" :closable="false" />
       <p class="dialog-summary">当前用户：{{ roleTarget?.displayName }}</p>
-      <el-select v-model="form.roleIds" multiple placeholder="选择角色" style="width: 100%">
+      <el-select
+        :model-value="form.roleIds"
+        multiple
+        placeholder="选择角色"
+        style="width: 100%"
+        @update:model-value="setFormRoleIds"
+      >
         <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
       </el-select>
       <template #footer>

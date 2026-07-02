@@ -46,6 +46,18 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.query.redirect).toBe('/accounts/users')
   })
 
+  it('根路径工作台占位组件不依赖运行时 template 编译', async () => {
+    const router = createQhErpRouter()
+
+    await router.push('/')
+    await router.isReady()
+
+    const homeComponent = router.currentRoute.value.matched[0].components?.default as { render?: unknown; template?: unknown }
+    expect(homeComponent.template).toBeUndefined()
+    expect(homeComponent.render).toBeTypeOf('function')
+    expect(router.currentRoute.value.name).toBe('home')
+  })
+
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiResponse(adminSession)))
     const router = createQhErpRouter()

@@ -38,6 +38,7 @@ describe('ERP 应用骨架', () => {
 
     expect(wrapper.text()).toContain('QH ERP')
     expect(wrapper.text()).toContain('制造业生产管理 ERP')
+    expect(wrapper.text()).toContain('工作台')
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('用户管理')
     expect(wrapper.text()).toContain('角色管理')

@@ -36,6 +36,13 @@ const enabledUser: UserRecord = {
   updatedAt: '2026-07-02T08:00:00+08:00',
 }
 const disabledUser: UserRecord = { ...enabledUser, id: 2, username: 'disabled', displayName: '停用用户', status: 'DISABLED' }
+const createdUser: UserRecord = {
+  ...enabledUser,
+  id: 3,
+  username: 'new_user',
+  displayName: '新用户',
+  roles: [{ id: 1, code: 'PLANNER', name: '计划员' }],
+}
 const emptyPage: PageResult<UserRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
 const rolePage: PageResult<RoleRecord> = {
   items: [{ id: 1, code: 'PLANNER', name: '计划员', status: 'ENABLED' }],
@@ -153,6 +160,37 @@ describe('用户管理页', () => {
     await flushPromises()
 
     expect(apiMock.users.resetPassword).toHaveBeenCalledWith(1, { newPassword: 'NewStrong@2026' })
+  })
+
+  it('新增用户带角色保存成功后提交 roleIds、关闭弹窗并刷新列表', async () => {
+    apiMock.users.list
+      .mockResolvedValueOnce(emptyPage)
+      .mockResolvedValueOnce({ items: [createdUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.create.mockResolvedValue(createdUser)
+    const wrapper = mountUsers()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-user"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="user-form-username"]').setValue('new_user')
+    await wrapper.find('input[name="user-form-display-name"]').setValue('新用户')
+    await wrapper.find('input[name="user-form-initial-password"]').setValue('NewStrong@2026')
+    const createFormSelects = wrapper.findAllComponents({ name: 'ElSelect' })
+    createFormSelects.at(-1)?.vm.$emit('update:modelValue', ['1'])
+    await flushPromises()
+
+    await wrapper.find('[data-test="submit-user"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.users.create).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'new_user',
+      displayName: '新用户',
+      initialPassword: 'NewStrong@2026',
+      roleIds: [1],
+    }))
+    expect(wrapper.findAllComponents({ name: 'ElDialog' })[0]?.props('modelValue')).toBe(false)
+    expect(apiMock.users.list).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('新用户')
   })
 
   it('用户保存失败后恢复提交按钮状态并保留错误提示', async () => {
