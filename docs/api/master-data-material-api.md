@@ -251,6 +251,7 @@
   - `unitId`
   - `status`
   - `remark`
+- 响应：`ApiResponse<MaterialDetail>`，其中 `categoryName`、`unitName` 由后端根据 `categoryId`、`unitId` 派生返回。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_REFERENCE_INVALID`。
 
 ### 更新物料
@@ -259,6 +260,7 @@
 - 路径：`/api/admin/master/materials/{id}`
 - 权限：`master:material:update`
 - 请求字段同创建物料。
+- 响应：`ApiResponse<MaterialDetail>`，其中 `categoryName`、`unitName` 由后端根据 `categoryId`、`unitId` 派生返回。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_REFERENCE_INVALID`。
 
 ### 启用物料
