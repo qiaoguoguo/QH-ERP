@@ -105,3 +105,4 @@ create index idx_mst_material_category_parent on mst_material_category (parent_i
 create index idx_mst_material_category_status on mst_material_category (status);
 create index idx_mst_material_category_unit on mst_material (category_id, unit_id);
 create index idx_mst_material_status on mst_material (status);
+create index idx_mst_material_unit_status on mst_material (unit_id, status);

@@ -17,6 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 
+import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,45 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			Map.entry("system:role:assign-permission", "分配角色权限"),
 			Map.entry("system:permission:view", "查看权限树"),
 			Map.entry("system:audit:view", "查看账号权限审计"));
+
+	private static final List<String> MASTER_DATA_MENU_PERMISSIONS = List.of("master", "master:unit",
+			"master:warehouse", "master:supplier", "master:customer", "material", "master:material-category",
+			"master:material");
+
+	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
+			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
+			new ExpectedActionPermission("master:unit:update", "master:unit", "PUT", "/api/admin/master/units/**"),
+			new ExpectedActionPermission("master:warehouse:view", "master:warehouse", "GET",
+					"/api/admin/master/warehouses/**"),
+			new ExpectedActionPermission("master:warehouse:create", "master:warehouse", "POST",
+					"/api/admin/master/warehouses"),
+			new ExpectedActionPermission("master:warehouse:update", "master:warehouse", "PUT",
+					"/api/admin/master/warehouses/**"),
+			new ExpectedActionPermission("master:supplier:view", "master:supplier", "GET",
+					"/api/admin/master/suppliers/**"),
+			new ExpectedActionPermission("master:supplier:create", "master:supplier", "POST",
+					"/api/admin/master/suppliers"),
+			new ExpectedActionPermission("master:supplier:update", "master:supplier", "PUT",
+					"/api/admin/master/suppliers/**"),
+			new ExpectedActionPermission("master:customer:view", "master:customer", "GET",
+					"/api/admin/master/customers/**"),
+			new ExpectedActionPermission("master:customer:create", "master:customer", "POST",
+					"/api/admin/master/customers"),
+			new ExpectedActionPermission("master:customer:update", "master:customer", "PUT",
+					"/api/admin/master/customers/**"),
+			new ExpectedActionPermission("master:material-category:view", "master:material-category", "GET",
+					"/api/admin/master/material-categories/**"),
+			new ExpectedActionPermission("master:material-category:create", "master:material-category", "POST",
+					"/api/admin/master/material-categories"),
+			new ExpectedActionPermission("master:material-category:update", "master:material-category", "PUT",
+					"/api/admin/master/material-categories/**"),
+			new ExpectedActionPermission("master:material:view", "master:material", "GET",
+					"/api/admin/master/materials/**"),
+			new ExpectedActionPermission("master:material:create", "master:material", "POST",
+					"/api/admin/master/materials"),
+			new ExpectedActionPermission("master:material:update", "master:material", "PUT",
+					"/api/admin/master/materials/**"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -117,6 +157,15 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(auditColumns).contains("id", "operator_user_id", "operator_username", "action", "target_type",
 				"target_id", "target_summary", "request_method", "request_path", "ip_address", "result",
 				"error_code", "created_at");
+
+		var materialIndexes = this.jdbcTemplate.queryForList("""
+				select indexname
+				from pg_indexes
+				where schemaname = 'public'
+				and tablename = 'mst_material'
+				""", String.class);
+		assertThat(materialIndexes).contains("idx_mst_material_category_unit", "idx_mst_material_status",
+				"idx_mst_material_unit_status");
 	}
 
 	@Test
@@ -151,12 +200,22 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(auditView.getApiMethod()).isEqualTo("GET");
 		assertThat(auditView.getApiPath()).isEqualTo("/api/admin/audit-logs");
 
-		assertThat(this.permissionRepository.findByCode("master:unit:view")).isPresent();
-		assertThat(this.permissionRepository.findByCode("master:warehouse:view")).isPresent();
-		assertThat(this.permissionRepository.findByCode("master:supplier:view")).isPresent();
-		assertThat(this.permissionRepository.findByCode("master:customer:view")).isPresent();
-		assertThat(this.permissionRepository.findByCode("master:material-category:view")).isPresent();
-		assertThat(this.permissionRepository.findByCode("master:material:view")).isPresent();
+		MASTER_DATA_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		MASTER_DATA_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -170,6 +229,21 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.as(code)
 				.isTrue();
 		});
+
+		MASTER_DATA_MENU_PERMISSIONS
+			.forEach(code -> assertThat(this.permissionRepository.countByCode(code)).as(code).isOne());
+		MASTER_DATA_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+	}
+
+	private record ExpectedActionPermission(String code, String parentCode, String apiMethod, String apiPath) {
 	}
 
 }
