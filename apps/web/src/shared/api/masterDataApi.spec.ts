@@ -21,7 +21,7 @@ function apiFailure(status = 400) {
     status,
     json: async () => ({
       success: false,
-      code: 'MASTER_DATA_DUPLICATED',
+      code: 'MASTER_DATA_CODE_EXISTS',
       message: '编码已存在',
       data: null,
       traceId: 'trace-1',
@@ -86,6 +86,40 @@ describe('基础资料与物料 API', () => {
     )
   })
 
+  it('列表查询只发送后端支持的筛选字段', async () => {
+    const fetcher = vi.fn().mockResolvedValue(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createMasterDataApi({ fetcher })
+
+    await api.categories.list({
+      keyword: '钢',
+      status: 'ENABLED',
+      page: 1,
+      pageSize: 20,
+      parentId: 7,
+    } as never)
+    await api.materials.list({
+      keyword: '板',
+      status: 'ENABLED',
+      materialType: 'RAW_MATERIAL',
+      sourceType: 'PURCHASED',
+      categoryId: 3,
+      unitId: 1,
+      page: 1,
+      pageSize: 20,
+    } as never)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/master/material-categories?keyword=%E9%92%A2&status=ENABLED&page=1&pageSize=20',
+      expect.any(Object),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/master/materials?keyword=%E6%9D%BF&status=ENABLED&page=1&pageSize=20&materialType=RAW_MATERIAL&sourceType=PURCHASED&categoryId=3',
+      expect.any(Object),
+    )
+  })
+
   it('更新物料时提交物料核心业务字段', async () => {
     const fetcher = vi
       .fn()
@@ -125,13 +159,47 @@ describe('基础资料与物料 API', () => {
     })
   })
 
+  it('启用和停用接口不发送空 JSON body', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 1, status: 'ENABLED' }))
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 1, status: 'DISABLED' }))
+    const api = createMasterDataApi({ fetcher })
+
+    await api.units.enable(1)
+    await api.units.disable(1)
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/master/units/1/enable', {
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'PUT',
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/master/units/1/disable', {
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'PUT',
+    })
+  })
+
   it('后端返回非成功 envelope 时抛出账号权限 API 错误并保留状态', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiFailure(409))
     const api = createMasterDataApi({ fetcher })
     const request = api.units.list({ page: 1, pageSize: 10 })
 
     await expect(request).rejects.toMatchObject({
-      code: 'MASTER_DATA_DUPLICATED',
+      code: 'MASTER_DATA_CODE_EXISTS',
       status: 409,
       traceId: 'trace-1',
     })

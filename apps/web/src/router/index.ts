@@ -17,7 +17,7 @@ const placeholder = (title: string, description: string) => ({
   render: () => h('section', [h('h1', title), h('p', description)]),
 })
 
-const futureComponent = (path: string) => () => import(/* @vite-ignore */ path)
+const masterDataRoutePlaceholder = () => import('../modules/master/shared/MasterDataRoutePlaceholder.vue')
 
 const routes: RouteRecordRaw[] = [
   {
@@ -70,25 +70,25 @@ const routes: RouteRecordRaw[] = [
     path: '/master/units',
     name: 'master-units',
     meta: { requiresAuth: true, requiredPermission: 'master:unit:view' },
-    component: futureComponent('../modules/master/units/UnitListView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/master/warehouses',
     name: 'master-warehouses',
     meta: { requiresAuth: true, requiredPermission: 'master:warehouse:view' },
-    component: futureComponent('../modules/master/warehouses/WarehouseListView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/master/suppliers',
     name: 'master-suppliers',
     meta: { requiresAuth: true, requiredPermission: 'master:supplier:view' },
-    component: futureComponent('../modules/master/suppliers/SupplierListView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/master/customers',
     name: 'master-customers',
     meta: { requiresAuth: true, requiredPermission: 'master:customer:view' },
-    component: futureComponent('../modules/master/customers/CustomerListView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/materials',
@@ -99,13 +99,13 @@ const routes: RouteRecordRaw[] = [
     path: '/materials/categories',
     name: 'material-categories',
     meta: { requiresAuth: true, requiredPermission: 'master:material-category:view' },
-    component: futureComponent('../modules/materials/categories/MaterialCategoryView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/materials/items',
     name: 'material-items',
     meta: { requiresAuth: true, requiredPermission: 'master:material:view' },
-    component: futureComponent('../modules/materials/items/MaterialItemListView.vue'),
+    component: masterDataRoutePlaceholder,
   },
   {
     path: '/production',

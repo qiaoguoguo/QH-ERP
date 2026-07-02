@@ -13,15 +13,12 @@ export interface MasterDataListQuery {
   pageSize: number
 }
 
-export interface MaterialCategoryListQuery extends MasterDataListQuery {
-  parentId?: ResourceId
-}
+export type MaterialCategoryListQuery = MasterDataListQuery
 
 export interface MaterialListQuery extends MasterDataListQuery {
   materialType?: MaterialType
   sourceType?: MaterialSourceType
   categoryId?: ResourceId
-  unitId?: ResourceId
 }
 
 interface BaseMasterRecord {
@@ -140,6 +137,27 @@ export interface MasterDataApiOptions {
 export function createMasterDataApi(options: MasterDataApiOptions = {}): MasterDataApi {
   const fetcher = options.fetcher ?? ((input: string, init: RequestInit) => fetch(input, init))
   const baseUrl = (options.baseUrl ?? '').replace(/\/$/, '')
+  const defaultQueryKeys = ['keyword', 'status', 'page', 'pageSize'] as const
+  const materialQueryKeys = [
+    'keyword',
+    'status',
+    'page',
+    'pageSize',
+    'materialType',
+    'sourceType',
+    'categoryId',
+  ] as const
+
+  const pickQuery = (query: object | undefined, keys: readonly string[]) => {
+    const result: Record<string, unknown> = {}
+    keys.forEach((key) => {
+      const value = (query as Record<string, unknown> | undefined)?.[key]
+      if (value !== undefined) {
+        result[key] = value
+      }
+    })
+    return result
+  }
 
   const buildUrl = (path: string, query?: object) => {
     const search = new URLSearchParams()
@@ -177,22 +195,28 @@ export function createMasterDataApi(options: MasterDataApiOptions = {}): MasterD
 
   const getCsrf = () => request<CsrfToken>('/api/auth/csrf', { method: 'GET' })
   const get = <T>(path: string, query?: object) => request<T>(path, { method: 'GET' }, query)
-  const write = async <T>(method: 'POST' | 'PUT', path: string, body: object = {}) => {
+  const write = async <T>(method: 'POST' | 'PUT', path: string, body?: object) => {
     const csrf = await getCsrf()
-    return request<T>(path, {
-      body: JSON.stringify(body),
-      headers: {
-        'Content-Type': 'application/json',
-        [csrf.headerName]: csrf.token,
-      },
+    const headers: Record<string, string> = {
+      [csrf.headerName]: csrf.token,
+    }
+    const init: RequestInit = {
+      headers,
       method,
-    })
+    }
+    if (body !== undefined) {
+      headers['Content-Type'] = 'application/json'
+      init.body = JSON.stringify(body)
+    }
+
+    return request<T>(path, init)
   }
 
   const createResource = <TRecord, TPayload, TQuery extends MasterDataListQuery = MasterDataListQuery>(
     path: string,
+    queryKeys: readonly string[] = defaultQueryKeys,
   ): MasterDataResource<TRecord, TPayload, TQuery> => ({
-    list: (query) => get<PageResult<TRecord>>(path, query),
+    list: (query) => get<PageResult<TRecord>>(path, pickQuery(query, queryKeys)),
     get: (id) => get<TRecord>(`${path}/${encodeURIComponent(String(id))}`),
     create: (payload) => write<TRecord>('POST', path, payload as object),
     update: (id, payload) => write<TRecord>('PUT', `${path}/${encodeURIComponent(String(id))}`, payload as object),
@@ -208,7 +232,10 @@ export function createMasterDataApi(options: MasterDataApiOptions = {}): MasterD
     categories: createResource<CategoryRecord, CategoryPayload, MaterialCategoryListQuery>(
       '/api/admin/master/material-categories',
     ),
-    materials: createResource<MaterialRecord, MaterialPayload, MaterialListQuery>('/api/admin/master/materials'),
+    materials: createResource<MaterialRecord, MaterialPayload, MaterialListQuery>(
+      '/api/admin/master/materials',
+      materialQueryKeys,
+    ),
   }
 }
 

@@ -58,6 +58,26 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('home')
   })
 
+  it('基础资料和物料未来路由加载 Task 5 通用占位组件', async () => {
+    const router = createQhErpRouter()
+    const futureRouteNames = [
+      'master-units',
+      'master-warehouses',
+      'master-suppliers',
+      'master-customers',
+      'material-categories',
+      'material-items',
+    ]
+
+    for (const routeName of futureRouteNames) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default')
+    }
+  })
+
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiResponse(adminSession)))
     const router = createQhErpRouter()
