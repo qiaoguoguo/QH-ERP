@@ -7,6 +7,7 @@
 - [项目启动基线](project-startup-baseline.md)
 - [任务文档模板](tasks/task-template.md)
 - [项目启动基线任务记录](tasks/000-project-startup-baseline.md)
+- [技术选型与工程骨架任务记录](tasks/001-technical-foundation.md)
 
 ## 产品
 
@@ -19,6 +20,7 @@
 
 - [核心数据口径](data/core-data-glossary.md)
 - [技术基线](architecture/technical-baseline.md)
+- [技术选型决策记录](architecture/technology-decision.md)
 - [接口契约基线](api/api-contract-baseline.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
