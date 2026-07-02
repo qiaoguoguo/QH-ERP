@@ -10,6 +10,7 @@
 - [技术选型与工程骨架任务记录](tasks/001-technical-foundation.md)
 - [工程骨架初始化任务记录](tasks/002-engineering-skeleton.md)
 - [项目开工准备决策任务记录](tasks/003-project-readiness-decisions.md)
+- [账号与权限基础模块任务记录](tasks/004-account-permission-foundation.md)
 
 ## 产品
 
@@ -19,6 +20,7 @@
 - [需求文档模板](product/requirements-template.md)
 - [角色权限草案](product/roles-permissions-draft.md)
 - [账号与权限基础模块范围](product/account-permission-scope.md)
+- [账号与权限需求说明](product/account-permission-requirements.md)
 
 ## 数据与技术
 
@@ -27,6 +29,7 @@
 - [技术基线](architecture/technical-baseline.md)
 - [技术选型决策记录](architecture/technology-decision.md)
 - [接口契约基线](api/api-contract-baseline.md)
+- [账号与权限接口契约](api/account-permission-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -37,6 +40,7 @@
 
 - [测试计划](testing/test-plan.md)
 - [验收标准](testing/acceptance-criteria.md)
+- [账号与权限测试计划](testing/account-permission-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
