@@ -14,8 +14,8 @@ class SecurityConfiguration {
 
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, ApiAuthenticationEntryPoint authenticationEntryPoint,
-			ApiAccessDeniedHandler accessDeniedHandler, SessionCurrentUserFilter sessionCurrentUserFilter)
-			throws Exception {
+			ApiAccessDeniedHandler accessDeniedHandler, SessionCurrentUserFilter sessionCurrentUserFilter,
+			PermissionAuthorizationManager permissionAuthorizationManager) throws Exception {
 		return http
 			.csrf((csrf) -> csrf.csrfTokenRepository(csrfTokenRepository()))
 			.formLogin((formLogin) -> formLogin.disable())
@@ -26,6 +26,7 @@ class SecurityConfiguration {
 				.accessDeniedHandler(accessDeniedHandler))
 			.addFilterBefore(sessionCurrentUserFilter,
 					org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
+			.addFilterAfter(permissionAuthorizationManager, SessionCurrentUserFilter.class)
 			.httpBasic((httpBasic) -> httpBasic.disable())
 			.build();
 	}
@@ -38,6 +39,11 @@ class SecurityConfiguration {
 	@Bean
 	SessionCurrentUserFilter sessionCurrentUserFilter(CurrentUserService currentUserService) {
 		return new SessionCurrentUserFilter(currentUserService);
+	}
+
+	@Bean
+	PermissionAuthorizationManager permissionAuthorizationManager(ApiAccessDeniedHandler accessDeniedHandler) {
+		return new PermissionAuthorizationManager(accessDeniedHandler);
 	}
 
 	@Bean
