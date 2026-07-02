@@ -13,17 +13,25 @@ class SecurityConfiguration {
 
 	@Bean
 	SecurityFilterChain securityFilterChain(HttpSecurity http, ApiAuthenticationEntryPoint authenticationEntryPoint,
-			ApiAccessDeniedHandler accessDeniedHandler) throws Exception {
+			ApiAccessDeniedHandler accessDeniedHandler, SessionCurrentUserFilter sessionCurrentUserFilter)
+			throws Exception {
 		return http
 			.csrf((csrf) -> csrf.disable())
 			.formLogin((formLogin) -> formLogin.disable())
 			.authorizeHttpRequests((authorize) -> authorize
-				.requestMatchers("/api/health").permitAll()
+				.requestMatchers("/api/health", "/api/auth/login").permitAll()
 				.anyRequest().authenticated())
 			.exceptionHandling((exceptions) -> exceptions.authenticationEntryPoint(authenticationEntryPoint)
 				.accessDeniedHandler(accessDeniedHandler))
+			.addFilterBefore(sessionCurrentUserFilter,
+					org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter.class)
 			.httpBasic(Customizer.withDefaults())
 			.build();
+	}
+
+	@Bean
+	SessionCurrentUserFilter sessionCurrentUserFilter(CurrentUserService currentUserService) {
+		return new SessionCurrentUserFilter(currentUserService);
 	}
 
 	@Bean
