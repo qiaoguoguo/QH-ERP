@@ -64,9 +64,18 @@ public class SystemPermission {
 	}
 
 	public SystemPermission(String code, String name, SystemPermissionType type, int sortOrder, String operator) {
+		this(code, name, type, null, null, null, null, sortOrder, operator);
+	}
+
+	public SystemPermission(String code, String name, SystemPermissionType type, Long parentId, String routePath,
+			String apiMethod, String apiPath, int sortOrder, String operator) {
 		this.code = code;
 		this.name = name;
 		this.type = type;
+		this.parentId = parentId;
+		this.routePath = routePath;
+		this.apiMethod = apiMethod;
+		this.apiPath = apiPath;
 		this.sortOrder = sortOrder;
 		this.createdBy = operator;
 		this.createdAt = OffsetDateTime.now();
@@ -84,6 +93,22 @@ public class SystemPermission {
 
 	public SystemPermissionType getType() {
 		return this.type;
+	}
+
+	public Long getParentId() {
+		return this.parentId;
+	}
+
+	public String getRoutePath() {
+		return this.routePath;
+	}
+
+	public String getApiMethod() {
+		return this.apiMethod;
+	}
+
+	public String getApiPath() {
+		return this.apiPath;
 	}
 
 }

@@ -29,6 +29,11 @@ public class SystemUser {
 	@Column(name = "display_name", nullable = false, length = 100)
 	private String displayName;
 
+	@Column(length = 32)
+	private String phone;
+
+	private String email;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 32)
 	private SystemUserStatus status;
@@ -76,6 +81,18 @@ public class SystemUser {
 
 	public String getUsername() {
 		return this.username;
+	}
+
+	public String getPasswordHash() {
+		return this.passwordHash;
+	}
+
+	public String getPhone() {
+		return this.phone;
+	}
+
+	public String getEmail() {
+		return this.email;
 	}
 
 	public SystemUserStatus getStatus() {

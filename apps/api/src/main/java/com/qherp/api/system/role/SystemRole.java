@@ -26,6 +26,8 @@ public class SystemRole {
 	@Column(nullable = false, length = 100)
 	private String name;
 
+	private String description;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 32)
 	private SystemRoleStatus status;
@@ -52,8 +54,14 @@ public class SystemRole {
 	}
 
 	public SystemRole(String code, String name, SystemRoleStatus status, int sortOrder, String operator) {
+		this(code, name, null, status, sortOrder, operator);
+	}
+
+	public SystemRole(String code, String name, String description, SystemRoleStatus status, int sortOrder,
+			String operator) {
 		this.code = code;
 		this.name = name;
+		this.description = description;
 		this.status = status;
 		this.sortOrder = sortOrder;
 		this.createdBy = operator;
@@ -68,6 +76,10 @@ public class SystemRole {
 
 	public String getCode() {
 		return this.code;
+	}
+
+	public String getDescription() {
+		return this.description;
 	}
 
 	public SystemRoleStatus getStatus() {
