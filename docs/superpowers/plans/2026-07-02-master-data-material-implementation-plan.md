@@ -1223,7 +1223,7 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(detail.getBody()).contains("冷轧钢板");
 
 		ResponseEntity<String> update = exchange(HttpMethod.PUT, "/api/admin/master/materials/" + materialId,
-				Map.of("name", "冷轧钢板改", "specification", "1.2mm", "materialType", "RAW_MATERIAL",
+				Map.of("code", "MAT-RAW-001", "name", "冷轧钢板改", "specification", "1.2mm", "materialType", "RAW_MATERIAL",
 						"sourceType", "PURCHASED", "categoryId", categoryId, "unitId", unitId, "status", "ENABLED"),
 				admin);
 		assertThat(update.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -1245,6 +1245,31 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				admin);
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
 		assertThat(response.getBody()).contains("\"code\":\"MASTER_DATA_REFERENCE_INVALID\"");
+
+		long enabledUnitId = createUnit(admin, "PCS-CAT", "件");
+		long disabledCategoryId = createCategory(admin, "DISABLED-CAT", "停用分类", null);
+		exchange(HttpMethod.PUT, "/api/admin/master/material-categories/" + disabledCategoryId + "/disable", Map.of(), admin);
+		ResponseEntity<String> disabledCategoryResponse = exchange(HttpMethod.POST, "/api/admin/master/materials",
+				Map.of("code", "MAT-DISABLED-CAT-001", "name", "停用分类物料", "materialType", "FINISHED_GOOD",
+						"sourceType", "SELF_MADE", "categoryId", disabledCategoryId, "unitId", enabledUnitId,
+						"status", "ENABLED"), admin);
+		assertThat(disabledCategoryResponse.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(disabledCategoryResponse.getBody()).contains("\"code\":\"MASTER_DATA_REFERENCE_INVALID\"");
+
+		long validCategoryId = createCategory(admin, "VALID-CAT", "有效分类", null);
+		ResponseEntity<String> validMaterial = exchange(HttpMethod.POST, "/api/admin/master/materials",
+				Map.of("code", "MAT-VALID-001", "name", "有效物料", "materialType", "FINISHED_GOOD",
+						"sourceType", "SELF_MADE", "categoryId", validCategoryId, "unitId", enabledUnitId,
+						"status", "ENABLED"), admin);
+		assertThat(validMaterial.getStatusCode()).isEqualTo(HttpStatus.OK);
+		long validMaterialId = data(validMaterial).get("id").longValue();
+		ResponseEntity<String> disabledCategoryUpdate = exchange(HttpMethod.PUT,
+				"/api/admin/master/materials/" + validMaterialId,
+				Map.of("code", "MAT-VALID-001", "name", "有效物料", "materialType", "FINISHED_GOOD",
+						"sourceType", "SELF_MADE", "categoryId", disabledCategoryId, "unitId", enabledUnitId,
+						"status", "ENABLED"), admin);
+		assertThat(disabledCategoryUpdate.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(disabledCategoryUpdate.getBody()).contains("\"code\":\"MASTER_DATA_REFERENCE_INVALID\"");
 	}
 
 	@Test
@@ -1466,7 +1491,7 @@ private void validateEnabledCategory(Long categoryId) {
 }
 ```
 
-Use request/response records:
+使用以下请求/响应记录：
 
 ```java
 public record MaterialRequest(@NotBlank String code, @NotBlank String name, String specification,
