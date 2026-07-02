@@ -104,6 +104,7 @@
 - 路径：`/api/admin/master/{resource}/{id}`
 - 权限：对应资源 `view` 权限
 - 响应：`ApiResponse<ResourceDetail>`。
+- 失败：ID 不存在返回 `MASTER_DATA_NOT_FOUND`。
 
 ### 创建
 

@@ -29,7 +29,7 @@
 
 - `apps/api/src/main/java/com/qherp/api/system/init/AccountPermissionInitializer.java`：补充基础资料与物料菜单/权限种子。
 - `apps/api/src/main/java/com/qherp/api/security/PermissionAuthorizationManager.java`：补充 `/api/admin/master/**` 权限映射。
-- `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`：补充主数据重复、引用、状态相关错误码。
+- `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`：补充主数据重复、引用、状态、分类父级和启停引用相关错误码。
 
 前端新增：
 
@@ -159,6 +159,8 @@ Create `docs/api/master-data-material-api.md` with endpoint tables for:
 | MASTER_DATA_INVALID_STATUS | 400 | 状态非法 |
 | MASTER_DATA_REFERENCE_INVALID | 400 | 物料引用不存在或停用的单位/分类 |
 | MASTER_DATA_CATEGORY_IN_USE | 409 | 分类存在启用子项或启用物料，不能停用 |
+| MASTER_DATA_CATEGORY_PARENT_INVALID | 400 | 分类父级不存在、停用、自引用、挂到自身子级或形成环 |
+| MASTER_DATA_UNIT_IN_USE | 409 | 计量单位存在启用物料引用，不能停用 |
 ```
 
 - [ ] **Step 3: 写测试计划**
@@ -196,7 +198,7 @@ Create `docs/testing/master-data-material-test-plan.md`:
 1. 管理员登录。
 2. 新增单位、仓库、供应商、客户。
 3. 新增物料分类。
-4. 新增原材料、半成品、成品。
+4. 新增原材料、半成品、成品和辅料 `AUXILIARY`，最小覆盖 `PURCHASED`、`SELF_MADE`、`OUTSOURCED` 来源属性。
 5. 查询、编辑、停用物料。
 6. 验证重复编码和停用引用错误。
 7. 只读用户登录验证权限表现。
@@ -431,6 +433,8 @@ MASTER_DATA_NOT_FOUND(HttpStatus.NOT_FOUND, "主数据不存在"),
 MASTER_DATA_INVALID_STATUS(HttpStatus.BAD_REQUEST, "主数据状态不正确"),
 MASTER_DATA_REFERENCE_INVALID(HttpStatus.BAD_REQUEST, "主数据引用不正确"),
 MASTER_DATA_CATEGORY_IN_USE(HttpStatus.CONFLICT, "物料分类已被启用数据引用"),
+MASTER_DATA_CATEGORY_PARENT_INVALID(HttpStatus.BAD_REQUEST, "物料分类父级不正确"),
+MASTER_DATA_UNIT_IN_USE(HttpStatus.CONFLICT, "计量单位已被启用物料引用"),
 ```
 
 - [ ] **Step 6: 补权限种子**
@@ -760,6 +764,9 @@ public class MasterDataAdminService {
 
 	@Transactional
 	public RecordResponse disable(Resource resource, Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+		if (resource == Resource.UNIT) {
+			validateUnitNotUsedByEnabledMaterial(id);
+		}
 		return changeStatus(resource, id, MasterDataStatus.DISABLED, operator, servletRequest);
 	}
 
@@ -805,6 +812,14 @@ public class MasterDataAdminService {
 		Integer count = this.jdbcTemplate.queryForObject("select count(*) from " + resource.table + " where id = ?", Integer.class, id);
 		if (count == null || count == 0) {
 			throw new BusinessException(ApiErrorCode.MASTER_DATA_NOT_FOUND);
+		}
+	}
+
+	private void validateUnitNotUsedByEnabledMaterial(Long unitId) {
+		Integer count = this.jdbcTemplate.queryForObject(
+				"select count(*) from mst_material where unit_id = ? and status = 'ENABLED'", Integer.class, unitId);
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.MASTER_DATA_UNIT_IN_USE);
 		}
 	}
 
@@ -1114,6 +1129,58 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(response.getBody()).contains("\"code\":\"MASTER_DATA_CATEGORY_IN_USE\"");
 	}
 
+	@Test
+	void categoryRejectsInvalidParentOnUpdateAndEnable() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long parentId = createCategory(admin, "ROOT", "根分类", null);
+		long childId = createCategory(admin, "CHILD", "子分类", parentId);
+
+		ResponseEntity<String> cycle = exchange(HttpMethod.PUT, "/api/admin/master/material-categories/" + parentId,
+				Map.of("code", "ROOT", "name", "根分类", "parentId", childId, "status", "ENABLED"), admin);
+		assertThat(cycle.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(cycle.getBody()).contains("\"code\":\"MASTER_DATA_CATEGORY_PARENT_INVALID\"");
+
+		exchange(HttpMethod.PUT, "/api/admin/master/material-categories/" + childId + "/disable", Map.of(), admin);
+		exchange(HttpMethod.PUT, "/api/admin/master/material-categories/" + parentId + "/disable", Map.of(), admin);
+		ResponseEntity<String> enable = exchange(HttpMethod.PUT, "/api/admin/master/material-categories/" + childId + "/enable",
+				Map.of(), admin);
+		assertThat(enable.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(enable.getBody()).contains("\"code\":\"MASTER_DATA_CATEGORY_PARENT_INVALID\"");
+	}
+
+	@Test
+	void materialEnableRejectsDisabledReference() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "PCS-ENABLE", "件");
+		long categoryId = createCategory(admin, "AUX", "辅料", null);
+		ResponseEntity<String> material = exchange(HttpMethod.POST, "/api/admin/master/materials",
+				Map.of("code", "MAT-AUX-001", "name", "外协辅料", "materialType", "AUXILIARY",
+						"sourceType", "OUTSOURCED", "categoryId", categoryId, "unitId", unitId, "status", "DISABLED"),
+				admin);
+		long materialId = data(material).get("id").longValue();
+		exchange(HttpMethod.PUT, "/api/admin/master/units/" + unitId + "/disable", Map.of(), admin);
+
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/master/materials/" + materialId + "/enable",
+				Map.of(), admin);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("\"code\":\"MASTER_DATA_REFERENCE_INVALID\"");
+	}
+
+	@Test
+	void unitWithEnabledMaterialCannotBeDisabled() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "PCS-USED", "件");
+		long categoryId = createCategory(admin, "RAW-USED", "原材料", null);
+		exchange(HttpMethod.POST, "/api/admin/master/materials",
+				Map.of("code", "MAT-RAW-USED", "name", "已启用原料", "materialType", "RAW_MATERIAL",
+						"sourceType", "PURCHASED", "categoryId", categoryId, "unitId", unitId, "status", "ENABLED"),
+				admin);
+
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/master/units/" + unitId + "/disable", Map.of(), admin);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(response.getBody()).contains("\"code\":\"MASTER_DATA_UNIT_IN_USE\"");
+	}
+
 	private long createUnit(AuthenticatedSession admin, String code, String name) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/master/units",
 				Map.of("code", code, "name", name, "precisionScale", 0, "status", "ENABLED"), admin);
@@ -1194,9 +1261,9 @@ Required behavior:
 |---|---|
 | `list(keyword,status,page,pageSize)` | 查询 `mst_material_category`，支持编码/名称关键词、状态、分页，按 `sort_order asc, id desc` 排序。 |
 | `get(id)` | 返回单条分类；不存在抛出 `MASTER_DATA_NOT_FOUND`。 |
-| `create(request,operator,servletRequest)` | 校验父级存在且启用，插入分类，记录 `CATEGORY_CREATE` 审计。 |
-| `update(id,request,operator,servletRequest)` | 校验自身存在，禁止父级等于自身，校验父级存在且启用，更新分类，记录 `CATEGORY_UPDATE` 审计。 |
-| `enable(id,operator,servletRequest)` | 设置 `ENABLED`，记录 `CATEGORY_ENABLE` 审计。 |
+| `create(request,operator,servletRequest)` | 校验父级存在且启用，插入分类，记录 `CATEGORY_CREATE` 审计；父级无效返回 `MASTER_DATA_CATEGORY_PARENT_INVALID`。 |
+| `update(id,request,operator,servletRequest)` | 校验自身存在，禁止父级等于自身，禁止挂到自身子级或形成环，校验父级存在且启用，更新分类，记录 `CATEGORY_UPDATE` 审计；父级无效返回 `MASTER_DATA_CATEGORY_PARENT_INVALID`。 |
+| `enable(id,operator,servletRequest)` | 校验分类存在，校验父级仍存在且启用，且不存在自引用、挂到自身子级或父子环；校验通过后设置 `ENABLED`，记录 `CATEGORY_ENABLE` 审计；父级无效返回 `MASTER_DATA_CATEGORY_PARENT_INVALID`。 |
 | `disable(id,operator,servletRequest)` | 若存在启用子分类或启用物料，抛出 `MASTER_DATA_CATEGORY_IN_USE`；否则设置 `DISABLED` 并记录 `CATEGORY_DISABLE` 审计。 |
 
 Use request/response records:
@@ -1223,7 +1290,7 @@ Required behavior:
 | `get(id)` | 返回物料详情；不存在抛出 `MASTER_DATA_NOT_FOUND`。 |
 | `create(request,operator,servletRequest)` | 校验物料编码唯一、分类启用、单位启用、枚举合法，插入物料，记录 `MATERIAL_CREATE` 审计。 |
 | `update(id,request,operator,servletRequest)` | 校验物料存在、分类启用、单位启用、枚举合法，更新物料，记录 `MATERIAL_UPDATE` 审计。 |
-| `enable(id,operator,servletRequest)` | 设置 `ENABLED`，记录 `MATERIAL_ENABLE` 审计。 |
+| `enable(id,operator,servletRequest)` | 校验物料存在，校验引用单位和分类仍存在且启用；校验通过后设置 `ENABLED`，记录 `MATERIAL_ENABLE` 审计；引用无效返回 `MASTER_DATA_REFERENCE_INVALID`。 |
 | `disable(id,operator,servletRequest)` | 设置 `DISABLED`，记录 `MATERIAL_DISABLE` 审计。 |
 
 Validation rules:
@@ -1940,11 +2007,12 @@ Using in-app browser:
 3. Open `/master/warehouses`, create `WH-A / 一号仓`.
 4. Open `/master/suppliers`, create `SUP-A / 原料供应商`.
 5. Open `/master/customers`, create `CUS-A / 成品客户`.
-6. Open `/materials/categories`, create `RAW / 原材料`, `SEMI / 半成品`, `FIN / 成品`.
+6. Open `/materials/categories`, create `RAW / 原材料`, `SEMI / 半成品`, `FIN / 成品`, `AUX / 辅料`.
 7. Open `/materials/items`, create:
    - `MAT-RAW-001 / 冷轧钢板 / RAW_MATERIAL / PURCHASED`
    - `MAT-SEMI-001 / 半成品件 / SEMI_FINISHED / SELF_MADE`
    - `MAT-FIN-001 / 整机 / FINISHED_GOOD / SELF_MADE`
+   - `MAT-AUX-001 / 外协辅料 / AUXILIARY / OUTSOURCED`
 8. Query and edit `MAT-RAW-001`.
 9. Disable `MAT-SEMI-001`.
 10. Attempt duplicate `MAT-RAW-001`, expect clear error.
