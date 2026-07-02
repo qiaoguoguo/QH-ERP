@@ -232,6 +232,36 @@ select {
   margin-bottom: 12px;
 }
 
+.el-overlay-dialog {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+  padding: 24px 16px;
+}
+
+.el-overlay-dialog .el-dialog {
+  display: flex;
+  flex-direction: column;
+  margin: 0 auto;
+  max-height: calc(100vh - 48px);
+  max-height: calc(100svh - 48px);
+  max-width: calc(100vw - 32px);
+  overflow: hidden;
+}
+
+.el-overlay-dialog .el-dialog__header,
+.el-overlay-dialog .el-dialog__footer {
+  flex: 0 0 auto;
+}
+
+.el-overlay-dialog .el-dialog__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .login-page {
   min-height: 100svh;
   display: grid;
@@ -362,5 +392,15 @@ select {
 
   .login-panel {
     padding: 20px;
+  }
+
+  .el-overlay-dialog {
+    padding: 12px;
+  }
+
+  .el-overlay-dialog .el-dialog {
+    max-height: calc(100vh - 24px);
+    max-height: calc(100svh - 24px);
+    max-width: calc(100vw - 24px);
   }
 }
