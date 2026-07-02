@@ -8,6 +8,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpSession;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import org.springframework.security.web.csrf.CsrfToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -34,8 +35,11 @@ public class AuthController {
 	public ApiResponse<AuthService.AuthSession> login(@Valid @RequestBody LoginRequest request,
 			HttpServletRequest servletRequest) {
 		AuthService.AuthSession sessionUser = this.authService.login(request.username(), request.password());
-		servletRequest.getSession(true)
-			.setAttribute(SessionCurrentUserFilter.SESSION_USER_ID, sessionUser.user().id());
+		HttpSession session = servletRequest.getSession(false);
+		if (session != null) {
+			servletRequest.changeSessionId();
+		}
+		servletRequest.getSession(true).setAttribute(SessionCurrentUserFilter.SESSION_USER_ID, sessionUser.user().id());
 		return ApiResponse.ok(sessionUser);
 	}
 
@@ -54,7 +58,16 @@ public class AuthController {
 		return ApiResponse.ok(this.currentUserService.requireCurrentUser());
 	}
 
+	@GetMapping("/csrf")
+	public ApiResponse<CsrfTokenResponse> csrf(HttpServletRequest request) {
+		CsrfToken token = (CsrfToken) request.getAttribute(CsrfToken.class.getName());
+		return ApiResponse.ok(new CsrfTokenResponse(token.getToken(), token.getHeaderName(), token.getParameterName()));
+	}
+
 	public record LoginRequest(@NotBlank String username, @NotBlank String password) {
+	}
+
+	public record CsrfTokenResponse(String token, String headerName, String parameterName) {
 	}
 
 }
