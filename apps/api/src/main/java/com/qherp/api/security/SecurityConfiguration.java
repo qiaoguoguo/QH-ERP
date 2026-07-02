@@ -12,13 +12,16 @@ import org.springframework.security.web.SecurityFilterChain;
 class SecurityConfiguration {
 
 	@Bean
-	SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+	SecurityFilterChain securityFilterChain(HttpSecurity http, ApiAuthenticationEntryPoint authenticationEntryPoint,
+			ApiAccessDeniedHandler accessDeniedHandler) throws Exception {
 		return http
 			.csrf((csrf) -> csrf.disable())
 			.formLogin((formLogin) -> formLogin.disable())
 			.authorizeHttpRequests((authorize) -> authorize
 				.requestMatchers("/api/health").permitAll()
 				.anyRequest().authenticated())
+			.exceptionHandling((exceptions) -> exceptions.authenticationEntryPoint(authenticationEntryPoint)
+				.accessDeniedHandler(accessDeniedHandler))
 			.httpBasic(Customizer.withDefaults())
 			.build();
 	}
