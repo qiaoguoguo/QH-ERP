@@ -9,7 +9,18 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
-const supportedMenuPaths = new Set(['/accounts/users', '/system/users', '/accounts/roles', '/system/roles'])
+const supportedMenuPaths = new Set([
+  '/accounts/users',
+  '/system/users',
+  '/accounts/roles',
+  '/system/roles',
+  '/master/units',
+  '/master/warehouses',
+  '/master/suppliers',
+  '/master/customers',
+  '/materials/categories',
+  '/materials/items',
+])
 const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')

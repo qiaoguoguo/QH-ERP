@@ -17,6 +17,8 @@ const placeholder = (title: string, description: string) => ({
   render: () => h('section', [h('h1', title), h('p', description)]),
 })
 
+const futureComponent = (path: string) => () => import(/* @vite-ignore */ path)
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -65,9 +67,45 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/system/roles/RolePermissionView.vue'),
   },
   {
+    path: '/master/units',
+    name: 'master-units',
+    meta: { requiresAuth: true, requiredPermission: 'master:unit:view' },
+    component: futureComponent('../modules/master/units/UnitListView.vue'),
+  },
+  {
+    path: '/master/warehouses',
+    name: 'master-warehouses',
+    meta: { requiresAuth: true, requiredPermission: 'master:warehouse:view' },
+    component: futureComponent('../modules/master/warehouses/WarehouseListView.vue'),
+  },
+  {
+    path: '/master/suppliers',
+    name: 'master-suppliers',
+    meta: { requiresAuth: true, requiredPermission: 'master:supplier:view' },
+    component: futureComponent('../modules/master/suppliers/SupplierListView.vue'),
+  },
+  {
+    path: '/master/customers',
+    name: 'master-customers',
+    meta: { requiresAuth: true, requiredPermission: 'master:customer:view' },
+    component: futureComponent('../modules/master/customers/CustomerListView.vue'),
+  },
+  {
     path: '/materials',
     name: 'materials',
     component: placeholder('物料管理', '物料、单位、分类和 BOM 前置资料入口。'),
+  },
+  {
+    path: '/materials/categories',
+    name: 'material-categories',
+    meta: { requiresAuth: true, requiredPermission: 'master:material-category:view' },
+    component: futureComponent('../modules/materials/categories/MaterialCategoryView.vue'),
+  },
+  {
+    path: '/materials/items',
+    name: 'material-items',
+    meta: { requiresAuth: true, requiredPermission: 'master:material:view' },
+    component: futureComponent('../modules/materials/items/MaterialItemListView.vue'),
   },
   {
     path: '/production',

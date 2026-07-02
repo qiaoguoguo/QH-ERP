@@ -5,6 +5,7 @@ import {
   ElCard,
   ElContainer,
   ElDialog,
+  ElDrawer,
   ElEmpty,
   ElForm,
   ElFormItem,
@@ -20,6 +21,7 @@ import {
   ElTable,
   ElTableColumn,
   ElTag,
+  ElTree,
 } from 'element-plus'
 import 'element-plus/theme-chalk/base.css'
 import 'element-plus/theme-chalk/el-alert.css'
@@ -28,6 +30,7 @@ import 'element-plus/theme-chalk/el-button.css'
 import 'element-plus/theme-chalk/el-card.css'
 import 'element-plus/theme-chalk/el-container.css'
 import 'element-plus/theme-chalk/el-dialog.css'
+import 'element-plus/theme-chalk/el-drawer.css'
 import 'element-plus/theme-chalk/el-empty.css'
 import 'element-plus/theme-chalk/el-form.css'
 import 'element-plus/theme-chalk/el-form-item.css'
@@ -43,6 +46,7 @@ import 'element-plus/theme-chalk/el-sub-menu.css'
 import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tag.css'
+import 'element-plus/theme-chalk/el-tree.css'
 import './style.css'
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
@@ -60,6 +64,7 @@ app
   .use(ElCard)
   .use(ElContainer)
   .use(ElDialog)
+  .use(ElDrawer)
   .use(ElEmpty)
   .use(ElForm)
   .use(ElFormItem)
@@ -75,4 +80,5 @@ app
   .use(ElTable)
   .use(ElTableColumn)
   .use(ElTag)
+  .use(ElTree)
   .mount('#app')
