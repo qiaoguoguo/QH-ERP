@@ -42,6 +42,7 @@ const actionError = ref('')
 const roleDialogError = ref('')
 const resetPasswordError = ref('')
 const actionLoading = ref(false)
+const formSubmitting = ref(false)
 const resetPasswordForm = reactive({
   newPassword: '',
   confirmPassword: '',
@@ -126,12 +127,16 @@ async function openEdit(user: UserRecord) {
 }
 
 async function saveUser() {
+  if (formSubmitting.value) {
+    return
+  }
   formError.value = ''
   if (!form.displayName.trim() || (!editingUser.value && !form.username.trim())) {
     formError.value = '请完整填写账号和显示姓名'
     return
   }
 
+  formSubmitting.value = true
   try {
     if (editingUser.value) {
       await accountPermissionApi.users.update(editingUser.value.id, {
@@ -156,6 +161,8 @@ async function saveUser() {
     await loadUsers()
   } catch (caught) {
     formError.value = errorMessage(caught)
+  } finally {
+    formSubmitting.value = false
   }
 }
 
@@ -340,10 +347,10 @@ onMounted(loadUsers)
       <el-alert v-if="formError" class="form-alert" type="error" :title="formError" :closable="false" />
       <el-form label-position="top">
         <el-form-item label="登录账号">
-          <el-input v-model="form.username" :disabled="Boolean(editingUser)" />
+          <el-input v-model="form.username" name="user-form-username" :disabled="Boolean(editingUser)" />
         </el-form-item>
         <el-form-item label="显示姓名">
-          <el-input v-model="form.displayName" />
+          <el-input v-model="form.displayName" name="user-form-display-name" />
         </el-form-item>
         <el-form-item v-if="!editingUser" label="初始密码">
           <el-input v-model="form.initialPassword" type="password" show-password />
@@ -362,7 +369,15 @@ onMounted(loadUsers)
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveUser">保存</el-button>
+        <el-button
+          data-test="submit-user"
+          type="primary"
+          :loading="formSubmitting"
+          :disabled="formSubmitting"
+          @click="saveUser"
+        >
+          保存
+        </el-button>
       </template>
     </el-dialog>
 

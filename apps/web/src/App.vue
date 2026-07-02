@@ -13,6 +13,7 @@ const supportedMenuPaths = new Set(['/accounts/users', '/system/users', '/accoun
 const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
+const logoutLoading = ref(false)
 
 function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
   return menus
@@ -32,12 +33,18 @@ function menuIndex(menu: MenuNode) {
 }
 
 async function logout() {
+  if (logoutLoading.value) {
+    return
+  }
   logoutError.value = ''
+  logoutLoading.value = true
   try {
     await authStore.logout()
   } catch (error) {
     authStore.clearSession()
     logoutError.value = error instanceof Error ? error.message : '退出失败，本地会话已清理'
+  } finally {
+    logoutLoading.value = false
   }
   await router.replace({ name: 'login', query: { loggedOut: '1' } })
 }
@@ -81,7 +88,16 @@ async function logout() {
         </div>
         <div class="header-user">
           <span>{{ displayName }}</span>
-          <el-button data-test="logout-button" link type="primary" @click="logout">退出</el-button>
+          <el-button
+            data-test="logout-button"
+            link
+            type="primary"
+            :loading="logoutLoading"
+            :disabled="logoutLoading"
+            @click="logout"
+          >
+            {{ logoutLoading ? '退出中' : '退出' }}
+          </el-button>
         </div>
       </el-header>
 

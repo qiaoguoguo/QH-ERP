@@ -24,6 +24,7 @@ const roles = ref<RoleRecord[]>([])
 const loading = ref(false)
 const error = ref('')
 const formVisible = ref(false)
+const formSubmitting = ref(false)
 const editingRole = ref<RoleRecord | null>(null)
 const form = reactive({
   code: '',
@@ -122,11 +123,15 @@ function validateForm() {
 }
 
 async function saveRole() {
+  if (formSubmitting.value) {
+    return
+  }
   formErrors.submit = ''
   if (!validateForm()) {
     return
   }
 
+  formSubmitting.value = true
   try {
     if (editingRole.value) {
       await accountPermissionApi.roles.update(editingRole.value.id, {
@@ -146,6 +151,8 @@ async function saveRole() {
     await loadRoles()
   } catch (caught) {
     formErrors.submit = errorMessage(caught)
+  } finally {
+    formSubmitting.value = false
   }
 }
 
@@ -253,11 +260,11 @@ onMounted(loadRoles)
       <el-alert v-if="formErrors.submit" class="form-alert" type="error" :title="formErrors.submit" :closable="false" />
       <el-form label-position="top">
         <el-form-item label="角色编码" :error="formErrors.code">
-          <el-input v-model="form.code" :disabled="Boolean(editingRole)" />
+          <el-input v-model="form.code" name="role-form-code" :disabled="Boolean(editingRole)" />
           <div v-if="formErrors.code" class="field-error">{{ formErrors.code }}</div>
         </el-form-item>
         <el-form-item label="角色名称" :error="formErrors.name">
-          <el-input v-model="form.name" />
+          <el-input v-model="form.name" name="role-form-name" />
           <div v-if="formErrors.name" class="field-error">{{ formErrors.name }}</div>
         </el-form-item>
         <el-form-item label="说明">
@@ -272,7 +279,15 @@ onMounted(loadRoles)
       </el-form>
       <template #footer>
         <el-button @click="formVisible = false">取消</el-button>
-        <el-button data-test="submit-role" type="primary" @click="saveRole">保存</el-button>
+        <el-button
+          data-test="submit-role"
+          type="primary"
+          :loading="formSubmitting"
+          :disabled="formSubmitting"
+          @click="saveRole"
+        >
+          保存
+        </el-button>
       </template>
     </el-dialog>
   </section>

@@ -107,6 +107,30 @@ describe('角色管理页', () => {
     expect(apiMock.roles.create).not.toHaveBeenCalled()
   })
 
+  it('角色保存失败后恢复提交按钮状态并保留错误提示', async () => {
+    let rejectCreate!: (error: Error) => void
+    apiMock.roles.create.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectCreate = reject
+    }))
+    const { wrapper } = await mountRoles()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-role"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="role-form-code"]').setValue('QUALITY')
+    await wrapper.find('input[name="role-form-name"]').setValue('质量员')
+    await wrapper.find('[data-test="submit-role"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="submit-role"]').attributes('disabled')).toBeDefined()
+
+    rejectCreate(new Error('角色编码已存在'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('角色编码已存在')
+    expect(wrapper.find('[data-test="submit-role"]').attributes('disabled')).toBeUndefined()
+  })
+
   it('权限配置入口按权限出现并跳转配置页', async () => {
     apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
     const { router, wrapper } = await mountRoles()

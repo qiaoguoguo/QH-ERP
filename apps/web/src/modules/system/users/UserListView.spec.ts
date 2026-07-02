@@ -155,6 +155,31 @@ describe('用户管理页', () => {
     expect(apiMock.users.resetPassword).toHaveBeenCalledWith(1, { newPassword: 'NewStrong@2026' })
   })
 
+  it('用户保存失败后恢复提交按钮状态并保留错误提示', async () => {
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    let rejectCreate!: (error: Error) => void
+    apiMock.users.create.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectCreate = reject
+    }))
+    const wrapper = mountUsers()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-user"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="user-form-username"]').setValue('new_user')
+    await wrapper.find('input[name="user-form-display-name"]').setValue('新用户')
+    await wrapper.find('[data-test="submit-user"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="submit-user"]').attributes('disabled')).toBeDefined()
+
+    rejectCreate(new Error('账号已存在'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('账号已存在')
+    expect(wrapper.find('[data-test="submit-user"]').attributes('disabled')).toBeUndefined()
+  })
+
   it('重置密码弱密码不提交并显示校验提示', async () => {
     apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
     const wrapper = mountUsers()

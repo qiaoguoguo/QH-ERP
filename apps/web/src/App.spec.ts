@@ -75,4 +75,39 @@ describe('ERP 应用骨架', () => {
     await vi.waitFor(() => expect(router.currentRoute.value.name).toBe('login'))
     expect(wrapper.text()).toContain('退出接口失败')
   })
+
+  it('退出提交中禁用退出入口并显示加载态', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useAuthStore()
+    store.setSession({
+      user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: [],
+    })
+    let resolveLogout!: () => void
+    vi.spyOn(store, 'logout').mockImplementation(() => new Promise<void>((resolve) => {
+      resolveLogout = () => {
+        store.clearSession()
+        resolve()
+      }
+    }))
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    await wrapper.find('[data-test="logout-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="logout-button"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).toContain('退出中')
+
+    resolveLogout()
+    await flushPromises()
+  })
 })
