@@ -18,15 +18,21 @@
 
 ## 通用基础资料字段
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| id | number | 是 | 后端主键 |
-| code | string | 是 | 同类主数据内唯一 |
-| name | string | 是 | 名称 |
-| status | string | 是 | `ENABLED` 或 `DISABLED` |
-| remark | string | 否 | 备注 |
-| createdAt | string | 是 | 创建时间 |
-| updatedAt | string | 是 | 更新时间 |
+| 字段 | 类型 | 请求必填 | 响应必返 | 说明 |
+|---|---|---|---|---|
+| id | number | 否 | 是 | 后端主键 |
+| code | string | 是 | 是 | 同类主数据内唯一 |
+| name | string | 是 | 是 | 名称 |
+| status | string | 否 | 是 | `ENABLED` 或 `DISABLED` |
+| remark | string | 否 | 否 | 备注 |
+| createdAt | string | 否 | 是 | 创建时间 |
+| updatedAt | string | 否 | 是 | 更新时间 |
+
+字段口径：
+
+- 创建请求中 `status` 可选，未传时后端默认 `ENABLED`。
+- 更新请求中 `status` 可传；未传时保留原状态，传入非法值时返回 `MASTER_DATA_INVALID_STATUS`。
+- 响应中的 `status` 必返。
 
 ## 扩展字段
 
@@ -111,7 +117,7 @@
 - 方法：`POST`
 - 路径：`/api/admin/master/{resource}`
 - 权限：对应资源 `create` 权限
-- 请求：通用基础资料字段中的 `code`、`name`、`status`、`remark` 以及资源扩展字段。
+- 请求：通用基础资料字段中的 `code`、`name`、可选 `status`、`remark` 以及资源扩展字段；未传 `status` 时默认 `ENABLED`。
 - 响应：`ApiResponse<ResourceDetail>`。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`。
 
@@ -120,9 +126,10 @@
 - 方法：`PUT`
 - 路径：`/api/admin/master/{resource}/{id}`
 - 权限：对应资源 `update` 权限
-- 请求：通用基础资料字段中的 `code`、`name`、`status`、`remark` 以及资源扩展字段。
+- 请求：通用基础资料字段中的 `code`、`name`、可选 `status`、`remark` 以及资源扩展字段；传入非法 `status` 时返回 `MASTER_DATA_INVALID_STATUS`。
 - 响应：`ApiResponse<ResourceDetail>`。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`。
+- 说明：更新请求未传 `status` 时保留原状态。
 
 ### 启用
 
@@ -186,6 +193,7 @@
   - `remark`
 - 响应：`ApiResponse<MaterialCategoryDetail>`。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_CATEGORY_PARENT_INVALID`。
+- 说明：`status` 可选，未传时后端默认 `ENABLED`。
 
 ### 更新分类
 
@@ -195,6 +203,7 @@
 - 请求字段同创建分类。
 - 响应：`ApiResponse<MaterialCategoryDetail>`。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_CATEGORY_PARENT_INVALID`。
+- 说明：更新请求未传 `status` 时保留原状态。
 
 ### 启用分类
 
@@ -254,6 +263,7 @@
   - `remark`
 - 响应：`ApiResponse<MaterialDetail>`，其中 `categoryName`、`unitName` 由后端根据 `categoryId`、`unitId` 派生返回。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_REFERENCE_INVALID`。
+- 说明：`status` 可选，未传时后端默认 `ENABLED`。
 
 ### 更新物料
 
@@ -263,6 +273,7 @@
 - 请求字段同创建物料。
 - 响应：`ApiResponse<MaterialDetail>`，其中 `categoryName`、`unitName` 由后端根据 `categoryId`、`unitId` 派生返回。
 - 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_REFERENCE_INVALID`。
+- 说明：更新请求未传 `status` 时保留原状态。
 
 ### 启用物料
 
