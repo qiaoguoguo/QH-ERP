@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: qherp-postgres
+    environment:
+      POSTGRES_DB: ${QHERP_POSTGRES_DB:-qherp}
+      POSTGRES_USER: ${QHERP_POSTGRES_USER:-qherp}
+      POSTGRES_PASSWORD: ${QHERP_POSTGRES_PASSWORD:-qherp_dev_password}
+    ports:
+      - "${QHERP_POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - qherp-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${QHERP_POSTGRES_USER:-qherp} -d ${QHERP_POSTGRES_DB:-qherp}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  qherp-postgres-data:

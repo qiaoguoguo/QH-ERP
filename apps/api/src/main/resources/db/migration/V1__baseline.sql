@@ -1,0 +1,1 @@
+-- Baseline migration. Business tables start in module-specific migrations.
