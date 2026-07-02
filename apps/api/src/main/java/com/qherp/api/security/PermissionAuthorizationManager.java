@@ -71,6 +71,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return bomPermissionCode;
 		}
 
+		String inventoryPermissionCode = inventoryPermissionCode(method, path);
+		if (inventoryPermissionCode != null) {
+			return inventoryPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -131,6 +136,33 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/disable")) {
 			return "material:bom:disable";
+		}
+		return null;
+	}
+
+	private String inventoryPermissionCode(String method, String path) {
+		String basePath = "/api/admin/inventory";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method) && "/api/admin/inventory/balances".equals(path)) {
+			return "inventory:balance:view";
+		}
+		if ("GET".equals(method) && "/api/admin/inventory/movements".equals(path)) {
+			return "inventory:movement:view";
+		}
+		String documentPath = "/api/admin/inventory/documents";
+		if ("GET".equals(method) && (documentPath.equals(path) || matchesIdPath(path, documentPath))) {
+			return "inventory:document:view";
+		}
+		if ("POST".equals(method) && documentPath.equals(path)) {
+			return "inventory:document:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, documentPath)) {
+			return "inventory:document:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(documentPath) + "/\\d+/post")) {
+			return "inventory:document:post";
 		}
 		return null;
 	}

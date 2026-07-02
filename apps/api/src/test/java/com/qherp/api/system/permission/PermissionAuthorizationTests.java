@@ -1,6 +1,7 @@
 package com.qherp.api.system.permission;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.security.PermissionAuthorizationManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -12,7 +13,9 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.util.ReflectionTestUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
@@ -130,6 +133,17 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertThat(detail.getBody()).contains("\"username\":\"path-variable-target\"");
 	}
 
+	@Test
+	void inventoryAdminPathsMapToInventoryPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/balances", "inventory:balance:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/movements", "inventory:movement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/documents", "inventory:document:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/documents/1", "inventory:document:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/inventory/documents", "inventory:document:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/inventory/documents/1", "inventory:document:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/inventory/documents/1/post", "inventory:document:post");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);
@@ -159,6 +173,15 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				""", operatorUsername, action, targetType, "task4-audit-filter", "审计过滤测试", "GET",
 				"/api/admin/audit-logs", "127.0.0.1", "SUCCESS", createdAt);
+	}
+
+	private void assertPermissionCode(HttpMethod method, String path, String expectedPermissionCode) {
+		var authorizationManager = new PermissionAuthorizationManager(null);
+		var request = new MockHttpServletRequest(method.name(), path);
+
+		String permissionCode = ReflectionTestUtils.invokeMethod(authorizationManager, "permissionCode", request);
+
+		assertThat(permissionCode).isEqualTo(expectedPermissionCode);
 	}
 
 	private AuthenticatedSession login(String username, String password) {

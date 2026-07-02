@@ -1,5 +1,6 @@
 package com.qherp.api.system.init;
 
+import com.qherp.api.common.ApiErrorCode;
 import com.qherp.api.support.PostgresIntegrationTest;
 import com.qherp.api.system.audit.SystemAuditLogRepository;
 import com.qherp.api.system.permission.SystemPermissionType;
@@ -13,6 +14,7 @@ import com.qherp.api.system.user.SystemUserRoleRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
@@ -41,6 +43,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	private static final List<String> MASTER_DATA_MENU_PERMISSIONS = List.of("master", "master:unit",
 			"master:warehouse", "master:supplier", "master:customer", "material", "master:material-category",
 			"master:material");
+
+	private static final List<String> INVENTORY_MENU_PERMISSIONS = List.of("inventory");
 
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
@@ -76,6 +80,20 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/master/materials"),
 			new ExpectedActionPermission("master:material:update", "master:material", "PUT",
 					"/api/admin/master/materials/**"));
+
+	private static final List<ExpectedActionPermission> INVENTORY_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("inventory:balance:view", "inventory", "GET",
+					"/api/admin/inventory/balances"),
+			new ExpectedActionPermission("inventory:movement:view", "inventory", "GET",
+					"/api/admin/inventory/movements"),
+			new ExpectedActionPermission("inventory:document:view", "inventory", "GET",
+					"/api/admin/inventory/documents/**"),
+			new ExpectedActionPermission("inventory:document:create", "inventory", "POST",
+					"/api/admin/inventory/documents"),
+			new ExpectedActionPermission("inventory:document:update", "inventory", "PUT",
+					"/api/admin/inventory/documents/{id}"),
+			new ExpectedActionPermission("inventory:document:post", "inventory", "PUT",
+					"/api/admin/inventory/documents/{id}/post"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -169,6 +187,53 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void inventorySchemaContainsContractTablesAndIndexes() {
+		var balanceColumns = columns("inv_stock_balance");
+		var documentColumns = columns("inv_inventory_document");
+		var documentLineColumns = columns("inv_inventory_document_line");
+		var movementColumns = columns("inv_stock_movement");
+
+		assertThat(balanceColumns).contains("id", "warehouse_id", "material_id", "unit_id", "quantity_on_hand",
+				"locked_quantity", "created_at", "updated_at", "version");
+		assertThat(documentColumns).contains("id", "document_no", "document_type", "status", "business_date",
+				"reason", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
+				"posted_at", "version");
+		assertThat(documentLineColumns).contains("id", "document_id", "line_no", "warehouse_id", "material_id",
+				"unit_id", "quantity", "adjustment_direction", "before_quantity", "after_quantity", "remark",
+				"created_at", "updated_at");
+		assertThat(movementColumns).contains("id", "movement_no", "movement_type", "direction", "warehouse_id",
+				"material_id", "unit_id", "quantity", "before_quantity", "after_quantity", "source_type",
+				"source_id", "source_line_id", "business_date", "reason", "remark", "operator_name",
+				"occurred_at");
+
+		assertThat(indexes("inv_stock_balance")).contains("uk_inv_stock_balance_warehouse_material",
+				"idx_inv_stock_balance_warehouse", "idx_inv_stock_balance_material");
+		assertThat(indexes("inv_stock_movement")).contains("uk_inv_stock_movement_no",
+				"uk_inv_stock_movement_source", "uk_inv_stock_movement_opening_once",
+				"idx_inv_stock_movement_business_date", "idx_inv_stock_movement_warehouse_material");
+		assertThat(indexes("inv_inventory_document")).contains("uk_inv_inventory_document_no",
+				"idx_inv_inventory_document_business_date");
+	}
+
+	@Test
+	void inventoryErrorCodesAreRegistered() {
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_TYPE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_POSTED_IMMUTABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_EMPTY_LINES.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_DUPLICATE_LINE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_QUANTITY_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_STOCK_NOT_ENOUGH.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_WAREHOUSE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_MATERIAL_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_UNIT_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_OPENING_EXISTS.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+	}
+
+	@Test
 	void initializesPermissionTreeAndApiMetadata() {
 		var systemMenu = permissionRepository.findByCode("system").orElseThrow();
 		var userMenu = permissionRepository.findByCode("system:user").orElseThrow();
@@ -216,6 +281,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
+
+		INVENTORY_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -248,6 +330,42 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.as(expected.code())
 				.isTrue();
 		});
+		INVENTORY_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+	}
+
+	private List<String> columns(String tableName) {
+		return this.jdbcTemplate.queryForList("""
+				select column_name
+				from information_schema.columns
+				where table_schema = 'public'
+				and table_name = ?
+				""", String.class, tableName);
+	}
+
+	private List<String> indexes(String tableName) {
+		return this.jdbcTemplate.queryForList("""
+				select indexname
+				from pg_indexes
+				where schemaname = 'public'
+				and tablename = ?
+				""", String.class, tableName);
 	}
 
 	private record ExpectedActionPermission(String code, String parentCode, String apiMethod, String apiPath) {
