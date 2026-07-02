@@ -48,7 +48,7 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		long unitId = createUnit(admin, "T4_LIFE_UNIT", "任务四生命周期单位");
 		long categoryId = createCategory(admin, "T4_LIFE_CAT", "任务四生命周期分类", null, "ENABLED", 10);
-		assertAuditLog("CATEGORY_CREATE", "CATEGORY", categoryId, "T4_LIFE_CAT", "POST", CATEGORIES);
+		assertAuditLog("CATEGORY_CREATE", "MATERIAL_CATEGORY", categoryId, "T4_LIFE_CAT", "POST", CATEGORIES);
 
 		ResponseEntity<String> categoryList = get(CATEGORIES + "?keyword=T4_LIFE_CAT&page=1&pageSize=20", admin);
 		assertThat(categoryList.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -58,19 +58,19 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				categoryRequest("T4_LIFE_CAT_UPD", "任务四生命周期分类改", null, "ENABLED", 20, "更新分类"), admin);
 		assertThat(categoryUpdate.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(categoryUpdate).get("code").asText()).isEqualTo("T4_LIFE_CAT_UPD");
-		assertAuditLog("CATEGORY_UPDATE", "CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
+		assertAuditLog("CATEGORY_UPDATE", "MATERIAL_CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
 				CATEGORIES + "/" + categoryId);
 
 		assertThat(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId + "/disable", Map.of(), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(get(CATEGORIES + "/" + categoryId, admin)).get("status").asText()).isEqualTo("DISABLED");
-		assertAuditLog("CATEGORY_DISABLE", "CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
+		assertAuditLog("CATEGORY_DISABLE", "MATERIAL_CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
 				CATEGORIES + "/" + categoryId + "/disable");
 
 		assertThat(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId + "/enable", Map.of(), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(get(CATEGORIES + "/" + categoryId, admin)).get("status").asText()).isEqualTo("ENABLED");
-		assertAuditLog("CATEGORY_ENABLE", "CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
+		assertAuditLog("CATEGORY_ENABLE", "MATERIAL_CATEGORY", categoryId, "T4_LIFE_CAT_UPD", "PUT",
 				CATEGORIES + "/" + categoryId + "/enable");
 
 		ResponseEntity<String> materialCreate = exchange(HttpMethod.POST, MATERIALS,
@@ -146,12 +146,28 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				materialRequest("T4_REF_DISABLED_CAT", "引用停用分类物料", "S", "RAW_MATERIAL", "PURCHASED",
 						disabledCategoryId, activeUnitId, "ENABLED", null),
 				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.POST, MATERIALS,
+				materialRequest("T4_REF_MISSING_CAT", "引用不存在分类物料", "S", "RAW_MATERIAL", "PURCHASED",
+						999_999_901L, activeUnitId, "ENABLED", null),
+				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.POST, MATERIALS,
+				materialRequest("T4_REF_MISSING_UNIT", "引用不存在单位物料", "S", "RAW_MATERIAL", "PURCHASED",
+						activeCategoryId, 999_999_902L, "ENABLED", null),
+				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
 
 		long materialId = createMaterial(admin, "T4_REF_UPDATE_MAT", "引用更新物料", activeCategoryId, activeUnitId,
 				"ENABLED");
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
 				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
 						disabledCategoryId, activeUnitId, "ENABLED", null),
+				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
+				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED", 999_999_903L,
+						activeUnitId, "ENABLED", null),
+				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
+				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
+						activeCategoryId, 999_999_904L, "ENABLED", null),
 				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
 	}
 
@@ -163,6 +179,18 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		createMaterial(admin, "T4_CAT_IN_USE_MAT", "分类占用物料", categoryId, unitId, "ENABLED");
 
 		assertError(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId + "/disable", Map.of(), admin),
+				HttpStatus.CONFLICT, "MASTER_DATA_CATEGORY_IN_USE");
+	}
+
+	@Test
+	void enabledMaterialPreventsCategoryDisableThroughUpdateStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_CAT_UPDATE_IN_USE_UNIT", "分类更新占用单位");
+		long categoryId = createCategory(admin, "T4_CAT_UPDATE_IN_USE", "更新停用被引用分类", null, "ENABLED", 10);
+		createMaterial(admin, "T4_CAT_UPDATE_IN_USE_MAT", "分类更新占用物料", categoryId, unitId, "ENABLED");
+
+		assertError(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId,
+				categoryRequest("T4_CAT_UPDATE_IN_USE", "更新停用被引用分类", null, "DISABLED", 10, null), admin),
 				HttpStatus.CONFLICT, "MASTER_DATA_CATEGORY_IN_USE");
 	}
 
@@ -225,6 +253,45 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 
 		assertError(exchange(HttpMethod.PUT, UNITS + "/" + unitId + "/disable", Map.of(), admin),
 				HttpStatus.CONFLICT, "MASTER_DATA_UNIT_IN_USE");
+	}
+
+	@Test
+	void enabledMaterialPreventsUnitDisableThroughUpdateStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_UNIT_UPDATE_IN_USE", "更新停用被引用单位");
+		long categoryId = createCategory(admin, "T4_UNIT_UPDATE_IN_USE_CAT", "单位更新占用分类", null, "ENABLED", 10);
+		createMaterial(admin, "T4_UNIT_UPDATE_IN_USE_MAT", "单位更新占用物料", categoryId, unitId, "ENABLED");
+
+		assertError(exchange(HttpMethod.PUT, UNITS + "/" + unitId,
+				Map.of("code", "T4_UNIT_UPDATE_IN_USE", "name", "更新停用被引用单位", "precisionScale", 2, "sortOrder",
+						10, "status", "DISABLED"),
+				admin), HttpStatus.CONFLICT, "MASTER_DATA_UNIT_IN_USE");
+	}
+
+	@Test
+	void materialStatusDefaultsToEnabledAndUpdateWithoutStatusRetainsCurrentStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_STATUS_DEFAULT_UNIT", "状态默认单位");
+		long categoryId = createCategory(admin, "T4_STATUS_DEFAULT_CAT", "状态默认分类", null, "ENABLED", 10);
+
+		ResponseEntity<String> createResponse = exchange(HttpMethod.POST, MATERIALS,
+				materialRequest("T4_STATUS_DEFAULT_MAT", "状态默认物料", "S", "RAW_MATERIAL", "PURCHASED", categoryId,
+						unitId, null, null),
+				admin);
+		assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode created = data(createResponse);
+		long materialId = created.get("id").longValue();
+		assertThat(created.get("status").asText()).isEqualTo("ENABLED");
+
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/disable", Map.of(), admin)
+			.getStatusCode()).isEqualTo(HttpStatus.OK);
+		ResponseEntity<String> updateWithoutStatus = exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
+				materialRequest("T4_STATUS_DEFAULT_MAT_UPD", "状态默认物料改", "S-2", "RAW_MATERIAL", "PURCHASED",
+						categoryId, unitId, null, null),
+				admin);
+
+		assertThat(updateWithoutStatus.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(updateWithoutStatus).get("status").asText()).isEqualTo("DISABLED");
 	}
 
 	@Test

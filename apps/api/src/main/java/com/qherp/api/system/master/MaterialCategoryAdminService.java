@@ -23,7 +23,7 @@ import java.util.Set;
 @Service
 public class MaterialCategoryAdminService {
 
-	private static final String TARGET_TYPE = "CATEGORY";
+	private static final String TARGET_TYPE = "MATERIAL_CATEGORY";
 
 	private final JdbcTemplate jdbcTemplate;
 
@@ -92,6 +92,9 @@ public class MaterialCategoryAdminService {
 		CategoryNode current = categoryNode(id).orElseThrow(this::notFound);
 		validateParentChain(current.id(), request.parentId());
 		MasterDataStatus status = statusOrCurrent(request.status(), current.status());
+		if (status == MasterDataStatus.DISABLED && current.status() != MasterDataStatus.DISABLED) {
+			validateNotUsedByEnabledData(id);
+		}
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update mst_material_category
@@ -122,9 +125,7 @@ public class MaterialCategoryAdminService {
 	@Transactional
 	public CategoryResponse disable(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
 		categoryNode(id).orElseThrow(this::notFound);
-		if (hasEnabledChild(id) || hasEnabledMaterial(id)) {
-			throw new BusinessException(ApiErrorCode.MASTER_DATA_CATEGORY_IN_USE);
-		}
+		validateNotUsedByEnabledData(id);
 		changeStatus(id, MasterDataStatus.DISABLED, operator, servletRequest);
 		return get(id);
 	}
@@ -213,6 +214,12 @@ public class MaterialCategoryAdminService {
 				and status = 'ENABLED'
 				""", Long.class, id);
 		return count != null && count > 0;
+	}
+
+	private void validateNotUsedByEnabledData(Long id) {
+		if (hasEnabledChild(id) || hasEnabledMaterial(id)) {
+			throw new BusinessException(ApiErrorCode.MASTER_DATA_CATEGORY_IN_USE);
+		}
 	}
 
 	private void changeStatus(Long id, MasterDataStatus status, CurrentUser operator, HttpServletRequest servletRequest) {

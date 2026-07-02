@@ -90,7 +90,11 @@ public class MasterDataAdminService {
 			HttpServletRequest servletRequest) {
 		requireResource(resource, Resource.UNIT);
 		validateUnitRequest(request);
-		MasterDataStatus status = statusOrCurrent(request.status(), currentStatus(resource, id));
+		MasterDataStatus currentStatus = currentStatus(resource, id);
+		MasterDataStatus status = statusOrCurrent(request.status(), currentStatus);
+		if (status == MasterDataStatus.DISABLED && currentStatus != MasterDataStatus.DISABLED) {
+			validateUnitNotUsedByEnabledMaterial(id);
+		}
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update %s

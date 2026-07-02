@@ -54,8 +54,7 @@ public class GlobalExceptionHandler {
 		if (businessException != null) {
 			return handleBusinessException(businessException, request);
 		}
-		return build(HttpStatus.BAD_REQUEST, ApiErrorCode.VALIDATION_ERROR, ApiErrorCode.VALIDATION_ERROR.message(),
-				List.of(), request);
+		return handleUnexpectedException(exception, request);
 	}
 
 	@ExceptionHandler(AuthenticationException.class)
