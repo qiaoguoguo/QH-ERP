@@ -16,7 +16,6 @@ import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -42,48 +41,57 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 
 		long unitId = createUnit(admin, "T3_UNIT", "任务三计量单位");
-		assertResourceLifecycle(admin, "/api/admin/master/units", unitId, "T3_UNIT",
+		assertResourceLifecycle(admin, "/api/admin/master/units", unitId, "T3_UNIT", "UNIT",
 				Map.of("code", "T3_UNIT_UPD", "name", "任务三计量单位改", "precisionScale", 3, "sortOrder", 20,
-						"remark", "更新计量单位"),
-				"UNIT_UPDATE", "UNIT");
+						"remark", "更新计量单位"));
 
 		long warehouseId = createResource(admin, "/api/admin/master/warehouses",
 				Map.of("code", "T3_WH", "name", "任务三仓库", "warehouseType", "RAW", "managerName", "仓管一",
 						"address", "一号园区", "status", "ENABLED", "remark", "仓库备注"));
-		assertResourceLifecycle(admin, "/api/admin/master/warehouses", warehouseId, "T3_WH",
+		assertResourceLifecycle(admin, "/api/admin/master/warehouses", warehouseId, "T3_WH", "WAREHOUSE",
 				Map.of("code", "T3_WH_UPD", "name", "任务三仓库改", "warehouseType", "FINISHED",
-						"managerName", "仓管二", "address", "二号园区", "remark", "更新仓库"),
-				"WAREHOUSE_UPDATE", "WAREHOUSE");
+						"managerName", "仓管二", "address", "二号园区", "remark", "更新仓库"));
 
 		long supplierId = createResource(admin, "/api/admin/master/suppliers",
 				Map.of("code", "T3_SUP", "name", "任务三供应商", "contactName", "供应商联系人", "contactPhone",
 						"13800000001", "status", "ENABLED", "remark", "供应商备注"));
-		assertResourceLifecycle(admin, "/api/admin/master/suppliers", supplierId, "T3_SUP",
+		assertResourceLifecycle(admin, "/api/admin/master/suppliers", supplierId, "T3_SUP", "SUPPLIER",
 				Map.of("code", "T3_SUP_UPD", "name", "任务三供应商改", "contactName", "供应商联系人二",
-						"contactPhone", "13800000002", "remark", "更新供应商"),
-				"SUPPLIER_UPDATE", "SUPPLIER");
+						"contactPhone", "13800000002", "remark", "更新供应商"));
 
 		long customerId = createResource(admin, "/api/admin/master/customers",
 				Map.of("code", "T3_CUS", "name", "任务三客户", "contactName", "客户联系人", "contactPhone",
 						"13900000001", "status", "ENABLED", "remark", "客户备注"));
-		assertResourceLifecycle(admin, "/api/admin/master/customers", customerId, "T3_CUS",
+		assertResourceLifecycle(admin, "/api/admin/master/customers", customerId, "T3_CUS", "CUSTOMER",
 				Map.of("code", "T3_CUS_UPD", "name", "任务三客户改", "contactName", "客户联系人二", "contactPhone",
-						"13900000002", "remark", "更新客户"),
-				"CUSTOMER_UPDATE", "CUSTOMER");
+						"13900000002", "remark", "更新客户"));
 	}
 
 	@Test
-	void duplicateCodeReturnsMasterDataCodeExists() {
+	void duplicateCodeReturnsMasterDataCodeExistsForAllResources() {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
-		Map<String, Object> request = Map.of("code", "T3_DUP_UNIT", "name", "重复计量单位", "precisionScale", 2,
-				"sortOrder", 10, "status", "ENABLED");
+		List<ResourceRequest> requests = List.of(
+				new ResourceRequest("/api/admin/master/units",
+						Map.of("code", "T3_DUP_UNIT", "name", "重复计量单位", "precisionScale", 2, "sortOrder", 10,
+								"status", "ENABLED")),
+				new ResourceRequest("/api/admin/master/warehouses",
+						Map.of("code", "T3_DUP_WH", "name", "重复仓库", "warehouseType", "RAW", "status", "ENABLED")),
+				new ResourceRequest("/api/admin/master/suppliers",
+						Map.of("code", "T3_DUP_SUP", "name", "重复供应商", "contactName", "供应商联系人", "status",
+								"ENABLED")),
+				new ResourceRequest("/api/admin/master/customers",
+						Map.of("code", "T3_DUP_CUS", "name", "重复客户", "contactName", "客户联系人", "status",
+								"ENABLED")));
 
-		assertThat(exchange(HttpMethod.POST, "/api/admin/master/units", request, admin).getStatusCode())
-			.isEqualTo(HttpStatus.OK);
-		ResponseEntity<String> duplicate = exchange(HttpMethod.POST, "/api/admin/master/units", request, admin);
+		for (ResourceRequest request : requests) {
+			assertThat(exchange(HttpMethod.POST, request.path(), request.body(), admin).getStatusCode())
+				.as(request.path())
+				.isEqualTo(HttpStatus.OK);
+			ResponseEntity<String> duplicate = exchange(HttpMethod.POST, request.path(), request.body(), admin);
 
-		assertThat(duplicate.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
-		assertThat(duplicate.getBody()).contains("\"code\":\"MASTER_DATA_CODE_EXISTS\"");
+			assertThat(duplicate.getStatusCode()).as(request.path()).isEqualTo(HttpStatus.CONFLICT);
+			assertThat(duplicate.getBody()).contains("\"code\":\"MASTER_DATA_CODE_EXISTS\"");
+		}
 	}
 
 	@Test
@@ -98,6 +106,34 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 
 		assertThat(forbidden.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
 		assertThat(forbidden.getBody()).contains("\"code\":\"AUTH_FORBIDDEN\"");
+	}
+
+	@Test
+	void readOnlyRoleCanViewUnitButCannotMutateAndCannotAccessOtherResources() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T3_READONLY_UNIT", "只读计量单位");
+		long roleId = createRole("T3_UNIT_VIEW_ROLE", "只读计量单位角色", admin);
+		assignPermissions(roleId, List.of(permissionId("master:unit:view")), admin);
+		createUser("task3-unit-view-user", List.of(roleId), admin);
+		AuthenticatedSession readonly = login("task3-unit-view-user", "Qherp@2026!");
+
+		ResponseEntity<String> listResponse = get("/api/admin/master/units?keyword=T3_READONLY_UNIT", readonly);
+		assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(listResponse.getBody()).contains("\"code\":\"T3_READONLY_UNIT\"");
+
+		ResponseEntity<String> detailResponse = get("/api/admin/master/units/" + unitId, readonly);
+		assertThat(detailResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(detailResponse).get("id").longValue()).isEqualTo(unitId);
+
+		assertForbidden(exchange(HttpMethod.POST, "/api/admin/master/units",
+				Map.of("code", "T3_READONLY_CREATE", "name", "只读创建", "precisionScale", 2, "sortOrder", 10),
+				readonly));
+		assertForbidden(exchange(HttpMethod.PUT, "/api/admin/master/units/" + unitId,
+				Map.of("code", "T3_READONLY_UNIT_UPD", "name", "只读更新", "precisionScale", 2, "sortOrder", 10),
+				readonly));
+		assertForbidden(exchange(HttpMethod.PUT, "/api/admin/master/units/" + unitId + "/enable", Map.of(), readonly));
+		assertForbidden(exchange(HttpMethod.PUT, "/api/admin/master/units/" + unitId + "/disable", Map.of(), readonly));
+		assertForbidden(get("/api/admin/master/warehouses", readonly));
 	}
 
 	@Test
@@ -166,33 +202,79 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(disableResponse.getBody()).contains("\"code\":\"MASTER_DATA_UNIT_IN_USE\"");
 	}
 
+	@Test
+	void missingUnitReturnsMasterDataNotFoundForDetailUpdateEnableAndDisable() {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long missingId = 999_999_999L;
+
+		assertMasterDataNotFound(get("/api/admin/master/units/" + missingId, admin));
+		assertMasterDataNotFound(exchange(HttpMethod.PUT, "/api/admin/master/units/" + missingId,
+				Map.of("code", "T3_MISSING_UNIT", "name", "不存在计量单位", "precisionScale", 2, "sortOrder", 10),
+				admin));
+		assertMasterDataNotFound(
+				exchange(HttpMethod.PUT, "/api/admin/master/units/" + missingId + "/enable", Map.of(), admin));
+		assertMasterDataNotFound(
+				exchange(HttpMethod.PUT, "/api/admin/master/units/" + missingId + "/disable", Map.of(), admin));
+	}
+
 	private void assertResourceLifecycle(AuthenticatedSession admin, String path, long id, String originalCode,
-			Map<String, Object> update, String updateAction, String targetType) throws Exception {
+			String targetType, Map<String, Object> update) throws Exception {
 		ResponseEntity<String> listResponse = get(path + "?keyword=" + originalCode + "&page=1&pageSize=20", admin);
 		assertThat(listResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(data(listResponse).get("items").isArray()).isTrue();
+		JsonNode page = data(listResponse);
+		assertThat(page.get("items").isArray()).isTrue();
+		assertThat(page.get("page").intValue()).isEqualTo(1);
+		assertThat(page.get("pageSize").intValue()).isEqualTo(20);
+		assertThat(page.get("total").longValue()).isEqualTo(1);
+		assertThat(page.get("totalPages").intValue()).isEqualTo(1);
 		assertThat(listResponse.getBody()).contains("\"code\":\"" + originalCode + "\"");
 
 		ResponseEntity<String> detailResponse = get(path + "/" + id, admin);
 		assertThat(detailResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(detailResponse).get("id").longValue()).isEqualTo(id);
 		assertThat(detailResponse.getBody()).doesNotContain("extra1", "extra2", "extra3");
+		assertAuditLog(targetType + "_CREATE", targetType, id, originalCode, "POST", path);
 
 		ResponseEntity<String> updateResponse = exchange(HttpMethod.PUT, path + "/" + id, update, admin);
 		assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertThat(data(updateResponse).get("code").asText()).isEqualTo(update.get("code"));
+		String updatedCode = update.get("code").toString();
+		assertThat(data(updateResponse).get("code").asText()).isEqualTo(updatedCode);
+		assertAuditLog(targetType + "_UPDATE", targetType, id, updatedCode, "PUT", path + "/" + id);
 
 		assertThat(exchange(HttpMethod.PUT, path + "/" + id + "/disable", Map.of(), admin).getStatusCode())
 			.isEqualTo(HttpStatus.OK);
 		assertThat(data(get(path + "/" + id, admin)).get("status").asText()).isEqualTo("DISABLED");
+		assertAuditLog(targetType + "_DISABLE", targetType, id, updatedCode, "PUT", path + "/" + id + "/disable");
 
 		assertThat(exchange(HttpMethod.PUT, path + "/" + id + "/enable", Map.of(), admin).getStatusCode())
 			.isEqualTo(HttpStatus.OK);
 		assertThat(data(get(path + "/" + id, admin)).get("status").asText()).isEqualTo("ENABLED");
+		assertAuditLog(targetType + "_ENABLE", targetType, id, updatedCode, "PUT", path + "/" + id + "/enable");
+	}
 
-		assertThat(this.jdbcTemplate.queryForObject(
-				"select count(*) from sys_audit_log where action = ? and target_type = ?", Long.class, updateAction,
-				targetType)).isGreaterThanOrEqualTo(1);
+	private void assertAuditLog(String action, String targetType, long targetId, String targetSummary,
+			String requestMethod, String requestPath) {
+		assertThat(this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sys_audit_log
+				where action = ?
+				and target_type = ?
+				and target_id = ?
+				and target_summary = ?
+				and request_method = ?
+				and request_path = ?
+				""", Long.class, action, targetType, Long.toString(targetId), targetSummary, requestMethod,
+				requestPath)).as(action).isOne();
+	}
+
+	private void assertForbidden(ResponseEntity<String> response) {
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+		assertThat(response.getBody()).contains("\"code\":\"AUTH_FORBIDDEN\"");
+	}
+
+	private void assertMasterDataNotFound(ResponseEntity<String> response) {
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(response.getBody()).contains("\"code\":\"MASTER_DATA_NOT_FOUND\"");
 	}
 
 	private long createUnit(AuthenticatedSession admin, String code, String name) throws Exception {
@@ -211,11 +293,32 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void createUser(String username, AuthenticatedSession session) {
+		createUser(username, List.of(), session);
+	}
+
+	private void createUser(String username, List<Long> roleIds, AuthenticatedSession session) {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/users",
 				Map.of("username", username, "displayName", username, "initialPassword", "Qherp@2026!", "status",
-						"ENABLED", "roleIds", List.of()),
+						"ENABLED", "roleIds", roleIds),
 				session);
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
+				Map.of("code", code, "name", name, "description", "测试角色", "status", "ENABLED"), session);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		return data(response).get("id").longValue();
+	}
+
+	private void assignPermissions(long roleId, List<Long> permissionIds, AuthenticatedSession session) {
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/roles/" + roleId + "/permissions",
+				Map.of("permissionIds", permissionIds), session);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	private long permissionId(String code) {
+		return this.jdbcTemplate.queryForObject("select id from sys_permission where code = ?", Long.class, code);
 	}
 
 	private long countByCode(String tableName, String code) {
@@ -301,6 +404,9 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record AuthenticatedSession(String sessionCookie, CsrfSession csrfSession) {
+	}
+
+	private record ResourceRequest(String path, Map<String, Object> body) {
 	}
 
 }
