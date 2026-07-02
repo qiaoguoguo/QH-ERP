@@ -24,6 +24,21 @@ function apiResponse<T>(data: T) {
   } as Response
 }
 
+function apiFailure(code = 'AUTH_UNAUTHORIZED') {
+  return {
+    ok: false,
+    status: 401,
+    json: async () => ({
+      success: false,
+      code,
+      message: '未登录或会话已失效',
+      data: null,
+      traceId: 'trace-id',
+      timestamp: '2026-07-02T00:00:00+08:00',
+    }),
+  } as Response
+}
+
 describe('认证状态 store', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -110,5 +125,17 @@ describe('认证状态 store', () => {
     expect(store.currentUser?.displayName).toBe('管理员')
     expect(store.hasPermission('system:user:view')).toBe(true)
     expect(store.hasPermission('system:role:view')).toBe(false)
+  })
+
+  it('拉取当前用户失败时清空旧用户和权限后继续抛出错误', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiFailure()))
+    const store = useAuthStore()
+    store.setSession(adminSession)
+
+    await expect(store.fetchCurrentUser()).rejects.toThrow('未登录或会话已失效')
+
+    expect(store.currentUser).toBeNull()
+    expect(store.permissions).toEqual([])
+    expect(store.menus).toEqual([])
   })
 })

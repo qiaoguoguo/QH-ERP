@@ -74,12 +74,24 @@ export function createQhErpRouter() {
     routes,
   })
 
-  appRouter.beforeEach((to) => {
+  appRouter.beforeEach(async (to) => {
     if (!to.meta.requiresAuth && !to.meta.guestOnly) {
       return true
     }
 
     const authStore = useAuthStore()
+    if (!authStore.currentUser) {
+      try {
+        await authStore.fetchCurrentUser()
+      } catch {
+        if (to.meta.requiresAuth) {
+          return { name: 'login', query: { redirect: to.fullPath } }
+        }
+
+        return true
+      }
+    }
+
     if (to.meta.guestOnly && authStore.isAuthenticated) {
       return { name: 'home' }
     }

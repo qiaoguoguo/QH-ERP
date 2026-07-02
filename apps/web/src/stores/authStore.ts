@@ -44,7 +44,12 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     async fetchCurrentUser() {
-      this.setSession(await accountPermissionApi.fetchCurrentUser())
+      try {
+        this.setSession(await accountPermissionApi.fetchCurrentUser())
+      } catch (error) {
+        this.clearSession()
+        throw error
+      }
     },
     hasPermission(permission: string) {
       return this.permissions.includes(permission)
