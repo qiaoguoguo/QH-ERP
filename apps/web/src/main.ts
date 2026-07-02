@@ -1,5 +1,3 @@
-import './style.css'
-
 import {
   ElAlert,
   ElAside,
@@ -45,6 +43,7 @@ import 'element-plus/theme-chalk/el-sub-menu.css'
 import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tag.css'
+import './style.css'
 import { createPinia } from 'pinia'
 import { createApp } from 'vue'
 import App from './App.vue'

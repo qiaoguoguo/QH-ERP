@@ -103,10 +103,6 @@ function normalizeRoleIds(roleIds: Array<string | number>) {
   })
 }
 
-function setFormRoleIds(roleIds: Array<string | number>) {
-  form.roleIds = normalizeRoleIds(roleIds)
-}
-
 async function openCreate() {
   editingUser.value = null
   Object.assign(form, {
@@ -315,20 +311,20 @@ onMounted(loadUsers)
     <el-card class="table-card" shadow="never">
       <div class="table-scroll">
         <el-table :data="users" :empty-text="loading ? '加载中' : '暂无用户数据'" stripe>
-          <el-table-column prop="username" label="账号" min-width="130" />
-          <el-table-column prop="displayName" label="姓名" min-width="120" />
+          <el-table-column prop="username" label="账号" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="displayName" label="姓名" min-width="140" show-overflow-tooltip />
           <el-table-column label="状态" min-width="90">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="角色" min-width="180">
+          <el-table-column label="角色" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">
               {{ row.roles?.map((role: RoleRecord) => role.name).join('、') || '未分配' }}
             </template>
           </el-table-column>
-          <el-table-column prop="phone" label="手机号" min-width="130" />
-          <el-table-column prop="email" label="邮箱" min-width="180" />
+          <el-table-column prop="phone" label="手机号" min-width="130" show-overflow-tooltip />
+          <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
           <el-table-column label="操作" fixed="right" min-width="280">
             <template #default="{ row }">
               <el-button v-if="canUpdate" size="small" text data-test="edit-user" @click="openEdit(row)">编辑</el-button>
@@ -377,7 +373,7 @@ onMounted(loadUsers)
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
-          <el-select :model-value="form.roleIds" multiple placeholder="选择角色" @update:model-value="setFormRoleIds">
+          <el-select v-model="form.roleIds" multiple placeholder="选择角色">
             <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
           </el-select>
         </el-form-item>
@@ -400,11 +396,10 @@ onMounted(loadUsers)
       <el-alert v-if="roleDialogError" class="form-alert" type="error" :title="roleDialogError" :closable="false" />
       <p class="dialog-summary">当前用户：{{ roleTarget?.displayName }}</p>
       <el-select
-        :model-value="form.roleIds"
+        v-model="form.roleIds"
         multiple
         placeholder="选择角色"
         style="width: 100%"
-        @update:model-value="setFormRoleIds"
       >
         <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
       </el-select>

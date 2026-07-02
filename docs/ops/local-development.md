@@ -39,6 +39,19 @@ cd apps/web
 npm run dev
 ```
 
+账号权限模块浏览器验收建议显式绑定本机可访问地址：
+
+```powershell
+cd apps/web
+npx vite --host 0.0.0.0 --port 5173
+```
+
+前端 Vite 已配置 `/api` 代理到 `http://localhost:18080`。本地验收访问：
+
+```text
+http://127.0.0.1:5173
+```
+
 ## 后端测试
 
 当前建议使用 Docker 化 Maven 和 JDK 21 运行测试，并挂载 Docker socket 供 Testcontainers 创建 PostgreSQL 容器。
@@ -71,7 +84,8 @@ cd apps/api
 ```powershell
 $api=(Resolve-Path 'apps/api').Path.Replace('\','/')
 docker run --rm `
-  -p 8080:8080 `
+  --name qherp-api-local `
+  -p 18080:8080 `
   -e QHERP_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:15432/qherp `
   -e QHERP_DATASOURCE_USERNAME=qherp `
   -e QHERP_DATASOURCE_PASSWORD=qherp_dev_password `
@@ -85,7 +99,7 @@ docker run --rm `
 健康检查地址：
 
 ```text
-http://localhost:8080/api/health
+http://localhost:18080/api/health
 ```
 
 预期响应包含：
@@ -94,6 +108,8 @@ http://localhost:8080/api/health
 {"service":"qherp-api","status":"UP"}
 ```
 
+如果本机 `8080` 被 Docker Desktop 或其他进程占用，仍按上面的 `18080:8080` 映射启动后端，前端代理无需调整。
+
 ## 阶段验收限制
 
-工程骨架只证明项目具备基础安装、构建、测试、启动和健康检查能力，不代表账号权限模块已完成，不通知用户进行业务成果验收。
+阶段验收必须完成自动化测试、本地部署、浏览器功能验收和视觉分析记录后，才通知用户进行业务成果验收。
