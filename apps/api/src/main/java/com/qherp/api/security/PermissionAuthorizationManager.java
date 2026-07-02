@@ -24,6 +24,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			throws ServletException, IOException {
 		String permissionCode = permissionCode(request);
 		if (permissionCode == null) {
+			if (isAdminPath(request)) {
+				this.accessDeniedHandler.handle(request, response,
+						new AccessDeniedException("管理接口未配置权限映射"));
+				return;
+			}
 			filterChain.doFilter(request, response);
 			return;
 		}
@@ -82,6 +87,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 
 		return null;
+	}
+
+	private boolean isAdminPath(HttpServletRequest request) {
+		String path = requestPath(request);
+		return "/api/admin".equals(path) || path.startsWith("/api/admin/");
 	}
 
 	private String requestPath(HttpServletRequest request) {

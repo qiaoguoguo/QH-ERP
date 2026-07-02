@@ -72,6 +72,7 @@ public class UserAdminService {
 		if (usernameExists(request.username())) {
 			throw new BusinessException(ApiErrorCode.AUTH_USERNAME_EXISTS);
 		}
+		validatePassword(request.initialPassword());
 		validateEnabledRoles(request.roleIds());
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
@@ -117,6 +118,7 @@ public class UserAdminService {
 	public UserResponse resetPassword(Long id, ResetPasswordRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		validateUserExists(id);
+		validatePassword(request.newPassword());
 		int updated = this.jdbcTemplate.update("""
 				update sys_user
 				set password_hash = ?, password_changed_at = ?, updated_by = ?, updated_at = ?, version = version + 1
@@ -167,7 +169,7 @@ public class UserAdminService {
 		}
 		if (hasText(status)) {
 			conditions.add("status = ?");
-			args.add(status);
+			args.add(parseStatus(status).name());
 		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		return new QueryParts(where, args);
@@ -238,7 +240,25 @@ public class UserAdminService {
 	}
 
 	private SystemUserStatus statusOrEnabled(String status) {
-		return hasText(status) ? SystemUserStatus.valueOf(status) : SystemUserStatus.ENABLED;
+		return hasText(status) ? parseStatus(status) : SystemUserStatus.ENABLED;
+	}
+
+	private SystemUserStatus parseStatus(String status) {
+		try {
+			return SystemUserStatus.valueOf(status);
+		}
+		catch (IllegalArgumentException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR, "用户状态不合法");
+		}
+	}
+
+	private void validatePassword(String password) {
+		if (!hasText(password) || password.length() < 8 || password.chars().noneMatch(Character::isUpperCase)
+				|| password.chars().noneMatch(Character::isLowerCase)
+				|| password.chars().noneMatch(Character::isDigit)
+				|| password.chars().noneMatch((value) -> !Character.isLetterOrDigit(value))) {
+			throw new BusinessException(ApiErrorCode.AUTH_INVALID_PASSWORD_RULE);
+		}
 	}
 
 	private static List<Long> distinctIds(List<Long> ids) {

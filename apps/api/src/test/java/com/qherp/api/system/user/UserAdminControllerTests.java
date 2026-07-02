@@ -109,6 +109,36 @@ class UserAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void weakPasswordReturnsAuthInvalidPasswordRuleForCreateAndReset() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+
+		ResponseEntity<String> createWeakPassword = exchange(HttpMethod.POST, "/api/admin/users",
+				Map.of("username", "weak-password-user", "displayName", "弱密码用户", "initialPassword", "weak",
+						"status", "ENABLED", "roleIds", List.of()),
+				admin);
+		assertThat(createWeakPassword.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(createWeakPassword.getBody()).contains("\"code\":\"AUTH_INVALID_PASSWORD_RULE\"");
+
+		long userId = createUser("reset-weak-password-user", List.of(), admin);
+		ResponseEntity<String> resetWeakPassword = exchange(HttpMethod.PUT,
+				"/api/admin/users/" + userId + "/password", Map.of("newPassword", "weak"), admin);
+		assertThat(resetWeakPassword.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(resetWeakPassword.getBody()).contains("\"code\":\"AUTH_INVALID_PASSWORD_RULE\"");
+	}
+
+	@Test
+	void updateWithInvalidStatusReturnsValidationError() {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long userId = createUser("invalid-status-user", List.of(), admin);
+
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/users/" + userId,
+				Map.of("displayName", "非法状态用户", "status", "LOCKED", "roleIds", List.of()), admin);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("\"code\":\"VALIDATION_ERROR\"");
+	}
+
+	@Test
 	void unauthenticatedAndUnauthorizedUsersCannotCreateUser() {
 		CsrfSession csrf = csrfSession();
 		ResponseEntity<String> unauthenticated = this.restTemplate.exchange("/api/admin/users", HttpMethod.POST,

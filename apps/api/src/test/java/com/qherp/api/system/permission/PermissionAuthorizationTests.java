@@ -110,6 +110,26 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertThat(unauthorizedAfterUserDisabled.getBody()).contains("\"code\":\"AUTH_UNAUTHORIZED\"");
 	}
 
+	@Test
+	void unmappedAdminPathIsForbiddenAndPathVariableRequestStillMatchesPermission() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		ResponseEntity<String> unmapped = get("/api/admin/unmapped-path", admin);
+		assertThat(unmapped.getStatusCode()).isEqualTo(HttpStatus.FORBIDDEN);
+		assertThat(unmapped.getBody()).contains("\"code\":\"AUTH_FORBIDDEN\"");
+
+		long roleId = createRole("USER_VIEW_ONLY_ROLE", "用户查看角色", admin);
+		exchange(HttpMethod.PUT, "/api/admin/roles/" + roleId + "/permissions",
+				Map.of("permissionIds", List.of(permissionId("system:user:view"))), admin);
+		long targetUserId = createUser("path-variable-target", List.of(), admin);
+		createUser("path-variable-viewer", List.of(roleId), admin);
+		AuthenticatedSession viewer = login("path-variable-viewer", "Qherp@2026!");
+
+		ResponseEntity<String> detail = get("/api/admin/users/" + targetUserId, viewer);
+
+		assertThat(detail.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(detail.getBody()).contains("\"username\":\"path-variable-target\"");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);

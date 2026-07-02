@@ -95,6 +95,23 @@ class RoleAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(duplicate.getBody()).contains("\"code\":\"AUTH_ROLE_CODE_EXISTS\"");
 	}
 
+	@Test
+	void updateWithInvalidStatusReturnsValidationError() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		ResponseEntity<String> createResponse = exchange(HttpMethod.POST, "/api/admin/roles",
+				Map.of("code", "INVALID_STATUS_ROLE", "name", "非法状态角色", "description", "测试", "status",
+						"ENABLED"),
+				admin);
+		assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		long roleId = data(createResponse).get("id").longValue();
+
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/roles/" + roleId,
+				Map.of("name", "非法状态角色改", "description", "测试", "status", "LOCKED"), admin);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(response.getBody()).contains("\"code\":\"VALIDATION_ERROR\"");
+	}
+
 	private long permissionId(String code) {
 		return this.jdbcTemplate.queryForObject("select id from sys_permission where code = ?", Long.class, code);
 	}

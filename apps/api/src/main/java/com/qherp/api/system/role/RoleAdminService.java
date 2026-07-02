@@ -161,7 +161,7 @@ public class RoleAdminService {
 		}
 		if (hasText(status)) {
 			conditions.add("status = ?");
-			args.add(status);
+			args.add(parseStatus(status).name());
 		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		return new QueryParts(where, args);
@@ -216,7 +216,16 @@ public class RoleAdminService {
 	}
 
 	private SystemRoleStatus statusOrEnabled(String status) {
-		return hasText(status) ? SystemRoleStatus.valueOf(status) : SystemRoleStatus.ENABLED;
+		return hasText(status) ? parseStatus(status) : SystemRoleStatus.ENABLED;
+	}
+
+	private SystemRoleStatus parseStatus(String status) {
+		try {
+			return SystemRoleStatus.valueOf(status);
+		}
+		catch (IllegalArgumentException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR, "角色状态不合法");
+		}
 	}
 
 	private static List<Long> distinctIds(List<Long> ids) {
