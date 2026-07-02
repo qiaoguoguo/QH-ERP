@@ -14,6 +14,7 @@
 - 后端接口鉴权是最终安全边界，前端菜单和按钮权限只作为体验控制。
 - 列表接口默认支持 `page`、`pageSize`、`keyword`、`status` 查询参数。
 - 写操作成功后必须生成审计日志，至少记录操作人、动作、目标类型、目标标识和操作时间。
+- `VALIDATION_ERROR`、`AUTH_FORBIDDEN`、`AUTH_UNAUTHORIZED` 沿用账号权限模块或通用错误码规则。
 
 ## 通用基础资料字段
 
@@ -60,15 +61,15 @@
 
 ### 物料档案
 
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| specification | string | 否 | 规格型号 |
-| materialType | string | 是 | `RAW_MATERIAL`、`SEMI_FINISHED`、`FINISHED_GOOD`、`AUXILIARY` |
-| sourceType | string | 是 | `PURCHASED`、`SELF_MADE`、`OUTSOURCED` |
-| categoryId | number | 是 | 已启用物料分类标识 |
-| categoryName | string | 是 | 物料分类名称，响应字段 |
-| unitId | number | 是 | 已启用计量单位标识 |
-| unitName | string | 是 | 计量单位名称，响应字段 |
+| 字段 | 类型 | 请求必填 | 响应必返 | 说明 |
+|---|---|---|---|---|
+| specification | string | 否 | 否 | 规格型号 |
+| materialType | string | 是 | 是 | `RAW_MATERIAL`、`SEMI_FINISHED`、`FINISHED_GOOD`、`AUXILIARY` |
+| sourceType | string | 是 | 是 | `PURCHASED`、`SELF_MADE`、`OUTSOURCED` |
+| categoryId | number | 是 | 是 | 已启用物料分类标识 |
+| categoryName | string | 否 | 是 | 物料分类名称，由后端根据 `categoryId` 派生返回，不作为创建或更新请求字段 |
+| unitId | number | 是 | 是 | 已启用计量单位标识 |
+| unitName | string | 否 | 是 | 计量单位名称，由后端根据 `unitId` 派生返回，不作为创建或更新请求字段 |
 
 ## 接口分组
 
@@ -137,6 +138,7 @@
 - 权限：对应资源 `update` 权限
 - 响应：`ApiResponse<ResourceDetail>`。
 - 失败：`MASTER_DATA_NOT_FOUND`。
+- 计量单位补充失败：如存在启用物料引用该计量单位，返回 `MASTER_DATA_UNIT_IN_USE`。
 
 ## 物料分类接口
 
@@ -158,6 +160,16 @@
 - 方法：`GET`
 - 路径：`/api/admin/master/material-categories/{id}`
 - 权限：`master:material-category:view`
+- 响应：`ApiResponse<MaterialCategoryDetail>`。
+- 失败：`MASTER_DATA_NOT_FOUND`。
+
+### 分类父级规则
+
+- `parentId` 为空表示顶级分类。
+- `parentId` 不为空时，父级分类必须存在且状态为 `ENABLED`。
+- 更新分类时，`parentId` 不能等于当前分类 `id`。
+- 更新分类时，不能把分类挂到自身子级下，也不能形成任何父子环。
+- 父级不存在、父级停用、自引用、挂到自身子级或形成环时，返回 `MASTER_DATA_CATEGORY_PARENT_INVALID`。
 
 ### 创建分类
 
@@ -171,7 +183,8 @@
   - `status`
   - `sortOrder`
   - `remark`
-- 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_INVALID_STATUS`。
+- 响应：`ApiResponse<MaterialCategoryDetail>`。
+- 失败：`VALIDATION_ERROR`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_CATEGORY_PARENT_INVALID`。
 
 ### 更新分类
 
@@ -179,19 +192,23 @@
 - 路径：`/api/admin/master/material-categories/{id}`
 - 权限：`master:material-category:update`
 - 请求字段同创建分类。
-- 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`。
+- 响应：`ApiResponse<MaterialCategoryDetail>`。
+- 失败：`VALIDATION_ERROR`、`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CODE_EXISTS`、`MASTER_DATA_INVALID_STATUS`、`MASTER_DATA_CATEGORY_PARENT_INVALID`。
 
 ### 启用分类
 
 - 方法：`PUT`
 - 路径：`/api/admin/master/material-categories/{id}/enable`
 - 权限：`master:material-category:update`
+- 响应：`ApiResponse<MaterialCategoryDetail>`。
+- 失败：`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CATEGORY_PARENT_INVALID`。
 
 ### 停用分类
 
 - 方法：`PUT`
 - 路径：`/api/admin/master/material-categories/{id}/disable`
 - 权限：`master:material-category:update`
+- 响应：`ApiResponse<MaterialCategoryDetail>`。
 - 失败：`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_CATEGORY_IN_USE`。
 
 ## 物料档案接口
@@ -217,6 +234,7 @@
 - 路径：`/api/admin/master/materials/{id}`
 - 权限：`master:material:view`
 - 响应：`ApiResponse<MaterialDetail>`。
+- 失败：`MASTER_DATA_NOT_FOUND`。
 
 ### 创建物料
 
@@ -248,12 +266,16 @@
 - 方法：`PUT`
 - 路径：`/api/admin/master/materials/{id}/enable`
 - 权限：`master:material:update`
+- 响应：`ApiResponse<MaterialDetail>`。
+- 失败：`MASTER_DATA_NOT_FOUND`、`MASTER_DATA_REFERENCE_INVALID`。
 
 ### 停用物料
 
 - 方法：`PUT`
 - 路径：`/api/admin/master/materials/{id}/disable`
 - 权限：`master:material:update`
+- 响应：`ApiResponse<MaterialDetail>`。
+- 失败：`MASTER_DATA_NOT_FOUND`。
 
 ## 权限编码
 
@@ -287,6 +309,8 @@
 | MASTER_DATA_INVALID_STATUS | 400 | 状态非法 |
 | MASTER_DATA_REFERENCE_INVALID | 400 | 物料引用不存在或停用的单位/分类 |
 | MASTER_DATA_CATEGORY_IN_USE | 409 | 分类存在启用子项或启用物料，不能停用 |
+| MASTER_DATA_CATEGORY_PARENT_INVALID | 400 | 分类父级不存在、停用、自引用、挂到自身子级或形成环 |
+| MASTER_DATA_UNIT_IN_USE | 409 | 计量单位存在启用物料引用，不能停用 |
 
 ## 联调验收
 
@@ -295,4 +319,6 @@
 - 创建或更新物料时，引用不存在或停用的单位、分类返回 `MASTER_DATA_REFERENCE_INVALID`。
 - 重复编码返回 `MASTER_DATA_CODE_EXISTS`。
 - 停用存在启用子分类或启用物料的分类返回 `MASTER_DATA_CATEGORY_IN_USE`。
+- 分类父级不存在、停用、自引用、挂到自身子级或形成环返回 `MASTER_DATA_CATEGORY_PARENT_INVALID`。
+- 停用存在启用物料引用的计量单位返回 `MASTER_DATA_UNIT_IN_USE`。
 - 写操作可在审计日志中查询到对应记录。
