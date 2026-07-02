@@ -230,8 +230,15 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 
-		MASTER_DATA_MENU_PERMISSIONS
-			.forEach(code -> assertThat(this.permissionRepository.countByCode(code)).as(code).isOne());
+		MASTER_DATA_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
 		MASTER_DATA_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
