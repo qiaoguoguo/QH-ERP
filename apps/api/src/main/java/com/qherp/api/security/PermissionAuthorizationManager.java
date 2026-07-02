@@ -10,8 +10,18 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.regex.Pattern;
 
 public class PermissionAuthorizationManager extends OncePerRequestFilter {
+
+	private static final List<MasterDataPermissionMapping> MASTER_DATA_PERMISSION_MAPPINGS = List.of(
+			new MasterDataPermissionMapping("/api/admin/master/units", "master:unit"),
+			new MasterDataPermissionMapping("/api/admin/master/warehouses", "master:warehouse"),
+			new MasterDataPermissionMapping("/api/admin/master/suppliers", "master:supplier"),
+			new MasterDataPermissionMapping("/api/admin/master/customers", "master:customer"),
+			new MasterDataPermissionMapping("/api/admin/master/material-categories", "master:material-category"),
+			new MasterDataPermissionMapping("/api/admin/master/materials", "master:material"));
 
 	private final ApiAccessDeniedHandler accessDeniedHandler;
 
@@ -51,6 +61,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		String method = request.getMethod();
 		String path = requestPath(request);
 
+		String masterDataPermissionCode = masterDataPermissionCode(method, path);
+		if (masterDataPermissionCode != null) {
+			return masterDataPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -89,6 +104,38 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		return null;
 	}
 
+	private String masterDataPermissionCode(String method, String path) {
+		for (MasterDataPermissionMapping mapping : MASTER_DATA_PERMISSION_MAPPINGS) {
+			if (!matchesBasePath(path, mapping.basePath())) {
+				continue;
+			}
+			if ("GET".equals(method) && (mapping.basePath().equals(path) || matchesIdPath(path, mapping.basePath()))) {
+				return mapping.permissionPrefix() + ":view";
+			}
+			if ("POST".equals(method) && mapping.basePath().equals(path)) {
+				return mapping.permissionPrefix() + ":create";
+			}
+			if ("PUT".equals(method)
+					&& (matchesIdPath(path, mapping.basePath()) || matchesStatusPath(path, mapping.basePath()))) {
+				return mapping.permissionPrefix() + ":update";
+			}
+			return null;
+		}
+		return null;
+	}
+
+	private boolean matchesBasePath(String path, String basePath) {
+		return basePath.equals(path) || path.startsWith(basePath + "/");
+	}
+
+	private boolean matchesIdPath(String path, String basePath) {
+		return path.matches(Pattern.quote(basePath) + "/\\d+");
+	}
+
+	private boolean matchesStatusPath(String path, String basePath) {
+		return path.matches(Pattern.quote(basePath) + "/\\d+/(enable|disable)");
+	}
+
 	private boolean isAdminPath(HttpServletRequest request) {
 		String path = requestPath(request);
 		return "/api/admin".equals(path) || path.startsWith("/api/admin/");
@@ -101,6 +148,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return path.substring(contextPath.length());
 		}
 		return path;
+	}
+
+	private record MasterDataPermissionMapping(String basePath, String permissionPrefix) {
 	}
 
 }
