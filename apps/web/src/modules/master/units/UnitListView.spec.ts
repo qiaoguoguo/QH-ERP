@@ -122,7 +122,7 @@ describe('计量单位列表页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('精度必须为非负整数')
-    expect(wrapper.text()).toContain('新增单位')
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
     expect(apiMock.units.create).not.toHaveBeenCalled()
   })
 
@@ -145,7 +145,7 @@ describe('计量单位列表页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('排序必须为整数')
-    expect(wrapper.text()).toContain('新增单位')
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
     expect(apiMock.units.create).not.toHaveBeenCalled()
   })
 
@@ -161,7 +161,7 @@ describe('计量单位列表页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('精度必须为非负整数')
-    expect(wrapper.text()).toContain('编辑单位')
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
     expect(apiMock.units.update).not.toHaveBeenCalled()
   })
 
@@ -177,7 +177,7 @@ describe('计量单位列表页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('排序必须为整数')
-    expect(wrapper.text()).toContain('编辑单位')
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
     expect(apiMock.units.update).not.toHaveBeenCalled()
   })
 
