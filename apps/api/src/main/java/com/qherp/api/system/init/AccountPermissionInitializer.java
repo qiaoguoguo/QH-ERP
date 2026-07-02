@@ -19,6 +19,8 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.List;
+
 @Component
 public class AccountPermissionInitializer implements ApplicationRunner {
 
@@ -30,7 +32,17 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 
 	private static final String SYSTEM_ADMIN_ROLE_CODE = "SYSTEM_ADMIN";
 
-	private static final String USER_VIEW_PERMISSION_CODE = "system:user:view";
+	private static final List<PermissionSeed> DOCUMENTED_PERMISSIONS = List.of(
+			new PermissionSeed("system:user:view", "查看用户", SystemPermissionType.ACTION, 10),
+			new PermissionSeed("system:user:create", "创建用户", SystemPermissionType.ACTION, 20),
+			new PermissionSeed("system:user:update", "更新、启用、停用用户", SystemPermissionType.ACTION, 30),
+			new PermissionSeed("system:user:reset-password", "重置用户密码", SystemPermissionType.ACTION, 40),
+			new PermissionSeed("system:role:view", "查看角色", SystemPermissionType.ACTION, 50),
+			new PermissionSeed("system:role:create", "创建角色", SystemPermissionType.ACTION, 60),
+			new PermissionSeed("system:role:update", "更新、启用、停用角色", SystemPermissionType.ACTION, 70),
+			new PermissionSeed("system:role:assign-permission", "分配角色权限", SystemPermissionType.ACTION, 80),
+			new PermissionSeed("system:permission:view", "查看权限树", SystemPermissionType.ACTION, 90),
+			new PermissionSeed("system:audit:view", "查看账号权限审计", SystemPermissionType.ACTION, 100));
 
 	private final SystemUserRepository userRepository;
 
@@ -72,19 +84,25 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 			.orElseGet(() -> this.roleRepository
 				.save(new SystemRole(SYSTEM_ADMIN_ROLE_CODE, "系统管理员", SystemRoleStatus.ENABLED, 0, SYSTEM_OPERATOR)));
 
-		SystemPermission userViewPermission = this.permissionRepository.findByCode(USER_VIEW_PERMISSION_CODE)
-			.orElseGet(() -> this.permissionRepository.save(new SystemPermission(USER_VIEW_PERMISSION_CODE, "查看用户",
-					SystemPermissionType.ACTION, 0, SYSTEM_OPERATOR)));
+		List<SystemPermission> permissions = DOCUMENTED_PERMISSIONS.stream()
+			.map((permission) -> this.permissionRepository.findByCode(permission.code())
+				.orElseGet(() -> this.permissionRepository.save(new SystemPermission(permission.code(), permission.name(),
+						permission.type(), permission.sortOrder(), SYSTEM_OPERATOR))))
+			.toList();
 
 		if (!this.userRoleRepository.existsByUserIdAndRoleId(admin.getId(), systemAdmin.getId())) {
 			this.userRoleRepository.save(new SystemUserRole(admin.getId(), systemAdmin.getId(), SYSTEM_OPERATOR));
 		}
 
-		if (!this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
-				userViewPermission.getId())) {
-			this.rolePermissionRepository
-				.save(new SystemRolePermission(systemAdmin.getId(), userViewPermission.getId(), SYSTEM_OPERATOR));
+		for (SystemPermission permission : permissions) {
+			if (!this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId())) {
+				this.rolePermissionRepository
+					.save(new SystemRolePermission(systemAdmin.getId(), permission.getId(), SYSTEM_OPERATOR));
+			}
 		}
+	}
+
+	private record PermissionSeed(String code, String name, SystemPermissionType type, int sortOrder) {
 	}
 
 }
