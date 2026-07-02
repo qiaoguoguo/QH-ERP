@@ -2,8 +2,9 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthSession, UserProfile } from '../shared/api/accountPermissionApi'
 import { useAuthStore } from '../stores/authStore'
+import MaterialCategoryView from '../modules/materials/categories/MaterialCategoryView.vue'
+import MaterialItemListView from '../modules/materials/items/MaterialItemListView.vue'
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
-import MasterDataRoutePlaceholder from '../modules/master/shared/MasterDataRoutePlaceholder.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
 import WarehouseListView from '../modules/master/warehouses/WarehouseListView.vue'
@@ -63,15 +64,16 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('home')
   })
 
-  it('基础资料路由加载真实页面，物料未来路由仍加载 Task 5 通用占位组件', async () => {
+  it('基础资料和物料路由加载真实页面', async () => {
     const router = createQhErpRouter()
     const realMasterRoutes = [
       ['master-units', UnitListView],
       ['master-warehouses', WarehouseListView],
       ['master-suppliers', SupplierListView],
       ['master-customers', CustomerListView],
+      ['material-categories', MaterialCategoryView],
+      ['material-items', MaterialItemListView],
     ] as const
-    const placeholderRouteNames = ['material-categories', 'material-items']
 
     for (const [routeName, expectedComponent] of realMasterRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
@@ -81,13 +83,10 @@ describe('账号权限路由守卫', () => {
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
 
-    for (const routeName of placeholderRouteNames) {
-      const route = router.getRoutes().find((item) => item.name === routeName)
-      const component = route?.components?.default as (() => Promise<unknown>) | undefined
-
-      expect(component).toBeTypeOf('function')
-      await expect(component?.()).resolves.toHaveProperty('default', MasterDataRoutePlaceholder)
-    }
+    expect(router.getRoutes().find((item) => item.name === 'material-categories')?.meta.requiredPermission)
+      .toBe('master:material-category:view')
+    expect(router.getRoutes().find((item) => item.name === 'material-items')?.meta.requiredPermission)
+      .toBe('master:material:view')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {

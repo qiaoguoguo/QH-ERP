@@ -17,8 +17,6 @@ const placeholder = (title: string, description: string) => ({
   render: () => h('section', [h('h1', title), h('p', description)]),
 })
 
-const masterDataRoutePlaceholder = () => import('../modules/master/shared/MasterDataRoutePlaceholder.vue')
-
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -99,13 +97,13 @@ const routes: RouteRecordRaw[] = [
     path: '/materials/categories',
     name: 'material-categories',
     meta: { requiresAuth: true, requiredPermission: 'master:material-category:view' },
-    component: masterDataRoutePlaceholder,
+    component: () => import('../modules/materials/categories/MaterialCategoryView.vue'),
   },
   {
     path: '/materials/items',
     name: 'material-items',
     meta: { requiresAuth: true, requiredPermission: 'master:material:view' },
-    component: masterDataRoutePlaceholder,
+    component: () => import('../modules/materials/items/MaterialItemListView.vue'),
   },
   {
     path: '/production',
