@@ -103,6 +103,50 @@ describe('计量单位列表页', () => {
     expect(apiMock.units.create).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['1.5'],
+    ['-1'],
+    ['1e309'],
+  ])('精度为非法数字 %s 时不提交并保持新增弹窗', async (precisionScale) => {
+    const wrapper = mountUnits()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-record"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="record-code"]').setValue('PCS')
+    await wrapper.find('input[name="record-name"]').setValue('件')
+    await wrapper.find('input[name="record-precision-scale"]').setValue(precisionScale)
+    await wrapper.find('input[name="record-sort-order"]').setValue('1')
+    await wrapper.find('[data-test="submit-record"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('精度必须为非负整数')
+    expect(wrapper.text()).toContain('新增单位')
+    expect(apiMock.units.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['1.2'],
+    ['-1'],
+    ['1e309'],
+  ])('排序为非法数字 %s 时不提交并保持新增弹窗', async (sortOrder) => {
+    const wrapper = mountUnits()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-record"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="record-code"]').setValue('PCS')
+    await wrapper.find('input[name="record-name"]').setValue('件')
+    await wrapper.find('input[name="record-precision-scale"]').setValue('0')
+    await wrapper.find('input[name="record-sort-order"]').setValue(sortOrder)
+    await wrapper.find('[data-test="submit-record"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('排序必须为整数')
+    expect(wrapper.text()).toContain('新增单位')
+    expect(apiMock.units.create).not.toHaveBeenCalled()
+  })
+
   it('支持关键词查询、重置和分页请求', async () => {
     apiMock.units.list.mockResolvedValue({ ...emptyPage, total: 21, totalPages: 2 })
     const wrapper = mountUnits()

@@ -106,32 +106,46 @@ function isBlank(value: string) {
   return value.trim() === ''
 }
 
-function validateUnitForm() {
+function validateUnitForm(): { precisionScale: number; sortOrder: number } | null {
   if (!form.code.trim() || !form.name.trim()) {
     formError.value = '请完整填写编码和名称'
-    return false
+    return null
   }
   if (isBlank(form.precisionScale) || isBlank(form.sortOrder)) {
     formError.value = '精度和排序为必填'
-    return false
+    return null
   }
+
+  const precisionScale = Number(form.precisionScale)
+  if (!Number.isFinite(precisionScale) || !Number.isInteger(precisionScale) || precisionScale < 0) {
+    formError.value = '精度必须为非负整数'
+    return null
+  }
+
+  const sortOrder = Number(form.sortOrder)
+  if (!Number.isFinite(sortOrder) || !Number.isInteger(sortOrder) || sortOrder < 0) {
+    formError.value = '排序必须为整数'
+    return null
+  }
+
   formError.value = ''
-  return true
+  return { precisionScale, sortOrder }
 }
 
 async function saveRecord() {
   if (formSubmitting.value) {
     return
   }
-  if (!validateUnitForm()) {
+  const validatedForm = validateUnitForm()
+  if (!validatedForm) {
     return
   }
 
   const payload: UnitPayload = {
     code: form.code.trim(),
     name: form.name.trim(),
-    precisionScale: Number(form.precisionScale),
-    sortOrder: Number(form.sortOrder),
+    precisionScale: validatedForm.precisionScale,
+    sortOrder: validatedForm.sortOrder,
     status: form.status,
     remark: form.remark.trim(),
   }
@@ -255,10 +269,10 @@ onMounted(loadRecords)
           <el-input v-model="form.name" name="record-name" />
         </el-form-item>
         <el-form-item label="精度">
-          <el-input v-model="form.precisionScale" name="record-precision-scale" type="number" />
+          <el-input v-model="form.precisionScale" name="record-precision-scale" inputmode="numeric" />
         </el-form-item>
         <el-form-item label="排序">
-          <el-input v-model="form.sortOrder" name="record-sort-order" type="number" />
+          <el-input v-model="form.sortOrder" name="record-sort-order" inputmode="numeric" />
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="form.status" style="width: 100%">
