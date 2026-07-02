@@ -66,6 +66,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return masterDataPermissionCode;
 		}
 
+		String bomPermissionCode = bomPermissionCode(method, path);
+		if (bomPermissionCode != null) {
+			return bomPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -101,6 +106,32 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String bomPermissionCode(String method, String path) {
+		String basePath = "/api/admin/boms";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath))) {
+			return "material:bom:view";
+		}
+		if ("POST".equals(method) && basePath.equals(path)) {
+			return "material:bom:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, basePath)) {
+			return "material:bom:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/copy")) {
+			return "material:bom:copy";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/enable")) {
+			return "material:bom:enable";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/disable")) {
+			return "material:bom:disable";
+		}
 		return null;
 	}
 

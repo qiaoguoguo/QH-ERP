@@ -155,4 +155,21 @@
 ## 执行记录
 
 - 本文档为测试计划基线。
-- 实际自动化验证、本地部署、浏览器验收、截图清单和缺陷处理结论在阶段验收任务中追加记录。
+- 2026-07-03 自动化验证：
+  - 后端 BOM 定向测试 `.\mvnw.cmd test -Dtest=BomAdminControllerTests` 通过，5 个用例全部通过。
+  - 后端全量测试 `.\mvnw.cmd test` 通过，65 个用例全部通过。
+  - 前端全量测试 `npm test` 通过，17 个测试文件、104 个用例全部通过。
+  - 前端构建 `npm run build` 通过。
+  - 操作列视觉修复后，重新执行 `npm test -- --run src/modules/materials/boms/BomListView.spec.ts src/shared/api/bomApi.spec.ts src/router/permissionGuard.spec.ts` 通过，28 个用例全部通过；`npm run build` 通过。
+- 2026-07-03 本地部署验证：
+  - PostgreSQL `qherp-postgres` 健康。
+  - 后端 `http://127.0.0.1:18080/api/health` 返回 `{"service":"qherp-api","status":"UP"}`。
+  - 前端 `http://127.0.0.1:5173/materials/boms` 返回 HTTP 200。
+- 2026-07-03 浏览器验收：
+  - 管理员路径通过：登录、进入 BOM 管理、新建成品 A 的 `V1.0` BOM 草稿、添加原材料 X、半成品 B、辅料 Z 三条明细、保存、查看详情、启用、复制为 `V1.1`、验证启用冲突、停用 `V1.0`、启用 `V1.1`。
+  - 异常路径通过：必填为空、重复版本、重复子项、用量为 0、父项等于子项、停用物料引用、可检测循环引用。
+  - 权限路径通过：只读账号可查看列表和详情，写按钮不可见，直接调用写接口返回 `AUTH_FORBIDDEN`。
+- 2026-07-03 视觉分析：
+  - 截图证据和分析记录保存至 `docs/testing/bom-management-visual-audit/`。
+  - 发现桌面列表操作列宽不足，已将操作列 `min-width` 从 `250` 调整为 `330` 并重新截图。
+  - 最终结论：无阻断缺陷，达到阶段验收标准。

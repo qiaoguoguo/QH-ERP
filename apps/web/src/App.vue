@@ -20,6 +20,7 @@ const supportedMenuPaths = new Set([
   '/master/customers',
   '/materials/categories',
   '/materials/items',
+  '/materials/boms',
 ])
 const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')

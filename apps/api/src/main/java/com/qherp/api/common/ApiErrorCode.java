@@ -40,6 +40,32 @@ public enum ApiErrorCode {
 
 	MASTER_DATA_UNIT_IN_USE(HttpStatus.CONFLICT, "计量单位已被启用物料引用"),
 
+	BOM_NOT_FOUND(HttpStatus.NOT_FOUND, "BOM 不存在"),
+
+	BOM_CODE_EXISTS(HttpStatus.CONFLICT, "BOM 编码已存在"),
+
+	BOM_VERSION_EXISTS(HttpStatus.CONFLICT, "同一父项物料的 BOM 版本已存在"),
+
+	BOM_ENABLED_VERSION_EXISTS(HttpStatus.CONFLICT, "同一父项物料已存在启用 BOM"),
+
+	BOM_STATUS_NOT_EDITABLE(HttpStatus.CONFLICT, "当前 BOM 状态不可编辑"),
+
+	BOM_PARENT_MATERIAL_INVALID(HttpStatus.BAD_REQUEST, "BOM 父项物料不正确"),
+
+	BOM_CHILD_MATERIAL_INVALID(HttpStatus.BAD_REQUEST, "BOM 子项物料不正确"),
+
+	BOM_UNIT_INVALID(HttpStatus.BAD_REQUEST, "BOM 单位不正确"),
+
+	BOM_EMPTY_ITEMS(HttpStatus.BAD_REQUEST, "BOM 明细不能为空"),
+
+	BOM_QUANTITY_INVALID(HttpStatus.BAD_REQUEST, "BOM 数量或损耗率不正确"),
+
+	BOM_DUPLICATE_ITEM(HttpStatus.CONFLICT, "BOM 明细子项重复"),
+
+	BOM_SELF_REFERENCE(HttpStatus.BAD_REQUEST, "BOM 父项物料不能作为子项"),
+
+	BOM_CYCLE_DETECTED(HttpStatus.CONFLICT, "BOM 存在循环引用"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);

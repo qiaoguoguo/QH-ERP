@@ -116,7 +116,21 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 			new PermissionSeed("master:material:create", "创建物料", SystemPermissionType.ACTION, "master:material",
 					"/materials/items", "POST", "/api/admin/master/materials", 222),
 			new PermissionSeed("master:material:update", "更新、启用、停用物料", SystemPermissionType.ACTION,
-					"master:material", "/materials/items", "PUT", "/api/admin/master/materials/**", 223));
+					"master:material", "/materials/items", "PUT", "/api/admin/master/materials/**", 223),
+			new PermissionSeed("material:bom", "BOM 管理", SystemPermissionType.MENU, "material",
+					"/materials/boms", null, null, 230),
+			new PermissionSeed("material:bom:view", "查看 BOM", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "GET", "/api/admin/boms/**", 231),
+			new PermissionSeed("material:bom:create", "创建 BOM", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "POST", "/api/admin/boms", 232),
+			new PermissionSeed("material:bom:update", "更新 BOM", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "PUT", "/api/admin/boms/{id}", 233),
+			new PermissionSeed("material:bom:copy", "复制 BOM 版本", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "POST", "/api/admin/boms/{id}/copy", 234),
+			new PermissionSeed("material:bom:enable", "启用 BOM", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "PUT", "/api/admin/boms/{id}/enable", 235),
+			new PermissionSeed("material:bom:disable", "停用 BOM", SystemPermissionType.ACTION, "material:bom",
+					"/materials/boms", "PUT", "/api/admin/boms/{id}/disable", 236));
 
 	private final SystemUserRepository userRepository;
 

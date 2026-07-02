@@ -4,6 +4,7 @@ import type { AuthSession, UserProfile } from '../shared/api/accountPermissionAp
 import { useAuthStore } from '../stores/authStore'
 import MaterialCategoryView from '../modules/materials/categories/MaterialCategoryView.vue'
 import MaterialItemListView from '../modules/materials/items/MaterialItemListView.vue'
+import BomListView from '../modules/materials/boms/BomListView.vue'
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
@@ -73,6 +74,7 @@ describe('账号权限路由守卫', () => {
       ['master-customers', CustomerListView],
       ['material-categories', MaterialCategoryView],
       ['material-items', MaterialItemListView],
+      ['material-boms', BomListView],
     ] as const
 
     for (const [routeName, expectedComponent] of realMasterRoutes) {
@@ -87,6 +89,8 @@ describe('账号权限路由守卫', () => {
       .toBe('master:material-category:view')
     expect(router.getRoutes().find((item) => item.name === 'material-items')?.meta.requiredPermission)
       .toBe('master:material:view')
+    expect(router.getRoutes().find((item) => item.name === 'material-boms')?.meta.requiredPermission)
+      .toBe('material:bom:view')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {

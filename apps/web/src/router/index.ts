@@ -106,6 +106,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/materials/items/MaterialItemListView.vue'),
   },
   {
+    path: '/materials/boms',
+    name: 'material-boms',
+    meta: { requiresAuth: true, requiredPermission: 'material:bom:view' },
+    component: () => import('../modules/materials/boms/BomListView.vue'),
+  },
+  {
     path: '/production',
     name: 'production',
     component: placeholder('生产管理', '生产工单、领料、报工和完工入库入口。'),
