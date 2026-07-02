@@ -26,6 +26,20 @@ public enum ApiErrorCode {
 
 	AUTH_INIT_ADMIN_FAILED("AUTH_INIT_ADMIN_FAILED", "初始管理员初始化失败", HttpStatus.INTERNAL_SERVER_ERROR),
 
+	MASTER_DATA_CODE_EXISTS(HttpStatus.CONFLICT, "主数据编码已存在"),
+
+	MASTER_DATA_NOT_FOUND(HttpStatus.NOT_FOUND, "主数据不存在"),
+
+	MASTER_DATA_INVALID_STATUS(HttpStatus.BAD_REQUEST, "主数据状态不正确"),
+
+	MASTER_DATA_REFERENCE_INVALID(HttpStatus.BAD_REQUEST, "主数据引用不正确"),
+
+	MASTER_DATA_CATEGORY_IN_USE(HttpStatus.CONFLICT, "物料分类已被启用数据引用"),
+
+	MASTER_DATA_CATEGORY_PARENT_INVALID(HttpStatus.BAD_REQUEST, "物料分类父级不正确"),
+
+	MASTER_DATA_UNIT_IN_USE(HttpStatus.CONFLICT, "计量单位已被启用物料引用"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);
@@ -38,6 +52,12 @@ public enum ApiErrorCode {
 
 	ApiErrorCode(String code, String message, HttpStatus httpStatus) {
 		this.code = code;
+		this.message = message;
+		this.httpStatus = httpStatus;
+	}
+
+	ApiErrorCode(HttpStatus httpStatus, String message) {
+		this.code = name();
 		this.message = message;
 		this.httpStatus = httpStatus;
 	}

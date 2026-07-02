@@ -150,6 +150,13 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(auditView.getType()).isEqualTo(SystemPermissionType.ACTION);
 		assertThat(auditView.getApiMethod()).isEqualTo("GET");
 		assertThat(auditView.getApiPath()).isEqualTo("/api/admin/audit-logs");
+
+		assertThat(this.permissionRepository.findByCode("master:unit:view")).isPresent();
+		assertThat(this.permissionRepository.findByCode("master:warehouse:view")).isPresent();
+		assertThat(this.permissionRepository.findByCode("master:supplier:view")).isPresent();
+		assertThat(this.permissionRepository.findByCode("master:customer:view")).isPresent();
+		assertThat(this.permissionRepository.findByCode("master:material-category:view")).isPresent();
+		assertThat(this.permissionRepository.findByCode("master:material:view")).isPresent();
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
