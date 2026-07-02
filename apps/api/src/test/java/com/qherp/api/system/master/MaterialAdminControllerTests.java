@@ -195,6 +195,31 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void enabledChildCategoryPreventsCategoryDisableThroughDisableAndUpdateStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long parentId = createCategory(admin, "T4_CHILD_IN_USE_PARENT", "启用子分类父分类", null, "ENABLED", 10);
+		createCategory(admin, "T4_CHILD_IN_USE_CHILD", "启用子分类", parentId, "ENABLED", 20);
+
+		assertError(exchange(HttpMethod.PUT, CATEGORIES + "/" + parentId + "/disable", Map.of(), admin),
+				HttpStatus.CONFLICT, "MASTER_DATA_CATEGORY_IN_USE");
+		assertError(exchange(HttpMethod.PUT, CATEGORIES + "/" + parentId,
+				categoryRequest("T4_CHILD_IN_USE_PARENT", "启用子分类父分类", null, "DISABLED", 10, null), admin),
+				HttpStatus.CONFLICT, "MASTER_DATA_CATEGORY_IN_USE");
+	}
+
+	@Test
+	void disabledCategoryUpdateWithDisabledStatusStillChecksEnabledChildren() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long parentId = createCategory(admin, "T4_DISABLED_PARENT_CHECK", "已停用仍校验父分类", null, "ENABLED", 10);
+		createCategory(admin, "T4_DISABLED_PARENT_CHILD", "已停用仍校验子分类", parentId, "ENABLED", 20);
+		this.jdbcTemplate.update("update mst_material_category set status = 'DISABLED' where id = ?", parentId);
+
+		assertError(exchange(HttpMethod.PUT, CATEGORIES + "/" + parentId,
+				categoryRequest("T4_DISABLED_PARENT_CHECK", "已停用仍校验父分类", null, "DISABLED", 10, null), admin),
+				HttpStatus.CONFLICT, "MASTER_DATA_CATEGORY_IN_USE");
+	}
+
+	@Test
 	void categoryParentMustNotBeSelfChildDisabledOrCyclic() throws Exception {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		long rootId = createCategory(admin, "T4_PARENT_ROOT", "父级根分类", null, "ENABLED", 10);
@@ -266,6 +291,42 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				Map.of("code", "T4_UNIT_UPDATE_IN_USE", "name", "更新停用被引用单位", "precisionScale", 2, "sortOrder",
 						10, "status", "DISABLED"),
 				admin), HttpStatus.CONFLICT, "MASTER_DATA_UNIT_IN_USE");
+	}
+
+	@Test
+	void disabledUnitUpdateWithDisabledStatusStillChecksEnabledMaterials() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_DISABLED_UNIT_CHECK", "已停用仍校验单位");
+		long categoryId = createCategory(admin, "T4_DISABLED_UNIT_CHECK_CAT", "已停用单位校验分类", null, "ENABLED",
+				10);
+		createMaterial(admin, "T4_DISABLED_UNIT_CHECK_MAT", "已停用单位校验物料", categoryId, unitId, "ENABLED");
+		this.jdbcTemplate.update("update mst_unit set status = 'DISABLED' where id = ?", unitId);
+
+		assertError(exchange(HttpMethod.PUT, UNITS + "/" + unitId,
+				Map.of("code", "T4_DISABLED_UNIT_CHECK", "name", "已停用仍校验单位", "precisionScale", 2, "sortOrder",
+						10, "status", "DISABLED"),
+				admin), HttpStatus.CONFLICT, "MASTER_DATA_UNIT_IN_USE");
+	}
+
+	@Test
+	void categoryStatusDefaultsToEnabledAndUpdateWithoutStatusRetainsCurrentStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		ResponseEntity<String> createResponse = exchange(HttpMethod.POST, CATEGORIES,
+				categoryRequest("T4_CAT_STATUS_DEFAULT", "分类状态默认", null, null, 10, null), admin);
+		assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode created = data(createResponse);
+		long categoryId = created.get("id").longValue();
+		assertThat(created.get("status").asText()).isEqualTo("ENABLED");
+
+		assertThat(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId + "/disable", Map.of(), admin)
+			.getStatusCode()).isEqualTo(HttpStatus.OK);
+		ResponseEntity<String> updateWithoutStatus = exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId,
+				categoryRequest("T4_CAT_STATUS_DEFAULT_UPD", "分类状态默认改", null, null, 20, null), admin);
+
+		assertThat(updateWithoutStatus.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode updated = data(updateWithoutStatus);
+		assertThat(updated.get("code").asText()).isEqualTo("T4_CAT_STATUS_DEFAULT_UPD");
+		assertThat(updated.get("status").asText()).isEqualTo("DISABLED");
 	}
 
 	@Test

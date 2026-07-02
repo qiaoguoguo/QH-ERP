@@ -92,7 +92,7 @@ public class MaterialCategoryAdminService {
 		CategoryNode current = categoryNode(id).orElseThrow(this::notFound);
 		validateParentChain(current.id(), request.parentId());
 		MasterDataStatus status = statusOrCurrent(request.status(), current.status());
-		if (status == MasterDataStatus.DISABLED && current.status() != MasterDataStatus.DISABLED) {
+		if (hasText(request.status()) && status == MasterDataStatus.DISABLED) {
 			validateNotUsedByEnabledData(id);
 		}
 		try {

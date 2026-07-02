@@ -92,7 +92,7 @@ public class MasterDataAdminService {
 		validateUnitRequest(request);
 		MasterDataStatus currentStatus = currentStatus(resource, id);
 		MasterDataStatus status = statusOrCurrent(request.status(), currentStatus);
-		if (status == MasterDataStatus.DISABLED && currentStatus != MasterDataStatus.DISABLED) {
+		if (hasText(request.status()) && status == MasterDataStatus.DISABLED) {
 			validateUnitNotUsedByEnabledMaterial(id);
 		}
 		try {
