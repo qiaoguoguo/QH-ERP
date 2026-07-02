@@ -1,0 +1,88 @@
+import ElementPlus from 'element-plus'
+import { createPinia, setActivePinia } from 'pinia'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import LoginView from './LoginView.vue'
+import { useAuthStore } from '../../stores/authStore'
+
+function createLoginRouter() {
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/login', name: 'login', component: LoginView },
+      { path: '/', name: 'home', component: { template: '<div>工作台</div>' } },
+      { path: '/accounts/users', name: 'system-users', component: { template: '<div>用户管理</div>' } },
+    ],
+  })
+}
+
+async function mountLogin(redirect = '/accounts/users') {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  const router = createLoginRouter()
+  await router.push({ path: '/login', query: { redirect } })
+  await router.isReady()
+  const wrapper = mount(LoginView, {
+    global: {
+      plugins: [pinia, router, ElementPlus],
+    },
+  })
+  return { router, store: useAuthStore(), wrapper }
+}
+
+describe('登录页', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('空账号和空密码提交时显示校验提示', async () => {
+    const { wrapper, store } = await mountLogin()
+    vi.spyOn(store, 'login').mockResolvedValue()
+
+    await wrapper.find('[data-test="login-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请输入登录账号')
+    expect(wrapper.text()).toContain('请输入登录密码')
+    expect(store.login).not.toHaveBeenCalled()
+  })
+
+  it('登录失败时显示后端错误信息', async () => {
+    const { wrapper, store } = await mountLogin()
+    vi.spyOn(store, 'login').mockRejectedValue(new Error('账号已停用'))
+
+    await wrapper.find('input[name="username"]').setValue('disabled-user')
+    await wrapper.find('input[name="password"]').setValue('Qherp@2026!')
+    await wrapper.find('[data-test="login-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('账号已停用')
+  })
+
+  it('登录请求进行中显示加载态并禁用提交', async () => {
+    const { wrapper, store } = await mountLogin()
+    vi.spyOn(store, 'login').mockImplementation(() => new Promise(() => undefined))
+
+    await wrapper.find('input[name="username"]').setValue('admin')
+    await wrapper.find('input[name="password"]').setValue('Qherp@2026!')
+    await wrapper.find('[data-test="login-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('登录中')
+    expect(wrapper.find('[data-test="login-submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('登录成功后调用 store 并跳转 redirect 地址', async () => {
+    const { router, wrapper, store } = await mountLogin('/accounts/users')
+    vi.spyOn(store, 'login').mockResolvedValue()
+
+    await wrapper.find('input[name="username"]').setValue('admin')
+    await wrapper.find('input[name="password"]').setValue('Qherp@2026!')
+    await wrapper.find('[data-test="login-submit"]').trigger('click')
+    await flushPromises()
+
+    expect(store.login).toHaveBeenCalledWith({ username: 'admin', password: 'Qherp@2026!' })
+    expect(router.currentRoute.value.fullPath).toBe('/accounts/users')
+  })
+})

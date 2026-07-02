@@ -20,7 +20,7 @@ const routes: RouteRecordRaw[] = [
     path: '/login',
     name: 'login',
     meta: { guestOnly: true },
-    component: placeholder('登录', '账号权限登录入口占位，完整登录页由后续任务实现。'),
+    component: () => import('../modules/auth/LoginView.vue'),
   },
   {
     path: '/forbidden',
@@ -30,7 +30,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'home',
-    component: placeholder('工作台', '工程骨架已就绪，等待接入账号权限模块。'),
+    component: placeholder('工作台', '账号与权限基础已接入，后续承接物料、BOM、库存和生产模块。'),
   },
   {
     path: '/accounts',
@@ -41,20 +41,23 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/accounts/users',
     name: 'system-users',
+    alias: '/system/users',
     meta: { requiresAuth: true, requiredPermission: 'system:user:view' },
-    component: placeholder('用户管理', '用户管理页面占位，完整页面由后续任务实现。'),
+    component: () => import('../modules/system/users/UserListView.vue'),
   },
   {
     path: '/accounts/roles',
     name: 'system-roles',
+    alias: '/system/roles',
     meta: { requiresAuth: true, requiredPermission: 'system:role:view' },
-    component: placeholder('角色管理', '角色管理页面占位，完整页面由后续任务实现。'),
+    component: () => import('../modules/system/roles/RoleListView.vue'),
   },
   {
     path: '/accounts/roles/:id/permissions',
     name: 'system-role-permissions',
+    alias: '/system/roles/:id/permissions',
     meta: { requiresAuth: true, requiredPermission: 'system:role:assign-permission' },
-    component: placeholder('角色权限配置', '角色权限配置页面占位，完整页面由后续任务实现。'),
+    component: () => import('../modules/system/roles/RolePermissionView.vue'),
   },
   {
     path: '/materials',

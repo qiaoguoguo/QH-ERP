@@ -2,7 +2,7 @@ type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 
 export type UserStatus = 'ENABLED' | 'DISABLED'
 export type RoleStatus = 'ENABLED' | 'DISABLED'
-export type PermissionType = 'MENU' | 'BUTTON' | 'API'
+export type PermissionType = 'MENU' | 'BUTTON' | 'ACTION' | 'API'
 
 export interface ApiEnvelope<T> {
   success: boolean
@@ -15,12 +15,13 @@ export interface ApiEnvelope<T> {
 }
 
 export interface PageResult<T> {
+  items: T[]
   records?: T[]
   content?: T[]
-  items?: T[]
   total: number
   page: number
   pageSize: number
+  totalPages?: number
 }
 
 export interface CsrfToken {
@@ -124,6 +125,7 @@ export interface CreateRolePayload {
   name: string
   description?: string
   status: RoleStatus
+  sortOrder?: number
 }
 
 export type UpdateRolePayload = Omit<CreateRolePayload, 'code'>
@@ -180,18 +182,18 @@ export interface AccountPermissionApi {
     get(id: string | number): Promise<UserRecord>
     create(payload: CreateUserPayload): Promise<UserRecord>
     update(id: string | number, payload: UpdateUserPayload): Promise<UserRecord>
-    resetPassword(id: string | number, payload: { newPassword: string }): Promise<void>
-    enable(id: string | number): Promise<void>
-    disable(id: string | number): Promise<void>
+    resetPassword(id: string | number, payload: { newPassword: string }): Promise<UserRecord>
+    enable(id: string | number): Promise<UserRecord>
+    disable(id: string | number): Promise<UserRecord>
   }
   roles: {
     list(query: RoleListQuery): Promise<PageResult<RoleRecord>>
     get(id: string | number): Promise<RoleRecord>
     create(payload: CreateRolePayload): Promise<RoleRecord>
     update(id: string | number, payload: UpdateRolePayload): Promise<RoleRecord>
-    savePermissions(id: string | number, payload: { permissionIds: Array<string | number> }): Promise<void>
-    enable(id: string | number): Promise<void>
-    disable(id: string | number): Promise<void>
+    savePermissions(id: string | number, payload: { permissionIds: Array<string | number> }): Promise<RoleRecord>
+    enable(id: string | number): Promise<RoleRecord>
+    disable(id: string | number): Promise<RoleRecord>
   }
   permissions: {
     tree(): Promise<PermissionNode[]>
@@ -254,10 +256,6 @@ export function createAccountPermissionApi(options: AccountPermissionApiOptions 
     })
   }
 
-  const writeVoid = async (method: 'POST' | 'PUT', path: string, body?: unknown): Promise<void> => {
-    await write<Record<string, never>>(method, path, body)
-  }
-
   const api: AccountPermissionApi = {
     async getCsrf() {
       return request<CsrfToken>('/api/auth/csrf', { method: 'GET' })
@@ -285,9 +283,9 @@ export function createAccountPermissionApi(options: AccountPermissionApiOptions 
       get: (id) => get<UserRecord>(`/api/admin/users/${encodeURIComponent(String(id))}`),
       create: (payload) => write<UserRecord>('POST', '/api/admin/users', payload),
       update: (id, payload) => write<UserRecord>('PUT', `/api/admin/users/${encodeURIComponent(String(id))}`, payload),
-      resetPassword: (id, payload) => writeVoid('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/password`, payload),
-      enable: (id) => writeVoid('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/enable`),
-      disable: (id) => writeVoid('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/disable`),
+      resetPassword: (id, payload) => write<UserRecord>('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/password`, payload),
+      enable: (id) => write<UserRecord>('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/enable`),
+      disable: (id) => write<UserRecord>('PUT', `/api/admin/users/${encodeURIComponent(String(id))}/disable`),
     },
     roles: {
       list: (query) => get<PageResult<RoleRecord>>('/api/admin/roles', query),
@@ -295,9 +293,9 @@ export function createAccountPermissionApi(options: AccountPermissionApiOptions 
       create: (payload) => write<RoleRecord>('POST', '/api/admin/roles', payload),
       update: (id, payload) => write<RoleRecord>('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}`, payload),
       savePermissions: (id, payload) =>
-        writeVoid('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/permissions`, payload),
-      enable: (id) => writeVoid('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/enable`),
-      disable: (id) => writeVoid('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/disable`),
+        write<RoleRecord>('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/permissions`, payload),
+      enable: (id) => write<RoleRecord>('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/enable`),
+      disable: (id) => write<RoleRecord>('PUT', `/api/admin/roles/${encodeURIComponent(String(id))}/disable`),
     },
     permissions: {
       tree: () => get<PermissionNode[]>('/api/admin/permissions/tree'),
