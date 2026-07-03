@@ -61,6 +61,60 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/inventory')
   })
 
+  it('有成本查看权限但后端菜单缺失时补齐成本管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'cost_admin', displayName: '成本管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['cost:record:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('成本管理')
+    expect(wrapper.text()).toContain('成本记录')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/cost')
+  })
+
+  it('无成本查看权限时不显示成本管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'readonly', displayName: '只读用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 10,
+          code: 'cost',
+          name: '成本管理',
+          routePath: null,
+          children: [{ id: 11, code: 'cost:record:view', name: '成本记录', routePath: '/cost/records' }],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('成本管理')
+    expect(wrapper.text()).not.toContain('成本记录')
+  })
+
   it('退出失败时保留当前会话和路由并显示错误提示', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

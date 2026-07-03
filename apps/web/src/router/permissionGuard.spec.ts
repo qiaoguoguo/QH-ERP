@@ -159,6 +159,26 @@ describe('账号权限路由守卫', () => {
     }
   })
 
+  it('成本路由配置占位页面和对应权限', async () => {
+    const router = createQhErpRouter()
+    const costRoutes = [
+      ['cost-records', '/cost/records', 'cost:record:view'],
+      ['cost-record-create', '/cost/records/create', 'cost:record:create'],
+      ['cost-record-detail', '/cost/records/:id', 'cost:record:view'],
+      ['cost-record-edit', '/cost/records/:id/edit', 'cost:record:update'],
+    ] as const
+
+    for (const [routeName, path, permission] of costRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component?.template).toBeUndefined()
+      expect(component?.render).toBeTypeOf('function')
+    }
+  })
+
   it('访问库存根路径时重定向到库存余额页', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
@@ -167,6 +187,16 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('inventory-balances')
+  })
+
+  it('访问成本根路径时重定向到成本记录页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+
+    await router.push('/cost')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('cost-records')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
@@ -287,6 +317,38 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('production-work-orders')
+  })
+
+  it('已登录且拥有成本记录查看权限时允许访问成本记录列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+
+    await router.push('/cost/records')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('cost-records')
+  })
+
+  it('已登录但缺少成本记录查看权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await router.push('/cost/records')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/cost/records')
+  })
+
+  it('已登录但缺少成本记录创建权限时不能访问新建路由', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+
+    await router.push('/cost/records/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/cost/records/create')
   })
 
   it('已登录但缺少生产工单查看权限时跳转无权限页', async () => {

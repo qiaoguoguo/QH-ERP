@@ -10,6 +10,7 @@ const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
 const productionWorkOrderPath = '/production/work-orders'
+const costRecordPath = '/cost/records'
 const supportedMenuPaths = new Set([
   '/accounts/users',
   '/system/users',
@@ -26,8 +27,9 @@ const supportedMenuPaths = new Set([
   '/inventory/movements',
   '/inventory/documents',
   productionWorkOrderPath,
+  costRecordPath,
 ])
-const menuTree = computed<MenuNode[]>(() => ensureProductionMenu(filterSupportedMenus(authStore.menus ?? [])))
+const menuTree = computed<MenuNode[]>(() => ensureCostMenu(ensureProductionMenu(filterSupportedMenus(authStore.menus ?? []))))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -77,6 +79,46 @@ function ensureProductionMenu(menus: MenuNode[]): MenuNode[] {
       ...menu,
       name: '生产管理',
       children: hasWorkOrderChild ? children : [productionChild, ...children],
+    }
+  })
+}
+
+function ensureCostMenu(menus: MenuNode[]): MenuNode[] {
+  if (!authStore.hasPermission('cost:record:view')) {
+    return menus.filter((menu) => menu.code !== 'cost' && menu.routePath !== costRecordPath)
+  }
+
+  const costChild: MenuNode = {
+    id: 'cost-records',
+    code: 'cost:record:view',
+    name: '成本记录',
+    routePath: costRecordPath,
+  }
+  const costIndex = menus.findIndex((menu) => menu.code === 'cost' || menu.routePath === costRecordPath)
+
+  if (costIndex === -1) {
+    return [
+      ...menus,
+      {
+        id: 'cost',
+        code: 'cost',
+        name: '成本管理',
+        routePath: null,
+        children: [costChild],
+      },
+    ]
+  }
+
+  return menus.map((menu, index) => {
+    if (index !== costIndex) {
+      return menu
+    }
+    const children = menu.children ?? []
+    const hasCostRecordChild = children.some((child) => child.routePath === costRecordPath)
+    return {
+      ...menu,
+      name: '成本管理',
+      children: hasCostRecordChild ? children : [costChild, ...children],
     }
   })
 }
