@@ -174,3 +174,13 @@
 - 验证：文档基线提交前执行范围排除项检查和 `git diff --check`。
 - 视觉分析：本任务文档阶段不启动服务，视觉分析在阶段浏览器验收任务中执行并保存截图证据到 `docs/testing/cost-collection-visual-audit/`。
 - 结论：文档基线完成后，后续任务以本任务文档、接口契约、测试计划和设计规格作为实施与验收依据。
+- 2026-07-03 任务 6 全量验证和代码质量检查：
+  - 分支：`codex/cost-collection-foundation`。
+  - 提交号：`44b9928 覆盖成本归集自动化测试`。
+  - 后端全量测试：Docker JDK 21 执行 `mvn -q test`，退出码 `0`。
+  - Testcontainers 检查：`docker ps -a --filter "label=org.testcontainers" --format "{{.ID}} {{.Image}} {{.Status}} {{.Names}}"`，退出码 `0`，无输出。
+  - 前端全量测试：`npm test`，退出码 `0`，31 个测试文件、207 个用例通过。
+  - 前端构建：`npm run build`，退出码 `0`，`vue-tsc --noEmit` 和 `vite build` 通过，Vite 完成 1734 个模块构建。
+  - 空白检查：`git diff --check`，退出码 `0`，仅 LF/CRLF 提示，无空白错误。
+  - 结论：任务 6 要求的后端全量测试、前端全量测试、前端构建、Testcontainers 残留检查和空白检查均通过，可进入后续本地部署、浏览器功能验收和视觉分析任务。
+  - 已知非阻断提示：后端测试输出包含 Ryuk 禁用提示、SpringDoc 默认端点提示、Mockito 动态 agent 提示和已关闭测试数据库连接池的 Hikari 警告；最终 Maven 退出码为 `0`，且 Testcontainers 残留容器检查无输出。

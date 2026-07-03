@@ -146,3 +146,13 @@
 
 - 2026-07-03 建立成本归集基础测试计划，作为后续实施和验收依据。
 - 自动化测试、本地部署、浏览器验收和视觉分析结果在阶段实现后补充。
+- 2026-07-03 任务 6 全量验证和代码质量检查：
+  - 分支：`codex/cost-collection-foundation`。
+  - 提交号：`44b9928 覆盖成本归集自动化测试`。
+  - 后端全量测试：Docker JDK 21 执行 `mvn -q test`，退出码 `0`。
+  - Testcontainers 检查：`docker ps -a --filter "label=org.testcontainers" --format "{{.ID}} {{.Image}} {{.Status}} {{.Names}}"`，退出码 `0`，无输出。
+  - 前端全量测试：`npm test`，退出码 `0`，31 个测试文件、207 个用例通过。
+  - 前端构建：`npm run build`，退出码 `0`，`vue-tsc --noEmit` 和 `vite build` 通过，Vite 完成 1734 个模块构建。
+  - 空白检查：`git diff --check`，退出码 `0`，仅 LF/CRLF 提示，无空白错误。
+  - 结论：自动化验证和代码质量检查通过；本记录不替代后续本地部署、浏览器验收和视觉分析。
+  - 已知非阻断提示：后端测试输出包含 Ryuk 禁用提示、SpringDoc 默认端点提示、Mockito 动态 agent 提示和已关闭测试数据库连接池的 Hikari 警告；最终 Maven 退出码为 `0`，且 Testcontainers 残留容器检查无输出。
