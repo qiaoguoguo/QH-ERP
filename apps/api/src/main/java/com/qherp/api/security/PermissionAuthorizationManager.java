@@ -76,6 +76,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return inventoryPermissionCode;
 		}
 
+		String productionPermissionCode = productionPermissionCode(method, path);
+		if (productionPermissionCode != null) {
+			return productionPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -111,6 +116,62 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String productionPermissionCode(String method, String path) {
+		String basePath = "/api/admin/production";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		String workOrderPath = "/api/admin/production/work-orders";
+		if ("GET".equals(method) && (workOrderPath.equals(path) || matchesIdPath(path, workOrderPath))) {
+			return "production:work-order:view";
+		}
+		if ("POST".equals(method) && workOrderPath.equals(path)) {
+			return "production:work-order:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, workOrderPath)) {
+			return "production:work-order:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(workOrderPath) + "/\\d+/release")) {
+			return "production:work-order:release";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(workOrderPath) + "/\\d+/complete")) {
+			return "production:work-order:complete";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(workOrderPath) + "/\\d+/cancel")) {
+			return "production:work-order:cancel";
+		}
+
+		String issuePermissionCode = productionDocumentPermissionCode(method, path, "material-issues",
+				"production:issue");
+		if (issuePermissionCode != null) {
+			return issuePermissionCode;
+		}
+		String reportPermissionCode = productionDocumentPermissionCode(method, path, "reports", "production:report");
+		if (reportPermissionCode != null) {
+			return reportPermissionCode;
+		}
+		return productionDocumentPermissionCode(method, path, "completion-receipts", "production:receipt");
+	}
+
+	private String productionDocumentPermissionCode(String method, String path, String resourceSegment,
+			String permissionPrefix) {
+		String collectionPattern = Pattern.quote("/api/admin/production/work-orders") + "/\\d+/"
+				+ Pattern.quote(resourceSegment);
+		if ("GET".equals(method) && (path.matches(collectionPattern) || path.matches(collectionPattern + "/\\d+"))) {
+			return permissionPrefix + ":view";
+		}
+		if ("POST".equals(method) && path.matches(collectionPattern)) {
+			return permissionPrefix + ":create";
+		}
+		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+")) {
+			return permissionPrefix + ":update";
+		}
+		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+/post")) {
+			return permissionPrefix + ":post";
+		}
 		return null;
 	}
 

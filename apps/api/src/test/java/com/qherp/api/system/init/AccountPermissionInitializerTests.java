@@ -46,6 +46,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> INVENTORY_MENU_PERMISSIONS = List.of("inventory");
 
+	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
+
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
 			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
@@ -94,6 +96,44 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/inventory/documents/{id}"),
 			new ExpectedActionPermission("inventory:document:post", "inventory", "PUT",
 					"/api/admin/inventory/documents/{id}/post"));
+
+	private static final List<ExpectedActionPermission> PRODUCTION_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("production:work-order:view", "production", "GET",
+					"/api/admin/production/work-orders/**"),
+			new ExpectedActionPermission("production:work-order:create", "production", "POST",
+					"/api/admin/production/work-orders"),
+			new ExpectedActionPermission("production:work-order:update", "production", "PUT",
+					"/api/admin/production/work-orders/{id}"),
+			new ExpectedActionPermission("production:work-order:release", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/release"),
+			new ExpectedActionPermission("production:work-order:complete", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/complete"),
+			new ExpectedActionPermission("production:work-order:cancel", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/cancel"),
+			new ExpectedActionPermission("production:issue:view", "production", "GET",
+					"/api/admin/production/work-orders/{id}/material-issues/**"),
+			new ExpectedActionPermission("production:issue:create", "production", "POST",
+					"/api/admin/production/work-orders/{id}/material-issues"),
+			new ExpectedActionPermission("production:issue:update", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/material-issues/{issueId}"),
+			new ExpectedActionPermission("production:issue:post", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/material-issues/{issueId}/post"),
+			new ExpectedActionPermission("production:report:view", "production", "GET",
+					"/api/admin/production/work-orders/{id}/reports/**"),
+			new ExpectedActionPermission("production:report:create", "production", "POST",
+					"/api/admin/production/work-orders/{id}/reports"),
+			new ExpectedActionPermission("production:report:update", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/reports/{reportId}"),
+			new ExpectedActionPermission("production:report:post", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/reports/{reportId}/post"),
+			new ExpectedActionPermission("production:receipt:view", "production", "GET",
+					"/api/admin/production/work-orders/{id}/completion-receipts/**"),
+			new ExpectedActionPermission("production:receipt:create", "production", "POST",
+					"/api/admin/production/work-orders/{id}/completion-receipts"),
+			new ExpectedActionPermission("production:receipt:update", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}"),
+			new ExpectedActionPermission("production:receipt:post", "production", "PUT",
+					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -216,6 +256,49 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void productionSchemaContainsContractTablesAndIndexes() {
+		var workOrderColumns = columns("mfg_work_order");
+		var workOrderMaterialColumns = columns("mfg_work_order_material");
+		var materialIssueColumns = columns("mfg_material_issue");
+		var materialIssueLineColumns = columns("mfg_material_issue_line");
+		var workReportColumns = columns("mfg_work_report");
+		var completionReceiptColumns = columns("mfg_completion_receipt");
+
+		assertThat(workOrderColumns).contains("id", "work_order_no", "product_material_id", "bom_id",
+				"planned_quantity", "reported_quantity", "qualified_quantity", "defective_quantity",
+				"received_quantity", "issue_warehouse_id", "receipt_warehouse_id", "planned_start_date",
+				"planned_finish_date", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"released_by", "released_at", "completed_by", "completed_at", "cancelled_by", "cancelled_at",
+				"version");
+		assertThat(workOrderMaterialColumns).contains("id", "work_order_id", "line_no", "bom_item_id",
+				"material_id", "unit_id", "required_quantity", "issued_quantity", "loss_rate", "remark",
+				"created_at", "updated_at", "version");
+		assertThat(materialIssueColumns).contains("id", "issue_no", "work_order_id", "status", "business_date",
+				"reason", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
+				"posted_at", "version");
+		assertThat(materialIssueLineColumns).contains("id", "issue_id", "work_order_material_id", "line_no",
+				"warehouse_id", "material_id", "unit_id", "quantity", "before_quantity", "after_quantity",
+				"remark", "created_at", "updated_at");
+		assertThat(workReportColumns).contains("id", "report_no", "work_order_id", "status", "business_date",
+				"qualified_quantity", "defective_quantity", "reporter_name", "remark", "created_by", "created_at",
+				"updated_by", "updated_at", "posted_by", "posted_at", "version");
+		assertThat(completionReceiptColumns).contains("id", "receipt_no", "work_order_id", "status",
+				"business_date", "receipt_warehouse_id", "quantity", "before_quantity", "after_quantity",
+				"remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by", "posted_at",
+				"version");
+
+		assertThat(indexes("mfg_work_order")).contains("uk_mfg_work_order_no", "idx_mfg_work_order_status",
+				"idx_mfg_work_order_product");
+		assertThat(indexes("mfg_work_order_material")).contains("uk_mfg_work_order_material_line",
+				"uk_mfg_work_order_material_bom_item", "idx_mfg_work_order_material_order");
+		assertThat(indexes("mfg_material_issue")).contains("uk_mfg_material_issue_no",
+				"idx_mfg_material_issue_order");
+		assertThat(indexes("mfg_work_report")).contains("uk_mfg_work_report_no", "idx_mfg_work_report_order");
+		assertThat(indexes("mfg_completion_receipt")).contains("uk_mfg_completion_receipt_no",
+				"idx_mfg_completion_receipt_order");
+	}
+
+	@Test
 	void inventoryErrorCodesAreRegistered() {
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_TYPE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -231,6 +314,31 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(ApiErrorCode.INVENTORY_OPENING_EXISTS.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.INVENTORY_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.INVENTORY_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+	}
+
+	@Test
+	void productionErrorCodesAreRegistered() {
+		assertThat(ApiErrorCode.PRODUCTION_WORK_ORDER_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(ApiErrorCode.PRODUCTION_WORK_ORDER_STATUS_INVALID.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_WORK_ORDER_HAS_POSTED_BUSINESS.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_PRODUCT_MATERIAL_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_BOM_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_BOM_EMPTY_ITEMS.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_WAREHOUSE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_MATERIAL_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_UNIT_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_QUANTITY_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_ISSUE_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(ApiErrorCode.PRODUCTION_ISSUE_EMPTY_LINES.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.PRODUCTION_ISSUE_EXCEEDS_REQUIRED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_STOCK_NOT_ENOUGH.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_REPORT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(ApiErrorCode.PRODUCTION_REPORT_EXCEEDS_PLAN.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_RECEIPT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+		assertThat(ApiErrorCode.PRODUCTION_RECEIPT_EXCEEDS_REPORTED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.PRODUCTION_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 	}
 
 	@Test
@@ -298,6 +406,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
+
+		PRODUCTION_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		PRODUCTION_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -340,6 +465,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+		PRODUCTION_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		PRODUCTION_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();

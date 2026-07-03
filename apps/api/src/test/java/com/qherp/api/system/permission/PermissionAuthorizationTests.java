@@ -144,6 +144,42 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/inventory/documents/1/post", "inventory:document:post");
 	}
 
+	@Test
+	void productionAdminPathsMapToProductionPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders", "production:work-order:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1", "production:work-order:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/work-orders", "production:work-order:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1", "production:work-order:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/release",
+				"production:work-order:release");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/complete",
+				"production:work-order:complete");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/cancel",
+				"production:work-order:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1/material-issues",
+				"production:issue:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1/material-issues/2",
+				"production:issue:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/work-orders/1/material-issues",
+				"production:issue:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/material-issues/2",
+				"production:issue:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/material-issues/2/post",
+				"production:issue:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1/reports",
+				"production:report:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/work-orders/1/reports",
+				"production:report:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/reports/2/post",
+				"production:report:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1/completion-receipts",
+				"production:receipt:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/work-orders/1/completion-receipts",
+				"production:receipt:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/completion-receipts/2/post",
+				"production:receipt:post");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);
