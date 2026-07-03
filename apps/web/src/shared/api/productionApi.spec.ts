@@ -6,8 +6,9 @@ import {
   type ProductionCompletionReceiptPayload,
   type ProductionCompletionReceiptRecord,
   type ProductionDocumentListParams,
+  type ProductionMaterialIssueDetailRecord,
   type ProductionMaterialIssuePayload,
-  type ProductionMaterialIssueRecord,
+  type ProductionMaterialIssueSummaryRecord,
   type ProductionWorkOrderDetailRecord,
   type ProductionWorkOrderPayload,
   type ProductionWorkReportPayload,
@@ -51,17 +52,72 @@ describe('生产执行 API', () => {
     materialIssuesAcceptPagination: true as AssertTrue<
       Parameters<ProductionApi['materialIssues']['list']>[1] extends ProductionDocumentListParams ? true : false
     >,
-    materialIssuesReturnPage: true as AssertTrue<
-      Awaited<ReturnType<ProductionApi['materialIssues']['list']>> extends PageResult<ProductionMaterialIssueRecord>
+    materialIssuesListReturnSummaryPage: true as AssertTrue<
+      Awaited<ReturnType<ProductionApi['materialIssues']['list']>> extends PageResult<ProductionMaterialIssueSummaryRecord>
         ? true
+        : false
+    >,
+    materialIssueSummaryHasNoLines: true as AssertTrue<
+      'lines' extends keyof ProductionMaterialIssueSummaryRecord ? false : true
+    >,
+    materialIssueDetailHasLines: true as AssertTrue<
+      Awaited<ReturnType<ProductionApi['materialIssues']['get']>> extends ProductionMaterialIssueDetailRecord
+        ? true
+        : false
+    >,
+    workOrderDetailUsesMaterialIssueSummary: true as AssertTrue<
+      ProductionWorkOrderDetailRecord['materialIssues'][number] extends ProductionMaterialIssueSummaryRecord
+        ? true
+        : false
+    >,
+    workOrderIncludesWarehouseAndCancelFields: true as AssertTrue<
+      'issueWarehouseName' extends keyof ProductionWorkOrderDetailRecord
+        ? 'receiptWarehouseName' extends keyof ProductionWorkOrderDetailRecord
+          ? 'cancelledByName' extends keyof ProductionWorkOrderDetailRecord
+            ? 'cancelledAt' extends keyof ProductionWorkOrderDetailRecord
+              ? true
+              : false
+            : false
+          : false
+        : false
+    >,
+    materialIssueLineIncludesNames: true as AssertTrue<
+      'warehouseName' extends keyof ProductionMaterialIssueDetailRecord['lines'][number]
+        ? 'materialCode' extends keyof ProductionMaterialIssueDetailRecord['lines'][number]
+          ? 'materialName' extends keyof ProductionMaterialIssueDetailRecord['lines'][number]
+            ? 'unitName' extends keyof ProductionMaterialIssueDetailRecord['lines'][number]
+              ? true
+              : false
+            : false
+          : false
         : false
     >,
     reportsReturnPage: true as AssertTrue<
       Awaited<ReturnType<ProductionApi['reports']['list']>> extends PageResult<ProductionWorkReportRecord> ? true : false
     >,
+    reportsIncludeAuditFields: true as AssertTrue<
+      'createdByName' extends keyof ProductionWorkReportRecord
+        ? 'updatedAt' extends keyof ProductionWorkReportRecord
+          ? 'postedByName' extends keyof ProductionWorkReportRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
     completionReceiptsReturnPage: true as AssertTrue<
       Awaited<ReturnType<ProductionApi['completionReceipts']['list']>> extends PageResult<ProductionCompletionReceiptRecord>
         ? true
+        : false
+    >,
+    completionReceiptsIncludeWarehouseAndAuditFields: true as AssertTrue<
+      'receiptWarehouseName' extends keyof ProductionCompletionReceiptRecord
+        ? 'createdByName' extends keyof ProductionCompletionReceiptRecord
+          ? 'updatedAt' extends keyof ProductionCompletionReceiptRecord
+            ? 'postedByName' extends keyof ProductionCompletionReceiptRecord
+              ? true
+              : false
+            : false
+          : false
         : false
     >,
     reportPayloadIncludesReporterName: true as AssertTrue<
@@ -72,11 +128,18 @@ describe('生产执行 API', () => {
   it('声明生产详情和执行记录列表的类型契约', () => {
     expect(productionApiTypeContract).toMatchObject({
       completionReceiptsReturnPage: true,
+      completionReceiptsIncludeWarehouseAndAuditFields: true,
       detailIncludesMovements: true,
       materialIssuesAcceptPagination: true,
-      materialIssuesReturnPage: true,
+      materialIssueDetailHasLines: true,
+      materialIssueLineIncludesNames: true,
+      materialIssueSummaryHasNoLines: true,
+      materialIssuesListReturnSummaryPage: true,
       reportPayloadIncludesReporterName: true,
+      reportsIncludeAuditFields: true,
       reportsReturnPage: true,
+      workOrderDetailUsesMaterialIssueSummary: true,
+      workOrderIncludesWarehouseAndCancelFields: true,
     })
   })
 
@@ -152,14 +215,99 @@ describe('生产执行 API', () => {
   it('按分页参数获取领料、报工和完工入库列表', async () => {
     const fetcher = vi
       .fn()
-      .mockResolvedValueOnce(apiResponse({ items: [], total: 21, page: 2, pageSize: 10 }))
-      .mockResolvedValueOnce(apiResponse({ items: [], total: 12, page: 3, pageSize: 5 }))
-      .mockResolvedValueOnce(apiResponse({ items: [], total: 8, page: 4, pageSize: 2 }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [
+          {
+            id: 11,
+            issueNo: 'MI-1',
+            workOrderId: 9,
+            status: 'DRAFT',
+            businessDate: '2026-07-03',
+            reason: '生产领料',
+            remark: '首批领料',
+            lineCount: 2,
+            createdByName: '管理员',
+            createdAt: '2026-07-03T09:00:00+08:00',
+            updatedAt: '2026-07-03T09:10:00+08:00',
+            postedByName: null,
+            postedAt: null,
+          },
+        ],
+        total: 21,
+        page: 2,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [
+          {
+            id: 12,
+            reportNo: 'WR-1',
+            workOrderId: 9,
+            status: 'POSTED',
+            businessDate: '2026-07-03',
+            qualifiedQuantity: 10,
+            defectiveQuantity: 0.5,
+            totalQuantity: 10.5,
+            reporterName: '张三',
+            remark: '首批报工',
+            createdByName: '管理员',
+            createdAt: '2026-07-03T10:00:00+08:00',
+            updatedAt: '2026-07-03T10:05:00+08:00',
+            postedByName: '管理员',
+            postedAt: '2026-07-03T10:10:00+08:00',
+          },
+        ],
+        total: 12,
+        page: 3,
+        pageSize: 5,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [
+          {
+            id: 13,
+            receiptNo: 'CR-1',
+            workOrderId: 9,
+            status: 'POSTED',
+            businessDate: '2026-07-03',
+            receiptWarehouseId: 3,
+            receiptWarehouseName: '成品仓',
+            quantity: 10,
+            beforeQuantity: 100,
+            afterQuantity: 110,
+            remark: '首批入库',
+            createdByName: '管理员',
+            createdAt: '2026-07-03T11:00:00+08:00',
+            updatedAt: '2026-07-03T11:05:00+08:00',
+            postedByName: '管理员',
+            postedAt: '2026-07-03T11:10:00+08:00',
+          },
+        ],
+        total: 8,
+        page: 4,
+        pageSize: 2,
+      }))
     const api = createProductionApi({ fetcher })
 
-    await expect(api.materialIssues.list(9, { page: 2, pageSize: 10 })).resolves.toMatchObject({ total: 21 })
-    await expect(api.reports.list(9, { page: 3, pageSize: 5 })).resolves.toMatchObject({ total: 12 })
-    await expect(api.completionReceipts.list(9, { page: 4, pageSize: 2 })).resolves.toMatchObject({ total: 8 })
+    const materialIssuesPage = await api.materialIssues.list(9, { page: 2, pageSize: 10 })
+    const reportsPage = await api.reports.list(9, { page: 3, pageSize: 5 })
+    const completionReceiptsPage = await api.completionReceipts.list(9, { page: 4, pageSize: 2 })
+
+    expect(materialIssuesPage).toMatchObject({ total: 21 })
+    expect(materialIssuesPage.items[0]).toMatchObject({ lineCount: 2, updatedAt: '2026-07-03T09:10:00+08:00' })
+    expect(materialIssuesPage.items[0]).not.toHaveProperty('lines')
+    expect(reportsPage).toMatchObject({ total: 12 })
+    expect(reportsPage.items[0]).toMatchObject({
+      createdByName: '管理员',
+      postedByName: '管理员',
+      updatedAt: '2026-07-03T10:05:00+08:00',
+    })
+    expect(completionReceiptsPage).toMatchObject({ total: 8 })
+    expect(completionReceiptsPage.items[0]).toMatchObject({
+      createdByName: '管理员',
+      postedByName: '管理员',
+      receiptWarehouseName: '成品仓',
+      updatedAt: '2026-07-03T11:05:00+08:00',
+    })
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/production/work-orders/9/material-issues?page=2&pageSize=10', {
       credentials: 'include',

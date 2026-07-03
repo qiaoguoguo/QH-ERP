@@ -35,7 +35,9 @@ export interface ProductionWorkOrderSummaryRecord {
   defectiveQuantity: number
   receivedQuantity: number
   issueWarehouseId: ResourceId
+  issueWarehouseName: string
   receiptWarehouseId: ResourceId
+  receiptWarehouseName: string
   plannedStartDate: string
   plannedFinishDate: string
   status: ProductionWorkOrderStatus
@@ -47,6 +49,8 @@ export interface ProductionWorkOrderSummaryRecord {
   releasedAt?: string | null
   completedByName?: string | null
   completedAt?: string | null
+  cancelledByName?: string | null
+  cancelledAt?: string | null
 }
 
 export interface ProductionWorkOrderMaterialRecord {
@@ -71,15 +75,19 @@ export interface ProductionMaterialIssueLineRecord {
   workOrderMaterialId: ResourceId
   lineNo: number
   warehouseId: ResourceId
+  warehouseName: string
   materialId: ResourceId
+  materialCode: string
+  materialName: string
   unitId: ResourceId
+  unitName: string
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null
   remark?: string | null
 }
 
-export interface ProductionMaterialIssueRecord {
+export interface ProductionMaterialIssueSummaryRecord {
   id: ResourceId
   issueNo: string
   workOrderId: ResourceId
@@ -87,10 +95,15 @@ export interface ProductionMaterialIssueRecord {
   businessDate: string
   reason: string
   remark?: string | null
+  lineCount: number
   createdByName: string
   createdAt: string
+  updatedAt: string
   postedByName?: string | null
   postedAt?: string | null
+}
+
+export interface ProductionMaterialIssueDetailRecord extends ProductionMaterialIssueSummaryRecord {
   lines: ProductionMaterialIssueLineRecord[]
 }
 
@@ -105,7 +118,10 @@ export interface ProductionWorkReportRecord {
   totalQuantity: number
   reporterName: string
   remark?: string | null
+  createdByName: string
   createdAt: string
+  updatedAt: string
+  postedByName?: string | null
   postedAt?: string | null
 }
 
@@ -116,11 +132,15 @@ export interface ProductionCompletionReceiptRecord {
   status: ProductionDocumentStatus
   businessDate: string
   receiptWarehouseId: ResourceId
+  receiptWarehouseName: string
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null
   remark?: string | null
+  createdByName: string
   createdAt: string
+  updatedAt: string
+  postedByName?: string | null
   postedAt?: string | null
 }
 
@@ -151,7 +171,7 @@ export interface ProductionMovementRecord {
 
 export interface ProductionWorkOrderDetailRecord extends ProductionWorkOrderSummaryRecord {
   materials: ProductionWorkOrderMaterialRecord[]
-  materialIssues: ProductionMaterialIssueRecord[]
+  materialIssues: ProductionMaterialIssueSummaryRecord[]
   reports: ProductionWorkReportRecord[]
   completionReceipts: ProductionCompletionReceiptRecord[]
   movements: ProductionMovementRecord[]
@@ -212,15 +232,18 @@ export interface ProductionApi {
     list(
       workOrderId: ResourceId,
       params: ProductionDocumentListParams,
-    ): Promise<PageResult<ProductionMaterialIssueRecord>>
-    get(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueRecord>
-    create(workOrderId: ResourceId, payload: ProductionMaterialIssuePayload): Promise<ProductionMaterialIssueRecord>
+    ): Promise<PageResult<ProductionMaterialIssueSummaryRecord>>
+    get(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueDetailRecord>
+    create(
+      workOrderId: ResourceId,
+      payload: ProductionMaterialIssuePayload,
+    ): Promise<ProductionMaterialIssueDetailRecord>
     update(
       workOrderId: ResourceId,
       id: ResourceId,
       payload: ProductionMaterialIssuePayload,
-    ): Promise<ProductionMaterialIssueRecord>
-    post(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueRecord>
+    ): Promise<ProductionMaterialIssueDetailRecord>
+    post(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueDetailRecord>
   }
   reports: {
     list(workOrderId: ResourceId, params: ProductionDocumentListParams): Promise<PageResult<ProductionWorkReportRecord>>
@@ -359,16 +382,17 @@ export function createProductionApi(options: ProductionApiOptions = {}): Product
     },
     materialIssues: {
       list: (workOrderId, params) =>
-        get<PageResult<ProductionMaterialIssueRecord>>(
+        get<PageResult<ProductionMaterialIssueSummaryRecord>>(
           materialIssuePath(workOrderId),
           pickQuery(params, documentListQueryKeys),
         ),
-      get: (workOrderId, id) => get<ProductionMaterialIssueRecord>(materialIssuePath(workOrderId, id)),
+      get: (workOrderId, id) => get<ProductionMaterialIssueDetailRecord>(materialIssuePath(workOrderId, id)),
       create: (workOrderId, payload) =>
-        write<ProductionMaterialIssueRecord>('POST', materialIssuePath(workOrderId), payload),
+        write<ProductionMaterialIssueDetailRecord>('POST', materialIssuePath(workOrderId), payload),
       update: (workOrderId, id, payload) =>
-        write<ProductionMaterialIssueRecord>('PUT', materialIssuePath(workOrderId, id), payload),
-      post: (workOrderId, id) => write<ProductionMaterialIssueRecord>('PUT', `${materialIssuePath(workOrderId, id)}/post`),
+        write<ProductionMaterialIssueDetailRecord>('PUT', materialIssuePath(workOrderId, id), payload),
+      post: (workOrderId, id) =>
+        write<ProductionMaterialIssueDetailRecord>('PUT', `${materialIssuePath(workOrderId, id)}/post`),
     },
     reports: {
       list: (workOrderId, params) =>
