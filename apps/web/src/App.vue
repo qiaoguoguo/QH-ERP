@@ -21,6 +21,9 @@ const supportedMenuPaths = new Set([
   '/materials/categories',
   '/materials/items',
   '/materials/boms',
+  '/inventory/balances',
+  '/inventory/movements',
+  '/inventory/documents',
 ])
 const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
@@ -41,6 +44,9 @@ function hasChildren(menu: MenuNode) {
 }
 
 function menuIndex(menu: MenuNode) {
+  if (hasChildren(menu)) {
+    return `/menu/${menu.code}`
+  }
   return menu.routePath || `/menu/${menu.code}`
 }
 

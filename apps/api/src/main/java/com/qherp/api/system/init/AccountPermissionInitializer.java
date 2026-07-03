@@ -130,7 +130,21 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 			new PermissionSeed("material:bom:enable", "启用 BOM", SystemPermissionType.ACTION, "material:bom",
 					"/materials/boms", "PUT", "/api/admin/boms/{id}/enable", 235),
 			new PermissionSeed("material:bom:disable", "停用 BOM", SystemPermissionType.ACTION, "material:bom",
-					"/materials/boms", "PUT", "/api/admin/boms/{id}/disable", 236));
+					"/materials/boms", "PUT", "/api/admin/boms/{id}/disable", 236),
+			new PermissionSeed("inventory", "库存管理", SystemPermissionType.MENU, null, "/inventory/balances",
+					null, null, 300),
+			new PermissionSeed("inventory:balance:view", "查看库存余额", SystemPermissionType.ACTION, "inventory",
+					"/inventory/balances", "GET", "/api/admin/inventory/balances", 301),
+			new PermissionSeed("inventory:movement:view", "查看库存变动", SystemPermissionType.ACTION, "inventory",
+					"/inventory/movements", "GET", "/api/admin/inventory/movements", 302),
+			new PermissionSeed("inventory:document:view", "查看库存单据", SystemPermissionType.ACTION, "inventory",
+					"/inventory/documents", "GET", "/api/admin/inventory/documents/**", 303),
+			new PermissionSeed("inventory:document:create", "创建库存单据", SystemPermissionType.ACTION, "inventory",
+					"/inventory/documents", "POST", "/api/admin/inventory/documents", 304),
+			new PermissionSeed("inventory:document:update", "更新库存单据", SystemPermissionType.ACTION, "inventory",
+					"/inventory/documents", "PUT", "/api/admin/inventory/documents/{id}", 305),
+			new PermissionSeed("inventory:document:post", "过账库存单据", SystemPermissionType.ACTION, "inventory",
+					"/inventory/documents", "PUT", "/api/admin/inventory/documents/{id}/post", 306));
 
 	private final SystemUserRepository userRepository;
 

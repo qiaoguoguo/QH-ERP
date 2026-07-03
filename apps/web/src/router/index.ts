@@ -112,6 +112,46 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/materials/boms/BomListView.vue'),
   },
   {
+    path: '/inventory',
+    redirect: '/inventory/balances',
+  },
+  {
+    path: '/inventory/balances',
+    name: 'inventory-balances',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:balance:view' },
+    component: () => import('../modules/inventory/InventoryBalanceListView.vue'),
+  },
+  {
+    path: '/inventory/movements',
+    name: 'inventory-movements',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:movement:view' },
+    component: () => import('../modules/inventory/InventoryMovementListView.vue'),
+  },
+  {
+    path: '/inventory/documents',
+    name: 'inventory-documents',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:view' },
+    component: () => import('../modules/inventory/InventoryDocumentListView.vue'),
+  },
+  {
+    path: '/inventory/documents/create',
+    name: 'inventory-document-create',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:create' },
+    component: () => import('../modules/inventory/InventoryDocumentFormView.vue'),
+  },
+  {
+    path: '/inventory/documents/:id',
+    name: 'inventory-document-detail',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:view' },
+    component: () => import('../modules/inventory/InventoryDocumentDetailView.vue'),
+  },
+  {
+    path: '/inventory/documents/:id/edit',
+    name: 'inventory-document-edit',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:update' },
+    component: () => import('../modules/inventory/InventoryDocumentFormView.vue'),
+  },
+  {
     path: '/production',
     name: 'production',
     component: placeholder('生产管理', '生产工单、领料、报工和完工入库入口。'),

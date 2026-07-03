@@ -5,6 +5,11 @@ import { useAuthStore } from '../stores/authStore'
 import MaterialCategoryView from '../modules/materials/categories/MaterialCategoryView.vue'
 import MaterialItemListView from '../modules/materials/items/MaterialItemListView.vue'
 import BomListView from '../modules/materials/boms/BomListView.vue'
+import InventoryBalanceListView from '../modules/inventory/InventoryBalanceListView.vue'
+import InventoryDocumentDetailView from '../modules/inventory/InventoryDocumentDetailView.vue'
+import InventoryDocumentFormView from '../modules/inventory/InventoryDocumentFormView.vue'
+import InventoryDocumentListView from '../modules/inventory/InventoryDocumentListView.vue'
+import InventoryMovementListView from '../modules/inventory/InventoryMovementListView.vue'
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
@@ -91,6 +96,38 @@ describe('账号权限路由守卫', () => {
       .toBe('master:material:view')
     expect(router.getRoutes().find((item) => item.name === 'material-boms')?.meta.requiredPermission)
       .toBe('material:bom:view')
+  })
+
+  it('库存路由加载真实页面并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const inventoryRoutes = [
+      ['inventory-balances', '/inventory/balances', 'inventory:balance:view', InventoryBalanceListView],
+      ['inventory-movements', '/inventory/movements', 'inventory:movement:view', InventoryMovementListView],
+      ['inventory-documents', '/inventory/documents', 'inventory:document:view', InventoryDocumentListView],
+      ['inventory-document-create', '/inventory/documents/create', 'inventory:document:create', InventoryDocumentFormView],
+      ['inventory-document-detail', '/inventory/documents/:id', 'inventory:document:view', InventoryDocumentDetailView],
+      ['inventory-document-edit', '/inventory/documents/:id/edit', 'inventory:document:update', InventoryDocumentFormView],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of inventoryRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+  })
+
+  it('访问库存根路径时重定向到库存余额页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
+
+    await router.push('/inventory')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('inventory-balances')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
@@ -191,5 +228,15 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('system-users')
+  })
+
+  it('已登录且缺少库存路由权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
+
+    await router.push('/inventory/documents/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
   })
 })
