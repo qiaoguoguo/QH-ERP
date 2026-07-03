@@ -112,6 +112,46 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/materials/boms/BomListView.vue'),
   },
   {
+    path: '/inventory',
+    redirect: '/inventory/balances',
+  },
+  {
+    path: '/inventory/balances',
+    name: 'inventory-balances',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:balance:view' },
+    component: placeholder('库存余额', '库存余额查询入口已接入，页面主体将在后续任务实现。'),
+  },
+  {
+    path: '/inventory/movements',
+    name: 'inventory-movements',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:movement:view' },
+    component: placeholder('库存变动', '库存变动追溯入口已接入，页面主体将在后续任务实现。'),
+  },
+  {
+    path: '/inventory/documents',
+    name: 'inventory-documents',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:view' },
+    component: placeholder('库存单据', '期初库存和库存调整入口已接入，页面主体将在后续任务实现。'),
+  },
+  {
+    path: '/inventory/documents/create',
+    name: 'inventory-document-create',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:create' },
+    component: placeholder('新增库存单据', '库存期初和调整表单将在后续任务实现。'),
+  },
+  {
+    path: '/inventory/documents/:id',
+    name: 'inventory-document-detail',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:view' },
+    component: placeholder('库存单据详情', '库存单据详情将在后续任务实现。'),
+  },
+  {
+    path: '/inventory/documents/:id/edit',
+    name: 'inventory-document-edit',
+    meta: { requiresAuth: true, requiredPermission: 'inventory:document:update' },
+    component: placeholder('编辑库存单据', '库存单据编辑表单将在后续任务实现。'),
+  },
+  {
     path: '/production',
     name: 'production',
     component: placeholder('生产管理', '生产工单、领料、报工和完工入库入口。'),

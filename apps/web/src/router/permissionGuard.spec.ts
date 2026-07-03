@@ -93,6 +93,38 @@ describe('账号权限路由守卫', () => {
       .toBe('material:bom:view')
   })
 
+  it('库存路由使用占位组件并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const inventoryRoutes = [
+      ['inventory-balances', '/inventory/balances', 'inventory:balance:view'],
+      ['inventory-movements', '/inventory/movements', 'inventory:movement:view'],
+      ['inventory-documents', '/inventory/documents', 'inventory:document:view'],
+      ['inventory-document-create', '/inventory/documents/create', 'inventory:document:create'],
+      ['inventory-document-detail', '/inventory/documents/:id', 'inventory:document:view'],
+      ['inventory-document-edit', '/inventory/documents/:id/edit', 'inventory:document:update'],
+    ] as const
+
+    inventoryRoutes.forEach(([routeName, path, permission]) => {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component?.template).toBeUndefined()
+      expect(component?.render).toBeTypeOf('function')
+    })
+  })
+
+  it('访问库存根路径时重定向到库存余额页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
+
+    await router.push('/inventory')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('inventory-balances')
+  })
+
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(apiResponse(adminSession)))
     const router = createQhErpRouter()
@@ -191,5 +223,15 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('system-users')
+  })
+
+  it('已登录且缺少库存路由权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
+
+    await router.push('/inventory/documents/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
   })
 })

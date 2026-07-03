@@ -23,6 +23,17 @@ describe('ERP 应用骨架', () => {
             { id: 3, code: 'system:role', name: '角色管理', routePath: '/system/roles' },
           ],
         },
+        {
+          id: 4,
+          code: 'inventory',
+          name: '库存管理',
+          routePath: '/inventory/balances',
+          children: [
+            { id: 5, code: 'inventory:balance:view', name: '库存余额', routePath: '/inventory/balances' },
+            { id: 6, code: 'inventory:movement:view', name: '库存变动', routePath: '/inventory/movements' },
+            { id: 7, code: 'inventory:document:view', name: '库存单据', routePath: '/inventory/documents' },
+          ],
+        },
       ],
       permissions: [],
     })
@@ -42,6 +53,12 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('用户管理')
     expect(wrapper.text()).toContain('角色管理')
+    expect(wrapper.text()).toContain('库存管理')
+    expect(wrapper.text()).toContain('库存余额')
+    expect(wrapper.text()).toContain('库存变动')
+    expect(wrapper.text()).toContain('库存单据')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/inventory')
   })
 
   it('退出失败时保留当前会话和路由并显示错误提示', async () => {
