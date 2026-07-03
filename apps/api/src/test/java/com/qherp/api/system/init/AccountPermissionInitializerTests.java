@@ -48,6 +48,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
 
+	private static final List<String> COST_MENU_PERMISSIONS = List.of("cost");
+
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
 			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
@@ -134,6 +136,11 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}"),
 			new ExpectedActionPermission("production:receipt:post", "production", "PUT",
 					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post"));
+
+	private static final List<ExpectedActionPermission> COST_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("cost:record:view", "cost", "GET", "/api/admin/cost/**"),
+			new ExpectedActionPermission("cost:record:create", "cost", "POST", "/api/admin/cost/records"),
+			new ExpectedActionPermission("cost:record:update", "cost", "PUT", "/api/admin/cost/records/{id}"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -299,6 +306,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void costSchemaContainsContractTableAndIndexes() {
+		var costRecordColumns = columns("mfg_cost_record");
+
+		assertThat(costRecordColumns).contains("id", "record_no", "work_order_id", "product_material_id",
+				"cost_type", "source_type", "source_document_type", "source_document_no", "source_document_id",
+				"source_line_id", "work_order_material_id", "material_id", "unit_id", "quantity", "unit_price",
+				"amount", "basis_type", "business_date", "status", "remark", "recorded_by", "recorded_at",
+				"created_by", "created_at", "updated_by", "updated_at", "version");
+
+		assertThat(indexes("mfg_cost_record")).contains("uk_mfg_cost_record_no",
+				"uk_mfg_cost_record_source_line", "uk_mfg_cost_record_source_document",
+				"uk_mfg_cost_record_output_trace", "idx_mfg_cost_record_work_order",
+				"idx_mfg_cost_record_product", "idx_mfg_cost_record_business_date",
+				"idx_mfg_cost_record_cost_type");
+	}
+
+	@Test
 	void inventoryErrorCodesAreRegistered() {
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_TYPE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -339,6 +363,21 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.PRODUCTION_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.PRODUCTION_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+	}
+
+	@Test
+	void costErrorCodesAreRegistered() {
+		assertErrorCode("COST_RECORD_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("COST_WORK_ORDER_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("COST_WORK_ORDER_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("COST_SOURCE_DOCUMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("COST_SOURCE_DOCUMENT_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("COST_SOURCE_DUPLICATED", HttpStatus.CONFLICT);
+		assertErrorCode("COST_TYPE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("COST_BASIS_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("COST_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("COST_AMOUNT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("COST_GENERATED_RECORD_IMMUTABLE", HttpStatus.CONFLICT);
 	}
 
 	@Test
@@ -423,6 +462,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
+
+		COST_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		COST_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -491,6 +547,28 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.as(expected.code())
 				.isTrue();
 		});
+		COST_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		COST_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+	}
+
+	private void assertErrorCode(String code, HttpStatus expectedStatus) {
+		assertThat(ApiErrorCode.valueOf(code).httpStatus()).isEqualTo(expectedStatus);
 	}
 
 	private List<String> columns(String tableName) {

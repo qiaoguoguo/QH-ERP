@@ -81,6 +81,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return productionPermissionCode;
 		}
 
+		String costPermissionCode = costPermissionCode(method, path);
+		if (costPermissionCode != null) {
+			return costPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -116,6 +121,28 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String costPermissionCode(String method, String path) {
+		String basePath = "/api/admin/cost";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		String recordsPath = "/api/admin/cost/records";
+		if ("GET".equals(method) && (recordsPath.equals(path) || matchesIdPath(path, recordsPath))) {
+			return "cost:record:view";
+		}
+		if ("GET".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/cost/work-orders") + "/\\d+/summary")) {
+			return "cost:record:view";
+		}
+		if ("POST".equals(method) && recordsPath.equals(path)) {
+			return "cost:record:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, recordsPath)) {
+			return "cost:record:update";
+		}
 		return null;
 	}
 

@@ -180,6 +180,15 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 				"production:receipt:post");
 	}
 
+	@Test
+	void costAdminPathsMapToCostPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/records", "cost:record:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/records/1", "cost:record:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/work-orders/1/summary", "cost:record:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/cost/records", "cost:record:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/records/1", "cost:record:update");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);

@@ -195,7 +195,15 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}", 417),
 			new PermissionSeed("production:receipt:post", "过账完工入库", SystemPermissionType.ACTION, "production",
 					"/production/work-orders", "PUT",
-					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post", 418));
+					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post", 418),
+			new PermissionSeed("cost", "成本管理", SystemPermissionType.MENU, null, "/cost/records", null, null,
+					500),
+			new PermissionSeed("cost:record:view", "查看成本记录", SystemPermissionType.ACTION, "cost",
+					"/cost/records", "GET", "/api/admin/cost/**", 501),
+			new PermissionSeed("cost:record:create", "创建成本记录", SystemPermissionType.ACTION, "cost",
+					"/cost/records", "POST", "/api/admin/cost/records", 502),
+			new PermissionSeed("cost:record:update", "更新手工成本记录", SystemPermissionType.ACTION, "cost",
+					"/cost/records", "PUT", "/api/admin/cost/records/{id}", 503));
 
 	private final SystemUserRepository userRepository;
 

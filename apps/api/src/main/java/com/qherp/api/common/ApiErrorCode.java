@@ -136,6 +136,28 @@ public enum ApiErrorCode {
 
 	PRODUCTION_MOVEMENT_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "生产来源明细已生成库存变动"),
 
+	COST_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "成本记录不存在"),
+
+	COST_WORK_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "成本关联工单不存在"),
+
+	COST_WORK_ORDER_STATUS_INVALID(HttpStatus.CONFLICT, "工单状态不允许成本记录"),
+
+	COST_SOURCE_DOCUMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "成本来源单据不存在"),
+
+	COST_SOURCE_DOCUMENT_STATUS_INVALID(HttpStatus.CONFLICT, "成本来源单据状态无效"),
+
+	COST_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "成本来源已归集"),
+
+	COST_TYPE_INVALID(HttpStatus.BAD_REQUEST, "成本类型不合法"),
+
+	COST_BASIS_INVALID(HttpStatus.BAD_REQUEST, "成本口径不合法"),
+
+	COST_QUANTITY_INVALID(HttpStatus.BAD_REQUEST, "成本数量不合法"),
+
+	COST_AMOUNT_INVALID(HttpStatus.BAD_REQUEST, "成本金额不合法"),
+
+	COST_GENERATED_RECORD_IMMUTABLE(HttpStatus.CONFLICT, "自动生成记录来源字段不可修改"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);
