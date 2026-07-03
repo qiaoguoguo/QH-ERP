@@ -1,12 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
-import { AccountPermissionApiError } from './accountPermissionApi'
+import { AccountPermissionApiError, type PageResult } from './accountPermissionApi'
 import {
   createProductionApi,
+  type ProductionApi,
   type ProductionCompletionReceiptPayload,
+  type ProductionCompletionReceiptRecord,
+  type ProductionDocumentListParams,
   type ProductionMaterialIssuePayload,
+  type ProductionMaterialIssueRecord,
+  type ProductionWorkOrderDetailRecord,
   type ProductionWorkOrderPayload,
   type ProductionWorkReportPayload,
+  type ProductionWorkReportRecord,
 } from './productionApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -36,6 +44,42 @@ function apiFailure(status = 403) {
 }
 
 describe('生产执行 API', () => {
+  const productionApiTypeContract = {
+    detailIncludesMovements: true as AssertTrue<
+      'movements' extends keyof ProductionWorkOrderDetailRecord ? true : false
+    >,
+    materialIssuesAcceptPagination: true as AssertTrue<
+      Parameters<ProductionApi['materialIssues']['list']>[1] extends ProductionDocumentListParams ? true : false
+    >,
+    materialIssuesReturnPage: true as AssertTrue<
+      Awaited<ReturnType<ProductionApi['materialIssues']['list']>> extends PageResult<ProductionMaterialIssueRecord>
+        ? true
+        : false
+    >,
+    reportsReturnPage: true as AssertTrue<
+      Awaited<ReturnType<ProductionApi['reports']['list']>> extends PageResult<ProductionWorkReportRecord> ? true : false
+    >,
+    completionReceiptsReturnPage: true as AssertTrue<
+      Awaited<ReturnType<ProductionApi['completionReceipts']['list']>> extends PageResult<ProductionCompletionReceiptRecord>
+        ? true
+        : false
+    >,
+    reportPayloadIncludesReporterName: true as AssertTrue<
+      'reporterName' extends keyof ProductionWorkReportPayload ? true : false
+    >,
+  }
+
+  it('声明生产详情和执行记录列表的类型契约', () => {
+    expect(productionApiTypeContract).toMatchObject({
+      completionReceiptsReturnPage: true,
+      detailIncludesMovements: true,
+      materialIssuesAcceptPagination: true,
+      materialIssuesReturnPage: true,
+      reportPayloadIncludesReporterName: true,
+      reportsReturnPage: true,
+    })
+  })
+
   it('按查询条件分页获取生产工单', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 2, pageSize: 50 }))
     const api = createProductionApi({ baseUrl: '/erp', fetcher })
@@ -52,6 +96,84 @@ describe('生产执行 API', () => {
 
     expect(fetcher).toHaveBeenCalledWith(
       '/erp/api/admin/production/work-orders?keyword=WO&status=RELEASED&productMaterialId=9&dateFrom=2026-07-01&dateTo=2026-07-03&page=2&pageSize=50',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+      },
+    )
+  })
+
+  it('按生产工单获取详情时保留库存流水摘要', async () => {
+    const detail = {
+      id: 9,
+      workOrderNo: 'WO-20260703-001',
+      movements: [
+        {
+          id: 1001,
+          movementNo: 'MOV-1',
+          movementType: 'PRODUCTION_ISSUE',
+          direction: 'OUT',
+          warehouseId: 2,
+          warehouseName: '原料仓',
+          materialId: 3,
+          materialCode: 'RM-001',
+          materialName: '原材料',
+          unitId: 4,
+          unitName: '千克',
+          quantity: 12.5,
+          beforeQuantity: 100,
+          afterQuantity: 87.5,
+          sourceType: 'PRODUCTION_MATERIAL_ISSUE',
+          sourceId: 11,
+          sourceLineId: 111,
+          businessDate: '2026-07-03',
+          reason: '生产领料',
+          remark: '首批领料',
+          operatorName: '管理员',
+          occurredAt: '2026-07-03T10:00:00+08:00',
+        },
+      ],
+    }
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse(detail))
+    const api = createProductionApi({ fetcher })
+
+    await expect(api.workOrders.get(9)).resolves.toMatchObject({
+      movements: [{ movementType: 'PRODUCTION_ISSUE', sourceType: 'PRODUCTION_MATERIAL_ISSUE' }],
+    })
+
+    expect(fetcher).toHaveBeenCalledWith('/api/admin/production/work-orders/9', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      method: 'GET',
+    })
+  })
+
+  it('按分页参数获取领料、报工和完工入库列表', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 21, page: 2, pageSize: 10 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 12, page: 3, pageSize: 5 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 8, page: 4, pageSize: 2 }))
+    const api = createProductionApi({ fetcher })
+
+    await expect(api.materialIssues.list(9, { page: 2, pageSize: 10 })).resolves.toMatchObject({ total: 21 })
+    await expect(api.reports.list(9, { page: 3, pageSize: 5 })).resolves.toMatchObject({ total: 12 })
+    await expect(api.completionReceipts.list(9, { page: 4, pageSize: 2 })).resolves.toMatchObject({ total: 8 })
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/production/work-orders/9/material-issues?page=2&pageSize=10', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      method: 'GET',
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/production/work-orders/9/reports?page=3&pageSize=5', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      method: 'GET',
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/production/work-orders/9/completion-receipts?page=4&pageSize=2',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -165,6 +287,7 @@ describe('生产执行 API', () => {
       businessDate: '2026-07-03',
       qualifiedQuantity: '10.000000',
       defectiveQuantity: '0.500000',
+      reporterName: '张三',
     }
     const receiptPayload: ProductionCompletionReceiptPayload = {
       businessDate: '2026-07-03',

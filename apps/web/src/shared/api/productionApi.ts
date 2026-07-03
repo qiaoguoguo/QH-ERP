@@ -15,6 +15,11 @@ export interface ProductionWorkOrderListParams {
   pageSize: number
 }
 
+export interface ProductionDocumentListParams {
+  page: number
+  pageSize: number
+}
+
 export interface ProductionWorkOrderSummaryRecord {
   id: ResourceId
   workOrderNo: string
@@ -119,11 +124,37 @@ export interface ProductionCompletionReceiptRecord {
   postedAt?: string | null
 }
 
+export interface ProductionMovementRecord {
+  id: ResourceId
+  movementNo: string
+  movementType: string
+  direction: string
+  warehouseId: ResourceId
+  warehouseName: string
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  quantity: number
+  beforeQuantity: number
+  afterQuantity: number
+  sourceType: string
+  sourceId: ResourceId
+  sourceLineId: ResourceId
+  businessDate: string
+  reason?: string | null
+  remark?: string | null
+  operatorName: string
+  occurredAt: string
+}
+
 export interface ProductionWorkOrderDetailRecord extends ProductionWorkOrderSummaryRecord {
   materials: ProductionWorkOrderMaterialRecord[]
   materialIssues: ProductionMaterialIssueRecord[]
   reports: ProductionWorkReportRecord[]
   completionReceipts: ProductionCompletionReceiptRecord[]
+  movements: ProductionMovementRecord[]
 }
 
 export interface ProductionWorkOrderPayload {
@@ -156,6 +187,7 @@ export interface ProductionWorkReportPayload {
   businessDate: string
   qualifiedQuantity: string
   defectiveQuantity: string
+  reporterName?: string
   remark?: string
 }
 
@@ -177,7 +209,10 @@ export interface ProductionApi {
     cancel(id: ResourceId): Promise<ProductionWorkOrderDetailRecord>
   }
   materialIssues: {
-    list(workOrderId: ResourceId): Promise<ProductionMaterialIssueRecord[]>
+    list(
+      workOrderId: ResourceId,
+      params: ProductionDocumentListParams,
+    ): Promise<PageResult<ProductionMaterialIssueRecord>>
     get(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueRecord>
     create(workOrderId: ResourceId, payload: ProductionMaterialIssuePayload): Promise<ProductionMaterialIssueRecord>
     update(
@@ -188,7 +223,7 @@ export interface ProductionApi {
     post(workOrderId: ResourceId, id: ResourceId): Promise<ProductionMaterialIssueRecord>
   }
   reports: {
-    list(workOrderId: ResourceId): Promise<ProductionWorkReportRecord[]>
+    list(workOrderId: ResourceId, params: ProductionDocumentListParams): Promise<PageResult<ProductionWorkReportRecord>>
     get(workOrderId: ResourceId, id: ResourceId): Promise<ProductionWorkReportRecord>
     create(workOrderId: ResourceId, payload: ProductionWorkReportPayload): Promise<ProductionWorkReportRecord>
     update(
@@ -199,7 +234,10 @@ export interface ProductionApi {
     post(workOrderId: ResourceId, id: ResourceId): Promise<ProductionWorkReportRecord>
   }
   completionReceipts: {
-    list(workOrderId: ResourceId): Promise<ProductionCompletionReceiptRecord[]>
+    list(
+      workOrderId: ResourceId,
+      params: ProductionDocumentListParams,
+    ): Promise<PageResult<ProductionCompletionReceiptRecord>>
     get(workOrderId: ResourceId, id: ResourceId): Promise<ProductionCompletionReceiptRecord>
     create(
       workOrderId: ResourceId,
@@ -231,6 +269,7 @@ export function createProductionApi(options: ProductionApiOptions = {}): Product
     'page',
     'pageSize',
   ] as const
+  const documentListQueryKeys = ['page', 'pageSize'] as const
 
   const pickQuery = (query: object | undefined, keys: readonly string[]) => {
     const result: Record<string, unknown> = {}
@@ -319,7 +358,11 @@ export function createProductionApi(options: ProductionApiOptions = {}): Product
       cancel: (id) => write<ProductionWorkOrderDetailRecord>('PUT', `${workOrderPath(id)}/cancel`),
     },
     materialIssues: {
-      list: (workOrderId) => get<ProductionMaterialIssueRecord[]>(materialIssuePath(workOrderId)),
+      list: (workOrderId, params) =>
+        get<PageResult<ProductionMaterialIssueRecord>>(
+          materialIssuePath(workOrderId),
+          pickQuery(params, documentListQueryKeys),
+        ),
       get: (workOrderId, id) => get<ProductionMaterialIssueRecord>(materialIssuePath(workOrderId, id)),
       create: (workOrderId, payload) =>
         write<ProductionMaterialIssueRecord>('POST', materialIssuePath(workOrderId), payload),
@@ -328,7 +371,8 @@ export function createProductionApi(options: ProductionApiOptions = {}): Product
       post: (workOrderId, id) => write<ProductionMaterialIssueRecord>('PUT', `${materialIssuePath(workOrderId, id)}/post`),
     },
     reports: {
-      list: (workOrderId) => get<ProductionWorkReportRecord[]>(reportPath(workOrderId)),
+      list: (workOrderId, params) =>
+        get<PageResult<ProductionWorkReportRecord>>(reportPath(workOrderId), pickQuery(params, documentListQueryKeys)),
       get: (workOrderId, id) => get<ProductionWorkReportRecord>(reportPath(workOrderId, id)),
       create: (workOrderId, payload) => write<ProductionWorkReportRecord>('POST', reportPath(workOrderId), payload),
       update: (workOrderId, id, payload) =>
@@ -336,7 +380,11 @@ export function createProductionApi(options: ProductionApiOptions = {}): Product
       post: (workOrderId, id) => write<ProductionWorkReportRecord>('PUT', `${reportPath(workOrderId, id)}/post`),
     },
     completionReceipts: {
-      list: (workOrderId) => get<ProductionCompletionReceiptRecord[]>(completionReceiptPath(workOrderId)),
+      list: (workOrderId, params) =>
+        get<PageResult<ProductionCompletionReceiptRecord>>(
+          completionReceiptPath(workOrderId),
+          pickQuery(params, documentListQueryKeys),
+        ),
       get: (workOrderId, id) => get<ProductionCompletionReceiptRecord>(completionReceiptPath(workOrderId, id)),
       create: (workOrderId, payload) =>
         write<ProductionCompletionReceiptRecord>('POST', completionReceiptPath(workOrderId), payload),
