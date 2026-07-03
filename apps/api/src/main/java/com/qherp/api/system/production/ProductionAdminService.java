@@ -5,6 +5,7 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.cost.CostRecordWriter;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import jakarta.servlet.http.HttpServletRequest;
@@ -66,9 +67,13 @@ public class ProductionAdminService {
 
 	private final AuditService auditService;
 
-	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final CostRecordWriter costRecordWriter;
+
+	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			CostRecordWriter costRecordWriter) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.costRecordWriter = costRecordWriter;
 	}
 
 	@Transactional(readOnly = true)
@@ -336,6 +341,7 @@ public class ProductionAdminService {
 			markWorkOrderInProgress(workOrderId, operator.username(), now);
 			this.auditService.record(operator, "MFG_MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id,
 					issue.documentNo(), servletRequest);
+			this.costRecordWriter.writeMaterialIssue(id, operator, servletRequest);
 			return materialIssue(workOrderId, id);
 		}
 		catch (DuplicateKeyException exception) {
@@ -437,6 +443,7 @@ public class ProductionAdminService {
 				""", ProductionDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
 		this.auditService.record(operator, "MFG_WORK_REPORT_POST", WORK_REPORT_TARGET, id, report.documentNo(),
 				servletRequest);
+		this.costRecordWriter.writeWorkReport(id, operator, servletRequest);
 		return report(workOrderId, id);
 	}
 
