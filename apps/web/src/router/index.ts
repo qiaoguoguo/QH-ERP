@@ -206,25 +206,25 @@ const routes: RouteRecordRaw[] = [
     path: '/cost/records',
     name: 'cost-records',
     meta: { requiresAuth: true, requiredPermission: 'cost:record:view' },
-    component: placeholder('成本记录', '查看成本归集业务记录和来源追溯。本阶段不展示正式财务核算结果。'),
+    component: () => import('../modules/cost/CostRecordListView.vue'),
   },
   {
     path: '/cost/records/create',
     name: 'cost-record-create',
     meta: { requiresAuth: true, requiredPermission: 'cost:record:create' },
-    component: placeholder('新增成本记录', '录入手工成本业务记录。本阶段不计算正式财务成本。'),
+    component: () => import('../modules/cost/CostRecordFormView.vue'),
   },
   {
     path: '/cost/records/:id',
     name: 'cost-record-detail',
     meta: { requiresAuth: true, requiredPermission: 'cost:record:view' },
-    component: placeholder('成本记录详情', '查看成本业务记录、工单和来源单据追溯。'),
+    component: () => import('../modules/cost/CostRecordDetailView.vue'),
   },
   {
     path: '/cost/records/:id/edit',
     name: 'cost-record-edit',
     meta: { requiresAuth: true, requiredPermission: 'cost:record:update' },
-    component: placeholder('编辑成本记录', '维护手工成本业务记录，不修改自动来源记录。'),
+    component: () => import('../modules/cost/CostRecordFormView.vue'),
   },
 ]
 

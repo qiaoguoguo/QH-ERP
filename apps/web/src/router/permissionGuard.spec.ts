@@ -20,6 +20,9 @@ import ProductionWorkOrderDetailView from '../modules/production/ProductionWorkO
 import ProductionWorkOrderFormView from '../modules/production/ProductionWorkOrderFormView.vue'
 import ProductionWorkOrderListView from '../modules/production/ProductionWorkOrderListView.vue'
 import ProductionWorkReportView from '../modules/production/ProductionWorkReportView.vue'
+import CostRecordDetailView from '../modules/cost/CostRecordDetailView.vue'
+import CostRecordFormView from '../modules/cost/CostRecordFormView.vue'
+import CostRecordListView from '../modules/cost/CostRecordListView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -159,23 +162,23 @@ describe('账号权限路由守卫', () => {
     }
   })
 
-  it('成本路由配置占位页面和对应权限', async () => {
+  it('成本路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
     const costRoutes = [
-      ['cost-records', '/cost/records', 'cost:record:view'],
-      ['cost-record-create', '/cost/records/create', 'cost:record:create'],
-      ['cost-record-detail', '/cost/records/:id', 'cost:record:view'],
-      ['cost-record-edit', '/cost/records/:id/edit', 'cost:record:update'],
+      ['cost-records', '/cost/records', 'cost:record:view', CostRecordListView],
+      ['cost-record-create', '/cost/records/create', 'cost:record:create', CostRecordFormView],
+      ['cost-record-detail', '/cost/records/:id', 'cost:record:view', CostRecordDetailView],
+      ['cost-record-edit', '/cost/records/:id/edit', 'cost:record:update', CostRecordFormView],
     ] as const
 
-    for (const [routeName, path, permission] of costRoutes) {
+    for (const [routeName, path, permission, expectedComponent] of costRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
-      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
 
       expect(route?.path).toBe(path)
       expect(route?.meta.requiredPermission).toBe(permission)
-      expect(component?.template).toBeUndefined()
-      expect(component?.render).toBeTypeOf('function')
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
   })
 

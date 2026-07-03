@@ -1,0 +1,152 @@
+import type {
+  CostBasisType,
+  CostRecordStatus,
+  CostSourceDocumentType,
+  CostSourceType,
+  CostType,
+} from '../../shared/api/costCollectionApi'
+
+export interface CostDecimalValidationResult {
+  payloadValue: string | null
+  message: string | null
+}
+
+const costTypeLabels: Record<CostType, string> = {
+  MATERIAL: '材料',
+  LABOR: '人工',
+  MANUFACTURING_OVERHEAD: '制造费用',
+  OTHER: '其他',
+}
+
+const sourceTypeLabels: Record<CostSourceType, string> = {
+  AUTO_PRODUCTION: '生产自动来源',
+  MANUAL_ENTRY: '手工记录',
+}
+
+const sourceDocumentTypeLabels: Record<CostSourceDocumentType, string> = {
+  PRODUCTION_MATERIAL_ISSUE: '生产领料',
+  PRODUCTION_WORK_REPORT: '生产报工',
+  PRODUCTION_COMPLETION_RECEIPT: '完工入库',
+  MANUAL_COST_RECORD: '手工成本记录',
+}
+
+const basisTypeLabels: Record<CostBasisType, string> = {
+  SOURCE_QUANTITY_ONLY: '来源数量口径',
+  MANUAL_AMOUNT: '手工金额',
+  MANUAL_UNIT_PRICE_QUANTITY: '手工单价数量',
+  OUTPUT_QUANTITY_TRACE: '产出数量追溯',
+}
+
+const statusLabels: Record<CostRecordStatus, string> = {
+  ACTIVE: '有效',
+  VOIDED: '已作废',
+}
+
+export function costTypeLabel(type?: CostType | string | null): string {
+  return type && type in costTypeLabels ? costTypeLabels[type as CostType] : '-'
+}
+
+export function costTypeTagType(type?: CostType | string | null): 'success' | 'warning' | 'info' | 'primary' {
+  if (type === 'MATERIAL') {
+    return 'success'
+  }
+  if (type === 'LABOR') {
+    return 'primary'
+  }
+  if (type === 'MANUFACTURING_OVERHEAD') {
+    return 'warning'
+  }
+  return 'info'
+}
+
+export function costSourceTypeLabel(type?: CostSourceType | string | null): string {
+  return type && type in sourceTypeLabels ? sourceTypeLabels[type as CostSourceType] : '-'
+}
+
+export function costSourceTypeTagType(type?: CostSourceType | string | null): 'success' | 'info' {
+  return type === 'AUTO_PRODUCTION' ? 'success' : 'info'
+}
+
+export function sourceDocumentTypeLabel(type?: CostSourceDocumentType | string | null): string {
+  return type && type in sourceDocumentTypeLabels ? sourceDocumentTypeLabels[type as CostSourceDocumentType] : '-'
+}
+
+export function basisTypeLabel(type?: CostBasisType | string | null): string {
+  return type && type in basisTypeLabels ? basisTypeLabels[type as CostBasisType] : '-'
+}
+
+export function costStatusLabel(status?: CostRecordStatus | string | null): string {
+  return status && status in statusLabels ? statusLabels[status as CostRecordStatus] : '-'
+}
+
+export function formatCostQuantity(value: unknown): string {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return '-'
+  }
+  return numberValue.toFixed(6).replace(/\.?0+$/, '')
+}
+
+export function formatCostAmount(value: unknown): string {
+  const numberValue = Number(value)
+  if (!Number.isFinite(numberValue)) {
+    return '-'
+  }
+  return numberValue.toFixed(6).replace(/\.?0+$/, '')
+}
+
+export function formatCostDateTime(value?: string | null): string {
+  if (!value) {
+    return '-'
+  }
+  return value.replace('T', ' ').slice(0, 16)
+}
+
+export function costErrorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+  return '操作失败，请稍后重试'
+}
+
+export function todayText(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function validateCostDecimal(
+  value: unknown,
+  label: string,
+  options: { allowZero: boolean },
+): CostDecimalValidationResult {
+  if (value === null || value === undefined || value === '') {
+    return { payloadValue: null, message: `${label}不能为空` }
+  }
+
+  const normalizedValue = String(value).trim()
+  if (!normalizedValue) {
+    return { payloadValue: null, message: `${label}不能为空` }
+  }
+  if (normalizedValue.startsWith('-') || /[eE]/.test(normalizedValue)) {
+    return { payloadValue: null, message: `${label}仅支持普通十进制非负数` }
+  }
+  if (!/^\d+(?:\.\d+)?$/.test(normalizedValue)) {
+    return { payloadValue: null, message: `${label}仅支持普通十进制非负数` }
+  }
+
+  const [integerPart, decimalPart = ''] = normalizedValue.split('.')
+  if (integerPart.length > 12) {
+    return { payloadValue: null, message: `${label}整数部分最多 12 位` }
+  }
+  if (decimalPart.length > 6) {
+    return { payloadValue: null, message: `${label}最多 6 位小数` }
+  }
+  if (!options.allowZero && /^0+(?:\.0+)?$/.test(normalizedValue)) {
+    return { payloadValue: null, message: `${label}必须大于 0` }
+  }
+
+  return { payloadValue: normalizedValue, message: null }
+}

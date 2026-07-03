@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import type { WorkOrderCostSummaryRecord } from '../../shared/api/costCollectionApi'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
 import ProductionWorkOrderDetailView from './ProductionWorkOrderDetailView.vue'
@@ -27,6 +28,16 @@ const productionApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/productionApi', () => ({
   productionApi: productionApiMock,
+}))
+
+const costCollectionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    summary: vi.fn(),
+  },
+}))
+
+vi.mock('../../shared/api/costCollectionApi', () => ({
+  costCollectionApi: costCollectionApiMock,
 }))
 
 const detailRecord: ProductionWorkOrderDetailRecord = {
@@ -238,6 +249,98 @@ const postedExecutionRecord: ProductionWorkOrderDetailRecord = {
   })),
 }
 
+const costSummaryRecord: WorkOrderCostSummaryRecord = {
+  workOrderId: 9,
+  workOrderNo: 'WO-20260703-001',
+  productMaterialId: 10,
+  productMaterialCode: 'FG-001',
+  productMaterialName: '成品 A',
+  formalAccounting: false,
+  records: [
+    {
+      id: 701,
+      recordNo: 'COST-001',
+      workOrderId: 9,
+      workOrderNo: 'WO-20260703-001',
+      productMaterialId: 10,
+      productMaterialCode: 'FG-001',
+      productMaterialName: '成品 A',
+      costType: 'MATERIAL',
+      sourceType: 'AUTO_PRODUCTION',
+      sourceDocumentType: 'PRODUCTION_MATERIAL_ISSUE',
+      sourceDocumentNo: 'MI-001',
+      sourceDocumentId: 300,
+      sourceLineId: 301,
+      basisType: 'SOURCE_QUANTITY_ONLY',
+      materialId: 11,
+      materialCode: 'RM-001',
+      materialName: '原材料 A',
+      unitId: 3,
+      unitName: '千克',
+      quantity: 80,
+      unitPrice: null,
+      amount: null,
+      businessDate: '2026-07-04',
+      status: 'ACTIVE',
+      remark: null,
+      recordedByName: '仓管员',
+      recordedAt: '2026-07-04T09:00:00+08:00',
+      createdByName: '仓管员',
+      createdAt: '2026-07-04T09:00:00+08:00',
+      updatedAt: '2026-07-04T09:00:00+08:00',
+    },
+    {
+      id: 702,
+      recordNo: 'COST-002',
+      workOrderId: 9,
+      workOrderNo: 'WO-20260703-001',
+      productMaterialId: 10,
+      productMaterialCode: 'FG-001',
+      productMaterialName: '成品 A',
+      costType: 'MANUFACTURING_OVERHEAD',
+      sourceType: 'MANUAL_ENTRY',
+      sourceDocumentType: 'MANUAL_COST_RECORD',
+      sourceDocumentNo: 'MANUAL-001',
+      sourceDocumentId: null,
+      sourceLineId: null,
+      basisType: 'MANUAL_AMOUNT',
+      materialId: null,
+      materialCode: null,
+      materialName: null,
+      unitId: null,
+      unitName: null,
+      quantity: null,
+      unitPrice: null,
+      amount: 300,
+      businessDate: '2026-07-05',
+      status: 'ACTIVE',
+      remark: '制造费用业务记录',
+      recordedByName: '成本管理员',
+      recordedAt: '2026-07-05T10:00:00+08:00',
+      createdByName: '成本管理员',
+      createdAt: '2026-07-05T10:00:00+08:00',
+      updatedAt: '2026-07-05T10:00:00+08:00',
+    },
+  ],
+  amountSummaries: [{ costType: 'MANUFACTURING_OVERHEAD', amount: 300 }],
+  quantitySummaries: [{ costType: 'MATERIAL', quantity: 80 }],
+  outputTraces: [
+    {
+      receiptId: 500,
+      receiptNo: 'CR-001',
+      workOrderId: 9,
+      businessDate: '2026-07-05',
+      receiptWarehouseId: 31,
+      receiptWarehouseName: '成品仓',
+      quantity: 40,
+      beforeQuantity: 10,
+      afterQuantity: 50,
+      postedByName: '仓管员',
+      postedAt: '2026-07-05T09:00:00+08:00',
+    },
+  ],
+}
+
 function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
@@ -271,6 +374,9 @@ async function mountDetail(
       { path: '/production/work-orders/:id/material-issues', name: 'production-work-order-material-issues', component: { render: () => null } },
       { path: '/production/work-orders/:id/reports', name: 'production-work-order-reports', component: { render: () => null } },
       { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component: { render: () => null } },
+      { path: '/cost/records/:id', name: 'cost-record-detail', component: { render: () => null } },
+      { path: '/cost/records/:id/edit', name: 'cost-record-edit', component: { render: () => null } },
+      { path: '/cost/records/create', name: 'cost-record-create', component: { render: () => null } },
     ],
   })
   await router.push('/production/work-orders/9')
@@ -294,6 +400,7 @@ describe('生产工单详情页', () => {
     productionApiMock.materialIssues.post.mockResolvedValue(postedExecutionRecord.materialIssues[0])
     productionApiMock.reports.post.mockResolvedValue(postedExecutionRecord.reports[0])
     productionApiMock.completionReceipts.post.mockResolvedValue(postedExecutionRecord.completionReceipts[0])
+    costCollectionApiMock.workOrders.summary.mockResolvedValue(costSummaryRecord)
   })
 
   afterEach(() => {
@@ -424,5 +531,31 @@ describe('生产工单详情页', () => {
     expect(wrapper.text()).toContain('报工单已过账，不能重复过账')
     expect(wrapper.text()).toContain('WO-20260703-001')
     expect(wrapper.text()).toContain('WR-DRAFT-001')
+  })
+
+  it('有成本查看权限时展示成本归集业务记录和非正式核算提示', async () => {
+    const { wrapper } = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'cost:record:view',
+      'cost:record:create',
+      'cost:record:update',
+    ])
+
+    expect(costCollectionApiMock.workOrders.summary).toHaveBeenCalledWith(9)
+    expect(wrapper.text()).toContain('成本归集记录')
+    expect(wrapper.text()).toContain('当前为业务归集记录，不是正式财务核算结果')
+    expect(wrapper.text()).toContain('COST-001')
+    expect(wrapper.text()).toContain('COST-002')
+    expect(wrapper.text()).toContain('制造费用')
+    expect(wrapper.text()).toContain('新增手工成本')
+    expect(wrapper.find('[data-test="edit-work-order-cost-record"]').exists()).toBe(true)
+  })
+
+  it('无成本查看权限时不请求也不展示成本分区', async () => {
+    const { wrapper } = await mountDetail(detailRecord, ['production:work-order:view'])
+
+    expect(costCollectionApiMock.workOrders.summary).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('成本归集记录')
+    expect(wrapper.text()).not.toContain('新增手工成本')
   })
 })

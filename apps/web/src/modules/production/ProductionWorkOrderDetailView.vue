@@ -1,8 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import {
+  costCollectionApi,
+  type CostRecordSummaryRecord,
+  type WorkOrderCostSummaryRecord,
+} from '../../shared/api/costCollectionApi'
 import { productionApi, type ProductionWorkOrderDetailRecord, type ResourceId } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
+import CostSourceTypeTag from '../cost/CostSourceTypeTag.vue'
+import CostTypeTag from '../cost/CostTypeTag.vue'
+import {
+  costErrorMessage,
+  costTypeLabel,
+  formatCostAmount,
+  formatCostDateTime,
+  formatCostQuantity,
+} from '../cost/costPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ProductionDocumentStatusTag from './ProductionDocumentStatusTag.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
@@ -20,6 +34,9 @@ const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
+const costSummary = ref<WorkOrderCostSummaryRecord | null>(null)
+const costLoading = ref(false)
+const costError = ref('')
 
 const canEdit = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('production:work-order:update'))
 const canRelease = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('production:work-order:release'))
@@ -35,6 +52,9 @@ const canCancel = computed(() => (
   (record.value?.status === 'DRAFT' || record.value?.status === 'RELEASED') &&
   authStore.hasPermission('production:work-order:cancel')
 ))
+const canViewCost = computed(() => authStore.hasPermission('cost:record:view'))
+const canCreateCost = computed(() => authStore.hasPermission('cost:record:create'))
+const canUpdateCost = computed(() => authStore.hasPermission('cost:record:update'))
 
 const postActionConfig = {
   materialIssue: {
@@ -56,11 +76,30 @@ async function loadRecord() {
   error.value = ''
   try {
     record.value = await productionApi.workOrders.get(route.params.id as ResourceId)
+    if (canViewCost.value) {
+      await loadCostSummary(record.value.id)
+    } else {
+      costSummary.value = null
+      costError.value = ''
+    }
   } catch (caught) {
     record.value = null
     error.value = productionErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadCostSummary(workOrderId: ResourceId) {
+  costLoading.value = true
+  costError.value = ''
+  try {
+    costSummary.value = await costCollectionApi.workOrders.summary(workOrderId)
+  } catch (caught) {
+    costSummary.value = null
+    costError.value = costErrorMessage(caught)
+  } finally {
+    costLoading.value = false
   }
 }
 
@@ -90,6 +129,21 @@ function createCompletionReceipt() {
     return
   }
   void router.push({ name: 'production-work-order-completion-receipts', params: { id: String(record.value.id) } })
+}
+
+function createCostRecord() {
+  if (!record.value) {
+    return
+  }
+  void router.push({ name: 'cost-record-create', query: { workOrderId: String(record.value.id) } })
+}
+
+function viewCostRecord(costRecord: CostRecordSummaryRecord) {
+  void router.push({ name: 'cost-record-detail', params: { id: String(costRecord.id) } })
+}
+
+function editCostRecord(costRecord: CostRecordSummaryRecord) {
+  void router.push({ name: 'cost-record-edit', params: { id: String(costRecord.id) } })
 }
 
 async function runAction(action: 'release' | 'complete' | 'cancel') {
@@ -373,6 +427,138 @@ onMounted(loadRecord)
           </el-table>
         </div>
       </section>
+
+      <section v-if="canViewCost" class="section-block">
+        <div class="section-title-row">
+          <h2>成本归集记录</h2>
+          <el-button v-if="canCreateCost" size="small" type="primary" @click="createCostRecord">
+            新增手工成本
+          </el-button>
+        </div>
+        <el-alert
+          class="state-alert cost-notice"
+          type="info"
+          title="当前为业务归集记录，不是正式财务核算结果。"
+          :closable="false"
+        />
+        <el-alert v-if="costError" class="state-alert cost-notice" type="error" :title="costError" :closable="false" />
+        <el-alert
+          v-if="costLoading"
+          class="state-alert cost-notice"
+          type="info"
+          title="成本归集记录加载中"
+          :closable="false"
+        />
+
+        <template v-if="costSummary">
+          <section class="cost-summary-strip">
+            <div>
+              <span>记录数</span>
+              <strong>{{ costSummary.records.length }}</strong>
+            </div>
+            <div>
+              <span>金额汇总项</span>
+              <strong>{{ costSummary.amountSummaries.length }}</strong>
+            </div>
+            <div>
+              <span>数量汇总项</span>
+              <strong>{{ costSummary.quantitySummaries.length }}</strong>
+            </div>
+            <div>
+              <span>产出追溯</span>
+              <strong>{{ costSummary.outputTraces.length }}</strong>
+            </div>
+          </section>
+
+          <div class="table-scroll">
+            <el-table :data="costSummary.records" empty-text="暂无成本归集记录" stripe>
+              <el-table-column prop="recordNo" label="记录编号" min-width="160" show-overflow-tooltip />
+              <el-table-column label="成本类型" min-width="110">
+                <template #default="{ row }"><CostTypeTag :type="row.costType" /></template>
+              </el-table-column>
+              <el-table-column label="来源类型" min-width="130">
+                <template #default="{ row }"><CostSourceTypeTag :type="row.sourceType" /></template>
+              </el-table-column>
+              <el-table-column prop="sourceDocumentNo" label="来源单据" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.sourceDocumentNo || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+                <template #default="{ row }">
+                  {{ row.materialCode ? `${row.materialCode} ${row.materialName || ''}` : '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" min-width="110" align="right">
+                <template #default="{ row }"><span class="numeric-cell">{{ formatCostQuantity(row.quantity) }}</span></template>
+              </el-table-column>
+              <el-table-column label="金额" min-width="110" align="right">
+                <template #default="{ row }"><span class="numeric-cell">{{ formatCostAmount(row.amount) }}</span></template>
+              </el-table-column>
+              <el-table-column prop="businessDate" label="业务日期" min-width="110" />
+              <el-table-column prop="recordedByName" label="记录人" min-width="110" />
+              <el-table-column label="操作" fixed="right" min-width="132">
+                <template #default="{ row }">
+                  <el-button size="small" text @click="viewCostRecord(row)">详情</el-button>
+                  <el-button
+                    v-if="canUpdateCost && row.sourceType === 'MANUAL_ENTRY'"
+                    data-test="edit-work-order-cost-record"
+                    size="small"
+                    text
+                    @click="editCostRecord(row)"
+                  >
+                    编辑
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+
+          <section class="section-block nested">
+            <h2>金额汇总</h2>
+            <div class="table-scroll">
+              <el-table :data="costSummary.amountSummaries" empty-text="暂无金额汇总" stripe>
+                <el-table-column label="成本类型" min-width="140">
+                  <template #default="{ row }">{{ costTypeLabel(row.costType) }}</template>
+                </el-table-column>
+                <el-table-column label="金额" min-width="140" align="right">
+                  <template #default="{ row }"><span class="numeric-cell">{{ formatCostAmount(row.amount) }}</span></template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </section>
+
+          <section class="section-block nested">
+            <h2>数量汇总</h2>
+            <div class="table-scroll">
+              <el-table :data="costSummary.quantitySummaries" empty-text="暂无数量汇总" stripe>
+                <el-table-column label="成本类型" min-width="140">
+                  <template #default="{ row }">{{ costTypeLabel(row.costType) }}</template>
+                </el-table-column>
+                <el-table-column label="数量" min-width="140" align="right">
+                  <template #default="{ row }"><span class="numeric-cell">{{ formatCostQuantity(row.quantity) }}</span></template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </section>
+
+          <section class="section-block nested">
+            <h2>完工入库产出追溯</h2>
+            <div class="table-scroll">
+              <el-table :data="costSummary.outputTraces" empty-text="暂无产出追溯" stripe>
+                <el-table-column prop="receiptNo" label="入库单号" min-width="160" show-overflow-tooltip />
+                <el-table-column prop="businessDate" label="业务日期" min-width="110" />
+                <el-table-column prop="receiptWarehouseName" label="入库仓库" min-width="140" show-overflow-tooltip />
+                <el-table-column label="入库数量" min-width="110" align="right">
+                  <template #default="{ row }"><span class="numeric-cell">{{ formatCostQuantity(row.quantity) }}</span></template>
+                </el-table-column>
+                <el-table-column prop="postedByName" label="过账人" min-width="110" />
+                <el-table-column label="过账时间" min-width="150">
+                  <template #default="{ row }">{{ formatCostDateTime(row.postedAt) }}</template>
+                </el-table-column>
+              </el-table>
+            </div>
+          </section>
+        </template>
+      </section>
     </div>
   </MasterDataTableView>
 </template>
@@ -434,6 +620,52 @@ onMounted(loadRecord)
   margin: 0 0 10px;
 }
 
+.section-title-row {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.section-title-row h2 {
+  margin: 0;
+}
+
+.cost-notice {
+  margin-bottom: 10px;
+}
+
+.cost-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.cost-summary-strip > div {
+  border: 1px solid var(--qherp-border);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.cost-summary-strip span {
+  color: var(--qherp-muted);
+  display: block;
+  font-size: 12px;
+}
+
+.cost-summary-strip strong {
+  display: block;
+  font-size: 20px;
+  margin-top: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.section-block.nested {
+  margin-top: 14px;
+}
+
 .numeric-cell {
   display: inline-block;
   min-width: 72px;
@@ -442,6 +674,7 @@ onMounted(loadRecord)
 }
 
 @media (max-width: 900px) {
+  .cost-summary-strip,
   .summary-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -449,6 +682,7 @@ onMounted(loadRecord)
 
 @media (max-width: 760px) {
   .detail-list,
+  .cost-summary-strip,
   .summary-strip {
     grid-template-columns: 1fr;
   }
