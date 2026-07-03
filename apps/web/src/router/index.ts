@@ -153,8 +153,50 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/production',
-    name: 'production',
-    component: placeholder('生产管理', '生产工单、领料、报工和完工入库入口。'),
+    redirect: '/production/work-orders',
+    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
+  },
+  {
+    path: '/production/work-orders',
+    name: 'production-work-orders',
+    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
+    component: placeholder('生产工单', '生产工单列表页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/create',
+    name: 'production-work-order-create',
+    meta: { requiresAuth: true, requiredPermission: 'production:work-order:create' },
+    component: placeholder('新建生产工单', '生产工单表单页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/:id',
+    name: 'production-work-order-detail',
+    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
+    component: placeholder('生产工单详情', '生产工单详情页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/:id/edit',
+    name: 'production-work-order-edit',
+    meta: { requiresAuth: true, requiredPermission: 'production:work-order:update' },
+    component: placeholder('编辑生产工单', '生产工单编辑页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/:id/material-issues',
+    name: 'production-work-order-material-issues',
+    meta: { requiresAuth: true, requiredPermission: 'production:issue:view' },
+    component: placeholder('生产领料', '生产领料页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/:id/reports',
+    name: 'production-work-order-reports',
+    meta: { requiresAuth: true, requiredPermission: 'production:report:view' },
+    component: placeholder('生产报工', '生产报工页面将在后续任务中实现。'),
+  },
+  {
+    path: '/production/work-orders/:id/completion-receipts',
+    name: 'production-work-order-completion-receipts',
+    meta: { requiresAuth: true, requiredPermission: 'production:receipt:view' },
+    component: placeholder('完工入库', '完工入库页面将在后续任务中实现。'),
   },
 ]
 

@@ -239,4 +239,36 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
   })
+
+  it('已登录且拥有生产工单查看权限时允许访问工单列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:work-order:view'] })
+
+    await router.push('/production/work-orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('production-work-orders')
+  })
+
+  it('已登录但缺少生产工单查看权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await router.push('/production/work-orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/production/work-orders')
+  })
+
+  it('未登录访问生产工单时跳转登录页并保留来源地址', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('未登录')))
+    const router = createQhErpRouter()
+
+    await router.push('/production/work-orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.redirect).toBe('/production/work-orders')
+  })
 })

@@ -9,6 +9,7 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
+const productionWorkOrderPath = '/production/work-orders'
 const supportedMenuPaths = new Set([
   '/accounts/users',
   '/system/users',
@@ -24,8 +25,9 @@ const supportedMenuPaths = new Set([
   '/inventory/balances',
   '/inventory/movements',
   '/inventory/documents',
+  productionWorkOrderPath,
 ])
-const menuTree = computed<MenuNode[]>(() => filterSupportedMenus(authStore.menus ?? []))
+const menuTree = computed<MenuNode[]>(() => ensureProductionMenu(filterSupportedMenus(authStore.menus ?? [])))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -37,6 +39,46 @@ function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
       children: filterSupportedMenus(menu.children ?? []),
     }))
     .filter((menu) => (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length))
+}
+
+function ensureProductionMenu(menus: MenuNode[]): MenuNode[] {
+  if (!authStore.hasPermission('production:work-order:view')) {
+    return menus.filter((menu) => menu.code !== 'production' && menu.routePath !== productionWorkOrderPath)
+  }
+
+  const productionChild: MenuNode = {
+    id: 'production-work-orders',
+    code: 'production:work-order:view',
+    name: '生产工单',
+    routePath: productionWorkOrderPath,
+  }
+  const productionIndex = menus.findIndex((menu) => menu.code === 'production' || menu.routePath === productionWorkOrderPath)
+
+  if (productionIndex === -1) {
+    return [
+      ...menus,
+      {
+        id: 'production',
+        code: 'production',
+        name: '生产管理',
+        routePath: null,
+        children: [productionChild],
+      },
+    ]
+  }
+
+  return menus.map((menu, index) => {
+    if (index !== productionIndex) {
+      return menu
+    }
+    const children = menu.children ?? []
+    const hasWorkOrderChild = children.some((child) => child.routePath === productionWorkOrderPath)
+    return {
+      ...menu,
+      name: '生产管理',
+      children: hasWorkOrderChild ? children : [productionChild, ...children],
+    }
+  })
 }
 
 function hasChildren(menu: MenuNode) {
