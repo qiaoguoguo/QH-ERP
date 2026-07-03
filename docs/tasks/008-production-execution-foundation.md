@@ -184,3 +184,16 @@
 - 前端构建：在 `apps/web` 执行 `npm run build`，退出码为 0，`vue-tsc --noEmit && vite build` 成功，Vite 构建完成。
 - 空白检查：在仓库根目录执行 `git diff --check`，退出码为 0；验证执行前无输出，文档更新后复查仅出现两个文档的 LF/CRLF 工作区提示，无空白错误。
 - 边界说明：本记录只覆盖任务 7 自动化验证与代码质量检查；本地部署、浏览器功能验收和视觉分析尚未进入，后续按任务 8/9 执行并另行记录。
+
+### 2026-07-03 生产执行任务 8 本地部署和浏览器功能验收记录
+
+- 本地 PostgreSQL：执行 `docker ps --filter "name=qherp-postgres" --format "{{.Names}} {{.Status}} {{.Ports}}"` 初始无运行容器；按本地开发说明执行 `docker compose up -d postgres` 后确认 `qherp-postgres` 为 `healthy`，端口为 `15432->5432`。
+- 后端服务：执行指定 Docker 命令启动 `qherp-api-local`，日志出现 `Started QherpApiApplication`；健康检查 `Invoke-RestMethod http://127.0.0.1:18080/api/health` 返回 `{"service":"qherp-api","status":"UP"}`。后端地址为 `http://127.0.0.1:18080`。
+- 前端服务：在 `apps/web` 执行 `npx vite --host 127.0.0.1`，Vite 监听 `http://127.0.0.1:5173/`，浏览器访问返回 HTTP 200。
+- 验收数据准备：复用已有启用 BOM `BVA171IK-BOM-FG-A-V11`，创建任务 8 浏览器验收原料仓 `任务8浏览器原料仓20260703134836` 和成品仓 `任务8浏览器成品仓20260703134836`；通过库存期初单 `INV-OPEN-20260703054836223-000` 给 `BVA171IK-RM-X`、`BVA171IK-SF-B`、`BVA171IK-AUX-Z` 各开账 1000。
+- 管理员主路径：使用 `admin / Qherp@2026!` 在浏览器创建工单 `MFG-WO-20260703055314097-000`，发布后生成 BOM 用料快照；创建并过账领料单 `MFG-ISS-20260703055813114-000`、报工单 `MFG-RPT-20260703055813727-000`、完工入库单 `MFG-RCP-20260703055814165-000`，随后完成工单。最终工单状态为 `COMPLETED`，计划数量 4，累计报工 4，合格 4，累计入库 4。
+- 库存结果：原料仓余额从 1000 扣减为 `BVA171IK-RM-X=989.8`、`BVA171IK-SF-B=996`、`BVA171IK-AUX-Z=988`；成品仓 `BVA171IK-FG-A` 增加到 4。后端库存流水接口返回 `PRODUCTION_ISSUE` 三条和 `PRODUCTION_RECEIPT` 一条，来源类型分别为 `PRODUCTION_MATERIAL_ISSUE` 和 `PRODUCTION_COMPLETION_RECEIPT`。
+- 异常验收：库存不足领料在浏览器过账时返回 409，页面显示“生产领料库存不足”；超领、超报、超入表单分别显示“本次领料不能大于未领数量”“累计报工不能超过计划数量”“入库数量不能超过累计合格报工减已入库数量”；停用 BOM 请求返回 `PRODUCTION_BOM_INVALID`，停用仓库请求返回 `PRODUCTION_WAREHOUSE_INVALID`。
+- 权限验收：创建只读用户 `t8_read_20260703135941`，浏览器可查看草稿工单详情但仅显示“退出”按钮，无编辑、发布、领料、报工、完工入库、完成、取消和过账按钮；只读用户直接调用发布接口返回 403 `AUTH_FORBIDDEN`。创建无权限用户 `t8_noperm_20260703135941`，浏览器访问生产工单跳转 `/forbidden?from=/production/work-orders/2`，接口读取工单返回 403 `AUTH_FORBIDDEN`。
+- 未完全通过项：库存流水页面 `/inventory/movements` 可看到生产领料和完工入库流水的仓库、物料、方向、数量和原因，但“变动类型”列未显示 `PRODUCTION_ISSUE`、`PRODUCTION_RECEIPT` 或对应中文标签；后端接口和生产工单详情接口已返回正确类型。该项未写作通过，需前端补齐库存流水生产类型展示后复验。
+- 边界说明：本记录覆盖任务 8 本地部署和浏览器功能验收；视觉分析和截图证据尚未执行，属于后续任务 9。
