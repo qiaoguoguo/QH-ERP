@@ -134,12 +134,16 @@ describe('库存 API', () => {
       businessDate: '2026-07-03',
       reason: '期初库存',
       remark: '上线期初',
-      lines: [{ lineNo: 1, warehouseId: 1, materialId: 2, unitId: 3, quantity: 10 }],
+      lines: [{ lineNo: 1, warehouseId: 1, materialId: 2, unitId: 3, quantity: '999999999999.999999' }],
     }
 
     await api.documents.create(payload)
     await api.documents.update(1, payload)
     await api.documents.post(1)
+
+    expect(JSON.parse((fetcher.mock.calls[1][1].body as string))).toMatchObject({
+      lines: [{ quantity: '999999999999.999999' }],
+    })
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/auth/csrf', {
       credentials: 'include',

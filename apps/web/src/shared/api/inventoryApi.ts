@@ -7,6 +7,7 @@ export type InventoryDocumentType = 'OPENING' | 'ADJUSTMENT'
 export type InventoryMovementType = 'OPENING' | 'ADJUSTMENT_INCREASE' | 'ADJUSTMENT_DECREASE'
 export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
+export type InventoryQuantityPayload = string
 
 export interface InventoryBalanceListParams {
   keyword?: string
@@ -125,7 +126,7 @@ export interface InventoryDocumentLinePayload {
   warehouseId: ResourceId
   materialId: ResourceId
   unitId?: ResourceId
-  quantity: number
+  quantity: InventoryQuantityPayload
   adjustmentDirection?: InventoryAdjustmentDirection
   remark?: string
 }
