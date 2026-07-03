@@ -1,0 +1,286 @@
+import ElementPlus from 'element-plus'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import type { WarehouseRecord } from '../../shared/api/masterDataApi'
+import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
+import { useAuthStore } from '../../stores/authStore'
+import ProductionCompletionReceiptView from './ProductionCompletionReceiptView.vue'
+import ProductionMaterialIssueView from './ProductionMaterialIssueView.vue'
+import ProductionWorkReportView from './ProductionWorkReportView.vue'
+
+const productionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    get: vi.fn(),
+  },
+  materialIssues: {
+    create: vi.fn(),
+  },
+  reports: {
+    create: vi.fn(),
+  },
+  completionReceipts: {
+    create: vi.fn(),
+  },
+}))
+
+const masterDataApiMock = vi.hoisted(() => ({
+  warehouses: {
+    list: vi.fn(),
+  },
+}))
+
+vi.mock('../../shared/api/productionApi', () => ({
+  productionApi: productionApiMock,
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+const warehouse: WarehouseRecord = {
+  id: 30,
+  code: 'WH-RAW',
+  name: '原料仓',
+  status: 'ENABLED',
+}
+
+const workOrder: ProductionWorkOrderDetailRecord = {
+  id: 9,
+  workOrderNo: 'WO-20260703-001',
+  productMaterialId: 10,
+  productMaterialCode: 'FG-001',
+  productMaterialName: '成品 A',
+  bomId: 20,
+  bomCode: 'BOM-FG-001',
+  bomVersionCode: 'V1',
+  plannedQuantity: 100,
+  reportedQuantity: 50,
+  qualifiedQuantity: 40,
+  defectiveQuantity: 10,
+  receivedQuantity: 30,
+  issueWarehouseId: 30,
+  issueWarehouseName: '原料仓',
+  receiptWarehouseId: 31,
+  receiptWarehouseName: '成品仓',
+  plannedStartDate: '2026-07-03',
+  plannedFinishDate: '2026-07-10',
+  status: 'IN_PROGRESS',
+  remark: null,
+  createdByName: '管理员',
+  createdAt: '2026-07-03T08:00:00+08:00',
+  updatedAt: '2026-07-03T09:00:00+08:00',
+  materials: [
+    {
+      id: 100,
+      lineNo: 10,
+      bomItemId: 200,
+      materialId: 11,
+      materialCode: 'RM-001',
+      materialName: '原材料 A',
+      materialType: 'RAW_MATERIAL',
+      unitId: 3,
+      unitName: '千克',
+      requiredQuantity: 100,
+      issuedQuantity: 60,
+      remainingQuantity: 40,
+      lossRate: 0,
+      remark: null,
+    },
+  ],
+  materialIssues: [],
+  reports: [],
+  completionReceipts: [],
+  movements: [],
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
+
+function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
+  return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
+}
+
+function submitButton(wrapper: VueWrapper, text: string): VueWrapper {
+  const button = buttonsByText(wrapper, text)[0]
+  expect(button?.exists()).toBe(true)
+  return button
+}
+
+function isDisabled(button: VueWrapper): boolean {
+  return Boolean((button.props() as { disabled?: boolean }).disabled)
+}
+
+async function mountExecution(
+  component: typeof ProductionMaterialIssueView | typeof ProductionWorkReportView | typeof ProductionCompletionReceiptView,
+  path: string,
+  permissions: string[],
+) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setSession({
+    user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+    menus: [],
+    permissions,
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/production/work-orders/:id', name: 'production-work-order-detail', component: { render: () => null } },
+      { path: '/production/work-orders/:id/material-issues', name: 'production-work-order-material-issues', component },
+      { path: '/production/work-orders/:id/reports', name: 'production-work-order-reports', component },
+      { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component },
+    ],
+  })
+  await router.push(path)
+  await router.isReady()
+  const wrapper = mount(component, {
+    global: {
+      plugins: [pinia, router, ElementPlus],
+    },
+  })
+  await flushPromises()
+  return { wrapper, router }
+}
+
+describe('生产执行表单页', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    productionApiMock.workOrders.get.mockResolvedValue(workOrder)
+    productionApiMock.materialIssues.create.mockResolvedValue({ id: 1, issueNo: 'MI-001' })
+    productionApiMock.reports.create.mockResolvedValue({ id: 2, reportNo: 'WR-001' })
+    productionApiMock.completionReceipts.create.mockResolvedValue({ id: 3, receiptNo: 'CR-001' })
+    masterDataApiMock.warehouses.list.mockResolvedValue({
+      items: [warehouse],
+      page: 1,
+      pageSize: 200,
+      total: 1,
+      totalPages: 1,
+    })
+  })
+
+  it('领料数量不能超过未领数量', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    await wrapper.find('input[placeholder="0.000000"]').setValue('40.000001')
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('本次领料不能大于未领数量')
+    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+  })
+
+  it('报工累计不能超过计划数量', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionWorkReportView,
+      '/production/work-orders/9/reports',
+      ['production:work-order:view', 'production:report:view', 'production:report:create'],
+    )
+
+    await wrapper.find('input[name="production-qualified-quantity"]').setValue('50.000001')
+    await wrapper.find('input[name="production-defective-quantity"]').setValue('0')
+    await submitButton(wrapper, '保存报工单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('累计报工不能超过计划数量')
+    expect(productionApiMock.reports.create).not.toHaveBeenCalled()
+  })
+
+  it('入库数量不能超过累计合格报工减已入库数量', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    await wrapper.find('input[name="production-receipt-quantity"]').setValue('10.000001')
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('入库数量不能超过累计合格报工减已入库数量')
+    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+  })
+
+  it('后端错误消息可见，提交期间按钮禁用，失败后恢复', async () => {
+    const pending = deferred<unknown>()
+    productionApiMock.reports.create.mockReturnValueOnce(pending.promise)
+    const { wrapper } = await mountExecution(
+      ProductionWorkReportView,
+      '/production/work-orders/9/reports',
+      ['production:work-order:view', 'production:report:view', 'production:report:create'],
+    )
+
+    await wrapper.find('input[name="production-qualified-quantity"]').setValue('10')
+    await submitButton(wrapper, '保存报工单').trigger('click')
+    await nextTick()
+
+    expect(isDisabled(submitButton(wrapper, '保存报工单'))).toBe(true)
+
+    pending.reject(new Error('累计报工超过计划数量'))
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('累计报工超过计划数量')
+    expect(isDisabled(submitButton(wrapper, '保存报工单'))).toBe(false)
+  })
+
+  it('无生产领料创建权限时禁用表单并阻止提交', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view'],
+    )
+
+    expect(wrapper.text()).toContain('缺少生产领料创建权限')
+    expect(isDisabled(submitButton(wrapper, '保存领料单'))).toBe(true)
+
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+  })
+
+  it('无生产报工创建权限时禁用表单并阻止提交', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionWorkReportView,
+      '/production/work-orders/9/reports',
+      ['production:work-order:view', 'production:report:view'],
+    )
+
+    expect(wrapper.text()).toContain('缺少生产报工创建权限')
+    expect(isDisabled(submitButton(wrapper, '保存报工单'))).toBe(true)
+
+    await submitButton(wrapper, '保存报工单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.reports.create).not.toHaveBeenCalled()
+  })
+
+  it('无完工入库创建权限时禁用表单并阻止提交', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view'],
+    )
+
+    expect(wrapper.text()).toContain('缺少完工入库创建权限')
+    expect(isDisabled(submitButton(wrapper, '保存入库单'))).toBe(true)
+
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+  })
+})

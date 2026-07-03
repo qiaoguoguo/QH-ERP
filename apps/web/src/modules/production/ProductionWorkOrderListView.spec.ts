@@ -1,0 +1,249 @@
+import ElementPlus from 'element-plus'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import type { PageResult } from '../../shared/api/accountPermissionApi'
+import type { ProductionWorkOrderSummaryRecord } from '../../shared/api/productionApi'
+import { useAuthStore } from '../../stores/authStore'
+import ProductionWorkOrderListView from './ProductionWorkOrderListView.vue'
+
+const productionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    list: vi.fn(),
+    release: vi.fn(),
+    complete: vi.fn(),
+    cancel: vi.fn(),
+  },
+}))
+
+vi.mock('../../shared/api/productionApi', () => ({
+  productionApi: productionApiMock,
+}))
+
+const draftWorkOrder: ProductionWorkOrderSummaryRecord = {
+  id: 1,
+  workOrderNo: 'WO-DRAFT-001',
+  productMaterialId: 10,
+  productMaterialCode: 'FG-001',
+  productMaterialName: '成品 A',
+  bomId: 20,
+  bomCode: 'BOM-FG-001',
+  bomVersionCode: 'V1',
+  plannedQuantity: 100,
+  reportedQuantity: 0,
+  qualifiedQuantity: 0,
+  defectiveQuantity: 0,
+  receivedQuantity: 0,
+  issueWarehouseId: 30,
+  issueWarehouseName: '原料仓',
+  receiptWarehouseId: 31,
+  receiptWarehouseName: '成品仓',
+  plannedStartDate: '2026-07-03',
+  plannedFinishDate: '2026-07-10',
+  status: 'DRAFT',
+  remark: null,
+  createdByName: '管理员',
+  createdAt: '2026-07-03T08:00:00+08:00',
+  updatedAt: '2026-07-03T09:00:00+08:00',
+}
+
+const releasedWorkOrder: ProductionWorkOrderSummaryRecord = {
+  ...draftWorkOrder,
+  id: 2,
+  workOrderNo: 'WO-REL-001',
+  status: 'RELEASED',
+  reportedQuantity: 20,
+}
+
+const inProgressWorkOrder: ProductionWorkOrderSummaryRecord = {
+  ...draftWorkOrder,
+  id: 3,
+  workOrderNo: 'WO-PROG-001',
+  status: 'IN_PROGRESS',
+  reportedQuantity: 40,
+  receivedQuantity: 10,
+}
+
+const completedWorkOrder: ProductionWorkOrderSummaryRecord = {
+  ...draftWorkOrder,
+  id: 4,
+  workOrderNo: 'WO-DONE-001',
+  status: 'COMPLETED',
+  reportedQuantity: 100,
+  receivedQuantity: 100,
+}
+
+const workOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
+  items: [draftWorkOrder, releasedWorkOrder, inProgressWorkOrder, completedWorkOrder],
+  page: 1,
+  pageSize: 20,
+  total: 4,
+  totalPages: 1,
+}
+
+const emptyWorkOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
+  items: [],
+  page: 1,
+  pageSize: 20,
+  total: 0,
+  totalPages: 0,
+}
+
+async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
+  const select = wrapper.findAllComponents({ name: 'ElSelect' })[index] as VueWrapper | undefined
+  expect(select?.exists()).toBe(true)
+  select?.vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
+
+function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
+  return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
+}
+
+async function mountList(permissions = [
+  'production:work-order:view',
+  'production:work-order:create',
+  'production:work-order:update',
+  'production:work-order:release',
+  'production:work-order:complete',
+  'production:work-order:cancel',
+  'production:issue:create',
+  'production:report:create',
+  'production:receipt:create',
+]) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setSession({
+    user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+    menus: [],
+    permissions,
+  })
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/production/work-orders', name: 'production-work-orders', component: ProductionWorkOrderListView },
+      { path: '/production/work-orders/create', name: 'production-work-order-create', component: { render: () => null } },
+      { path: '/production/work-orders/:id', name: 'production-work-order-detail', component: { render: () => null } },
+      { path: '/production/work-orders/:id/edit', name: 'production-work-order-edit', component: { render: () => null } },
+      { path: '/production/work-orders/:id/material-issues', name: 'production-work-order-material-issues', component: { render: () => null } },
+      { path: '/production/work-orders/:id/reports', name: 'production-work-order-reports', component: { render: () => null } },
+      { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component: { render: () => null } },
+    ],
+  })
+  await router.push('/production/work-orders')
+  await router.isReady()
+  const wrapper = mount(ProductionWorkOrderListView, {
+    global: {
+      plugins: [pinia, router, ElementPlus],
+    },
+  })
+  await flushPromises()
+  return { wrapper, router }
+}
+
+describe('生产工单列表页', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    productionApiMock.workOrders.list.mockResolvedValue(workOrderPage)
+    productionApiMock.workOrders.release.mockResolvedValue(releasedWorkOrder)
+    productionApiMock.workOrders.complete.mockResolvedValue(completedWorkOrder)
+    productionApiMock.workOrders.cancel.mockResolvedValue({ ...draftWorkOrder, status: 'CANCELLED' })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('初始加载生产工单并使用默认分页参数', async () => {
+    const { wrapper } = await mountList()
+
+    expect(productionApiMock.workOrders.list).toHaveBeenCalledWith({
+      keyword: '',
+      status: undefined,
+      dateFrom: '',
+      dateTo: '',
+      page: 1,
+      pageSize: 20,
+    })
+    expect(wrapper.text()).toContain('WO-DRAFT-001')
+    expect(wrapper.text()).toContain('FG-001 成品 A')
+    expect(wrapper.text()).toContain('BOM-FG-001 / V1')
+    expect(wrapper.text()).toContain('100')
+    expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.find('[data-test="create-production-work-order"]').exists()).toBe(true)
+  })
+
+  it('支持按关键词、状态和计划日期筛选并重置', async () => {
+    const { wrapper } = await mountList()
+
+    await wrapper.find('input[name="production-work-order-keyword"]').setValue('WO')
+    await setSelectValue(wrapper, 0, 'RELEASED')
+    await wrapper.find('input[name="production-date-from"]').setValue('2026-07-01')
+    await wrapper.find('input[name="production-date-to"]').setValue('2026-07-31')
+    await wrapper.find('[data-test="search-production-work-orders"]').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.workOrders.list).toHaveBeenLastCalledWith({
+      keyword: 'WO',
+      status: 'RELEASED',
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-31',
+      page: 1,
+      pageSize: 20,
+    })
+
+    await wrapper.find('[data-test="reset-production-work-orders"]').trigger('click')
+    await flushPromises()
+    expect(productionApiMock.workOrders.list).toHaveBeenLastCalledWith({
+      keyword: '',
+      status: undefined,
+      dateFrom: '',
+      dateTo: '',
+      page: 1,
+      pageSize: 20,
+    })
+  })
+
+  it('无数据和加载失败时显示明确状态', async () => {
+    productionApiMock.workOrders.list.mockResolvedValueOnce(emptyWorkOrderPage)
+    const { wrapper } = await mountList()
+
+    expect(wrapper.text()).toContain('暂无生产工单')
+
+    productionApiMock.workOrders.list.mockRejectedValueOnce(new Error('生产工单接口异常'))
+    await wrapper.find('[data-test="search-production-work-orders"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('生产工单接口异常')
+    expect(wrapper.text()).toContain('暂无生产工单')
+  })
+
+  it('只读权限仅展示查看入口，不展示写操作入口', async () => {
+    const { wrapper } = await mountList(['production:work-order:view'])
+
+    expect(wrapper.find('[data-test="create-production-work-order"]').exists()).toBe(false)
+    expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
+    expect(buttonsByText(wrapper, '编辑')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '发布')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '领料')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '报工')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '完成')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '取消')).toHaveLength(0)
+  })
+
+  it('按工单状态展示行操作', async () => {
+    const { wrapper } = await mountList()
+
+    expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
+    expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '发布')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '领料')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '报工')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '完成')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
+  })
+})
