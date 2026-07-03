@@ -175,3 +175,12 @@
 - 验证：文档基线提交前执行占位扫描、范围排除项检查和 `git diff --check`。
 - 视觉分析：本任务不启动服务，视觉分析在阶段浏览器验收任务中执行并保存截图证据到 `docs/testing/production-execution-visual-audit/`。
 - 结论：文档基线完成后，后续任务以本任务文档、接口契约、测试计划和设计规格作为实施与验收依据。
+
+### 2026-07-03 生产执行任务 7 自动化验证记录
+
+- 后端全量测试：按计划使用 Docker 命令执行 `docker run --rm -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal -v "${PWD}:/workspace" -v /var/run/docker.sock:/var/run/docker.sock -w /workspace/apps/api maven:3.9-eclipse-temurin-21 mvn -q test`，退出码为 0；未使用本地 Java 21 替代。Surefire 报告汇总为 13 个测试套件、84 个用例、0 失败、0 错误、0 跳过。
+- Testcontainers 遗留容器检查：执行 `docker ps -a --filter "label=org.testcontainers" --format "{{.ID}} {{.Image}} {{.Status}}"`，退出码为 0，无输出，未发现遗留 Testcontainers 容器。
+- 前端全量测试：在 `apps/web` 执行 `npm test`，退出码为 0，27 个测试文件、166 个用例通过。
+- 前端构建：在 `apps/web` 执行 `npm run build`，退出码为 0，`vue-tsc --noEmit && vite build` 成功，Vite 构建完成。
+- 空白检查：在仓库根目录执行 `git diff --check`，退出码为 0；验证执行前无输出，文档更新后复查仅出现两个文档的 LF/CRLF 工作区提示，无空白错误。
+- 边界说明：本记录只覆盖任务 7 自动化验证与代码质量检查；本地部署、浏览器功能验收和视觉分析尚未进入，后续按任务 8/9 执行并另行记录。

@@ -146,3 +146,9 @@
 
 - 2026-07-03 建立生产执行基础测试计划，作为后续实施和验收依据。
 - 自动化测试、本地部署、浏览器验收和视觉分析结果在阶段实现后补充。
+- 2026-07-03 生产执行任务 7 自动化验证：后端按计划使用 Docker 执行 `docker run --rm -e TESTCONTAINERS_RYUK_DISABLED=true -e TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal -v "${PWD}:/workspace" -v /var/run/docker.sock:/var/run/docker.sock -w /workspace/apps/api maven:3.9-eclipse-temurin-21 mvn -q test`，退出码为 0；未使用本地 Java 21 替代。Surefire 汇总 13 个测试套件、84 个用例、0 失败、0 错误、0 跳过。
+- 2026-07-03 Testcontainers 遗留容器检查：执行 `docker ps -a --filter "label=org.testcontainers" --format "{{.ID}} {{.Image}} {{.Status}}"`，退出码为 0，无输出，未发现遗留 Testcontainers 容器。
+- 2026-07-03 前端自动化验证：在 `apps/web` 执行 `npm test`，退出码为 0，27 个测试文件、166 个用例通过。
+- 2026-07-03 前端构建验证：在 `apps/web` 执行 `npm run build`，退出码为 0，`vue-tsc --noEmit && vite build` 成功。
+- 2026-07-03 空白检查：在仓库根目录执行 `git diff --check`，退出码为 0；验证执行前无输出，文档更新后复查仅出现两个文档的 LF/CRLF 工作区提示，无空白错误。
+- 2026-07-03 阶段边界：当前仍未进入本地部署、浏览器功能验收和视觉分析；这些内容属于后续任务 8/9，需在启动服务、浏览器操作和截图分析完成后补充结果。
