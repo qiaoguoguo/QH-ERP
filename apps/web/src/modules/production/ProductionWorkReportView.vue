@@ -7,6 +7,7 @@ import {
   type ProductionWorkReportPayload,
   type ResourceId,
 } from '../../shared/api/productionApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
@@ -18,6 +19,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -31,6 +33,8 @@ const form = reactive({
 })
 
 const executable = computed(() => workOrder.value?.status === 'RELEASED' || workOrder.value?.status === 'IN_PROGRESS')
+const canCreateReport = computed(() => authStore.hasPermission('production:report:create'))
+const canSubmitReport = computed(() => executable.value && canCreateReport.value)
 const remainingReportQuantity = computed(() => {
   if (!workOrder.value) {
     return 0
@@ -54,6 +58,10 @@ async function loadWorkOrder() {
 function validateForm(): ProductionWorkReportPayload | null {
   if (!workOrder.value) {
     formError.value = '生产工单未加载'
+    return null
+  }
+  if (!canCreateReport.value) {
+    formError.value = '缺少生产报工创建权限'
     return null
   }
   if (!executable.value) {
@@ -98,6 +106,10 @@ async function submitReport() {
   if (!workOrder.value || formSubmitting.value) {
     return
   }
+  if (!canCreateReport.value) {
+    formError.value = '缺少生产报工创建权限'
+    return
+  }
   const payload = validateForm()
   if (!payload) {
     return
@@ -126,6 +138,7 @@ onMounted(loadWorkOrder)
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-alert v-if="loading" class="state-alert" type="info" title="生产报工页面加载中" :closable="false" />
+      <el-alert v-if="workOrder && !canCreateReport" class="state-alert" type="warning" title="缺少生产报工创建权限，无法保存报工单" :closable="false" />
       <el-alert v-if="workOrder && !executable" class="state-alert" type="warning" title="当前工单状态不可报工" :closable="false" />
     </template>
 
@@ -152,24 +165,30 @@ onMounted(loadWorkOrder)
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
           <el-form-item label="报工日期">
-            <el-input v-model="form.businessDate" name="production-report-date" placeholder="YYYY-MM-DD" :disabled="!executable" />
+            <el-input v-model="form.businessDate" name="production-report-date" placeholder="YYYY-MM-DD" :disabled="!canSubmitReport" />
           </el-form-item>
           <el-form-item label="合格数量">
-            <el-input v-model="form.qualifiedQuantity" name="production-qualified-quantity" placeholder="0.000000" :disabled="!executable" />
+            <el-input v-model="form.qualifiedQuantity" name="production-qualified-quantity" placeholder="0.000000" :disabled="!canSubmitReport" />
           </el-form-item>
           <el-form-item label="不良数量">
-            <el-input v-model="form.defectiveQuantity" name="production-defective-quantity" placeholder="0.000000" :disabled="!executable" />
+            <el-input v-model="form.defectiveQuantity" name="production-defective-quantity" placeholder="0.000000" :disabled="!canSubmitReport" />
           </el-form-item>
         </div>
         <el-form-item label="备注">
-          <el-input v-model="form.remark" name="production-report-remark" type="textarea" :rows="3" placeholder="可选" :disabled="!executable" />
+          <el-input v-model="form.remark" name="production-report-remark" type="textarea" :rows="3" placeholder="可选" :disabled="!canSubmitReport" />
         </el-form-item>
       </el-form>
     </div>
 
     <div class="form-footer">
       <el-button @click="cancel">取消</el-button>
-      <el-button type="primary" :loading="formSubmitting" :disabled="formSubmitting || !executable" @click="submitReport">
+      <el-button
+        type="primary"
+        :loading="formSubmitting"
+        :disabled="formSubmitting || !canSubmitReport"
+        :title="!canCreateReport ? '缺少生产报工创建权限' : ''"
+        @click="submitReport"
+      >
         保存报工单
       </el-button>
     </div>

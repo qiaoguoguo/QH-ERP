@@ -8,6 +8,7 @@ import {
   type ProductionWorkOrderDetailRecord,
   type ResourceId,
 } from '../../shared/api/productionApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
@@ -20,6 +21,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
 const warehouses = ref<WarehouseRecord[]>([])
 const loading = ref(true)
@@ -35,6 +37,8 @@ const form = reactive({
 })
 
 const executable = computed(() => workOrder.value?.status === 'RELEASED' || workOrder.value?.status === 'IN_PROGRESS')
+const canCreateReceipt = computed(() => authStore.hasPermission('production:receipt:create'))
+const canSubmitReceipt = computed(() => executable.value && canCreateReceipt.value)
 const remainingReceiptQuantity = computed(() => {
   if (!workOrder.value) {
     return 0
@@ -94,6 +98,10 @@ function validateForm(): ProductionCompletionReceiptPayload | null {
     formError.value = '生产工单未加载'
     return null
   }
+  if (!canCreateReceipt.value) {
+    formError.value = '缺少完工入库创建权限'
+    return null
+  }
   if (!executable.value) {
     formError.value = '仅已发布或生产中的工单可完工入库'
     return null
@@ -130,6 +138,10 @@ async function submitReceipt() {
   if (!workOrder.value || formSubmitting.value) {
     return
   }
+  if (!canCreateReceipt.value) {
+    formError.value = '缺少完工入库创建权限'
+    return
+  }
   const payload = validateForm()
   if (!payload) {
     return
@@ -161,6 +173,7 @@ onMounted(() => {
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="完工入库页面加载中" :closable="false" />
+      <el-alert v-if="workOrder && !canCreateReceipt" class="state-alert" type="warning" title="缺少完工入库创建权限，无法保存入库单" :closable="false" />
       <el-alert v-if="workOrder && !executable" class="state-alert" type="warning" title="当前工单状态不可完工入库" :closable="false" />
     </template>
 
@@ -187,26 +200,32 @@ onMounted(() => {
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
           <el-form-item label="入库日期">
-            <el-input v-model="form.businessDate" name="production-receipt-date" placeholder="YYYY-MM-DD" :disabled="!executable" />
+            <el-input v-model="form.businessDate" name="production-receipt-date" placeholder="YYYY-MM-DD" :disabled="!canSubmitReceipt" />
           </el-form-item>
           <el-form-item label="入库仓库">
-            <el-select v-model="form.receiptWarehouseId" filterable placeholder="请选择入库仓库" style="width: 100%" :disabled="!executable">
+            <el-select v-model="form.receiptWarehouseId" filterable placeholder="请选择入库仓库" style="width: 100%" :disabled="!canSubmitReceipt">
               <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.name" :value="warehouse.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="入库数量">
-            <el-input v-model="form.quantity" name="production-receipt-quantity" placeholder="0.000000" :disabled="!executable" />
+            <el-input v-model="form.quantity" name="production-receipt-quantity" placeholder="0.000000" :disabled="!canSubmitReceipt" />
           </el-form-item>
         </div>
         <el-form-item label="备注">
-          <el-input v-model="form.remark" name="production-receipt-remark" type="textarea" :rows="3" placeholder="可选" :disabled="!executable" />
+          <el-input v-model="form.remark" name="production-receipt-remark" type="textarea" :rows="3" placeholder="可选" :disabled="!canSubmitReceipt" />
         </el-form-item>
       </el-form>
     </div>
 
     <div class="form-footer">
       <el-button @click="cancel">取消</el-button>
-      <el-button type="primary" :loading="formSubmitting" :disabled="formSubmitting || !executable" @click="submitReceipt">
+      <el-button
+        type="primary"
+        :loading="formSubmitting"
+        :disabled="formSubmitting || !canSubmitReceipt"
+        :title="!canCreateReceipt ? '缺少完工入库创建权限' : ''"
+        @click="submitReceipt"
+      >
         保存入库单
       </el-button>
     </div>

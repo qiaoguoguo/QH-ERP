@@ -9,6 +9,7 @@ import {
   type ProductionWorkOrderMaterialRecord,
   type ResourceId,
 } from '../../shared/api/productionApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
@@ -29,6 +30,7 @@ interface IssueLineDraft {
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
 const warehouses = ref<WarehouseRecord[]>([])
 const lines = ref<IssueLineDraft[]>([])
@@ -45,6 +47,8 @@ const form = reactive({
 })
 
 const executable = computed(() => workOrder.value?.status === 'RELEASED' || workOrder.value?.status === 'IN_PROGRESS')
+const canCreateIssue = computed(() => authStore.hasPermission('production:issue:create'))
+const canSubmitIssue = computed(() => executable.value && canCreateIssue.value)
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -109,6 +113,10 @@ function validateForm(): ProductionMaterialIssuePayload | null {
     formError.value = '生产工单未加载'
     return null
   }
+  if (!canCreateIssue.value) {
+    formError.value = '缺少生产领料创建权限'
+    return null
+  }
   if (!executable.value) {
     formError.value = '仅已发布或生产中的工单可领料'
     return null
@@ -171,6 +179,10 @@ async function submitIssue() {
   if (!workOrder.value || formSubmitting.value) {
     return
   }
+  if (!canCreateIssue.value) {
+    formError.value = '缺少生产领料创建权限'
+    return
+  }
   const payload = validateForm()
   if (!payload) {
     return
@@ -202,6 +214,7 @@ onMounted(() => {
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="生产领料页面加载中" :closable="false" />
+      <el-alert v-if="workOrder && !canCreateIssue" class="state-alert" type="warning" title="缺少生产领料创建权限，无法保存领料单" :closable="false" />
       <el-alert v-if="workOrder && !executable" class="state-alert" type="warning" title="当前工单状态不可领料" :closable="false" />
     </template>
 
@@ -228,13 +241,13 @@ onMounted(() => {
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
           <el-form-item label="领料日期">
-            <el-input v-model="form.businessDate" name="production-issue-date" placeholder="YYYY-MM-DD" :disabled="!executable" />
+            <el-input v-model="form.businessDate" name="production-issue-date" placeholder="YYYY-MM-DD" :disabled="!canSubmitIssue" />
           </el-form-item>
           <el-form-item label="原因">
-            <el-input v-model="form.reason" name="production-issue-reason" :disabled="!executable" />
+            <el-input v-model="form.reason" name="production-issue-reason" :disabled="!canSubmitIssue" />
           </el-form-item>
           <el-form-item label="备注">
-            <el-input v-model="form.remark" name="production-issue-remark" placeholder="可选" :disabled="!executable" />
+            <el-input v-model="form.remark" name="production-issue-remark" placeholder="可选" :disabled="!canSubmitIssue" />
           </el-form-item>
         </div>
       </el-form>
@@ -268,7 +281,7 @@ onMounted(() => {
             <template #default="{ row }">
               <el-input
                 v-model="row.quantity"
-                :disabled="!executable || Number(materialForLine(row)?.remainingQuantity ?? 0) <= 0"
+                :disabled="!canSubmitIssue || Number(materialForLine(row)?.remainingQuantity ?? 0) <= 0"
                 placeholder="0.000000"
               />
               <div v-if="lineErrors[row.lineNo]" class="line-error">{{ lineErrors[row.lineNo] }}</div>
@@ -276,14 +289,14 @@ onMounted(() => {
           </el-table-column>
           <el-table-column label="仓库" min-width="170">
             <template #default="{ row }">
-              <el-select v-model="row.warehouseId" filterable placeholder="仓库" style="width: 100%" :disabled="!executable">
+              <el-select v-model="row.warehouseId" filterable placeholder="仓库" style="width: 100%" :disabled="!canSubmitIssue">
                 <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.name" :value="warehouse.id" />
               </el-select>
             </template>
           </el-table-column>
           <el-table-column label="备注" min-width="150">
             <template #default="{ row }">
-              <el-input v-model="row.remark" placeholder="可选" :disabled="!executable" />
+              <el-input v-model="row.remark" placeholder="可选" :disabled="!canSubmitIssue" />
             </template>
           </el-table-column>
         </el-table>
@@ -292,7 +305,13 @@ onMounted(() => {
 
     <div class="form-footer">
       <el-button @click="cancel">取消</el-button>
-      <el-button type="primary" :loading="formSubmitting" :disabled="formSubmitting || !executable" @click="submitIssue">
+      <el-button
+        type="primary"
+        :loading="formSubmitting"
+        :disabled="formSubmitting || !canSubmitIssue"
+        :title="!canCreateIssue ? '缺少生产领料创建权限' : ''"
+        @click="submitIssue"
+      >
         保存领料单
       </el-button>
     </div>
