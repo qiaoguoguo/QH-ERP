@@ -16,6 +16,7 @@
 - [BOM 管理任务记录](tasks/006-bom-management-foundation.md)
 - [仓库与库存基础任务记录](tasks/007-inventory-management-foundation.md)
 - [生产执行基础任务记录](tasks/008-production-execution-foundation.md)
+- [成本归集基础任务记录](tasks/009-cost-collection-foundation.md)
 
 ## 产品
 
@@ -39,6 +40,7 @@
 - [BOM 管理接口契约](api/bom-management-api.md)
 - [仓库与库存基础接口契约](api/inventory-management-api.md)
 - [生产执行基础接口契约](api/production-execution-api.md)
+- [成本归集基础接口契约](api/cost-collection-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -46,6 +48,7 @@
 - [UI 与交互基线](ui/ui-baseline.md)
 - [仓库与库存基础设计规格](superpowers/specs/2026-07-03-inventory-management-design.md)
 - [生产执行基础设计规格](superpowers/specs/2026-07-03-production-execution-design.md)
+- [成本归集基础设计规格](superpowers/specs/2026-07-03-cost-collection-design.md)
 
 ## 测试与验收
 
@@ -56,6 +59,7 @@
 - [BOM 管理测试计划](testing/bom-management-test-plan.md)
 - [仓库与库存基础测试计划](testing/inventory-management-test-plan.md)
 - [生产执行基础测试计划](testing/production-execution-test-plan.md)
+- [成本归集基础测试计划](testing/cost-collection-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
