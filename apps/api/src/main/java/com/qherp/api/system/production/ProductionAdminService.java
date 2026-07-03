@@ -219,6 +219,9 @@ public class ProductionAdminService {
 		if (hasPostedBusiness(id)) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_WORK_ORDER_HAS_POSTED_BUSINESS);
 		}
+		if (hasDraftBusiness(id)) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_WORK_ORDER_STATUS_INVALID);
+		}
 		if (workOrder.status() != ProductionWorkOrderStatus.DRAFT
 				&& workOrder.status() != ProductionWorkOrderStatus.RELEASED) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_WORK_ORDER_STATUS_INVALID);
@@ -310,12 +313,12 @@ public class ProductionAdminService {
 	public MaterialIssueDetailResponse postMaterialIssue(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		try {
+			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
+			requireExecutableWorkOrder(workOrder);
 			ProductionDocumentRow issue = lockMaterialIssue(workOrderId, id).orElseThrow(this::issueNotFound);
 			if (issue.status() != ProductionDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 			}
-			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
-			requireExecutableWorkOrder(workOrder);
 			List<MaterialIssueLineRow> lines = materialIssueLineRows(id);
 			if (lines.isEmpty()) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EMPTY_LINES);
@@ -407,12 +410,12 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkReportResponse postReport(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
+		requireExecutableWorkOrder(workOrder);
 		ProductionDocumentRow report = lockWorkReport(workOrderId, id).orElseThrow(this::reportNotFound);
 		if (report.status() != ProductionDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 		}
-		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
-		requireExecutableWorkOrder(workOrder);
 		WorkReportResponse detail = report(workOrderId, id);
 		BigDecimal total = detail.qualifiedQuantity().add(detail.defectiveQuantity());
 		if (workOrder.reportedQuantity().add(total).compareTo(workOrder.plannedQuantity()) > 0) {
@@ -506,12 +509,12 @@ public class ProductionAdminService {
 	public CompletionReceiptResponse postCompletionReceipt(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		try {
+			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
+			requireExecutableWorkOrder(workOrder);
 			ProductionDocumentRow receipt = lockCompletionReceipt(workOrderId, id).orElseThrow(this::receiptNotFound);
 			if (receipt.status() != ProductionDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 			}
-			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
-			requireExecutableWorkOrder(workOrder);
 			CompletionReceiptResponse detail = completionReceipt(workOrderId, id);
 			validateEnabledWarehouse(detail.receiptWarehouseId());
 			if (workOrder.receivedQuantity().add(detail.quantity()).compareTo(workOrder.qualifiedQuantity()) > 0) {
