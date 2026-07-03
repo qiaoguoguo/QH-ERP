@@ -551,6 +551,56 @@ describe('生产工单详情页', () => {
     expect(wrapper.find('[data-test="edit-work-order-cost-record"]').exists()).toBe(true)
   })
 
+  it('成本只读权限展示成本分区但隐藏创建和编辑入口', async () => {
+    const { wrapper } = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'cost:record:view',
+    ])
+
+    expect(costCollectionApiMock.workOrders.summary).toHaveBeenCalledWith(9)
+    expect(wrapper.text()).toContain('成本归集记录')
+    expect(wrapper.text()).toContain('COST-001')
+    expect(wrapper.text()).not.toContain('新增手工成本')
+    expect(wrapper.find('[data-test="edit-work-order-cost-record"]').exists()).toBe(false)
+  })
+
+  it('成本分区创建和编辑入口进入对应成本页面', async () => {
+    const created = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'cost:record:view',
+      'cost:record:create',
+      'cost:record:update',
+    ])
+
+    await buttonsByText(created.wrapper, '新增手工成本')[0].trigger('click')
+    await flushPromises()
+    expect(created.router.currentRoute.value.name).toBe('cost-record-create')
+    expect(created.router.currentRoute.value.query.workOrderId).toBe('9')
+
+    const edited = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'cost:record:view',
+      'cost:record:update',
+    ])
+    await edited.wrapper.find('[data-test="edit-work-order-cost-record"]').trigger('click')
+    await flushPromises()
+    expect(edited.router.currentRoute.value.name).toBe('cost-record-edit')
+    expect(edited.router.currentRoute.value.params.id).toBe('702')
+  })
+
+  it('成本汇总加载失败不影响工单详情展示', async () => {
+    costCollectionApiMock.workOrders.summary.mockRejectedValueOnce(new Error('成本汇总加载失败'))
+    const { wrapper } = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'cost:record:view',
+    ])
+
+    expect(wrapper.text()).toContain('WO-20260703-001')
+    expect(wrapper.text()).toContain('BOM 用料快照')
+    expect(wrapper.text()).toContain('成本归集记录')
+    expect(wrapper.text()).toContain('成本汇总加载失败')
+  })
+
   it('无成本查看权限时不请求也不展示成本分区', async () => {
     const { wrapper } = await mountDetail(detailRecord, ['production:work-order:view'])
 

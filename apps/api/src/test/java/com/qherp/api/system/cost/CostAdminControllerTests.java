@@ -1,6 +1,10 @@
 package com.qherp.api.system.cost;
 
+import com.qherp.api.common.ApiErrorCode;
+import com.qherp.api.common.BusinessException;
+import com.qherp.api.security.CurrentUser;
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.user.SystemUserStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -12,6 +16,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -24,6 +29,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = "qherp.test.context=cost-admin")
@@ -43,6 +49,9 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private CostRecordWriter costRecordWriter;
 
 	@Test
 	void materialIssuePostingCreatesMaterialCostRecord() throws Exception {
@@ -164,6 +173,205 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 		assertError(updateCostRecord(admin, costRecordId, overflowingPayload), HttpStatus.BAD_REQUEST,
 				"COST_AMOUNT_INVALID");
+	}
+
+	@Test
+	void manualCostRecordRejectsMissingOrCancelledWorkOrder() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long cancelledWorkOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		assertOk(cancelWorkOrder(admin, cancelledWorkOrderId));
+
+		assertError(createCostRecord(admin, manualCostPayload(999_999_991L, "OTHER", "MANUAL_AMOUNT", null, null,
+				"1.000000", "不存在工单成本")), HttpStatus.NOT_FOUND, "COST_WORK_ORDER_NOT_FOUND");
+		assertError(createCostRecord(admin, manualCostPayload(cancelledWorkOrderId, "OTHER", "MANUAL_AMOUNT", null,
+				null, "1.000000", "已取消工单成本")), HttpStatus.CONFLICT, "COST_WORK_ORDER_STATUS_INVALID");
+	}
+
+	@Test
+	void manualCostRecordRejectsInvalidAmountQuantityAndUnitPrice() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+
+		for (String amount : List.of("-1.000000", "1.0000001", "1000000000000.000000")) {
+			assertError(createCostRecord(admin, manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null, null,
+					amount, "非法金额" + amount)), HttpStatus.BAD_REQUEST, "COST_AMOUNT_INVALID");
+		}
+
+		for (String quantity : List.of("0.000000", "-1.000000", "1.0000001", "1000000000000.000000")) {
+			assertError(createCostRecord(admin, manualCostPayload(workOrderId, "OTHER",
+					"MANUAL_UNIT_PRICE_QUANTITY", quantity, "1.000000", null, "非法数量" + quantity)),
+					HttpStatus.BAD_REQUEST, "COST_QUANTITY_INVALID");
+		}
+
+		for (String unitPrice : List.of("-1.000000", "1.0000001", "1000000000000.000000")) {
+			assertError(createCostRecord(admin, manualCostPayload(workOrderId, "OTHER",
+					"MANUAL_UNIT_PRICE_QUANTITY", "1.000000", unitPrice, null, "非法单价" + unitPrice)),
+					HttpStatus.BAD_REQUEST, "COST_AMOUNT_INVALID");
+		}
+	}
+
+	@Test
+	void manualCostRecordCanBeUpdatedWithoutChangingWorkOrder() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		ResponseEntity<String> created = createCostRecord(admin,
+				manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null, null, "12.000000", "待编辑成本"));
+		assertOk(created);
+		long costRecordId = data(created).get("id").longValue();
+
+		ResponseEntity<String> updated = updateCostRecord(admin, costRecordId, manualCostPayload(workOrderId,
+				"MANUFACTURING_OVERHEAD", "MANUAL_UNIT_PRICE_QUANTITY", "2.000000", "7.500000", null,
+				"更新为单价数量"));
+
+		assertOk(updated);
+		JsonNode cost = data(updated);
+		assertThat(cost.get("id").longValue()).isEqualTo(costRecordId);
+		assertThat(cost.get("workOrderId").longValue()).isEqualTo(workOrderId);
+		assertThat(cost.get("sourceType").asText()).isEqualTo("MANUAL_ENTRY");
+		assertThat(cost.get("costType").asText()).isEqualTo("MANUFACTURING_OVERHEAD");
+		assertThat(cost.get("basisType").asText()).isEqualTo("MANUAL_UNIT_PRICE_QUANTITY");
+		assertDecimal(cost, "quantity", "2.000000");
+		assertDecimal(cost, "unitPrice", "7.500000");
+		assertDecimal(cost, "amount", "15.000000");
+		assertThat(auditCount("MFG_COST_RECORD_UPDATE", "MFG_COST_RECORD")).isGreaterThanOrEqualTo(1L);
+	}
+
+	@Test
+	void costRecordPermissionsSeparateViewCreateAndUpdate() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		ResponseEntity<String> created = createCostRecord(admin,
+				manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null, null, "12.000000", "权限隔离成本"));
+		assertOk(created);
+		long costRecordId = data(created).get("id").longValue();
+
+		AuthenticatedSession noPermission = login(createUserWithRoles("cost-no-permission", List.of(), admin),
+				ADMIN_PASSWORD);
+		assertError(get("/api/admin/cost/records", noPermission), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(get("/api/admin/cost/records/" + costRecordId, noPermission), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
+		assertError(get("/api/admin/cost/work-orders/" + workOrderId + "/summary", noPermission),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(createCostRecord(noPermission, manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null,
+				null, "1.000000", "无权限创建")), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(updateCostRecord(noPermission, costRecordId, manualCostPayload(workOrderId, "OTHER",
+				"MANUAL_AMOUNT", null, null, "2.000000", "无权限更新")), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		long viewRoleId = createRole("COST_VIEW_ONLY", "成本只读角色", admin);
+		assignPermissions(viewRoleId, List.of(permissionId("cost:record:view")), admin);
+		AuthenticatedSession readonly = login(createUserWithRoles("cost-readonly", List.of(viewRoleId), admin),
+				ADMIN_PASSWORD);
+		assertOk(get("/api/admin/cost/records", readonly));
+		assertOk(get("/api/admin/cost/records/" + costRecordId, readonly));
+		assertOk(get("/api/admin/cost/work-orders/" + workOrderId + "/summary", readonly));
+		assertError(createCostRecord(readonly, manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null, null,
+				"1.000000", "只读创建")), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(updateCostRecord(readonly, costRecordId, manualCostPayload(workOrderId, "OTHER",
+				"MANUAL_AMOUNT", null, null, "2.000000", "只读更新")), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+	}
+
+	@Test
+	void costManagerCanMaintainCostRecordsButCannotWriteProductionOrInventory() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		long costRoleId = createRole("COST_MANAGER", "成本管理角色", admin);
+		assignPermissions(costRoleId,
+				List.of(permissionId("cost:record:view"), permissionId("cost:record:create"),
+						permissionId("cost:record:update")),
+				admin);
+		AuthenticatedSession costManager = login(createUserWithRoles("cost-manager", List.of(costRoleId), admin),
+				ADMIN_PASSWORD);
+
+		ResponseEntity<String> created = createCostRecord(costManager, manualCostPayload(workOrderId, "OTHER",
+				"MANUAL_AMOUNT", null, null, "30.000000", "成本角色创建"));
+		assertOk(created);
+		long costRecordId = data(created).get("id").longValue();
+		assertOk(get("/api/admin/cost/records/" + costRecordId, costManager));
+		assertOk(updateCostRecord(costManager, costRecordId, manualCostPayload(workOrderId, "OTHER",
+				"MANUAL_AMOUNT", null, null, "35.000000", "成本角色更新")));
+
+		assertError(exchange(HttpMethod.POST, "/api/admin/production/work-orders",
+				workOrderPayload(fixture.productMaterialId(), fixture.bomId(), fixture.issueWarehouseId(),
+						fixture.receiptWarehouseId(), "1.000000"),
+				costManager), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(exchange(HttpMethod.POST, "/api/admin/inventory/documents",
+				inventoryOpeningPayload(fixture.issueWarehouseId(), fixture.rawMaterialId(), "1.000000"),
+				costManager), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+	}
+
+	@Test
+	void manualCostRecordCreateAndUpdateDoNotChangeProductionOrInventoryState() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "30.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("成本写入不反写",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000"))));
+		BigDecimal beforeStock = balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId());
+		String beforeWorkOrderStatus = workOrderStatus(workOrderId);
+		String beforeIssueStatus = materialIssueStatus(issueId);
+
+		ResponseEntity<String> created = createCostRecord(admin,
+				manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT", null, null, "18.000000", "状态隔离创建"));
+		assertOk(created);
+		long costRecordId = data(created).get("id").longValue();
+		assertOk(updateCostRecord(admin, costRecordId, manualCostPayload(workOrderId, "OTHER", "MANUAL_AMOUNT",
+				null, null, "20.000000", "状态隔离更新")));
+
+		assertDecimal(balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId()), beforeStock.toPlainString());
+		assertThat(workOrderStatus(workOrderId)).isEqualTo(beforeWorkOrderStatus);
+		assertThat(materialIssueStatus(issueId)).isEqualTo(beforeIssueStatus);
+	}
+
+	@Test
+	void draftAutomaticMaterialIssueSourceIsRejected() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "30.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("草稿来源拒绝",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000"))));
+		BigDecimal beforeStock = balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId());
+		String beforeWorkOrderStatus = workOrderStatus(workOrderId);
+
+		assertThatThrownBy(() -> this.costRecordWriter.writeMaterialIssue(issueId, costWriterOperator(),
+				costWriterRequest("/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId
+						+ "/post")))
+			.isInstanceOfSatisfying(BusinessException.class, (exception) -> assertThat(exception.errorCode())
+				.isEqualTo(ApiErrorCode.COST_SOURCE_DOCUMENT_STATUS_INVALID));
+
+		assertThat(costRecordCountBySource("PRODUCTION_MATERIAL_ISSUE", issueId)).isZero();
+		assertThat(materialIssueStatus(issueId)).isEqualTo("DRAFT");
+		assertThat(workOrderStatus(workOrderId)).isEqualTo(beforeWorkOrderStatus);
+		assertDecimal(balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId()), beforeStock.toPlainString());
+	}
+
+	@Test
+	void draftAutomaticWorkReportSourceIsRejected() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		long reportId = createReportId(admin, workOrderId, workReportPayload("2.000000", "0.000000"));
+		String beforeWorkOrderStatus = workOrderStatus(workOrderId);
+
+		assertThatThrownBy(() -> this.costRecordWriter.writeWorkReport(reportId, costWriterOperator(),
+				costWriterRequest("/api/admin/production/work-orders/" + workOrderId + "/reports/" + reportId
+						+ "/post")))
+			.isInstanceOfSatisfying(BusinessException.class, (exception) -> assertThat(exception.errorCode())
+				.isEqualTo(ApiErrorCode.COST_SOURCE_DOCUMENT_STATUS_INVALID));
+
+		assertThat(costRecordCountBySource("PRODUCTION_WORK_REPORT", reportId)).isZero();
+		assertThat(workReportStatus(reportId)).isEqualTo("DRAFT");
+		assertThat(workOrderStatus(workOrderId)).isEqualTo(beforeWorkOrderStatus);
 	}
 
 	@Test
@@ -300,6 +508,15 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	private long createOpeningStock(AuthenticatedSession admin, long warehouseId, long materialId, String quantity)
 			throws Exception {
+		ResponseEntity<String> created = exchange(HttpMethod.POST, "/api/admin/inventory/documents",
+				inventoryOpeningPayload(warehouseId, materialId, quantity), admin);
+		assertOk(created);
+		long documentId = data(created).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/documents/" + documentId + "/post", null, admin));
+		return documentId;
+	}
+
+	private Map<String, Object> inventoryOpeningPayload(long warehouseId, long materialId, String quantity) {
 		Map<String, Object> line = new LinkedHashMap<>();
 		line.put("lineNo", 1);
 		line.put("warehouseId", warehouseId);
@@ -311,11 +528,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("reason", "成本测试期初");
 		body.put("remark", "成本归集测试");
 		body.put("lines", List.of(line));
-		ResponseEntity<String> created = exchange(HttpMethod.POST, "/api/admin/inventory/documents", body, admin);
-		assertOk(created);
-		long documentId = data(created).get("id").longValue();
-		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/documents/" + documentId + "/post", null, admin));
-		return documentId;
+		return body;
 	}
 
 	private long createAndReleaseWorkOrder(AuthenticatedSession admin, CostFixture fixture, String plannedQuantity)
@@ -347,6 +560,11 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> getWorkOrder(AuthenticatedSession session, long workOrderId) {
 		return get("/api/admin/production/work-orders/" + workOrderId, session);
+	}
+
+	private ResponseEntity<String> cancelWorkOrder(AuthenticatedSession session, long workOrderId) {
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/cancel", null,
+				session);
 	}
 
 	private long createMaterialIssueId(AuthenticatedSession session, long workOrderId, Map<String, Object> body)
@@ -519,6 +737,70 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 				where action = ?
 				and target_type = ?
 				""", Long.class, action, targetType);
+	}
+
+	private String workOrderStatus(long workOrderId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_work_order where id = ?", String.class,
+				workOrderId);
+	}
+
+	private String materialIssueStatus(long issueId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_material_issue where id = ?", String.class,
+				issueId);
+	}
+
+	private String workReportStatus(long reportId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_work_report where id = ?", String.class,
+				reportId);
+	}
+
+	private long costRecordCountBySource(String sourceDocumentType, long sourceDocumentId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from mfg_cost_record
+				where source_document_type = ?
+				and source_document_id = ?
+				""", Long.class, sourceDocumentType, sourceDocumentId);
+	}
+
+	private CurrentUser costWriterOperator() {
+		return new CurrentUser(1L, "admin", "admin", SystemUserStatus.ENABLED, List.of(), List.of(),
+				List.of("cost:record:create"));
+	}
+
+	private MockHttpServletRequest costWriterRequest(String path) {
+		return new MockHttpServletRequest("PUT", path);
+	}
+
+	private long createRole(String codePrefix, String name, AuthenticatedSession session) throws Exception {
+		String code = codePrefix + "_" + SEQUENCE.incrementAndGet();
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
+				Map.of("code", code, "name", name + code, "description", "成本测试角色", "status", "ENABLED"),
+				session);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private void assignPermissions(long roleId, List<Long> permissionIds, AuthenticatedSession session)
+			throws Exception {
+		ResponseEntity<String> response = exchange(HttpMethod.PUT, "/api/admin/roles/" + roleId + "/permissions",
+				Map.of("permissionIds", permissionIds), session);
+		assertOk(response);
+	}
+
+	private String createUserWithRoles(String usernamePrefix, List<Long> roleIds, AuthenticatedSession session)
+			throws Exception {
+		String username = usernamePrefix + "-" + SEQUENCE.incrementAndGet();
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/users",
+				Map.of("username", username, "displayName", username, "initialPassword", ADMIN_PASSWORD, "status",
+						"ENABLED", "roleIds", roleIds),
+				session);
+		assertOk(response);
+		return username;
+	}
+
+	private long permissionId(String code) {
+		return this.jdbcTemplate.queryForObject("select id from sys_permission where code = ?", Long.class, code);
 	}
 
 	private AuthenticatedSession login(String username, String password) {
