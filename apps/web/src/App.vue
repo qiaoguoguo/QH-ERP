@@ -9,6 +9,9 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
+const inventoryBalancePath = '/inventory/balances'
+const inventoryMovementPath = '/inventory/movements'
+const inventoryDocumentPath = '/inventory/documents'
 const productionWorkOrderPath = '/production/work-orders'
 const costRecordPath = '/cost/records'
 const supportedMenuPaths = new Set([
@@ -23,13 +26,36 @@ const supportedMenuPaths = new Set([
   '/materials/categories',
   '/materials/items',
   '/materials/boms',
-  '/inventory/balances',
-  '/inventory/movements',
-  '/inventory/documents',
+  inventoryBalancePath,
+  inventoryMovementPath,
+  inventoryDocumentPath,
   productionWorkOrderPath,
   costRecordPath,
 ])
-const menuTree = computed<MenuNode[]>(() => ensureCostMenu(ensureProductionMenu(filterSupportedMenus(authStore.menus ?? []))))
+const inventoryChildren: MenuNode[] = [
+  {
+    id: 'inventory-balances',
+    code: 'inventory:balance:view',
+    name: '库存余额',
+    routePath: inventoryBalancePath,
+  },
+  {
+    id: 'inventory-movements',
+    code: 'inventory:movement:view',
+    name: '库存变动',
+    routePath: inventoryMovementPath,
+  },
+  {
+    id: 'inventory-documents',
+    code: 'inventory:document:view',
+    name: '库存单据',
+    routePath: inventoryDocumentPath,
+  },
+]
+const inventoryMenuPaths = new Set(inventoryChildren.map((child) => child.routePath))
+const menuTree = computed<MenuNode[]>(() => ensureCostMenu(
+  ensureProductionMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))),
+))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -41,6 +67,45 @@ function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
       children: filterSupportedMenus(menu.children ?? []),
     }))
     .filter((menu) => (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length))
+}
+
+function ensureInventoryMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = inventoryChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  if (!allowedChildren.length) {
+    return menus
+  }
+
+  const inventoryIndex = menus.findIndex((menu) =>
+    menu.code === 'inventory' || (menu.routePath ? inventoryMenuPaths.has(menu.routePath) : false))
+  if (inventoryIndex === -1) {
+    return [
+      ...menus,
+      {
+        id: 'inventory',
+        code: 'inventory',
+        name: '库存管理',
+        routePath: null,
+        children: allowedChildren,
+      },
+    ]
+  }
+
+  return menus.map((menu, index) => {
+    if (index !== inventoryIndex) {
+      return menu
+    }
+    const children = [...(menu.children ?? [])]
+    for (const child of allowedChildren) {
+      if (!children.some((existing) => existing.routePath === child.routePath)) {
+        children.push(child)
+      }
+    }
+    return {
+      ...menu,
+      name: '库存管理',
+      children,
+    }
+  })
 }
 
 function ensureProductionMenu(menus: MenuNode[]): MenuNode[] {

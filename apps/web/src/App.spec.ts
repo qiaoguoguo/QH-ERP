@@ -61,6 +61,40 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/inventory')
   })
 
+  it('有库存查看权限但后端只返回库存一级菜单时补齐库存子菜单入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'inventory_admin', displayName: '库存管理员', status: 'ENABLED' },
+      menus: [
+        {
+          id: 4,
+          code: 'inventory',
+          name: '库存管理',
+          routePath: '/inventory/balances',
+          children: [],
+        },
+      ],
+      permissions: ['inventory:balance:view', 'inventory:movement:view', 'inventory:document:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('库存管理')
+    expect(wrapper.text()).toContain('库存余额')
+    expect(wrapper.text()).toContain('库存变动')
+    expect(wrapper.text()).toContain('库存单据')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/inventory')
+  })
+
   it('有成本查看权限但后端菜单缺失时补齐成本管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
