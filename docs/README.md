@@ -5,6 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
+- [项目交接报告（2026-07-03）](handoffs/2026-07-03-project-handoff.md)
 - [任务文档模板](tasks/task-template.md)
 - [项目启动基线任务记录](tasks/000-project-startup-baseline.md)
 - [技术选型与工程骨架任务记录](tasks/001-technical-foundation.md)
