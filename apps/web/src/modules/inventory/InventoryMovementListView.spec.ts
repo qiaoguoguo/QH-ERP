@@ -191,8 +191,9 @@ describe('库存变动流水页', () => {
 
     const { wrapper } = await mountMovements()
 
-    expect(wrapper.text()).toContain('生产领料')
-    expect(wrapper.text()).toContain('完工入库')
+    const movementTypeCells = wrapper.findAll('[data-test="movement-type-cell"]')
+    expect(movementTypeCells).toHaveLength(2)
+    expect(movementTypeCells.map((cell) => cell.text())).toEqual(['生产领料', '完工入库'])
   })
 
   it('按筛选条件查询并支持来自余额页的仓库物料查询参数', async () => {

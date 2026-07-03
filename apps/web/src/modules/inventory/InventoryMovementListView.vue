@@ -281,7 +281,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="变动类型" min-width="100">
           <template #default="{ row }">
-            {{ movementTypeLabel(row.movementType) }}
+            <span data-test="movement-type-cell">{{ movementTypeLabel(row.movementType) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="方向" min-width="90">
