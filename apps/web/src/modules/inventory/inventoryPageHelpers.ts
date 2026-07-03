@@ -43,6 +43,8 @@ const movementTypeLabels: Record<InventoryMovementType, string> = {
   OPENING: '期初',
   ADJUSTMENT_INCREASE: '调增',
   ADJUSTMENT_DECREASE: '调减',
+  PRODUCTION_ISSUE: '生产领料',
+  PRODUCTION_RECEIPT: '完工入库',
 }
 
 const directionLabels: Record<InventoryDirection, string> = {

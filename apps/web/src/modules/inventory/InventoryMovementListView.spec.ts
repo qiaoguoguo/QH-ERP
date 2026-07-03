@@ -76,6 +76,38 @@ const movement: InventoryMovementRecord = {
   occurredAt: '2026-07-03T10:00:00+08:00',
 }
 
+const productionIssueMovement: InventoryMovementRecord = {
+  ...movement,
+  id: 21,
+  movementNo: 'MV202607030002',
+  movementType: 'PRODUCTION_ISSUE',
+  direction: 'OUT',
+  quantity: 5,
+  beforeQuantity: 117,
+  afterQuantity: 112,
+  sourceType: 'PRODUCTION_MATERIAL_ISSUE',
+  sourceId: 300,
+  sourceLineId: 301,
+  reason: '生产工单领料',
+  occurredAt: '2026-07-03T11:00:00+08:00',
+}
+
+const productionReceiptMovement: InventoryMovementRecord = {
+  ...movement,
+  id: 22,
+  movementNo: 'MV202607030003',
+  movementType: 'PRODUCTION_RECEIPT',
+  direction: 'IN',
+  quantity: 2,
+  beforeQuantity: 112,
+  afterQuantity: 114,
+  sourceType: 'PRODUCTION_RECEIPT',
+  sourceId: 300,
+  sourceLineId: 302,
+  reason: '完工入库',
+  occurredAt: '2026-07-03T12:00:00+08:00',
+}
+
 const movementPage: PageResult<InventoryMovementRecord> = {
   items: [movement],
   page: 1,
@@ -148,6 +180,21 @@ describe('库存变动流水页', () => {
     expect(wrapper.find('[data-test="movement-quantity-cell"]').classes()).toContain('numeric-cell')
   })
 
+  it('用中文展示生产领料和完工入库流水类型', async () => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [productionIssueMovement, productionReceiptMovement],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+
+    const { wrapper } = await mountMovements()
+
+    expect(wrapper.text()).toContain('生产领料')
+    expect(wrapper.text()).toContain('完工入库')
+  })
+
   it('按筛选条件查询并支持来自余额页的仓库物料查询参数', async () => {
     const { wrapper } = await mountMovements({ warehouseId: '1', materialId: '2' })
 
@@ -175,6 +222,37 @@ describe('库存变动流水页', () => {
       page: 1,
       pageSize: 20,
     })
+  })
+
+  it('变动类型筛选提供生产类型选项并可传递生产流水类型参数', async () => {
+    const { wrapper } = await mountMovements()
+    const movementTypeOptions = wrapper
+      .findAllComponents({ name: 'ElOption' })
+      .filter((option) => ['OPENING', 'ADJUSTMENT_INCREASE', 'ADJUSTMENT_DECREASE', 'PRODUCTION_ISSUE', 'PRODUCTION_RECEIPT'].includes(String(option.props('value'))))
+
+    expect(movementTypeOptions.map((option) => option.props('label'))).toEqual([
+      '期初',
+      '调增',
+      '调减',
+      '生产领料',
+      '完工入库',
+    ])
+
+    await setSelectValue(wrapper, 'inventory-movement-type', 'PRODUCTION_ISSUE')
+    await wrapper.find('[data-test="search-inventory-movements"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      movementType: 'PRODUCTION_ISSUE',
+    }))
+
+    await setSelectValue(wrapper, 'inventory-movement-type', 'PRODUCTION_RECEIPT')
+    await wrapper.find('[data-test="search-inventory-movements"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      movementType: 'PRODUCTION_RECEIPT',
+    }))
   })
 
   it('来源单据可跳转到库存单据详情', async () => {

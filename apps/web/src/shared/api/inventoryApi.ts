@@ -4,7 +4,12 @@ export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
 export type InventoryDocumentStatus = 'DRAFT' | 'POSTED'
 export type InventoryDocumentType = 'OPENING' | 'ADJUSTMENT'
-export type InventoryMovementType = 'OPENING' | 'ADJUSTMENT_INCREASE' | 'ADJUSTMENT_DECREASE'
+export type InventoryMovementType =
+  | 'OPENING'
+  | 'ADJUSTMENT_INCREASE'
+  | 'ADJUSTMENT_DECREASE'
+  | 'PRODUCTION_ISSUE'
+  | 'PRODUCTION_RECEIPT'
 export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
 export type InventoryQuantityPayload = string

@@ -213,6 +213,8 @@ onMounted(() => {
             <el-option label="期初" value="OPENING" />
             <el-option label="调增" value="ADJUSTMENT_INCREASE" />
             <el-option label="调减" value="ADJUSTMENT_DECREASE" />
+            <el-option label="生产领料" value="PRODUCTION_ISSUE" />
+            <el-option label="完工入库" value="PRODUCTION_RECEIPT" />
           </el-select>
         </el-form-item>
         <el-form-item label="方向">
