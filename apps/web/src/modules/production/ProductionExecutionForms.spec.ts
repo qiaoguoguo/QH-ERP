@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -10,6 +10,7 @@ import { useAuthStore } from '../../stores/authStore'
 import ProductionCompletionReceiptView from './ProductionCompletionReceiptView.vue'
 import ProductionMaterialIssueView from './ProductionMaterialIssueView.vue'
 import ProductionWorkReportView from './ProductionWorkReportView.vue'
+import { todayText } from './productionPageHelpers'
 
 const productionApiMock = vi.hoisted(() => ({
   workOrders: {
@@ -120,6 +121,12 @@ function isDisabled(button: VueWrapper): boolean {
   return Boolean((button.props() as { disabled?: boolean }).disabled)
 }
 
+function inputValue(wrapper: VueWrapper, name: string): string {
+  const input = wrapper.find<HTMLInputElement>(`input[name="${name}"]`)
+  expect(input.exists()).toBe(true)
+  return input.element.value
+}
+
 async function mountExecution(
   component: typeof ProductionMaterialIssueView | typeof ProductionWorkReportView | typeof ProductionCompletionReceiptView,
   path: string,
@@ -166,6 +173,39 @@ describe('生产执行表单页', () => {
       total: 1,
       totalPages: 1,
     })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('三类执行表单默认业务日期使用本地日期而不是 UTC 日期', async () => {
+    const chinaEarlyMorning = new Date('2026-07-03T00:30:00+08:00')
+    vi.useFakeTimers()
+    vi.setSystemTime(chinaEarlyMorning)
+
+    expect(chinaEarlyMorning.toISOString().slice(0, 10)).toBe('2026-07-02')
+    expect(todayText()).toBe('2026-07-03')
+
+    const issue = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+    const report = await mountExecution(
+      ProductionWorkReportView,
+      '/production/work-orders/9/reports',
+      ['production:work-order:view', 'production:report:view', 'production:report:create'],
+    )
+    const receipt = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    expect(inputValue(issue.wrapper, 'production-issue-date')).toBe('2026-07-03')
+    expect(inputValue(report.wrapper, 'production-report-date')).toBe('2026-07-03')
+    expect(inputValue(receipt.wrapper, 'production-receipt-date')).toBe('2026-07-03')
   })
 
   it('领料数量不能超过未领数量', async () => {
