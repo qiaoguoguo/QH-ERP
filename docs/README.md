@@ -17,6 +17,7 @@
 - [仓库与库存基础任务记录](tasks/007-inventory-management-foundation.md)
 - [生产执行基础任务记录](tasks/008-production-execution-foundation.md)
 - [成本归集基础任务记录](tasks/009-cost-collection-foundation.md)
+- [一期生产主链路端到端闭环验收与稳定化任务记录](tasks/010-phase-one-e2e-stabilization.md)
 
 ## 产品
 
@@ -60,6 +61,9 @@
 - [仓库与库存基础测试计划](testing/inventory-management-test-plan.md)
 - [生产执行基础测试计划](testing/production-execution-test-plan.md)
 - [成本归集基础测试计划](testing/cost-collection-test-plan.md)
+- [一期生产主链路端到端测试计划](testing/phase-one-e2e-test-plan.md)
+- [一期生产主链路端到端执行记录](testing/phase-one-e2e-execution-record.md)
+- [一期生产主链路端到端缺陷清单](testing/phase-one-e2e-defects.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
