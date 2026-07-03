@@ -14,6 +14,7 @@
 - [基础资料与物料管理任务记录](tasks/005-master-data-material-foundation.md)
 - [BOM 管理任务记录](tasks/006-bom-management-foundation.md)
 - [仓库与库存基础任务记录](tasks/007-inventory-management-foundation.md)
+- [生产执行基础任务记录](tasks/008-production-execution-foundation.md)
 
 ## 产品
 
@@ -36,12 +37,14 @@
 - [基础资料与物料管理接口契约](api/master-data-material-api.md)
 - [BOM 管理接口契约](api/bom-management-api.md)
 - [仓库与库存基础接口契约](api/inventory-management-api.md)
+- [生产执行基础接口契约](api/production-execution-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
 
 - [UI 与交互基线](ui/ui-baseline.md)
 - [仓库与库存基础设计规格](superpowers/specs/2026-07-03-inventory-management-design.md)
+- [生产执行基础设计规格](superpowers/specs/2026-07-03-production-execution-design.md)
 
 ## 测试与验收
 
@@ -51,6 +54,7 @@
 - [基础资料与物料管理测试计划](testing/master-data-material-test-plan.md)
 - [BOM 管理测试计划](testing/bom-management-test-plan.md)
 - [仓库与库存基础测试计划](testing/inventory-management-test-plan.md)
+- [生产执行基础测试计划](testing/production-execution-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
