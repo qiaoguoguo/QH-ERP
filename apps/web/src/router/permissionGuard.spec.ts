@@ -14,6 +14,12 @@ import CustomerListView from '../modules/master/customers/CustomerListView.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
 import WarehouseListView from '../modules/master/warehouses/WarehouseListView.vue'
+import ProductionCompletionReceiptView from '../modules/production/ProductionCompletionReceiptView.vue'
+import ProductionMaterialIssueView from '../modules/production/ProductionMaterialIssueView.vue'
+import ProductionWorkOrderDetailView from '../modules/production/ProductionWorkOrderDetailView.vue'
+import ProductionWorkOrderFormView from '../modules/production/ProductionWorkOrderFormView.vue'
+import ProductionWorkOrderListView from '../modules/production/ProductionWorkOrderListView.vue'
+import ProductionWorkReportView from '../modules/production/ProductionWorkReportView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -110,6 +116,39 @@ describe('账号权限路由守卫', () => {
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of inventoryRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+  })
+
+  it('生产路由加载真实页面并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const productionRoutes = [
+      ['production-work-orders', '/production/work-orders', 'production:work-order:view', ProductionWorkOrderListView],
+      ['production-work-order-create', '/production/work-orders/create', 'production:work-order:create', ProductionWorkOrderFormView],
+      ['production-work-order-detail', '/production/work-orders/:id', 'production:work-order:view', ProductionWorkOrderDetailView],
+      ['production-work-order-edit', '/production/work-orders/:id/edit', 'production:work-order:update', ProductionWorkOrderFormView],
+      [
+        'production-work-order-material-issues',
+        '/production/work-orders/:id/material-issues',
+        'production:issue:view',
+        ProductionMaterialIssueView,
+      ],
+      ['production-work-order-reports', '/production/work-orders/:id/reports', 'production:report:view', ProductionWorkReportView],
+      [
+        'production-work-order-completion-receipts',
+        '/production/work-orders/:id/completion-receipts',
+        'production:receipt:view',
+        ProductionCompletionReceiptView,
+      ],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of productionRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
       const component = route?.components?.default as (() => Promise<unknown>) | undefined
 

@@ -27,11 +27,29 @@ const canExecute = computed(() => record.value?.status === 'RELEASED' || record.
 const canCreateIssue = computed(() => canExecute.value && authStore.hasPermission('production:issue:create'))
 const canCreateReport = computed(() => canExecute.value && authStore.hasPermission('production:report:create'))
 const canCreateReceipt = computed(() => canExecute.value && authStore.hasPermission('production:receipt:create'))
+const canPostIssue = computed(() => authStore.hasPermission('production:issue:post'))
+const canPostReport = computed(() => authStore.hasPermission('production:report:post'))
+const canPostReceipt = computed(() => authStore.hasPermission('production:receipt:post'))
 const canComplete = computed(() => canExecute.value && authStore.hasPermission('production:work-order:complete'))
 const canCancel = computed(() => (
   (record.value?.status === 'DRAFT' || record.value?.status === 'RELEASED') &&
   authStore.hasPermission('production:work-order:cancel')
 ))
+
+const postActionConfig = {
+  materialIssue: {
+    label: '领料单',
+    permission: 'production:issue:post',
+  },
+  report: {
+    label: '报工单',
+    permission: 'production:report:post',
+  },
+  completionReceipt: {
+    label: '完工入库单',
+    permission: 'production:receipt:post',
+  },
+} as const
 
 async function loadRecord() {
   loading.value = true
@@ -97,6 +115,41 @@ async function runAction(action: 'release' | 'complete' | 'cancel') {
     } else {
       record.value = await productionApi.workOrders.cancel(record.value.id)
     }
+  } catch (caught) {
+    actionError.value = productionErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function postExecutionDocument(
+  action: 'materialIssue' | 'report' | 'completionReceipt',
+  documentId: ResourceId,
+  documentNo: string,
+) {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  const config = postActionConfig[action]
+  if (!authStore.hasPermission(config.permission)) {
+    actionError.value = `缺少${config.label}过账权限`
+    return
+  }
+  if (!window.confirm(`确认过账${config.label}“${documentNo}”？过账会影响生产执行和库存结果，过账后不可撤销。`)) {
+    return
+  }
+
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    if (action === 'materialIssue') {
+      await productionApi.materialIssues.post(record.value.id, documentId)
+    } else if (action === 'report') {
+      await productionApi.reports.post(record.value.id, documentId)
+    } else {
+      await productionApi.completionReceipts.post(record.value.id, documentId)
+    }
+    await loadRecord()
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)
   } finally {
@@ -213,6 +266,21 @@ onMounted(loadRecord)
             <el-table-column prop="postedByName" label="过账人" min-width="110">
               <template #default="{ row }">{{ row.postedByName || '-' }}</template>
             </el-table-column>
+            <el-table-column label="操作" width="96" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.status === 'DRAFT' && canPostIssue"
+                  data-test="post-production-material-issue"
+                  size="small"
+                  text
+                  :loading="actionLoading"
+                  :disabled="actionLoading"
+                  @click="postExecutionDocument('materialIssue', row.id, row.issueNo)"
+                >
+                  过账
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </section>
@@ -233,6 +301,21 @@ onMounted(loadRecord)
               <template #default="{ row }"><span class="numeric-cell">{{ formatProductionQuantity(row.defectiveQuantity) }}</span></template>
             </el-table-column>
             <el-table-column prop="reporterName" label="报工人" min-width="110" />
+            <el-table-column label="操作" width="96" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.status === 'DRAFT' && canPostReport"
+                  data-test="post-production-work-report"
+                  size="small"
+                  text
+                  :loading="actionLoading"
+                  :disabled="actionLoading"
+                  @click="postExecutionDocument('report', row.id, row.reportNo)"
+                >
+                  过账
+                </el-button>
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </section>
@@ -252,6 +335,21 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column prop="postedByName" label="过账人" min-width="110">
               <template #default="{ row }">{{ row.postedByName || '-' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="96" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="row.status === 'DRAFT' && canPostReceipt"
+                  data-test="post-production-completion-receipt"
+                  size="small"
+                  text
+                  :loading="actionLoading"
+                  :disabled="actionLoading"
+                  @click="postExecutionDocument('completionReceipt', row.id, row.receiptNo)"
+                >
+                  过账
+                </el-button>
+              </template>
             </el-table-column>
           </el-table>
         </div>

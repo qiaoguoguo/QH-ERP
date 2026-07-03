@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
@@ -13,6 +13,15 @@ const productionApiMock = vi.hoisted(() => ({
     release: vi.fn(),
     complete: vi.fn(),
     cancel: vi.fn(),
+  },
+  materialIssues: {
+    post: vi.fn(),
+  },
+  reports: {
+    post: vi.fn(),
+  },
+  completionReceipts: {
+    post: vi.fn(),
   },
 }))
 
@@ -147,6 +156,88 @@ const detailRecord: ProductionWorkOrderDetailRecord = {
   ],
 }
 
+const draftExecutionRecord: ProductionWorkOrderDetailRecord = {
+  ...detailRecord,
+  materialIssues: [
+    {
+      id: 301,
+      issueNo: 'MI-DRAFT-001',
+      workOrderId: 9,
+      status: 'DRAFT',
+      businessDate: '2026-07-04',
+      reason: '生产领料',
+      remark: null,
+      lineCount: 1,
+      createdByName: '管理员',
+      createdAt: '2026-07-04T08:00:00+08:00',
+      updatedAt: '2026-07-04T08:30:00+08:00',
+      postedByName: null,
+      postedAt: null,
+    },
+  ],
+  reports: [
+    {
+      id: 401,
+      reportNo: 'WR-DRAFT-001',
+      workOrderId: 9,
+      status: 'DRAFT',
+      businessDate: '2026-07-04',
+      qualifiedQuantity: 55,
+      defectiveQuantity: 5,
+      totalQuantity: 60,
+      reporterName: '张三',
+      remark: '首批报工',
+      createdByName: '管理员',
+      createdAt: '2026-07-04T10:00:00+08:00',
+      updatedAt: '2026-07-04T10:30:00+08:00',
+      postedByName: null,
+      postedAt: null,
+    },
+  ],
+  completionReceipts: [
+    {
+      id: 501,
+      receiptNo: 'CR-DRAFT-001',
+      workOrderId: 9,
+      status: 'DRAFT',
+      businessDate: '2026-07-05',
+      receiptWarehouseId: 31,
+      receiptWarehouseName: '成品仓',
+      quantity: 40,
+      beforeQuantity: null,
+      afterQuantity: null,
+      remark: '首批入库',
+      createdByName: '管理员',
+      createdAt: '2026-07-05T08:00:00+08:00',
+      updatedAt: '2026-07-05T08:30:00+08:00',
+      postedByName: null,
+      postedAt: null,
+    },
+  ],
+}
+
+const postedExecutionRecord: ProductionWorkOrderDetailRecord = {
+  ...draftExecutionRecord,
+  materialIssues: draftExecutionRecord.materialIssues.map((issue) => ({
+    ...issue,
+    status: 'POSTED',
+    postedByName: '仓管员',
+    postedAt: '2026-07-04T09:00:00+08:00',
+  })),
+  reports: draftExecutionRecord.reports.map((report) => ({
+    ...report,
+    status: 'POSTED',
+    postedByName: '生产主管',
+    postedAt: '2026-07-04T11:00:00+08:00',
+  })),
+  completionReceipts: draftExecutionRecord.completionReceipts.map((receipt) => ({
+    ...receipt,
+    status: 'POSTED',
+    postedByName: '仓管员',
+    postedAt: '2026-07-05T09:00:00+08:00',
+  })),
+}
+
 function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
@@ -164,7 +255,7 @@ async function mountDetail(
     'production:receipt:create',
   ],
 ) {
-  productionApiMock.workOrders.get.mockResolvedValueOnce(record)
+  productionApiMock.workOrders.get.mockResolvedValue(record)
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -196,9 +287,17 @@ async function mountDetail(
 describe('生产工单详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubGlobal('confirm', vi.fn(() => true))
     productionApiMock.workOrders.release.mockResolvedValue(detailRecord)
     productionApiMock.workOrders.complete.mockResolvedValue({ ...detailRecord, status: 'COMPLETED' })
     productionApiMock.workOrders.cancel.mockResolvedValue({ ...detailRecord, status: 'CANCELLED' })
+    productionApiMock.materialIssues.post.mockResolvedValue(postedExecutionRecord.materialIssues[0])
+    productionApiMock.reports.post.mockResolvedValue(postedExecutionRecord.reports[0])
+    productionApiMock.completionReceipts.post.mockResolvedValue(postedExecutionRecord.completionReceipts[0])
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('展示状态标签、数量摘要和工单基础信息', async () => {
@@ -262,5 +361,68 @@ describe('生产工单详情页', () => {
     expect(buttonsByText(wrapper, '完工入库')).toHaveLength(0)
     expect(buttonsByText(wrapper, '完成')).toHaveLength(0)
     expect(buttonsByText(wrapper, '取消')).toHaveLength(0)
+  })
+
+  it('草稿执行记录在具备过账权限时显示过账按钮并调用对应 API', async () => {
+    const { wrapper } = await mountDetail(draftExecutionRecord, [
+      'production:work-order:view',
+      'production:issue:post',
+      'production:report:post',
+      'production:receipt:post',
+    ])
+
+    expect(wrapper.find('[data-test="post-production-material-issue"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="post-production-work-report"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="post-production-completion-receipt"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="post-production-material-issue"]').trigger('click')
+    await flushPromises()
+    expect(productionApiMock.materialIssues.post).toHaveBeenCalledWith(9, 301)
+
+    await wrapper.find('[data-test="post-production-work-report"]').trigger('click')
+    await flushPromises()
+    expect(productionApiMock.reports.post).toHaveBeenCalledWith(9, 401)
+
+    await wrapper.find('[data-test="post-production-completion-receipt"]').trigger('click')
+    await flushPromises()
+    expect(productionApiMock.completionReceipts.post).toHaveBeenCalledWith(9, 501)
+    expect(productionApiMock.workOrders.get).toHaveBeenCalledTimes(4)
+  })
+
+  it('已过账执行记录不显示过账按钮', async () => {
+    const { wrapper } = await mountDetail(postedExecutionRecord, [
+      'production:work-order:view',
+      'production:issue:post',
+      'production:report:post',
+      'production:receipt:post',
+    ])
+
+    expect(wrapper.find('[data-test="post-production-material-issue"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-production-work-report"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-production-completion-receipt"]').exists()).toBe(false)
+  })
+
+  it('只读用户不显示执行单过账按钮', async () => {
+    const { wrapper } = await mountDetail(draftExecutionRecord, ['production:work-order:view'])
+
+    expect(wrapper.find('[data-test="post-production-material-issue"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-production-work-report"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-production-completion-receipt"]').exists()).toBe(false)
+  })
+
+  it('执行单过账失败时错误可见且详情数据仍保留', async () => {
+    productionApiMock.reports.post.mockRejectedValueOnce(new Error('报工单已过账，不能重复过账'))
+    const { wrapper } = await mountDetail(draftExecutionRecord, [
+      'production:work-order:view',
+      'production:report:post',
+    ])
+
+    await wrapper.find('[data-test="post-production-work-report"]').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.reports.post).toHaveBeenCalledWith(9, 401)
+    expect(wrapper.text()).toContain('报工单已过账，不能重复过账')
+    expect(wrapper.text()).toContain('WO-20260703-001')
+    expect(wrapper.text()).toContain('WR-DRAFT-001')
   })
 })
