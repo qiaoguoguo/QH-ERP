@@ -76,6 +76,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return inventoryPermissionCode;
 		}
 
+		String procurementPermissionCode = procurementPermissionCode(method, path);
+		if (procurementPermissionCode != null) {
+			return procurementPermissionCode;
+		}
+
 		String productionPermissionCode = productionPermissionCode(method, path);
 		if (productionPermissionCode != null) {
 			return productionPermissionCode;
@@ -181,6 +186,47 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return reportPermissionCode;
 		}
 		return productionDocumentPermissionCode(method, path, "completion-receipts", "production:receipt");
+	}
+
+	private String procurementPermissionCode(String method, String path) {
+		String basePath = "/api/admin/procurement";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		String orderPath = "/api/admin/procurement/orders";
+		if ("GET".equals(method) && (orderPath.equals(path) || matchesIdPath(path, orderPath))) {
+			return "procurement:order:view";
+		}
+		if ("POST".equals(method) && orderPath.equals(path)) {
+			return "procurement:order:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, orderPath)) {
+			return "procurement:order:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/confirm")) {
+			return "procurement:order:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/cancel")) {
+			return "procurement:order:cancel";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/close")) {
+			return "procurement:order:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/receipts")) {
+			return "procurement:receipt:create";
+		}
+
+		String receiptPath = "/api/admin/procurement/receipts";
+		if ("GET".equals(method) && (receiptPath.equals(path) || matchesIdPath(path, receiptPath))) {
+			return "procurement:receipt:view";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, receiptPath)) {
+			return "procurement:receipt:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receiptPath) + "/\\d+/post")) {
+			return "procurement:receipt:post";
+		}
+		return null;
 	}
 
 	private String productionDocumentPermissionCode(String method, String path, String resourceSegment,

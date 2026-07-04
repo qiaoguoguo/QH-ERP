@@ -10,6 +10,7 @@ export type InventoryMovementType =
   | 'ADJUSTMENT_DECREASE'
   | 'PRODUCTION_ISSUE'
   | 'PRODUCTION_RECEIPT'
+  | 'PURCHASE_RECEIPT'
 export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
 export type InventoryQuantityPayload = string

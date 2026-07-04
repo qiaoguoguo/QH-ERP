@@ -8,6 +8,7 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.cost.CostRecordWriter;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
+import com.qherp.api.system.inventory.InventoryPostingService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -69,11 +70,14 @@ public class ProductionAdminService {
 
 	private final CostRecordWriter costRecordWriter;
 
+	private final InventoryPostingService inventoryPostingService;
+
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			CostRecordWriter costRecordWriter) {
+			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
+		this.inventoryPostingService = inventoryPostingService;
 	}
 
 	@Transactional(readOnly = true)
@@ -529,21 +533,18 @@ public class ProductionAdminService {
 			}
 			MaterialRef product = validateProductMaterial(workOrder.productMaterialId());
 			OffsetDateTime now = OffsetDateTime.now();
-			BalanceRow balance = lockedBalance(detail.receiptWarehouseId(), product.id(), product.unitId(), now);
-			BigDecimal beforeQuantity = balance.quantityOnHand();
-			BigDecimal afterQuantity = beforeQuantity.add(detail.quantity());
-			insertMovement(movementNo("MFG-RCP", id), InventoryMovementType.PRODUCTION_RECEIPT,
-					InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
-					detail.quantity(), beforeQuantity, afterQuantity, COMPLETION_RECEIPT_SOURCE, id, id,
-					detail.businessDate(), "生产完工入库", detail.remark(), operator.username(), now);
-			updateBalance(balance.id(), product.unitId(), afterQuantity, now);
+			InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+					new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_RECEIPT,
+							InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
+							detail.quantity(), COMPLETION_RECEIPT_SOURCE, id, id, detail.businessDate(), "生产完工入库",
+							detail.remark(), operator.username()));
 			this.jdbcTemplate.update("""
 					update mfg_completion_receipt
 					set before_quantity = ?, after_quantity = ?, status = ?, posted_by = ?, posted_at = ?,
 					    updated_by = ?, updated_at = ?, version = version + 1
 					where id = ?
-					""", beforeQuantity, afterQuantity, ProductionDocumentStatus.POSTED.name(), operator.username(),
-					now, operator.username(), now, id);
+					""", posting.beforeQuantity(), posting.afterQuantity(), ProductionDocumentStatus.POSTED.name(),
+					operator.username(), now, operator.username(), now, id);
 			this.jdbcTemplate.update("""
 					update mfg_work_order
 					set received_quantity = received_quantity + ?, status = ?, updated_by = ?, updated_at = ?,
@@ -570,17 +571,11 @@ public class ProductionAdminService {
 		if (material.issuedQuantity().add(line.quantity()).compareTo(material.requiredQuantity()) > 0) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EXCEEDS_REQUIRED);
 		}
-		BalanceRow balance = lockedBalance(line.warehouseId(), material.materialId(), material.unitId(), now);
-		BigDecimal beforeQuantity = balance.quantityOnHand();
-		BigDecimal afterQuantity = beforeQuantity.subtract(line.quantity());
-		if (afterQuantity.compareTo(ZERO) < 0) {
-			throw new BusinessException(ApiErrorCode.PRODUCTION_STOCK_NOT_ENOUGH);
-		}
-		insertMovement(movementNo("MFG-ISS", line.id()), InventoryMovementType.PRODUCTION_ISSUE,
-				InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(), line.quantity(),
-				beforeQuantity, afterQuantity, MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), issue.businessDate(),
-				issue.reason(), line.remark(), operatorName, now);
-		updateBalance(balance.id(), material.unitId(), afterQuantity, now);
+		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
+						InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
+						line.quantity(), MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), issue.businessDate(),
+						issue.reason(), line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update mfg_work_order_material
 				set issued_quantity = issued_quantity + ?, updated_at = ?, version = version + 1
@@ -590,7 +585,7 @@ public class ProductionAdminService {
 				update mfg_material_issue_line
 				set before_quantity = ?, after_quantity = ?, updated_at = ?
 				where id = ?
-				""", beforeQuantity, afterQuantity, now, line.id());
+				""", posting.beforeQuantity(), posting.afterQuantity(), now, line.id());
 	}
 
 	private ValidatedWorkOrder validateWorkOrderRequest(WorkOrderRequest request) {
@@ -770,62 +765,6 @@ public class ProductionAdminService {
 				&& workOrder.status() != ProductionWorkOrderStatus.IN_PROGRESS) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_WORK_ORDER_STATUS_INVALID);
 		}
-	}
-
-	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, OffsetDateTime now) {
-		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId);
-		if (balance.isEmpty()) {
-			try {
-				this.jdbcTemplate.update("""
-						insert into inv_stock_balance (
-							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
-						)
-						values (?, ?, ?, ?, ?, ?, ?)
-						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now);
-			}
-			catch (DuplicateKeyException exception) {
-				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material")) {
-					throw exception;
-				}
-			}
-			balance = lockBalance(warehouseId, materialId);
-		}
-		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
-	}
-
-	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId) {
-		return this.jdbcTemplate.query("""
-				select id, quantity_on_hand, locked_quantity
-				from inv_stock_balance
-				where warehouse_id = ?
-				and material_id = ?
-				for update
-				""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand"),
-				rs.getBigDecimal("locked_quantity")), warehouseId, materialId).stream().findFirst();
-	}
-
-	private void insertMovement(String movementNo, InventoryMovementType movementType, InventoryDirection direction,
-			Long warehouseId, Long materialId, Long unitId, BigDecimal quantity, BigDecimal beforeQuantity,
-			BigDecimal afterQuantity, String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate,
-			String reason, String remark, String operatorName, OffsetDateTime now) {
-		this.jdbcTemplate.update("""
-				insert into inv_stock_movement (
-					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
-					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-					reason, remark, operator_name, occurred_at
-				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				""", movementNo, movementType.name(), direction.name(), warehouseId, materialId, unitId, quantity,
-				beforeQuantity, afterQuantity, sourceType, sourceId, sourceLineId, businessDate, reason,
-				blankToNull(remark), operatorName, now);
-	}
-
-	private void updateBalance(Long balanceId, Long unitId, BigDecimal afterQuantity, OffsetDateTime now) {
-		this.jdbcTemplate.update("""
-				update inv_stock_balance
-				set quantity_on_hand = ?, unit_id = ?, updated_at = ?, version = version + 1
-				where id = ?
-				""", afterQuantity, unitId, now, balanceId);
 	}
 
 	private void markWorkOrderInProgress(Long workOrderId, String operatorName, OffsetDateTime now) {
@@ -1409,10 +1348,6 @@ public class ProductionAdminService {
 		return prefix + "-" + LocalDateTime.now().format(NUMBER_FORMATTER) + "-" + String.format("%03d", value);
 	}
 
-	private String movementNo(String prefix, Long sourceLineId) {
-		return prefix + "-MOV-" + LocalDateTime.now().format(NUMBER_FORMATTER) + "-" + sourceLineId;
-	}
-
 	private long integerDigits(BigDecimal value) {
 		return Math.max(0L, (long) value.precision() - value.scale());
 	}
@@ -1585,9 +1520,6 @@ public class ProductionAdminService {
 
 	private record BomItemRef(Long id, Integer lineNo, MaterialRef material, Long unitId, BigDecimal quantity,
 			BigDecimal lossRate, String remark) {
-	}
-
-	private record BalanceRow(Long id, BigDecimal quantityOnHand, BigDecimal lockedQuantity) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

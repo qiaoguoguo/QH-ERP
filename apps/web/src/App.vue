@@ -12,6 +12,8 @@ const isLogin = computed(() => route.name === 'login')
 const inventoryBalancePath = '/inventory/balances'
 const inventoryMovementPath = '/inventory/movements'
 const inventoryDocumentPath = '/inventory/documents'
+const procurementOrderPath = '/procurement/orders'
+const procurementReceiptPath = '/procurement/receipts'
 const productionWorkOrderPath = '/production/work-orders'
 const costRecordPath = '/cost/records'
 const supportedMenuPaths = new Set([
@@ -29,6 +31,8 @@ const supportedMenuPaths = new Set([
   inventoryBalancePath,
   inventoryMovementPath,
   inventoryDocumentPath,
+  procurementOrderPath,
+  procurementReceiptPath,
   productionWorkOrderPath,
   costRecordPath,
 ])
@@ -53,8 +57,23 @@ const inventoryChildren: MenuNode[] = [
   },
 ]
 const inventoryMenuPaths = new Set(inventoryChildren.map((child) => child.routePath))
+const procurementChildren: MenuNode[] = [
+  {
+    id: 'procurement-orders',
+    code: 'procurement:order:view',
+    name: '采购订单',
+    routePath: procurementOrderPath,
+  },
+  {
+    id: 'procurement-receipts',
+    code: 'procurement:receipt:view',
+    name: '采购入库',
+    routePath: procurementReceiptPath,
+  },
+]
+const procurementMenuPaths = new Set(procurementChildren.map((child) => child.routePath))
 const menuTree = computed<MenuNode[]>(() => ensureCostMenu(
-  ensureProductionMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))),
+  ensureProductionMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? [])))),
 ))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
@@ -106,6 +125,65 @@ function ensureInventoryMenu(menus: MenuNode[]): MenuNode[] {
       children,
     }
   })
+}
+
+function ensureProcurementMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = procurementChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  if (!allowedChildren.length) {
+    return removeProcurementMenus(menus)
+  }
+
+  const allowedMenuPaths = new Set(allowedChildren.map((child) => child.routePath))
+  const procurementIndex = menus.findIndex((menu) =>
+    menu.code === 'procurement' || (menu.routePath ? procurementMenuPaths.has(menu.routePath) : false))
+  if (procurementIndex === -1) {
+    return [
+      ...menus,
+      {
+        id: 'procurement',
+        code: 'procurement',
+        name: '采购管理',
+        routePath: null,
+        children: allowedChildren,
+      },
+    ]
+  }
+
+  return menus.map((menu, index) => {
+    if (index !== procurementIndex) {
+      return menu
+    }
+    const children = (menu.children ?? []).filter((child) =>
+      child.routePath ? allowedMenuPaths.has(child.routePath) : false)
+    for (const child of allowedChildren) {
+      if (!children.some((existing) => existing.routePath === child.routePath)) {
+        children.push(child)
+      }
+    }
+    return {
+      ...menu,
+      name: '采购管理',
+      children,
+    }
+  })
+}
+
+function isProcurementMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'procurement'
+    || code.startsWith('procurement:')
+    || (menu.routePath ? procurementMenuPaths.has(menu.routePath) : false)
+}
+
+function removeProcurementMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeProcurementMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isProcurementMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 function ensureProductionMenu(menus: MenuNode[]): MenuNode[] {

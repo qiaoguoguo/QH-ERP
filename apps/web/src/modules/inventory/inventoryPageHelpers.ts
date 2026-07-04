@@ -45,6 +45,7 @@ const movementTypeLabels: Record<InventoryMovementType, string> = {
   ADJUSTMENT_DECREASE: '调减',
   PRODUCTION_ISSUE: '生产领料',
   PRODUCTION_RECEIPT: '完工入库',
+  PURCHASE_RECEIPT: '采购入库',
 }
 
 const directionLabels: Record<InventoryDirection, string> = {

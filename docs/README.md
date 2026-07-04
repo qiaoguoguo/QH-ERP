@@ -5,6 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
+- [项目交接报告（2026-07-04，一期完成版）](handoffs/2026-07-04-project-handoff.md)
 - [项目交接报告（2026-07-03）](handoffs/2026-07-03-project-handoff.md)
 - [任务文档模板](tasks/task-template.md)
 - [项目启动基线任务记录](tasks/000-project-startup-baseline.md)
@@ -18,6 +19,7 @@
 - [生产执行基础任务记录](tasks/008-production-execution-foundation.md)
 - [成本归集基础任务记录](tasks/009-cost-collection-foundation.md)
 - [一期生产主链路端到端闭环验收与稳定化任务记录](tasks/010-phase-one-e2e-stabilization.md)
+- [采购管理基础模块任务记录](tasks/011-procurement-management-foundation.md)
 
 ## 产品
 
@@ -42,6 +44,7 @@
 - [仓库与库存基础接口契约](api/inventory-management-api.md)
 - [生产执行基础接口契约](api/production-execution-api.md)
 - [成本归集基础接口契约](api/cost-collection-api.md)
+- [采购管理基础接口契约](api/procurement-management-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -50,6 +53,11 @@
 - [仓库与库存基础设计规格](superpowers/specs/2026-07-03-inventory-management-design.md)
 - [生产执行基础设计规格](superpowers/specs/2026-07-03-production-execution-design.md)
 - [成本归集基础设计规格](superpowers/specs/2026-07-03-cost-collection-design.md)
+- [采购管理基础模块设计规格](superpowers/specs/2026-07-04-procurement-management-design.md)
+
+## 实施计划
+
+- [采购管理基础模块实施计划](superpowers/plans/2026-07-04-procurement-management-implementation-plan.md)
 
 ## 测试与验收
 
@@ -64,6 +72,7 @@
 - [一期生产主链路端到端测试计划](testing/phase-one-e2e-test-plan.md)
 - [一期生产主链路端到端执行记录](testing/phase-one-e2e-execution-record.md)
 - [一期生产主链路端到端缺陷清单](testing/phase-one-e2e-defects.md)
+- [采购管理基础测试计划](testing/procurement-management-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)

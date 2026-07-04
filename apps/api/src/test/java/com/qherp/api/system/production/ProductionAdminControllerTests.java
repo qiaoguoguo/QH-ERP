@@ -83,6 +83,12 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 								"5.000000"))));
 		ResponseEntity<String> postedIssue = postMaterialIssue(admin, workOrderId, issueId);
 		assertOk(postedIssue);
+		JsonNode postedIssueData = data(postedIssue);
+		JsonNode postedRawIssueLine = materialIssueLine(postedIssueData, fixture.rawMaterialId());
+		assertDecimal(postedRawIssueLine, "beforeQuantity", "30.000000");
+		assertDecimal(postedRawIssueLine, "afterQuantity", "20.000000");
+		assertThat(movementCountBySource("PRODUCTION_MATERIAL_ISSUE", postedRawIssueLine.get("id").longValue()))
+			.isOne();
 		assertDecimal(balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId()), "20.000000");
 		JsonNode issueMovement = firstItem(get("/api/admin/inventory/movements?movementType=PRODUCTION_ISSUE"
 				+ "&sourceType=PRODUCTION_MATERIAL_ISSUE&materialId=" + fixture.rawMaterialId(), admin));
@@ -100,6 +106,10 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				completionReceiptPayload(fixture.receiptWarehouseId(), "5.000000"));
 		ResponseEntity<String> postedReceipt = postCompletionReceipt(admin, workOrderId, receiptId);
 		assertOk(postedReceipt);
+		JsonNode postedReceiptData = data(postedReceipt);
+		assertDecimal(postedReceiptData, "beforeQuantity", "0");
+		assertDecimal(postedReceiptData, "afterQuantity", "5.000000");
+		assertThat(movementCountBySource("PRODUCTION_COMPLETION_RECEIPT", receiptId)).isOne();
 		assertDecimal(balanceQuantity(fixture.receiptWarehouseId(), fixture.productMaterialId()), "5.000000");
 		JsonNode receiptMovement = firstItem(get("/api/admin/inventory/movements?movementType=PRODUCTION_RECEIPT"
 				+ "&sourceType=PRODUCTION_COMPLETION_RECEIPT&materialId=" + fixture.productMaterialId(), admin));
@@ -592,6 +602,17 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		throw new AssertionError("未找到工单用料：" + materialId);
 	}
 
+	private JsonNode materialIssueLine(JsonNode issue, long materialId) {
+		JsonNode lines = issue.get("lines");
+		for (int i = 0; i < lines.size(); i++) {
+			JsonNode line = lines.get(i);
+			if (line.get("materialId").longValue() == materialId) {
+				return line;
+			}
+		}
+		throw new AssertionError("未找到生产领料行：" + materialId);
+	}
+
 	private BigDecimal balanceQuantity(long warehouseId, long materialId) throws Exception {
 		ResponseEntity<String> response = get(
 				"/api/admin/inventory/balances?warehouseId=" + warehouseId + "&materialId=" + materialId,
@@ -612,6 +633,15 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				and source_type = 'PRODUCTION_MATERIAL_ISSUE'
 				and material_id = ?
 				""", Long.class, materialId);
+	}
+
+	private long movementCountBySource(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", Long.class, sourceType, sourceLineId);
 	}
 
 	private BigDecimal productionIssueMovementQuantity(long materialId) {
