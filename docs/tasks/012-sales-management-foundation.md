@@ -215,5 +215,8 @@
 - 后端 Task 4 全量回归：2026-07-04 测试角色执行后端全量测试，主代理复核 Surefire 汇总。结果为 16 个报告文件、125 个测试、0 失败、0 错误、0 跳过；Testcontainers 残留检查无输出。未发现销售变更或 `GlobalExceptionHandler` 调整引入既有模块回归失败。
 - 前端 Task 5 完成：2026-07-04 前端开发完成销售 API 客户端、销售路由占位、销售菜单、库存流水 `SALES_SHIPMENT` 标签/筛选/来源跳转和对应测试。主代理复跑 Task 5 定向测试 5 个文件、68 个测试通过，`npm run typecheck` 通过，`git diff --check` 通过且仅有 CRLF 提示。
 - 前端 Task 5 审查：产品经理规格审查 `APPROVED`。前端代码质量审查先发现部分销售权限场景可能泄露无权限销售子菜单，已由前端开发修复并补充回归测试；代码质量复审 `APPROVED`。Task 6/7 替换占位页时必须保留当前路由名、路径、权限和库存流水来源跳转口径。
+- 前端 Task 6 完成：2026-07-04 前端开发完成销售订单列表、新建、编辑、详情、状态标签、明细编辑器和页面辅助方法；`/sales/orders`、`/sales/orders/create`、`/sales/orders/:id`、`/sales/orders/:id/edit` 已替换为真实销售订单页面组件，销售出库路由仍保持占位并归 Task 7。
+- 前端 Task 6 验证：主代理复跑 `npm test -- SalesOrderListView.spec.ts SalesOrderFormView.spec.ts SalesOrderDetailView.spec.ts permissionGuard.spec.ts`，结果为 4 个文件、50 个测试通过；`npm run typecheck` 通过；`git diff --check` 退出码 0，仅有 LF/CRLF 提示。禁用旧命名和未决占位类标记检索无业务命中。
+- 前端 Task 6 审查：UI 设计师规格审查 `APPROVED`，确认销售订单页面符合 ERP 信息密度、可销售物料口径、权限状态、出库追溯入口和 Task6/Task7 边界。前端开发代码质量审查 `APPROVED`，无 Critical/Important；记录两个后续优化项：可销售物料下拉后续宜将过滤前移到 API 查询层以避免分页截断，表单测试后续可补异常输入触发不可销售物料错误文案的直接断言。
 - 视觉分析：本任务文档阶段不启动视觉验收，阶段实现后截图保存到 `docs/testing/sales-management-visual-audit/`。
-- 结论：文档基线、后端 Task 2、后端 Task 3、后端 Task 4 和前端 Task 5 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 6：前端销售订单页面。
+- 结论：文档基线、后端 Task 2、后端 Task 3、后端 Task 4、前端 Task 5 和前端 Task 6 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 7：前端销售出库页面。

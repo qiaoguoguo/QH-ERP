@@ -419,7 +419,7 @@ npm run typecheck
 - 测试： `apps/web/src/modules/sales/SalesOrderFormView.spec.ts`
 - 测试： `apps/web/src/modules/sales/SalesOrderDetailView.spec.ts`
 
-- [ ] **步骤 1：编写预期失败的销售订单页面测试**
+- [x] **步骤 1：编写预期失败的销售订单页面测试**
 
 覆盖列表筛选、空态、错误态、权限按钮、状态标签、表单校验、成品/半成品过滤、原材料/辅料不可销售提示、数量和单价字符串 payload、确认/取消/关闭、出库记录追溯、创建出库入口，并验证销售订单路由加载真实 `SalesOrder*View.vue` 组件而非占位页。
 
@@ -432,11 +432,11 @@ npm test -- SalesOrderListView.spec.ts SalesOrderFormView.spec.ts SalesOrderDeta
 
 预期：失败，原因是 sales order views do not exist.
 
-- [ ] **步骤 2：实现销售订单列表、表单和详情**
+- [x] **步骤 2：实现销售订单列表、表单和详情**
 
 复用采购订单页面模式。页面必须使用后台 ERP 信息密度，不新增看板、CRM、报价、合同、应收、发票、收款、退货、物流或审批界面。若 Task 5 为销售订单路由使用占位组件，本任务必须把 `/sales/orders`、`/sales/orders/create`、`/sales/orders/:id`、`/sales/orders/:id/edit` 替换为真实销售订单页面组件。
 
-- [ ] **步骤 3：验证销售订单定向测试**
+- [x] **步骤 3：验证销售订单定向测试**
 
 运行步骤 1 中的命令。
 
