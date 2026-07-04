@@ -529,11 +529,11 @@ npm run build
 - 更新： `docs/testing/sales-management-test-plan.md`
 - 新建或更新： `docs/testing/sales-management-defects.md`，仅在发现问题时使用
 
-- [ ] **步骤 1：启动本地服务**
+- [x] **步骤 1：启动本地服务**
 
 按本地开发文档启动 PostgreSQL、后端和前端。后端使用 `18080`，前端使用可用 Vite 端口。
 
-- [ ] **步骤 2：验证健康检查**
+- [x] **步骤 2：验证健康检查**
 
 运行：
 
@@ -543,19 +543,19 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:18080/api/health' -UseBasicParsing
 
 预期： response contains `{"status":"UP","service":"qherp-api"}`.
 
-- [ ] **步骤 3：执行浏览器主路径**
+- [x] **步骤 3：执行浏览器主路径**
 
 使用真实浏览器自动化完成销售订单创建、编辑、确认、部分销售出库过账、库存余额扣减、`SALES_SHIPMENT` 库存流水追溯、第二次销售出库过账、订单进入 `SHIPPED`、出库到订单追溯和订单到出库追溯。
 
-- [ ] **步骤 4：执行权限路径**
+- [x] **步骤 4：执行权限路径**
 
 验证管理员、销售员、仓库角色、只读用户、无权限用户和未登录用户，确认前后端权限一致。
 
-- [ ] **步骤 5：执行异常路径**
+- [x] **步骤 5：执行异常路径**
 
 验证停用客户创建/更新/确认订单、不可销售物料、停用物料、停用仓库、未确认订单出库、已取消/已关闭/已全部出库订单出库、零或负数量、超精度、超出库、库存不足、重复过账、已过账编辑和来源行不匹配。
 
-- [ ] **步骤 6：记录结果**
+- [x] **步骤 6：记录结果**
 
 将执行结果、账号、数据标识、命令输出和缺陷记录追加到 `docs/testing/sales-management-test-plan.md`，如创建独立执行记录则同步记录。
 
@@ -568,15 +568,15 @@ Invoke-WebRequest -Uri 'http://127.0.0.1:18080/api/health' -UseBasicParsing
 - 新建： `docs/testing/sales-management-visual-audit/*.png`
 - 更新： `docs/testing/sales-management-test-plan.md`
 
-- [ ] **步骤 1：采集视觉证据**
+- [x] **步骤 1：采集视觉证据**
 
 采集 `docs/testing/sales-management-test-plan.md` 中列出的截图，覆盖桌面和窄屏视口状态。
 
-- [ ] **步骤 2：编写视觉记录**
+- [x] **步骤 2：编写视觉记录**
 
 创建 `notes.md`，记录截图文件名、视口尺寸、页面、账号、发现问题、处理结果和最终结论。
 
-- [ ] **步骤 3：验证视觉资产**
+- [x] **步骤 3：验证视觉资产**
 
 运行：
 
@@ -600,15 +600,15 @@ Get-ChildItem -LiteralPath 'docs/testing/sales-management-visual-audit' -Filter 
 - 更新： `docs/testing/sales-management-test-plan.md`
 - 更新： `docs/testing/sales-management-defects.md` if applicable
 
-- [ ] **步骤 1：运行最终后端测试**
+- [x] **步骤 1：运行最终后端测试**
 
 Run backend full test command from Task 4.
 
-- [ ] **步骤 2：运行最终前端测试、类型检查和构建**
+- [x] **步骤 2：运行最终前端测试、类型检查和构建**
 
 运行 Task 8 中的前端命令。
 
-- [ ] **步骤 3：运行空白检查**
+- [x] **步骤 3：运行空白检查**
 
 运行：
 
@@ -618,11 +618,11 @@ git diff --check
 
 预期： exits `0` with no whitespace errors.
 
-- [ ] **步骤 4：确认没有未解决阻断缺陷**
+- [x] **步骤 4：确认没有未解决阻断缺陷**
 
 检查销售缺陷记录。阻断缺陷必须修复并复验，严重缺陷必须修复或形成明确风险决策。
 
-- [ ] **步骤 5：固定角色最终复审**
+- [x] **步骤 5：固定角色最终复审**
 
 Use `/goal` to dispatch:
 
@@ -632,7 +632,7 @@ Use `/goal` to dispatch:
 - UI 设计师：视觉分析复审。
 - 测试：最终验收证据复核。
 
-- [ ] **步骤 6：主代理交付判断**
+- [x] **步骤 6：主代理交付判断**
 
 主代理复核当前证据后，再判断销售阶段是否可合入或交付浏览器验收。没有新鲜命令输出和当前浏览器证据时，不得声称完成。
 

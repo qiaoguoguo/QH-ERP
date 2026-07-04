@@ -353,3 +353,27 @@
   - 保存销售出库按钮可用，取消按钮可识别。
 - 结论：Lagrange 指出的 `19-sales-shipment-mobile-form.png` 严重窄屏裁切问题已关闭。保留 `17/18` 窄屏侧栏未折叠和 `11` 库存流水宽表列密度作为一般/后续优化项。
 - 是否允许继续：允许进入 UI 设计师 Lagrange 复审或 Task11 质量门。
+
+### 2026-07-04 Task11 最终自动化质量门
+
+- 执行分支与提交：`codex/sales-management-foundation`，`af3c24f 完成销售视觉分析和窄屏修复`。
+- 后端全量测试：按实施计划 Task4 Docker Maven/Testcontainers 命令执行 `mvn -q test`，退出码 `0`。
+  - Surefire 汇总：16 个报告文件，125 个测试，0 失败，0 错误，0 跳过。
+  - Testcontainers 残留检查：`docker ps -a --filter "label=org.testcontainers"` 无输出。
+  - 非阻断提示：Ryuk 禁用提示、SpringDoc 默认端点提示、Mockito 动态 agent 提示和已关闭测试数据库连接池的 Hikari warning；最终 Maven 退出码为 `0`。
+- 前端全量测试：`npm test` 通过，45 个测试文件，317 个测试。
+- 前端类型检查：`npm run typecheck` 通过。
+- 前端构建：`npm run build` 通过，Vite 完成 1794 个模块构建；仅有既有 chunk size warning，非阻断。
+- 空白检查：`git diff --check` 退出码 `0`，无空白错误。
+- 工作区检查：`git status --short --branch` 显示 `codex/sales-management-foundation...origin/main [ahead 10]`，无未提交文件。
+- 缺陷记录：未发现未解决阻断或严重缺陷；未创建 `docs/testing/sales-management-defects.md`。
+- 结论：最终自动化质量门通过，允许进入固定角色最终复审。
+
+### 2026-07-04 Task11 固定角色最终复审和主代理判断
+
+- 产品经理规格复审：Galileo 输出 `APPROVED`。确认销售阶段能力仍限定在销售订单、销售出库、库存扣减、`SALES_SHIPMENT` 库存流水和三方来源追溯；未发现应收、发票、收款、税务、退货、物流、报价、合同、报表或审批等范围外能力被包装成本阶段交付。
+- 后端代码质量审查：Godel 输出 `APPROVED`。未发现 Critical 或 Important；数据库约束、权限映射、销售过账事务、库存扣减、重复过账、库存不足和异常回滚风险可接受。残余非阻断风险为非法 JSON 全局错误语义、未来订单下级 GET 路由权限校准和未做真实并发压测。
+- 前端独立代码质量与最终证据复核：Tesla 输出 `APPROVED`。确认 `origin/main..af3c24f` 的 `apps/web/src` 未发现 Critical 或 Important；此前 `movementType=SALES_SHIPMENT` 查询参数初始化问题已关闭并有回归测试覆盖。复核期间运行前端定向测试 5 个文件、74 个测试通过，`npm run typecheck` 通过，`git diff --check` 退出码 `0`。
+- UI 视觉最终复审：Lagrange 输出 `APPROVED`。确认 19 张截图齐全，`19-sales-shipment-mobile-form.png` 原严重窄屏裁切问题已关闭；`17/18` 窄屏侧栏下推和 `11` 库存流水宽表列密度仍为一般后续优化项，不阻断阶段准出。
+- 前端实现交接：Lovelace 仅提交实现清单和残余风险说明，不作为前端代码质量审查结论；前端质量最终结论以 Tesla 独立复核为准。
+- 主代理判断：固定五角色最终复审均已完成，未发现阻断或严重缺陷。销售管理基础阶段当前满足进入主分支合入和浏览器阶段验收准备的条件；阶段完成边界仍为销售订单、销售出库、库存扣减和来源追溯闭环，不包含阶段排除项。
