@@ -162,6 +162,16 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/receipts/2", "procurement:receipt:update");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/receipts/2/post",
 				"procurement:receipt:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/return-sources",
+				"procurement:return:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/returns", "procurement:return:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/returns/1", "procurement:return:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/procurement/returns", "procurement:return:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/returns/1", "procurement:return:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/returns/1/post",
+				"procurement:return:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/returns/1/cancel",
+				"procurement:return:cancel");
 	}
 
 	@Test
@@ -178,6 +188,13 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.POST, "/api/admin/sales/orders/1/shipments", "sales:shipment:create");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/shipments/2", "sales:shipment:update");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/shipments/2/post", "sales:shipment:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/return-sources", "sales:return:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/returns", "sales:return:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/returns/1", "sales:return:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/sales/returns", "sales:return:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/returns/1", "sales:return:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/returns/1/post", "sales:return:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/returns/1/cancel", "sales:return:cancel");
 	}
 
 	@Test
@@ -214,6 +231,34 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 				"production:receipt:create");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/work-orders/1/completion-receipts/2/post",
 				"production:receipt:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-return-sources",
+				"production:material-return:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-returns",
+				"production:material-return:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-returns/1",
+				"production:material-return:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/material-returns",
+				"production:material-return:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-returns/1",
+				"production:material-return:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-returns/1/post",
+				"production:material-return:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-returns/1/cancel",
+				"production:material-return:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-supplement-sources",
+				"production:material-supplement:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-supplements",
+				"production:material-supplement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/material-supplements/1",
+				"production:material-supplement:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/material-supplements",
+				"production:material-supplement:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-supplements/1",
+				"production:material-supplement:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-supplements/1/post",
+				"production:material-supplement:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-supplements/1/cancel",
+				"production:material-supplement:cancel");
 	}
 
 	@Test
@@ -262,6 +307,25 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1", "finance:payment:update");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1/post", "finance:payment:post");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1/cancel", "finance:payment:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/settlement-adjustment-sources",
+				"finance:settlement-adjustment:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/settlement-adjustments",
+				"finance:settlement-adjustment:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/settlement-adjustments/1",
+				"finance:settlement-adjustment:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/finance/settlement-adjustments",
+				"finance:settlement-adjustment:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/settlement-adjustments/1",
+				"finance:settlement-adjustment:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/settlement-adjustments/1/post",
+				"finance:settlement-adjustment:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/settlement-adjustments/1/cancel",
+				"finance:settlement-adjustment:cancel");
+	}
+
+	@Test
+	void reversalTraceAdminPathMapsToReversalPermissionCode() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reversal-traces", "business:reversal:view");
 	}
 
 	@Test

@@ -1,0 +1,222 @@
+package com.qherp.api.system.reversal;
+
+import com.qherp.api.common.ApiResponse;
+import com.qherp.api.common.PageResponse;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/admin")
+public class ReversalAdminController {
+
+	private final ReversalAdminService reversalAdminService;
+
+	public ReversalAdminController(ReversalAdminService reversalAdminService) {
+		this.reversalAdminService = reversalAdminService;
+	}
+
+	@GetMapping("/sales/return-sources")
+	public ApiResponse<PageResponse<Object>> salesReturnSources(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/sales/returns")
+	public ApiResponse<PageResponse<Object>> salesReturns(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/sales/returns/{id}")
+	public ApiResponse<Object> salesReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PostMapping("/sales/returns")
+	public ApiResponse<Object> createSalesReturn(@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/sales/returns/{id}")
+	public ApiResponse<Object> updateSalesReturn(@PathVariable Long id,
+			@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/sales/returns/{id}/post")
+	public ApiResponse<Object> postSalesReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/sales/returns/{id}/cancel")
+	public ApiResponse<Object> cancelSalesReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@GetMapping("/procurement/return-sources")
+	public ApiResponse<PageResponse<Object>> procurementReturnSources(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/procurement/returns")
+	public ApiResponse<PageResponse<Object>> procurementReturns(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/procurement/returns/{id}")
+	public ApiResponse<Object> procurementReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PostMapping("/procurement/returns")
+	public ApiResponse<Object> createProcurementReturn(@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/procurement/returns/{id}")
+	public ApiResponse<Object> updateProcurementReturn(@PathVariable Long id,
+			@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/procurement/returns/{id}/post")
+	public ApiResponse<Object> postProcurementReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/procurement/returns/{id}/cancel")
+	public ApiResponse<Object> cancelProcurementReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@GetMapping("/production/material-return-sources")
+	public ApiResponse<PageResponse<Object>> materialReturnSources(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/production/material-returns")
+	public ApiResponse<PageResponse<Object>> materialReturns(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/production/material-returns/{id}")
+	public ApiResponse<Object> materialReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PostMapping("/production/material-returns")
+	public ApiResponse<Object> createMaterialReturn(@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-returns/{id}")
+	public ApiResponse<Object> updateMaterialReturn(@PathVariable Long id,
+			@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-returns/{id}/post")
+	public ApiResponse<Object> postMaterialReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-returns/{id}/cancel")
+	public ApiResponse<Object> cancelMaterialReturn(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@GetMapping("/production/material-supplement-sources")
+	public ApiResponse<PageResponse<Object>> materialSupplementSources(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/production/material-supplements")
+	public ApiResponse<PageResponse<Object>> materialSupplements(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/production/material-supplements/{id}")
+	public ApiResponse<Object> materialSupplement(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PostMapping("/production/material-supplements")
+	public ApiResponse<Object> createMaterialSupplement(@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-supplements/{id}")
+	public ApiResponse<Object> updateMaterialSupplement(@PathVariable Long id,
+			@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-supplements/{id}/post")
+	public ApiResponse<Object> postMaterialSupplement(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/production/material-supplements/{id}/cancel")
+	public ApiResponse<Object> cancelMaterialSupplement(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@GetMapping("/finance/settlement-adjustment-sources")
+	public ApiResponse<PageResponse<Object>> settlementAdjustmentSources(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/finance/settlement-adjustments")
+	public ApiResponse<PageResponse<Object>> settlementAdjustments(@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	}
+
+	@GetMapping("/finance/settlement-adjustments/{id}")
+	public ApiResponse<Object> settlementAdjustment(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PostMapping("/finance/settlement-adjustments")
+	public ApiResponse<Object> createSettlementAdjustment(@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/finance/settlement-adjustments/{id}")
+	public ApiResponse<Object> updateSettlementAdjustment(@PathVariable Long id,
+			@RequestBody(required = false) Map<String, Object> request) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/finance/settlement-adjustments/{id}/post")
+	public ApiResponse<Object> postSettlementAdjustment(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@PutMapping("/finance/settlement-adjustments/{id}/cancel")
+	public ApiResponse<Object> cancelSettlementAdjustment(@PathVariable Long id) {
+		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	}
+
+	@GetMapping("/reversal-traces")
+	public ApiResponse<List<ReversalAdminService.ReversalTraceRecord>> reversalTraces() {
+		return ApiResponse.ok(this.reversalAdminService.traces());
+	}
+
+}

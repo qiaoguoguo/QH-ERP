@@ -59,6 +59,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> REPORT_MENU_PERMISSIONS = List.of("report");
 
+	private static final List<String> REVERSAL_MENU_PERMISSIONS = List.of("reversal");
+
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
 			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
@@ -128,7 +130,17 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("procurement:receipt:update", "procurement", "PUT",
 					"/api/admin/procurement/receipts/{id}"),
 			new ExpectedActionPermission("procurement:receipt:post", "procurement", "PUT",
-					"/api/admin/procurement/receipts/{id}/post"));
+					"/api/admin/procurement/receipts/{id}/post"),
+			new ExpectedActionPermission("procurement:return:view", "procurement", "GET",
+					"/api/admin/procurement/returns/**"),
+			new ExpectedActionPermission("procurement:return:create", "procurement", "POST",
+					"/api/admin/procurement/returns"),
+			new ExpectedActionPermission("procurement:return:update", "procurement", "PUT",
+					"/api/admin/procurement/returns/{id}"),
+			new ExpectedActionPermission("procurement:return:post", "procurement", "PUT",
+					"/api/admin/procurement/returns/{id}/post"),
+			new ExpectedActionPermission("procurement:return:cancel", "procurement", "PUT",
+					"/api/admin/procurement/returns/{id}/cancel"));
 
 	private static final List<ExpectedActionPermission> SALES_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("sales:order:view", "sales", "GET", "/api/admin/sales/orders/**"),
@@ -147,7 +159,14 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("sales:shipment:update", "sales", "PUT",
 					"/api/admin/sales/shipments/{id}"),
 			new ExpectedActionPermission("sales:shipment:post", "sales", "PUT",
-					"/api/admin/sales/shipments/{id}/post"));
+					"/api/admin/sales/shipments/{id}/post"),
+			new ExpectedActionPermission("sales:return:view", "sales", "GET", "/api/admin/sales/returns/**"),
+			new ExpectedActionPermission("sales:return:create", "sales", "POST", "/api/admin/sales/returns"),
+			new ExpectedActionPermission("sales:return:update", "sales", "PUT", "/api/admin/sales/returns/{id}"),
+			new ExpectedActionPermission("sales:return:post", "sales", "PUT",
+					"/api/admin/sales/returns/{id}/post"),
+			new ExpectedActionPermission("sales:return:cancel", "sales", "PUT",
+					"/api/admin/sales/returns/{id}/cancel"));
 
 	private static final List<ExpectedActionPermission> PRODUCTION_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("production:work-order:view", "production", "GET",
@@ -185,7 +204,27 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("production:receipt:update", "production", "PUT",
 					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}"),
 			new ExpectedActionPermission("production:receipt:post", "production", "PUT",
-					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post"));
+					"/api/admin/production/work-orders/{id}/completion-receipts/{receiptId}/post"),
+			new ExpectedActionPermission("production:material-return:view", "production", "GET",
+					"/api/admin/production/material-returns/**"),
+			new ExpectedActionPermission("production:material-return:create", "production", "POST",
+					"/api/admin/production/material-returns"),
+			new ExpectedActionPermission("production:material-return:update", "production", "PUT",
+					"/api/admin/production/material-returns/{id}"),
+			new ExpectedActionPermission("production:material-return:post", "production", "PUT",
+					"/api/admin/production/material-returns/{id}/post"),
+			new ExpectedActionPermission("production:material-return:cancel", "production", "PUT",
+					"/api/admin/production/material-returns/{id}/cancel"),
+			new ExpectedActionPermission("production:material-supplement:view", "production", "GET",
+					"/api/admin/production/material-supplements/**"),
+			new ExpectedActionPermission("production:material-supplement:create", "production", "POST",
+					"/api/admin/production/material-supplements"),
+			new ExpectedActionPermission("production:material-supplement:update", "production", "PUT",
+					"/api/admin/production/material-supplements/{id}"),
+			new ExpectedActionPermission("production:material-supplement:post", "production", "PUT",
+					"/api/admin/production/material-supplements/{id}/post"),
+			new ExpectedActionPermission("production:material-supplement:cancel", "production", "PUT",
+					"/api/admin/production/material-supplements/{id}/cancel"));
 
 	private static final List<ExpectedActionPermission> COST_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("cost:record:view", "cost", "GET", "/api/admin/cost/**"),
@@ -236,7 +275,17 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("finance:payment:post", "finance", "PUT",
 					"/api/admin/finance/payments/{id}/post"),
 			new ExpectedActionPermission("finance:payment:cancel", "finance", "PUT",
-					"/api/admin/finance/payments/{id}/cancel"));
+					"/api/admin/finance/payments/{id}/cancel"),
+			new ExpectedActionPermission("finance:settlement-adjustment:view", "finance", "GET",
+					"/api/admin/finance/settlement-adjustments/**"),
+			new ExpectedActionPermission("finance:settlement-adjustment:create", "finance", "POST",
+					"/api/admin/finance/settlement-adjustments"),
+			new ExpectedActionPermission("finance:settlement-adjustment:update", "finance", "PUT",
+					"/api/admin/finance/settlement-adjustments/{id}"),
+			new ExpectedActionPermission("finance:settlement-adjustment:post", "finance", "PUT",
+					"/api/admin/finance/settlement-adjustments/{id}/post"),
+			new ExpectedActionPermission("finance:settlement-adjustment:cancel", "finance", "PUT",
+					"/api/admin/finance/settlement-adjustments/{id}/cancel"));
 
 	private static final List<ExpectedActionPermission> REPORT_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("report:overview:view", "report", "GET", "/api/admin/reports/overview"),
@@ -264,6 +313,9 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			Map.entry("report:cost:view", "/reports/cost"),
 			Map.entry("report:settlement:view", "/reports/settlement"),
 			Map.entry("report:exception:view", "/reports/exceptions"));
+
+	private static final List<ExpectedActionPermission> REVERSAL_ACTION_PERMISSIONS = List
+		.of(new ExpectedActionPermission("business:reversal:view", "reversal", "GET", "/api/admin/reversal-traces"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -538,7 +590,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		var paymentAllocationColumns = columns("fin_payment_allocation");
 
 		assertThat(receivableColumns).contains("id", "receivable_no", "customer_id", "source_type", "source_id",
-				"source_no", "business_date", "due_date", "total_amount", "received_amount",
+				"source_no", "business_date", "due_date", "total_amount", "received_amount", "adjusted_amount",
 				"unreceived_amount", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
 				"confirmed_by", "confirmed_at", "closed_by", "closed_at", "cancelled_by", "cancelled_at",
 				"version");
@@ -549,7 +601,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				"posted_by", "posted_at", "cancelled_by", "cancelled_at", "version");
 		assertThat(receiptAllocationColumns).contains("id", "receipt_id", "receivable_id", "allocated_amount");
 		assertThat(payableColumns).contains("id", "payable_no", "supplier_id", "source_type", "source_id",
-				"source_no", "business_date", "due_date", "total_amount", "paid_amount", "unpaid_amount",
+				"source_no", "business_date", "due_date", "total_amount", "paid_amount", "adjusted_amount", "unpaid_amount",
 				"status", "remark", "created_by", "created_at", "updated_by", "updated_at", "confirmed_by",
 				"confirmed_at", "closed_by", "closed_at", "cancelled_by", "cancelled_at", "version");
 		assertThat(payableSourceColumns).contains("id", "payable_id", "source_type", "source_id", "source_no",
@@ -585,9 +637,92 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(constraint("fin_payment", "ck_fin_payment_status")).contains("DRAFT", "POSTED",
 				"CANCELLED");
 		assertThat(constraint("fin_receivable", "ck_fin_receivable_amount_balance")).contains("total_amount",
-				"received_amount", "unreceived_amount");
+				"received_amount", "adjusted_amount", "unreceived_amount");
 		assertThat(constraint("fin_payable", "ck_fin_payable_amount_balance")).contains("total_amount",
-				"paid_amount", "unpaid_amount");
+				"paid_amount", "adjusted_amount", "unpaid_amount");
+	}
+
+	@Test
+	void reversalSchemaContainsContractTablesConstraintsIndexesAndEnums() throws Exception {
+		assertThat(columns("biz_reversal_link")).contains("id", "source_type", "source_id", "source_line_id",
+				"reverse_type", "reverse_id", "reverse_line_id", "business_date", "quantity", "amount", "created_by",
+				"created_at");
+		assertThat(columns("sal_sales_return")).contains("id", "return_no", "customer_id", "source_shipment_id",
+				"source_shipment_no", "warehouse_id", "business_date", "status", "total_amount",
+				"client_request_id", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
+				"posted_at", "cancelled_by", "cancelled_at", "version");
+		assertThat(columns("sal_sales_return_line")).contains("id", "return_id", "source_shipment_line_id",
+				"sales_order_line_id", "material_id", "unit_id", "line_no", "returned_quantity_before",
+				"returnable_quantity_before", "quantity", "unit_price", "amount", "reason", "stock_movement_id");
+		assertThat(columns("proc_purchase_return")).contains("id", "return_no", "supplier_id", "source_receipt_id",
+				"source_receipt_no", "warehouse_id", "business_date", "status", "total_amount",
+				"client_request_id", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
+				"posted_at", "cancelled_by", "cancelled_at", "version");
+		assertThat(columns("proc_purchase_return_line")).contains("id", "return_id", "source_receipt_line_id",
+				"purchase_order_line_id", "material_id", "unit_id", "line_no", "returned_quantity_before",
+				"returnable_quantity_before", "quantity", "unit_price", "amount", "reason", "stock_movement_id");
+		assertThat(columns("mfg_material_return")).contains("id", "return_no", "work_order_id", "source_issue_id",
+				"warehouse_id", "business_date", "status", "client_request_id", "remark", "created_by",
+				"created_at", "updated_by", "updated_at", "posted_by", "posted_at", "cancelled_by",
+				"cancelled_at", "version");
+		assertThat(columns("mfg_material_return_line")).contains("id", "return_id", "source_issue_line_id",
+				"work_order_material_id", "material_id", "unit_id", "line_no", "returned_quantity_before",
+				"returnable_quantity_before", "quantity", "reason", "stock_movement_id", "cost_record_id");
+		assertThat(columns("mfg_material_supplement")).contains("id", "supplement_no", "work_order_id",
+				"warehouse_id", "business_date", "status", "client_request_id", "remark", "created_by",
+				"created_at", "updated_by", "updated_at", "posted_by", "posted_at", "cancelled_by",
+				"cancelled_at", "version");
+		assertThat(columns("mfg_material_supplement_line")).contains("id", "supplement_id", "work_order_material_id",
+				"material_id", "unit_id", "line_no", "issued_quantity_before", "supplemented_quantity_before",
+				"available_stock_quantity_before", "quantity", "reason", "stock_movement_id", "cost_record_id");
+		assertThat(columns("fin_settlement_adjustment")).contains("id", "adjustment_no", "settlement_side",
+				"adjustment_type", "source_type", "source_id", "target_id", "business_date", "amount", "status",
+				"remark", "client_request_id", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
+				"posted_at", "cancelled_by", "cancelled_at", "version");
+
+		assertThat(indexes("biz_reversal_link")).contains("uk_biz_reversal_link_reverse_line",
+				"uk_biz_reversal_link_source_reverse", "idx_biz_reversal_link_source",
+				"idx_biz_reversal_link_reverse");
+		assertThat(indexes("sal_sales_return")).contains("uk_sal_sales_return_no",
+				"uk_sal_sales_return_client_request", "idx_sal_sales_return_customer",
+				"idx_sal_sales_return_status_date", "idx_sal_sales_return_source");
+		assertThat(indexes("proc_purchase_return")).contains("uk_proc_purchase_return_no",
+				"uk_proc_purchase_return_client_request", "idx_proc_purchase_return_supplier",
+				"idx_proc_purchase_return_status_date", "idx_proc_purchase_return_source");
+		assertThat(indexes("mfg_material_return")).contains("uk_mfg_material_return_no",
+				"uk_mfg_material_return_client_request", "idx_mfg_material_return_work_order",
+				"idx_mfg_material_return_status_date", "idx_mfg_material_return_source");
+		assertThat(indexes("mfg_material_supplement")).contains("uk_mfg_material_supplement_no",
+				"uk_mfg_material_supplement_client_request", "idx_mfg_material_supplement_work_order",
+				"idx_mfg_material_supplement_status_date", "idx_mfg_material_supplement_warehouse");
+		assertThat(indexes("fin_settlement_adjustment")).contains("uk_fin_settlement_adjustment_no",
+				"uk_fin_settlement_adjustment_client_request", "idx_fin_settlement_adjustment_target",
+				"idx_fin_settlement_adjustment_source", "idx_fin_settlement_adjustment_status_date");
+
+		assertThat(constraint("biz_reversal_link", "ck_biz_reversal_link_has_quantity_or_amount"))
+			.contains("quantity", "amount");
+		assertThat(constraint("sal_sales_return", "ck_sal_sales_return_status")).contains("DRAFT", "POSTED",
+				"CANCELLED");
+		assertThat(constraint("fin_settlement_adjustment", "ck_fin_settlement_adjustment_type"))
+			.contains("RETURN_OFFSET", "REFUND", "PAYMENT_OFFSET");
+		assertThat(constraint("inv_stock_movement", "ck_inv_stock_movement_type")).contains("SALES_RETURN_IN",
+				"PURCHASE_RETURN_OUT", "PRODUCTION_MATERIAL_RETURN_IN", "PRODUCTION_MATERIAL_SUPPLEMENT_OUT",
+				"BUSINESS_REVERSAL");
+		assertThat(constraint("mfg_cost_record", "ck_mfg_cost_record_source_document_type"))
+			.contains("PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT");
+
+		assertThat(enumConstants("com.qherp.api.system.inventory.InventoryMovementType")).contains("SALES_RETURN_IN",
+				"PURCHASE_RETURN_OUT", "PRODUCTION_MATERIAL_RETURN_IN", "PRODUCTION_MATERIAL_SUPPLEMENT_OUT",
+				"BUSINESS_REVERSAL");
+		assertThat(enumConstants("com.qherp.api.system.cost.CostSourceDocumentType"))
+			.contains("PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT");
+		assertThat(enumConstants("com.qherp.api.system.reversal.ReversalDocumentStatus")).containsExactly("DRAFT",
+				"POSTED", "CANCELLED");
+		assertThat(enumConstants("com.qherp.api.system.reversal.ReversalSourceType")).contains("SALES_SHIPMENT",
+				"SALES_SHIPMENT_LINE", "PURCHASE_RECEIPT", "PURCHASE_RECEIPT_LINE",
+				"PRODUCTION_MATERIAL_ISSUE", "PRODUCTION_MATERIAL_ISSUE_LINE", "RECEIVABLE", "RECEIPT",
+				"PAYABLE", "PAYMENT", "COST_RECORD", "SALES_RETURN", "PURCHASE_RETURN",
+				"PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT", "SETTLEMENT_ADJUSTMENT");
 	}
 
 	@Test
@@ -731,6 +866,22 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertErrorCode("REPORT_DATE_RANGE_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("REPORT_PARAMETER_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("REPORT_TRACE_KEY_INVALID", HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
+	void reversalErrorCodesAreRegistered() {
+		assertErrorCode("REVERSAL_SOURCE_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("REVERSAL_SOURCE_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_STATUS_NOT_ALLOWED", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("REVERSAL_AMOUNT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("REVERSAL_QUANTITY_EXCEEDS_AVAILABLE", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_AMOUNT_EXCEEDS_AVAILABLE", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_STOCK_INSUFFICIENT", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_DUPLICATED", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_POSTED_IMMUTABLE", HttpStatus.CONFLICT);
+		assertErrorCode("REVERSAL_TRACE_RESTRICTED", HttpStatus.FORBIDDEN);
+		assertErrorCode("REVERSAL_CONCURRENT_MODIFICATION", HttpStatus.CONFLICT);
 	}
 
 	@Test
@@ -904,6 +1055,22 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			var permission = this.permissionRepository.findByCode(code).orElseThrow();
 			assertThat(permission.getRoutePath()).as(code).isEqualTo(routePath);
 		});
+		REVERSAL_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		REVERSAL_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -1054,6 +1221,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 		REPORT_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+		REVERSAL_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		REVERSAL_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
