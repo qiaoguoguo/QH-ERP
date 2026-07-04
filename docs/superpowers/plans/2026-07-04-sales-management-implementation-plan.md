@@ -488,7 +488,7 @@ npm test -- SalesShipmentListView.spec.ts SalesShipmentFormView.spec.ts SalesShi
 **文件：**
 - Task 5、Task 6 和 Task 7 涉及的全部前端文件
 
-- [ ] **步骤 1：运行前端全量测试**
+- [x] **步骤 1：运行前端全量测试**
 
 运行：
 
@@ -499,7 +499,7 @@ npm test
 
 预期： all frontend tests pass.
 
-- [ ] **步骤 2：运行类型检查**
+- [x] **步骤 2：运行类型检查**
 
 运行：
 
@@ -510,7 +510,7 @@ npm run typecheck
 
 预期： typecheck exits `0`.
 
-- [ ] **步骤 3：运行前端构建**
+- [x] **步骤 3：运行前端构建**
 
 运行：
 

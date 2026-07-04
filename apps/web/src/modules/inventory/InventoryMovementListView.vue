@@ -18,6 +18,15 @@ import { formatQuantity, movementTypeLabel } from './inventoryPageHelpers'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const routeMovementTypes = new Set<string>([
+  'OPENING',
+  'ADJUSTMENT_INCREASE',
+  'ADJUSTMENT_DECREASE',
+  'PRODUCTION_ISSUE',
+  'PRODUCTION_RECEIPT',
+  'PURCHASE_RECEIPT',
+  'SALES_SHIPMENT',
+])
 const filters = reactive<{
   keyword: string
   warehouseId: ResourceId | ''
@@ -30,7 +39,7 @@ const filters = reactive<{
   keyword: '',
   warehouseId: normalizeRouteId(route.query.warehouseId),
   materialId: normalizeRouteId(route.query.materialId),
-  movementType: undefined,
+  movementType: normalizeRouteMovementType(route.query.movementType),
   direction: undefined,
   dateFrom: '',
   dateTo: '',
@@ -57,6 +66,16 @@ function normalizeRouteId(value: unknown): ResourceId | '' {
   }
   const numericValue = Number(value)
   return Number.isFinite(numericValue) ? numericValue : String(value)
+}
+
+function normalizeRouteMovementType(value: unknown): InventoryMovementType | undefined {
+  if (Array.isArray(value)) {
+    return normalizeRouteMovementType(value[0])
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  return routeMovementTypes.has(value) ? value as InventoryMovementType : undefined
 }
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {

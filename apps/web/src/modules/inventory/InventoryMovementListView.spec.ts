@@ -262,6 +262,22 @@ describe('库存变动流水页', () => {
     })
   })
 
+  it('支持从路由查询参数初始化销售出库流水类型', async () => {
+    await mountMovements({ movementType: 'SALES_SHIPMENT' })
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      movementType: 'SALES_SHIPMENT',
+    }))
+  })
+
+  it('忽略路由中的非法流水类型查询参数', async () => {
+    await mountMovements({ movementType: 'NOT_A_MOVEMENT' })
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      movementType: undefined,
+    }))
+  })
+
   it('变动类型筛选提供生产、采购和销售出库选项并可传递对应流水类型参数', async () => {
     const { wrapper } = await mountMovements()
     const movementTypeOptions = wrapper
