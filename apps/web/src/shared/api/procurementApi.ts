@@ -1,4 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
+import type { InventoryDirection, InventoryMovementType } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -117,9 +118,26 @@ export interface PurchaseReceiptLineRecord {
   remark?: string | null
 }
 
+export interface PurchaseReceiptInventoryMovementRecord {
+  id: ResourceId
+  movementNo: string
+  movementType: InventoryMovementType
+  direction: InventoryDirection
+  warehouseName: string
+  materialCode: string
+  materialName: string
+  quantity: number
+  beforeQuantity?: number | null
+  afterQuantity?: number | null
+  businessDate?: string | null
+  operatorName?: string | null
+  occurredAt?: string | null
+}
+
 export interface PurchaseReceiptDetailRecord extends PurchaseReceiptSummaryRecord {
   lines: PurchaseReceiptLineRecord[]
   orderSummary: PurchaseOrderSummaryRecord
+  inventoryMovements?: PurchaseReceiptInventoryMovementRecord[]
 }
 
 export interface PurchaseOrderLinePayload {

@@ -37,6 +37,12 @@
 | 无权限用户 | 验证无菜单入口、路由受限和接口拒绝 |
 | 未登录用户 | 验证认证拦截 |
 
+### 业务验收账号授权包口径
+
+- 采购员、仓库角色和只读用户的浏览器验收账号，除下方采购订单、采购入库和库存流水权限外，应具备采购页面加载引用数据所需的基础资料只读权限。
+- 必要基础资料只读权限至少包括：`master:supplier:view`、`master:warehouse:view`、`master:material:view`、`master:unit:view`。
+- 该口径是制造业 ERP 业务角色的合理授权包，用于支持采购页面加载供应商、仓库、物料和单位引用数据，不代表扩大采购阶段功能范围，也不改变采购接口自身的后端鉴权边界。
+
 ## 权限矩阵
 
 | 角色 | 菜单 | 路由 | 采购订单权限 | 采购入库权限 | 库存流水权限 | 接口预期 |
@@ -206,3 +212,114 @@
 
 - 2026-07-04 建立采购管理基础测试计划，作为后续实施和验收依据。
 - 自动化测试、本地部署、浏览器验收和视觉分析结果在阶段实现后补充。
+- 2026-07-04 Task 9 本地部署与浏览器验收执行记录：
+  - 执行角色：测试。
+  - 服务地址：后端 `http://127.0.0.1:18080`，前端 `http://127.0.0.1:5188`。
+  - 启动与健康检查：
+    - `docker compose up -d postgres`：PostgreSQL 已运行并健康。
+    - 旧 `qherp-api-local` 为早期后端进程，管理员登录后缺少采购菜单与采购权限；已停止后按当前工作区使用 Docker Maven 重新启动。
+    - `maven:3.9.9-eclipse-temurin-21 mvn spring-boot:run`：后端启动成功，Flyway 从 V7 迁移到 V8 采购管理 schema，健康检查返回 `{"service":"qherp-api","status":"UP"}`。
+    - 前端使用 `npx vite --host 0.0.0.0 --port 5188 --strictPort --force` 启动；已通过 `/src/App.vue` 和 `/src/router/index.ts` 校验当前实例包含采购菜单与采购订单、采购入库真实路由。
+  - 执行账号：
+    - 管理员：`admin`。
+    - 准备的采购员、仓库、只读、无权限账号：`t9_buyer_0704130250`、`t9_warehouse_0704130250`、`t9_readonly_0704130250`、`t9_none_0704130250`，密码统一 `Qherp@2026!`。
+  - 测试数据：
+    - 启用供应商：`T9-SUP-0704130250 Task9供应商0704130250`。
+    - 启用仓库：`T9-WH-0704130250 Task9原料仓0704130250`。
+    - 启用采购型物料：`T9-MAT-0704130250 Task9铜排0704130250`，基础单位 `Task9千克0704130250`。
+    - 停用供应商、停用仓库、停用物料、非采购物料已准备，但异常矩阵因阻断缺陷未继续完整执行。
+  - 已验证主路径：
+    - 管理员浏览器登录后可见采购管理菜单。
+    - 使用真实 HTTP 调用创建采购订单草稿 `PO-20260704050958938-000`，编辑草稿后确认订单成功。
+    - 基于该订单创建第一张采购入库 `PR-20260704050959177-000`，数量 `4.000000`，过账成功；订单状态变为 `PARTIALLY_RECEIVED`。
+    - 创建第二张采购入库 `PR-20260704050959341-001`，数量 `6.000000`，过账成功；订单状态变为 `RECEIVED`，订单明细已入库 `10`、未入库 `0`。
+    - 库存余额从 `0` 增加到 `10`。
+    - 库存流水接口返回两条采购入库流水：
+      - `PROC-RCP-MOV-20260704050959251-1-000`：`movementType=PURCHASE_RECEIPT`、`direction=IN`、`sourceType=PURCHASE_RECEIPT`、`sourceId=1`、数量 `4`、变动前 `0`、变动后 `4`。
+      - `PROC-RCP-MOV-20260704050959390-2-001`：`movementType=PURCHASE_RECEIPT`、`direction=IN`、`sourceType=PURCHASE_RECEIPT`、`sourceId=2`、数量 `6`、变动前 `4`、变动后 `10`。
+    - 浏览器打开采购订单详情 `/procurement/orders/1`，可见订单状态“全部入库”、已入库 `10`、未入库 `0`，并列出两张已过账采购入库记录。
+    - 浏览器打开采购入库详情 `/procurement/receipts/1`，可见来源订单、入库明细、过账前库存 `0`、过账后库存 `4`。
+  - 阻断缺陷：
+    - 从库存流水列表点击采购入库来源的“查看单据”时，页面跳转到 `/inventory/documents/{sourceId}`，实际打开无关库存单据，而不是 `/procurement/receipts/{sourceId}`。
+    - 采购入库详情在已有真实采购入库库存流水时仍显示“暂无库存流水追溯”。
+    - 该问题导致采购订单、采购入库和库存流水之间的浏览器追溯断链，命中本计划阻断标准“采购订单、采购入库和库存流水追溯断链”。
+    - 缺陷已记录到 `docs/testing/procurement-management-defects.md`，编号 `PROC-T9-001`。
+  - 权限、异常与视觉验收：
+    - 因发现阻断缺陷，按阻断规则停止继续扩大验收。
+    - 采购员、仓库角色、只读用户、无权限用户、未登录用户浏览器权限矩阵未完整执行。
+    - 异常矩阵未完整执行。
+    - 视觉分析截图与完整视觉结论未生成。
+  - 本次 Task 9 结论：`BLOCKED`。
+- 2026-07-04 Task 9 阻断修复后复跑记录：
+  - 执行角色：测试。
+  - 服务地址：
+    - 后端：`http://127.0.0.1:18080`。
+    - 前端：`http://127.0.0.1:5188`。
+  - 启动与环境校验：
+    - `docker compose up -d postgres`：`qherp-postgres` 已运行并健康。
+    - `maven:3.9.9-eclipse-temurin-21 mvn spring-boot:run`：后端按当前工作区启动成功，Flyway 当前 schema 为 V8，健康检查返回 `{"service":"qherp-api","status":"UP"}`。
+    - `npx vite --host 0.0.0.0 --port 5188 --strictPort --force`：前端按当前工作区启动成功。
+    - 前端源码探针确认 `InventoryMovementListView.vue` 包含 `procurement-receipt-detail` 和 `procurement:receipt:view` 来源分流，`PurchaseReceiptDetailView.vue` 使用 `inventoryMovements` 展示追溯。
+    - 内置浏览器连接在本次执行中不可用，改用可用的本机 Chrome 浏览器连接完成 localhost 浏览器验收。
+  - 执行账号：
+    - 管理员：`admin`。
+    - 采购员：`t9r_buyer_0704133200`。
+    - 仓库角色：`t9r_warehouse_0704133200`。
+    - 只读：`t9r_readonly_0704133200`。
+    - 仅库存流水：`t9r_invonly_0704133200`。
+    - 无权限：`t9r_none_0704133200`。
+    - 密码统一：`Qherp@2026!`。
+  - 测试数据：
+    - 启用供应商：`T9R-SUP-0704133200 Task9复验供应商0704133200`。
+    - 启用仓库：`T9R-WH-0704133200 Task9复验原料仓0704133200`。
+    - 启用采购型物料：`T9R-MAT-0704133200 Task9复验铜排0704133200`。
+    - 停用供应商：`T9R-SUPD-0704133200`。
+    - 停用仓库：`T9R-WHD-0704133200`。
+    - 停用物料：`T9R-MATD-0704133200`。
+    - 非采购物料：`T9R-SELF-0704133200`。
+  - `PROC-T9-001` 修复复验：
+    - 管理员创建采购订单 `PO-20260704053201987-000`，编辑草稿后确认。
+    - 第一张采购入库 `PR-20260704053202169-000` 过账数量 `4`，生成流水 `PROC-RCP-MOV-20260704053202246-3-000`。
+    - 第二张采购入库 `PR-20260704053202343-001` 过账数量 `6`，生成流水 `PROC-RCP-MOV-20260704053202387-4-001`。
+    - 库存余额从 `0` 增加到 `10`，订单状态为 `RECEIVED`，已入库 `10`，未入库 `0`。
+    - 浏览器库存流水页 `/inventory/movements?warehouseId=6&materialId=16` 显示采购入库流水。
+    - 点击第二张采购入库流水“查看单据”，进入 `/procurement/receipts/4`，详情展示自己的流水号、方向“入库”、数量 `6`、变动前 `4`、变动后 `10`、业务日期 `2026-07-04`、操作人 `admin`，未出现第一张入库流水号。
+    - 点击第一张采购入库流水“查看单据”，进入 `/procurement/receipts/3`，详情展示自己的流水号、方向“入库”、数量 `4`、变动前 `0`、变动后 `4`、业务日期 `2026-07-04`、操作人 `admin`，未出现第二张入库流水号。
+    - 新增库存调整单据 `INV-ADJ-20260704053202567-000` 过账后，点击库存单据来源流水“查看单据”进入 `/inventory/documents/5`，库存单据原追溯未回归。
+    - `t9r_invonly_0704133200` 仅有库存流水权限、无采购入库查看权限，可查看库存流水列表和采购入库流水，但来源列显示 `-`，不显示采购入库“查看单据”。
+    - 结论：`PROC-T9-001` 已修复，原阻断解除。
+  - 管理员主路径结果：
+    - 浏览器可见采购管理菜单、采购订单和采购入库入口。
+    - 采购订单创建、编辑、确认、部分入库过账、剩余入库过账均成功。
+    - 采购订单详情可见两张已过账入库记录，可从采购订单进入采购入库详情。
+    - 采购入库详情可查看来源订单，可从入库追溯回采购订单。
+    - 采购入库过账后库存余额增加，库存流水为 `PURCHASE_RECEIPT`，追溯闭环通过。
+  - 权限结果：
+    - 采购员 `t9r_buyer_0704133200`：浏览器显示采购管理、采购订单、采购入库；订单列表显示新建、编辑、确认、取消、关闭等订单权限内按钮；后端订单列表 `200 OK`；在有效已确认订单上调用采购入库创建返回 `403 AUTH_FORBIDDEN`。
+    - 仓库角色 `t9r_warehouse_0704133200`：浏览器显示采购管理、采购订单、采购入库；订单列表显示“创建入库”入口，不显示订单编辑/确认类决策按钮；后端订单确认返回 `403 AUTH_FORBIDDEN`，采购入库创建和过账返回 `200 OK`。
+    - 只读 `t9r_readonly_0704133200`：浏览器可查看采购订单详情、采购入库详情和库存流水追溯；未显示可执行编辑、确认、取消、关闭、过账的操作按钮；后端订单列表 `200 OK`，订单创建返回 `403 AUTH_FORBIDDEN`。
+    - 仅库存流水 `t9r_invonly_0704133200`：后端库存流水查询 `200 OK`，采购入库详情返回 `403 AUTH_FORBIDDEN`；浏览器库存流水可见但采购入库来源跳转隐藏。
+    - 无权限 `t9r_none_0704133200`：浏览器访问 `/procurement/orders` 跳转 `/forbidden?from=/procurement/orders`；后端采购订单查询返回 `403 AUTH_FORBIDDEN`。
+    - 未登录用户：浏览器访问 `/procurement/orders` 跳转 `/login?redirect=/procurement/orders`；后端采购订单查询返回 `401 AUTH_UNAUTHORIZED`。
+  - 异常矩阵结果：
+    - 停用供应商创建订单：`400 PROCUREMENT_SUPPLIER_INVALID`。
+    - 停用物料创建订单：`400 PROCUREMENT_MATERIAL_INVALID`。
+    - 非采购物料创建订单：`400 PROCUREMENT_MATERIAL_INVALID`。
+    - 未确认订单创建入库：`409 PROCUREMENT_ORDER_STATUS_INVALID`。
+    - 已取消订单继续入库：`409 PROCUREMENT_ORDER_STATUS_INVALID`。
+    - 已关闭订单继续入库：`409 PROCUREMENT_ORDER_STATUS_INVALID`。
+    - 已全部入库订单继续入库：`409 PROCUREMENT_ORDER_STATUS_INVALID`。
+    - 停用仓库创建入库：`400 PROCUREMENT_WAREHOUSE_INVALID`。
+    - 入库数量为 0：`400 PROCUREMENT_QUANTITY_INVALID`。
+    - 入库数量为负数：`400 PROCUREMENT_QUANTITY_INVALID`。
+    - 入库数量超精度：`400 PROCUREMENT_QUANTITY_INVALID`。
+    - 入库数量超过未入库数量：`409 PROCUREMENT_RECEIPT_EXCEEDS_ORDER`。
+    - 来源订单行物料不匹配：`409 PROCUREMENT_RECEIPT_LINE_SOURCE_INVALID`。
+    - 已过账采购入库编辑：`409 PROCUREMENT_RECEIPT_POSTED_IMMUTABLE`。
+    - 重复过账：`409 PROCUREMENT_DUPLICATE_POST`，重复过账前后库存数量均为 `12`，采购入库流水数量均为 `3`，未污染库存或流水。
+  - 新发现问题：
+    - `PROC-T9-002`：按 Task 9 最小角色口径创建的采购员、仓库和只读用户打开采购列表时，页面主体和权限按钮可用，但供应商、仓库、物料等引用下拉因缺少基础资料查看权限显示“无访问权限”。该问题已记录为非阻断缺陷，阶段内采用文档口径修正处理：采购员、仓库角色和只读业务验收账号应补齐必要基础资料只读权限，至少包括 `master:supplier:view`、`master:warehouse:view`、`master:material:view`、`master:unit:view`。Task 10 视觉分析应使用补齐基础资料只读权限后的采购员、仓库和只读账号。
+  - 未覆盖项：
+    - 本次复跑未生成完整视觉分析截图清单；浏览器复验覆盖了关键页面、追溯、权限差异和异常接口结果，但未完成计划中 19 张视觉截图。
+    - 未执行“异常过账中任一明细失败整单回滚”的多明细组合场景；本次异常验证覆盖了单明细失败不写入和重复过账不污染库存/流水。
+  - 本次 Task 9 结论：`DONE_WITH_CONCERNS`，无阻断缺陷。

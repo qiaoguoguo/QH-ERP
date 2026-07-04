@@ -12,30 +12,10 @@ import {
   procurementErrorMessage,
 } from './procurementPageHelpers'
 
-type InventoryMovementTrace = {
-  id: ResourceId
-  movementNo: string
-  movementType: string
-  direction: string
-  warehouseName: string
-  materialCode: string
-  materialName: string
-  quantity: number
-  beforeQuantity?: number | null
-  afterQuantity?: number | null
-  businessDate?: string | null
-  operatorName?: string | null
-  occurredAt?: string | null
-}
-
-type PurchaseReceiptDetailWithMovements = PurchaseReceiptDetailRecord & {
-  inventoryMovements?: InventoryMovementTrace[]
-}
-
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const record = ref<PurchaseReceiptDetailWithMovements | null>(null)
+const record = ref<PurchaseReceiptDetailRecord | null>(null)
 const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
@@ -76,7 +56,7 @@ async function loadRecord() {
   loading.value = true
   error.value = ''
   try {
-    record.value = await procurementApi.receipts.get(route.params.id as ResourceId) as PurchaseReceiptDetailWithMovements
+    record.value = await procurementApi.receipts.get(route.params.id as ResourceId)
   } catch (caught) {
     record.value = null
     error.value = procurementErrorMessage(caught)

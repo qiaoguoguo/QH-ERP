@@ -9,6 +9,7 @@ import {
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import InventoryDirectionTag from './InventoryDirectionTag.vue'
@@ -16,6 +17,7 @@ import { formatQuantity, movementTypeLabel } from './inventoryPageHelpers'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
   warehouseId: ResourceId | ''
@@ -139,8 +141,24 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function canViewSourceDocument(record: InventoryMovementRecord) {
+  if (record.sourceType === 'PURCHASE_RECEIPT') {
+    return authStore.hasPermission('procurement:receipt:view')
+  }
+  if (record.sourceType === 'INVENTORY_DOCUMENT') {
+    return authStore.hasPermission('inventory:document:view')
+  }
+  return false
+}
+
 function viewSourceDocument(record: InventoryMovementRecord) {
-  void router.push({ name: 'inventory-document-detail', params: { id: String(record.sourceId) } })
+  if (record.sourceType === 'PURCHASE_RECEIPT') {
+    void router.push({ name: 'procurement-receipt-detail', params: { id: String(record.sourceId) } })
+    return
+  }
+  if (record.sourceType === 'INVENTORY_DOCUMENT') {
+    void router.push({ name: 'inventory-document-detail', params: { id: String(record.sourceId) } })
+  }
 }
 
 function formatDateTime(value?: string | null) {
@@ -215,6 +233,7 @@ onMounted(() => {
             <el-option label="调减" value="ADJUSTMENT_DECREASE" />
             <el-option label="生产领料" value="PRODUCTION_ISSUE" />
             <el-option label="完工入库" value="PRODUCTION_RECEIPT" />
+            <el-option label="采购入库" value="PURCHASE_RECEIPT" />
           </el-select>
         </el-form-item>
         <el-form-item label="方向">
@@ -306,9 +325,16 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="来源单据" min-width="140">
           <template #default="{ row }">
-            <el-button size="small" text data-test="view-source-document" @click="viewSourceDocument(row)">
+            <el-button
+              v-if="canViewSourceDocument(row)"
+              size="small"
+              text
+              data-test="view-source-document"
+              @click="viewSourceDocument(row)"
+            >
               查看单据
             </el-button>
+            <span v-else class="source-document-empty">-</span>
           </template>
         </el-table-column>
         <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
@@ -332,5 +358,9 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.source-document-empty {
+  color: var(--qherp-muted);
 }
 </style>

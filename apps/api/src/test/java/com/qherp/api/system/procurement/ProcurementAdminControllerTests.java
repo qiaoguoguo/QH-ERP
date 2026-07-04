@@ -116,6 +116,25 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(movement.beforeQuantity(), "0");
 		assertDecimal(movement.afterQuantity(), "3.000000");
 
+		JsonNode receiptDetail = data(getReceipt(admin, receiptId));
+		JsonNode inventoryMovements = receiptDetail.get("inventoryMovements");
+		assertThat(inventoryMovements).isNotNull();
+		assertThat(inventoryMovements.size()).isOne();
+		JsonNode tracedMovement = inventoryMovements.get(0);
+		assertThat(tracedMovement.get("id").longValue()).isPositive();
+		assertThat(tracedMovement.get("movementNo").asText()).isNotBlank();
+		assertThat(tracedMovement.get("movementType").asText()).isEqualTo("PURCHASE_RECEIPT");
+		assertThat(tracedMovement.get("direction").asText()).isEqualTo("IN");
+		assertThat(tracedMovement.get("warehouseName").asText()).isEqualTo(warehouseName(fixture.warehouseId()));
+		assertThat(tracedMovement.get("materialCode").asText()).isEqualTo(materialCode(fixture.materialId()));
+		assertThat(tracedMovement.get("materialName").asText()).isEqualTo(materialName(fixture.materialId()));
+		assertDecimal(tracedMovement, "quantity", "3.000000");
+		assertDecimal(tracedMovement, "beforeQuantity", "0");
+		assertDecimal(tracedMovement, "afterQuantity", "3.000000");
+		assertThat(tracedMovement.get("businessDate").asText()).isEqualTo(LocalDate.now().toString());
+		assertThat(tracedMovement.get("operatorName").asText()).isEqualTo("admin");
+		assertThat(tracedMovement.get("occurredAt").asText()).isNotBlank();
+
 		JsonNode partiallyReceived = data(getOrder(admin, orderId));
 		assertThat(partiallyReceived.get("status").asText()).isEqualTo("PARTIALLY_RECEIVED");
 		assertDecimal(partiallyReceived, "receivedQuantity", "3.000000");
@@ -690,6 +709,11 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 				materialId);
 	}
 
+	private String warehouseName(long warehouseId) {
+		return this.jdbcTemplate.queryForObject("select name from mst_warehouse where id = ?", String.class,
+				warehouseId);
+	}
+
 	private String supplierCode(long supplierId) {
 		return this.jdbcTemplate.queryForObject("select code from mst_supplier where id = ?", String.class,
 				supplierId);
@@ -776,6 +800,10 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> createReceipt(AuthenticatedSession session, long orderId, Map<String, Object> body) {
 		return exchange(HttpMethod.POST, "/api/admin/procurement/orders/" + orderId + "/receipts", body, session);
+	}
+
+	private ResponseEntity<String> getReceipt(AuthenticatedSession session, long receiptId) {
+		return get("/api/admin/procurement/receipts/" + receiptId, session);
 	}
 
 	private ResponseEntity<String> updateReceipt(AuthenticatedSession session, long receiptId,

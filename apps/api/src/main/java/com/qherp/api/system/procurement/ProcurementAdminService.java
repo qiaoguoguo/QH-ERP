@@ -242,7 +242,7 @@ public class ProcurementAdminService {
 				summary.warehouseName(), summary.businessDate(), summary.status(), summary.lineCount(),
 				summary.totalQuantity(), summary.remark(), summary.createdByName(), summary.createdAt(),
 				summary.updatedAt(), summary.postedByName(), summary.postedAt(), receiptLines(id),
-				orderSummary(summary.orderId()).orElseThrow(this::orderNotFound));
+				orderSummary(summary.orderId()).orElseThrow(this::orderNotFound), receiptInventoryMovements(id));
 	}
 
 	@Transactional
@@ -858,6 +858,28 @@ public class ProcurementAdminService {
 				receiptId);
 	}
 
+	private List<PurchaseReceiptInventoryMovementResponse> receiptInventoryMovements(Long receiptId) {
+		return this.jdbcTemplate.query("""
+				select sm.id, sm.movement_no, sm.movement_type, sm.direction, w.name as warehouse_name,
+				       m.code as material_code, m.name as material_name, sm.quantity, sm.before_quantity,
+				       sm.after_quantity, sm.business_date, sm.operator_name, sm.occurred_at
+				from inv_stock_movement sm
+				join proc_purchase_receipt_line rl on rl.id = sm.source_line_id
+				join mst_warehouse w on w.id = sm.warehouse_id
+				join mst_material m on m.id = sm.material_id
+				where sm.source_type = ?
+				and sm.source_id = ?
+				order by sm.occurred_at asc, rl.line_no asc, sm.id asc
+				""",
+				(rs, rowNum) -> new PurchaseReceiptInventoryMovementResponse(rs.getLong("id"),
+						rs.getString("movement_no"), rs.getString("movement_type"), rs.getString("direction"),
+						rs.getString("warehouse_name"), rs.getString("material_code"), rs.getString("material_name"),
+						rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"),
+						rs.getBigDecimal("after_quantity"), rs.getObject("business_date", LocalDate.class),
+						rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class)),
+				RECEIPT_SOURCE_TYPE, receiptId);
+	}
+
 	private Optional<SupplierRef> supplierRef(Long supplierId) {
 		return this.jdbcTemplate.query("""
 				select id, code, name, status
@@ -1086,11 +1108,18 @@ public class ProcurementAdminService {
 			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark) {
 	}
 
+	public record PurchaseReceiptInventoryMovementResponse(Long id, String movementNo, String movementType,
+			String direction, String warehouseName, String materialCode, String materialName, BigDecimal quantity,
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, LocalDate businessDate, String operatorName,
+			OffsetDateTime occurredAt) {
+	}
+
 	public record PurchaseReceiptDetailResponse(Long id, String receiptNo, Long orderId, String orderNo,
 			Long supplierId, String supplierName, Long warehouseId, String warehouseName, LocalDate businessDate,
 			String status, int lineCount, BigDecimal totalQuantity, String remark, String createdByName,
 			OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt,
-			List<PurchaseReceiptLineResponse> lines, PurchaseOrderSummaryResponse orderSummary) {
+			List<PurchaseReceiptLineResponse> lines, PurchaseOrderSummaryResponse orderSummary,
+			List<PurchaseReceiptInventoryMovementResponse> inventoryMovements) {
 	}
 
 	private record ValidatedOrder(SupplierRef supplier, LocalDate orderDate, LocalDate expectedArrivalDate,

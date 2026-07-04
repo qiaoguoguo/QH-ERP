@@ -7,24 +7,6 @@ import type { PurchaseReceiptDetailRecord } from '../../shared/api/procurementAp
 import { useAuthStore } from '../../stores/authStore'
 import PurchaseReceiptDetailView from './PurchaseReceiptDetailView.vue'
 
-type ReceiptDetailWithMovements = PurchaseReceiptDetailRecord & {
-  inventoryMovements?: Array<{
-    id: string | number
-    movementNo: string
-    movementType: string
-    direction: string
-    warehouseName: string
-    materialCode: string
-    materialName: string
-    quantity: number
-    beforeQuantity?: number | null
-    afterQuantity?: number | null
-    businessDate?: string | null
-    operatorName?: string | null
-    occurredAt?: string | null
-  }>
-}
-
 const procurementApiMock = vi.hoisted(() => ({
   receipts: {
     get: vi.fn(),
@@ -36,7 +18,7 @@ vi.mock('../../shared/api/procurementApi', () => ({
   procurementApi: procurementApiMock,
 }))
 
-const draftReceipt: ReceiptDetailWithMovements = {
+const draftReceipt: PurchaseReceiptDetailRecord = {
   id: 700,
   receiptNo: 'PR-20260705-001',
   orderId: 99,
@@ -95,7 +77,7 @@ const draftReceipt: ReceiptDetailWithMovements = {
   inventoryMovements: [],
 }
 
-const postedReceipt: ReceiptDetailWithMovements = {
+const postedReceipt: PurchaseReceiptDetailRecord = {
   ...draftReceipt,
   status: 'POSTED',
   postedByName: '仓管员',
@@ -124,7 +106,7 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
 }
 
 async function mountDetail(
-  record: ReceiptDetailWithMovements = draftReceipt,
+  record: PurchaseReceiptDetailRecord = draftReceipt,
   permissions = [
     'procurement:order:view',
     'procurement:receipt:view',
