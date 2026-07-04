@@ -119,6 +119,136 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/cost')
   })
 
+  it('后端返回采购菜单且用户有采购查看权限时展示采购入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'procurement_user', displayName: '采购用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 20,
+          code: 'procurement',
+          name: '采购管理',
+          routePath: '/procurement/orders',
+          children: [
+            { id: 21, code: 'procurement:order:view', name: '采购订单', routePath: '/procurement/orders' },
+            { id: 22, code: 'procurement:receipt:view', name: '采购入库', routePath: '/procurement/receipts' },
+          ],
+        },
+      ],
+      permissions: ['procurement:order:view', 'procurement:receipt:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('采购管理')
+    expect(wrapper.text()).toContain('采购订单')
+    expect(wrapper.text()).toContain('采购入库')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/procurement')
+  })
+
+  it('有采购查看权限但后端菜单缺失时补齐采购管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'procurement_admin', displayName: '采购管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['procurement:order:view', 'procurement:receipt:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('采购管理')
+    expect(wrapper.text()).toContain('采购订单')
+    expect(wrapper.text()).toContain('采购入库')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/procurement')
+  })
+
+  it('无采购查看权限时不显示采购管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'no_procurement', displayName: '无采购权限', status: 'ENABLED' },
+      menus: [
+        {
+          id: 20,
+          code: 'procurement',
+          name: '采购管理',
+          routePath: null,
+          children: [
+            { id: 21, code: 'procurement:order:view', name: '采购订单', routePath: '/procurement/orders' },
+            { id: 22, code: 'procurement:receipt:view', name: '采购入库', routePath: '/procurement/receipts' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('采购管理')
+    expect(wrapper.text()).not.toContain('采购订单')
+    expect(wrapper.text()).not.toContain('采购入库')
+  })
+
+  it('无采购查看权限时递归移除挂在其他父级下的采购菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'business_user', displayName: '业务用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 30,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 31, code: 'procurement:order:view', name: '采购订单', routePath: '/procurement/orders' },
+            { id: 32, code: 'procurement:receipt:view', name: '采购入库', routePath: '/procurement/receipts' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('采购管理')
+    expect(wrapper.text()).not.toContain('采购订单')
+    expect(wrapper.text()).not.toContain('采购入库')
+    expect(wrapper.text()).not.toContain('业务管理')
+  })
+
   it('无成本查看权限时不显示成本管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

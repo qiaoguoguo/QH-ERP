@@ -182,6 +182,35 @@ describe('账号权限路由守卫', () => {
     }
   })
 
+  it('采购路由使用占位组件并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const procurementRoutes = [
+      ['procurement-orders', '/procurement/orders', 'procurement:order:view'],
+      ['procurement-order-create', '/procurement/orders/create', 'procurement:order:create'],
+      ['procurement-order-detail', '/procurement/orders/:id', 'procurement:order:view'],
+      ['procurement-order-edit', '/procurement/orders/:id/edit', 'procurement:order:update'],
+      ['procurement-receipts', '/procurement/receipts', 'procurement:receipt:view'],
+      ['procurement-receipt-create', '/procurement/orders/:orderId/receipts/create', 'procurement:receipt:create'],
+      ['procurement-receipt-detail', '/procurement/receipts/:id', 'procurement:receipt:view'],
+      ['procurement-receipt-edit', '/procurement/receipts/:id/edit', 'procurement:receipt:update'],
+    ] as const
+
+    for (const [routeName, path, permission] of procurementRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component?.template).toBeUndefined()
+      expect(component?.render).toBeTypeOf('function')
+    }
+
+    const rootRoute = router.getRoutes().find((item) => item.path === '/procurement')
+    expect(rootRoute?.redirect).toBe('/procurement/orders')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+    expect(rootRoute?.meta.requiredPermission).toBe('procurement:order:view')
+  })
+
   it('访问库存根路径时重定向到库存余额页', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
@@ -200,6 +229,16 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('cost-records')
+  })
+
+  it('访问采购根路径时重定向到采购订单页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:order:view'] })
+
+    await router.push('/procurement')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('procurement-orders')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
@@ -330,6 +369,38 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('cost-records')
+  })
+
+  it('已登录且拥有采购订单查看权限时允许访问采购订单列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:order:view'] })
+
+    await router.push('/procurement/orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('procurement-orders')
+  })
+
+  it('已登录但缺少采购入库查看权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:order:view'] })
+
+    await router.push('/procurement/receipts')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/procurement/receipts')
+  })
+
+  it('未登录访问采购路由时跳转登录页并保留来源地址', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('未登录')))
+    const router = createQhErpRouter()
+
+    await router.push('/procurement/orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.redirect).toBe('/procurement/orders')
   })
 
   it('已登录但缺少成本记录查看权限时跳转无权限页', async () => {
