@@ -5,6 +5,7 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.finance.PayableStatus;
 import com.qherp.api.system.finance.ReceivableStatus;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
@@ -45,6 +46,14 @@ public class ReversalAdminService {
 
 	private static final String SALES_RETURN_SOURCE = "SALES_RETURN";
 
+	private static final String PURCHASE_RETURN_TARGET = "PURCHASE_RETURN";
+
+	private static final String PURCHASE_RECEIPT_SOURCE = "PURCHASE_RECEIPT";
+
+	private static final String PURCHASE_RECEIPT_LINE_SOURCE = "PURCHASE_RECEIPT_LINE";
+
+	private static final String PURCHASE_RETURN_SOURCE = "PURCHASE_RETURN";
+
 	private static final String SETTLEMENT_ADJUSTMENT_SOURCE = "SETTLEMENT_ADJUSTMENT";
 
 	private static final String RESTRICTED_MESSAGE = "来源无查看权限";
@@ -54,6 +63,8 @@ public class ReversalAdminService {
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final AtomicInteger SALES_RETURN_NO_SEQUENCE = new AtomicInteger();
+
+	private static final AtomicInteger PURCHASE_RETURN_NO_SEQUENCE = new AtomicInteger();
 
 	private static final AtomicInteger SETTLEMENT_ADJUSTMENT_NO_SEQUENCE = new AtomicInteger();
 
@@ -283,10 +294,235 @@ public class ReversalAdminService {
 	}
 
 	@Transactional(readOnly = true)
+	public PageResponse<PurchaseReturnSourceResponse> purchaseReturnSources(String keyword, Long supplierId,
+			Long warehouseId, LocalDate dateFrom, LocalDate dateTo, int page, int pageSize, CurrentUser currentUser) {
+		if (!canViewPurchaseReceipt(currentUser)) {
+			return PageResponse.of(List.of(), page, limit(pageSize), 0);
+		}
+		QueryParts queryParts = purchaseReturnSourceQuery(keyword, supplierId, warehouseId, dateFrom, dateTo);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from proc_purchase_receipt pr
+				join mst_supplier s on s.id = pr.supplier_id
+				join mst_warehouse w on w.id = pr.warehouse_id
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> args = paginationArgs(queryParts, pageSize, page);
+		List<PurchaseReturnSourceResponse> sources = this.jdbcTemplate.query("""
+				select pr.id, pr.receipt_no, pr.supplier_id, s.name as supplier_name, pr.warehouse_id,
+				       w.name as warehouse_name, pr.business_date, pr.status
+				from proc_purchase_receipt pr
+				join mst_supplier s on s.id = pr.supplier_id
+				join mst_warehouse w on w.id = pr.warehouse_id
+				%s
+				order by pr.business_date desc, pr.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapPurchaseReturnSource(rs), args.toArray());
+		return PageResponse.of(sources, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<PurchaseReturnSummaryResponse> purchaseReturns(String keyword, Long supplierId,
+			Long warehouseId, String status, LocalDate dateFrom, LocalDate dateTo, int page, int pageSize,
+			CurrentUser currentUser) {
+		QueryParts queryParts = purchaseReturnQuery(keyword, supplierId, warehouseId, status, dateFrom, dateTo);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from proc_purchase_return r
+				join mst_supplier s on s.id = r.supplier_id
+				join mst_warehouse w on w.id = r.warehouse_id
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> args = paginationArgs(queryParts, pageSize, page);
+		List<PurchaseReturnSummaryResponse> items = this.jdbcTemplate.query("""
+				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
+				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
+				       pr.business_date as source_date, pr.status as source_status, r.business_date, r.status,
+				       coalesce((select sum(l.quantity) from proc_purchase_return_line l where l.return_id = r.id), 0) as total_quantity,
+				       r.total_amount, r.created_at, r.updated_at
+				from proc_purchase_return r
+				join mst_supplier s on s.id = r.supplier_id
+				join mst_warehouse w on w.id = r.warehouse_id
+				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				%s
+				order by r.updated_at desc, r.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapPurchaseReturnSummary(rs, currentUser),
+				args.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public PurchaseReturnDetailResponse purchaseReturn(Long id, CurrentUser currentUser) {
+		PurchaseReturnRow row = purchaseReturnRow(id).orElseThrow(this::sourceNotFoundException);
+		return purchaseReturnDetail(row, currentUser);
+	}
+
+	@Transactional
+	public PurchaseReturnDetailResponse createPurchaseReturn(PurchaseReturnRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		ValidatedPurchaseReturn validated = validatePurchaseReturnCreate(request);
+		ReceiptRow receipt = lockReceipt(validated.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
+		if (!"POSTED".equals(receipt.status())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		Optional<PurchaseReturnRow> existing = existingPurchaseReturn(validated.sourceReceiptId(),
+				validated.clientRequestId());
+		if (existing.isPresent()) {
+			return existingPurchaseReturnDetail(existing.get(), validated, operator);
+		}
+		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines());
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			CreatedDocument created = insertPurchaseReturnWithRetry(receipt, validated, totalPurchaseAmount(lines),
+					operator.username(), now);
+			insertPurchaseReturnLines(created.id(), lines, now);
+			this.auditService.record(operator, "PURCHASE_RETURN_CREATE", PURCHASE_RETURN_TARGET, created.id(),
+					created.documentNo(), servletRequest);
+			return purchaseReturn(created.id(), operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public PurchaseReturnDetailResponse updatePurchaseReturn(Long id, PurchaseReturnRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		PurchaseReturnRow current = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+		if (current.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(current);
+		ValidatedPurchaseReturn validated = validatePurchaseReturnCreate(request);
+		if (!current.sourceReceiptId().equals(validated.sourceReceiptId())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		ReceiptRow receipt = lockReceipt(current.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
+		if (!"POSTED".equals(receipt.status())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines());
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			this.jdbcTemplate.update("""
+					update proc_purchase_return
+					set business_date = ?, total_amount = ?, client_request_id = ?, remark = ?, updated_by = ?,
+					    updated_at = ?, version = version + 1
+					where id = ?
+					""", validated.businessDate(), totalPurchaseAmount(lines), blankToNull(validated.clientRequestId()),
+					blankToNull(validated.remark()), operator.username(), now, id);
+			this.jdbcTemplate.update("delete from proc_purchase_return_line where return_id = ?", id);
+			insertPurchaseReturnLines(id, lines, now);
+			this.auditService.record(operator, "PURCHASE_RETURN_UPDATE", PURCHASE_RETURN_TARGET, id,
+					current.returnNo(), servletRequest);
+			return purchaseReturn(id, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public PurchaseReturnDetailResponse postPurchaseReturn(Long id, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+		if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(purchaseReturn);
+		ReceiptRow receipt = lockReceipt(purchaseReturn.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
+		if (!"POSTED".equals(receipt.status())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		List<PurchaseReturnLineRow> lines = lockPurchaseReturnLines(id);
+		if (lines.isEmpty()) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
+		}
+		PayableRow payable = lockPayableForReceipt(receipt.id()).orElseThrow(this::sourceNotFoundException);
+		requireAdjustablePayable(payable);
+		BigDecimal totalAmount = totalPurchaseAmountFromRows(lines);
+		if (totalAmount.compareTo(payable.unpaidAmount()) > 0) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			for (PurchaseReturnLineRow line : lines) {
+				ReceiptLineRow sourceLine = lockReceiptLine(receipt.id(), line.sourceReceiptLineId())
+					.orElseThrow(this::sourceNotFoundException);
+				validatePurchaseLineStillReturnable(sourceLine, line);
+				if (lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId()).compareTo(line.quantity()) < 0) {
+					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
+				}
+				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+						InventoryMovementType.PURCHASE_RETURN_OUT, InventoryDirection.OUT,
+						purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+						PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(), purchaseReturn.businessDate(),
+						"采购退货出库", line.reason(), operator.username()));
+				Long movementId = movementId(PURCHASE_RETURN_SOURCE, line.id());
+				this.jdbcTemplate.update("""
+						update proc_purchase_return_line
+						set stock_movement_id = ?, updated_at = ?
+						where id = ?
+						""", movementId, now, line.id());
+				insertPurchaseReversalLink(receipt, sourceLine, purchaseReturn, line, operator.username(), now);
+			}
+			Long adjustmentId = insertPostedPayableAdjustment(purchaseReturn, payable, totalAmount, operator.username(),
+					now);
+			applyPayableAdjustment(payable, totalAmount, operator.username(), now);
+			this.jdbcTemplate.update("""
+					update proc_purchase_return
+					set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+					    version = version + 1
+					where id = ?
+					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
+			this.auditService.record(operator, "PURCHASE_RETURN_POST", PURCHASE_RETURN_TARGET, id,
+					purchaseReturn.returnNo(), servletRequest);
+			return purchaseReturn(id, operator).withSettlementAdjustmentId(adjustmentId);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public PurchaseReturnDetailResponse cancelPurchaseReturn(Long id, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+		if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(purchaseReturn);
+		OffsetDateTime now = OffsetDateTime.now();
+		this.jdbcTemplate.update("""
+				update proc_purchase_return
+				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
+				    version = version + 1
+				where id = ?
+				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
+		this.auditService.record(operator, "PURCHASE_RETURN_CANCEL", PURCHASE_RETURN_TARGET, id,
+				purchaseReturn.returnNo(), servletRequest);
+		return purchaseReturn(id, operator);
+	}
+
+	@Transactional(readOnly = true)
 	public List<ReversalTraceRecord> traces(String sourceType, Long sourceId, Long sourceLineId, String direction,
 			CurrentUser currentUser) {
 		if (!hasText(sourceType) || sourceId == null) {
 			return List.of();
+		}
+		if (isPurchaseTraceType(sourceType)) {
+			List<PurchaseTraceLinkRow> links;
+			List<ReversalTraceRecord> traces = new ArrayList<>();
+			if (!"REVERSE_TO_SOURCE".equals(direction)) {
+				links = purchaseSourceTraceLinks(sourceType, sourceId, sourceLineId);
+				traces.addAll(purchaseTraceRecords(links, currentUser, "SOURCE_TO_REVERSE"));
+			}
+			if (!"SOURCE_TO_REVERSE".equals(direction)) {
+				links = purchaseReverseTraceLinks(sourceType, sourceId, sourceLineId);
+				traces.addAll(purchaseTraceRecords(links, currentUser, "REVERSE_TO_SOURCE"));
+			}
+			return traces;
 		}
 		List<TraceLinkRow> links = new ArrayList<>();
 		List<ReversalTraceRecord> traces = new ArrayList<>();
@@ -320,11 +556,34 @@ public class ReversalAdminService {
 				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), lines, traces);
 	}
 
+	private PurchaseReturnDetailResponse purchaseReturnDetail(PurchaseReturnRow row, CurrentUser currentUser) {
+		boolean canViewSource = canViewPurchaseReceipt(currentUser);
+		List<ReversalDocumentLine> lines = purchaseReturnLines(row.id(), row.sourceReceiptId(), row.sourceReceiptNo(),
+				canViewSource);
+		List<ReversalTraceRecord> traces = purchaseTraceRecords(
+				purchaseReverseTraceLinks(PURCHASE_RETURN_SOURCE, row.id(), null), currentUser, "SOURCE_TO_REVERSE");
+		return new PurchaseReturnDetailResponse(row.id(), row.returnNo(), row.supplierId(), row.supplierName(),
+				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
+				quantity(totalQuantity(lines)), amount(row.totalAmount()), sourceView(PURCHASE_RECEIPT_SOURCE,
+						row.sourceReceiptId(), null, row.sourceReceiptNo(), null, row.sourceBusinessDate(),
+						row.sourceStatus(), null, null, canViewSource, "procurement-receipt-detail",
+						Map.of("id", row.sourceReceiptId()), null),
+				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), lines, traces);
+	}
+
 	private SalesReturnSourceResponse mapSalesReturnSource(ResultSet rs) throws SQLException {
 		Long shipmentId = rs.getLong("id");
 		List<SalesReturnSourceLineResponse> lines = salesReturnSourceLines(shipmentId);
 		return new SalesReturnSourceResponse(shipmentId, rs.getString("shipment_no"), rs.getLong("customer_id"),
 				rs.getString("customer_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
+				rs.getObject("business_date", LocalDate.class), rs.getString("status"), lines);
+	}
+
+	private PurchaseReturnSourceResponse mapPurchaseReturnSource(ResultSet rs) throws SQLException {
+		Long receiptId = rs.getLong("id");
+		List<PurchaseReturnSourceLineResponse> lines = purchaseReturnSourceLines(receiptId);
+		return new PurchaseReturnSourceResponse(receiptId, rs.getString("receipt_no"), rs.getLong("supplier_id"),
+				rs.getString("supplier_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("status"), lines);
 	}
 
@@ -338,6 +597,20 @@ public class ReversalAdminService {
 				sourceView(SALES_SHIPMENT_SOURCE, sourceShipmentId, null, rs.getString("source_shipment_no"), null,
 						rs.getObject("source_date", LocalDate.class), rs.getString("source_status"), null, null,
 						canViewSource, "sales-shipment-detail", Map.of("id", sourceShipmentId), null),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private PurchaseReturnSummaryResponse mapPurchaseReturnSummary(ResultSet rs, CurrentUser currentUser)
+			throws SQLException {
+		boolean canViewSource = canViewPurchaseReceipt(currentUser);
+		Long sourceReceiptId = rs.getLong("source_receipt_id");
+		return new PurchaseReturnSummaryResponse(rs.getLong("id"), rs.getString("return_no"), rs.getLong("supplier_id"),
+				rs.getString("supplier_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
+				rs.getObject("business_date", LocalDate.class), rs.getString("status"),
+				quantity(rs.getBigDecimal("total_quantity")), amount(rs.getBigDecimal("total_amount")),
+				sourceView(PURCHASE_RECEIPT_SOURCE, sourceReceiptId, null, rs.getString("source_receipt_no"), null,
+						rs.getObject("source_date", LocalDate.class), rs.getString("source_status"), null, null,
+						canViewSource, "procurement-receipt-detail", Map.of("id", sourceReceiptId), null),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
@@ -372,6 +645,42 @@ public class ReversalAdminService {
 			.toList();
 	}
 
+	private List<PurchaseReturnSourceLineResponse> purchaseReturnSourceLines(Long receiptId) {
+		return this.jdbcTemplate.query("""
+				select prl.id, prl.order_line_id, prl.line_no, prl.material_id, m.code as material_code,
+				       m.name as material_name, prl.unit_id, u.name as unit_name, prl.quantity,
+				       coalesce((
+				           select sum(rl.quantity)
+				           from proc_purchase_return_line rl
+				           join proc_purchase_return r on r.id = rl.return_id
+				           where rl.source_receipt_line_id = prl.id
+				           and r.status = 'POSTED'
+				       ), 0) as returned_quantity,
+				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
+				       pol.unit_price
+				from proc_purchase_receipt_line prl
+				join proc_purchase_order_line pol on pol.id = prl.order_line_id
+				join proc_purchase_receipt pr on pr.id = prl.receipt_id
+				join mst_material m on m.id = prl.material_id
+				join mst_unit u on u.id = prl.unit_id
+				left join inv_stock_balance sb on sb.warehouse_id = pr.warehouse_id
+					and sb.material_id = prl.material_id
+				where prl.receipt_id = ?
+				order by prl.line_no asc, prl.id asc
+				""", (rs, rowNum) -> {
+			BigDecimal received = rs.getBigDecimal("quantity");
+			BigDecimal returned = rs.getBigDecimal("returned_quantity");
+			BigDecimal returnable = received.subtract(returned);
+			return new PurchaseReturnSourceLineResponse(rs.getLong("id"), rs.getLong("order_line_id"),
+					rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
+					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+					quantity(received), quantity(returned), quantity(returnable),
+					quantity(rs.getBigDecimal("available_stock_quantity")), quantity(rs.getBigDecimal("unit_price")),
+					amount(returnable.multiply(rs.getBigDecimal("unit_price"))));
+		}, receiptId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
+			.toList();
+	}
+
 	private List<ReversalDocumentLine> salesReturnLines(Long returnId, Long sourceShipmentId, String sourceShipmentNo,
 			boolean canViewSource) {
 		return this.jdbcTemplate.query("""
@@ -400,6 +709,37 @@ public class ReversalAdminService {
 						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
 						"sales-shipment-detail", Map.of("id", sourceShipmentId),
 						Map.of("lineId", rs.getLong("source_shipment_line_id")))),
+				returnId);
+	}
+
+	private List<ReversalDocumentLine> purchaseReturnLines(Long returnId, Long sourceReceiptId, String sourceReceiptNo,
+			boolean canViewSource) {
+		return this.jdbcTemplate.query("""
+				select l.id, l.line_no, l.source_receipt_line_id, l.purchase_order_line_id, l.material_id,
+				       m.code as material_code, m.name as material_name, l.unit_id, u.name as unit_name,
+				       l.returned_quantity_before, l.returnable_quantity_before, l.quantity, l.unit_price,
+				       l.amount, l.reason, l.stock_movement_id, prl.line_no as source_line_no,
+				       pr.business_date as source_business_date, pr.status as source_status
+				from proc_purchase_return_line l
+				join proc_purchase_receipt_line prl on prl.id = l.source_receipt_line_id
+				join proc_purchase_receipt pr on pr.id = prl.receipt_id
+				join mst_material m on m.id = l.material_id
+				join mst_unit u on u.id = l.unit_id
+				where l.return_id = ?
+				order by l.line_no asc, l.id asc
+				""", (rs, rowNum) -> new ReversalDocumentLine(rs.getLong("id"), rs.getInt("line_no"),
+				rs.getLong("source_receipt_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
+				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				quantity(rs.getBigDecimal("returned_quantity_before")),
+				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
+				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
+				nullableLong(rs, "stock_movement_id"), null,
+				sourceView(PURCHASE_RECEIPT_LINE_SOURCE, sourceReceiptId, rs.getLong("source_receipt_line_id"),
+						sourceReceiptNo, rs.getInt("source_line_no"),
+						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
+						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
+						"procurement-receipt-detail", Map.of("id", sourceReceiptId),
+						Map.of("lineId", rs.getLong("source_receipt_line_id")))),
 				returnId);
 	}
 
@@ -483,6 +823,106 @@ public class ReversalAdminService {
 		if (customerId != null) {
 			conditions.add("r.customer_id = ?");
 			args.add(customerId);
+		}
+		if (warehouseId != null) {
+			conditions.add("r.warehouse_id = ?");
+			args.add(warehouseId);
+		}
+		if (hasText(status)) {
+			conditions.add("r.status = ?");
+			args.add(parseReversalStatus(status).name());
+		}
+		if (dateFrom != null) {
+			conditions.add("r.business_date >= ?");
+			args.add(dateFrom);
+		}
+		if (dateTo != null) {
+			conditions.add("r.business_date <= ?");
+			args.add(dateTo);
+		}
+		return where(conditions, args);
+	}
+
+	private QueryParts purchaseReturnSourceQuery(String keyword, Long supplierId, Long warehouseId, LocalDate dateFrom,
+			LocalDate dateTo) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		conditions.add("pr.status = 'POSTED'");
+		conditions.add("""
+				exists (
+					select 1
+					from proc_purchase_receipt_line prlx
+					where prlx.receipt_id = pr.id
+					and prlx.quantity > coalesce((
+						select sum(rl.quantity)
+						from proc_purchase_return_line rl
+						join proc_purchase_return r on r.id = rl.return_id
+						where rl.source_receipt_line_id = prlx.id
+						and r.status = 'POSTED'
+					), 0)
+				)
+				""");
+		if (hasText(keyword)) {
+			conditions.add("""
+					(pr.receipt_no ilike ? or s.name ilike ? or exists (
+						select 1
+						from proc_purchase_receipt_line prl
+						join mst_material m on m.id = prl.material_id
+						where prl.receipt_id = pr.id
+						and (m.code ilike ? or m.name ilike ?)
+					))
+					""");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (supplierId != null) {
+			conditions.add("pr.supplier_id = ?");
+			args.add(supplierId);
+		}
+		if (warehouseId != null) {
+			conditions.add("pr.warehouse_id = ?");
+			args.add(warehouseId);
+		}
+		if (dateFrom != null) {
+			conditions.add("pr.business_date >= ?");
+			args.add(dateFrom);
+		}
+		if (dateTo != null) {
+			conditions.add("pr.business_date <= ?");
+			args.add(dateTo);
+		}
+		return where(conditions, args);
+	}
+
+	private QueryParts purchaseReturnQuery(String keyword, Long supplierId, Long warehouseId, String status,
+			LocalDate dateFrom, LocalDate dateTo) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("""
+					(r.return_no ilike ? or r.source_receipt_no ilike ? or s.name ilike ? or r.remark ilike ?
+					or exists (
+						select 1
+						from proc_purchase_return_line rl
+						join mst_material m on m.id = rl.material_id
+						where rl.return_id = r.id
+						and (m.code ilike ? or m.name ilike ?)
+					))
+					""");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (supplierId != null) {
+			conditions.add("r.supplier_id = ?");
+			args.add(supplierId);
 		}
 		if (warehouseId != null) {
 			conditions.add("r.warehouse_id = ?");
@@ -663,6 +1103,159 @@ public class ReversalAdminService {
 				returnLine.id(), salesReturn.businessDate(), returnLine.quantity(), returnLine.amount(), operator, now);
 	}
 
+	private ValidatedPurchaseReturn validatePurchaseReturnCreate(PurchaseReturnRequest request) {
+		if (request == null || request.sourceReceiptId() == null || request.businessDate() == null
+				|| request.lines() == null || request.lines().isEmpty()) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		if (hasText(request.clientRequestId()) && request.clientRequestId().length() > 64) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (request.remark() != null && request.remark().length() > 500) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return new ValidatedPurchaseReturn(request.sourceReceiptId(), request.businessDate(),
+				blankToNull(request.clientRequestId()), blankToNull(request.remark()), request.lines());
+	}
+
+	private List<ValidatedPurchaseReturnLine> validatePurchaseReturnLines(ReceiptRow receipt,
+			List<PurchaseReturnLineRequest> requests) {
+		Set<Long> sourceLineIds = new HashSet<>();
+		List<ValidatedPurchaseReturnLine> lines = new ArrayList<>();
+		int lineNo = 1;
+		for (PurchaseReturnLineRequest request : requests) {
+			if (request == null || request.sourceReceiptLineId() == null
+					|| !sourceLineIds.add(request.sourceReceiptLineId())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+			}
+			BigDecimal quantity = validateQuantity(request.quantity());
+			ReceiptLineRow sourceLine = receiptLine(receipt.id(), request.sourceReceiptLineId())
+				.orElseThrow(this::sourceNotFoundException);
+			BigDecimal returnedQuantity = postedPurchaseReturnedQuantity(sourceLine.id());
+			BigDecimal returnableQuantity = sourceLine.quantity().subtract(returnedQuantity);
+			if (quantity.compareTo(returnableQuantity) > 0) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_EXCEEDS_AVAILABLE);
+			}
+			String reason = request.reason();
+			if (reason != null && reason.length() > 200) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+			BigDecimal amount = money(quantity.multiply(sourceLine.unitPrice()));
+			lines.add(new ValidatedPurchaseReturnLine(lineNo++, sourceLine.id(), sourceLine.orderLineId(),
+					sourceLine.materialId(), sourceLine.unitId(), returnedQuantity, returnableQuantity, quantity,
+					sourceLine.unitPrice(), amount, blankToNull(reason)));
+		}
+		return lines;
+	}
+
+	private void validatePurchaseLineStillReturnable(ReceiptLineRow sourceLine, PurchaseReturnLineRow line) {
+		if (!sourceLine.materialId().equals(line.materialId()) || !sourceLine.unitId().equals(line.unitId())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		BigDecimal returnedQuantity = postedPurchaseReturnedQuantity(sourceLine.id());
+		BigDecimal returnableQuantity = sourceLine.quantity().subtract(returnedQuantity);
+		if (line.quantity().compareTo(returnableQuantity) > 0) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_EXCEEDS_AVAILABLE);
+		}
+	}
+
+	private CreatedDocument insertPurchaseReturnWithRetry(ReceiptRow receipt, ValidatedPurchaseReturn purchaseReturn,
+			BigDecimal totalAmount, String operator, OffsetDateTime now) {
+		for (int attempt = 1; attempt <= MAX_NO_ATTEMPTS; attempt++) {
+			String returnNo = nextNo("PR", PURCHASE_RETURN_NO_SEQUENCE);
+			try {
+				Long id = this.jdbcTemplate.queryForObject("""
+						insert into proc_purchase_return (
+							return_no, supplier_id, source_receipt_id, source_receipt_no, warehouse_id,
+							business_date, status, total_amount, client_request_id, remark, created_by, created_at,
+							updated_by, updated_at
+						)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						returning id
+						""", Long.class, returnNo, receipt.supplierId(), receipt.id(), receipt.receiptNo(),
+						receipt.warehouseId(), purchaseReturn.businessDate(), ReversalDocumentStatus.DRAFT.name(),
+						totalAmount, blankToNull(purchaseReturn.clientRequestId()), blankToNull(purchaseReturn.remark()),
+						operator, now, operator, now);
+				return new CreatedDocument(id, returnNo);
+			}
+			catch (DuplicateKeyException exception) {
+				if (containsConstraint(exception, "uk_proc_purchase_return_no") && attempt < MAX_NO_ATTEMPTS) {
+					continue;
+				}
+				throw exception;
+			}
+		}
+		throw new BusinessException(ApiErrorCode.CONFLICT);
+	}
+
+	private void insertPurchaseReturnLines(Long returnId, List<ValidatedPurchaseReturnLine> lines, OffsetDateTime now) {
+		for (ValidatedPurchaseReturnLine line : lines) {
+			this.jdbcTemplate.update("""
+					insert into proc_purchase_return_line (
+						return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
+						returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
+						created_at, updated_at
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", returnId, line.sourceReceiptLineId(), line.purchaseOrderLineId(), line.materialId(),
+					line.unitId(), line.lineNo(), line.returnedQuantityBefore(), line.returnableQuantityBefore(),
+					line.quantity(), line.unitPrice(), line.amount(), blankToNull(line.reason()), now, now);
+		}
+	}
+
+	private Long insertPostedPayableAdjustment(PurchaseReturnRow purchaseReturn, PayableRow payable,
+			BigDecimal amount, String operator, OffsetDateTime now) {
+		for (int attempt = 1; attempt <= MAX_NO_ATTEMPTS; attempt++) {
+			String adjustmentNo = nextNo("ADJ", SETTLEMENT_ADJUSTMENT_NO_SEQUENCE);
+			try {
+				return this.jdbcTemplate.queryForObject("""
+						insert into fin_settlement_adjustment (
+							adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+							business_date, amount, status, remark, created_by, created_at, updated_by, updated_at,
+							posted_by, posted_at
+						)
+						values (?, 'PAYABLE', 'RETURN_OFFSET', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						returning id
+						""", Long.class, adjustmentNo, PURCHASE_RETURN_SOURCE, purchaseReturn.id(), payable.id(),
+						purchaseReturn.businessDate(), amount, ReversalDocumentStatus.POSTED.name(), "采购退货冲减应付",
+						operator, now, operator, now, operator, now);
+			}
+			catch (DuplicateKeyException exception) {
+				if (containsConstraint(exception, "uk_fin_settlement_adjustment_no") && attempt < MAX_NO_ATTEMPTS) {
+					continue;
+				}
+				throw exception;
+			}
+		}
+		throw new BusinessException(ApiErrorCode.CONFLICT);
+	}
+
+	private void applyPayableAdjustment(PayableRow payable, BigDecimal amount, String operator, OffsetDateTime now) {
+		BigDecimal adjustedAmount = money(payable.adjustedAmount().add(amount));
+		BigDecimal unpaidAmount = money(payable.unpaidAmount().subtract(amount));
+		PayableStatus nextStatus = unpaidAmount.compareTo(ZERO) == 0 ? PayableStatus.PAID
+				: PayableStatus.PARTIALLY_PAID;
+		this.jdbcTemplate.update("""
+				update fin_payable
+				set adjusted_amount = ?, unpaid_amount = ?, status = ?, updated_by = ?, updated_at = ?,
+				    version = version + 1
+				where id = ?
+				""", adjustedAmount, unpaidAmount, nextStatus.name(), operator, now, payable.id());
+	}
+
+	private void insertPurchaseReversalLink(ReceiptRow receipt, ReceiptLineRow sourceLine,
+			PurchaseReturnRow purchaseReturn, PurchaseReturnLineRow returnLine, String operator, OffsetDateTime now) {
+		this.jdbcTemplate.update("""
+				insert into biz_reversal_link (
+					source_type, source_id, source_line_id, reverse_type, reverse_id, reverse_line_id, business_date,
+					quantity, amount, created_by, created_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				""", PURCHASE_RECEIPT_SOURCE, receipt.id(), sourceLine.id(), PURCHASE_RETURN_SOURCE,
+				purchaseReturn.id(), returnLine.id(), purchaseReturn.businessDate(), returnLine.quantity(),
+				returnLine.amount(), operator, now);
+	}
+
 	private SalesReturnDetailResponse existingSalesReturnDetail(SalesReturnRow existing, ValidatedSalesReturn request,
 			CurrentUser operator) {
 		if (existing.status() == ReversalDocumentStatus.CANCELLED
@@ -670,6 +1263,15 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
 		}
 		return salesReturnDetail(existing, operator);
+	}
+
+	private PurchaseReturnDetailResponse existingPurchaseReturnDetail(PurchaseReturnRow existing,
+			ValidatedPurchaseReturn request, CurrentUser operator) {
+		if (existing.status() == ReversalDocumentStatus.CANCELLED
+				|| !samePurchaseReturnCoreLines(existing.id(), request.lines())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+		return purchaseReturnDetail(existing, operator);
 	}
 
 	private boolean sameSalesReturnCoreLines(Long existingReturnId, List<SalesReturnLineRequest> requestLines) {
@@ -689,6 +1291,23 @@ public class ReversalAdminService {
 		return true;
 	}
 
+	private boolean samePurchaseReturnCoreLines(Long existingReturnId, List<PurchaseReturnLineRequest> requestLines) {
+		Map<Long, BigDecimal> existingLines = new LinkedHashMap<>();
+		for (PurchaseReturnLineRow line : lockPurchaseReturnLines(existingReturnId)) {
+			existingLines.put(line.sourceReceiptLineId(), line.quantity());
+		}
+		Map<Long, BigDecimal> requestedLines = requestedPurchaseCoreLineQuantities(requestLines);
+		if (!existingLines.keySet().equals(requestedLines.keySet())) {
+			return false;
+		}
+		for (Map.Entry<Long, BigDecimal> entry : existingLines.entrySet()) {
+			if (entry.getValue().compareTo(requestedLines.get(entry.getKey())) != 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	private Map<Long, BigDecimal> requestedCoreLineQuantities(List<SalesReturnLineRequest> requestLines) {
 		Map<Long, BigDecimal> lines = new LinkedHashMap<>();
 		for (SalesReturnLineRequest line : requestLines) {
@@ -696,6 +1315,17 @@ public class ReversalAdminService {
 				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
 			}
 			lines.put(line.sourceShipmentLineId(), validateQuantity(line.quantity()));
+		}
+		return lines;
+	}
+
+	private Map<Long, BigDecimal> requestedPurchaseCoreLineQuantities(List<PurchaseReturnLineRequest> requestLines) {
+		Map<Long, BigDecimal> lines = new LinkedHashMap<>();
+		for (PurchaseReturnLineRequest line : requestLines) {
+			if (line == null || line.sourceReceiptLineId() == null || lines.containsKey(line.sourceReceiptLineId())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+			}
+			lines.put(line.sourceReceiptLineId(), validateQuantity(line.quantity()));
 		}
 		return lines;
 	}
@@ -719,6 +1349,25 @@ public class ReversalAdminService {
 				""", this::mapSalesReturnRow, sourceShipmentId, clientRequestId).stream().findFirst();
 	}
 
+	private Optional<PurchaseReturnRow> existingPurchaseReturn(Long sourceReceiptId, String clientRequestId) {
+		if (!hasText(clientRequestId)) {
+			return Optional.empty();
+		}
+		return this.jdbcTemplate.query("""
+				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
+				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
+				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				from proc_purchase_return r
+				join mst_supplier s on s.id = r.supplier_id
+				join mst_warehouse w on w.id = r.warehouse_id
+				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				where r.source_receipt_id = ?
+				and r.client_request_id = ?
+				for update of r
+				""", this::mapPurchaseReturnRow, sourceReceiptId, clientRequestId).stream().findFirst();
+	}
+
 	private Optional<SalesReturnRow> salesReturnRow(Long id) {
 		return this.jdbcTemplate.query("""
 				select r.id, r.return_no, r.customer_id, c.name as customer_name, r.warehouse_id,
@@ -731,6 +1380,20 @@ public class ReversalAdminService {
 				join sal_sales_shipment sh on sh.id = r.source_shipment_id
 				where r.id = ?
 				""", this::mapSalesReturnRow, id).stream().findFirst();
+	}
+
+	private Optional<PurchaseReturnRow> purchaseReturnRow(Long id) {
+		return this.jdbcTemplate.query("""
+				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
+				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
+				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				from proc_purchase_return r
+				join mst_supplier s on s.id = r.supplier_id
+				join mst_warehouse w on w.id = r.warehouse_id
+				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				where r.id = ?
+				""", this::mapPurchaseReturnRow, id).stream().findFirst();
 	}
 
 	private Optional<SalesReturnRow> lockSalesReturn(Long id) {
@@ -748,6 +1411,21 @@ public class ReversalAdminService {
 				""", this::mapSalesReturnRow, id).stream().findFirst();
 	}
 
+	private Optional<PurchaseReturnRow> lockPurchaseReturn(Long id) {
+		return this.jdbcTemplate.query("""
+				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
+				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
+				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				from proc_purchase_return r
+				join mst_supplier s on s.id = r.supplier_id
+				join mst_warehouse w on w.id = r.warehouse_id
+				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				where r.id = ?
+				for update
+				""", this::mapPurchaseReturnRow, id).stream().findFirst();
+	}
+
 	private List<SalesReturnLineRow> lockSalesReturnLines(Long returnId) {
 		return this.jdbcTemplate.query("""
 				select id, return_id, source_shipment_line_id, sales_order_line_id, material_id, unit_id, line_no,
@@ -760,6 +1438,18 @@ public class ReversalAdminService {
 				""", this::mapSalesReturnLineRow, returnId);
 	}
 
+	private List<PurchaseReturnLineRow> lockPurchaseReturnLines(Long returnId) {
+		return this.jdbcTemplate.query("""
+				select id, return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
+				       returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
+				       stock_movement_id
+				from proc_purchase_return_line
+				where return_id = ?
+				order by line_no asc, id asc
+				for update
+				""", this::mapPurchaseReturnLineRow, returnId);
+	}
+
 	private Optional<ShipmentRow> lockShipment(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, shipment_no, order_id, customer_id, warehouse_id, business_date, status
@@ -767,6 +1457,15 @@ public class ReversalAdminService {
 				where id = ?
 				for update
 				""", this::mapShipmentRow, id).stream().findFirst();
+	}
+
+	private Optional<ReceiptRow> lockReceipt(Long id) {
+		return this.jdbcTemplate.query("""
+				select id, receipt_no, order_id, supplier_id, warehouse_id, business_date, status
+				from proc_purchase_receipt
+				where id = ?
+				for update
+				""", this::mapReceiptRow, id).stream().findFirst();
 	}
 
 	private Optional<ShipmentLineRow> shipmentLine(Long shipmentId, Long lineId) {
@@ -778,6 +1477,17 @@ public class ReversalAdminService {
 				where sl.shipment_id = ?
 				and sl.id = ?
 				""", this::mapShipmentLineRow, shipmentId, lineId).stream().findFirst();
+	}
+
+	private Optional<ReceiptLineRow> receiptLine(Long receiptId, Long lineId) {
+		return this.jdbcTemplate.query("""
+				select prl.id, prl.receipt_id, prl.line_no, prl.order_line_id, prl.material_id, prl.unit_id,
+				       prl.quantity, pol.unit_price
+				from proc_purchase_receipt_line prl
+				join proc_purchase_order_line pol on pol.id = prl.order_line_id
+				where prl.receipt_id = ?
+				and prl.id = ?
+				""", this::mapReceiptLineRow, receiptId, lineId).stream().findFirst();
 	}
 
 	private Optional<ShipmentLineRow> lockShipmentLine(Long shipmentId, Long lineId) {
@@ -792,6 +1502,18 @@ public class ReversalAdminService {
 				""", this::mapShipmentLineRow, shipmentId, lineId).stream().findFirst();
 	}
 
+	private Optional<ReceiptLineRow> lockReceiptLine(Long receiptId, Long lineId) {
+		return this.jdbcTemplate.query("""
+				select prl.id, prl.receipt_id, prl.line_no, prl.order_line_id, prl.material_id, prl.unit_id,
+				       prl.quantity, pol.unit_price
+				from proc_purchase_receipt_line prl
+				join proc_purchase_order_line pol on pol.id = prl.order_line_id
+				where prl.receipt_id = ?
+				and prl.id = ?
+				for update
+				""", this::mapReceiptLineRow, receiptId, lineId).stream().findFirst();
+	}
+
 	private Optional<ReceivableRow> lockReceivableForShipment(Long shipmentId) {
 		return this.jdbcTemplate.query("""
 				select id, receivable_no, source_id, total_amount, received_amount, adjusted_amount,
@@ -803,6 +1525,16 @@ public class ReversalAdminService {
 				""", this::mapReceivableRow, SALES_SHIPMENT_SOURCE, shipmentId).stream().findFirst();
 	}
 
+	private Optional<PayableRow> lockPayableForReceipt(Long receiptId) {
+		return this.jdbcTemplate.query("""
+				select id, payable_no, source_id, total_amount, paid_amount, adjusted_amount, unpaid_amount, status
+				from fin_payable
+				where source_type = ?
+				and source_id = ?
+				for update
+				""", this::mapPayableRow, PURCHASE_RECEIPT_SOURCE, receiptId).stream().findFirst();
+	}
+
 	private BigDecimal postedReturnedQuantity(Long shipmentLineId) {
 		BigDecimal returned = this.jdbcTemplate.queryForObject("""
 				select coalesce(sum(rl.quantity), 0)
@@ -812,6 +1544,30 @@ public class ReversalAdminService {
 				and r.status = ?
 				""", BigDecimal.class, shipmentLineId, ReversalDocumentStatus.POSTED.name());
 		return returned == null ? ZERO : returned;
+	}
+
+	private BigDecimal postedPurchaseReturnedQuantity(Long receiptLineId) {
+		BigDecimal returned = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(rl.quantity), 0)
+				from proc_purchase_return_line rl
+				join proc_purchase_return r on r.id = rl.return_id
+				where rl.source_receipt_line_id = ?
+				and r.status = ?
+				""", BigDecimal.class, receiptLineId, ReversalDocumentStatus.POSTED.name());
+		return returned == null ? ZERO : returned;
+	}
+
+	private BigDecimal lockedStockQuantity(Long warehouseId, Long materialId) {
+		return this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
+			.stream()
+			.findFirst()
+			.orElse(ZERO);
 	}
 
 	private Long movementId(String sourceType, Long sourceLineId) {
@@ -905,7 +1661,97 @@ public class ReversalAdminService {
 			.toList();
 	}
 
+	private List<PurchaseTraceLinkRow> purchaseReverseTraceLinks(String reverseType, Long reverseId,
+			Long reverseLineId) {
+		List<Object> args = new ArrayList<>();
+		args.add(reverseType);
+		args.add(reverseId);
+		String condition = "";
+		if (reverseLineId != null) {
+			condition = "and bl.reverse_line_id = ?";
+			args.add(reverseLineId);
+		}
+		return purchaseTraceLinks("""
+				where bl.reverse_type = ?
+				and bl.reverse_id = ?
+				%s
+				""".formatted(condition), args);
+	}
+
+	private List<PurchaseTraceLinkRow> purchaseSourceTraceLinks(String sourceType, Long sourceId, Long sourceLineId) {
+		List<Object> args = new ArrayList<>();
+		String normalizedType = PURCHASE_RECEIPT_LINE_SOURCE.equals(sourceType) ? PURCHASE_RECEIPT_SOURCE : sourceType;
+		args.add(normalizedType);
+		args.add(sourceId);
+		String condition = "";
+		if (sourceLineId != null) {
+			condition = "and bl.source_line_id = ?";
+			args.add(sourceLineId);
+		}
+		return purchaseTraceLinks("""
+				where bl.source_type = ?
+				and bl.source_id = ?
+				%s
+				""".formatted(condition), args);
+	}
+
+	private List<PurchaseTraceLinkRow> purchaseTraceLinks(String where, List<Object> args) {
+		return this.jdbcTemplate.query("""
+				select bl.source_type, bl.source_id, bl.source_line_id, bl.reverse_type, bl.reverse_id,
+				       bl.reverse_line_id, bl.business_date, bl.quantity, bl.amount,
+				       pr.receipt_no, pr.business_date as receipt_date, pr.status as receipt_status,
+				       prl.line_no as receipt_line_no,
+				       rr.return_no, rr.business_date as return_date, rr.status as return_status,
+				       rrl.line_no as return_line_no, rrl.stock_movement_id,
+				       fsa.id as settlement_adjustment_id
+				from biz_reversal_link bl
+				join proc_purchase_receipt pr on pr.id = bl.source_id
+				join proc_purchase_receipt_line prl on prl.id = bl.source_line_id
+				join proc_purchase_return rr on rr.id = bl.reverse_id
+				join proc_purchase_return_line rrl on rrl.id = bl.reverse_line_id
+				left join fin_settlement_adjustment fsa on fsa.source_type = 'PURCHASE_RETURN'
+					and fsa.source_id = rr.id
+					and fsa.status = 'POSTED'
+				%s
+				order by bl.business_date asc, bl.id asc
+				""".formatted(where), this::mapPurchaseTraceLinkRow, args.toArray());
+	}
+
+	private List<ReversalTraceRecord> purchaseTraceRecords(List<PurchaseTraceLinkRow> links, CurrentUser currentUser,
+			String direction) {
+		boolean canViewReceipt = canViewPurchaseReceipt(currentUser);
+		boolean canViewReturn = canViewPurchaseReturn(currentUser);
+		return links.stream()
+			.map((link) -> {
+				Map<String, Object> source = sourceView(PURCHASE_RECEIPT_LINE_SOURCE, link.sourceId(),
+						link.sourceLineId(), link.receiptNo(), link.receiptLineNo(), link.receiptDate(),
+						link.receiptStatus(), quantity(link.quantity()), amount(link.amount()), canViewReceipt,
+						"procurement-receipt-detail", Map.of("id", link.sourceId()),
+						Map.of("lineId", link.sourceLineId()));
+				Map<String, Object> reverse = sourceView(PURCHASE_RETURN_SOURCE, link.reverseId(),
+						link.reverseLineId(), link.returnNo(), link.returnLineNo(), link.returnDate(),
+						link.returnStatus(), quantity(link.quantity()), amount(link.amount()), canViewReturn,
+						"procurement-return-detail", Map.of("id", link.reverseId()),
+						Map.of("lineId", link.reverseLineId()));
+				boolean restricted = !canViewReceipt || !canViewReturn;
+				return new ReversalTraceRecord(traceKey(link), direction, source, reverse,
+						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
+						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
+						restricted ? null : amount(link.amount()), restricted ? null : link.returnStatus(),
+						!restricted, restricted, restricted ? RESTRICTED_MESSAGE : null,
+						restricted ? null : "procurement-return-detail",
+						restricted ? null : Map.of("id", link.reverseId()),
+						restricted ? null : Map.of("lineId", link.reverseLineId()));
+			})
+			.toList();
+	}
+
 	private String traceKey(TraceLinkRow link) {
+		return link.sourceType() + ":" + link.sourceId() + ":" + link.sourceLineId() + ":" + link.reverseType() + ":"
+				+ link.reverseId() + ":" + link.reverseLineId();
+	}
+
+	private String traceKey(PurchaseTraceLinkRow link) {
 		return link.sourceType() + ":" + link.sourceId() + ":" + link.sourceLineId() + ":" + link.reverseType() + ":"
 				+ link.reverseId() + ":" + link.reverseLineId();
 	}
@@ -966,9 +1812,34 @@ public class ReversalAdminService {
 				rs.getString("reason"), nullableLong(rs, "stock_movement_id"));
 	}
 
+	private PurchaseReturnRow mapPurchaseReturnRow(ResultSet rs, int rowNum) throws SQLException {
+		return new PurchaseReturnRow(rs.getLong("id"), rs.getString("return_no"), rs.getLong("supplier_id"),
+				rs.getString("supplier_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
+				rs.getLong("source_receipt_id"), rs.getString("source_receipt_no"),
+				rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
+				rs.getObject("business_date", LocalDate.class), ReversalDocumentStatus.valueOf(rs.getString("status")),
+				rs.getBigDecimal("total_amount"), rs.getString("client_request_id"), rs.getString("remark"),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private PurchaseReturnLineRow mapPurchaseReturnLineRow(ResultSet rs, int rowNum) throws SQLException {
+		return new PurchaseReturnLineRow(rs.getLong("id"), rs.getLong("return_id"),
+				rs.getLong("source_receipt_line_id"), nullableLong(rs, "purchase_order_line_id"),
+				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getInt("line_no"),
+				rs.getBigDecimal("returned_quantity_before"), rs.getBigDecimal("returnable_quantity_before"),
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"),
+				rs.getString("reason"), nullableLong(rs, "stock_movement_id"));
+	}
+
 	private ShipmentRow mapShipmentRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ShipmentRow(rs.getLong("id"), rs.getString("shipment_no"), rs.getLong("order_id"),
 				rs.getLong("customer_id"), rs.getLong("warehouse_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getString("status"));
+	}
+
+	private ReceiptRow mapReceiptRow(ResultSet rs, int rowNum) throws SQLException {
+		return new ReceiptRow(rs.getLong("id"), rs.getString("receipt_no"), rs.getLong("order_id"),
+				rs.getLong("supplier_id"), rs.getLong("warehouse_id"), rs.getObject("business_date", LocalDate.class),
 				rs.getString("status"));
 	}
 
@@ -978,11 +1849,23 @@ public class ReversalAdminService {
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"));
 	}
 
+	private ReceiptLineRow mapReceiptLineRow(ResultSet rs, int rowNum) throws SQLException {
+		return new ReceiptLineRow(rs.getLong("id"), rs.getLong("receipt_id"), rs.getInt("line_no"),
+				rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getLong("unit_id"),
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"));
+	}
+
 	private ReceivableRow mapReceivableRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ReceivableRow(rs.getLong("id"), rs.getString("receivable_no"), rs.getLong("source_id"),
 				rs.getBigDecimal("total_amount"), rs.getBigDecimal("received_amount"),
 				rs.getBigDecimal("adjusted_amount"), rs.getBigDecimal("unreceived_amount"),
 				ReceivableStatus.valueOf(rs.getString("status")));
+	}
+
+	private PayableRow mapPayableRow(ResultSet rs, int rowNum) throws SQLException {
+		return new PayableRow(rs.getLong("id"), rs.getString("payable_no"), rs.getLong("source_id"),
+				rs.getBigDecimal("total_amount"), rs.getBigDecimal("paid_amount"), rs.getBigDecimal("adjusted_amount"),
+				rs.getBigDecimal("unpaid_amount"), PayableStatus.valueOf(rs.getString("status")));
 	}
 
 	private TraceLinkRow mapTraceLinkRow(ResultSet rs, int rowNum) throws SQLException {
@@ -996,8 +1879,25 @@ public class ReversalAdminService {
 				nullableLong(rs, "settlement_adjustment_id"));
 	}
 
+	private PurchaseTraceLinkRow mapPurchaseTraceLinkRow(ResultSet rs, int rowNum) throws SQLException {
+		return new PurchaseTraceLinkRow(rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getString("reverse_type"), rs.getLong("reverse_id"),
+				rs.getLong("reverse_line_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("amount"), rs.getString("receipt_no"),
+				rs.getObject("receipt_date", LocalDate.class), rs.getString("receipt_status"),
+				rs.getInt("receipt_line_no"), rs.getString("return_no"), rs.getObject("return_date", LocalDate.class),
+				rs.getString("return_status"), rs.getInt("return_line_no"), nullableLong(rs, "stock_movement_id"),
+				nullableLong(rs, "settlement_adjustment_id"));
+	}
+
 	private void requireDraft(SalesReturnRow salesReturn) {
 		if (salesReturn.status() != ReversalDocumentStatus.DRAFT) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
+		}
+	}
+
+	private void requireDraft(PurchaseReturnRow purchaseReturn) {
+		if (purchaseReturn.status() != ReversalDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
 		}
 	}
@@ -1005,6 +1905,12 @@ public class ReversalAdminService {
 	private void requireAdjustableReceivable(ReceivableRow receivable) {
 		if (receivable.status() != ReceivableStatus.CONFIRMED
 				&& receivable.status() != ReceivableStatus.PARTIALLY_RECEIVED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+	}
+
+	private void requireAdjustablePayable(PayableRow payable) {
+		if (payable.status() != PayableStatus.CONFIRMED && payable.status() != PayableStatus.PARTIALLY_PAID) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
 	}
@@ -1021,6 +1927,8 @@ public class ReversalAdminService {
 	private BusinessException duplicateReversalException(DuplicateKeyException exception) {
 		if (containsConstraint(exception, "uk_sal_sales_return_client_request")
 				|| containsConstraint(exception, "uk_sal_sales_return_line_source")
+				|| containsConstraint(exception, "uk_proc_purchase_return_client_request")
+				|| containsConstraint(exception, "uk_proc_purchase_return_line_source")
 				|| containsConstraint(exception, "uk_biz_reversal_link_reverse_line")
 				|| containsConstraint(exception, "uk_biz_reversal_link_source_reverse")) {
 			return new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
@@ -1062,8 +1970,16 @@ public class ReversalAdminService {
 		return money(lines.stream().map(ValidatedSalesReturnLine::amount).reduce(ZERO, BigDecimal::add));
 	}
 
+	private BigDecimal totalPurchaseAmount(List<ValidatedPurchaseReturnLine> lines) {
+		return money(lines.stream().map(ValidatedPurchaseReturnLine::amount).reduce(ZERO, BigDecimal::add));
+	}
+
 	private BigDecimal totalAmountFromRows(List<SalesReturnLineRow> lines) {
 		return money(lines.stream().map(SalesReturnLineRow::amount).reduce(ZERO, BigDecimal::add));
+	}
+
+	private BigDecimal totalPurchaseAmountFromRows(List<PurchaseReturnLineRow> lines) {
+		return money(lines.stream().map(PurchaseReturnLineRow::amount).reduce(ZERO, BigDecimal::add));
 	}
 
 	private BigDecimal totalQuantity(List<ReversalDocumentLine> lines) {
@@ -1099,6 +2015,19 @@ public class ReversalAdminService {
 		return currentUser != null && currentUser.permissions().contains("sales:return:view");
 	}
 
+	private boolean canViewPurchaseReceipt(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("procurement:receipt:view");
+	}
+
+	private boolean canViewPurchaseReturn(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("procurement:return:view");
+	}
+
+	private boolean isPurchaseTraceType(String sourceType) {
+		return PURCHASE_RECEIPT_SOURCE.equals(sourceType) || PURCHASE_RECEIPT_LINE_SOURCE.equals(sourceType)
+				|| PURCHASE_RETURN_SOURCE.equals(sourceType);
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -1124,9 +2053,22 @@ public class ReversalAdminService {
 			String reason) {
 	}
 
+	public record PurchaseReturnRequest(@NotNull Long sourceReceiptId, @NotNull LocalDate businessDate,
+			String clientRequestId, String remark, @Valid List<PurchaseReturnLineRequest> lines) {
+	}
+
+	public record PurchaseReturnLineRequest(@NotNull Long sourceReceiptLineId, @NotNull BigDecimal quantity,
+			String reason) {
+	}
+
 	public record SalesReturnSourceResponse(Long shipmentId, String shipmentNo, Long customerId, String customerName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status,
 			List<SalesReturnSourceLineResponse> lines) {
+	}
+
+	public record PurchaseReturnSourceResponse(Long receiptId, String receiptNo, Long supplierId, String supplierName,
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status,
+			List<PurchaseReturnSourceLineResponse> lines) {
 	}
 
 	public record SalesReturnSourceLineResponse(Long shipmentLineId, Long salesOrderLineId, Integer lineNo,
@@ -1135,7 +2077,18 @@ public class ReversalAdminService {
 			String returnableAmount) {
 	}
 
+	public record PurchaseReturnSourceLineResponse(Long receiptLineId, Long purchaseOrderLineId, Integer lineNo,
+			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
+			String receivedQuantity, String returnedQuantity, String returnableQuantity, String availableStockQuantity,
+			String unitPrice, String returnableAmount) {
+	}
+
 	public record SalesReturnSummaryResponse(Long id, String returnNo, Long customerId, String customerName,
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
+			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+	}
+
+	public record PurchaseReturnSummaryResponse(Long id, String returnNo, Long supplierId, String supplierName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
 			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
@@ -1159,6 +2112,31 @@ public class ReversalAdminService {
 						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
 				.toList();
 			return new SalesReturnDetailResponse(this.id, this.returnNo, this.customerId, this.customerName,
+					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.totalQuantity,
+					this.totalAmount, this.source, this.createdAt, this.updatedAt, this.clientRequestId, this.remark,
+					this.lines, updatedTraces);
+		}
+	}
+
+	public record PurchaseReturnDetailResponse(Long id, String returnNo, Long supplierId, String supplierName,
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
+			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt,
+			String clientRequestId, String remark, List<ReversalDocumentLine> lines,
+			List<ReversalTraceRecord> traces) {
+
+		private PurchaseReturnDetailResponse withSettlementAdjustmentId(Long settlementAdjustmentId) {
+			if (settlementAdjustmentId == null || this.traces.isEmpty()) {
+				return this;
+			}
+			List<ReversalTraceRecord> updatedTraces = this.traces.stream()
+				.map((trace) -> new ReversalTraceRecord(trace.traceKey(), trace.direction(), trace.source(),
+						trace.reverse(), trace.inventoryMovementId(),
+						trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
+						trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(), trace.status(),
+						trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
+						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
+				.toList();
+			return new PurchaseReturnDetailResponse(this.id, this.returnNo, this.supplierId, this.supplierName,
 					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.totalQuantity,
 					this.totalAmount, this.source, this.createdAt, this.updatedAt, this.clientRequestId, this.remark,
 					this.lines, updatedTraces);
@@ -1327,7 +2305,16 @@ public class ReversalAdminService {
 			String remark, List<SalesReturnLineRequest> lines) {
 	}
 
+	private record ValidatedPurchaseReturn(Long sourceReceiptId, LocalDate businessDate, String clientRequestId,
+			String remark, List<PurchaseReturnLineRequest> lines) {
+	}
+
 	private record ValidatedSalesReturnLine(Integer lineNo, Long sourceShipmentLineId, Long salesOrderLineId,
+			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
+			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason) {
+	}
+
+	private record ValidatedPurchaseReturnLine(Integer lineNo, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
 			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason) {
 	}
@@ -1338,7 +2325,19 @@ public class ReversalAdminService {
 			String clientRequestId, String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
+	private record PurchaseReturnRow(Long id, String returnNo, Long supplierId, String supplierName, Long warehouseId,
+			String warehouseName, Long sourceReceiptId, String sourceReceiptNo, LocalDate sourceBusinessDate,
+			String sourceStatus, LocalDate businessDate, ReversalDocumentStatus status, BigDecimal totalAmount,
+			String clientRequestId, String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+	}
+
 	private record SalesReturnLineRow(Long id, Long returnId, Long sourceShipmentLineId, Long salesOrderLineId,
+			Long materialId, Long unitId, Integer lineNo, BigDecimal returnedQuantityBefore,
+			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
+			String reason, Long stockMovementId) {
+	}
+
+	private record PurchaseReturnLineRow(Long id, Long returnId, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, Integer lineNo, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
 			String reason, Long stockMovementId) {
@@ -1348,7 +2347,15 @@ public class ReversalAdminService {
 			LocalDate businessDate, String status) {
 	}
 
+	private record ReceiptRow(Long id, String receiptNo, Long orderId, Long supplierId, Long warehouseId,
+			LocalDate businessDate, String status) {
+	}
+
 	private record ShipmentLineRow(Long id, Long shipmentId, Integer lineNo, Long orderLineId, Long materialId,
+			Long unitId, BigDecimal quantity, BigDecimal unitPrice) {
+	}
+
+	private record ReceiptLineRow(Long id, Long receiptId, Integer lineNo, Long orderLineId, Long materialId,
 			Long unitId, BigDecimal quantity, BigDecimal unitPrice) {
 	}
 
@@ -1357,9 +2364,20 @@ public class ReversalAdminService {
 			ReceivableStatus status) {
 	}
 
+	private record PayableRow(Long id, String payableNo, Long sourceId, BigDecimal totalAmount, BigDecimal paidAmount,
+			BigDecimal adjustedAmount, BigDecimal unpaidAmount, PayableStatus status) {
+	}
+
 	private record TraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,
 			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal quantity, BigDecimal amount,
 			String shipmentNo, LocalDate shipmentDate, String shipmentStatus, Integer shipmentLineNo, String returnNo,
+			LocalDate returnDate, String returnStatus, Integer returnLineNo, Long stockMovementId,
+			Long settlementAdjustmentId) {
+	}
+
+	private record PurchaseTraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,
+			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal quantity, BigDecimal amount,
+			String receiptNo, LocalDate receiptDate, String receiptStatus, Integer receiptLineNo, String returnNo,
 			LocalDate returnDate, String returnStatus, Integer returnLineNo, Long stockMovementId,
 			Long settlementAdjustmentId) {
 	}

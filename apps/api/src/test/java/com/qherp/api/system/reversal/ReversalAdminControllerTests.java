@@ -305,11 +305,198 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void procurementReturnLifecyclePostsInventoryPayableAdjustmentAndTraceLinks() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"3.000000", "20.000000", "CONFIRMED", "110.00", "0.00", "110.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "7.000000");
+		seedStock(fixture.warehouseId(), fixture.secondMaterialId(), fixture.unitId(), "2.000000");
+
+		ResponseEntity<String> sources = get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(),
+				admin);
+		assertOk(sources);
+		JsonNode source = data(sources).get("items").get(0);
+		assertThat(source.get("receiptId").longValue()).isEqualTo(receipt.receiptId());
+		assertThat(source.get("status").asText()).isEqualTo("POSTED");
+		assertDecimalText(source.get("lines").get(0), "receivedQuantity", "5.000000");
+		assertDecimalText(source.get("lines").get(0), "returnedQuantity", "0");
+		assertDecimalText(source.get("lines").get(0), "returnableQuantity", "5.000000");
+		assertDecimalText(source.get("lines").get(0), "availableStockQuantity", "7.000000");
+		assertDecimalText(source.get("lines").get(0), "returnableAmount", "50.00");
+
+		ResponseEntity<String> created = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-lifecycle-" + SEQUENCE.incrementAndGet(),
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "2.000000", "供应商退货"))),
+				admin);
+		assertOk(created);
+		JsonNode draft = data(created);
+		long returnId = draft.get("id").longValue();
+		assertThat(draft.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(draft.get("source").get("sourceId").longValue()).isEqualTo(receipt.receiptId());
+		assertDecimalText(draft, "totalQuantity", "2.000000");
+		assertDecimalText(draft, "totalAmount", "20.00");
+
+		ResponseEntity<String> updated = put("/api/admin/procurement/returns/" + returnId,
+				purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "3.000000", "退货调整"))),
+				admin);
+		assertOk(updated);
+		JsonNode updatedLine = data(updated).get("lines").get(0);
+		assertDecimalText(updatedLine, "quantity", "3.000000");
+		assertDecimalText(updatedLine, "amount", "30.00");
+
+		ResponseEntity<String> cancelDraft = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-cancel-" + SEQUENCE.incrementAndGet(),
+						List.of(purchaseReturnLine(receipt.secondReceiptLineId(), "1.000000", "取消草稿"))),
+				admin);
+		assertOk(cancelDraft);
+		long cancelledId = data(cancelDraft).get("id").longValue();
+		assertOk(put("/api/admin/procurement/returns/" + cancelledId + "/cancel", Map.of(), admin));
+		assertThat(data(get("/api/admin/procurement/returns/" + cancelledId, admin)).get("status").asText())
+			.isEqualTo("CANCELLED");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.secondMaterialId()), "2.000000");
+
+		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
+				admin);
+		assertOk(posted);
+		JsonNode postedData = data(posted);
+		JsonNode postedLine = postedData.get("lines").get(0);
+		long returnLineId = postedLine.get("id").longValue();
+		assertThat(postedData.get("status").asText()).isEqualTo("POSTED");
+		assertDecimalText(postedData, "totalAmount", "30.00");
+		assertDecimalText(postedLine, "returnedQuantityBefore", "0");
+		assertDecimalText(postedLine, "returnableQuantityBefore", "5.000000");
+		assertThat(postedLine.get("stockMovementId").isNumber()).isTrue();
+
+		MovementRow movement = movementForSource("PURCHASE_RETURN", returnLineId);
+		assertThat(movement.movementType()).isEqualTo("PURCHASE_RETURN_OUT");
+		assertThat(movement.direction()).isEqualTo("OUT");
+		assertThat(movement.sourceId()).isEqualTo(returnId);
+		assertDecimal(movement.quantity(), "3.000000");
+		assertDecimal(movement.beforeQuantity(), "7.000000");
+		assertDecimal(movement.afterQuantity(), "4.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "4.000000");
+
+		PayableAmounts payable = payableAmounts(receipt.payableId());
+		assertDecimal(payable.adjustedAmount(), "30.00");
+		assertDecimal(payable.unpaidAmount(), "80.00");
+		assertThat(payable.status()).isEqualTo("PARTIALLY_PAID");
+
+		ReversalLink link = reversalLink("PURCHASE_RETURN", returnId, returnLineId);
+		assertThat(link.sourceType()).isEqualTo("PURCHASE_RECEIPT");
+		assertThat(link.sourceId()).isEqualTo(receipt.receiptId());
+		assertThat(link.sourceLineId()).isEqualTo(receipt.firstReceiptLineId());
+		assertDecimal(link.quantity(), "3.000000");
+		assertDecimal(link.amount(), "30.00");
+
+		JsonNode detail = data(get("/api/admin/procurement/returns/" + returnId, admin));
+		assertThat(detail.get("traces").size()).isOne();
+		assertThat(detail.get("traces").get(0).get("traceKey").asText()).contains("PURCHASE_RETURN");
+		JsonNode listItem = data(get("/api/admin/procurement/returns?keyword=" + postedData.get("returnNo").asText(),
+				admin)).get("items").get(0);
+		assertThat(listItem.get("id").longValue()).isEqualTo(returnId);
+		assertDecimalText(listItem, "totalQuantity", "3.000000");
+	}
+
+	@Test
+	void procurementReturnSupportsPartialFullStockAndInvalidOperationRules() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"3.000000", "20.000000", "CONFIRMED", "110.00", "0.00", "110.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000");
+		seedStock(fixture.warehouseId(), fixture.secondMaterialId(), fixture.unitId(), "3.000000");
+
+		long firstReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
+				"2.000000");
+		assertOk(put("/api/admin/procurement/returns/" + firstReturnId + "/post", Map.of(), admin));
+		JsonNode sourceAfterPartial = data(get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(),
+				admin)).get("items").get(0);
+		assertDecimalText(sourceAfterPartial.get("lines").get(0), "returnedQuantity", "2.000000");
+		assertDecimalText(sourceAfterPartial.get("lines").get(0), "returnableQuantity", "3.000000");
+		assertDecimalText(sourceAfterPartial.get("lines").get(0), "availableStockQuantity", "3.000000");
+
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "3.000001", "超退"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_QUANTITY_EXCEEDS_AVAILABLE");
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "0.000000", "非法数量"))),
+				admin), HttpStatus.BAD_REQUEST, "REVERSAL_QUANTITY_INVALID");
+		long stockBlockedId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
+				"3.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "1.000000");
+		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000");
+		assertOk(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin));
+
+		long secondLineReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.secondReceiptLineId(),
+				"3.000000");
+		assertOk(put("/api/admin/procurement/returns/" + secondLineReturnId + "/post", Map.of(), admin));
+		PayableAmounts payable = payableAmounts(receipt.payableId());
+		assertDecimal(payable.adjustedAmount(), "110.00");
+		assertDecimal(payable.unpaidAmount(), "0.00");
+		assertThat(payable.status()).isEqualTo("PAID");
+		assertThat(data(get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(), admin))
+			.get("items")
+			.size()).isZero();
+
+		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+		assertError(put("/api/admin/procurement/returns/" + stockBlockedId,
+				purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "1.000000", "已过账不可改"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/cancel", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+
+		PostedPurchaseReceipt draftReceipt = createReceiptWithoutPayable(fixture, "DRAFT");
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(draftReceipt.receiptId(), null,
+						List.of(purchaseReturnLine(draftReceipt.firstReceiptLineId(), "1.000000", "未过账来源"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(999999999L, null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "1.000000", "来源不存在"))),
+				admin), HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
+	}
+
+	@Test
+	void procurementReturnMasksSourceFieldsWhenSourcePermissionMissing() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "2.000000", "15.000000",
+				"1.000000", "20.000000", "CONFIRMED", "50.00", "0.00", "50.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000");
+		long returnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(), "1.000000");
+		assertOk(put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(), admin));
+
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("purchase-return-restricted",
+				List.of("procurement:return:view", "business:reversal:view"));
+		JsonNode detail = data(get("/api/admin/procurement/returns/" + returnId, restricted));
+		assertRestrictedSource(detail.get("source"), "PURCHASE_RECEIPT");
+		assertRestrictedSource(detail.get("lines").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
+		assertRestrictedSource(detail.get("traces").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
+		assertRestrictedTraceRecord(detail.get("traces").get(0));
+		assertThat(detail.get("traces").get(0).get("reverse").get("sourceId").longValue()).isEqualTo(returnId);
+
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=PURCHASE_RETURN&sourceId=" + returnId,
+				restricted)).get(0);
+		assertRestrictedSource(trace.get("source"), "PURCHASE_RECEIPT_LINE");
+		assertRestrictedTraceRecord(trace);
+	}
+
+	@Test
 	void adminCanQueryStableEmptyReversalSkeletons() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
-		for (String path : List.of("/api/admin/sales/return-sources", "/api/admin/sales/returns",
-				"/api/admin/procurement/return-sources", "/api/admin/procurement/returns",
+		for (String path : List.of("/api/admin/sales/return-sources?keyword=NO_SUCH_SOURCE",
+				"/api/admin/sales/returns?keyword=NO_SUCH_RETURN",
+				"/api/admin/procurement/return-sources?keyword=NO_SUCH_SOURCE",
+				"/api/admin/procurement/returns?keyword=NO_SUCH_RETURN",
 				"/api/admin/production/material-return-sources", "/api/admin/production/material-returns",
 				"/api/admin/production/material-supplement-sources",
 				"/api/admin/production/material-supplements",
@@ -406,6 +593,18 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long materialId = insertMaterial("REV_MAT_" + suffix, "退货成品" + suffix, categoryId, unitId);
 		long secondMaterialId = insertMaterial("REV_MAT_B_" + suffix, "退货成品B" + suffix, categoryId, unitId);
 		return new SalesReturnFixture(unitId, warehouseId, customerId, categoryId, materialId, secondMaterialId);
+	}
+
+	private PurchaseReturnFixture purchaseReturnFixture() {
+		int suffix = SEQUENCE.incrementAndGet();
+		long unitId = insertUnit("REV_PUR_UNIT_" + suffix, "采购退货单位" + suffix);
+		long warehouseId = insertWarehouse("REV_PUR_WH_" + suffix, "采购退货仓" + suffix);
+		long supplierId = insertSupplier("REV_SUP_" + suffix, "反向供应商" + suffix);
+		long categoryId = insertMaterialCategory("REV_PUR_CAT_" + suffix);
+		long materialId = insertMaterial("REV_PUR_MAT_" + suffix, "采购退货物料" + suffix, categoryId, unitId);
+		long secondMaterialId = insertMaterial("REV_PUR_MAT_B_" + suffix, "采购退货物料B" + suffix, categoryId,
+				unitId);
+		return new PurchaseReturnFixture(unitId, warehouseId, supplierId, categoryId, materialId, secondMaterialId);
 	}
 
 	private PostedSalesShipment createPostedShipmentWithReceivable(SalesReturnFixture fixture, String firstQuantity,
@@ -505,6 +704,103 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				""", Long.class, shipmentId, lineNo, orderLineId, materialId, unitId, quantity, quantity, quantity);
 	}
 
+	private PostedPurchaseReceipt createPostedReceiptWithPayable(PurchaseReturnFixture fixture, String firstQuantity,
+			String firstPrice, String secondQuantity, String secondPrice, String payableStatus, String totalAmount,
+			String paidAmount, String unpaidAmount) {
+		PostedPurchaseReceipt receipt = createReceiptWithoutPayable(fixture, "POSTED", firstQuantity, firstPrice,
+				secondQuantity, secondPrice);
+		long payableId = this.jdbcTemplate.queryForObject("""
+				insert into fin_payable (
+					payable_no, supplier_id, source_type, source_id, source_no, business_date, due_date,
+					total_amount, paid_amount, adjusted_amount, unpaid_amount, status, remark, created_by, created_at,
+					updated_by, updated_at, confirmed_by, confirmed_at
+				)
+				values (?, ?, 'PURCHASE_RECEIPT', ?, ?, ?, ?, ?, ?, 0, ?, ?, '采购退货测试应付', 'test', now(), 'test',
+					now(), 'test', now())
+				returning id
+				""", Long.class, "REV-AP-" + SEQUENCE.incrementAndGet(), fixture.supplierId(), receipt.receiptId(),
+				receipt.receiptNo(), LocalDate.now(), LocalDate.now().plusDays(30), new BigDecimal(totalAmount),
+				new BigDecimal(paidAmount), new BigDecimal(unpaidAmount), payableStatus);
+		this.jdbcTemplate.update("""
+				insert into fin_payable_source (
+					payable_id, source_type, source_id, source_no, source_line_id, source_line_no, source_amount
+				)
+				values (?, 'PURCHASE_RECEIPT', ?, ?, ?, 1, ?),
+				       (?, 'PURCHASE_RECEIPT', ?, ?, ?, 2, ?)
+				""", payableId, receipt.receiptId(), receipt.receiptNo(), receipt.firstReceiptLineId(),
+				money(new BigDecimal(firstQuantity).multiply(new BigDecimal(firstPrice))), payableId,
+				receipt.receiptId(), receipt.receiptNo(), receipt.secondReceiptLineId(),
+				money(new BigDecimal(secondQuantity).multiply(new BigDecimal(secondPrice))));
+		return new PostedPurchaseReceipt(receipt.receiptId(), receipt.receiptNo(), receipt.firstReceiptLineId(),
+				receipt.secondReceiptLineId(), payableId);
+	}
+
+	private PostedPurchaseReceipt createReceiptWithoutPayable(PurchaseReturnFixture fixture, String status) {
+		return createReceiptWithoutPayable(fixture, status, "2.000000", "10.000000", "1.000000", "20.000000");
+	}
+
+	private PostedPurchaseReceipt createReceiptWithoutPayable(PurchaseReturnFixture fixture, String status,
+			String firstQuantity, String firstPrice, String secondQuantity, String secondPrice) {
+		int suffix = SEQUENCE.incrementAndGet();
+		BigDecimal firstQty = new BigDecimal(firstQuantity);
+		BigDecimal secondQty = new BigDecimal(secondQuantity);
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order (
+					order_no, supplier_id, order_date, expected_arrival_date, status, remark,
+					created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at
+				)
+				values (?, ?, ?, ?, ?, '采购退货测试订单', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "REV-PO-" + suffix, fixture.supplierId(), LocalDate.now(),
+				LocalDate.now().plusDays(3), "POSTED".equals(status) ? "RECEIVED" : "CONFIRMED");
+		long firstOrderLineId = insertPurchaseOrderLine(orderId, 1, fixture.materialId(), fixture.unitId(), firstQty,
+				"POSTED".equals(status) ? firstQty : BigDecimal.ZERO, firstPrice);
+		long secondOrderLineId = insertPurchaseOrderLine(orderId, 2, fixture.secondMaterialId(), fixture.unitId(),
+				secondQty, "POSTED".equals(status) ? secondQty : BigDecimal.ZERO, secondPrice);
+		String receiptNo = "REV-PR-" + suffix;
+		long receiptId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_receipt (
+					receipt_no, order_id, supplier_id, warehouse_id, business_date, status, remark,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, ?, ?, '采购退货测试入库', 'test', now(), 'test', now(), ?,
+					case when ? = 'POSTED' then now() else null end)
+				returning id
+				""", Long.class, receiptNo, orderId, fixture.supplierId(), fixture.warehouseId(), LocalDate.now(),
+				status, "POSTED".equals(status) ? "test" : null, status);
+		long firstReceiptLineId = insertPurchaseReceiptLine(receiptId, 1, firstOrderLineId, fixture.materialId(),
+				fixture.unitId(), firstQty);
+		long secondReceiptLineId = insertPurchaseReceiptLine(receiptId, 2, secondOrderLineId,
+				fixture.secondMaterialId(), fixture.unitId(), secondQty);
+		return new PostedPurchaseReceipt(receiptId, receiptNo, firstReceiptLineId, secondReceiptLineId, null);
+	}
+
+	private long insertPurchaseOrderLine(long orderId, int lineNo, long materialId, long unitId, BigDecimal quantity,
+			BigDecimal receivedQuantity, String unitPrice) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order_line (
+					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
+					expected_arrival_date, remark, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, '采购退货测试订单行', now(), now())
+				returning id
+				""", Long.class, orderId, lineNo, materialId, unitId, quantity, receivedQuantity,
+				new BigDecimal(unitPrice), LocalDate.now().plusDays(3));
+	}
+
+	private long insertPurchaseReceiptLine(long receiptId, int lineNo, long orderLineId, long materialId, long unitId,
+			BigDecimal quantity) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_receipt_line (
+					receipt_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
+					received_quantity_before, remaining_quantity_before, quantity, before_quantity, after_quantity,
+					remark, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, ?, 0, ?, ?, null, null, '采购退货测试入库行', now(), now())
+				returning id
+				""", Long.class, receiptId, lineNo, orderLineId, materialId, unitId, quantity, quantity, quantity);
+	}
+
 	private long insertUnit(String code, String name) {
 		return this.jdbcTemplate.queryForObject("""
 				insert into mst_unit (code, name, precision_scale, status, sort_order, created_by, created_at,
@@ -526,6 +822,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	private long insertCustomer(String code, String name) {
 		return this.jdbcTemplate.queryForObject("""
 				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, name);
+	}
+
+	private long insertSupplier(String code, String name) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_supplier (code, name, status, created_by, created_at, updated_by, updated_at)
 				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
 				returning id
 				""", Long.class, code, name);
@@ -582,11 +886,42 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> purchaseReturnPayload(long sourceReceiptId, String clientRequestId,
+			List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("sourceReceiptId", sourceReceiptId);
+		payload.put("businessDate", LocalDate.now().toString());
+		if (clientRequestId != null) {
+			payload.put("clientRequestId", clientRequestId);
+		}
+		payload.put("remark", "采购退货测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> purchaseReturnLine(long sourceReceiptLineId, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("sourceReceiptLineId", sourceReceiptLineId);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
 	private long createSalesReturn(AuthenticatedSession admin, long shipmentId, long shipmentLineId, String quantity)
 			throws Exception {
 		ResponseEntity<String> response = post("/api/admin/sales/returns",
 				salesReturnPayload(shipmentId, "sales-return-" + SEQUENCE.incrementAndGet(),
 						List.of(returnLine(shipmentLineId, quantity, "测试退货"))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createPurchaseReturn(AuthenticatedSession admin, long receiptId, long receiptLineId, String quantity)
+			throws Exception {
+		ResponseEntity<String> response = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receiptId, "purchase-return-" + SEQUENCE.incrementAndGet(),
+						List.of(purchaseReturnLine(receiptLineId, quantity, "测试采购退货"))),
 				admin);
 		assertOk(response);
 		return data(response).get("id").longValue();
@@ -624,6 +959,15 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				where id = ?
 				""", (rs, rowNum) -> new ReceivableAmounts(rs.getBigDecimal("adjusted_amount"),
 				rs.getBigDecimal("unreceived_amount"), rs.getString("status")), receivableId);
+	}
+
+	private PayableAmounts payableAmounts(long payableId) {
+		return this.jdbcTemplate.queryForObject("""
+				select adjusted_amount, unpaid_amount, status
+				from fin_payable
+				where id = ?
+				""", (rs, rowNum) -> new PayableAmounts(rs.getBigDecimal("adjusted_amount"),
+				rs.getBigDecimal("unpaid_amount"), rs.getString("status")), payableId);
 	}
 
 	private ReversalLink reversalLink(String reverseType, long reverseId, long reverseLineId) {
@@ -773,8 +1117,16 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 			long secondMaterialId) {
 	}
 
+	private record PurchaseReturnFixture(long unitId, long warehouseId, long supplierId, long categoryId,
+			long materialId, long secondMaterialId) {
+	}
+
 	private record PostedSalesShipment(long shipmentId, String shipmentNo, long firstShipmentLineId,
 			long secondShipmentLineId, Long receivableId) {
+	}
+
+	private record PostedPurchaseReceipt(long receiptId, String receiptNo, long firstReceiptLineId,
+			long secondReceiptLineId, Long payableId) {
 	}
 
 	private record MovementRow(String movementType, String direction, long sourceId, long sourceLineId,
@@ -782,6 +1134,9 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record ReceivableAmounts(BigDecimal adjustedAmount, BigDecimal unreceivedAmount, String status) {
+	}
+
+	private record PayableAmounts(BigDecimal adjustedAmount, BigDecimal unpaidAmount, String status) {
 	}
 
 	private record ReversalLink(String sourceType, long sourceId, long sourceLineId, BigDecimal quantity,

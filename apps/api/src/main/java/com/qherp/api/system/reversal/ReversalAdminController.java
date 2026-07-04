@@ -87,41 +87,59 @@ public class ReversalAdminController {
 	}
 
 	@GetMapping("/procurement/return-sources")
-	public ApiResponse<PageResponse<Object>> procurementReturnSources(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.PurchaseReturnSourceResponse>> procurementReturnSources(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long supplierId,
+			@RequestParam(required = false) Long warehouseId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.purchaseReturnSources(keyword, supplierId, warehouseId,
+				dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/procurement/returns")
-	public ApiResponse<PageResponse<Object>> procurementReturns(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.PurchaseReturnSummaryResponse>> procurementReturns(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long supplierId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.purchaseReturns(keyword, supplierId, warehouseId, status,
+				dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/procurement/returns/{id}")
-	public ApiResponse<Object> procurementReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> procurementReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.purchaseReturn(id, currentUser));
 	}
 
 	@PostMapping("/procurement/returns")
-	public ApiResponse<Object> createProcurementReturn(@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> createProcurementReturn(
+			@Valid @RequestBody ReversalAdminService.PurchaseReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.createPurchaseReturn(request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/procurement/returns/{id}")
-	public ApiResponse<Object> updateProcurementReturn(@PathVariable Long id,
-			@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> updateProcurementReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.PurchaseReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.updatePurchaseReturn(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/procurement/returns/{id}/post")
-	public ApiResponse<Object> postProcurementReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> postProcurementReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.postPurchaseReturn(id, currentUser, servletRequest));
 	}
 
 	@PutMapping("/procurement/returns/{id}/cancel")
-	public ApiResponse<Object> cancelProcurementReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> cancelProcurementReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.cancelPurchaseReturn(id, currentUser, servletRequest));
 	}
 
 	@GetMapping("/production/material-return-sources")
