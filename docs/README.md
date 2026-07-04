@@ -5,6 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
+- [项目交接报告（2026-07-04，销售管理完成版）](handoffs/2026-07-04-project-handoff-sales-management-complete.md)
 - [项目交接报告（2026-07-04，一期完成版）](handoffs/2026-07-04-project-handoff.md)
 - [项目交接报告（2026-07-03）](handoffs/2026-07-03-project-handoff.md)
 - [任务文档模板](tasks/task-template.md)
