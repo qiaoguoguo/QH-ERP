@@ -141,6 +141,109 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void postingServiceMapsSalesShipmentSourceErrors() {
+		InventoryFixture fixture = fixture();
+		long stockSourceId = 920_000L + SEQUENCE.incrementAndGet();
+		long stockSourceLineId = 930_000L + SEQUENCE.incrementAndGet();
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.ADJUSTMENT_DECREASE,
+						InventoryDirection.OUT, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("1.000000"), "SALES_SHIPMENT", stockSourceId, stockSourceLineId,
+						LocalDate.now(), "销售出库库存不足测试", "库存不足", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode().code()).isEqualTo("SALES_STOCK_NOT_ENOUGH"));
+		assertThat(movementCountBySource("SALES_SHIPMENT", stockSourceLineId)).isZero();
+
+		long duplicateSourceId = 940_000L + SEQUENCE.incrementAndGet();
+		long duplicateSourceLineId = 950_000L + SEQUENCE.incrementAndGet();
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_INCREASE, InventoryDirection.IN, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("2.000000"), "SALES_SHIPMENT",
+				duplicateSourceId, duplicateSourceLineId, LocalDate.now(), "销售出库来源重复测试", "首次过账", "tester"));
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.ADJUSTMENT_INCREASE,
+						InventoryDirection.IN, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("1.000000"), "SALES_SHIPMENT", duplicateSourceId, duplicateSourceLineId,
+						LocalDate.now(), "销售出库来源重复测试", "重复过账", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode().code())
+						.isEqualTo("SALES_MOVEMENT_SOURCE_DUPLICATED"));
+		assertThat(movementCountBySource("SALES_SHIPMENT", duplicateSourceLineId)).isOne();
+	}
+
+	@Test
+	void postingServiceSupportsSalesShipmentMovementTypeAndMovementNoPrefix() {
+		InventoryFixture fixture = fixture();
+		long openingSourceId = 960_000L + SEQUENCE.incrementAndGet();
+		long openingSourceLineId = 970_000L + SEQUENCE.incrementAndGet();
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_INCREASE, InventoryDirection.IN, fixture.finishedWarehouseId(),
+				fixture.finishedMaterialId(), fixture.eachUnitId(), new BigDecimal("6.000000"), "INVENTORY_DOCUMENT",
+				openingSourceId, openingSourceLineId, LocalDate.now(), "销售出库前置库存", "前置库存", "tester"));
+
+		InventoryMovementType salesShipment = InventoryMovementType.valueOf("SALES_SHIPMENT");
+		long salesSourceId = 980_000L + SEQUENCE.incrementAndGet();
+		long salesSourceLineId = 990_000L + SEQUENCE.incrementAndGet();
+		InventoryPostingService.PostingResult result = this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(salesShipment, InventoryDirection.OUT,
+						fixture.finishedWarehouseId(), fixture.finishedMaterialId(), fixture.eachUnitId(),
+						new BigDecimal("2.500000"), "SALES_SHIPMENT", salesSourceId, salesSourceLineId,
+						LocalDate.now(), "销售出库", "销售出库过账", "tester"));
+
+		assertDecimal(result.beforeQuantity(), "6.000000");
+		assertDecimal(result.afterQuantity(), "3.500000");
+		assertDecimal(balanceQuantity(fixture.finishedWarehouseId(), fixture.finishedMaterialId()), "3.500000");
+		assertThat(movementNoBySource("SALES_SHIPMENT", salesSourceLineId)).startsWith("SAL-SHP-MOV-");
+		MovementRow movement = movementForSource("SALES_SHIPMENT", salesSourceLineId);
+		assertThat(movement.movementType()).isEqualTo("SALES_SHIPMENT");
+		assertThat(movement.direction()).isEqualTo("OUT");
+		assertDecimal(movement.quantity(), "2.500000");
+	}
+
+	@Test
+	void postingServiceKeepsExistingSourceErrorMappings() {
+		InventoryFixture fixture = fixture();
+		long procurementSourceId = 1_000_000L + SEQUENCE.incrementAndGet();
+		long procurementSourceLineId = 1_010_000L + SEQUENCE.incrementAndGet();
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.PURCHASE_RECEIPT, InventoryDirection.IN, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("1.000000"), "PURCHASE_RECEIPT",
+				procurementSourceId, procurementSourceLineId, LocalDate.now(), "采购来源重复基线", "首次过账", "tester"));
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
+						InventoryDirection.IN, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("1.000000"), "PURCHASE_RECEIPT", procurementSourceId,
+						procurementSourceLineId, LocalDate.now(), "采购来源重复基线", "重复过账", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED));
+
+		long productionSourceId = 1_020_000L + SEQUENCE.incrementAndGet();
+		long productionSourceLineId = 1_030_000L + SEQUENCE.incrementAndGet();
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
+						InventoryDirection.OUT, fixture.finishedWarehouseId(), fixture.semiMaterialId(),
+						fixture.eachUnitId(), new BigDecimal("1.000000"), "PRODUCTION_MATERIAL_ISSUE", productionSourceId,
+						productionSourceLineId, LocalDate.now(), "生产库存不足基线", "库存不足", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.PRODUCTION_STOCK_NOT_ENOUGH));
+
+		long inventorySourceId = 1_040_000L + SEQUENCE.incrementAndGet();
+		long inventorySourceLineId = 1_050_000L + SEQUENCE.incrementAndGet();
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.ADJUSTMENT_DECREASE,
+						InventoryDirection.OUT, fixture.rawWarehouseId(), fixture.auxiliaryMaterialId(),
+						fixture.meterUnitId(), new BigDecimal("1.000000"), "INVENTORY_DOCUMENT", inventorySourceId,
+						inventorySourceLineId, LocalDate.now(), "库存不足基线", "库存不足", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode()).isEqualTo(ApiErrorCode.INVENTORY_STOCK_NOT_ENOUGH));
+	}
+
+	@Test
 	void adjustmentDocumentsIncreaseAndDecreaseStock() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		InventoryFixture fixture = fixture();
@@ -679,6 +782,28 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private String movementNoBySource(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select movement_no
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", String.class, sourceType, sourceLineId);
+	}
+
+	private MovementRow movementForSource(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select movement_type, direction, source_line_id, quantity, before_quantity, after_quantity
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""",
+				(rs, rowNum) -> new MovementRow(rs.getString("movement_type"), rs.getString("direction"),
+						rs.getLong("source_line_id"), rs.getBigDecimal("quantity"),
+						rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity")),
+				sourceType, sourceLineId);
 	}
 
 	private long decreaseMovementCount(long firstDocumentId, long secondDocumentId) {

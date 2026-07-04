@@ -165,6 +165,22 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesAdminPathsMapToSalesPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/orders", "sales:order:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/orders/1", "sales:order:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/sales/orders", "sales:order:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/orders/1", "sales:order:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/orders/1/confirm", "sales:order:confirm");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/orders/1/cancel", "sales:order:cancel");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/orders/1/close", "sales:order:close");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/shipments", "sales:shipment:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales/shipments/2", "sales:shipment:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/sales/orders/1/shipments", "sales:shipment:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/shipments/2", "sales:shipment:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales/shipments/2/post", "sales:shipment:post");
+	}
+
+	@Test
 	void productionAdminPathsMapToProductionPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders", "production:work-order:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1", "production:work-order:view");

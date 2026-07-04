@@ -12,6 +12,8 @@ public enum InventoryMovementType {
 
 	PRODUCTION_RECEIPT,
 
-	PURCHASE_RECEIPT
+	PURCHASE_RECEIPT,
+
+	SALES_SHIPMENT
 
 }

@@ -19,6 +19,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -47,6 +48,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	private static final List<String> INVENTORY_MENU_PERMISSIONS = List.of("inventory");
 
 	private static final List<String> PROCUREMENT_MENU_PERMISSIONS = List.of("procurement");
+
+	private static final List<String> SALES_MENU_PERMISSIONS = List.of("sales");
 
 	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
 
@@ -122,6 +125,25 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/procurement/receipts/{id}"),
 			new ExpectedActionPermission("procurement:receipt:post", "procurement", "PUT",
 					"/api/admin/procurement/receipts/{id}/post"));
+
+	private static final List<ExpectedActionPermission> SALES_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("sales:order:view", "sales", "GET", "/api/admin/sales/orders/**"),
+			new ExpectedActionPermission("sales:order:create", "sales", "POST", "/api/admin/sales/orders"),
+			new ExpectedActionPermission("sales:order:update", "sales", "PUT", "/api/admin/sales/orders/{id}"),
+			new ExpectedActionPermission("sales:order:confirm", "sales", "PUT",
+					"/api/admin/sales/orders/{id}/confirm"),
+			new ExpectedActionPermission("sales:order:cancel", "sales", "PUT",
+					"/api/admin/sales/orders/{id}/cancel"),
+			new ExpectedActionPermission("sales:order:close", "sales", "PUT",
+					"/api/admin/sales/orders/{id}/close"),
+			new ExpectedActionPermission("sales:shipment:view", "sales", "GET",
+					"/api/admin/sales/shipments/**"),
+			new ExpectedActionPermission("sales:shipment:create", "sales", "POST",
+					"/api/admin/sales/orders/{id}/shipments"),
+			new ExpectedActionPermission("sales:shipment:update", "sales", "PUT",
+					"/api/admin/sales/shipments/{id}"),
+			new ExpectedActionPermission("sales:shipment:post", "sales", "PUT",
+					"/api/admin/sales/shipments/{id}/post"));
 
 	private static final List<ExpectedActionPermission> PRODUCTION_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("production:work-order:view", "production", "GET",
@@ -360,6 +382,57 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesSchemaContainsContractTablesIndexesAndInventoryMovementType() {
+		var orderColumns = columns("sal_sales_order");
+		var orderLineColumns = columns("sal_sales_order_line");
+		var shipmentColumns = columns("sal_sales_shipment");
+		var shipmentLineColumns = columns("sal_sales_shipment_line");
+
+		assertThat(orderColumns).contains("id", "order_no", "customer_id", "order_date", "expected_ship_date",
+				"status", "remark", "created_by", "created_at", "updated_by", "updated_at", "confirmed_by",
+				"confirmed_at", "cancelled_by", "cancelled_at", "closed_by", "closed_at", "version");
+		assertThat(orderLineColumns).contains("id", "order_id", "line_no", "material_id", "unit_id", "quantity",
+				"shipped_quantity", "unit_price", "expected_ship_date", "remark", "created_at", "updated_at",
+				"version");
+		assertThat(shipmentColumns).contains("id", "shipment_no", "order_id", "customer_id", "warehouse_id",
+				"business_date", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"posted_by", "posted_at", "version");
+		assertThat(shipmentLineColumns).contains("id", "shipment_id", "line_no", "order_line_id", "material_id",
+				"unit_id", "ordered_quantity", "shipped_quantity_before", "remaining_quantity_before", "quantity",
+				"before_quantity", "after_quantity", "remark", "created_at", "updated_at");
+
+		assertThat(indexes("sal_sales_order")).contains("uk_sal_sales_order_no", "idx_sal_sales_order_customer",
+				"idx_sal_sales_order_status_date", "idx_sal_sales_order_expected_date");
+		assertThat(indexes("sal_sales_order_line")).contains("uk_sal_sales_order_line_no",
+				"uk_sal_sales_order_line_material", "idx_sal_sales_order_line_order",
+				"idx_sal_sales_order_line_material");
+		assertThat(indexes("sal_sales_shipment")).contains("uk_sal_sales_shipment_no",
+				"idx_sal_sales_shipment_order", "idx_sal_sales_shipment_customer",
+				"idx_sal_sales_shipment_warehouse", "idx_sal_sales_shipment_status_date");
+		assertThat(indexes("sal_sales_shipment_line")).contains("uk_sal_sales_shipment_line_no",
+				"uk_sal_sales_shipment_line_order_line", "idx_sal_sales_shipment_line_shipment",
+				"idx_sal_sales_shipment_line_order_line_ref");
+
+		String movementTypeConstraint = this.jdbcTemplate.queryForObject("""
+				select pg_get_constraintdef(c.oid)
+				from pg_constraint c
+				join pg_class t on t.oid = c.conrelid
+				where t.relname = 'inv_stock_movement'
+				and c.conname = 'ck_inv_stock_movement_type'
+				""", String.class);
+		assertThat(movementTypeConstraint).contains("OPENING", "ADJUSTMENT_INCREASE", "ADJUSTMENT_DECREASE",
+				"PRODUCTION_ISSUE", "PRODUCTION_RECEIPT", "PURCHASE_RECEIPT", "SALES_SHIPMENT");
+	}
+
+	@Test
+	void salesStatusEnumsContainContractValues() throws Exception {
+		assertThat(enumConstants("com.qherp.api.system.sales.SalesOrderStatus")).containsExactly("DRAFT",
+				"CONFIRMED", "PARTIALLY_SHIPPED", "SHIPPED", "CLOSED", "CANCELLED");
+		assertThat(enumConstants("com.qherp.api.system.sales.SalesShipmentStatus")).containsExactly("DRAFT",
+				"POSTED");
+	}
+
+	@Test
 	void costSchemaContainsContractTableAndIndexes() {
 		var costRecordColumns = columns("mfg_cost_record");
 
@@ -440,6 +513,31 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertErrorCode("PROCUREMENT_RECEIPT_POSTED_IMMUTABLE", HttpStatus.CONFLICT);
 		assertErrorCode("PROCUREMENT_DUPLICATE_POST", HttpStatus.CONFLICT);
 		assertErrorCode("PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED", HttpStatus.CONFLICT);
+	}
+
+	@Test
+	void salesErrorCodesAreRegistered() {
+		assertErrorCode("SALES_ORDER_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("SALES_SHIPMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("SALES_ORDER_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_SHIPMENT_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_ORDER_EMPTY_LINES", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_SHIPMENT_EMPTY_LINES", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_CUSTOMER_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_WAREHOUSE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_MATERIAL_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_MATERIAL_NOT_SELLABLE", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_UNIT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_UNIT_PRICE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("SALES_ORDER_DUPLICATE_LINE", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_SHIPMENT_DUPLICATE_LINE", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_SHIPMENT_EXCEEDS_ORDER", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_SHIPMENT_LINE_SOURCE_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_STOCK_NOT_ENOUGH", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_SHIPMENT_POSTED_IMMUTABLE", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_DUPLICATE_POST", HttpStatus.CONFLICT);
+		assertErrorCode("SALES_MOVEMENT_SOURCE_DUPLICATED", HttpStatus.CONFLICT);
 	}
 
 	@Test
@@ -531,6 +629,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		});
 
 		PROCUREMENT_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
+
+		SALES_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		SALES_ACTION_PERMISSIONS.forEach(expected -> {
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
 			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
 
@@ -641,6 +756,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.as(expected.code())
 				.isTrue();
 		});
+		SALES_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		SALES_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
 		PRODUCTION_MENU_PERMISSIONS.forEach(code -> {
 			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
 
@@ -681,6 +814,11 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private void assertErrorCode(String code, HttpStatus expectedStatus) {
 		assertThat(ApiErrorCode.valueOf(code).httpStatus()).isEqualTo(expectedStatus);
+	}
+
+	private List<String> enumConstants(String className) throws ClassNotFoundException {
+		Class<?> enumClass = Class.forName(className);
+		return Arrays.stream(enumClass.getEnumConstants()).map(Object::toString).toList();
 	}
 
 	private List<String> columns(String tableName) {

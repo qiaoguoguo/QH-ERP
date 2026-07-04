@@ -122,11 +122,17 @@ public class InventoryPostingService {
 	}
 
 	private ApiErrorCode stockNotEnoughErrorCode(String sourceType) {
+		if (salesShipmentSource(sourceType)) {
+			return ApiErrorCode.SALES_STOCK_NOT_ENOUGH;
+		}
 		return productionSource(sourceType) ? ApiErrorCode.PRODUCTION_STOCK_NOT_ENOUGH
 				: ApiErrorCode.INVENTORY_STOCK_NOT_ENOUGH;
 	}
 
 	private ApiErrorCode sourceDuplicatedErrorCode(String sourceType) {
+		if (salesShipmentSource(sourceType)) {
+			return ApiErrorCode.SALES_MOVEMENT_SOURCE_DUPLICATED;
+		}
 		if (procurementSource(sourceType)) {
 			return ApiErrorCode.PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED;
 		}
@@ -142,11 +148,16 @@ public class InventoryPostingService {
 		return "PURCHASE_RECEIPT".equals(sourceType);
 	}
 
+	private boolean salesShipmentSource(String sourceType) {
+		return "SALES_SHIPMENT".equals(sourceType);
+	}
+
 	private String movementNo(PostingRequest request) {
 		String prefix = switch (request.movementType()) {
 			case PRODUCTION_ISSUE -> "MFG-ISS-MOV";
 			case PRODUCTION_RECEIPT -> "MFG-RCP-MOV";
 			case PURCHASE_RECEIPT -> "PROC-RCP-MOV";
+			case SALES_SHIPMENT -> "SAL-SHP-MOV";
 			default -> "INV-MOV";
 		};
 		int sequence = Math.floorMod(MOVEMENT_NO_SEQUENCE.getAndIncrement(), 1000);

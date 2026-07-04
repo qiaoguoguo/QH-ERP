@@ -136,7 +136,7 @@ git diff --check
 - 测试： `apps/api/src/test/java/com/qherp/api/system/permission/PermissionAuthorizationTests.java`
 - 测试： `apps/api/src/test/java/com/qherp/api/system/inventory/InventoryAdminControllerTests.java`
 
-- [ ] **步骤 1：编写预期失败的基础后端测试**
+- [x] **步骤 1：编写预期失败的基础后端测试**
 
 新增或更新测试，覆盖以下预期：
 
@@ -162,7 +162,7 @@ docker run --rm `
 
 预期：新增销售断言失败，原因是销售权限、库存类型或销售错误码尚不存在。
 
-- [ ] **步骤 2：新增销售迁移和状态枚举**
+- [x] **步骤 2：新增销售迁移和状态枚举**
 
 新增 `V9__sales_management_schema.sql`，包含 `sal_sales_order`、`sal_sales_order_line`、`sal_sales_shipment`、`sal_sales_shipment_line`，并修改 `inv_stock_movement` 类型约束加入 `SALES_SHIPMENT`。
 
@@ -186,7 +186,7 @@ public enum SalesShipmentStatus {
 }
 ```
 
-- [ ] **步骤 3：新增错误码、库存类型和权限种子**
+- [x] **步骤 3：新增错误码、库存类型和权限种子**
 
 在 `ApiErrorCode` 增加 `SALES_*` 错误码，至少包含接口契约中的订单不存在、出库不存在、状态非法、空明细、客户/仓库/物料/单位非法、不可销售物料、数量非法、单价非法、重复行、超出库、来源行不匹配、库存不足、已过账不可编辑、重复过账、来源重复。
 
@@ -211,7 +211,7 @@ SALES_SHIPMENT
 - `PUT /api/admin/sales/shipments/{id}` -> `sales:shipment:update`
 - `PUT /api/admin/sales/shipments/{id}/post` -> `sales:shipment:post`
 
-- [ ] **步骤 4：更新库存过账服务销售来源错误映射**
+- [x] **步骤 4：更新库存过账服务销售来源错误映射**
 
 `InventoryPostingService` 识别 `sourceType=SALES_SHIPMENT`：
 
@@ -219,7 +219,7 @@ SALES_SHIPMENT
 - 来源重复返回 `SALES_MOVEMENT_SOURCE_DUPLICATED`。
 - 流水号前缀建议使用 `SAL-SHP-MOV`，不得复用采购或库存单据前缀。
 
-- [ ] **步骤 5：验证定向基础后端测试**
+- [x] **步骤 5：验证定向基础后端测试**
 
 运行步骤 1 中的 Docker Maven 定向测试命令。
 

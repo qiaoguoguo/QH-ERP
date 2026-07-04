@@ -174,6 +174,48 @@ public enum ApiErrorCode {
 
 	PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "采购来源明细已生成库存变动"),
 
+	SALES_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "销售订单不存在"),
+
+	SALES_SHIPMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "销售出库单不存在"),
+
+	SALES_ORDER_STATUS_INVALID(HttpStatus.CONFLICT, "销售订单状态不允许当前操作"),
+
+	SALES_SHIPMENT_STATUS_INVALID(HttpStatus.CONFLICT, "销售出库状态不允许当前操作"),
+
+	SALES_ORDER_EMPTY_LINES(HttpStatus.BAD_REQUEST, "销售订单明细不能为空"),
+
+	SALES_SHIPMENT_EMPTY_LINES(HttpStatus.BAD_REQUEST, "销售出库明细不能为空"),
+
+	SALES_CUSTOMER_INVALID(HttpStatus.BAD_REQUEST, "客户不存在或已停用"),
+
+	SALES_WAREHOUSE_INVALID(HttpStatus.BAD_REQUEST, "销售出库仓库不存在或已停用"),
+
+	SALES_MATERIAL_INVALID(HttpStatus.BAD_REQUEST, "销售物料不存在或已停用"),
+
+	SALES_MATERIAL_NOT_SELLABLE(HttpStatus.BAD_REQUEST, "物料类型当前不可销售"),
+
+	SALES_UNIT_INVALID(HttpStatus.BAD_REQUEST, "销售单位不存在、已停用或不是物料基本单位"),
+
+	SALES_QUANTITY_INVALID(HttpStatus.BAD_REQUEST, "销售或出库数量不正确"),
+
+	SALES_UNIT_PRICE_INVALID(HttpStatus.BAD_REQUEST, "销售单价不正确"),
+
+	SALES_ORDER_DUPLICATE_LINE(HttpStatus.CONFLICT, "销售订单明细物料重复"),
+
+	SALES_SHIPMENT_DUPLICATE_LINE(HttpStatus.CONFLICT, "销售出库明细来源订单行重复"),
+
+	SALES_SHIPMENT_EXCEEDS_ORDER(HttpStatus.CONFLICT, "销售出库数量超过订单未出库数量"),
+
+	SALES_SHIPMENT_LINE_SOURCE_INVALID(HttpStatus.CONFLICT, "销售出库明细来源不正确"),
+
+	SALES_STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "销售出库库存不足"),
+
+	SALES_SHIPMENT_POSTED_IMMUTABLE(HttpStatus.CONFLICT, "已过账销售出库单不可编辑"),
+
+	SALES_DUPLICATE_POST(HttpStatus.CONFLICT, "销售出库单已过账或重复过账"),
+
+	SALES_MOVEMENT_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "销售来源明细已生成库存变动"),
+
 	COST_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "成本记录不存在"),
 
 	COST_WORK_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "成本关联工单不存在"),

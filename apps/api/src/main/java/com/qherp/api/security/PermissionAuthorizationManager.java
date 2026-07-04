@@ -81,6 +81,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return procurementPermissionCode;
 		}
 
+		String salesPermissionCode = salesPermissionCode(method, path);
+		if (salesPermissionCode != null) {
+			return salesPermissionCode;
+		}
+
 		String productionPermissionCode = productionPermissionCode(method, path);
 		if (productionPermissionCode != null) {
 			return productionPermissionCode;
@@ -225,6 +230,47 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(receiptPath) + "/\\d+/post")) {
 			return "procurement:receipt:post";
+		}
+		return null;
+	}
+
+	private String salesPermissionCode(String method, String path) {
+		String basePath = "/api/admin/sales";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		String orderPath = "/api/admin/sales/orders";
+		if ("GET".equals(method) && matchesBasePath(path, orderPath)) {
+			return "sales:order:view";
+		}
+		if ("POST".equals(method) && orderPath.equals(path)) {
+			return "sales:order:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, orderPath)) {
+			return "sales:order:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/confirm")) {
+			return "sales:order:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/cancel")) {
+			return "sales:order:cancel";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/close")) {
+			return "sales:order:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/shipments")) {
+			return "sales:shipment:create";
+		}
+
+		String shipmentPath = "/api/admin/sales/shipments";
+		if ("GET".equals(method) && matchesBasePath(path, shipmentPath)) {
+			return "sales:shipment:view";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, shipmentPath)) {
+			return "sales:shipment:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(shipmentPath) + "/\\d+/post")) {
+			return "sales:shipment:post";
 		}
 		return null;
 	}
