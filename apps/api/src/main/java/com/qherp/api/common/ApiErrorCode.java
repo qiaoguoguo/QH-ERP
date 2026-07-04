@@ -266,6 +266,12 @@ public enum ApiErrorCode {
 
 	FINANCE_METHOD_INVALID(HttpStatus.BAD_REQUEST, "收付款方式不合法"),
 
+	REPORT_DATE_RANGE_INVALID(HttpStatus.BAD_REQUEST, "报表日期范围非法"),
+
+	REPORT_PARAMETER_INVALID(HttpStatus.BAD_REQUEST, "报表查询参数非法"),
+
+	REPORT_TRACE_KEY_INVALID(HttpStatus.BAD_REQUEST, "报表追溯键非法"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);

@@ -57,6 +57,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> FINANCE_MENU_PERMISSIONS = List.of("finance");
 
+	private static final List<String> REPORT_MENU_PERMISSIONS = List.of("report");
+
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
 			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
@@ -235,6 +237,33 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/finance/payments/{id}/post"),
 			new ExpectedActionPermission("finance:payment:cancel", "finance", "PUT",
 					"/api/admin/finance/payments/{id}/cancel"));
+
+	private static final List<ExpectedActionPermission> REPORT_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("report:overview:view", "report", "GET", "/api/admin/reports/overview"),
+			new ExpectedActionPermission("report:sales:view", "report", "GET",
+					"/api/admin/reports/sales-summary/**"),
+			new ExpectedActionPermission("report:procurement:view", "report", "GET",
+					"/api/admin/reports/procurement-summary/**"),
+			new ExpectedActionPermission("report:inventory:view", "report", "GET",
+					"/api/admin/reports/inventory-stock-flow/**"),
+			new ExpectedActionPermission("report:production:view", "report", "GET",
+					"/api/admin/reports/production-execution/**"),
+			new ExpectedActionPermission("report:cost:view", "report", "GET",
+					"/api/admin/reports/cost-collection/**"),
+			new ExpectedActionPermission("report:settlement:view", "report", "GET",
+					"/api/admin/reports/settlement-summary/**"),
+			new ExpectedActionPermission("report:exception:view", "report", "GET",
+					"/api/admin/reports/exceptions/**"));
+
+	private static final Map<String, String> REPORT_ROUTE_PATHS = Map.ofEntries(
+			Map.entry("report:overview:view", "/reports/overview"),
+			Map.entry("report:sales:view", "/reports/sales"),
+			Map.entry("report:procurement:view", "/reports/procurement"),
+			Map.entry("report:inventory:view", "/reports/inventory"),
+			Map.entry("report:production:view", "/reports/production"),
+			Map.entry("report:cost:view", "/reports/cost"),
+			Map.entry("report:settlement:view", "/reports/settlement"),
+			Map.entry("report:exception:view", "/reports/exceptions"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -698,6 +727,13 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void reportErrorCodesAreRegistered() {
+		assertErrorCode("REPORT_DATE_RANGE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("REPORT_PARAMETER_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("REPORT_TRACE_KEY_INVALID", HttpStatus.BAD_REQUEST);
+	}
+
+	@Test
 	void initializesPermissionTreeAndApiMetadata() {
 		var systemMenu = permissionRepository.findByCode("system").orElseThrow();
 		var userMenu = permissionRepository.findByCode("system:user").orElseThrow();
@@ -847,6 +883,27 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
+
+		REPORT_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		REPORT_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
+		REPORT_ROUTE_PATHS.forEach((code, routePath) -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getRoutePath()).as(code).isEqualTo(routePath);
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -979,6 +1036,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 		FINANCE_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+		REPORT_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		REPORT_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();

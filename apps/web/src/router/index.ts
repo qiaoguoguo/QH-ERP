@@ -1,6 +1,7 @@
 import { h } from 'vue'
 import { createMemoryHistory, createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { firstFinanceRouteByPermission } from '../modules/finance/financePageHelpers'
+import { firstReportRouteByPermission, reportRouteConfigs } from '../modules/reports/reportPageHelpers'
 import { useAuthStore } from '../stores/authStore'
 
 const history = import.meta.env.MODE === 'test' ? createMemoryHistory() : createWebHistory()
@@ -17,6 +18,29 @@ declare module 'vue-router' {
 const placeholder = (title: string, description: string) => ({
   render: () => h('section', [h('h1', title), h('p', description)]),
 })
+
+const reportPageComponent = (routeName: string) => {
+  switch (routeName) {
+    case 'reports-overview':
+      return () => import('../modules/reports/ReportOverviewView.vue')
+    case 'reports-sales':
+      return () => import('../modules/reports/SalesReportView.vue')
+    case 'reports-procurement':
+      return () => import('../modules/reports/ProcurementReportView.vue')
+    case 'reports-inventory':
+      return () => import('../modules/reports/InventoryReportView.vue')
+    case 'reports-production':
+      return () => import('../modules/reports/ProductionReportView.vue')
+    case 'reports-cost':
+      return () => import('../modules/reports/CostReportView.vue')
+    case 'reports-settlement':
+      return () => import('../modules/reports/SettlementReportView.vue')
+    case 'reports-exceptions':
+      return () => import('../modules/reports/ExceptionReportView.vue')
+    default:
+      return placeholder('经营报表', '经营报表页面。')
+  }
+}
 
 const routes: RouteRecordRaw[] = [
   {
@@ -435,6 +459,18 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: 'finance:payment:update' },
     component: () => import('../modules/finance/PaymentFormView.vue'),
   },
+  {
+    path: '/reports',
+    name: 'reports-root',
+    meta: { requiresAuth: true },
+    component: placeholder('经营报表', '经营报表入口。'),
+  },
+  ...reportRouteConfigs.map((config): RouteRecordRaw => ({
+    path: config.path,
+    name: config.routeName,
+    meta: { requiresAuth: true, requiredPermission: config.permission },
+    component: reportPageComponent(config.routeName),
+  })),
 ]
 
 export function createQhErpRouter() {
@@ -479,6 +515,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return financeRoute
+    }
+
+    if (to.name === 'reports-root') {
+      const reportRoute = firstReportRouteByPermission((permission) => authStore.hasPermission(permission))
+      if (!reportRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return reportRoute
     }
 
     const requiredPermissions = [

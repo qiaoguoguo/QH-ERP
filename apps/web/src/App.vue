@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuNode } from './shared/api/accountPermissionApi'
 import { financePermissions } from './modules/finance/financePageHelpers'
+import { reportMenuChildren, reportRouteConfigs } from './modules/reports/reportPageHelpers'
 import { useAuthStore } from './stores/authStore'
 
 const route = useRoute()
@@ -23,6 +24,7 @@ const financeReceivablePath = '/finance/receivables'
 const financeReceiptPath = '/finance/receipts'
 const financePayablePath = '/finance/payables'
 const financePaymentPath = '/finance/payments'
+const reportMenuPaths = new Set(reportRouteConfigs.map((item) => item.path))
 const supportedMenuPaths = new Set([
   '/accounts/users',
   '/system/users',
@@ -48,6 +50,7 @@ const supportedMenuPaths = new Set([
   financeReceiptPath,
   financePayablePath,
   financePaymentPath,
+  ...reportMenuPaths,
 ])
 const inventoryChildren: MenuNode[] = [
   {
@@ -127,9 +130,9 @@ const financeChildren: MenuNode[] = [
   },
 ]
 const financeMenuPaths = new Set(financeChildren.map((child) => child.routePath))
-const menuTree = computed<MenuNode[]>(() => ensureFinanceMenu(ensureCostMenu(
+const menuTree = computed<MenuNode[]>(() => ensureReportsMenu(ensureFinanceMenu(ensureCostMenu(
   ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))))),
-)))
+))))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -391,6 +394,43 @@ function removeFinanceMenus(menus: MenuNode[]): MenuNode[] {
       children: removeFinanceMenus(menu.children ?? []),
     }))
     .filter((menu) => !isFinanceMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
+}
+
+function ensureReportsMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = reportMenuChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeReportMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'reports',
+      code: 'report',
+      name: '经营报表',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isReportMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'report'
+    || code.startsWith('report:')
+    || (menu.routePath ? reportMenuPaths.has(menu.routePath) : false)
+}
+
+function removeReportMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeReportMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isReportMenu(menu) && (
       (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
     ))
 }
