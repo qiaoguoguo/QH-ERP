@@ -232,6 +232,18 @@ describe('销售出库表单页', () => {
     expect(wrapper.text()).toContain('7.5')
   })
 
+  it('销售出库明细在表单内提供独立横向滚动边界', async () => {
+    const { wrapper } = await mountForm()
+
+    const lineFormItem = wrapper.find('[data-test="sales-shipment-line-form-item"]')
+    const lineScroll = wrapper.findComponent(SalesShipmentLineEditor).find('[data-test="sales-shipment-line-scroll"]')
+
+    expect(lineFormItem.exists()).toBe(true)
+    expect(lineScroll.exists()).toBe(true)
+    expect(lineScroll.classes()).toContain('table-scroll')
+    expect(lineScroll.classes()).toContain('sales-shipment-line-scroll')
+  })
+
   it('缺少必填项时阻止保存', async () => {
     const { wrapper } = await mountForm()
 

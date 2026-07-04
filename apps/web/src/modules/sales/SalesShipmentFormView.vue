@@ -395,7 +395,11 @@ onMounted(async () => {
           <el-input v-model="form.remark" name="sales-shipment-remark" placeholder="可选" :disabled="!canEditForm" />
         </el-form-item>
       </div>
-      <el-form-item label="销售出库明细">
+      <el-form-item
+        label="销售出库明细"
+        class="sales-shipment-line-form-item"
+        data-test="sales-shipment-line-form-item"
+      >
         <SalesShipmentLineEditor
           v-model:lines="lines"
           :source-lines="sourceLines"
@@ -425,12 +429,15 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
+  max-width: 100%;
+  min-width: 0;
   padding: 14px 14px 0;
 }
 
 .source-summary > div {
   border: 1px solid var(--qherp-border);
   border-radius: 6px;
+  min-width: 0;
   padding: 10px 12px;
 }
 
@@ -442,11 +449,18 @@ onMounted(async () => {
 }
 
 .source-summary strong {
+  display: block;
   font-size: 16px;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sales-shipment-form {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   padding: 14px;
 }
 
@@ -473,6 +487,16 @@ onMounted(async () => {
   gap: 8px;
   padding: 12px 14px 14px;
   border-top: 1px solid var(--qherp-border);
+}
+
+.sales-shipment-line-form-item,
+.sales-shipment-line-form-item :deep(.el-form-item__content) {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sales-shipment-line-form-item :deep(.sales-shipment-line-editor) {
+  width: 100%;
 }
 
 @media (max-width: 900px) {

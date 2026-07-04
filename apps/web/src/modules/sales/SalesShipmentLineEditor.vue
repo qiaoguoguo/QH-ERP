@@ -62,7 +62,7 @@ function removeLine(index: number) {
 
 <template>
   <div class="sales-shipment-line-editor">
-    <div class="table-scroll">
+    <div class="table-scroll sales-shipment-line-scroll" data-test="sales-shipment-line-scroll">
       <el-table :data="lines" empty-text="暂无销售出库明细" stripe>
         <el-table-column label="行号" width="78">
           <template #default="{ row }">
@@ -171,6 +171,15 @@ function removeLine(index: number) {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sales-shipment-line-scroll {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .line-option-meta {
@@ -185,5 +194,17 @@ function removeLine(index: number) {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 760px) {
+  .sales-shipment-line-editor {
+    overflow: hidden;
+  }
+
+  .line-option-meta {
+    display: block;
+    float: none;
+    margin-left: 0;
+  }
 }
 </style>
