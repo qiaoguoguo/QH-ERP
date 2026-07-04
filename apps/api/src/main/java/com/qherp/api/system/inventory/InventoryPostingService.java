@@ -127,6 +127,9 @@ public class InventoryPostingService {
 	}
 
 	private ApiErrorCode sourceDuplicatedErrorCode(String sourceType) {
+		if (procurementSource(sourceType)) {
+			return ApiErrorCode.PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED;
+		}
 		return productionSource(sourceType) ? ApiErrorCode.PRODUCTION_MOVEMENT_SOURCE_DUPLICATED
 				: ApiErrorCode.INVENTORY_MOVEMENT_SOURCE_DUPLICATED;
 	}
@@ -135,10 +138,15 @@ public class InventoryPostingService {
 		return sourceType != null && sourceType.startsWith("PRODUCTION_");
 	}
 
+	private boolean procurementSource(String sourceType) {
+		return "PURCHASE_RECEIPT".equals(sourceType);
+	}
+
 	private String movementNo(PostingRequest request) {
 		String prefix = switch (request.movementType()) {
 			case PRODUCTION_ISSUE -> "MFG-ISS-MOV";
 			case PRODUCTION_RECEIPT -> "MFG-RCP-MOV";
+			case PURCHASE_RECEIPT -> "PROC-RCP-MOV";
 			default -> "INV-MOV";
 		};
 		int sequence = Math.floorMod(MOVEMENT_NO_SEQUENCE.getAndIncrement(), 1000);

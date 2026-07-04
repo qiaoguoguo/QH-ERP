@@ -145,6 +145,26 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void procurementAdminPathsMapToProcurementPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/orders", "procurement:order:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/orders/1", "procurement:order:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/procurement/orders", "procurement:order:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/orders/1", "procurement:order:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/orders/1/confirm",
+				"procurement:order:confirm");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/orders/1/cancel",
+				"procurement:order:cancel");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/orders/1/close", "procurement:order:close");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/receipts", "procurement:receipt:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/receipts/2", "procurement:receipt:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/procurement/orders/1/receipts",
+				"procurement:receipt:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/receipts/2", "procurement:receipt:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/procurement/receipts/2/post",
+				"procurement:receipt:post");
+	}
+
+	@Test
 	void productionAdminPathsMapToProductionPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders", "production:work-order:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1", "production:work-order:view");

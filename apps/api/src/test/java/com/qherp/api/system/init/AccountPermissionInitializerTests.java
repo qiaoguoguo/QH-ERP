@@ -46,6 +46,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> INVENTORY_MENU_PERMISSIONS = List.of("inventory");
 
+	private static final List<String> PROCUREMENT_MENU_PERMISSIONS = List.of("procurement");
+
 	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
 
 	private static final List<String> COST_MENU_PERMISSIONS = List.of("cost");
@@ -98,6 +100,28 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/inventory/documents/{id}"),
 			new ExpectedActionPermission("inventory:document:post", "inventory", "PUT",
 					"/api/admin/inventory/documents/{id}/post"));
+
+	private static final List<ExpectedActionPermission> PROCUREMENT_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("procurement:order:view", "procurement", "GET",
+					"/api/admin/procurement/orders/**"),
+			new ExpectedActionPermission("procurement:order:create", "procurement", "POST",
+					"/api/admin/procurement/orders"),
+			new ExpectedActionPermission("procurement:order:update", "procurement", "PUT",
+					"/api/admin/procurement/orders/{id}"),
+			new ExpectedActionPermission("procurement:order:confirm", "procurement", "PUT",
+					"/api/admin/procurement/orders/{id}/confirm"),
+			new ExpectedActionPermission("procurement:order:cancel", "procurement", "PUT",
+					"/api/admin/procurement/orders/{id}/cancel"),
+			new ExpectedActionPermission("procurement:order:close", "procurement", "PUT",
+					"/api/admin/procurement/orders/{id}/close"),
+			new ExpectedActionPermission("procurement:receipt:view", "procurement", "GET",
+					"/api/admin/procurement/receipts/**"),
+			new ExpectedActionPermission("procurement:receipt:create", "procurement", "POST",
+					"/api/admin/procurement/orders/{id}/receipts"),
+			new ExpectedActionPermission("procurement:receipt:update", "procurement", "PUT",
+					"/api/admin/procurement/receipts/{id}"),
+			new ExpectedActionPermission("procurement:receipt:post", "procurement", "PUT",
+					"/api/admin/procurement/receipts/{id}/post"));
 
 	private static final List<ExpectedActionPermission> PRODUCTION_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("production:work-order:view", "production", "GET",
@@ -306,6 +330,36 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void procurementSchemaContainsContractTablesAndIndexes() {
+		var orderColumns = columns("proc_purchase_order");
+		var orderLineColumns = columns("proc_purchase_order_line");
+		var receiptColumns = columns("proc_purchase_receipt");
+		var receiptLineColumns = columns("proc_purchase_receipt_line");
+
+		assertThat(orderColumns).contains("id", "order_no", "supplier_id", "order_date", "expected_arrival_date",
+				"status", "remark", "created_by", "created_at", "updated_by", "updated_at", "confirmed_by",
+				"confirmed_at", "cancelled_by", "cancelled_at", "closed_by", "closed_at", "version");
+		assertThat(orderLineColumns).contains("id", "order_id", "line_no", "material_id", "unit_id", "quantity",
+				"received_quantity", "unit_price", "expected_arrival_date", "remark", "created_at", "updated_at",
+				"version");
+		assertThat(receiptColumns).contains("id", "receipt_no", "order_id", "supplier_id", "warehouse_id",
+				"business_date", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"posted_by", "posted_at", "version");
+		assertThat(receiptLineColumns).contains("id", "receipt_id", "line_no", "order_line_id", "material_id",
+				"unit_id", "ordered_quantity", "received_quantity_before", "remaining_quantity_before",
+				"quantity", "before_quantity", "after_quantity", "remark", "created_at", "updated_at");
+
+		assertThat(indexes("proc_purchase_order")).contains("uk_proc_purchase_order_no",
+				"idx_proc_purchase_order_supplier", "idx_proc_purchase_order_status_date");
+		assertThat(indexes("proc_purchase_order_line")).contains("uk_proc_purchase_order_line_no",
+				"uk_proc_purchase_order_line_material", "idx_proc_purchase_order_line_order");
+		assertThat(indexes("proc_purchase_receipt")).contains("uk_proc_purchase_receipt_no",
+				"idx_proc_purchase_receipt_order", "idx_proc_purchase_receipt_status_date");
+		assertThat(indexes("proc_purchase_receipt_line")).contains("uk_proc_purchase_receipt_line_no",
+				"uk_proc_purchase_receipt_line_order_line", "idx_proc_purchase_receipt_line_receipt");
+	}
+
+	@Test
 	void costSchemaContainsContractTableAndIndexes() {
 		var costRecordColumns = columns("mfg_cost_record");
 
@@ -363,6 +417,29 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.PRODUCTION_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.PRODUCTION_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+	}
+
+	@Test
+	void procurementErrorCodesAreRegistered() {
+		assertErrorCode("PROCUREMENT_ORDER_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("PROCUREMENT_RECEIPT_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("PROCUREMENT_ORDER_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_RECEIPT_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_ORDER_EMPTY_LINES", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_RECEIPT_EMPTY_LINES", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_SUPPLIER_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_WAREHOUSE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_MATERIAL_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_UNIT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_UNIT_PRICE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROCUREMENT_ORDER_DUPLICATE_LINE", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_RECEIPT_DUPLICATE_LINE", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_RECEIPT_EXCEEDS_ORDER", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_RECEIPT_LINE_SOURCE_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_RECEIPT_POSTED_IMMUTABLE", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_DUPLICATE_POST", HttpStatus.CONFLICT);
+		assertErrorCode("PROCUREMENT_MOVEMENT_SOURCE_DUPLICATED", HttpStatus.CONFLICT);
 	}
 
 	@Test
@@ -437,6 +514,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		});
 
 		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
+
+		PROCUREMENT_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		PROCUREMENT_ACTION_PERMISSIONS.forEach(expected -> {
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
 			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
 
@@ -521,6 +615,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+		PROCUREMENT_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		PROCUREMENT_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
