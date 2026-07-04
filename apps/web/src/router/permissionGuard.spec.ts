@@ -32,6 +32,9 @@ import PurchaseReceiptListView from '../modules/procurement/PurchaseReceiptListV
 import SalesOrderDetailView from '../modules/sales/SalesOrderDetailView.vue'
 import SalesOrderFormView from '../modules/sales/SalesOrderFormView.vue'
 import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
+import SalesShipmentDetailView from '../modules/sales/SalesShipmentDetailView.vue'
+import SalesShipmentFormView from '../modules/sales/SalesShipmentFormView.vue'
+import SalesShipmentListView from '../modules/sales/SalesShipmentListView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -225,22 +228,20 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiredPermission).toBe('procurement:order:view')
   })
 
-  it('销售订单路由加载真实页面，销售出库路由保持占位组件，并配置对应权限', async () => {
+  it('销售订单和销售出库路由加载真实页面，并配置对应权限', async () => {
     const router = createQhErpRouter()
-    const salesOrderRoutes = [
+    const salesRoutes = [
       ['sales-orders', '/sales/orders', 'sales:order:view', SalesOrderListView],
       ['sales-order-create', '/sales/orders/create', 'sales:order:create', SalesOrderFormView],
       ['sales-order-detail', '/sales/orders/:id', 'sales:order:view', SalesOrderDetailView],
       ['sales-order-edit', '/sales/orders/:id/edit', 'sales:order:update', SalesOrderFormView],
-    ] as const
-    const salesShipmentPlaceholderRoutes = [
-      ['sales-shipment-create', '/sales/orders/:orderId/shipments/create', 'sales:shipment:create'],
-      ['sales-shipments', '/sales/shipments', 'sales:shipment:view'],
-      ['sales-shipment-detail', '/sales/shipments/:id', 'sales:shipment:view'],
-      ['sales-shipment-edit', '/sales/shipments/:id/edit', 'sales:shipment:update'],
+      ['sales-shipment-create', '/sales/orders/:orderId/shipments/create', 'sales:shipment:create', SalesShipmentFormView],
+      ['sales-shipments', '/sales/shipments', 'sales:shipment:view', SalesShipmentListView],
+      ['sales-shipment-detail', '/sales/shipments/:id', 'sales:shipment:view', SalesShipmentDetailView],
+      ['sales-shipment-edit', '/sales/shipments/:id/edit', 'sales:shipment:update', SalesShipmentFormView],
     ] as const
 
-    for (const [routeName, path, permission, expectedComponent] of salesOrderRoutes) {
+    for (const [routeName, path, permission, expectedComponent] of salesRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
       const component = route?.components?.default as (() => Promise<unknown>) | undefined
 
@@ -249,17 +250,6 @@ describe('账号权限路由守卫', () => {
       expect(route?.meta.requiredPermission).toBe(permission)
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
-    }
-
-    for (const [routeName, path, permission] of salesShipmentPlaceholderRoutes) {
-      const route = router.getRoutes().find((item) => item.name === routeName)
-      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
-
-      expect(route?.path).toBe(path)
-      expect(route?.meta.requiresAuth).toBe(true)
-      expect(route?.meta.requiredPermission).toBe(permission)
-      expect(component?.template).toBeUndefined()
-      expect(component?.render).toBeTypeOf('function')
     }
 
     const rootRoute = router.getRoutes().find((item) => item.path === '/sales')

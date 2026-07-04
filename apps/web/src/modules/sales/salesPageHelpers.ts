@@ -2,6 +2,7 @@ import type {
   ResourceId,
   SalesOrderLineRecord,
   SalesOrderStatus,
+  SalesShipmentLineRecord,
   SalesShipmentStatus,
 } from '../../shared/api/salesApi'
 
@@ -19,6 +20,34 @@ export interface SalesOrderLineDraft {
   quantity: string
   unitPrice: string
   expectedShipDate: string
+  remark: string
+}
+
+export interface SalesShipmentSourceLine {
+  id: ResourceId
+  lineNo: number
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  orderedQuantity: number
+  shippedQuantityBefore: number
+  remainingQuantityBefore: number
+}
+
+export interface SalesShipmentLineDraft {
+  lineNo: number
+  orderLineId: ResourceId | ''
+  materialId: ResourceId | ''
+  materialCode: string
+  materialName: string
+  unitId: ResourceId | ''
+  unitName: string
+  orderedQuantity: number
+  shippedQuantityBefore: number
+  remainingQuantityBefore: number
+  quantity: string
   remark: string
 }
 
@@ -64,6 +93,29 @@ export function salesShipmentStatusLabel(status: SalesShipmentStatus): string {
 
 export function salesShipmentStatusTagType(status: SalesShipmentStatus): 'info' | 'success' {
   return salesShipmentStatusTypes[status]
+}
+
+export function salesMovementTypeLabel(value: string): string {
+  const labels: Record<string, string> = {
+    SALES_SHIPMENT: '销售出库',
+    PURCHASE_RECEIPT: '采购入库',
+    OPENING: '期初',
+    ADJUSTMENT_INCREASE: '调增',
+    ADJUSTMENT_DECREASE: '调减',
+    PRODUCTION_ISSUE: '生产领料',
+    PRODUCTION_RECEIPT: '完工入库',
+  }
+  return labels[value] ?? value
+}
+
+export function salesMovementDirectionLabel(value: string): string {
+  if (value === 'IN') {
+    return '入库'
+  }
+  if (value === 'OUT') {
+    return '出库'
+  }
+  return value
 }
 
 export function salesErrorMessage(error: unknown): string {
@@ -162,6 +214,28 @@ export function newSalesOrderLine(lineNo = 10): SalesOrderLineDraft {
   }
 }
 
+export function nextSalesShipmentLineNo(lines: Array<{ lineNo: number }>): number {
+  const maxLineNo = lines.reduce((max, line) => Math.max(max, Number(line.lineNo) || 0), 0)
+  return maxLineNo + 10
+}
+
+export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
+  return {
+    lineNo,
+    orderLineId: '',
+    materialId: '',
+    materialCode: '',
+    materialName: '',
+    unitId: '',
+    unitName: '',
+    orderedQuantity: 0,
+    shippedQuantityBefore: 0,
+    remainingQuantityBefore: 0,
+    quantity: '',
+    remark: '',
+  }
+}
+
 export function salesOrderLineDraftFromRecord(line: SalesOrderLineRecord): SalesOrderLineDraft {
   return {
     lineNo: line.lineNo,
@@ -172,6 +246,36 @@ export function salesOrderLineDraftFromRecord(line: SalesOrderLineRecord): Sales
     unitPrice: String(line.unitPrice),
     expectedShipDate: line.expectedShipDate ?? '',
     remark: line.remark ?? '',
+  }
+}
+
+export function salesShipmentSourceFromOrderLine(line: SalesOrderLineRecord): SalesShipmentSourceLine {
+  return {
+    id: line.id,
+    lineNo: line.lineNo,
+    materialId: line.materialId,
+    materialCode: line.materialCode,
+    materialName: line.materialName,
+    unitId: line.unitId,
+    unitName: line.unitName,
+    orderedQuantity: Number(line.quantity) || 0,
+    shippedQuantityBefore: Number(line.shippedQuantity) || 0,
+    remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+  }
+}
+
+export function salesShipmentSourceFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentSourceLine {
+  return {
+    id: line.orderLineId,
+    lineNo: line.lineNo,
+    materialId: line.materialId,
+    materialCode: line.materialCode,
+    materialName: line.materialName,
+    unitId: line.unitId,
+    unitName: line.unitName,
+    orderedQuantity: Number(line.orderedQuantity) || 0,
+    shippedQuantityBefore: Number(line.shippedQuantityBefore) || 0,
+    remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
   }
 }
 

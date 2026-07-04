@@ -458,7 +458,7 @@ npm test -- SalesOrderListView.spec.ts SalesOrderFormView.spec.ts SalesOrderDeta
 - 测试： `apps/web/src/modules/sales/SalesShipmentFormView.spec.ts`
 - 测试： `apps/web/src/modules/sales/SalesShipmentDetailView.spec.ts`
 
-- [ ] **步骤 1：编写预期失败的销售出库页面测试**
+- [x] **步骤 1：编写预期失败的销售出库页面测试**
 
 覆盖销售出库列表筛选、来源订单摘要、明细候选、未出库数量、本次出库数量、超出库提示、库存不足提示、客户停用后不阻断出库、过账二次确认、已过账只读、库存流水追溯、权限按钮，并验证销售出库路由加载真实 `SalesShipment*View.vue` 组件而非占位页。
 
@@ -471,11 +471,11 @@ npm test -- SalesShipmentListView.spec.ts SalesShipmentFormView.spec.ts SalesShi
 
 预期：失败，原因是 sales shipment views do not exist.
 
-- [ ] **步骤 2：实现销售出库列表、表单和详情**
+- [x] **步骤 2：实现销售出库列表、表单和详情**
 
 复用采购入库页面模式。页面文案必须统一“销售出库”，不得把销售出库描述成库存单据、物流发运、发票、收款或应收确认。若 Task 5 为销售出库路由使用占位组件，本任务必须把 `/sales/shipments`、`/sales/orders/:id/shipments/create`、`/sales/shipments/:id`、`/sales/shipments/:id/edit` 替换为真实销售出库页面组件。
 
-- [ ] **步骤 3：验证销售出库定向测试**
+- [x] **步骤 3：验证销售出库定向测试**
 
 运行步骤 1 中的命令。
 

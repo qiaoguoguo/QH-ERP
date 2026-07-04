@@ -218,5 +218,8 @@
 - 前端 Task 6 完成：2026-07-04 前端开发完成销售订单列表、新建、编辑、详情、状态标签、明细编辑器和页面辅助方法；`/sales/orders`、`/sales/orders/create`、`/sales/orders/:id`、`/sales/orders/:id/edit` 已替换为真实销售订单页面组件，销售出库路由仍保持占位并归 Task 7。
 - 前端 Task 6 验证：主代理复跑 `npm test -- SalesOrderListView.spec.ts SalesOrderFormView.spec.ts SalesOrderDetailView.spec.ts permissionGuard.spec.ts`，结果为 4 个文件、50 个测试通过；`npm run typecheck` 通过；`git diff --check` 退出码 0，仅有 LF/CRLF 提示。禁用旧命名和未决占位类标记检索无业务命中。
 - 前端 Task 6 审查：UI 设计师规格审查 `APPROVED`，确认销售订单页面符合 ERP 信息密度、可销售物料口径、权限状态、出库追溯入口和 Task6/Task7 边界。前端开发代码质量审查 `APPROVED`，无 Critical/Important；记录两个后续优化项：可销售物料下拉后续宜将过滤前移到 API 查询层以避免分页截断，表单测试后续可补异常输入触发不可销售物料错误文案的直接断言。
+- 前端 Task 7 完成：2026-07-04 前端开发完成销售出库列表、新建、编辑、详情、状态标签、明细编辑器和页面辅助方法扩展；`/sales/shipments`、`/sales/orders/:orderId/shipments/create`、`/sales/shipments/:id`、`/sales/shipments/:id/edit` 已替换为真实销售出库页面组件。
+- 前端 Task 7 验证：主代理复跑 `npm test -- SalesShipmentListView.spec.ts SalesShipmentFormView.spec.ts SalesShipmentDetailView.spec.ts permissionGuard.spec.ts`，结果为 4 个文件、54 个测试通过；`npm run typecheck` 通过；`git diff --check` 退出码 0，仅有 LF/CRLF 提示。范围外语义、禁用旧命名和未决占位类标记检索无业务命中。
+- 前端 Task 7 审查：UI 设计师规格审查 `APPROVED`，确认销售出库页面符合销售出库业务语义、客户停用不阻断口径、出库数量校验、过账二次确认、权限状态和库存追溯要求。前端开发代码质量审查 `APPROVED`，无 Critical/Important/Minor。残余风险：销售出库详情跳转库存流水时携带的变动类型查询参数是否能被库存流水页面初始化，需在 Task 8/9 前端回归和浏览器链路中继续验证；详情页内嵌库存流水追溯表已满足 Task 7 页面识别要求。
 - 视觉分析：本任务文档阶段不启动视觉验收，阶段实现后截图保存到 `docs/testing/sales-management-visual-audit/`。
-- 结论：文档基线、后端 Task 2、后端 Task 3、后端 Task 4、前端 Task 5 和前端 Task 6 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 7：前端销售出库页面。
+- 结论：文档基线、后端 Task 2、后端 Task 3、后端 Task 4、前端 Task 5、前端 Task 6 和前端 Task 7 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 8：前端全量回归和构建。
