@@ -23,6 +23,31 @@ function routeValues(values?: Record<string, string | number | boolean>) {
   return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]))
 }
 
+function sourceTypeLabel(sourceType?: string) {
+  const labels: Record<string, string> = {
+    SALES_SHIPMENT: '销售出库来源',
+    SALES_SHIPMENT_LINE: '销售出库行',
+    SALES_RETURN: '销售退货',
+    INVENTORY_MOVEMENT: '库存流水',
+    RECEIVABLE: '应收冲减',
+    SETTLEMENT_ADJUSTMENT: '往来冲减',
+  }
+  return sourceType ? labels[sourceType] ?? sourceType : '-'
+}
+
+function traceImpactType(row: ReversalTraceRecord) {
+  if (row.inventoryMovementId || row.source.sourceType === 'INVENTORY_MOVEMENT' || row.reverse.sourceType === 'INVENTORY_MOVEMENT') {
+    return '库存入库影响'
+  }
+  if (row.settlementAdjustmentId || row.source.sourceType === 'RECEIVABLE' || row.reverse.sourceType === 'RECEIVABLE') {
+    return '应收冲减'
+  }
+  if (row.source.sourceType === 'SALES_SHIPMENT' || row.reverse.sourceType === 'SALES_SHIPMENT') {
+    return '销售出库来源'
+  }
+  return sourceTypeLabel(row.reverse.sourceType || row.source.sourceType)
+}
+
 function viewResource(row: ReversalTraceRecord) {
   if (restricted(row) || !row.resourceRouteName) {
     return
@@ -46,6 +71,21 @@ function viewResource(row: ReversalTraceRecord) {
     <el-empty v-else-if="rows.length === 0" description="暂无反向追溯" />
     <div v-else class="table-scroll">
       <el-table :data="rows" stripe>
+        <el-table-column label="影响类型" min-width="130">
+          <template #default="{ row }">
+            {{ traceImpactType(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="来源类型" min-width="130">
+          <template #default="{ row }">
+            {{ sourceTypeLabel(row.source.sourceType) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="影响资源" min-width="130">
+          <template #default="{ row }">
+            {{ sourceTypeLabel(row.reverse.sourceType) }}
+          </template>
+        </el-table-column>
         <el-table-column label="来源单据" min-width="180">
           <template #default="{ row }">
             <span v-if="restricted(row)">{{ row.restrictedMessage || '当前账号没有查看来源详情的权限' }}</span>

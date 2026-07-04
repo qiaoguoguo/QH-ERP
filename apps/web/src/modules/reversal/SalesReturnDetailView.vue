@@ -33,6 +33,8 @@ const canPost = computed(() => authStore.hasPermission('sales:return:post'))
 const canCancel = computed(() => authStore.hasPermission('sales:return:cancel'))
 const canTrace = computed(() => authStore.hasPermission('business:reversal:view'))
 const isDraft = computed(() => record.value?.status === 'DRAFT')
+const inventoryImpactRows = computed(() => (record.value?.traces ?? []).filter(isInventoryImpact))
+const receivableImpactRows = computed(() => (record.value?.traces ?? []).filter(isReceivableImpact))
 
 function sourceRestricted(source?: ReversalSourceView | null) {
   return !source || source.restricted || !source.canViewSource
@@ -40,6 +42,67 @@ function sourceRestricted(source?: ReversalSourceView | null) {
 
 function routeValues(values?: Record<string, string | number | boolean>) {
   return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]))
+}
+
+function sourceTypeLabel(sourceType?: string) {
+  const labels: Record<string, string> = {
+    SALES_SHIPMENT: '销售出库来源',
+    SALES_SHIPMENT_LINE: '销售出库行',
+    SALES_RETURN: '销售退货',
+    INVENTORY_MOVEMENT: '库存流水',
+    RECEIVABLE: '应收冲减',
+    SETTLEMENT_ADJUSTMENT: '往来冲减',
+  }
+  return sourceType ? labels[sourceType] ?? sourceType : '-'
+}
+
+function isInventoryImpact(trace: ReversalTraceRecord) {
+  return Boolean(trace.inventoryMovementId)
+    || trace.source.sourceType === 'INVENTORY_MOVEMENT'
+    || trace.reverse.sourceType === 'INVENTORY_MOVEMENT'
+    || trace.resourceRouteName === 'inventory-movements'
+}
+
+function isReceivableImpact(trace: ReversalTraceRecord) {
+  return Boolean(trace.settlementAdjustmentId)
+    || trace.source.sourceType === 'RECEIVABLE'
+    || trace.reverse.sourceType === 'RECEIVABLE'
+    || trace.resourceRouteName === 'finance-receivable-detail'
+}
+
+function impactTarget(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  const matches = type === 'inventory'
+    ? (source: ReversalSourceView) => source.sourceType === 'INVENTORY_MOVEMENT'
+    : (source: ReversalSourceView) => source.sourceType === 'RECEIVABLE' || source.sourceType === 'SETTLEMENT_ADJUSTMENT'
+  return [trace.reverse, trace.source].find(matches) ?? trace.reverse
+}
+
+function impactSourceNo(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  const source = impactTarget(trace, type)
+  if (impactRestricted(trace, type)) {
+    return source.restrictedMessage || '来源无查看权限'
+  }
+  return source.sourceNo || '-'
+}
+
+function impactTypeText(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  return sourceTypeLabel(impactTarget(trace, type).sourceType)
+}
+
+function impactRestricted(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  return trace.restricted || sourceRestricted(impactTarget(trace, type))
+}
+
+function impactDisplayText(trace: ReversalTraceRecord, type: 'inventory' | 'receivable', value?: string) {
+  return impactRestricted(trace, type) ? '' : value || '-'
+}
+
+function impactQuantityText(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  return impactRestricted(trace, type) ? '' : formatSalesQuantity(trace.quantity)
+}
+
+function impactAmountText(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
+  return impactRestricted(trace, type) ? '' : formatSalesAmount(trace.amount)
 }
 
 async function loadDetail() {
@@ -278,6 +341,79 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </el-card>
+
+      <el-card class="section-card" shadow="never">
+        <template #header>库存入库影响</template>
+        <el-empty v-if="inventoryImpactRows.length === 0" description="暂无库存入库影响" />
+        <div v-else class="table-scroll">
+          <el-table :data="inventoryImpactRows" stripe>
+            <el-table-column label="影响类型" min-width="120">
+              <template #default="{ row }">
+                {{ impactTypeText(row, 'inventory') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="库存流水" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ impactSourceNo(row, 'inventory') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="业务日期" min-width="110">
+              <template #default="{ row }">
+                {{ impactDisplayText(row, 'inventory', row.businessDate) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="入库数量" min-width="110" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ impactQuantityText(row, 'inventory') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="影响金额" min-width="110" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ impactAmountText(row, 'inventory') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" min-width="100">
+              <template #default="{ row }">
+                {{ impactDisplayText(row, 'inventory', row.status) }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </el-card>
+
+      <el-card class="section-card" shadow="never">
+        <template #header>应收冲减影响</template>
+        <el-empty v-if="receivableImpactRows.length === 0" description="暂无应收冲减影响" />
+        <div v-else class="table-scroll">
+          <el-table :data="receivableImpactRows" stripe>
+            <el-table-column label="影响类型" min-width="120">
+              <template #default="{ row }">
+                {{ impactTypeText(row, 'receivable') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="应收单据" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ impactSourceNo(row, 'receivable') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="业务日期" min-width="110">
+              <template #default="{ row }">
+                {{ impactDisplayText(row, 'receivable', row.businessDate) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="冲减金额" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ impactAmountText(row, 'receivable') }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" min-width="100">
+              <template #default="{ row }">
+                {{ impactDisplayText(row, 'receivable', row.status) }}
+              </template>
+            </el-table-column>
           </el-table>
         </div>
       </el-card>

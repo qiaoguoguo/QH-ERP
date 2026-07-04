@@ -107,6 +107,112 @@ const salesReturnDetail = {
   ],
 }
 
+const inventoryMovementTrace = {
+  traceKey: 'SALES_RETURN:1:0:INVENTORY_MOVEMENT:701:0',
+  direction: 'SOURCE_TO_REVERSE',
+  source: {
+    sourceType: 'SALES_RETURN',
+    sourceId: 1,
+    sourceNo: 'SR202607050001',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'sales-return-detail',
+    resourceRouteParams: { id: 1 },
+  },
+  reverse: {
+    sourceType: 'INVENTORY_MOVEMENT',
+    sourceId: 701,
+    sourceNo: 'IM202607050001',
+    businessDate: '2026-07-05',
+    status: 'POSTED',
+    quantity: '2.000000',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'inventory-movements',
+    resourceRouteQuery: { sourceId: 701 },
+  },
+  inventoryMovementId: 701,
+  businessDate: '2026-07-05',
+  quantity: '2.000000',
+  amount: '100.00',
+  status: 'POSTED',
+  canViewResource: true,
+  restricted: false,
+  resourceRouteName: 'inventory-movements',
+  resourceRouteQuery: { sourceId: 701 },
+}
+
+const receivableAdjustmentTrace = {
+  traceKey: 'SALES_RETURN:1:0:RECEIVABLE:801:0',
+  direction: 'SOURCE_TO_REVERSE',
+  source: {
+    sourceType: 'SALES_RETURN',
+    sourceId: 1,
+    sourceNo: 'SR202607050001',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'sales-return-detail',
+    resourceRouteParams: { id: 1 },
+  },
+  reverse: {
+    sourceType: 'RECEIVABLE',
+    sourceId: 801,
+    sourceNo: 'AR202607050001',
+    businessDate: '2026-07-05',
+    status: 'PARTIALLY_RECEIVED',
+    amount: '100.00',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'finance-receivable-detail',
+    resourceRouteParams: { id: 801 },
+  },
+  settlementAdjustmentId: 801,
+  businessDate: '2026-07-05',
+  amount: '100.00',
+  status: 'POSTED',
+  canViewResource: true,
+  restricted: false,
+  resourceRouteName: 'finance-receivable-detail',
+  resourceRouteParams: { id: 801 },
+}
+
+const restrictedInventoryTrace = {
+  traceKey: 'SALES_RETURN:1:0:INVENTORY_MOVEMENT:999:0',
+  direction: 'SOURCE_TO_REVERSE',
+  source: {
+    sourceType: 'INVENTORY_MOVEMENT',
+    canViewSource: false,
+    restricted: true,
+    restrictedMessage: '来源无查看权限',
+  },
+  reverse: {
+    sourceType: 'SALES_RETURN',
+    sourceId: 1,
+    sourceNo: 'SR202607050001',
+    canViewSource: true,
+    restricted: false,
+  },
+  inventoryMovementId: 999,
+  businessDate: '2026-07-05',
+  quantity: '9.000000',
+  amount: '999.00',
+  status: 'POSTED',
+  canViewResource: false,
+  restricted: true,
+  restrictedMessage: '来源无查看权限',
+}
+
+const impactedSalesReturnDetail = {
+  ...salesReturnDetail,
+  status: 'POSTED',
+  lines: salesReturnDetail.lines.map((line) => ({ ...line, stockMovementId: 701 })),
+  traces: [
+    salesReturnDetail.traces[0],
+    inventoryMovementTrace,
+    receivableAdjustmentTrace,
+  ],
+}
+
 const salesReturnSource = {
   shipmentId: 10,
   shipmentNo: 'SS202607050001',
@@ -252,6 +358,26 @@ describe('销售退货前端页面', () => {
     expect(router.currentRoute.value.name).toBe('sales-return-detail')
   })
 
+  it.each([
+    ['POSTED', '已过账'],
+    ['CANCELLED', '已取消'],
+  ])('直接进入%s销售退货编辑页时显示不可编辑提示并隐藏保存入口', async (status, statusText) => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      status,
+    })
+    const { wrapper, router } = await mountReversalView(SalesReturnFormView, '/sales/returns/1/edit', ['sales:return:update'])
+
+    expect(wrapper.text()).toContain(`当前销售退货${statusText}，不可编辑`)
+    expect(wrapper.find('[data-test="submit-sales-return"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="sales-return-business-date"]').exists()).toBe(false)
+    expect(returnRefundReversalApiMock.salesReturns.update).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="return-sales-return-detail"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('sales-return-detail')
+  })
+
   it('销售退货详情展示来源、明细、追溯，过账和取消按钮按权限显示', async () => {
     const { wrapper, router } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', [
       'sales:return:view',
@@ -287,6 +413,40 @@ describe('销售退货前端页面', () => {
     await wrapper.find('[data-test="post-sales-return-detail"]').trigger('click')
     await flushPromises()
     expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1)
+  })
+
+  it('销售退货详情明确展示库存入库影响和应收冲减影响', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce(impactedSalesReturnDetail)
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view', 'business:reversal:view'])
+
+    expect(wrapper.text()).toContain('库存入库影响')
+    expect(wrapper.text()).toContain('库存流水')
+    expect(wrapper.text()).toContain('IM202607050001')
+    expect(wrapper.text()).toContain('应收冲减影响')
+    expect(wrapper.text()).toContain('应收冲减')
+    expect(wrapper.text()).toContain('AR202607050001')
+  })
+
+  it('反向追溯面板展示资源类型并在受限记录中隐藏敏感字段', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce(impactedSalesReturnDetail)
+    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([
+      salesReturnDetail.traces[0],
+      inventoryMovementTrace,
+      receivableAdjustmentTrace,
+      restrictedInventoryTrace,
+    ])
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view', 'business:reversal:view'])
+
+    await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('销售出库来源')
+    expect(wrapper.text()).toContain('销售退货')
+    expect(wrapper.text()).toContain('库存流水')
+    expect(wrapper.text()).toContain('应收冲减')
+    expect(wrapper.text()).toContain('来源无查看权限')
+    expect(wrapper.text()).not.toContain('IM-SECRET')
+    expect(wrapper.text()).not.toContain('999.00')
   })
 
   it('来源受限时只展示受限提示，不展示来源敏感字段或跳转入口', async () => {

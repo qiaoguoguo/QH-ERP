@@ -5,6 +5,7 @@ import {
   returnRefundReversalApi,
   type ReversalDocumentLine,
   type ReversalDocumentPayload,
+  type ReversalStatus,
   type SalesReturnDetail,
   type SalesReturnSource,
   type SalesReturnSourceLine,
@@ -55,8 +56,19 @@ const loading = ref(true)
 const submitting = ref(false)
 const error = ref('')
 const submitError = ref('')
+const nonEditableStatus = ref<ReversalStatus | null>(null)
 
 const selectedSource = computed(() => sources.value.find((source) => String(source.shipmentId) === String(form.sourceShipmentId)))
+const canEditForm = computed(() => !isEdit.value || nonEditableStatus.value === null)
+const nonEditableStatusText = computed(() => {
+  if (nonEditableStatus.value === 'POSTED') {
+    return '已过账'
+  }
+  if (nonEditableStatus.value === 'CANCELLED') {
+    return '已取消'
+  }
+  return ''
+})
 
 function lineDraftFromSource(line: SalesReturnSourceLine): SalesReturnLineDraft {
   return {
@@ -110,6 +122,16 @@ async function loadDetail() {
   }
   const detail = await returnRefundReversalApi.salesReturns.get(routeId.value)
   editDetail.value = detail
+  if (detail.status !== 'DRAFT') {
+    nonEditableStatus.value = detail.status
+    form.sourceShipmentId = detail.source.sourceId ?? ''
+    form.businessDate = detail.businessDate
+    form.remark = detail.remark ?? ''
+    form.clientRequestId = detail.clientRequestId ?? `sales-return-${detail.id}`
+    lines.value = []
+    return
+  }
+  nonEditableStatus.value = null
   form.sourceShipmentId = detail.source.sourceId ?? ''
   form.businessDate = detail.businessDate
   form.remark = detail.remark ?? ''
@@ -120,6 +142,7 @@ async function loadDetail() {
 async function loadForm() {
   loading.value = true
   error.value = ''
+  nonEditableStatus.value = null
   try {
     if (isEdit.value) {
       await loadDetail()
@@ -159,6 +182,10 @@ async function searchSources() {
 }
 
 function buildPayload(): ReversalDocumentPayload | null {
+  if (!canEditForm.value) {
+    submitError.value = `当前销售退货${nonEditableStatusText.value}，不可编辑`
+    return null
+  }
   const payloadLines = []
   for (const line of lines.value) {
     if (!line.quantity) {
@@ -224,6 +251,13 @@ function backToList() {
   void router.push({ name: 'sales-returns' })
 }
 
+function returnToDetail() {
+  if (!routeId.value) {
+    return
+  }
+  void router.push({ name: 'sales-return-detail', params: { id: routeId.value } })
+}
+
 onMounted(() => {
   void loadForm()
 })
@@ -257,7 +291,18 @@ onMounted(() => {
       <el-alert v-if="loading" class="state-alert" type="info" title="销售退货表单加载中" :closable="false" />
     </template>
 
-    <div class="form-layout">
+    <el-result
+      v-if="!canEditForm"
+      icon="warning"
+      :title="`当前销售退货${nonEditableStatusText}，不可编辑`"
+      sub-title="已过账或已取消的销售退货只能查看，不能继续修改草稿内容。"
+    >
+      <template #extra>
+        <el-button data-test="return-sales-return-detail" type="primary" @click="returnToDetail">返回详情</el-button>
+      </template>
+    </el-result>
+
+    <div v-else class="form-layout">
       <el-card v-if="!isEdit" class="section-card" shadow="never">
         <template #header>可退来源</template>
         <el-empty v-if="!loading && sources.length === 0" description="暂无可退销售出库" />
