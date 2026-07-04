@@ -289,13 +289,16 @@ public class ReversalAdminService {
 			return List.of();
 		}
 		List<TraceLinkRow> links = new ArrayList<>();
+		List<ReversalTraceRecord> traces = new ArrayList<>();
 		if (!"REVERSE_TO_SOURCE".equals(direction)) {
-			links.addAll(sourceTraceLinks(sourceType, sourceId, sourceLineId));
+			links = sourceTraceLinks(sourceType, sourceId, sourceLineId);
+			traces.addAll(traceRecords(links, currentUser, "SOURCE_TO_REVERSE"));
 		}
 		if (!"SOURCE_TO_REVERSE".equals(direction)) {
-			links.addAll(reverseTraceLinks(sourceType, sourceId, sourceLineId));
+			links = reverseTraceLinks(sourceType, sourceId, sourceLineId);
+			traces.addAll(traceRecords(links, currentUser, "REVERSE_TO_SOURCE"));
 		}
-		return traceRecords(links, currentUser);
+		return traces;
 	}
 
 	public Object sourceNotFound() {
@@ -307,7 +310,7 @@ public class ReversalAdminService {
 		List<ReversalDocumentLine> lines = salesReturnLines(row.id(), row.sourceShipmentId(), row.sourceShipmentNo(),
 				canViewSource);
 		List<ReversalTraceRecord> traces = traceRecords(reverseTraceLinks(SALES_RETURN_SOURCE, row.id(), null),
-				currentUser);
+				currentUser, "SOURCE_TO_REVERSE");
 		return new SalesReturnDetailResponse(row.id(), row.returnNo(), row.customerId(), row.customerName(),
 				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
 				quantity(totalQuantity(lines)), amount(row.totalAmount()), sourceView(SALES_SHIPMENT_SOURCE,
@@ -875,7 +878,8 @@ public class ReversalAdminService {
 				""".formatted(where), this::mapTraceLinkRow, args.toArray());
 	}
 
-	private List<ReversalTraceRecord> traceRecords(List<TraceLinkRow> links, CurrentUser currentUser) {
+	private List<ReversalTraceRecord> traceRecords(List<TraceLinkRow> links, CurrentUser currentUser,
+			String direction) {
 		boolean canViewShipment = canViewSalesShipment(currentUser);
 		boolean canViewReturn = canViewSalesReturn(currentUser);
 		return links.stream()
@@ -889,12 +893,14 @@ public class ReversalAdminService {
 						quantity(link.quantity()), amount(link.amount()), canViewReturn, "sales-return-detail",
 						Map.of("id", link.reverseId()), Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewShipment || !canViewReturn;
-				return new ReversalTraceRecord(traceKey(link), "SOURCE_TO_REVERSE", source, reverse,
-						link.stockMovementId(), link.settlementAdjustmentId(), null, link.businessDate(),
-						quantity(link.quantity()), amount(link.amount()), link.returnStatus(), !restricted, restricted,
-						restricted ? RESTRICTED_MESSAGE : null, canViewReturn ? "sales-return-detail" : null,
-						canViewReturn ? Map.of("id", link.reverseId()) : null,
-						canViewReturn ? Map.of("lineId", link.reverseLineId()) : null);
+				return new ReversalTraceRecord(traceKey(link), direction, source, reverse,
+						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
+						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
+						restricted ? null : amount(link.amount()), restricted ? null : link.returnStatus(),
+						!restricted, restricted, restricted ? RESTRICTED_MESSAGE : null,
+						restricted ? null : "sales-return-detail",
+						restricted ? null : Map.of("id", link.reverseId()),
+						restricted ? null : Map.of("lineId", link.reverseLineId()));
 			})
 			.toList();
 	}
@@ -1097,8 +1103,9 @@ public class ReversalAdminService {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
 
-	private static int offset(int page, int pageSize) {
-		return (Math.max(page, 1) - 1) * limit(pageSize);
+	private static long offset(int page, int pageSize) {
+		long normalizedPage = Math.max((long) page, 1L);
+		return (normalizedPage - 1L) * limit(pageSize);
 	}
 
 	private static String blankToNull(String value) {
@@ -1145,8 +1152,9 @@ public class ReversalAdminService {
 			}
 			List<ReversalTraceRecord> updatedTraces = this.traces.stream()
 				.map((trace) -> new ReversalTraceRecord(trace.traceKey(), trace.direction(), trace.source(),
-						trace.reverse(), trace.inventoryMovementId(), settlementAdjustmentId, trace.costRecordId(),
-						trace.businessDate(), trace.quantity(), trace.amount(), trace.status(),
+						trace.reverse(), trace.inventoryMovementId(),
+						trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
+						trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(), trace.status(),
 						trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
 						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
 				.toList();
@@ -1163,11 +1171,156 @@ public class ReversalAdminService {
 			Long stockMovementId, Long costRecordId, Map<String, Object> source) {
 	}
 
-	public record ReversalTraceRecord(String traceKey, String direction, Map<String, Object> source,
-			Map<String, Object> reverse, Long inventoryMovementId, Long settlementAdjustmentId, Long costRecordId,
-			LocalDate businessDate, String quantity, String amount, String status, boolean canViewResource,
-			boolean restricted, String restrictedMessage, String resourceRouteName, Object resourceRouteParams,
-			Object resourceRouteQuery) {
+	public static final class ReversalTraceRecord extends LinkedHashMap<String, Object> {
+
+		private final String traceKey;
+
+		private final String direction;
+
+		private final Map<String, Object> source;
+
+		private final Map<String, Object> reverse;
+
+		private final Long inventoryMovementId;
+
+		private final Long settlementAdjustmentId;
+
+		private final Long costRecordId;
+
+		private final LocalDate businessDate;
+
+		private final String quantity;
+
+		private final String amount;
+
+		private final String status;
+
+		private final boolean canViewResource;
+
+		private final boolean restricted;
+
+		private final String restrictedMessage;
+
+		private final String resourceRouteName;
+
+		private final Object resourceRouteParams;
+
+		private final Object resourceRouteQuery;
+
+		public ReversalTraceRecord(String traceKey, String direction, Map<String, Object> source,
+				Map<String, Object> reverse, Long inventoryMovementId, Long settlementAdjustmentId, Long costRecordId,
+				LocalDate businessDate, String quantity, String amount, String status, boolean canViewResource,
+				boolean restricted, String restrictedMessage, String resourceRouteName, Object resourceRouteParams,
+				Object resourceRouteQuery) {
+			this.traceKey = traceKey;
+			this.direction = direction;
+			this.source = source;
+			this.reverse = reverse;
+			this.inventoryMovementId = inventoryMovementId;
+			this.settlementAdjustmentId = settlementAdjustmentId;
+			this.costRecordId = costRecordId;
+			this.businessDate = businessDate;
+			this.quantity = quantity;
+			this.amount = amount;
+			this.status = status;
+			this.canViewResource = canViewResource;
+			this.restricted = restricted;
+			this.restrictedMessage = restrictedMessage;
+			this.resourceRouteName = resourceRouteName;
+			this.resourceRouteParams = resourceRouteParams;
+			this.resourceRouteQuery = resourceRouteQuery;
+			put("traceKey", traceKey);
+			put("direction", direction);
+			put("source", source);
+			put("reverse", reverse);
+			putIfPresent("inventoryMovementId", inventoryMovementId);
+			putIfPresent("settlementAdjustmentId", settlementAdjustmentId);
+			putIfPresent("costRecordId", costRecordId);
+			putIfPresent("businessDate", businessDate);
+			putIfPresent("quantity", quantity);
+			putIfPresent("amount", amount);
+			putIfPresent("status", status);
+			put("canViewResource", canViewResource);
+			put("restricted", restricted);
+			putIfPresent("restrictedMessage", restrictedMessage);
+			putIfPresent("resourceRouteName", resourceRouteName);
+			putIfPresent("resourceRouteParams", resourceRouteParams);
+			putIfPresent("resourceRouteQuery", resourceRouteQuery);
+		}
+
+		private void putIfPresent(String key, Object value) {
+			if (value != null) {
+				put(key, value);
+			}
+		}
+
+		public String traceKey() {
+			return this.traceKey;
+		}
+
+		public String direction() {
+			return this.direction;
+		}
+
+		public Map<String, Object> source() {
+			return this.source;
+		}
+
+		public Map<String, Object> reverse() {
+			return this.reverse;
+		}
+
+		public Long inventoryMovementId() {
+			return this.inventoryMovementId;
+		}
+
+		public Long settlementAdjustmentId() {
+			return this.settlementAdjustmentId;
+		}
+
+		public Long costRecordId() {
+			return this.costRecordId;
+		}
+
+		public LocalDate businessDate() {
+			return this.businessDate;
+		}
+
+		public String quantity() {
+			return this.quantity;
+		}
+
+		public String amount() {
+			return this.amount;
+		}
+
+		public String status() {
+			return this.status;
+		}
+
+		public boolean canViewResource() {
+			return this.canViewResource;
+		}
+
+		public boolean restricted() {
+			return this.restricted;
+		}
+
+		public String restrictedMessage() {
+			return this.restrictedMessage;
+		}
+
+		public String resourceRouteName() {
+			return this.resourceRouteName;
+		}
+
+		public Object resourceRouteParams() {
+			return this.resourceRouteParams;
+		}
+
+		public Object resourceRouteQuery() {
+			return this.resourceRouteQuery;
+		}
 	}
 
 	private record ValidatedSalesReturn(Long sourceShipmentId, LocalDate businessDate, String clientRequestId,

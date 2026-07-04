@@ -272,6 +272,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertRestrictedSource(detail.get("source"), "SALES_SHIPMENT");
 		assertRestrictedSource(detail.get("lines").get(0).get("source"), "SALES_SHIPMENT_LINE");
 		assertRestrictedSource(detail.get("traces").get(0).get("source"), "SALES_SHIPMENT_LINE");
+		assertRestrictedTraceRecord(detail.get("traces").get(0));
 		assertThat(detail.get("traces").get(0).get("reverse").get("sourceId").longValue()).isEqualTo(returnId);
 
 		JsonNode listItem = data(get("/api/admin/sales/returns", restricted)).get("items").get(0);
@@ -280,7 +281,27 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=SALES_RETURN&sourceId=" + returnId,
 				restricted)).get(0);
 		assertRestrictedSource(trace.get("source"), "SALES_SHIPMENT_LINE");
+		assertRestrictedTraceRecord(trace);
 		assertThat(trace.get("restricted").booleanValue()).isTrue();
+
+		JsonNode reverseDirectionTrace = data(get(
+				"/api/admin/reversal-traces?sourceType=SALES_RETURN&sourceId=" + returnId
+						+ "&direction=REVERSE_TO_SOURCE",
+				admin)).get(0);
+		assertThat(reverseDirectionTrace.get("direction").asText()).isEqualTo("REVERSE_TO_SOURCE");
+	}
+
+	@Test
+	void salesReturnPaginationHandlesExtremePageWithoutNegativeOffset() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+
+		ResponseEntity<String> response = get("/api/admin/sales/returns?page=2147483647&pageSize=100", admin);
+		assertOk(response);
+		JsonNode data = data(response);
+		assertThat(data.get("items").isArray()).isTrue();
+		assertThat(data.get("items").size()).isZero();
+		assertThat(data.get("page").intValue()).isEqualTo(Integer.MAX_VALUE);
+		assertThat(data.get("pageSize").intValue()).isEqualTo(100);
 	}
 
 	@Test
@@ -662,6 +683,21 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(source.has("resourceRouteName")).isFalse();
 		assertThat(source.has("resourceRouteParams")).isFalse();
 		assertThat(source.has("resourceRouteQuery")).isFalse();
+	}
+
+	private void assertRestrictedTraceRecord(JsonNode trace) {
+		assertThat(trace.get("canViewResource").booleanValue()).isFalse();
+		assertThat(trace.get("restricted").booleanValue()).isTrue();
+		assertThat(trace.get("restrictedMessage").asText()).isEqualTo("来源无查看权限");
+		assertThat(trace.has("inventoryMovementId")).isFalse();
+		assertThat(trace.has("settlementAdjustmentId")).isFalse();
+		assertThat(trace.has("businessDate")).isFalse();
+		assertThat(trace.has("quantity")).isFalse();
+		assertThat(trace.has("amount")).isFalse();
+		assertThat(trace.has("status")).isFalse();
+		assertThat(trace.has("resourceRouteName")).isFalse();
+		assertThat(trace.has("resourceRouteParams")).isFalse();
+		assertThat(trace.has("resourceRouteQuery")).isFalse();
 	}
 
 	private AuthenticatedSession login(String username, String password) throws Exception {
