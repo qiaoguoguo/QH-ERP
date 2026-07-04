@@ -25,6 +25,7 @@
 - [销售管理基础模块任务记录](tasks/012-sales-management-foundation.md)
 - [财务往来基础模块任务记录](tasks/013-financial-settlement-foundation.md)
 - [经营报表基础模块任务记录](tasks/014-business-reporting-foundation.md)
+- [退货退款与业务反冲基础模块任务记录](tasks/015-return-refund-reversal-foundation.md)
 
 ## 产品
 
@@ -53,6 +54,7 @@
 - [销售管理基础接口契约](api/sales-management-api.md)
 - [财务往来基础接口契约](api/financial-settlement-api.md)
 - [经营报表基础接口契约](api/business-reporting-api.md)
+- [退货退款与业务反冲接口契约](api/return-refund-reversal-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -65,6 +67,7 @@
 - [销售管理基础模块设计规格](superpowers/specs/2026-07-04-sales-management-design.md)
 - [财务往来基础模块设计规格](superpowers/specs/2026-07-04-financial-settlement-design.md)
 - [经营报表基础模块设计规格](superpowers/specs/2026-07-04-business-reporting-design.md)
+- [退货退款与业务反冲基础模块设计规格](superpowers/specs/2026-07-05-return-refund-reversal-design.md)
 
 ## 实施计划
 
@@ -72,6 +75,7 @@
 - [销售管理基础模块实施计划](superpowers/plans/2026-07-04-sales-management-implementation-plan.md)
 - [财务往来基础模块实施计划](superpowers/plans/2026-07-04-financial-settlement-implementation-plan.md)
 - [经营报表基础模块实施计划](superpowers/plans/2026-07-04-business-reporting-implementation-plan.md)
+- [退货退款与业务反冲基础模块实施计划](superpowers/plans/2026-07-05-return-refund-reversal-implementation-plan.md)
 
 ## 测试与验收
 
@@ -90,6 +94,7 @@
 - [销售管理基础测试计划](testing/sales-management-test-plan.md)
 - [财务往来基础测试计划](testing/financial-settlement-test-plan.md)
 - [经营报表基础测试计划](testing/business-reporting-test-plan.md)
+- [退货退款与业务反冲测试计划](testing/return-refund-reversal-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
