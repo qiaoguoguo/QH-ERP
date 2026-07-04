@@ -151,7 +151,7 @@ public class ReversalAdminService {
 		Optional<SalesReturnRow> existing = existingSalesReturn(validated.sourceShipmentId(),
 				validated.clientRequestId());
 		if (existing.isPresent()) {
-			return salesReturnDetail(existing.get(), operator);
+			return existingSalesReturnDetail(existing.get(), validated, operator);
 		}
 		List<ValidatedSalesReturnLine> lines = validateSalesReturnLines(shipment, validated.lines());
 		OffsetDateTime now = OffsetDateTime.now();
@@ -660,6 +660,43 @@ public class ReversalAdminService {
 				returnLine.id(), salesReturn.businessDate(), returnLine.quantity(), returnLine.amount(), operator, now);
 	}
 
+	private SalesReturnDetailResponse existingSalesReturnDetail(SalesReturnRow existing, ValidatedSalesReturn request,
+			CurrentUser operator) {
+		if (existing.status() == ReversalDocumentStatus.CANCELLED
+				|| !sameSalesReturnCoreLines(existing.id(), request.lines())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+		return salesReturnDetail(existing, operator);
+	}
+
+	private boolean sameSalesReturnCoreLines(Long existingReturnId, List<SalesReturnLineRequest> requestLines) {
+		Map<Long, BigDecimal> existingLines = new LinkedHashMap<>();
+		for (SalesReturnLineRow line : lockSalesReturnLines(existingReturnId)) {
+			existingLines.put(line.sourceShipmentLineId(), line.quantity());
+		}
+		Map<Long, BigDecimal> requestedLines = requestedCoreLineQuantities(requestLines);
+		if (!existingLines.keySet().equals(requestedLines.keySet())) {
+			return false;
+		}
+		for (Map.Entry<Long, BigDecimal> entry : existingLines.entrySet()) {
+			if (entry.getValue().compareTo(requestedLines.get(entry.getKey())) != 0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private Map<Long, BigDecimal> requestedCoreLineQuantities(List<SalesReturnLineRequest> requestLines) {
+		Map<Long, BigDecimal> lines = new LinkedHashMap<>();
+		for (SalesReturnLineRequest line : requestLines) {
+			if (line == null || line.sourceShipmentLineId() == null || lines.containsKey(line.sourceShipmentLineId())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+			}
+			lines.put(line.sourceShipmentLineId(), validateQuantity(line.quantity()));
+		}
+		return lines;
+	}
+
 	private Optional<SalesReturnRow> existingSalesReturn(Long sourceShipmentId, String clientRequestId) {
 		if (!hasText(clientRequestId)) {
 			return Optional.empty();
@@ -675,6 +712,7 @@ public class ReversalAdminService {
 				join sal_sales_shipment sh on sh.id = r.source_shipment_id
 				where r.source_shipment_id = ?
 				and r.client_request_id = ?
+				for update of r
 				""", this::mapSalesReturnRow, sourceShipmentId, clientRequestId).stream().findFirst();
 	}
 

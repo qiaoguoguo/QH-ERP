@@ -206,6 +206,57 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesReturnClientRequestIdIdempotencyRequiresMatchingCoreLines() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "5.000000", "10.000000",
+				"3.000000", "20.000000", "CONFIRMED", "110.00", "0.00", "110.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "1.000000");
+		seedStock(fixture.warehouseId(), fixture.secondMaterialId(), fixture.unitId(), "1.000000");
+
+		String clientRequestId = "sales-return-idempotent-" + SEQUENCE.incrementAndGet();
+		Map<String, Object> originalPayload = salesReturnPayload(shipment.shipmentId(), clientRequestId,
+				List.of(returnLine(shipment.firstShipmentLineId(), "1.000000", "幂等退货")));
+		ResponseEntity<String> created = post("/api/admin/sales/returns", originalPayload, admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		Map<String, Object> sameCorePayload = salesReturnPayload(shipment.shipmentId(), clientRequestId,
+				List.of(returnLine(shipment.firstShipmentLineId(), "1.000000", "幂等退货")));
+		sameCorePayload.put("businessDate", LocalDate.now().minusDays(1).toString());
+		sameCorePayload.put("remark", "备注变化不影响幂等核心字段");
+		ResponseEntity<String> sameCoreRetry = post("/api/admin/sales/returns", sameCorePayload, admin);
+		assertOk(sameCoreRetry);
+		assertThat(data(sameCoreRetry).get("id").longValue()).isEqualTo(returnId);
+		assertThat(data(sameCoreRetry).get("status").asText()).isEqualTo("DRAFT");
+
+		assertError(post("/api/admin/sales/returns",
+				salesReturnPayload(shipment.shipmentId(), clientRequestId,
+						List.of(returnLine(shipment.firstShipmentLineId(), "2.000000", "数量不一致"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_DUPLICATED");
+		assertError(post("/api/admin/sales/returns",
+				salesReturnPayload(shipment.shipmentId(), clientRequestId,
+						List.of(returnLine(shipment.secondShipmentLineId(), "1.000000", "来源行不一致"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_DUPLICATED");
+
+		assertOk(put("/api/admin/sales/returns/" + returnId + "/post", Map.of(), admin));
+		ResponseEntity<String> postedRetry = post("/api/admin/sales/returns", originalPayload, admin);
+		assertOk(postedRetry);
+		assertThat(data(postedRetry).get("id").longValue()).isEqualTo(returnId);
+		assertThat(data(postedRetry).get("status").asText()).isEqualTo("POSTED");
+
+		String cancelledClientRequestId = "sales-return-cancelled-idempotent-" + SEQUENCE.incrementAndGet();
+		Map<String, Object> cancelledPayload = salesReturnPayload(shipment.shipmentId(), cancelledClientRequestId,
+				List.of(returnLine(shipment.secondShipmentLineId(), "1.000000", "取消后重试")));
+		ResponseEntity<String> cancelledDraft = post("/api/admin/sales/returns", cancelledPayload, admin);
+		assertOk(cancelledDraft);
+		long cancelledId = data(cancelledDraft).get("id").longValue();
+		assertOk(put("/api/admin/sales/returns/" + cancelledId + "/cancel", Map.of(), admin));
+		assertError(post("/api/admin/sales/returns", cancelledPayload, admin), HttpStatus.CONFLICT,
+				"REVERSAL_DUPLICATED");
+	}
+
+	@Test
 	void salesReturnMasksSourceFieldsWhenSourcePermissionMissing() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesReturnFixture fixture = salesReturnFixture();
