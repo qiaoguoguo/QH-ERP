@@ -47,9 +47,13 @@ public class InventoryAdminService {
 
 	private final AuditService auditService;
 
-	public InventoryAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final InventoryPostingService inventoryPostingService;
+
+	public InventoryAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			InventoryPostingService inventoryPostingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.inventoryPostingService = inventoryPostingService;
 	}
 
 	@Transactional(readOnly = true)
@@ -231,69 +235,15 @@ public class InventoryAdminService {
 		}
 		InventoryDirection direction = direction(document.documentType(), line.adjustmentDirection());
 		InventoryMovementType movementType = movementType(document.documentType(), line.adjustmentDirection());
-		BalanceRow balance = lockedBalance(line.warehouseId(), line.materialId(), line.unitId(), now);
-		BigDecimal beforeQuantity = balance.quantityOnHand();
-		BigDecimal afterQuantity = direction == InventoryDirection.IN ? beforeQuantity.add(line.quantity())
-				: beforeQuantity.subtract(line.quantity());
-		if (afterQuantity.compareTo(ZERO) < 0) {
-			throw new BusinessException(ApiErrorCode.INVENTORY_STOCK_NOT_ENOUGH);
-		}
-		this.jdbcTemplate.update("""
-				insert into inv_stock_movement (
-					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
-					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-					reason, remark, operator_name, occurred_at
-				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-				""", movementNo(line.id()), movementType.name(), direction.name(), line.warehouseId(),
-				line.materialId(), line.unitId(), line.quantity(), beforeQuantity, afterQuantity, SOURCE_TYPE,
-				document.id(), line.id(), document.businessDate(), document.reason(), blankToNull(line.remark()),
-				operatorName, now);
-		this.jdbcTemplate.update("""
-				update inv_stock_balance
-				set quantity_on_hand = ?, unit_id = ?, updated_at = ?, version = version + 1
-				where id = ?
-				""", afterQuantity, line.unitId(), now, balance.id());
+		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(movementType, direction, line.warehouseId(),
+						line.materialId(), line.unitId(), line.quantity(), SOURCE_TYPE, document.id(), line.id(),
+						document.businessDate(), document.reason(), line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update inv_inventory_document_line
 				set before_quantity = ?, after_quantity = ?, updated_at = ?
 				where id = ?
-				""", beforeQuantity, afterQuantity, now, line.id());
-	}
-
-	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, OffsetDateTime now) {
-		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId);
-		if (balance.isEmpty()) {
-			try {
-				this.jdbcTemplate.update("""
-						insert into inv_stock_balance (
-							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
-						)
-						values (?, ?, ?, ?, ?, ?, ?)
-						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now);
-			}
-			catch (DuplicateKeyException exception) {
-				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material")) {
-					throw exception;
-				}
-			}
-			balance = lockBalance(warehouseId, materialId);
-		}
-		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
-	}
-
-	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId) {
-		return this.jdbcTemplate
-			.query("""
-					select id, quantity_on_hand, locked_quantity
-					from inv_stock_balance
-					where warehouse_id = ?
-					and material_id = ?
-					for update
-					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand"),
-					rs.getBigDecimal("locked_quantity")), warehouseId, materialId)
-			.stream()
-			.findFirst();
+				""", posting.beforeQuantity(), posting.afterQuantity(), now, line.id());
 	}
 
 	private void validateOpeningNotExists(Long warehouseId, Long materialId) {
@@ -779,10 +729,6 @@ public class InventoryAdminService {
 		return prefix + LocalDateTime.now().format(NUMBER_FORMATTER) + "-" + String.format("%03d", sequence);
 	}
 
-	private String movementNo(Long lineId) {
-		return "INV-MOV-" + LocalDateTime.now().format(NUMBER_FORMATTER) + "-" + lineId;
-	}
-
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -859,9 +805,6 @@ public class InventoryAdminService {
 	}
 
 	private record MaterialRef(Long id, String code, String name, Long unitId, String status) {
-	}
-
-	private record BalanceRow(Long id, BigDecimal quantityOnHand, BigDecimal lockedQuantity) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

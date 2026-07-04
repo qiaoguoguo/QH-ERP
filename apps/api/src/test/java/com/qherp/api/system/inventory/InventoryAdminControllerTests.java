@@ -1,5 +1,7 @@
 package com.qherp.api.system.inventory;
 
+import com.qherp.api.common.ApiErrorCode;
+import com.qherp.api.common.BusinessException;
 import com.qherp.api.support.PostgresIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +35,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = "qherp.test.context=task7-inventory-admin")
@@ -52,6 +55,9 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private InventoryPostingService inventoryPostingService;
 
 	@Autowired
 	private PasswordEncoder passwordEncoder;
@@ -98,10 +104,40 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(movement, "beforeQuantity", "0");
 		assertDecimal(movement, "quantity", "12.500000");
 		assertDecimal(movement, "afterQuantity", "12.500000");
+		assertThat(movementCountBySource("INVENTORY_DOCUMENT", lineId)).isOne();
 
 		assertAuditLog("INVENTORY_DOCUMENT_CREATE", documentId);
 		assertAuditLog("INVENTORY_DOCUMENT_UPDATE", documentId);
 		assertAuditLog("INVENTORY_DOCUMENT_POST", documentId);
+	}
+
+	@Test
+	void postingServiceRejectsDuplicateSourceLineAndKeepsBalanceUnchanged() {
+		InventoryFixture fixture = fixture();
+		long sourceId = 900_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 910_000L + SEQUENCE.incrementAndGet();
+
+		InventoryPostingService.PostingResult result = this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.ADJUSTMENT_INCREASE,
+						InventoryDirection.IN, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("7.000000"), "INVENTORY_DOCUMENT", sourceId, sourceLineId, LocalDate.now(),
+						"共享过账测试", "首次过账", "tester"));
+
+		assertDecimal(result.beforeQuantity(), "0");
+		assertDecimal(result.afterQuantity(), "7.000000");
+		assertDecimal(balanceQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId()), "7.000000");
+		assertThat(movementCountBySource("INVENTORY_DOCUMENT", sourceLineId)).isOne();
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.ADJUSTMENT_INCREASE,
+						InventoryDirection.IN, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("2.000000"), "INVENTORY_DOCUMENT", sourceId, sourceLineId, LocalDate.now(),
+						"共享过账重复测试", "重复过账", "tester")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_MOVEMENT_SOURCE_DUPLICATED));
+		assertDecimal(balanceQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId()), "7.000000");
+		assertThat(movementCountBySource("INVENTORY_DOCUMENT", sourceLineId)).isOne();
 	}
 
 	@Test
@@ -634,6 +670,15 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				where warehouse_id = ?
 				and material_id = ?
 				""", Long.class, warehouseId, materialId);
+	}
+
+	private long movementCountBySource(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", Long.class, sourceType, sourceLineId);
 	}
 
 	private long decreaseMovementCount(long firstDocumentId, long secondDocumentId) {
