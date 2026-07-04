@@ -440,6 +440,32 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/sales')
   })
 
+  it('只有销售退货查看权限且后端菜单缺失时补齐销售退货入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'sales_return_user', displayName: '销售退货员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['sales:return:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('销售退货')
+    expect(wrapper.text()).not.toContain('销售订单')
+    expect(wrapper.text()).not.toContain('销售出库')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/sales')
+  })
+
   it('无销售查看权限时递归移除挂在其他父级下的销售菜单', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -454,6 +480,7 @@ describe('ERP 应用骨架', () => {
           children: [
             { id: 51, code: 'sales:order:view', name: '销售订单', routePath: '/sales/orders' },
             { id: 52, code: 'sales:shipment:view', name: '销售出库', routePath: '/sales/shipments' },
+            { id: 53, code: 'sales:return:view', name: '销售退货', routePath: '/sales/returns' },
           ],
         },
       ],
@@ -472,6 +499,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('销售管理')
     expect(wrapper.text()).not.toContain('销售订单')
     expect(wrapper.text()).not.toContain('销售出库')
+    expect(wrapper.text()).not.toContain('销售退货')
     expect(wrapper.text()).not.toContain('业务管理')
   })
 

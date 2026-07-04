@@ -283,6 +283,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/sales/SalesShipmentFormView.vue'),
   },
   {
+    path: '/sales/returns',
+    name: 'sales-returns',
+    meta: { requiresAuth: true, requiredPermission: 'sales:return:view' },
+    component: () => import('../modules/reversal/SalesReturnListView.vue'),
+  },
+  {
+    path: '/sales/returns/create',
+    name: 'sales-return-create',
+    meta: { requiresAuth: true, requiredPermission: 'sales:return:create' },
+    component: () => import('../modules/reversal/SalesReturnFormView.vue'),
+  },
+  {
+    path: '/sales/returns/:id',
+    name: 'sales-return-detail',
+    meta: { requiresAuth: true, requiredPermission: 'sales:return:view' },
+    component: () => import('../modules/reversal/SalesReturnDetailView.vue'),
+  },
+  {
+    path: '/sales/returns/:id/edit',
+    name: 'sales-return-edit',
+    meta: { requiresAuth: true, requiredPermission: 'sales:return:update' },
+    component: () => import('../modules/reversal/SalesReturnFormView.vue'),
+  },
+  {
     path: '/production',
     redirect: '/production/work-orders',
     meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },

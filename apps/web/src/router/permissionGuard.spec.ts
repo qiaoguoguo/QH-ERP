@@ -35,6 +35,9 @@ import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
 import SalesShipmentDetailView from '../modules/sales/SalesShipmentDetailView.vue'
 import SalesShipmentFormView from '../modules/sales/SalesShipmentFormView.vue'
 import SalesShipmentListView from '../modules/sales/SalesShipmentListView.vue'
+import SalesReturnDetailView from '../modules/reversal/SalesReturnDetailView.vue'
+import SalesReturnFormView from '../modules/reversal/SalesReturnFormView.vue'
+import SalesReturnListView from '../modules/reversal/SalesReturnListView.vue'
 import ReceivableListView from '../modules/finance/ReceivableListView.vue'
 import ReceivableFormView from '../modules/finance/ReceivableFormView.vue'
 import ReceivableDetailView from '../modules/finance/ReceivableDetailView.vue'
@@ -249,7 +252,7 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiredPermission).toBe('procurement:order:view')
   })
 
-  it('销售订单和销售出库路由加载真实页面，并配置对应权限', async () => {
+  it('销售订单、销售出库和销售退货路由加载真实页面，并配置对应权限', async () => {
     const router = createQhErpRouter()
     const salesRoutes = [
       ['sales-orders', '/sales/orders', 'sales:order:view', SalesOrderListView],
@@ -260,6 +263,10 @@ describe('账号权限路由守卫', () => {
       ['sales-shipments', '/sales/shipments', 'sales:shipment:view', SalesShipmentListView],
       ['sales-shipment-detail', '/sales/shipments/:id', 'sales:shipment:view', SalesShipmentDetailView],
       ['sales-shipment-edit', '/sales/shipments/:id/edit', 'sales:shipment:update', SalesShipmentFormView],
+      ['sales-returns', '/sales/returns', 'sales:return:view', SalesReturnListView],
+      ['sales-return-create', '/sales/returns/create', 'sales:return:create', SalesReturnFormView],
+      ['sales-return-detail', '/sales/returns/:id', 'sales:return:view', SalesReturnDetailView],
+      ['sales-return-edit', '/sales/returns/:id/edit', 'sales:return:update', SalesReturnFormView],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of salesRoutes) {
@@ -628,6 +635,27 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
     expect(router.currentRoute.value.query.from).toBe('/sales/shipments')
+  })
+
+  it('已登录且拥有销售退货查看权限时允许访问销售退货列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:return:view'] })
+
+    await router.push('/sales/returns')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('sales-returns')
+  })
+
+  it('已登录但缺少销售退货创建权限时不能访问新建销售退货', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:return:view'] })
+
+    await router.push('/sales/returns/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/sales/returns/create')
   })
 
   it('未登录访问销售路由时跳转登录页并保留来源地址', async () => {
