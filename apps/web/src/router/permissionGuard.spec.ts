@@ -26,6 +26,9 @@ import CostRecordListView from '../modules/cost/CostRecordListView.vue'
 import PurchaseOrderDetailView from '../modules/procurement/PurchaseOrderDetailView.vue'
 import PurchaseOrderFormView from '../modules/procurement/PurchaseOrderFormView.vue'
 import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.vue'
+import PurchaseReceiptDetailView from '../modules/procurement/PurchaseReceiptDetailView.vue'
+import PurchaseReceiptFormView from '../modules/procurement/PurchaseReceiptFormView.vue'
+import PurchaseReceiptListView from '../modules/procurement/PurchaseReceiptListView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -185,22 +188,25 @@ describe('账号权限路由守卫', () => {
     }
   })
 
-  it('采购订单路由加载真实页面，采购入库路由仍使用占位组件', async () => {
+  it('采购订单和采购入库路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
-    const purchaseOrderRoutes = [
+    const procurementRoutes = [
       ['procurement-orders', '/procurement/orders', 'procurement:order:view', PurchaseOrderListView],
       ['procurement-order-create', '/procurement/orders/create', 'procurement:order:create', PurchaseOrderFormView],
       ['procurement-order-detail', '/procurement/orders/:id', 'procurement:order:view', PurchaseOrderDetailView],
       ['procurement-order-edit', '/procurement/orders/:id/edit', 'procurement:order:update', PurchaseOrderFormView],
-    ] as const
-    const purchaseReceiptRoutes = [
-      ['procurement-receipts', '/procurement/receipts', 'procurement:receipt:view'],
-      ['procurement-receipt-create', '/procurement/orders/:orderId/receipts/create', 'procurement:receipt:create'],
-      ['procurement-receipt-detail', '/procurement/receipts/:id', 'procurement:receipt:view'],
-      ['procurement-receipt-edit', '/procurement/receipts/:id/edit', 'procurement:receipt:update'],
+      ['procurement-receipts', '/procurement/receipts', 'procurement:receipt:view', PurchaseReceiptListView],
+      [
+        'procurement-receipt-create',
+        '/procurement/orders/:orderId/receipts/create',
+        'procurement:receipt:create',
+        PurchaseReceiptFormView,
+      ],
+      ['procurement-receipt-detail', '/procurement/receipts/:id', 'procurement:receipt:view', PurchaseReceiptDetailView],
+      ['procurement-receipt-edit', '/procurement/receipts/:id/edit', 'procurement:receipt:update', PurchaseReceiptFormView],
     ] as const
 
-    for (const [routeName, path, permission, expectedComponent] of purchaseOrderRoutes) {
+    for (const [routeName, path, permission, expectedComponent] of procurementRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
       const component = route?.components?.default as (() => Promise<unknown>) | undefined
 
@@ -208,16 +214,6 @@ describe('账号权限路由守卫', () => {
       expect(route?.meta.requiredPermission).toBe(permission)
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
-    }
-
-    for (const [routeName, path, permission] of purchaseReceiptRoutes) {
-      const route = router.getRoutes().find((item) => item.name === routeName)
-      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
-
-      expect(route?.path).toBe(path)
-      expect(route?.meta.requiredPermission).toBe(permission)
-      expect(component?.template).toBeUndefined()
-      expect(component?.render).toBeTypeOf('function')
     }
 
     const rootRoute = router.getRoutes().find((item) => item.path === '/procurement')

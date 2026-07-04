@@ -1,4 +1,10 @@
-import type { ResourceId, PurchaseOrderStatus, PurchaseReceiptStatus } from '../../shared/api/procurementApi'
+import type {
+  ResourceId,
+  PurchaseOrderLineRecord,
+  PurchaseOrderStatus,
+  PurchaseReceiptLineRecord,
+  PurchaseReceiptStatus,
+} from '../../shared/api/procurementApi'
 
 export interface ProcurementDecimalValidationResult {
   value: number | null
@@ -14,6 +20,34 @@ export interface PurchaseOrderLineDraft {
   quantity: string
   unitPrice: string
   expectedArrivalDate: string
+  remark: string
+}
+
+export interface PurchaseReceiptSourceLine {
+  id: ResourceId
+  lineNo: number
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  orderedQuantity: number
+  receivedQuantityBefore: number
+  remainingQuantityBefore: number
+}
+
+export interface PurchaseReceiptLineDraft {
+  lineNo: number
+  orderLineId: ResourceId | ''
+  materialId: ResourceId | ''
+  materialCode: string
+  materialName: string
+  unitId: ResourceId | ''
+  unitName: string
+  orderedQuantity: number
+  receivedQuantityBefore: number
+  remainingQuantityBefore: number
+  quantity: string
   remark: string
 }
 
@@ -154,6 +188,58 @@ export function newPurchaseOrderLine(lineNo = 10): PurchaseOrderLineDraft {
     unitPrice: '',
     expectedArrivalDate: '',
     remark: '',
+  }
+}
+
+export function nextPurchaseReceiptLineNo(lines: Array<{ lineNo: number }>): number {
+  const maxLineNo = lines.reduce((max, line) => Math.max(max, Number(line.lineNo) || 0), 0)
+  return maxLineNo + 10
+}
+
+export function newPurchaseReceiptLine(lineNo = 10): PurchaseReceiptLineDraft {
+  return {
+    lineNo,
+    orderLineId: '',
+    materialId: '',
+    materialCode: '',
+    materialName: '',
+    unitId: '',
+    unitName: '',
+    orderedQuantity: 0,
+    receivedQuantityBefore: 0,
+    remainingQuantityBefore: 0,
+    quantity: '',
+    remark: '',
+  }
+}
+
+export function purchaseReceiptSourceFromOrderLine(line: PurchaseOrderLineRecord): PurchaseReceiptSourceLine {
+  return {
+    id: line.id,
+    lineNo: line.lineNo,
+    materialId: line.materialId,
+    materialCode: line.materialCode,
+    materialName: line.materialName,
+    unitId: line.unitId,
+    unitName: line.unitName,
+    orderedQuantity: Number(line.quantity) || 0,
+    receivedQuantityBefore: Number(line.receivedQuantity) || 0,
+    remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+  }
+}
+
+export function purchaseReceiptSourceFromReceiptLine(line: PurchaseReceiptLineRecord): PurchaseReceiptSourceLine {
+  return {
+    id: line.orderLineId,
+    lineNo: line.lineNo,
+    materialId: line.materialId,
+    materialCode: line.materialCode,
+    materialName: line.materialName,
+    unitId: line.unitId,
+    unitName: line.unitName,
+    orderedQuantity: Number(line.orderedQuantity) || 0,
+    receivedQuantityBefore: Number(line.receivedQuantityBefore) || 0,
+    remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
   }
 }
 
