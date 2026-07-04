@@ -23,6 +23,9 @@ import ProductionWorkReportView from '../modules/production/ProductionWorkReport
 import CostRecordDetailView from '../modules/cost/CostRecordDetailView.vue'
 import CostRecordFormView from '../modules/cost/CostRecordFormView.vue'
 import CostRecordListView from '../modules/cost/CostRecordListView.vue'
+import PurchaseOrderDetailView from '../modules/procurement/PurchaseOrderDetailView.vue'
+import PurchaseOrderFormView from '../modules/procurement/PurchaseOrderFormView.vue'
+import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -182,20 +185,32 @@ describe('账号权限路由守卫', () => {
     }
   })
 
-  it('采购路由使用占位组件并配置对应权限', async () => {
+  it('采购订单路由加载真实页面，采购入库路由仍使用占位组件', async () => {
     const router = createQhErpRouter()
-    const procurementRoutes = [
-      ['procurement-orders', '/procurement/orders', 'procurement:order:view'],
-      ['procurement-order-create', '/procurement/orders/create', 'procurement:order:create'],
-      ['procurement-order-detail', '/procurement/orders/:id', 'procurement:order:view'],
-      ['procurement-order-edit', '/procurement/orders/:id/edit', 'procurement:order:update'],
+    const purchaseOrderRoutes = [
+      ['procurement-orders', '/procurement/orders', 'procurement:order:view', PurchaseOrderListView],
+      ['procurement-order-create', '/procurement/orders/create', 'procurement:order:create', PurchaseOrderFormView],
+      ['procurement-order-detail', '/procurement/orders/:id', 'procurement:order:view', PurchaseOrderDetailView],
+      ['procurement-order-edit', '/procurement/orders/:id/edit', 'procurement:order:update', PurchaseOrderFormView],
+    ] as const
+    const purchaseReceiptRoutes = [
       ['procurement-receipts', '/procurement/receipts', 'procurement:receipt:view'],
       ['procurement-receipt-create', '/procurement/orders/:orderId/receipts/create', 'procurement:receipt:create'],
       ['procurement-receipt-detail', '/procurement/receipts/:id', 'procurement:receipt:view'],
       ['procurement-receipt-edit', '/procurement/receipts/:id/edit', 'procurement:receipt:update'],
     ] as const
 
-    for (const [routeName, path, permission] of procurementRoutes) {
+    for (const [routeName, path, permission, expectedComponent] of purchaseOrderRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+
+    for (const [routeName, path, permission] of purchaseReceiptRoutes) {
       const route = router.getRoutes().find((item) => item.name === routeName)
       const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
 
