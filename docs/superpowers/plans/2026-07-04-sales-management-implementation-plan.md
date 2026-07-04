@@ -306,7 +306,7 @@ docker run --rm `
 **文件：**
 - Task 2 和 Task 3 涉及的全部后端文件
 
-- [ ] **步骤 1：运行后端全量测试**
+- [x] **步骤 1：运行后端全量测试**
 
 运行：
 
@@ -324,7 +324,7 @@ docker run --rm `
 
 预期： all backend tests pass.
 
-- [ ] **步骤 2：检查 Testcontainers 残留**
+- [x] **步骤 2：检查 Testcontainers 残留**
 
 运行：
 
