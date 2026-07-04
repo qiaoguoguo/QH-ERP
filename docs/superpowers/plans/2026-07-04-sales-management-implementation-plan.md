@@ -234,7 +234,7 @@ SALES_SHIPMENT
 - 新建： `apps/api/src/main/java/com/qherp/api/system/sales/SalesAdminService.java`
 - 测试： `apps/api/src/test/java/com/qherp/api/system/sales/SalesAdminControllerTests.java`
 
-- [ ] **步骤 1：编写预期失败的销售集成测试**
+- [x] **步骤 1：编写预期失败的销售集成测试**
 
 创建 `SalesAdminControllerTests`，覆盖：
 
@@ -265,7 +265,7 @@ docker run --rm `
 
 预期：失败，原因是 sales schema and endpoints do not exist.
 
-- [ ] **步骤 2：实现销售控制器**
+- [x] **步骤 2：实现销售控制器**
 
 `SalesAdminController` 路径固定为 `/api/admin/sales`，接口固定为：
 
@@ -282,7 +282,7 @@ docker run --rm `
 - `PUT /shipments/{id}`
 - `PUT /shipments/{id}/post`
 
-- [ ] **步骤 3：实现销售服务和校验**
+- [x] **步骤 3：实现销售服务和校验**
 
 `SalesAdminService` 可参考 `ProcurementAdminService` 的结构，但必须保留销售差异：
 
@@ -293,7 +293,7 @@ docker run --rm `
 - 过账通过 `InventoryPostingService.post` 传入 `InventoryMovementType.SALES_SHIPMENT`、`InventoryDirection.OUT`、`sourceType=SALES_SHIPMENT`。
 - 任一过账明细失败时整单回滚。
 
-- [ ] **步骤 4：验证定向销售后端测试**
+- [x] **步骤 4：验证定向销售后端测试**
 
 运行步骤 1 中的 Docker Maven 命令。
 

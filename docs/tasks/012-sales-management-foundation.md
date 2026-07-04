@@ -210,5 +210,7 @@
 - 后端角色替代记录：原后端开发线程 `019f2afd-9d7e-7e41-a403-862012d46c7a` 出现 `systemError`，多次输入无代理正文且无文件落地；已按同角色替代规则关闭失效线程并创建后端开发替代线程 `019f2bdf-05c0-7980-aa85-2c11d4cbba49`。替代线程随后因子代理配额限制失败，错误为 `You've hit your usage limit... try again at 3:18 PM`。当前不得创建额外角色或第六类子代理；后续应在子代理通道恢复后继续复用后端开发角色执行 Task 2。
 - 后端 Task 2 完成：2026-07-04 后端开发替代线程恢复后完成 V9 迁移、销售状态枚举、销售错误码、销售权限种子、销售权限映射、`SALES_SHIPMENT` 库存来源支持和后端测试；主代理复跑 Docker Maven 定向测试通过，`AccountPermissionInitializerTests` 14 个通过、`InventoryAdminControllerTests` 13 个通过、`PermissionAuthorizationTests` 9 个通过，`git diff --check` 通过且仅有 CRLF 提示。
 - 后端 Task 2 审查：测试角色规格审查 `APPROVED`，后端开发角色代码质量审查 `APPROVED`。Task 3 必须避免定义 `GET /api/admin/sales/orders/{id}/shipments`；如后续确需该路径，必须在订单 broad GET 规则之前显式映射到 `sales:shipment:view`。
+- 后端 Task 3 完成：2026-07-04 后端开发完成销售订单和销售出库 12 个接口、销售服务、销售集成测试，并未新增 `GET /api/admin/sales/orders/{id}/shipments`。主代理复跑 `SalesAdminControllerTests` 6 个通过，`git diff --check` 通过且仅有 CRLF 提示。
+- 后端 Task 3 审查：产品经理规格审查 `APPROVED`，后端开发代码质量审查 `APPROVED`。非法 JSON 或 decimal 解析失败返回 `400 VALIDATION_ERROR` 被确认为满足“非法格式返回受控错误”，但该 `GlobalExceptionHandler` 全局行为变更必须在 Task 4 后端全量回归中重点观察。
 - 视觉分析：本任务文档阶段不启动视觉验收，阶段实现后截图保存到 `docs/testing/sales-management-visual-audit/`。
-- 结论：文档基线和后端 Task 2 已完成并通过审查，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 3：销售订单和销售出库后端接口。
+- 结论：文档基线、后端 Task 2 和后端 Task 3 已完成并通过审查，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 4：后端全量回归。
