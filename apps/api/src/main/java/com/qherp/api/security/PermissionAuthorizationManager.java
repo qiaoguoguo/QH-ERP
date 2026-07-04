@@ -101,6 +101,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return financePermissionCode;
 		}
 
+		String reportPermissionCode = reportPermissionCode(method, path);
+		if (reportPermissionCode != null) {
+			return reportPermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -136,6 +141,38 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String reportPermissionCode(String method, String path) {
+		String basePath = "/api/admin/reports";
+		if (!"GET".equals(method) || !matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("/api/admin/reports/overview".equals(path)) {
+			return "report:overview:view";
+		}
+		if (matchesReportEndpoint(path, "sales-summary")) {
+			return "report:sales:view";
+		}
+		if (matchesReportEndpoint(path, "procurement-summary")) {
+			return "report:procurement:view";
+		}
+		if (matchesReportEndpoint(path, "inventory-stock-flow")) {
+			return "report:inventory:view";
+		}
+		if (matchesReportEndpoint(path, "production-execution")) {
+			return "report:production:view";
+		}
+		if (matchesReportEndpoint(path, "cost-collection")) {
+			return "report:cost:view";
+		}
+		if (matchesReportEndpoint(path, "settlement-summary")) {
+			return "report:settlement:view";
+		}
+		if (matchesReportEndpoint(path, "exceptions")) {
+			return "report:exception:view";
+		}
 		return null;
 	}
 
@@ -461,6 +498,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 
 	private boolean matchesBasePath(String path, String basePath) {
 		return basePath.equals(path) || path.startsWith(basePath + "/");
+	}
+
+	private boolean matchesReportEndpoint(String path, String reportSegment) {
+		String endpointPath = "/api/admin/reports/" + reportSegment;
+		return endpointPath.equals(path) || (endpointPath + "/traces").equals(path);
 	}
 
 	private boolean matchesIdPath(String path, String basePath) {

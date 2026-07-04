@@ -8,6 +8,7 @@ import PaymentStatusTag from './modules/finance/PaymentStatusTag.vue'
 import ReceivableStatusTag from './modules/finance/ReceivableStatusTag.vue'
 import ReceiptStatusTag from './modules/finance/ReceiptStatusTag.vue'
 import { financePermissions, formatFinanceAmount, financeSourceTypeText } from './modules/finance/financePageHelpers'
+import { reportPermissions } from './modules/reports/reportPageHelpers'
 import { createQhErpRouter } from './router'
 import { useAuthStore } from './stores/authStore'
 
@@ -149,6 +150,68 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('付款记录')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/finance')
+  })
+
+  it('有报表查看权限但后端菜单缺失时补齐经营报表入口并按权限显示子项', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'report_user', displayName: '报表用户', status: 'ENABLED' },
+      menus: [],
+      permissions: [reportPermissions.overviewView, reportPermissions.salesView, reportPermissions.exceptionView],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('经营报表')
+    expect(wrapper.text()).toContain('经营概览')
+    expect(wrapper.text()).toContain('销售经营')
+    expect(wrapper.text()).toContain('异常清单')
+    expect(wrapper.text()).not.toContain('采购经营')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/report')
+  })
+
+  it('无报表查看权限时不显示经营报表入口并递归移除报表菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'no_report', displayName: '无报表权限', status: 'ENABLED' },
+      menus: [
+        {
+          id: 80,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 81, code: reportPermissions.salesView, name: '销售经营', routePath: '/reports/sales' },
+            { id: 82, code: reportPermissions.exceptionView, name: '异常清单', routePath: '/reports/exceptions' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('经营报表')
+    expect(wrapper.text()).not.toContain('销售经营')
+    expect(wrapper.text()).not.toContain('异常清单')
+    expect(wrapper.text()).not.toContain('业务管理')
   })
 
   it('无财务查看权限时递归移除挂在其他父级下的财务菜单', async () => {

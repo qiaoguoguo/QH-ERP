@@ -295,7 +295,29 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 			new PermissionSeed("finance:payment:post", "过账付款", SystemPermissionType.ACTION, "finance",
 					"/finance/payments", "PUT", "/api/admin/finance/payments/{id}/post", 621),
 			new PermissionSeed("finance:payment:cancel", "取消付款草稿", SystemPermissionType.ACTION, "finance",
-					"/finance/payments", "PUT", "/api/admin/finance/payments/{id}/cancel", 622));
+					"/finance/payments", "PUT", "/api/admin/finance/payments/{id}/cancel", 622),
+			new PermissionSeed("report", "经营报表", SystemPermissionType.MENU, null, "/reports", null, null,
+					700),
+			new PermissionSeed("report:overview:view", "查看经营概览", SystemPermissionType.ACTION, "report",
+					"/reports/overview", "GET", "/api/admin/reports/overview", 701),
+			new PermissionSeed("report:sales:view", "查看销售经营报表", SystemPermissionType.ACTION, "report",
+					"/reports/sales", "GET", "/api/admin/reports/sales-summary/**", 702),
+			new PermissionSeed("report:procurement:view", "查看采购经营报表", SystemPermissionType.ACTION,
+					"report", "/reports/procurement", "GET",
+					"/api/admin/reports/procurement-summary/**", 703),
+			new PermissionSeed("report:inventory:view", "查看库存收发存报表", SystemPermissionType.ACTION,
+					"report", "/reports/inventory", "GET",
+					"/api/admin/reports/inventory-stock-flow/**", 704),
+			new PermissionSeed("report:production:view", "查看生产执行报表", SystemPermissionType.ACTION,
+					"report", "/reports/production", "GET",
+					"/api/admin/reports/production-execution/**", 705),
+			new PermissionSeed("report:cost:view", "查看成本归集报表", SystemPermissionType.ACTION, "report",
+					"/reports/cost", "GET", "/api/admin/reports/cost-collection/**", 706),
+			new PermissionSeed("report:settlement:view", "查看往来收付报表", SystemPermissionType.ACTION,
+					"report", "/reports/settlement", "GET",
+					"/api/admin/reports/settlement-summary/**", 707),
+			new PermissionSeed("report:exception:view", "查看经营异常清单", SystemPermissionType.ACTION,
+					"report", "/reports/exceptions", "GET", "/api/admin/reports/exceptions/**", 708));
 
 	private final SystemUserRepository userRepository;
 

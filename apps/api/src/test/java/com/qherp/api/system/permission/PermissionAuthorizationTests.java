@@ -264,6 +264,29 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1/cancel", "finance:payment:cancel");
 	}
 
+	@Test
+	void reportAdminPathsMapToReportPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/overview", "report:overview:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/sales-summary", "report:sales:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/sales-summary/traces", "report:sales:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/procurement-summary", "report:procurement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/procurement-summary/traces",
+				"report:procurement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/inventory-stock-flow", "report:inventory:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/inventory-stock-flow/traces",
+				"report:inventory:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/production-execution", "report:production:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/production-execution/traces",
+				"report:production:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/cost-collection", "report:cost:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/cost-collection/traces", "report:cost:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/settlement-summary", "report:settlement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/settlement-summary/traces",
+				"report:settlement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/exceptions", "report:exception:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/exceptions/traces", "report:exception:view");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);
