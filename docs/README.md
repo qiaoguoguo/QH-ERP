@@ -20,6 +20,7 @@
 - [成本归集基础任务记录](tasks/009-cost-collection-foundation.md)
 - [一期生产主链路端到端闭环验收与稳定化任务记录](tasks/010-phase-one-e2e-stabilization.md)
 - [采购管理基础模块任务记录](tasks/011-procurement-management-foundation.md)
+- [销售管理基础模块任务记录](tasks/012-sales-management-foundation.md)
 
 ## 产品
 
