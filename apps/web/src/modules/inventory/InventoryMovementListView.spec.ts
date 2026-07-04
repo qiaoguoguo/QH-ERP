@@ -124,6 +124,22 @@ const purchaseReceiptMovement: InventoryMovementRecord = {
   occurredAt: '2026-07-03T13:00:00+08:00',
 }
 
+const salesShipmentMovement: InventoryMovementRecord = {
+  ...movement,
+  id: 24,
+  movementNo: 'MV202607030005',
+  movementType: 'SALES_SHIPMENT',
+  direction: 'OUT',
+  quantity: 6,
+  beforeQuantity: 122,
+  afterQuantity: 116,
+  sourceType: 'SALES_SHIPMENT',
+  sourceId: 800,
+  sourceLineId: 801,
+  reason: '销售出库过账',
+  occurredAt: '2026-07-03T14:00:00+08:00',
+}
+
 const movementPage: PageResult<InventoryMovementRecord> = {
   items: [movement],
   page: 1,
@@ -141,7 +157,7 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
 
 async function mountMovements(
   initialQuery: Record<string, string> = {},
-  permissions = ['inventory:movement:view', 'inventory:document:view', 'procurement:receipt:view'],
+  permissions = ['inventory:movement:view', 'inventory:document:view', 'procurement:receipt:view', 'sales:shipment:view'],
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -156,6 +172,7 @@ async function mountMovements(
       { path: '/inventory/movements', name: 'inventory-movements', component: InventoryMovementListView },
       { path: '/inventory/documents/:id', name: 'inventory-document-detail', component: { render: () => null } },
       { path: '/procurement/receipts/:id', name: 'procurement-receipt-detail', component: { render: () => null } },
+      { path: '/sales/shipments/:id', name: 'sales-shipment-detail', component: { render: () => null } },
     ],
   })
   await router.push({ path: '/inventory/movements', query: initialQuery })
@@ -245,7 +262,7 @@ describe('库存变动流水页', () => {
     })
   })
 
-  it('变动类型筛选提供生产和采购入库选项并可传递对应流水类型参数', async () => {
+  it('变动类型筛选提供生产、采购和销售出库选项并可传递对应流水类型参数', async () => {
     const { wrapper } = await mountMovements()
     const movementTypeOptions = wrapper
       .findAllComponents({ name: 'ElOption' })
@@ -256,6 +273,7 @@ describe('库存变动流水页', () => {
         'PRODUCTION_ISSUE',
         'PRODUCTION_RECEIPT',
         'PURCHASE_RECEIPT',
+        'SALES_SHIPMENT',
       ].includes(String(option.props('value'))))
 
     expect(movementTypeOptions.map((option) => option.props('label'))).toEqual([
@@ -265,6 +283,7 @@ describe('库存变动流水页', () => {
       '生产领料',
       '完工入库',
       '采购入库',
+      '销售出库',
     ])
 
     await setSelectValue(wrapper, 'inventory-movement-type', 'PRODUCTION_ISSUE')
@@ -289,6 +308,14 @@ describe('库存变动流水页', () => {
 
     expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
       movementType: 'PURCHASE_RECEIPT',
+    }))
+
+    await setSelectValue(wrapper, 'inventory-movement-type', 'SALES_SHIPMENT')
+    await wrapper.find('[data-test="search-inventory-movements"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      movementType: 'SALES_SHIPMENT',
     }))
   })
 
@@ -331,6 +358,41 @@ describe('库存变动流水页', () => {
     const { wrapper } = await mountMovements({}, ['inventory:movement:view', 'inventory:document:view'])
 
     expect(wrapper.text()).toContain('采购入库')
+    expect(wrapper.find('[data-test="view-source-document"]').exists()).toBe(false)
+  })
+
+  it('销售出库来源流水可跳转到销售出库详情', async () => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [salesShipmentMovement],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper, router } = await mountMovements()
+
+    expect(wrapper.text()).toContain('销售出库')
+    await wrapper.find('[data-test="view-source-document"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('sales-shipment-detail')
+    expect(router.currentRoute.value.params.id).toBe('800')
+  })
+
+  it('缺少销售出库查看权限时不暴露销售出库来源跳转', async () => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [salesShipmentMovement],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountMovements(
+      {},
+      ['inventory:movement:view', 'inventory:document:view', 'procurement:receipt:view'],
+    )
+
+    expect(wrapper.text()).toContain('销售出库')
     expect(wrapper.find('[data-test="view-source-document"]').exists()).toBe(false)
   })
 })

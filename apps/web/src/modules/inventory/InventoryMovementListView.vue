@@ -145,6 +145,9 @@ function canViewSourceDocument(record: InventoryMovementRecord) {
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     return authStore.hasPermission('procurement:receipt:view')
   }
+  if (record.sourceType === 'SALES_SHIPMENT') {
+    return authStore.hasPermission('sales:shipment:view')
+  }
   if (record.sourceType === 'INVENTORY_DOCUMENT') {
     return authStore.hasPermission('inventory:document:view')
   }
@@ -154,6 +157,10 @@ function canViewSourceDocument(record: InventoryMovementRecord) {
 function viewSourceDocument(record: InventoryMovementRecord) {
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     void router.push({ name: 'procurement-receipt-detail', params: { id: String(record.sourceId) } })
+    return
+  }
+  if (record.sourceType === 'SALES_SHIPMENT') {
+    void router.push({ name: 'sales-shipment-detail', params: { id: String(record.sourceId) } })
     return
   }
   if (record.sourceType === 'INVENTORY_DOCUMENT') {
@@ -234,6 +241,7 @@ onMounted(() => {
             <el-option label="生产领料" value="PRODUCTION_ISSUE" />
             <el-option label="完工入库" value="PRODUCTION_RECEIPT" />
             <el-option label="采购入库" value="PURCHASE_RECEIPT" />
+            <el-option label="销售出库" value="SALES_SHIPMENT" />
           </el-select>
         </el-form-item>
         <el-form-item label="方向">

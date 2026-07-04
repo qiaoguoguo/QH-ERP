@@ -351,7 +351,7 @@ docker ps -a --filter "label=org.testcontainers" --format "{{.ID}} {{.Image}} {{
 - 修改： `apps/web/src/modules/inventory/InventoryMovementListView.vue`
 - 修改： `apps/web/src/modules/inventory/InventoryMovementListView.spec.ts`
 
-- [ ] **步骤 1：编写预期失败的 API、路由和菜单测试**
+- [x] **步骤 1：编写预期失败的 API、路由和菜单测试**
 
 新增测试覆盖：
 
@@ -370,7 +370,7 @@ npm test -- salesApi.spec.ts inventoryApi.spec.ts permissionGuard.spec.ts App.sp
 
 预期：失败，原因是 sales API, routes, menu, movement mapping are not implemented.
 
-- [ ] **步骤 2：实现销售 API 客户端**
+- [x] **步骤 2：实现销售 API 客户端**
 
 创建 `salesApi.ts`，接口分组为 `orders` 和 `shipments`。销售数量、出库数量和销售单价 payload 使用字符串。
 
@@ -381,17 +381,17 @@ export type SalesOrderStatus = 'DRAFT' | 'CONFIRMED' | 'PARTIALLY_SHIPPED' | 'SH
 export type SalesShipmentStatus = 'DRAFT' | 'POSTED'
 ```
 
-- [ ] **步骤 3：新增路由、菜单和库存来源跳转**
+- [x] **步骤 3：新增路由、菜单和库存来源跳转**
 
 新增销售路由，修改 `App.vue` 补齐销售菜单。修改库存流水页面的来源类型映射，确保 `SALES_SHIPMENT` 不跳到库存单据或采购入库。
 
-- [ ] **步骤 4：验证定向前端基础测试**
+- [x] **步骤 4：验证定向前端基础测试**
 
 运行步骤 1 中的命令。
 
 预期： targeted tests pass.
 
-- [ ] **步骤 5：验证前端类型检查**
+- [x] **步骤 5：验证前端类型检查**
 
 运行：
 

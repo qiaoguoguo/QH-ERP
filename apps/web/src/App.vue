@@ -14,6 +14,8 @@ const inventoryMovementPath = '/inventory/movements'
 const inventoryDocumentPath = '/inventory/documents'
 const procurementOrderPath = '/procurement/orders'
 const procurementReceiptPath = '/procurement/receipts'
+const salesOrderPath = '/sales/orders'
+const salesShipmentPath = '/sales/shipments'
 const productionWorkOrderPath = '/production/work-orders'
 const costRecordPath = '/cost/records'
 const supportedMenuPaths = new Set([
@@ -33,6 +35,8 @@ const supportedMenuPaths = new Set([
   inventoryDocumentPath,
   procurementOrderPath,
   procurementReceiptPath,
+  salesOrderPath,
+  salesShipmentPath,
   productionWorkOrderPath,
   costRecordPath,
 ])
@@ -72,8 +76,23 @@ const procurementChildren: MenuNode[] = [
   },
 ]
 const procurementMenuPaths = new Set(procurementChildren.map((child) => child.routePath))
+const salesChildren: MenuNode[] = [
+  {
+    id: 'sales-orders',
+    code: 'sales:order:view',
+    name: '销售订单',
+    routePath: salesOrderPath,
+  },
+  {
+    id: 'sales-shipments',
+    code: 'sales:shipment:view',
+    name: '销售出库',
+    routePath: salesShipmentPath,
+  },
+]
+const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
 const menuTree = computed<MenuNode[]>(() => ensureCostMenu(
-  ensureProductionMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? [])))),
+  ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))))),
 ))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
@@ -182,6 +201,43 @@ function removeProcurementMenus(menus: MenuNode[]): MenuNode[] {
       children: removeProcurementMenus(menu.children ?? []),
     }))
     .filter((menu) => !isProcurementMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
+}
+
+function ensureSalesMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = salesChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeSalesMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'sales',
+      code: 'sales',
+      name: '销售管理',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isSalesMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'sales'
+    || code.startsWith('sales:')
+    || (menu.routePath ? salesMenuPaths.has(menu.routePath) : false)
+}
+
+function removeSalesMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeSalesMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isSalesMenu(menu) && (
       (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
     ))
 }

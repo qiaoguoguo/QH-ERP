@@ -222,6 +222,36 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiredPermission).toBe('procurement:order:view')
   })
 
+  it('销售路由使用占位组件并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const salesRoutes = [
+      ['sales-orders', '/sales/orders', 'sales:order:view'],
+      ['sales-order-create', '/sales/orders/create', 'sales:order:create'],
+      ['sales-order-detail', '/sales/orders/:id', 'sales:order:view'],
+      ['sales-order-edit', '/sales/orders/:id/edit', 'sales:order:update'],
+      ['sales-shipment-create', '/sales/orders/:orderId/shipments/create', 'sales:shipment:create'],
+      ['sales-shipments', '/sales/shipments', 'sales:shipment:view'],
+      ['sales-shipment-detail', '/sales/shipments/:id', 'sales:shipment:view'],
+      ['sales-shipment-edit', '/sales/shipments/:id/edit', 'sales:shipment:update'],
+    ] as const
+
+    for (const [routeName, path, permission] of salesRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as { render?: unknown; template?: unknown } | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component?.template).toBeUndefined()
+      expect(component?.render).toBeTypeOf('function')
+    }
+
+    const rootRoute = router.getRoutes().find((item) => item.path === '/sales')
+    expect(rootRoute?.redirect).toBe('/sales/orders')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+    expect(rootRoute?.meta.requiredPermission).toBe('sales:order:view')
+  })
+
   it('访问库存根路径时重定向到库存余额页', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
@@ -250,6 +280,16 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('procurement-orders')
+  })
+
+  it('访问销售根路径时重定向到销售订单页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:order:view'] })
+
+    await router.push('/sales')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('sales-orders')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
@@ -412,6 +452,38 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('login')
     expect(router.currentRoute.value.query.redirect).toBe('/procurement/orders')
+  })
+
+  it('已登录且拥有销售订单查看权限时允许访问销售订单列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:order:view'] })
+
+    await router.push('/sales/orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('sales-orders')
+  })
+
+  it('已登录但缺少销售出库查看权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:order:view'] })
+
+    await router.push('/sales/shipments')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/sales/shipments')
+  })
+
+  it('未登录访问销售路由时跳转登录页并保留来源地址', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('未登录')))
+    const router = createQhErpRouter()
+
+    await router.push('/sales/orders')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('login')
+    expect(router.currentRoute.value.query.redirect).toBe('/sales/orders')
   })
 
   it('已登录但缺少成本记录查看权限时跳转无权限页', async () => {

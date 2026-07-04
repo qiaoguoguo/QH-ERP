@@ -249,6 +249,136 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('业务管理')
   })
 
+  it('后端返回销售菜单且用户有销售查看权限时展示销售入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'sales_user', displayName: '销售用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 40,
+          code: 'sales',
+          name: '销售管理',
+          routePath: '/sales/orders',
+          children: [
+            { id: 41, code: 'sales:order:view', name: '销售订单', routePath: '/sales/orders' },
+            { id: 42, code: 'sales:shipment:view', name: '销售出库', routePath: '/sales/shipments' },
+          ],
+        },
+      ],
+      permissions: ['sales:order:view', 'sales:shipment:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.text()).toContain('销售出库')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/sales')
+  })
+
+  it('有销售查看权限但后端菜单缺失时补齐销售管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'sales_admin', displayName: '销售管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['sales:order:view', 'sales:shipment:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.text()).toContain('销售出库')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/sales')
+  })
+
+  it('无销售查看权限时递归移除挂在其他父级下的销售菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'business_user', displayName: '业务用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 50,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 51, code: 'sales:order:view', name: '销售订单', routePath: '/sales/orders' },
+            { id: 52, code: 'sales:shipment:view', name: '销售出库', routePath: '/sales/shipments' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('销售管理')
+    expect(wrapper.text()).not.toContain('销售订单')
+    expect(wrapper.text()).not.toContain('销售出库')
+    expect(wrapper.text()).not.toContain('业务管理')
+  })
+
+  it('只有销售订单查看权限时递归移除无权限销售出库菜单并补齐允许入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'sales_order_user', displayName: '销售订单用户', status: 'ENABLED' },
+      menus: [
+        {
+          id: 60,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 61, code: 'sales:shipment:view', name: '销售出库', routePath: '/sales/shipments' },
+          ],
+        },
+      ],
+      permissions: ['sales:order:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.text()).not.toContain('销售出库')
+    expect(wrapper.text()).not.toContain('业务管理')
+  })
+
   it('无成本查看权限时不显示成本管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

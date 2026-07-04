@@ -213,5 +213,7 @@
 - 后端 Task 3 完成：2026-07-04 后端开发完成销售订单和销售出库 12 个接口、销售服务、销售集成测试，并未新增 `GET /api/admin/sales/orders/{id}/shipments`。主代理复跑 `SalesAdminControllerTests` 6 个通过，`git diff --check` 通过且仅有 CRLF 提示。
 - 后端 Task 3 审查：产品经理规格审查 `APPROVED`，后端开发代码质量审查 `APPROVED`。非法 JSON 或 decimal 解析失败返回 `400 VALIDATION_ERROR` 被确认为满足“非法格式返回受控错误”，但该 `GlobalExceptionHandler` 全局行为变更必须在 Task 4 后端全量回归中重点观察。
 - 后端 Task 4 全量回归：2026-07-04 测试角色执行后端全量测试，主代理复核 Surefire 汇总。结果为 16 个报告文件、125 个测试、0 失败、0 错误、0 跳过；Testcontainers 残留检查无输出。未发现销售变更或 `GlobalExceptionHandler` 调整引入既有模块回归失败。
+- 前端 Task 5 完成：2026-07-04 前端开发完成销售 API 客户端、销售路由占位、销售菜单、库存流水 `SALES_SHIPMENT` 标签/筛选/来源跳转和对应测试。主代理复跑 Task 5 定向测试 5 个文件、68 个测试通过，`npm run typecheck` 通过，`git diff --check` 通过且仅有 CRLF 提示。
+- 前端 Task 5 审查：产品经理规格审查 `APPROVED`。前端代码质量审查先发现部分销售权限场景可能泄露无权限销售子菜单，已由前端开发修复并补充回归测试；代码质量复审 `APPROVED`。Task 6/7 替换占位页时必须保留当前路由名、路径、权限和库存流水来源跳转口径。
 - 视觉分析：本任务文档阶段不启动视觉验收，阶段实现后截图保存到 `docs/testing/sales-management-visual-audit/`。
-- 结论：文档基线、后端 Task 2、后端 Task 3 和后端 Task 4 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 5：前端销售 API、路由、菜单和库存来源跳转。
+- 结论：文档基线、后端 Task 2、后端 Task 3、后端 Task 4 和前端 Task 5 已完成并通过审查或回归验证，后续任务以本任务文档、销售设计规格、接口契约、测试计划和实施计划作为实施与验收依据。下一步进入实施计划 Task 6：前端销售订单页面。
