@@ -3,6 +3,11 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
+import PayableStatusTag from './modules/finance/PayableStatusTag.vue'
+import PaymentStatusTag from './modules/finance/PaymentStatusTag.vue'
+import ReceivableStatusTag from './modules/finance/ReceivableStatusTag.vue'
+import ReceiptStatusTag from './modules/finance/ReceiptStatusTag.vue'
+import { financePermissions, formatFinanceAmount, financeSourceTypeText } from './modules/finance/financePageHelpers'
 import { createQhErpRouter } from './router'
 import { useAuthStore } from './stores/authStore'
 
@@ -117,6 +122,68 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('成本记录')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/cost')
+  })
+
+  it('有财务查看权限但后端菜单缺失时补齐财务往来入口并按权限显示子项', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'finance_user', displayName: '财务用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['finance:receivable:view', 'finance:receipt:view', 'finance:payable:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('财务往来')
+    expect(wrapper.text()).toContain('应收台账')
+    expect(wrapper.text()).toContain('收款记录')
+    expect(wrapper.text()).toContain('应付台账')
+    expect(wrapper.text()).not.toContain('付款记录')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/finance')
+  })
+
+  it('无财务查看权限时递归移除挂在其他父级下的财务菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'no_finance', displayName: '无财务权限', status: 'ENABLED' },
+      menus: [
+        {
+          id: 70,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 71, code: 'finance:receivable:view', name: '应收台账', routePath: '/finance/receivables' },
+            { id: 72, code: 'finance:payment:view', name: '付款记录', routePath: '/finance/payments' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('财务往来')
+    expect(wrapper.text()).not.toContain('应收台账')
+    expect(wrapper.text()).not.toContain('付款记录')
+    expect(wrapper.text()).not.toContain('业务管理')
   })
 
   it('后端返回采购菜单且用户有采购查看权限时展示采购入口', async () => {
@@ -473,5 +540,26 @@ describe('ERP 应用骨架', () => {
 
     resolveLogout()
     await flushPromises()
+  })
+
+  it('财务状态标签展示中文状态', () => {
+    const receivable = mount(ReceivableStatusTag, { props: { status: 'PARTIALLY_RECEIVED' }, global: { plugins: [ElementPlus] } })
+    const receipt = mount(ReceiptStatusTag, { props: { status: 'POSTED' }, global: { plugins: [ElementPlus] } })
+    const payable = mount(PayableStatusTag, { props: { status: 'PAID' }, global: { plugins: [ElementPlus] } })
+    const payment = mount(PaymentStatusTag, { props: { status: 'CANCELLED' }, global: { plugins: [ElementPlus] } })
+
+    expect(receivable.text()).toContain('部分收款')
+    expect(receipt.text()).toContain('已过账')
+    expect(payable.text()).toContain('已付清')
+    expect(payment.text()).toContain('已取消')
+  })
+
+  it('财务页面 helper 提供金额格式、来源文案和权限常量', () => {
+    expect(formatFinanceAmount('1234.5')).toBe('1,234.50')
+    expect(formatFinanceAmount(0)).toBe('0.00')
+    expect(financeSourceTypeText('SALES_SHIPMENT')).toBe('销售出库')
+    expect(financeSourceTypeText('PURCHASE_RECEIPT')).toBe('采购入库')
+    expect(financePermissions.receivableView).toBe('finance:receivable:view')
+    expect(financePermissions.paymentView).toBe('finance:payment:view')
   })
 })

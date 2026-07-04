@@ -1,0 +1,264 @@
+{
+  "runId": "T1173028729",
+  "service": {
+    "api": "http://127.0.0.1:18080",
+    "web": "http://127.0.0.1:5188",
+    "health": {
+      "service": "qherp-api",
+      "status": "UP"
+    }
+  },
+  "accounts": {
+    "source": "复用 Task 10 临时角色账号",
+    "usernames": {
+      "finance": "t1072567899_fin",
+      "sales": "t1072567899_sale",
+      "procurement": "t1072567899_pur",
+      "readonly": "t1072567899_read",
+      "none": "t1072567899_none"
+    }
+  },
+  "data": {
+    "master": {
+      "unit": "T1173028729-EA",
+      "category": "T1173028729-CAT",
+      "material": "T1173028729-MAT",
+      "warehouse": "T1173028729-WH",
+      "customer": "T1173028729-CUS",
+      "supplier": "T1173028729-SUP"
+    },
+    "visual": {
+      "receivableFormShipment": "SS-20260704135029280-012",
+      "payableFormReceipt": "PR-20260704135029404-012",
+      "receiptFormReceivable": "AR-20260704135029595-008",
+      "paymentFormPayable": "AP-20260704135029760-007"
+    }
+  },
+  "screenshots": [
+    {
+      "file": "01-finance-menu-desktop.png",
+      "label": "财务往来菜单入口",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 91157,
+      "notes": "视口截图，保留左侧导航和应收列表首屏。"
+    },
+    {
+      "file": "02-receivable-list-desktop.png",
+      "label": "应收台账列表",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 91157,
+      "notes": "视口截图，宽表不使用全页截图以避免滚动容器失真。"
+    },
+    {
+      "file": "03-receivable-query-result-desktop.png",
+      "label": "应收查询结果",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 49636,
+      "notes": ""
+    },
+    {
+      "file": "04-receivable-empty-desktop.png",
+      "label": "应收空状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 57058,
+      "notes": ""
+    },
+    {
+      "file": "05-receivable-form-desktop.png",
+      "label": "基于销售出库生成应收表单",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 60118,
+      "notes": ""
+    },
+    {
+      "file": "06-receivable-detail-desktop.png",
+      "label": "应收详情与来源追溯",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 75592,
+      "notes": ""
+    },
+    {
+      "file": "07-receipt-list-desktop.png",
+      "label": "收款记录列表",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 76176,
+      "notes": ""
+    },
+    {
+      "file": "08-receipt-empty-desktop.png",
+      "label": "收款记录空状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 54989,
+      "notes": ""
+    },
+    {
+      "file": "09-receipt-form-desktop.png",
+      "label": "登记收款表单",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 47985,
+      "notes": ""
+    },
+    {
+      "file": "10-receipt-form-error-desktop.png",
+      "label": "收款金额超限异常",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 49785,
+      "notes": ""
+    },
+    {
+      "file": "11-receipt-detail-desktop.png",
+      "label": "收款详情只读状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 54238,
+      "notes": ""
+    },
+    {
+      "file": "12-payable-list-desktop.png",
+      "label": "应付台账列表",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 86936,
+      "notes": ""
+    },
+    {
+      "file": "13-payable-empty-desktop.png",
+      "label": "应付台账空状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 58081,
+      "notes": ""
+    },
+    {
+      "file": "14-payable-form-desktop.png",
+      "label": "基于采购入库生成应付表单",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 61885,
+      "notes": ""
+    },
+    {
+      "file": "15-payable-detail-desktop.png",
+      "label": "应付详情与来源追溯",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 75516,
+      "notes": ""
+    },
+    {
+      "file": "16-payment-list-desktop.png",
+      "label": "付款记录列表",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 77768,
+      "notes": ""
+    },
+    {
+      "file": "17-payment-empty-desktop.png",
+      "label": "付款记录空状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 55179,
+      "notes": ""
+    },
+    {
+      "file": "18-payment-form-desktop.png",
+      "label": "登记付款表单",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 47843,
+      "notes": ""
+    },
+    {
+      "file": "19-payment-form-error-desktop.png",
+      "label": "付款金额超限异常",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 49691,
+      "notes": ""
+    },
+    {
+      "file": "20-payment-detail-desktop.png",
+      "label": "付款详情只读状态",
+      "account": "admin",
+      "viewport": "1366x768",
+      "size": 53281,
+      "notes": ""
+    },
+    {
+      "file": "21-finance-role-permission-desktop.png",
+      "label": "财务角色权限",
+      "account": "t1072567899_fin",
+      "viewport": "1366x768",
+      "size": 84288,
+      "notes": ""
+    },
+    {
+      "file": "22-sales-role-permission-desktop.png",
+      "label": "销售角色权限",
+      "account": "t1072567899_sale",
+      "viewport": "1366x768",
+      "size": 75488,
+      "notes": ""
+    },
+    {
+      "file": "23-procurement-role-permission-desktop.png",
+      "label": "采购角色权限",
+      "account": "t1072567899_pur",
+      "viewport": "1366x768",
+      "size": 72960,
+      "notes": ""
+    },
+    {
+      "file": "24-readonly-permission-desktop.png",
+      "label": "只读权限状态",
+      "account": "t1072567899_read",
+      "viewport": "1366x768",
+      "size": 76391,
+      "notes": ""
+    },
+    {
+      "file": "25-forbidden-desktop.png",
+      "label": "无权限状态",
+      "account": "t1072567899_none",
+      "viewport": "1366x768",
+      "size": 17601,
+      "notes": ""
+    },
+    {
+      "file": "26-receivable-mobile-list.png",
+      "label": "窄屏应收列表",
+      "account": "admin",
+      "viewport": "390x844",
+      "size": 39778,
+      "notes": "移动视口滚动到业务列表区域截图；顶部导航在窄屏堆叠，占用首屏，未使用全页拼接。"
+    },
+    {
+      "file": "27-receipt-mobile-list.png",
+      "label": "窄屏收款记录列表",
+      "account": "admin",
+      "viewport": "390x844",
+      "size": 39482,
+      "notes": "移动视口滚动到业务列表区域截图；顶部导航在窄屏堆叠，占用首屏，未使用全页拼接。"
+    },
+    {
+      "file": "28-payment-mobile-form.png",
+      "label": "窄屏付款表单",
+      "account": "admin",
+      "viewport": "390x844",
+      "size": 26088,
+      "notes": "移动视口滚动到付款表单主体区域截图；未使用全页拼接。"
+    }
+  ],
+  "observations": []
+}

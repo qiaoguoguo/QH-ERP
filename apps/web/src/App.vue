@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuNode } from './shared/api/accountPermissionApi'
+import { financePermissions } from './modules/finance/financePageHelpers'
 import { useAuthStore } from './stores/authStore'
 
 const route = useRoute()
@@ -18,6 +19,10 @@ const salesOrderPath = '/sales/orders'
 const salesShipmentPath = '/sales/shipments'
 const productionWorkOrderPath = '/production/work-orders'
 const costRecordPath = '/cost/records'
+const financeReceivablePath = '/finance/receivables'
+const financeReceiptPath = '/finance/receipts'
+const financePayablePath = '/finance/payables'
+const financePaymentPath = '/finance/payments'
 const supportedMenuPaths = new Set([
   '/accounts/users',
   '/system/users',
@@ -39,6 +44,10 @@ const supportedMenuPaths = new Set([
   salesShipmentPath,
   productionWorkOrderPath,
   costRecordPath,
+  financeReceivablePath,
+  financeReceiptPath,
+  financePayablePath,
+  financePaymentPath,
 ])
 const inventoryChildren: MenuNode[] = [
   {
@@ -91,9 +100,36 @@ const salesChildren: MenuNode[] = [
   },
 ]
 const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
-const menuTree = computed<MenuNode[]>(() => ensureCostMenu(
+const financeChildren: MenuNode[] = [
+  {
+    id: 'finance-receivables',
+    code: financePermissions.receivableView,
+    name: '应收台账',
+    routePath: financeReceivablePath,
+  },
+  {
+    id: 'finance-receipts',
+    code: financePermissions.receiptView,
+    name: '收款记录',
+    routePath: financeReceiptPath,
+  },
+  {
+    id: 'finance-payables',
+    code: financePermissions.payableView,
+    name: '应付台账',
+    routePath: financePayablePath,
+  },
+  {
+    id: 'finance-payments',
+    code: financePermissions.paymentView,
+    name: '付款记录',
+    routePath: financePaymentPath,
+  },
+]
+const financeMenuPaths = new Set(financeChildren.map((child) => child.routePath))
+const menuTree = computed<MenuNode[]>(() => ensureFinanceMenu(ensureCostMenu(
   ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))))),
-))
+)))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -320,6 +356,43 @@ function ensureCostMenu(menus: MenuNode[]): MenuNode[] {
       children: hasCostRecordChild ? children : [costChild, ...children],
     }
   })
+}
+
+function ensureFinanceMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = financeChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeFinanceMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'finance',
+      code: 'finance',
+      name: '财务往来',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isFinanceMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'finance'
+    || code.startsWith('finance:')
+    || (menu.routePath ? financeMenuPaths.has(menu.routePath) : false)
+}
+
+function removeFinanceMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeFinanceMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isFinanceMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 function hasChildren(menu: MenuNode) {

@@ -55,6 +55,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> COST_MENU_PERMISSIONS = List.of("cost");
 
+	private static final List<String> FINANCE_MENU_PERMISSIONS = List.of("finance");
+
 	private static final List<ExpectedActionPermission> MASTER_DATA_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("master:unit:view", "master:unit", "GET", "/api/admin/master/units/**"),
 			new ExpectedActionPermission("master:unit:create", "master:unit", "POST", "/api/admin/master/units"),
@@ -187,6 +189,52 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("cost:record:view", "cost", "GET", "/api/admin/cost/**"),
 			new ExpectedActionPermission("cost:record:create", "cost", "POST", "/api/admin/cost/records"),
 			new ExpectedActionPermission("cost:record:update", "cost", "PUT", "/api/admin/cost/records/{id}"));
+
+	private static final List<ExpectedActionPermission> FINANCE_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("finance:receivable:view", "finance", "GET",
+					"/api/admin/finance/receivables/**"),
+			new ExpectedActionPermission("finance:receivable:create", "finance", "POST",
+					"/api/admin/finance/receivables"),
+			new ExpectedActionPermission("finance:receivable:update", "finance", "PUT",
+					"/api/admin/finance/receivables/{id}"),
+			new ExpectedActionPermission("finance:receivable:confirm", "finance", "PUT",
+					"/api/admin/finance/receivables/{id}/confirm"),
+			new ExpectedActionPermission("finance:receivable:cancel", "finance", "PUT",
+					"/api/admin/finance/receivables/{id}/cancel"),
+			new ExpectedActionPermission("finance:receivable:close", "finance", "PUT",
+					"/api/admin/finance/receivables/{id}/close"),
+			new ExpectedActionPermission("finance:receipt:view", "finance", "GET",
+					"/api/admin/finance/receipts/**"),
+			new ExpectedActionPermission("finance:receipt:create", "finance", "POST",
+					"/api/admin/finance/receivables/{id}/receipts"),
+			new ExpectedActionPermission("finance:receipt:update", "finance", "PUT",
+					"/api/admin/finance/receipts/{id}"),
+			new ExpectedActionPermission("finance:receipt:post", "finance", "PUT",
+					"/api/admin/finance/receipts/{id}/post"),
+			new ExpectedActionPermission("finance:receipt:cancel", "finance", "PUT",
+					"/api/admin/finance/receipts/{id}/cancel"),
+			new ExpectedActionPermission("finance:payable:view", "finance", "GET",
+					"/api/admin/finance/payables/**"),
+			new ExpectedActionPermission("finance:payable:create", "finance", "POST",
+					"/api/admin/finance/payables"),
+			new ExpectedActionPermission("finance:payable:update", "finance", "PUT",
+					"/api/admin/finance/payables/{id}"),
+			new ExpectedActionPermission("finance:payable:confirm", "finance", "PUT",
+					"/api/admin/finance/payables/{id}/confirm"),
+			new ExpectedActionPermission("finance:payable:cancel", "finance", "PUT",
+					"/api/admin/finance/payables/{id}/cancel"),
+			new ExpectedActionPermission("finance:payable:close", "finance", "PUT",
+					"/api/admin/finance/payables/{id}/close"),
+			new ExpectedActionPermission("finance:payment:view", "finance", "GET",
+					"/api/admin/finance/payments/**"),
+			new ExpectedActionPermission("finance:payment:create", "finance", "POST",
+					"/api/admin/finance/payables/{id}/payments"),
+			new ExpectedActionPermission("finance:payment:update", "finance", "PUT",
+					"/api/admin/finance/payments/{id}"),
+			new ExpectedActionPermission("finance:payment:post", "finance", "PUT",
+					"/api/admin/finance/payments/{id}/post"),
+			new ExpectedActionPermission("finance:payment:cancel", "finance", "PUT",
+					"/api/admin/finance/payments/{id}/cancel"));
 
 	@Autowired
 	private AccountPermissionInitializer initializer;
@@ -450,6 +498,82 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void financialSettlementSchemaContainsContractTablesConstraintsAndIndexes() {
+		var receivableColumns = columns("fin_receivable");
+		var receivableSourceColumns = columns("fin_receivable_source");
+		var receiptColumns = columns("fin_receipt");
+		var receiptAllocationColumns = columns("fin_receipt_allocation");
+		var payableColumns = columns("fin_payable");
+		var payableSourceColumns = columns("fin_payable_source");
+		var paymentColumns = columns("fin_payment");
+		var paymentAllocationColumns = columns("fin_payment_allocation");
+
+		assertThat(receivableColumns).contains("id", "receivable_no", "customer_id", "source_type", "source_id",
+				"source_no", "business_date", "due_date", "total_amount", "received_amount",
+				"unreceived_amount", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"confirmed_by", "confirmed_at", "closed_by", "closed_at", "cancelled_by", "cancelled_at",
+				"version");
+		assertThat(receivableSourceColumns).contains("id", "receivable_id", "source_type", "source_id",
+				"source_no", "source_line_id", "source_line_no", "source_amount");
+		assertThat(receiptColumns).contains("id", "receipt_no", "customer_id", "receipt_date", "amount",
+				"method", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"posted_by", "posted_at", "cancelled_by", "cancelled_at", "version");
+		assertThat(receiptAllocationColumns).contains("id", "receipt_id", "receivable_id", "allocated_amount");
+		assertThat(payableColumns).contains("id", "payable_no", "supplier_id", "source_type", "source_id",
+				"source_no", "business_date", "due_date", "total_amount", "paid_amount", "unpaid_amount",
+				"status", "remark", "created_by", "created_at", "updated_by", "updated_at", "confirmed_by",
+				"confirmed_at", "closed_by", "closed_at", "cancelled_by", "cancelled_at", "version");
+		assertThat(payableSourceColumns).contains("id", "payable_id", "source_type", "source_id", "source_no",
+				"source_line_id", "source_line_no", "source_amount");
+		assertThat(paymentColumns).contains("id", "payment_no", "supplier_id", "payment_date", "amount",
+				"method", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
+				"posted_by", "posted_at", "cancelled_by", "cancelled_at", "version");
+		assertThat(paymentAllocationColumns).contains("id", "payment_id", "payable_id", "allocated_amount");
+
+		assertThat(indexes("fin_receivable")).contains("uk_fin_receivable_no", "idx_fin_receivable_customer",
+				"idx_fin_receivable_status_date", "idx_fin_receivable_due_date", "idx_fin_receivable_source_no");
+		assertThat(indexes("fin_receivable_source")).contains("uk_fin_receivable_source_line",
+				"idx_fin_receivable_source_receivable", "idx_fin_receivable_source_source");
+		assertThat(indexes("fin_receipt")).contains("uk_fin_receipt_no", "idx_fin_receipt_customer",
+				"idx_fin_receipt_status_date");
+		assertThat(indexes("fin_receipt_allocation")).contains("uk_fin_receipt_allocation_receipt",
+				"idx_fin_receipt_allocation_receivable");
+		assertThat(indexes("fin_payable")).contains("uk_fin_payable_no", "idx_fin_payable_supplier",
+				"idx_fin_payable_status_date", "idx_fin_payable_due_date", "idx_fin_payable_source_no");
+		assertThat(indexes("fin_payable_source")).contains("uk_fin_payable_source_line",
+				"idx_fin_payable_source_payable", "idx_fin_payable_source_source");
+		assertThat(indexes("fin_payment")).contains("uk_fin_payment_no", "idx_fin_payment_supplier",
+				"idx_fin_payment_status_date");
+		assertThat(indexes("fin_payment_allocation")).contains("uk_fin_payment_allocation_payment",
+				"idx_fin_payment_allocation_payable");
+
+		assertThat(constraint("fin_receivable", "ck_fin_receivable_status")).contains("DRAFT", "CONFIRMED",
+				"PARTIALLY_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED");
+		assertThat(constraint("fin_receipt", "ck_fin_receipt_status")).contains("DRAFT", "POSTED",
+				"CANCELLED");
+		assertThat(constraint("fin_payable", "ck_fin_payable_status")).contains("DRAFT", "CONFIRMED",
+				"PARTIALLY_PAID", "PAID", "CLOSED", "CANCELLED");
+		assertThat(constraint("fin_payment", "ck_fin_payment_status")).contains("DRAFT", "POSTED",
+				"CANCELLED");
+		assertThat(constraint("fin_receivable", "ck_fin_receivable_amount_balance")).contains("total_amount",
+				"received_amount", "unreceived_amount");
+		assertThat(constraint("fin_payable", "ck_fin_payable_amount_balance")).contains("total_amount",
+				"paid_amount", "unpaid_amount");
+	}
+
+	@Test
+	void financialSettlementStatusEnumsContainContractValues() throws Exception {
+		assertThat(enumConstants("com.qherp.api.system.finance.ReceivableStatus")).containsExactly("DRAFT",
+				"CONFIRMED", "PARTIALLY_RECEIVED", "RECEIVED", "CLOSED", "CANCELLED");
+		assertThat(enumConstants("com.qherp.api.system.finance.ReceiptStatus")).containsExactly("DRAFT", "POSTED",
+				"CANCELLED");
+		assertThat(enumConstants("com.qherp.api.system.finance.PayableStatus")).containsExactly("DRAFT",
+				"CONFIRMED", "PARTIALLY_PAID", "PAID", "CLOSED", "CANCELLED");
+		assertThat(enumConstants("com.qherp.api.system.finance.PaymentStatus")).containsExactly("DRAFT", "POSTED",
+				"CANCELLED");
+	}
+
+	@Test
 	void inventoryErrorCodesAreRegistered() {
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND.httpStatus()).isEqualTo(HttpStatus.NOT_FOUND);
 		assertThat(ApiErrorCode.INVENTORY_DOCUMENT_TYPE_INVALID.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -553,6 +677,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertErrorCode("COST_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("COST_AMOUNT_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("COST_GENERATED_RECORD_IMMUTABLE", HttpStatus.CONFLICT);
+	}
+
+	@Test
+	void financeErrorCodesAreRegistered() {
+		assertErrorCode("FINANCE_RECEIVABLE_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("FINANCE_RECEIPT_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("FINANCE_PAYABLE_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("FINANCE_PAYMENT_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("FINANCE_SOURCE_NOT_FOUND", HttpStatus.NOT_FOUND);
+		assertErrorCode("FINANCE_SOURCE_STATUS_INVALID", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_SOURCE_DUPLICATED", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_AMOUNT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("FINANCE_ALLOCATION_EXCEEDS_BALANCE", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_STATUS_NOT_ALLOWED", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_POSTED_IMMUTABLE", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_CONCURRENT_MODIFICATION", HttpStatus.CONFLICT);
+		assertErrorCode("FINANCE_DUE_DATE_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("FINANCE_METHOD_INVALID", HttpStatus.BAD_REQUEST);
 	}
 
 	@Test
@@ -688,6 +830,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
+
+		FINANCE_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		FINANCE_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
 	}
 
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
@@ -810,6 +969,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.as(expected.code())
 				.isTrue();
 		});
+		FINANCE_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		FINANCE_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
 	}
 
 	private void assertErrorCode(String code, HttpStatus expectedStatus) {
@@ -837,6 +1014,16 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				where schemaname = 'public'
 				and tablename = ?
 				""", String.class, tableName);
+	}
+
+	private String constraint(String tableName, String constraintName) {
+		return this.jdbcTemplate.queryForObject("""
+				select pg_get_constraintdef(c.oid)
+				from pg_constraint c
+				join pg_class t on t.oid = c.conrelid
+				where t.relname = ?
+				and c.conname = ?
+				""", String.class, tableName, constraintName);
 	}
 
 	private record ExpectedActionPermission(String code, String parentCode, String apiMethod, String apiPath) {

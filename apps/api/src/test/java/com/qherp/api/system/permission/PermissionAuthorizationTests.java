@@ -225,6 +225,45 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/records/1", "cost:record:update");
 	}
 
+	@Test
+	void financeAdminPathsMapToFinancePermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receivable-sources",
+				"finance:receivable:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/payable-sources", "finance:payable:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receivables", "finance:receivable:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receivables/1", "finance:receivable:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/finance/receivables", "finance:receivable:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receivables/1", "finance:receivable:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receivables/1/confirm",
+				"finance:receivable:confirm");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receivables/1/cancel",
+				"finance:receivable:cancel");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receivables/1/close",
+				"finance:receivable:close");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receipts", "finance:receipt:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receipts/1", "finance:receipt:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/finance/receivables/1/receipts",
+				"finance:receipt:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receipts/1", "finance:receipt:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receipts/1/post", "finance:receipt:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/receipts/1/cancel", "finance:receipt:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/payables", "finance:payable:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/payables/1", "finance:payable:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/finance/payables", "finance:payable:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payables/1", "finance:payable:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payables/1/confirm",
+				"finance:payable:confirm");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payables/1/cancel", "finance:payable:cancel");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payables/1/close", "finance:payable:close");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/payments", "finance:payment:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/payments/1", "finance:payment:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/finance/payables/1/payments",
+				"finance:payment:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1", "finance:payment:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1/post", "finance:payment:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/finance/payments/1/cancel", "finance:payment:cancel");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);

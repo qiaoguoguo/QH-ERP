@@ -35,6 +35,18 @@ import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
 import SalesShipmentDetailView from '../modules/sales/SalesShipmentDetailView.vue'
 import SalesShipmentFormView from '../modules/sales/SalesShipmentFormView.vue'
 import SalesShipmentListView from '../modules/sales/SalesShipmentListView.vue'
+import ReceivableListView from '../modules/finance/ReceivableListView.vue'
+import ReceivableFormView from '../modules/finance/ReceivableFormView.vue'
+import ReceivableDetailView from '../modules/finance/ReceivableDetailView.vue'
+import ReceiptListView from '../modules/finance/ReceiptListView.vue'
+import ReceiptFormView from '../modules/finance/ReceiptFormView.vue'
+import ReceiptDetailView from '../modules/finance/ReceiptDetailView.vue'
+import PayableListView from '../modules/finance/PayableListView.vue'
+import PayableFormView from '../modules/finance/PayableFormView.vue'
+import PayableDetailView from '../modules/finance/PayableDetailView.vue'
+import PaymentListView from '../modules/finance/PaymentListView.vue'
+import PaymentFormView from '../modules/finance/PaymentFormView.vue'
+import PaymentDetailView from '../modules/finance/PaymentDetailView.vue'
 import { createQhErpRouter } from './index'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
@@ -258,6 +270,42 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiredPermission).toBe('sales:order:view')
   })
 
+  it('财务往来路由加载基础占位页面并配置对应权限', async () => {
+    const router = createQhErpRouter()
+    const financeRoutes = [
+      ['finance-receivables', '/finance/receivables', 'finance:receivable:view', ReceivableListView],
+      ['finance-receivable-create', '/finance/receivables/create', 'finance:receivable:create', ReceivableFormView],
+      ['finance-receivable-detail', '/finance/receivables/:id', 'finance:receivable:view', ReceivableDetailView],
+      ['finance-receivable-edit', '/finance/receivables/:id/edit', 'finance:receivable:update', ReceivableFormView],
+      ['finance-receipt-create', '/finance/receivables/:id/receipts/create', 'finance:receipt:create', ReceiptFormView],
+      ['finance-receipts', '/finance/receipts', 'finance:receipt:view', ReceiptListView],
+      ['finance-receipt-detail', '/finance/receipts/:id', 'finance:receipt:view', ReceiptDetailView],
+      ['finance-receipt-edit', '/finance/receipts/:id/edit', 'finance:receipt:update', ReceiptFormView],
+      ['finance-payables', '/finance/payables', 'finance:payable:view', PayableListView],
+      ['finance-payable-create', '/finance/payables/create', 'finance:payable:create', PayableFormView],
+      ['finance-payable-detail', '/finance/payables/:id', 'finance:payable:view', PayableDetailView],
+      ['finance-payable-edit', '/finance/payables/:id/edit', 'finance:payable:update', PayableFormView],
+      ['finance-payment-create', '/finance/payables/:id/payments/create', 'finance:payment:create', PaymentFormView],
+      ['finance-payments', '/finance/payments', 'finance:payment:view', PaymentListView],
+      ['finance-payment-detail', '/finance/payments/:id', 'finance:payment:view', PaymentDetailView],
+      ['finance-payment-edit', '/finance/payments/:id/edit', 'finance:payment:update', PaymentFormView],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of financeRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+
+    const rootRoute = router.getRoutes().find((item) => item.path === '/finance')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+  })
+
   it('访问库存根路径时重定向到库存余额页', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['inventory:balance:view'] })
@@ -296,6 +344,37 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('sales-orders')
+  })
+
+  it('访问财务根路径时按首个可用财务查看权限动态重定向', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:receivable:view', 'finance:payable:view'] })
+
+    await router.push('/finance')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('finance-receivables')
+  })
+
+  it('仅有应付查看权限时访问财务根路径进入应付台账', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:payable:view'] })
+
+    await router.push('/finance')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('finance-payables')
+  })
+
+  it('无任一财务查看权限时访问财务根路径进入无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await router.push('/finance')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/finance')
   })
 
   it('store 为空但后端 session 有效时访问受保护路由会恢复会话并放行', async () => {
@@ -501,6 +580,17 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
     expect(router.currentRoute.value.query.from).toBe('/cost/records')
+  })
+
+  it('已登录但缺少财务查看权限时跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await router.push('/finance/receivables')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/finance/receivables')
   })
 
   it('已登录但缺少成本记录创建权限时不能访问新建路由', async () => {

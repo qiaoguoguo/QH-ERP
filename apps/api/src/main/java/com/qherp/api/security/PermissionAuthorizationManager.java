@@ -96,6 +96,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return costPermissionCode;
 		}
 
+		String financePermissionCode = financePermissionCode(method, path);
+		if (financePermissionCode != null) {
+			return financePermissionCode;
+		}
+
 		if ("GET".equals(method) && ("/api/admin/users".equals(path) || path.matches("/api/admin/users/\\d+"))) {
 			return "system:user:view";
 		}
@@ -131,6 +136,93 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String financePermissionCode(String method, String path) {
+		String basePath = "/api/admin/finance";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		String receivablePath = "/api/admin/finance/receivables";
+		if ("GET".equals(method) && "/api/admin/finance/receivable-sources".equals(path)) {
+			return "finance:receivable:create";
+		}
+		if ("GET".equals(method) && (receivablePath.equals(path) || matchesIdPath(path, receivablePath))) {
+			return "finance:receivable:view";
+		}
+		if ("POST".equals(method) && receivablePath.equals(path)) {
+			return "finance:receivable:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, receivablePath)) {
+			return "finance:receivable:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receivablePath) + "/\\d+/confirm")) {
+			return "finance:receivable:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receivablePath) + "/\\d+/cancel")) {
+			return "finance:receivable:cancel";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receivablePath) + "/\\d+/close")) {
+			return "finance:receivable:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(receivablePath) + "/\\d+/receipts")) {
+			return "finance:receipt:create";
+		}
+
+		String receiptPath = "/api/admin/finance/receipts";
+		if ("GET".equals(method) && (receiptPath.equals(path) || matchesIdPath(path, receiptPath))) {
+			return "finance:receipt:view";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, receiptPath)) {
+			return "finance:receipt:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receiptPath) + "/\\d+/post")) {
+			return "finance:receipt:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(receiptPath) + "/\\d+/cancel")) {
+			return "finance:receipt:cancel";
+		}
+
+		String payablePath = "/api/admin/finance/payables";
+		if ("GET".equals(method) && "/api/admin/finance/payable-sources".equals(path)) {
+			return "finance:payable:create";
+		}
+		if ("GET".equals(method) && (payablePath.equals(path) || matchesIdPath(path, payablePath))) {
+			return "finance:payable:view";
+		}
+		if ("POST".equals(method) && payablePath.equals(path)) {
+			return "finance:payable:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, payablePath)) {
+			return "finance:payable:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(payablePath) + "/\\d+/confirm")) {
+			return "finance:payable:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(payablePath) + "/\\d+/cancel")) {
+			return "finance:payable:cancel";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(payablePath) + "/\\d+/close")) {
+			return "finance:payable:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(payablePath) + "/\\d+/payments")) {
+			return "finance:payment:create";
+		}
+
+		String paymentPath = "/api/admin/finance/payments";
+		if ("GET".equals(method) && (paymentPath.equals(path) || matchesIdPath(path, paymentPath))) {
+			return "finance:payment:view";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, paymentPath)) {
+			return "finance:payment:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(paymentPath) + "/\\d+/post")) {
+			return "finance:payment:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(paymentPath) + "/\\d+/cancel")) {
+			return "finance:payment:cancel";
+		}
 		return null;
 	}
 

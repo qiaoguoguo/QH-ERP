@@ -1,5 +1,6 @@
 import { h } from 'vue'
 import { createMemoryHistory, createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
+import { firstFinanceRouteByPermission } from '../modules/finance/financePageHelpers'
 import { useAuthStore } from '../stores/authStore'
 
 const history = import.meta.env.MODE === 'test' ? createMemoryHistory() : createWebHistory()
@@ -332,6 +333,108 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: 'cost:record:update' },
     component: () => import('../modules/cost/CostRecordFormView.vue'),
   },
+  {
+    path: '/finance',
+    name: 'finance-root',
+    meta: { requiresAuth: true },
+    component: () => import('../modules/finance/FinancePlaceholderView.vue'),
+  },
+  {
+    path: '/finance/receivables',
+    name: 'finance-receivables',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receivable:view' },
+    component: () => import('../modules/finance/ReceivableListView.vue'),
+  },
+  {
+    path: '/finance/receivables/create',
+    name: 'finance-receivable-create',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receivable:create' },
+    component: () => import('../modules/finance/ReceivableFormView.vue'),
+  },
+  {
+    path: '/finance/receivables/:id',
+    name: 'finance-receivable-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receivable:view' },
+    component: () => import('../modules/finance/ReceivableDetailView.vue'),
+  },
+  {
+    path: '/finance/receivables/:id/edit',
+    name: 'finance-receivable-edit',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receivable:update' },
+    component: () => import('../modules/finance/ReceivableFormView.vue'),
+  },
+  {
+    path: '/finance/receivables/:id/receipts/create',
+    name: 'finance-receipt-create',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receipt:create' },
+    component: () => import('../modules/finance/ReceiptFormView.vue'),
+  },
+  {
+    path: '/finance/receipts',
+    name: 'finance-receipts',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receipt:view' },
+    component: () => import('../modules/finance/ReceiptListView.vue'),
+  },
+  {
+    path: '/finance/receipts/:id',
+    name: 'finance-receipt-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receipt:view' },
+    component: () => import('../modules/finance/ReceiptDetailView.vue'),
+  },
+  {
+    path: '/finance/receipts/:id/edit',
+    name: 'finance-receipt-edit',
+    meta: { requiresAuth: true, requiredPermission: 'finance:receipt:update' },
+    component: () => import('../modules/finance/ReceiptFormView.vue'),
+  },
+  {
+    path: '/finance/payables',
+    name: 'finance-payables',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payable:view' },
+    component: () => import('../modules/finance/PayableListView.vue'),
+  },
+  {
+    path: '/finance/payables/create',
+    name: 'finance-payable-create',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payable:create' },
+    component: () => import('../modules/finance/PayableFormView.vue'),
+  },
+  {
+    path: '/finance/payables/:id',
+    name: 'finance-payable-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payable:view' },
+    component: () => import('../modules/finance/PayableDetailView.vue'),
+  },
+  {
+    path: '/finance/payables/:id/edit',
+    name: 'finance-payable-edit',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payable:update' },
+    component: () => import('../modules/finance/PayableFormView.vue'),
+  },
+  {
+    path: '/finance/payables/:id/payments/create',
+    name: 'finance-payment-create',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payment:create' },
+    component: () => import('../modules/finance/PaymentFormView.vue'),
+  },
+  {
+    path: '/finance/payments',
+    name: 'finance-payments',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payment:view' },
+    component: () => import('../modules/finance/PaymentListView.vue'),
+  },
+  {
+    path: '/finance/payments/:id',
+    name: 'finance-payment-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payment:view' },
+    component: () => import('../modules/finance/PaymentDetailView.vue'),
+  },
+  {
+    path: '/finance/payments/:id/edit',
+    name: 'finance-payment-edit',
+    meta: { requiresAuth: true, requiredPermission: 'finance:payment:update' },
+    component: () => import('../modules/finance/PaymentFormView.vue'),
+  },
 ]
 
 export function createQhErpRouter() {
@@ -368,6 +471,14 @@ export function createQhErpRouter() {
 
     if (!authStore.isAuthenticated) {
       return { name: 'login', query: { redirect: to.fullPath } }
+    }
+
+    if (to.name === 'finance-root') {
+      const financeRoute = firstFinanceRouteByPermission((permission) => authStore.hasPermission(permission))
+      if (!financeRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return financeRoute
     }
 
     const requiredPermissions = [
