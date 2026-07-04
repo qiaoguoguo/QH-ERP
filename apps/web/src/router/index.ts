@@ -230,6 +230,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/procurement/PurchaseReceiptFormView.vue'),
   },
   {
+    path: '/procurement/returns',
+    name: 'procurement-returns',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:return:view' },
+    component: () => import('../modules/reversal/PurchaseReturnListView.vue'),
+  },
+  {
+    path: '/procurement/returns/create',
+    name: 'procurement-return-create',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:return:create' },
+    component: () => import('../modules/reversal/PurchaseReturnFormView.vue'),
+  },
+  {
+    path: '/procurement/returns/:id',
+    name: 'procurement-return-detail',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:return:view' },
+    component: () => import('../modules/reversal/PurchaseReturnDetailView.vue'),
+  },
+  {
+    path: '/procurement/returns/:id/edit',
+    name: 'procurement-return-edit',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:return:update' },
+    component: () => import('../modules/reversal/PurchaseReturnFormView.vue'),
+  },
+  {
     path: '/sales',
     redirect: '/sales/orders',
     meta: { requiresAuth: true, requiredPermission: 'sales:order:view' },

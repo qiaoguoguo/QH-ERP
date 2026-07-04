@@ -32,22 +32,36 @@ function sourceTypeLabel(sourceType?: string) {
     SALES_SHIPMENT: '销售出库来源',
     SALES_SHIPMENT_LINE: '销售出库行',
     SALES_RETURN: '销售退货',
+    PURCHASE_RECEIPT: '采购入库来源',
+    PURCHASE_RECEIPT_LINE: '采购入库行',
+    PURCHASE_RETURN: '采购退货',
     INVENTORY_MOVEMENT: '库存流水',
     RECEIVABLE: '应收冲减',
+    PAYABLE: '应付冲减',
     SETTLEMENT_ADJUSTMENT: '往来冲减',
   }
   return sourceType ? labels[sourceType] ?? sourceType : '-'
 }
 
+function isPurchaseTrace(row: ReversalTraceRecord) {
+  const routeName = String(row.resourceRouteName ?? '')
+  return row.source.sourceType?.startsWith('PURCHASE_')
+    || row.reverse.sourceType?.startsWith('PURCHASE_')
+    || routeName === 'finance-payable-detail'
+}
+
 function traceImpactType(row: ReversalTraceRecord) {
   if (row.inventoryMovementId) {
-    return '库存入库影响'
+    return isPurchaseTrace(row) ? '库存出库影响' : '库存入库影响'
   }
   if (row.settlementAdjustmentId) {
-    return '应收冲减'
+    return isPurchaseTrace(row) ? '应付冲减' : '应收冲减'
   }
   if (row.source.sourceType === 'SALES_SHIPMENT' || row.source.sourceType === 'SALES_SHIPMENT_LINE') {
     return '销售出库来源'
+  }
+  if (row.source.sourceType === 'PURCHASE_RECEIPT' || row.source.sourceType === 'PURCHASE_RECEIPT_LINE') {
+    return '采购入库来源'
   }
   return sourceTypeLabel(row.reverse.sourceType || row.source.sourceType)
 }
@@ -97,7 +111,7 @@ function impactResourceLabel(row: ReversalTraceRecord) {
     return `库存流水 #${row.inventoryMovementId}`
   }
   if (row.settlementAdjustmentId) {
-    return `应收冲减 #${row.settlementAdjustmentId}`
+    return `${isPurchaseTrace(row) ? '应付冲减' : '应收冲减'} #${row.settlementAdjustmentId}`
   }
   return '-'
 }

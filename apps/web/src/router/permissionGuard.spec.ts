@@ -29,6 +29,9 @@ import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.
 import PurchaseReceiptDetailView from '../modules/procurement/PurchaseReceiptDetailView.vue'
 import PurchaseReceiptFormView from '../modules/procurement/PurchaseReceiptFormView.vue'
 import PurchaseReceiptListView from '../modules/procurement/PurchaseReceiptListView.vue'
+import PurchaseReturnDetailView from '../modules/reversal/PurchaseReturnDetailView.vue'
+import PurchaseReturnFormView from '../modules/reversal/PurchaseReturnFormView.vue'
+import PurchaseReturnListView from '../modules/reversal/PurchaseReturnListView.vue'
 import SalesOrderDetailView from '../modules/sales/SalesOrderDetailView.vue'
 import SalesOrderFormView from '../modules/sales/SalesOrderFormView.vue'
 import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
@@ -218,7 +221,7 @@ describe('账号权限路由守卫', () => {
     }
   })
 
-  it('采购订单和采购入库路由加载真实页面并配置对应权限', async () => {
+  it('采购订单、采购入库和采购退货路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
     const procurementRoutes = [
       ['procurement-orders', '/procurement/orders', 'procurement:order:view', PurchaseOrderListView],
@@ -234,6 +237,10 @@ describe('账号权限路由守卫', () => {
       ],
       ['procurement-receipt-detail', '/procurement/receipts/:id', 'procurement:receipt:view', PurchaseReceiptDetailView],
       ['procurement-receipt-edit', '/procurement/receipts/:id/edit', 'procurement:receipt:update', PurchaseReceiptFormView],
+      ['procurement-returns', '/procurement/returns', 'procurement:return:view', PurchaseReturnListView],
+      ['procurement-return-create', '/procurement/returns/create', 'procurement:return:create', PurchaseReturnFormView],
+      ['procurement-return-detail', '/procurement/returns/:id', 'procurement:return:view', PurchaseReturnDetailView],
+      ['procurement-return-edit', '/procurement/returns/:id/edit', 'procurement:return:update', PurchaseReturnFormView],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of procurementRoutes) {
@@ -635,6 +642,27 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
     expect(router.currentRoute.value.query.from).toBe('/sales/shipments')
+  })
+
+  it('已登录且拥有采购退货查看权限时允许访问采购退货列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:return:view'] })
+
+    await router.push('/procurement/returns')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('procurement-returns')
+  })
+
+  it('已登录但缺少采购退货创建权限时不能访问新建采购退货', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:return:view'] })
+
+    await router.push('/procurement/returns/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/procurement/returns/create')
   })
 
   it('已登录且拥有销售退货查看权限时允许访问销售退货列表', async () => {

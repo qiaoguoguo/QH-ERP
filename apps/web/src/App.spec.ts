@@ -291,7 +291,7 @@ describe('ERP 应用骨架', () => {
     useAuthStore().setSession({
       user: { id: 1, username: 'procurement_admin', displayName: '采购管理员', status: 'ENABLED' },
       menus: [],
-      permissions: ['procurement:order:view', 'procurement:receipt:view'],
+      permissions: ['procurement:order:view', 'procurement:receipt:view', 'procurement:return:view'],
     })
     const router = createQhErpRouter()
     router.push('/')
@@ -306,6 +306,33 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('采购管理')
     expect(wrapper.text()).toContain('采购订单')
     expect(wrapper.text()).toContain('采购入库')
+    expect(wrapper.text()).toContain('采购退货')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/procurement')
+  })
+
+  it('只有采购退货查看权限且后端菜单缺失时补齐采购退货入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'procurement_return_user', displayName: '采购退货员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['procurement:return:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('采购管理')
+    expect(wrapper.text()).toContain('采购退货')
+    expect(wrapper.text()).not.toContain('采购订单')
+    expect(wrapper.text()).not.toContain('采购入库')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/procurement')
   })
@@ -324,6 +351,7 @@ describe('ERP 应用骨架', () => {
           children: [
             { id: 21, code: 'procurement:order:view', name: '采购订单', routePath: '/procurement/orders' },
             { id: 22, code: 'procurement:receipt:view', name: '采购入库', routePath: '/procurement/receipts' },
+            { id: 23, code: 'procurement:return:view', name: '采购退货', routePath: '/procurement/returns' },
           ],
         },
       ],
@@ -342,6 +370,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('采购管理')
     expect(wrapper.text()).not.toContain('采购订单')
     expect(wrapper.text()).not.toContain('采购入库')
+    expect(wrapper.text()).not.toContain('采购退货')
   })
 
   it('无采购查看权限时递归移除挂在其他父级下的采购菜单', async () => {
@@ -358,6 +387,7 @@ describe('ERP 应用骨架', () => {
           children: [
             { id: 31, code: 'procurement:order:view', name: '采购订单', routePath: '/procurement/orders' },
             { id: 32, code: 'procurement:receipt:view', name: '采购入库', routePath: '/procurement/receipts' },
+            { id: 33, code: 'procurement:return:view', name: '采购退货', routePath: '/procurement/returns' },
           ],
         },
       ],
@@ -376,6 +406,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('采购管理')
     expect(wrapper.text()).not.toContain('采购订单')
     expect(wrapper.text()).not.toContain('采购入库')
+    expect(wrapper.text()).not.toContain('采购退货')
     expect(wrapper.text()).not.toContain('业务管理')
   })
 

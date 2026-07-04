@@ -89,6 +89,29 @@ export interface SalesReturnDetail extends SalesReturnSummary {
   traces: ReversalTraceRecord[]
 }
 
+export interface PurchaseReturnSummary {
+  id: ResourceId
+  returnNo: string
+  supplierId: ResourceId
+  supplierName: string
+  warehouseId: ResourceId
+  warehouseName: string
+  businessDate: string
+  status: ReversalStatus
+  totalQuantity: ReversalDecimal
+  totalAmount: ReversalMoney
+  source: ReversalSourceView
+  createdAt: string
+  updatedAt: string
+}
+
+export interface PurchaseReturnDetail extends PurchaseReturnSummary {
+  clientRequestId?: string
+  remark?: string
+  lines: ReversalDocumentLine[]
+  traces: ReversalTraceRecord[]
+}
+
 export interface SalesReturnSourceLine {
   shipmentLineId: ResourceId
   salesOrderLineId?: ResourceId
@@ -117,6 +140,35 @@ export interface SalesReturnSource {
   lines: SalesReturnSourceLine[]
 }
 
+export interface PurchaseReturnSourceLine {
+  receiptLineId: ResourceId
+  purchaseOrderLineId?: ResourceId
+  lineNo: number
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  receivedQuantity: ReversalDecimal
+  returnedQuantity: ReversalDecimal
+  returnableQuantity: ReversalDecimal
+  availableStockQuantity: ReversalDecimal
+  unitPrice: ReversalMoney
+  returnableAmount: ReversalMoney
+}
+
+export interface PurchaseReturnSource {
+  receiptId: ResourceId
+  receiptNo: string
+  supplierId: ResourceId
+  supplierName: string
+  warehouseId: ResourceId
+  warehouseName: string
+  businessDate: string
+  status: 'POSTED'
+  lines: PurchaseReturnSourceLine[]
+}
+
 export interface SalesReturnListParams {
   keyword?: string | null
   customerId?: ResourceId | null
@@ -131,6 +183,27 @@ export interface SalesReturnListParams {
 export interface SalesReturnSourceListParams {
   keyword?: string | null
   customerId?: ResourceId | null
+  warehouseId?: ResourceId | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface PurchaseReturnListParams {
+  keyword?: string | null
+  supplierId?: ResourceId | null
+  warehouseId?: ResourceId | null
+  status?: ReversalStatus | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface PurchaseReturnSourceListParams {
+  keyword?: string | null
+  supplierId?: ResourceId | null
   warehouseId?: ResourceId | null
   dateFrom?: string | null
   dateTo?: string | null
@@ -160,6 +233,20 @@ export interface ReversalDocumentPayload {
   lines: ReversalDocumentLinePayload[]
 }
 
+export interface PurchaseReturnPayloadLine {
+  sourceReceiptLineId: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface PurchaseReturnPayload {
+  sourceReceiptId: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: PurchaseReturnPayloadLine[]
+}
+
 export interface ReturnRefundReversalApi {
   salesReturns: {
     list(params: SalesReturnListParams): Promise<PageResult<SalesReturnSummary>>
@@ -171,6 +258,17 @@ export interface ReturnRefundReversalApi {
   }
   salesReturnSources: {
     list(params: SalesReturnSourceListParams): Promise<PageResult<SalesReturnSource>>
+  }
+  purchaseReturns: {
+    list(params: PurchaseReturnListParams): Promise<PageResult<PurchaseReturnSummary>>
+    get(id: ResourceId): Promise<PurchaseReturnDetail>
+    create(payload: PurchaseReturnPayload): Promise<PurchaseReturnDetail>
+    update(id: ResourceId, payload: PurchaseReturnPayload): Promise<PurchaseReturnDetail>
+    post(id: ResourceId): Promise<PurchaseReturnDetail>
+    cancel(id: ResourceId): Promise<PurchaseReturnDetail>
+  }
+  purchaseReturnSources: {
+    list(params: PurchaseReturnSourceListParams): Promise<PageResult<PurchaseReturnSource>>
   }
   traces: {
     list(params: ReversalTraceListParams): Promise<ReversalTraceRecord[]>
@@ -198,6 +296,25 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
   const salesReturnSourceQueryKeys = [
     'keyword',
     'customerId',
+    'warehouseId',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const purchaseReturnQueryKeys = [
+    'keyword',
+    'supplierId',
+    'warehouseId',
+    'status',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const purchaseReturnSourceQueryKeys = [
+    'keyword',
+    'supplierId',
     'warehouseId',
     'dateFrom',
     'dateTo',
@@ -271,6 +388,8 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
 
   const salesReturnPath = (id?: ResourceId) =>
     `/api/admin/sales/returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
+  const purchaseReturnPath = (id?: ResourceId) =>
+    `/api/admin/procurement/returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
 
   return {
     salesReturns: {
@@ -285,6 +404,19 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     salesReturnSources: {
       list: (params) =>
         get<PageResult<SalesReturnSource>>('/api/admin/sales/return-sources', pickQuery(params, salesReturnSourceQueryKeys)),
+    },
+    purchaseReturns: {
+      list: (params) =>
+        get<PageResult<PurchaseReturnSummary>>('/api/admin/procurement/returns', pickQuery(params, purchaseReturnQueryKeys)),
+      get: (id) => get<PurchaseReturnDetail>(purchaseReturnPath(id)),
+      create: (payload) => write<PurchaseReturnDetail>('POST', purchaseReturnPath(), payload),
+      update: (id, payload) => write<PurchaseReturnDetail>('PUT', purchaseReturnPath(id), payload),
+      post: (id) => write<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/post`),
+      cancel: (id) => write<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/cancel`),
+    },
+    purchaseReturnSources: {
+      list: (params) =>
+        get<PageResult<PurchaseReturnSource>>('/api/admin/procurement/return-sources', pickQuery(params, purchaseReturnSourceQueryKeys)),
     },
     traces: {
       list: (params) =>
