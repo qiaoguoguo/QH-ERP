@@ -256,3 +256,68 @@
 
 - 2026-07-04 建立销售管理基础测试计划，作为后续实施和验收依据。
 - 自动化测试、本地部署、浏览器验收、异常矩阵和视觉分析结果在阶段实现后补充。
+
+### 2026-07-04 Task9 本地部署、浏览器主路径和权限验收
+
+- 执行时间：2026-07-04 17:35:12 +08:00。
+- 分支与提交：`codex/sales-management-foundation`，`b2d0ce2 修复销售出库库存流水追溯筛选`。
+- 工作区前置状态：`git status --short --branch` 显示当前分支相对 `origin/main` ahead 8，开始时无未提交业务改动。
+- 服务启动：
+  - `docker compose up -d postgres` 成功，`docker compose ps` 显示 `qherp-postgres` 为 `healthy`，端口 `15432`。
+  - 检测到旧 `qherp-api-local` 占用 `18080`，执行 `docker rm -f qherp-api-local` 后用当前工作区代码重新启动后端。
+  - 后端命令：`docker run --rm --name qherp-api-local -p 18080:8080 -e QHERP_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:15432/qherp -e QHERP_DATASOURCE_USERNAME=qherp -e QHERP_DATASOURCE_PASSWORD=qherp_dev_password -v apps/api:/workspace -v qherp-maven-repo:/root/.m2 -w /workspace maven:3.9.9-eclipse-temurin-21 mvn spring-boot:run`，日志显示 V9 迁移已应用，Tomcat 8080 启动。
+  - 健康检查：`Invoke-WebRequest -Uri 'http://127.0.0.1:18080/api/health' -UseBasicParsing` 返回 `{"status":"UP","service":"qherp-api"}`。
+  - 前端第一次使用 `VITE_API_BASE_URL=http://127.0.0.1:18080` 启动时浏览器跨域失败；改为 Vite 同源代理后通过，属于本地启动方式调整，不作为业务缺陷。
+  - 前端最终命令：`npx vite --host 0.0.0.0 --port 5188 --strictPort --force`，访问地址 `http://127.0.0.1:5188`。
+- 浏览器和接口验收方式：使用真实 Chromium 浏览器执行管理员主路径、权限路径；异常路径中难以稳定构造的场景使用同一浏览器登录态发起真实 HTTP 调用并校验返回码、错误码和数据不变性。临时验收脚本执行后已删除，未纳入业务代码。
+- 执行账号：
+  - 管理员：`admin / Qherp@2026!`。
+  - 销售员：`t9mr663780_sales / Qherp@2026!`，角色 `T9MR663780_SALESPERSON`。
+  - 仓库角色：`t9mr663780_wh / Qherp@2026!`，角色 `T9MR663780_WAREHOUSE`。
+  - 只读用户：`t9mr663780_ro / Qherp@2026!`，角色 `T9MR663780_READONLY`。
+  - 无权限用户：`t9mr663780_nop / Qherp@2026!`，角色 `T9MR663780_NOPERM`。
+- 关键测试数据：
+  - 单位：`T9MR663780-PCS`，ID `14`。
+  - 仓库：`T9MR663780-WH`，ID `22`。
+  - 客户：`T9MR663780-CUST`，ID `23`。
+  - 可销售物料：`T9MR663780-FG`，ID `55`。
+  - 期初库存单：`INV-OPEN-20260704093600401-006`，ID `12`，主路径物料期初数量 `20.000000`。
+  - 销售订单：`SO-20260704093603565-015`，ID `16`，最终状态 `SHIPPED`。
+  - 第一张销售出库：`SS-20260704093605626-011`，ID `12`，数量 `4.000000`，库存流水 `SAL-SHP-MOV-20260704093605777-12-022`。
+  - 第二张销售出库：`SS-20260704093608295-012`，ID `13`，数量 `6.000000`，库存流水 `SAL-SHP-MOV-20260704093608442-13-023`。
+- 管理员主路径结果：通过。
+  - 销售管理、销售订单、销售出库入口可见。
+  - 通过浏览器创建销售订单草稿、编辑草稿、确认订单。
+  - 通过浏览器创建第一张部分销售出库并过账，库存流水为 `SALES_SHIPMENT`，方向 `OUT`，数量 `4.000000`。
+  - 通过浏览器从销售出库详情进入库存流水列表，筛选 `movementType=SALES_SHIPMENT`，使用流水号查询后点击“查看单据”回到对应 `/sales/shipments/12`。
+  - 返回销售订单详情可见第一张出库记录，订单状态为部分出库。
+  - 通过浏览器创建第二张销售出库并过账，库存流水为 `SALES_SHIPMENT`，方向 `OUT`，数量 `6.000000`。
+  - 第二条库存流水可回跳 `/sales/shipments/13`。
+  - 销售出库详情可追溯来源销售订单；销售订单详情可查看两张销售出库记录。
+  - 主路径物料库存余额由 `20.000000` 扣减至 `10.000000`，累计已出库 `10.000000`，未出库 `0.000000`，订单状态为 `SHIPPED`。
+- 权限路径结果：通过。
+  - 销售员：订单可管理，销售出库仅查看；出库创建、编辑、过账按钮不可见；接口过账返回 `403 AUTH_FORBIDDEN`。
+  - 仓库角色：可见销售出库入口和创建出库；订单确认、取消、关闭按钮不可见；接口确认订单返回 `403 AUTH_FORBIDDEN`。
+  - 只读用户：订单、出库和追溯可查看，写按钮不可见；接口创建订单返回 `403 AUTH_FORBIDDEN`。
+  - 无权限用户：首页无销售入口，直接访问销售路由进入无权限页；销售列表接口返回 `403 AUTH_FORBIDDEN`。
+  - 未登录用户：访问销售路由跳转登录；销售列表接口返回 `401 AUTH_UNAUTHORIZED`。
+- 异常路径结果：通过。
+  - 停用客户创建、更新、确认订单均返回 `400 SALES_CUSTOMER_INVALID`。
+  - 原材料、辅料作为销售明细均返回 `400 SALES_MATERIAL_NOT_SELLABLE`。
+  - 停用物料创建订单返回 `400 SALES_MATERIAL_INVALID`。
+  - 销售数量为 0、负数、超精度均返回 `400 SALES_QUANTITY_INVALID`。
+  - 销售单价为负数、超精度均返回 `400 SALES_UNIT_PRICE_INVALID`。
+  - 未确认订单、已取消订单、已关闭订单、已全部出库订单继续创建出库均返回 `409 SALES_ORDER_STATUS_INVALID`。
+  - 停用仓库创建出库返回 `400 SALES_WAREHOUSE_INVALID`。
+  - 出库数量为 0、负数、超精度均返回 `400 SALES_QUANTITY_INVALID`。
+  - 超出未出库数量返回 `409 SALES_SHIPMENT_EXCEEDS_ORDER`。
+  - 来源订单行不匹配返回 `409 SALES_SHIPMENT_LINE_SOURCE_INVALID`。
+  - 库存不足过账返回 `409 SALES_STOCK_NOT_ENOUGH`，库存流水计数不变。
+  - 多明细部分失败整单回滚返回 `409 SALES_STOCK_NOT_ENOUGH`，可出库物料余额不变，两类物料销售出库流水计数不变。
+  - 重复过账返回 `409 SALES_DUPLICATE_POST`。
+  - 已过账销售出库编辑返回 `409 SALES_SHIPMENT_POSTED_IMMUTABLE`。
+  - 已确认订单的客户后续停用后，不阻止基于该订单创建并过账销售出库，验证单号 `SS-20260704093622523-016`。
+- 追溯结论：通过。销售订单、销售出库、库存流水三方追溯闭环成立；库存流水销售来源未误跳库存单据或采购入库。
+- 未覆盖项：Task10 正式视觉截图清单和视觉分析按任务边界未执行；本次仅执行浏览器功能、权限和异常验收。
+- 缺陷记录：未发现阻断缺陷、严重缺陷或一般缺陷；未创建 `docs/testing/sales-management-defects.md`。
+- 结论：Task9 通过，允许进入 Task10 视觉分析。
