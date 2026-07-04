@@ -2,6 +2,11 @@ package com.qherp.api.system.reversal;
 
 import com.qherp.api.common.ApiResponse;
 import com.qherp.api.common.PageResponse;
+import com.qherp.api.security.CurrentUser;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -13,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/admin")
@@ -25,41 +31,59 @@ public class ReversalAdminController {
 	}
 
 	@GetMapping("/sales/return-sources")
-	public ApiResponse<PageResponse<Object>> salesReturnSources(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.SalesReturnSourceResponse>> salesReturnSources(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long customerId,
+			@RequestParam(required = false) Long warehouseId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.salesReturnSources(keyword, customerId, warehouseId, dateFrom,
+				dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/sales/returns")
-	public ApiResponse<PageResponse<Object>> salesReturns(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.SalesReturnSummaryResponse>> salesReturns(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long customerId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.salesReturns(keyword, customerId, warehouseId, status,
+				dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/sales/returns/{id}")
-	public ApiResponse<Object> salesReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> salesReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.salesReturn(id, currentUser));
 	}
 
 	@PostMapping("/sales/returns")
-	public ApiResponse<Object> createSalesReturn(@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> createSalesReturn(
+			@Valid @RequestBody ReversalAdminService.SalesReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.createSalesReturn(request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/sales/returns/{id}")
-	public ApiResponse<Object> updateSalesReturn(@PathVariable Long id,
-			@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> updateSalesReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.SalesReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.updateSalesReturn(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/sales/returns/{id}/post")
-	public ApiResponse<Object> postSalesReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> postSalesReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.postSalesReturn(id, currentUser, servletRequest));
 	}
 
 	@PutMapping("/sales/returns/{id}/cancel")
-	public ApiResponse<Object> cancelSalesReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> cancelSalesReturn(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.cancelSalesReturn(id, currentUser, servletRequest));
 	}
 
 	@GetMapping("/procurement/return-sources")
@@ -215,8 +239,12 @@ public class ReversalAdminController {
 	}
 
 	@GetMapping("/reversal-traces")
-	public ApiResponse<List<ReversalAdminService.ReversalTraceRecord>> reversalTraces() {
-		return ApiResponse.ok(this.reversalAdminService.traces());
+	public ApiResponse<List<ReversalAdminService.ReversalTraceRecord>> reversalTraces(
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) Long sourceLineId, @RequestParam(required = false) String direction,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.traces(sourceType, sourceId, sourceLineId, direction,
+				currentUser));
 	}
 
 }
