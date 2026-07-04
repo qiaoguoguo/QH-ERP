@@ -8,6 +8,7 @@ import {
   type PurchaseReturnSource,
   type PurchaseReturnSourceLine,
   type ReversalDocumentLine,
+  type ReversalSourceView,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -70,6 +71,16 @@ const nonEditableStatusText = computed(() => {
   }
   return ''
 })
+const sourceDisplayText = computed(() => {
+  if (isEdit.value && sourceRestricted(editDetail.value?.source)) {
+    return editDetail.value?.source.restrictedMessage || '来源无查看权限'
+  }
+  return selectedSource.value?.receiptNo || editDetail.value?.source.sourceNo || '-'
+})
+
+function sourceRestricted(source?: ReversalSourceView | null) {
+  return !source || source.restricted || !source.canViewSource
+}
 
 function lineDraftFromSource(line: PurchaseReturnSourceLine): PurchaseReturnLineDraft {
   return {
@@ -90,13 +101,14 @@ function lineDraftFromSource(line: PurchaseReturnSourceLine): PurchaseReturnLine
 }
 
 function lineDraftFromDetail(line: ReversalDocumentLine): PurchaseReturnLineDraft {
+  const restricted = sourceRestricted(line.source)
   return {
     sourceReceiptLineId: line.sourceLineId ?? line.id,
     lineNo: line.lineNo,
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
-    receivedQuantity: line.source.quantity ?? '',
+    receivedQuantity: restricted ? '' : line.source.quantity ?? '',
     returnedQuantity: line.returnedQuantityBefore ?? '',
     returnableQuantity: line.returnableQuantityBefore ?? '',
     availableStockQuantity: '',
@@ -334,7 +346,7 @@ onMounted(() => {
         <template #header>退货信息</template>
         <el-form class="document-form" label-width="96px">
           <el-form-item label="来源入库">
-            <span>{{ selectedSource?.receiptNo || editDetail?.source.sourceNo || '-' }}</span>
+            <span>{{ sourceDisplayText }}</span>
           </el-form-item>
           <el-form-item label="业务日期">
             <el-input

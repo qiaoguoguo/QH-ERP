@@ -320,6 +320,62 @@ describe('采购退货前端页面', () => {
     expect(router.currentRoute.value.name).toBe('procurement-return-detail')
   })
 
+  it('编辑采购退货时来源采购入库受限只展示受限提示，不泄露来源字段', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...purchaseReturnDetail,
+      source: {
+        sourceType: 'PURCHASE_RECEIPT',
+        sourceId: 987,
+        sourceNo: 'RC-SECRET',
+        businessDate: '2026-06-30',
+        status: 'POSTED',
+        quantity: '88.000000',
+        amount: '640.00',
+        canViewSource: false,
+        restricted: true,
+        restrictedMessage: '来源无查看权限',
+        resourceRouteName: 'procurement-receipt-detail',
+        resourceRouteParams: { id: 987 },
+      },
+      lines: [
+        {
+          ...purchaseReturnDetail.lines[0],
+          source: {
+            sourceType: 'PURCHASE_RECEIPT_LINE',
+            sourceId: 987,
+            sourceLineId: 988,
+            sourceNo: 'RC-LINE-SECRET',
+            lineNo: 10,
+            businessDate: '2026-06-30',
+            status: 'POSTED',
+            quantity: '88.000000',
+            amount: '640.00',
+            canViewSource: false,
+            restricted: true,
+            restrictedMessage: '来源无查看权限',
+            resourceRouteName: 'procurement-receipt-detail',
+            resourceRouteParams: { id: 987 },
+          },
+        },
+      ],
+    })
+
+    const { wrapper } = await mountReversalView(PurchaseReturnFormView, '/procurement/returns/2/edit', ['procurement:return:update'])
+
+    expect(wrapper.text()).toContain('来源无查看权限')
+    expect(wrapper.text()).toContain('编辑采购退货')
+    expect(wrapper.find('[data-test="submit-purchase-return"]').exists()).toBe(true)
+    expect(wrapper.text()).not.toContain('RC-SECRET')
+    expect(wrapper.text()).not.toContain('RC-LINE-SECRET')
+    expect(wrapper.text()).not.toContain('987')
+    expect(wrapper.text()).not.toContain('988')
+    expect(wrapper.text()).not.toContain('88')
+    expect(wrapper.text()).not.toContain('640.00')
+    expect(wrapper.text()).not.toContain('2026-06-30')
+    expect(wrapper.text()).not.toContain('POSTED')
+    expect(wrapper.find('[data-test="view-source-document"]').exists()).toBe(false)
+  })
+
   it.each([
     ['POSTED', '已过账'],
     ['CANCELLED', '已取消'],
