@@ -11,6 +11,7 @@ import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { masterStatusLabel } from '../../master/shared/masterPageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 interface CategoryTreeNode extends CategoryRecord {
   children: CategoryTreeNode[]
@@ -224,7 +225,7 @@ async function saveRecord() {
 
 async function changeStatus(record: CategoryRecord) {
   const nextAction = record.status === 'DISABLED' ? '启用' : '停用'
-  if (!window.confirm(`确认${nextAction}物料分类“${record.name}”？`)) {
+  if (!(await confirmAction(`确认${nextAction}物料分类“${record.name}”？`))) {
     return
   }
   actionError.value = ''
@@ -260,7 +261,7 @@ onMounted(loadRecords)
           <el-input v-model="filters.keyword" name="category-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="启用" value="ENABLED" />
             <el-option label="停用" value="DISABLED" />
           </el-select>

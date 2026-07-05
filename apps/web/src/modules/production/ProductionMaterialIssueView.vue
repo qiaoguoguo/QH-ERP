@@ -241,7 +241,7 @@ onMounted(() => {
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
           <el-form-item label="领料日期">
-            <el-input v-model="form.businessDate" name="production-issue-date" placeholder="YYYY-MM-DD" :disabled="!canSubmitIssue" />
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.businessDate" name="production-issue-date" placeholder="选择日期" :disabled="!canSubmitIssue" />
           </el-form-item>
           <el-form-item label="原因">
             <el-input v-model="form.reason" name="production-issue-reason" :disabled="!canSubmitIssue" />

@@ -30,7 +30,7 @@ const customer: PartnerRecord = {
   status: 'ENABLED',
   remark: '设备整机客户',
 }
-const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 
 function mountCustomers(permissions = ['master:customer:view', 'master:customer:create', 'master:customer:update']) {
   const pinia = createPinia()

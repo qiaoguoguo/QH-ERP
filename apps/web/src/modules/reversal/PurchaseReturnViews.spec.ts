@@ -207,7 +207,7 @@ const purchaseReturnSource = {
   ],
 }
 
-const page = <T>(items: T[]) => ({ items, page: 1, pageSize: 20, total: items.length })
+const page = <T>(items: T[], pageSize = 10) => ({ items, page: 1, pageSize, total: items.length })
 
 async function mountReversalView(component: Component, path: string, permissions: string[]) {
   const pinia = createPinia()
@@ -244,14 +244,13 @@ async function mountReversalView(component: Component, path: string, permissions
 describe('采购退货前端页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     returnRefundReversalApiMock.purchaseReturns.list.mockResolvedValue(page([purchaseReturnDetail]))
     returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValue(purchaseReturnDetail)
     returnRefundReversalApiMock.purchaseReturns.create.mockResolvedValue({ ...purchaseReturnDetail, status: 'DRAFT' })
     returnRefundReversalApiMock.purchaseReturns.update.mockResolvedValue({ ...purchaseReturnDetail, remark: '更新退货' })
     returnRefundReversalApiMock.purchaseReturns.post.mockResolvedValue({ ...purchaseReturnDetail, status: 'POSTED' })
     returnRefundReversalApiMock.purchaseReturns.cancel.mockResolvedValue({ ...purchaseReturnDetail, status: 'CANCELLED' })
-    returnRefundReversalApiMock.purchaseReturnSources.list.mockResolvedValue(page([purchaseReturnSource]))
+    returnRefundReversalApiMock.purchaseReturnSources.list.mockResolvedValue(page([purchaseReturnSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(purchaseReturnDetail.traces)
   })
 
@@ -304,6 +303,11 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).toContain('新建采购退货')
     expect(wrapper.text()).toContain('RC202607050001')
     expect(wrapper.text()).toContain('可用库存')
+    expect(returnRefundReversalApiMock.purchaseReturnSources.list).toHaveBeenCalledWith({
+      keyword: '',
+      page: 1,
+      pageSize: 20,
+    })
     await wrapper.find('input[name="purchase-return-business-date"]').setValue('2026-07-05')
     await wrapper.find('textarea[name="purchase-return-remark"]').setValue('来料退回')
     await wrapper.find('input[name="purchase-return-line-quantity-201"]').setValue('1.500000')

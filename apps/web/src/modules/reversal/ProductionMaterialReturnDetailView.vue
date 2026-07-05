@@ -8,12 +8,14 @@ import {
   type ReversalSourceView,
   type ReversalTraceRecord,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { formatSalesAmount } from '../sales/salesPageHelpers'
 import { formatProductionDateTime, formatProductionQuantity, productionErrorMessage } from '../production/productionPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -85,14 +87,18 @@ async function loadDetail() {
 }
 
 function backToList() {
-  void router.push({ name: 'production-material-returns' })
+  void router.push(returnLocation(route, { name: 'production-material-returns' }))
 }
 
 function editMaterialReturn() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'production-material-return-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'production-material-return-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function viewSourceDocument(source: ReversalSourceView) {
@@ -102,12 +108,12 @@ function viewSourceDocument(source: ReversalSourceView) {
   void router.push({
     name: source.resourceRouteName,
     params: routeValues(source.resourceRouteParams),
-    query: routeValues(source.resourceRouteQuery),
+    query: queryWithReturnTo(routeValues(source.resourceRouteQuery), currentRouteReturnTo(route)),
   })
 }
 
 async function postMaterialReturn() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认过账生产退料“${record.value.returnNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认过账生产退料“${record.value.returnNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -122,7 +128,7 @@ async function postMaterialReturn() {
 }
 
 async function cancelMaterialReturn() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认取消生产退料“${record.value.returnNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认取消生产退料“${record.value.returnNo}”？`))) {
     return
   }
   actionError.value = ''

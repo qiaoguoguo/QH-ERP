@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   inventoryApi,
   type InventoryDocumentDetailRecord,
@@ -209,7 +210,11 @@ async function saveDocument() {
     const result = editingRecord.value
       ? await inventoryApi.documents.update(editingRecord.value.id, payload)
       : await inventoryApi.documents.create(payload)
-    await router.push({ name: 'inventory-document-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'inventory-document-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = errorMessage(caught)
   } finally {
@@ -219,7 +224,11 @@ async function saveDocument() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'inventory-document-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'inventory-document-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'inventory-documents' })
@@ -258,10 +267,10 @@ onMounted(() => {
           <el-input :model-value="documentTypeLabel(form.documentType)" name="inventory-document-type" disabled />
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="form.businessDate"
             name="inventory-document-business-date"
-            placeholder="YYYY-MM-DD"
+            placeholder="选择日期"
             :disabled="isPostedRecord"
           />
         </el-form-item>

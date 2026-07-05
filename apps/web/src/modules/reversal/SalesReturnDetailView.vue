@@ -8,11 +8,13 @@ import {
   type ReversalTraceRecord,
   type SalesReturnDetail,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { formatSalesAmount, formatSalesDateTime, formatSalesQuantity, salesErrorMessage } from '../sales/salesPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,14 +98,18 @@ async function loadDetail() {
 }
 
 function backToList() {
-  void router.push({ name: 'sales-returns' })
+  void router.push(returnLocation(route, { name: 'sales-returns' }))
 }
 
 function editSalesReturn() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'sales-return-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'sales-return-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function viewSourceDocument(source: ReversalSourceView) {
@@ -113,12 +119,12 @@ function viewSourceDocument(source: ReversalSourceView) {
   void router.push({
     name: source.resourceRouteName,
     params: routeValues(source.resourceRouteParams),
-    query: routeValues(source.resourceRouteQuery),
+    query: queryWithReturnTo(routeValues(source.resourceRouteQuery), currentRouteReturnTo(route)),
   })
 }
 
 async function postSalesReturn() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认过账销售退货“${record.value.returnNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认过账销售退货“${record.value.returnNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -133,7 +139,7 @@ async function postSalesReturn() {
 }
 
 async function cancelSalesReturn() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认取消销售退货“${record.value.returnNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认取消销售退货“${record.value.returnNo}”？`))) {
     return
   }
   actionError.value = ''

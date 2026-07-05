@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { salesApi, type ResourceId, type SalesShipmentDetailRecord } from '../../shared/api/salesApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import SalesOrderStatusTag from './SalesOrderStatusTag.vue'
@@ -13,6 +14,7 @@ import {
   salesMovementDirectionLabel,
   salesMovementTypeLabel,
 } from './salesPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -47,21 +49,29 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'sales-shipments' })
+  void router.push(returnLocation(route, { name: 'sales-shipments' }))
 }
 
 function editShipment() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'sales-shipment-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'sales-shipment-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function viewSourceOrder() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'sales-order-detail', params: { id: String(record.value.orderId) } })
+  void router.push({
+    name: 'sales-order-detail',
+    params: { id: String(record.value.orderId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function viewInventoryMovements() {
@@ -81,7 +91,7 @@ async function postShipment() {
   if (!record.value || actionLoading.value) {
     return
   }
-  if (!window.confirm(`确认过账销售出库“${record.value.shipmentNo}”？`)) {
+  if (!(await confirmAction(`确认过账销售出库“${record.value.shipmentNo}”？`))) {
     return
   }
 

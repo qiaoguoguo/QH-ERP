@@ -91,7 +91,7 @@ const receivedOrder: PurchaseOrderSummaryRecord = {
 const orderPage: PageResult<PurchaseOrderSummaryRecord> = {
   items: [draftOrder, confirmedOrder, partialOrder, receivedOrder],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 4,
   totalPages: 1,
 }
@@ -99,7 +99,7 @@ const orderPage: PageResult<PurchaseOrderSummaryRecord> = {
 const emptyOrderPage: PageResult<PurchaseOrderSummaryRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -159,7 +159,6 @@ async function mountList(permissions = [
 describe('采购订单列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     procurementApiMock.orders.list.mockResolvedValue(orderPage)
     procurementApiMock.orders.confirm.mockResolvedValue({ ...draftOrder, status: 'CONFIRMED' })
     procurementApiMock.orders.cancel.mockResolvedValue({ ...draftOrder, status: 'CANCELLED' })
@@ -195,7 +194,7 @@ describe('采购订单列表页', () => {
       expectedDateFrom: '',
       expectedDateTo: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
     expect(wrapper.text()).toContain('PO-DRAFT-001')
     expect(wrapper.text()).toContain('华东五金')
@@ -227,7 +226,7 @@ describe('采购订单列表页', () => {
       expectedDateFrom: '2026-07-08',
       expectedDateTo: '2026-07-20',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     await wrapper.find('[data-test="reset-purchase-orders"]').trigger('click')
@@ -241,7 +240,7 @@ describe('采购订单列表页', () => {
       expectedDateFrom: '',
       expectedDateTo: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 

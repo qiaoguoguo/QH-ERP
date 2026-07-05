@@ -35,7 +35,6 @@ const payment: PaymentSummaryRecord = {
 describe('付款记录列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     masterDataApiMock.suppliers.list.mockResolvedValue(page([supplier]))
     financeApiMock.payments.list.mockResolvedValue(page([payment]))
     financeApiMock.payments.post.mockResolvedValue({ ...payment, status: 'POSTED' })
@@ -66,7 +65,7 @@ describe('付款记录列表页', () => {
       dateTo: '2026-07-31',
       payableId: '10',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)

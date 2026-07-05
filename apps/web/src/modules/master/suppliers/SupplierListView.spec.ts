@@ -30,7 +30,7 @@ const supplier: PartnerRecord = {
   status: 'ENABLED',
   remark: '标准件供应',
 }
-const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 
 function mountSuppliers(permissions = ['master:supplier:view', 'master:supplier:create', 'master:supplier:update']) {
   const pinia = createPinia()

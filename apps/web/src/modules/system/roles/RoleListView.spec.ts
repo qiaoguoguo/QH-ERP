@@ -30,7 +30,7 @@ const role: RoleRecord = {
   permissionIds: [1, 2],
 }
 const disabledRole: RoleRecord = { ...role, id: 2, code: 'DISABLED_ROLE', name: '停用角色', status: 'DISABLED' }
-const emptyPage: PageResult<RoleRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<RoleRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 
 function createTestRouter() {
   return createRouter({
@@ -80,7 +80,7 @@ describe('角色管理页', () => {
   })
 
   it('展示角色列表、查询和停用状态标签', async () => {
-    apiMock.roles.list.mockResolvedValue({ items: [disabledRole], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.list.mockResolvedValue({ items: [disabledRole], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const { wrapper } = await mountRoles()
     await flushPromises()
 
@@ -91,7 +91,7 @@ describe('角色管理页', () => {
     await wrapper.find('[data-test="role-search"]').trigger('click')
     await flushPromises()
 
-    expect(apiMock.roles.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 1, pageSize: 20 })
+    expect(apiMock.roles.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 1, pageSize: 10 })
   })
 
   it('角色表单空值提交时显示校验提示', async () => {
@@ -132,7 +132,7 @@ describe('角色管理页', () => {
   })
 
   it('权限配置入口按权限出现并跳转配置页', async () => {
-    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const { router, wrapper } = await mountRoles()
     await flushPromises()
 
@@ -143,7 +143,7 @@ describe('角色管理页', () => {
   })
 
   it('没有分配权限时隐藏权限配置入口', async () => {
-    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const { wrapper } = await mountRoles(['system:role:view'])
     await flushPromises()
 
@@ -151,7 +151,7 @@ describe('角色管理页', () => {
   })
 
   it('缺少角色查看或权限树查看权限时隐藏权限配置入口', async () => {
-    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const { wrapper } = await mountRoles(['system:role:view', 'system:role:assign-permission'])
     await flushPromises()
 
@@ -159,9 +159,8 @@ describe('角色管理页', () => {
   })
 
   it('角色启停失败时展示错误并保留页面状态', async () => {
-    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.roles.list.mockResolvedValue({ items: [role], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     apiMock.roles.disable.mockRejectedValue(new Error('角色已被使用，不能停用'))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const { wrapper } = await mountRoles()
     await flushPromises()
 

@@ -145,7 +145,6 @@ async function mountDetail(
 describe('采购入库详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     procurementApiMock.receipts.post.mockResolvedValue(postedReceipt)
   })
 

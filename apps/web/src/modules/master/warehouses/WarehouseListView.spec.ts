@@ -31,7 +31,7 @@ const warehouse: WarehouseRecord = {
   status: 'ENABLED',
   remark: '生产原料存放',
 }
-const emptyPage: PageResult<WarehouseRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<WarehouseRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 
 function mountWarehouses(permissions = ['master:warehouse:view', 'master:warehouse:create', 'master:warehouse:update']) {
   const pinia = createPinia()

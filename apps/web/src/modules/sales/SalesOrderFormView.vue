@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { masterDataApi, type MaterialRecord, type PartnerRecord } from '../../shared/api/masterDataApi'
 import {
   salesApi,
@@ -192,7 +193,11 @@ async function saveOrder() {
     } else {
       result = await salesApi.orders.create(payload)
     }
-    await router.push({ name: 'sales-order-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'sales-order-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = salesErrorMessage(caught)
   } finally {
@@ -202,7 +207,11 @@ async function saveOrder() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'sales-order-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'sales-order-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'sales-orders' })
@@ -259,18 +268,18 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="订单日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="form.orderDate"
             name="sales-order-date"
-            placeholder="YYYY-MM-DD"
+            placeholder="选择日期"
             :disabled="!canEditForm"
           />
         </el-form-item>
         <el-form-item label="默认预计交付日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="form.expectedShipDate"
             name="sales-order-expected-date"
-            placeholder="YYYY-MM-DD"
+            placeholder="选择日期"
             :disabled="!canEditForm"
           />
         </el-form-item>

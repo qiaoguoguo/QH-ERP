@@ -24,7 +24,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<InventoryBalanceRecord[]>([])
@@ -113,6 +113,12 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function viewMovements(record: InventoryBalanceRecord) {
   void router.push({
     path: '/inventory/movements',
@@ -155,7 +161,6 @@ onMounted(() => {
             filterable
             clearable
             placeholder="全部仓库"
-            style="width: 170px"
           >
             <el-option
               v-for="warehouse in warehouses"
@@ -172,7 +177,6 @@ onMounted(() => {
             filterable
             clearable
             placeholder="全部物料"
-            style="width: 190px"
           >
             <el-option
               v-for="material in materials"
@@ -188,7 +192,6 @@ onMounted(() => {
             data-test="inventory-balance-material-type"
             clearable
             placeholder="全部类型"
-            style="width: 150px"
           >
             <el-option label="原材料" value="RAW_MATERIAL" />
             <el-option label="半成品" value="SEMI_FINISHED" />
@@ -265,11 +268,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

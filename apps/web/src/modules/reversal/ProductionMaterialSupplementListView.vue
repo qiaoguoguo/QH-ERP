@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   returnRefundReversalApi,
   type ProductionMaterialSupplementSummary,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import { formatSalesAmount, normalizeOptionalId } from '../sales/salesPageHelpers'
 import { formatProductionQuantity, productionErrorMessage } from '../production/productionPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -32,7 +35,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<ProductionMaterialSupplementSummary[]>([])
@@ -92,12 +95,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createMaterialSupplement() {
   void router.push({ name: 'production-material-supplement-create' })
 }
 
 function viewMaterialSupplement(record: ProductionMaterialSupplementSummary) {
-  void router.push({ name: 'production-material-supplement-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'production-material-supplement-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editMaterialSupplement(record: ProductionMaterialSupplementSummary) {
@@ -105,7 +118,7 @@ function editMaterialSupplement(record: ProductionMaterialSupplementSummary) {
 }
 
 async function postMaterialSupplement(record: ProductionMaterialSupplementSummary) {
-  if (actionLoading.value || !window.confirm(`确认过账生产补料“${record.supplementNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认过账生产补料“${record.supplementNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -121,7 +134,7 @@ async function postMaterialSupplement(record: ProductionMaterialSupplementSummar
 }
 
 async function cancelMaterialSupplement(record: ProductionMaterialSupplementSummary) {
-  if (actionLoading.value || !window.confirm(`确认取消生产补料“${record.supplementNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认取消生产补料“${record.supplementNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -170,7 +183,6 @@ onMounted(() => {
             name="material-supplement-work-order-id"
             clearable
             placeholder="工单 ID"
-            style="width: 120px"
           />
         </el-form-item>
         <el-form-item label="仓库 ID">
@@ -179,21 +191,20 @@ onMounted(() => {
             name="material-supplement-warehouse-id"
             clearable
             placeholder="仓库 ID"
-            style="width: 120px"
           />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 120px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已过账" value="POSTED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="filters.dateFrom" name="material-supplement-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="material-supplement-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="material-supplement-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="material-supplement-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-material-supplements" type="primary" @click="search">查询</el-button>
@@ -275,11 +286,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

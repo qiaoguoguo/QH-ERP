@@ -43,7 +43,7 @@ const createdUser: UserRecord = {
   displayName: '新用户',
   roles: [{ id: 1, code: 'PLANNER', name: '计划员' }],
 }
-const emptyPage: PageResult<UserRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<UserRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 const rolePage: PageResult<RoleRecord> = {
   items: [{ id: 1, code: 'PLANNER', name: '计划员', status: 'ENABLED' }],
   page: 1,
@@ -102,15 +102,15 @@ describe('用户管理页', () => {
     await wrapper.find('[data-test="user-search"]').trigger('click')
     await flushPromises()
 
-    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 1, pageSize: 20 })
+    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 1, pageSize: 10 })
 
     wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)
     await flushPromises()
-    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 2, pageSize: 20 })
+    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '计划', status: undefined, page: 2, pageSize: 10 })
 
     await wrapper.find('[data-test="user-reset"]').trigger('click')
     await flushPromises()
-    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '', status: undefined, page: 1, pageSize: 20 })
+    expect(apiMock.users.list).toHaveBeenLastCalledWith({ keyword: '', status: undefined, page: 1, pageSize: 10 })
   })
 
   it('没有创建权限时隐藏新增用户按钮', async () => {
@@ -121,8 +121,7 @@ describe('用户管理页', () => {
   })
 
   it('展示停用状态标签并可触发停用操作', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [disabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    apiMock.users.list.mockResolvedValue({ items: [disabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -134,7 +133,7 @@ describe('用户管理页', () => {
   })
 
   it('关键操作打开弹窗或调用接口', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -147,7 +146,7 @@ describe('用户管理页', () => {
   })
 
   it('重置密码使用弹窗输入的新密码', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -165,7 +164,7 @@ describe('用户管理页', () => {
   it('新增用户带角色保存成功后提交 roleIds、关闭弹窗并刷新列表', async () => {
     apiMock.users.list
       .mockResolvedValueOnce(emptyPage)
-      .mockResolvedValueOnce({ items: [createdUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+      .mockResolvedValueOnce({ items: [createdUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     apiMock.users.create.mockResolvedValue(createdUser)
     const wrapper = mountUsers()
     await flushPromises()
@@ -194,7 +193,7 @@ describe('用户管理页', () => {
   })
 
   it('用户保存失败后恢复提交按钮状态并保留错误提示', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     let rejectCreate!: (error: Error) => void
     apiMock.users.create.mockReturnValue(new Promise((_resolve, reject) => {
       rejectCreate = reject
@@ -219,7 +218,7 @@ describe('用户管理页', () => {
   })
 
   it('重置密码弱密码不提交并显示校验提示', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -235,9 +234,8 @@ describe('用户管理页', () => {
   })
 
   it('用户启停失败时展示错误提示', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [disabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [disabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     apiMock.users.enable.mockRejectedValue(new Error('账号状态已变化'))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountUsers()
     await flushPromises()
 
@@ -248,7 +246,7 @@ describe('用户管理页', () => {
   })
 
   it('角色分配失败时保留弹窗并展示错误提示', async () => {
-    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.users.list.mockResolvedValue({ items: [enabledUser], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     apiMock.users.update.mockRejectedValue(new Error('角色已停用'))
     const wrapper = mountUsers()
     await flushPromises()

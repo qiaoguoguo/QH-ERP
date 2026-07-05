@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { salesApi, type ResourceId, type SalesOrderDetailRecord } from '../../shared/api/salesApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import SalesOrderStatusTag from './SalesOrderStatusTag.vue'
@@ -12,6 +13,7 @@ import {
   salesShipmentStatusLabel,
   salesShipmentStatusTagType,
 } from './salesPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,14 +67,18 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'sales-orders' })
+  void router.push(returnLocation(route, { name: 'sales-orders' }))
 }
 
 function editOrder() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'sales-order-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'sales-order-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function createShipment() {
@@ -83,7 +89,11 @@ function createShipment() {
 }
 
 function viewShipment(shipmentId: ResourceId) {
-  void router.push({ name: 'sales-shipment-detail', params: { id: String(shipmentId) } })
+  void router.push({
+    name: 'sales-shipment-detail',
+    params: { id: String(shipmentId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
@@ -95,7 +105,7 @@ async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
     cancel: '取消',
     close: '关闭',
   }
-  if (!window.confirm(`确认${actionLabels[action]}销售订单“${record.value.orderNo}”？`)) {
+  if (!(await confirmAction(`确认${actionLabels[action]}销售订单“${record.value.orderNo}”？`))) {
     return
   }
 

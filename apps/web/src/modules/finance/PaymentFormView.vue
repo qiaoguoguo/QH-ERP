@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { financeApi, type PayableDetailRecord, type PaymentDetailRecord, type ResourceId } from '../../shared/api/financeApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import PayableStatusTag from './PayableStatusTag.vue'
@@ -95,7 +96,11 @@ async function savePayment() {
     const result = isEdit.value
       ? await financeApi.payments.update(route.params.id as ResourceId, payload)
       : await financeApi.payments.create(targetPayableId.value!, payload)
-    await router.push({ name: 'finance-payment-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'finance-payment-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = financeErrorMessage(caught)
   } finally {
@@ -105,11 +110,19 @@ async function savePayment() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'finance-payment-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'finance-payment-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   if (payable.value) {
-    void router.push({ name: 'finance-payable-detail', params: { id: String(payable.value.id) } })
+    void router.push({
+      name: 'finance-payable-detail',
+      params: { id: String(payable.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   }
 }
 
@@ -142,7 +155,7 @@ onMounted(loadData)
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
         <el-form-item label="付款日期">
-          <el-input v-model="form.paymentDate" name="payment-date" placeholder="YYYY-MM-DD" :disabled="isReadonlyEdit" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.paymentDate" name="payment-date" placeholder="选择日期" :disabled="isReadonlyEdit" />
         </el-form-item>
         <el-form-item label="付款金额">
           <el-input v-model="form.amount" name="payment-amount" placeholder="0.00" :disabled="isReadonlyEdit" />

@@ -4,8 +4,11 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { SalesShipmentDetailRecord } from '../../shared/api/salesApi'
+import { useConfirmActionMock } from '../../test/setup'
 import { useAuthStore } from '../../stores/authStore'
 import SalesShipmentDetailView from './SalesShipmentDetailView.vue'
+
+const confirmActionMock = useConfirmActionMock()
 
 const salesApiMock = vi.hoisted(() => ({
   shipments: {
@@ -147,7 +150,6 @@ async function mountDetail(
 describe('销售出库详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     salesApiMock.shipments.post.mockResolvedValue(postedShipment)
   })
 
@@ -214,7 +216,7 @@ describe('销售出库详情页', () => {
 
     await wrapper.find('[data-test="post-sales-shipment-detail"]').trigger('click')
     await flushPromises()
-    expect(window.confirm).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
+    expect(confirmActionMock).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
     expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700)
     expect(salesApiMock.shipments.get).toHaveBeenCalledTimes(2)
 

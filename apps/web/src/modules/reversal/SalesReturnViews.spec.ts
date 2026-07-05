@@ -207,7 +207,7 @@ const salesReturnSource = {
   ],
 }
 
-const page = <T>(items: T[]) => ({ items, page: 1, pageSize: 20, total: items.length })
+const page = <T>(items: T[], pageSize = 10) => ({ items, page: 1, pageSize, total: items.length })
 
 async function mountReversalView(component: Component, path: string, permissions: string[]) {
   const pinia = createPinia()
@@ -244,14 +244,13 @@ async function mountReversalView(component: Component, path: string, permissions
 describe('销售退货前端页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     returnRefundReversalApiMock.salesReturns.list.mockResolvedValue(page([salesReturnDetail]))
     returnRefundReversalApiMock.salesReturns.get.mockResolvedValue(salesReturnDetail)
     returnRefundReversalApiMock.salesReturns.create.mockResolvedValue({ ...salesReturnDetail, status: 'DRAFT' })
     returnRefundReversalApiMock.salesReturns.update.mockResolvedValue({ ...salesReturnDetail, remark: '更新退货' })
     returnRefundReversalApiMock.salesReturns.post.mockResolvedValue({ ...salesReturnDetail, status: 'POSTED' })
     returnRefundReversalApiMock.salesReturns.cancel.mockResolvedValue({ ...salesReturnDetail, status: 'CANCELLED' })
-    returnRefundReversalApiMock.salesReturnSources.list.mockResolvedValue(page([salesReturnSource]))
+    returnRefundReversalApiMock.salesReturnSources.list.mockResolvedValue(page([salesReturnSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(salesReturnDetail.traces)
   })
 
@@ -310,6 +309,11 @@ describe('销售退货前端页面', () => {
     expect(wrapper.text()).toContain('新建销售退货')
     expect(wrapper.text()).toContain('SS202607050001')
     expect(wrapper.text()).toContain('可退数量')
+    expect(returnRefundReversalApiMock.salesReturnSources.list).toHaveBeenCalledWith({
+      keyword: '',
+      page: 1,
+      pageSize: 20,
+    })
     await wrapper.find('input[name="sales-return-business-date"]').setValue('2026-07-05')
     await wrapper.find('textarea[name="sales-return-remark"]').setValue('客户退货')
     await wrapper.find('input[name="sales-return-line-quantity-101"]').setValue('2.000000')

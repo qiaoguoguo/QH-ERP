@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeApi, type ReceiptDetailRecord, type ResourceId } from '../../shared/api/financeApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ReceiptStatusTag from './ReceiptStatusTag.vue'
@@ -10,6 +11,7 @@ import {
   financePermissions,
   formatFinanceAmount,
 } from './financePageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -41,18 +43,26 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'finance-receipts' })
+  void router.push(returnLocation(route, { name: 'finance-receipts' }))
 }
 
 function editReceipt() {
   if (record.value) {
-    void router.push({ name: 'finance-receipt-edit', params: { id: String(record.value.id) } })
+    void router.push({
+    name: 'finance-receipt-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
   }
 }
 
 function viewReceivable() {
   if (record.value) {
-    void router.push({ name: 'finance-receivable-detail', params: { id: String(record.value.receivableId) } })
+    void router.push({
+      name: 'finance-receivable-detail',
+      params: { id: String(record.value.receivableId) },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
   }
 }
 
@@ -61,7 +71,7 @@ async function runReceiptAction(action: 'post' | 'cancel') {
     return
   }
   const label = action === 'post' ? '过账' : '取消'
-  if (!window.confirm(`确认${label}收款“${record.value.receiptNo}”，金额 ${formatFinanceAmount(record.value.amount)}？`)) {
+  if (!(await confirmAction(`确认${label}收款“${record.value.receiptNo}”，金额 ${formatFinanceAmount(record.value.amount)}？`))) {
     return
   }
 

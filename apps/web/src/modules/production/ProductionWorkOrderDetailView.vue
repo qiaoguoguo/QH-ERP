@@ -7,6 +7,7 @@ import {
   type WorkOrderCostSummaryRecord,
 } from '../../shared/api/costCollectionApi'
 import { productionApi, type ProductionWorkOrderDetailRecord, type ResourceId } from '../../shared/api/productionApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import CostSourceTypeTag from '../cost/CostSourceTypeTag.vue'
 import CostTypeTag from '../cost/CostTypeTag.vue'
@@ -25,6 +26,7 @@ import {
   formatProductionQuantity,
   productionErrorMessage,
 } from './productionPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -103,11 +105,19 @@ async function loadCostSummary(workOrderId: ResourceId) {
   }
 }
 
+function backToList() {
+  void router.push(returnLocation(route, { name: 'production-work-orders' }))
+}
+
 function editRecord() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'production-work-order-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'production-work-order-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function createMaterialIssue() {
@@ -139,11 +149,19 @@ function createCostRecord() {
 }
 
 function viewCostRecord(costRecord: CostRecordSummaryRecord) {
-  void router.push({ name: 'cost-record-detail', params: { id: String(costRecord.id) } })
+  void router.push({
+    name: 'cost-record-detail',
+    params: { id: String(costRecord.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editCostRecord(costRecord: CostRecordSummaryRecord) {
-  void router.push({ name: 'cost-record-edit', params: { id: String(costRecord.id) } })
+  void router.push({
+    name: 'cost-record-edit',
+    params: { id: String(costRecord.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 async function runAction(action: 'release' | 'complete' | 'cancel') {
@@ -155,7 +173,7 @@ async function runAction(action: 'release' | 'complete' | 'cancel') {
     complete: '完成',
     cancel: '取消',
   }
-  if (!window.confirm(`确认${labels[action]}生产工单“${record.value.workOrderNo}”？`)) {
+  if (!(await confirmAction(`确认${labels[action]}生产工单“${record.value.workOrderNo}”？`))) {
     return
   }
 
@@ -189,7 +207,7 @@ async function postExecutionDocument(
     actionError.value = `缺少${config.label}过账权限`
     return
   }
-  if (!window.confirm(`确认过账${config.label}“${documentNo}”？过账会影响生产执行和库存结果，过账后不可撤销。`)) {
+  if (!(await confirmAction(`确认过账${config.label}“${documentNo}”？过账会影响生产执行和库存结果，过账后不可撤销。`))) {
     return
   }
 
@@ -217,6 +235,7 @@ onMounted(loadRecord)
 <template>
   <MasterDataTableView title="生产工单详情" description="查看工单计划、BOM 快照、生产执行记录和库存流水追溯。">
     <template #actions>
+      <el-button data-test="back-production-work-order-list" @click="backToList">返回列表</el-button>
       <el-button v-if="canEdit" data-test="edit-production-work-order-detail" type="primary" @click="editRecord">
         编辑
       </el-button>

@@ -39,7 +39,6 @@ const draftReceipt: ReceiptDetailRecord = {
 describe('收款详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     financeApiMock.receipts.get.mockResolvedValue(draftReceipt)
     financeApiMock.receipts.post.mockResolvedValue({ ...draftReceipt, status: 'POSTED' })
     financeApiMock.receipts.cancel.mockResolvedValue({ ...draftReceipt, status: 'CANCELLED' })

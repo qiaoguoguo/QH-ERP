@@ -9,6 +9,7 @@ import {
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
@@ -46,7 +47,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<InventoryMovementRecord[]>([])
@@ -160,6 +161,12 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function canViewSourceDocument(record: InventoryMovementRecord) {
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     return authStore.hasPermission('procurement:receipt:view')
@@ -175,15 +182,27 @@ function canViewSourceDocument(record: InventoryMovementRecord) {
 
 function viewSourceDocument(record: InventoryMovementRecord) {
   if (record.sourceType === 'PURCHASE_RECEIPT') {
-    void router.push({ name: 'procurement-receipt-detail', params: { id: String(record.sourceId) } })
+    void router.push({
+      name: 'procurement-receipt-detail',
+      params: { id: String(record.sourceId) },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
     return
   }
   if (record.sourceType === 'SALES_SHIPMENT') {
-    void router.push({ name: 'sales-shipment-detail', params: { id: String(record.sourceId) } })
+    void router.push({
+      name: 'sales-shipment-detail',
+      params: { id: String(record.sourceId) },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
     return
   }
   if (record.sourceType === 'INVENTORY_DOCUMENT') {
-    void router.push({ name: 'inventory-document-detail', params: { id: String(record.sourceId) } })
+    void router.push({
+      name: 'inventory-document-detail',
+      params: { id: String(record.sourceId) },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
   }
 }
 
@@ -219,7 +238,6 @@ onMounted(() => {
             filterable
             clearable
             placeholder="全部仓库"
-            style="width: 170px"
           >
             <el-option
               v-for="warehouse in warehouses"
@@ -236,7 +254,6 @@ onMounted(() => {
             filterable
             clearable
             placeholder="全部物料"
-            style="width: 190px"
           >
             <el-option
               v-for="material in materials"
@@ -252,7 +269,6 @@ onMounted(() => {
             data-test="inventory-movement-type"
             clearable
             placeholder="全部类型"
-            style="width: 140px"
           >
             <el-option label="期初" value="OPENING" />
             <el-option label="调增" value="ADJUSTMENT_INCREASE" />
@@ -269,26 +285,23 @@ onMounted(() => {
             data-test="inventory-movement-direction"
             clearable
             placeholder="全部方向"
-            style="width: 120px"
           >
             <el-option label="入库" value="IN" />
             <el-option label="出库" value="OUT" />
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.dateFrom"
             name="inventory-movement-date-from"
             placeholder="起始日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.dateTo"
             name="inventory-movement-date-to"
             placeholder="截止日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
@@ -370,11 +383,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

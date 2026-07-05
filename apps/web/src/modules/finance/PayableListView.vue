@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
 import { financeApi, type PayableStatus, type PayableSummaryRecord } from '../../shared/api/financeApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -13,8 +14,10 @@ import {
   formatFinanceAmount,
   normalizeOptionalId,
 } from './financePageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -35,7 +38,7 @@ const filters = reactive<{
   dueDateTo: '',
   sourceNo: '',
 })
-const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
+const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const suppliers = ref<PartnerRecord[]>([])
 const records = ref<PayableSummaryRecord[]>([])
 const loading = ref(true)
@@ -120,12 +123,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createPayable() {
   void router.push({ name: 'finance-payable-create' })
 }
 
 function viewPayable(record: PayableSummaryRecord) {
-  void router.push({ name: 'finance-payable-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'finance-payable-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editPayable(record: PayableSummaryRecord) {
@@ -153,7 +166,7 @@ async function runPayableAction(record: PayableSummaryRecord, action: 'confirm' 
     return
   }
   const labels = { confirm: '确认', cancel: '取消', close: '关闭' }
-  if (!window.confirm(`确认${labels[action]}应付“${record.payableNo}”？`)) {
+  if (!(await confirmAction(`确认${labels[action]}应付“${record.payableNo}”？`))) {
     return
   }
 
@@ -195,12 +208,12 @@ onMounted(() => {
           <el-input v-model="filters.keyword" name="payable-keyword" clearable placeholder="应付单、供应商或来源" />
         </el-form-item>
         <el-form-item label="供应商">
-          <el-select v-model="filters.supplierId" clearable filterable placeholder="全部供应商" style="width: 170px">
+          <el-select v-model="filters.supplierId" clearable filterable placeholder="全部供应商">
             <el-option v-for="supplier in suppliers" :key="supplier.id" :label="`${supplier.code} ${supplier.name}`" :value="supplier.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="待付款" value="CONFIRMED" />
             <el-option label="部分付款" value="PARTIALLY_PAID" />
@@ -210,19 +223,19 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="filters.dateFrom" name="payable-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="payable-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="payable-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="payable-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item label="到期日期">
-          <el-input v-model="filters.dueDateFrom" name="payable-due-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dueDateFrom" name="payable-due-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dueDateTo" name="payable-due-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dueDateTo" name="payable-due-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item label="来源单号">
-          <el-input v-model="filters.sourceNo" name="payable-source-no" clearable placeholder="采购入库" style="width: 150px" />
+          <el-input v-model="filters.sourceNo" name="payable-source-no" clearable placeholder="采购入库" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-payables" type="primary" @click="search">查询</el-button>
@@ -272,7 +285,7 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </div>
-    <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" />
+    <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />
   </MasterDataTableView>
 </template>
 

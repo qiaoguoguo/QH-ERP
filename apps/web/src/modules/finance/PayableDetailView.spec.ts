@@ -72,7 +72,6 @@ const detail: PayableDetailRecord = {
 describe('应付详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     financeApiMock.payables.get.mockResolvedValue(detail)
     financeApiMock.payables.close.mockResolvedValue({ ...detail, status: 'CLOSED' })
   })

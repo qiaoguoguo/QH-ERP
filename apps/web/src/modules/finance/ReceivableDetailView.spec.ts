@@ -73,7 +73,6 @@ const receivableDetail: ReceivableDetailRecord = {
 describe('应收详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     financeApiMock.receivables.get.mockResolvedValue(receivableDetail)
     financeApiMock.receivables.close.mockResolvedValue({ ...receivableDetail, status: 'CLOSED' })
   })

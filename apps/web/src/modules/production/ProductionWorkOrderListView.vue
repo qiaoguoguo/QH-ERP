@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   productionApi,
   type ProductionWorkOrderStatus,
   type ProductionWorkOrderSummaryRecord,
 } from '../../shared/api/productionApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -16,8 +17,10 @@ import {
   productionErrorMessage,
   workOrderStatusLabel,
 } from './productionPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -32,7 +35,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<ProductionWorkOrderSummaryRecord[]>([])
@@ -92,12 +95,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createWorkOrder() {
   void router.push({ name: 'production-work-order-create' })
 }
 
 function viewWorkOrder(record: ProductionWorkOrderSummaryRecord) {
-  void router.push({ name: 'production-work-order-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'production-work-order-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editWorkOrder(record: ProductionWorkOrderSummaryRecord) {
@@ -129,7 +142,7 @@ async function runWorkOrderAction(record: ProductionWorkOrderSummaryRecord, acti
     complete: '完成',
     cancel: '取消',
   }
-  if (!window.confirm(`确认${actionLabels[action]}生产工单“${record.workOrderNo}”？`)) {
+  if (!(await confirmAction(`确认${actionLabels[action]}生产工单“${record.workOrderNo}”？`))) {
     return
   }
 
@@ -172,7 +185,6 @@ onMounted(loadRecords)
             v-model="filters.status"
             clearable
             placeholder="全部状态"
-            style="width: 140px"
           >
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已发布" value="RELEASED" />
@@ -182,10 +194,10 @@ onMounted(loadRecords)
           </el-select>
         </el-form-item>
         <el-form-item label="计划日期">
-          <el-input v-model="filters.dateFrom" name="production-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="production-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="production-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="production-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-production-work-orders" type="primary" @click="search">查询</el-button>
@@ -298,11 +310,11 @@ onMounted(loadRecords)
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

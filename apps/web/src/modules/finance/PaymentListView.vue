@@ -1,15 +1,18 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
 import { financeApi, type PaymentStatus, type PaymentSummaryRecord } from '../../shared/api/financeApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import PaymentStatusTag from './PaymentStatusTag.vue'
 import { financeErrorMessage, financePermissions, formatFinanceAmount, normalizeOptionalId } from './financePageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -26,7 +29,7 @@ const filters = reactive<{
   dateTo: '',
   payableId: '',
 })
-const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
+const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const suppliers = ref<PartnerRecord[]>([])
 const records = ref<PaymentSummaryRecord[]>([])
 const loading = ref(true)
@@ -94,8 +97,18 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function viewPayment(record: PaymentSummaryRecord) {
-  void router.push({ name: 'finance-payment-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'finance-payment-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editPayment(record: PaymentSummaryRecord) {
@@ -119,7 +132,7 @@ async function runPaymentAction(record: PaymentSummaryRecord, action: 'post' | '
     return
   }
   const label = action === 'post' ? '过账' : '取消'
-  if (!window.confirm(`确认${label}付款“${record.paymentNo}”，金额 ${formatFinanceAmount(record.amount)}？`)) {
+  if (!(await confirmAction(`确认${label}付款“${record.paymentNo}”，金额 ${formatFinanceAmount(record.amount)}？`))) {
     return
   }
   actionLoading.value = true
@@ -152,25 +165,25 @@ onMounted(() => {
           <el-input v-model="filters.keyword" name="payment-keyword" clearable placeholder="付款单、应付单、供应商" />
         </el-form-item>
         <el-form-item label="供应商">
-          <el-select v-model="filters.supplierId" clearable filterable placeholder="全部供应商" style="width: 170px">
+          <el-select v-model="filters.supplierId" clearable filterable placeholder="全部供应商">
             <el-option v-for="supplier in suppliers" :key="supplier.id" :label="`${supplier.code} ${supplier.name}`" :value="supplier.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 130px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已过账" value="POSTED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="付款日期">
-          <el-input v-model="filters.dateFrom" name="payment-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="payment-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="payment-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="payment-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item label="应付 ID">
-          <el-input v-model="filters.payableId" name="payment-payable-id" clearable placeholder="应付标识" style="width: 130px" />
+          <el-input v-model="filters.payableId" name="payment-payable-id" clearable placeholder="应付标识" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-payments" type="primary" @click="search">查询</el-button>
@@ -234,7 +247,7 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </div>
-    <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" />
+    <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />
   </MasterDataTableView>
 </template>
 

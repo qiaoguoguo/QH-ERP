@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { bomApi, type BomDetailRecord, type BomSummaryRecord } from '../../shared/api/bomApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
@@ -190,7 +191,11 @@ async function saveWorkOrder() {
     const result = editingRecord.value
       ? await productionApi.workOrders.update(editingRecord.value.id, payload)
       : await productionApi.workOrders.create(payload)
-    await router.push({ name: 'production-work-order-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'production-work-order-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = productionErrorMessage(caught)
   } finally {
@@ -200,7 +205,11 @@ async function saveWorkOrder() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'production-work-order-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'production-work-order-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'production-work-orders' })
@@ -278,10 +287,10 @@ onMounted(async () => {
           <el-input v-model="form.plannedQuantity" name="production-planned-quantity" placeholder="大于 0，最多 6 位小数" :disabled="!isDraftRecord" />
         </el-form-item>
         <el-form-item label="计划开工日期">
-          <el-input v-model="form.plannedStartDate" name="production-planned-start-date" placeholder="YYYY-MM-DD" :disabled="!isDraftRecord" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.plannedStartDate" name="production-planned-start-date" placeholder="选择日期" :disabled="!isDraftRecord" />
         </el-form-item>
         <el-form-item label="计划完工日期">
-          <el-input v-model="form.plannedFinishDate" name="production-planned-finish-date" placeholder="YYYY-MM-DD" :disabled="!isDraftRecord" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.plannedFinishDate" name="production-planned-finish-date" placeholder="选择日期" :disabled="!isDraftRecord" />
         </el-form-item>
         <el-form-item label="领料仓库">
           <el-select v-model="form.issueWarehouseId" filterable placeholder="请选择领料仓库" style="width: 100%" :disabled="!isDraftRecord">

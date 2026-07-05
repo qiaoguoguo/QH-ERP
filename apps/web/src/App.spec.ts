@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import PayableStatusTag from './modules/finance/PayableStatusTag.vue'
 import PaymentStatusTag from './modules/finance/PaymentStatusTag.vue'
@@ -10,9 +10,53 @@ import ReceiptStatusTag from './modules/finance/ReceiptStatusTag.vue'
 import { financePermissions, formatFinanceAmount, financeSourceTypeText } from './modules/finance/financePageHelpers'
 import { reportPermissions } from './modules/reports/reportPageHelpers'
 import { createQhErpRouter } from './router'
+import type { AuthSession, CsrfToken } from './shared/api/accountPermissionApi'
 import { useAuthStore } from './stores/authStore'
 
+const adminLoginSession: AuthSession = {
+  user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+  menus: [],
+  permissions: [],
+  roles: [{ id: 1, code: 'SYSTEM_ADMIN', name: '系统管理员', status: 'ENABLED' }],
+}
+
+const csrfToken: CsrfToken = {
+  token: 'csrf-token',
+  headerName: 'X-CSRF-TOKEN',
+  parameterName: '_csrf',
+}
+
+function apiResponse<T>(data: T) {
+  return {
+    ok: true,
+    status: 200,
+    json: async () => ({
+      success: true,
+      code: 'OK',
+      message: '成功',
+      data,
+    }),
+  } as Response
+}
+
+function apiFailure() {
+  return {
+    ok: false,
+    status: 401,
+    json: async () => ({
+      success: false,
+      code: 'AUTH_UNAUTHORIZED',
+      message: '未登录或会话已失效',
+      data: null,
+    }),
+  } as Response
+}
+
 describe('ERP 应用骨架', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
   it('展示制造业 ERP 后台框架和当前用户菜单入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -63,8 +107,66 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('库存余额')
     expect(wrapper.text()).toContain('库存变动')
     expect(wrapper.text()).toContain('库存单据')
+    expect(wrapper.find('[data-test="app-logo"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="app-logo"]').attributes('src')).toContain('logo.ico')
+    expect(wrapper.find('[data-test="main-menu-icon-home"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="main-menu-icon-system"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="main-menu-icon-inventory"]').exists()).toBe(true)
+    expect(wrapper.findComponent({ name: 'ElMenu' }).props('uniqueOpened')).toBe(true)
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/inventory')
+  })
+
+  it('登录成功进入工作台后顶部显示当前用户而不是未登录', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiFailure())
+      .mockResolvedValueOnce(apiResponse(csrfToken))
+      .mockResolvedValueOnce(apiResponse(adminLoginSession))
+    vi.stubGlobal('fetch', fetcher)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createQhErpRouter()
+    router.push('/login')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    await wrapper.find('input[name="username"]').setValue('admin')
+    await wrapper.find('input[name="password"]').setValue('Qherp@2026!')
+    await wrapper.find('[data-test="login-submit"]').trigger('click')
+    await flushPromises()
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('home')
+    expect(useAuthStore().currentUser?.username).toBe('admin')
+    expect(wrapper.find('.header-user').text()).toContain('管理员')
+    expect(wrapper.find('.header-user').text()).not.toContain('未登录')
+  })
+
+  it('已有有效登录会话进入工作台时从当前用户接口恢复顶部用户', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse(adminLoginSession))
+    vi.stubGlobal('fetch', fetcher)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    await flushPromises()
+
+    expect(fetcher).toHaveBeenCalledWith('/api/auth/me', expect.objectContaining({ method: 'GET' }))
+    expect(useAuthStore().currentUser?.username).toBe('admin')
+    expect(wrapper.find('.header-user').text()).toContain('管理员')
+    expect(wrapper.find('.header-user').text()).not.toContain('未登录')
   })
 
   it('有库存查看权限但后端只返回库存一级菜单时补齐库存子菜单入口', async () => {

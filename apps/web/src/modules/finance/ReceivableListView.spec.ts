@@ -62,7 +62,6 @@ const partialReceivable: ReceivableSummaryRecord = {
 describe('应收台账列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     masterDataApiMock.customers.list.mockResolvedValue(page([customer]))
     financeApiMock.receivables.list.mockResolvedValue(page([draftReceivable, confirmedReceivable, partialReceivable]))
     financeApiMock.receivables.confirm.mockResolvedValue({ ...draftReceivable, status: 'CONFIRMED' })
@@ -94,7 +93,7 @@ describe('应收台账列表页', () => {
       dueDateTo: '',
       sourceNo: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
     expect(wrapper.text()).toContain('应收台账')
     expect(wrapper.text()).toContain('AR-DRAFT-001')
@@ -128,7 +127,7 @@ describe('应收台账列表页', () => {
       dueDateTo: '2026-08-31',
       sourceNo: 'SS',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     financeApiMock.receivables.list.mockResolvedValueOnce(page([]))

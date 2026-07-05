@@ -165,7 +165,6 @@ async function mountDetail(
 describe('采购订单详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     procurementApiMock.orders.confirm.mockResolvedValue(confirmedOrder)
     procurementApiMock.orders.cancel.mockResolvedValue({ ...draftOrder, status: 'CANCELLED' })
     procurementApiMock.orders.close.mockResolvedValue({ ...confirmedOrder, status: 'CLOSED' })

@@ -2,11 +2,13 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { inventoryApi, type InventoryDocumentDetailRecord, type ResourceId } from '../../shared/api/inventoryApi'
+import { returnLocation, queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage } from '../system/shared/pageHelpers'
 import InventoryStatusTag from './InventoryStatusTag.vue'
 import { adjustmentDirectionLabel, documentTypeLabel, formatQuantity } from './inventoryPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -37,18 +39,26 @@ async function loadRecord() {
   }
 }
 
+function backToList() {
+  void router.push(returnLocation(route, { name: 'inventory-documents' }))
+}
+
 function editRecord() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'inventory-document-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'inventory-document-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 async function postRecord() {
   if (!record.value || actionLoading.value) {
     return
   }
-  if (!window.confirm(`确认过账库存单据“${record.value.documentNo}”？过账会影响库存余额且不可撤销。`)) {
+  if (!(await confirmAction(`确认过账库存单据“${record.value.documentNo}”？过账会影响库存余额且不可撤销。`))) {
     return
   }
   actionError.value = ''
@@ -75,6 +85,7 @@ onMounted(loadRecord)
 <template>
   <MasterDataTableView title="库存单据详情" description="查看库存单据主表、明细和过账结果。">
     <template #actions>
+      <el-button data-test="back-inventory-document-list" @click="backToList">返回列表</el-button>
       <el-button v-if="canEdit" data-test="edit-inventory-document-detail" type="primary" @click="editRecord">
         编辑
       </el-button>

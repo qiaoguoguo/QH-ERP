@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   financeApi,
   type PayableCandidateSource,
@@ -110,7 +111,11 @@ async function savePayable() {
         ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
       })
     }
-    await router.push({ name: 'finance-payable-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'finance-payable-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = financeErrorMessage(caught)
   } finally {
@@ -120,7 +125,11 @@ async function savePayable() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'finance-payable-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'finance-payable-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'finance-payables' })
@@ -145,15 +154,15 @@ onMounted(async () => {
     </template>
 
     <div v-if="!isEdit" class="source-query">
-      <el-form inline>
+      <el-form class="query-form" inline>
         <el-form-item label="候选来源">
-          <el-input v-model="sourceFilters.keyword" name="payable-source-keyword" placeholder="采购入库、采购订单、供应商" style="width: 230px" />
+          <el-input v-model="sourceFilters.keyword" name="payable-source-keyword" placeholder="采购入库、采购订单、供应商" />
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="sourceFilters.dateFrom" name="payable-source-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="sourceFilters.dateFrom" name="payable-source-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="sourceFilters.dateTo" name="payable-source-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="sourceFilters.dateTo" name="payable-source-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-payable-sources" @click="loadCandidates">查询来源</el-button>
@@ -209,7 +218,7 @@ onMounted(async () => {
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
         <el-form-item label="到期日期">
-          <el-input v-model="form.dueDate" name="payable-due-date" placeholder="YYYY-MM-DD" :disabled="isReadonlyEdit" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.dueDate" name="payable-due-date" placeholder="选择日期" :disabled="isReadonlyEdit" />
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" name="payable-remark" placeholder="可选" :disabled="isReadonlyEdit" />

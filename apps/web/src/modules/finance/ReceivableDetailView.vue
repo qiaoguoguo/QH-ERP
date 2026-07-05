@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeApi, type ReceivableDetailRecord, type ResourceId } from '../../shared/api/financeApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
@@ -12,6 +13,7 @@ import {
   financePermissions,
   formatFinanceAmount,
 } from './financePageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,12 +50,16 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'finance-receivables' })
+  void router.push(returnLocation(route, { name: 'finance-receivables' }))
 }
 
 function editReceivable() {
   if (record.value) {
-    void router.push({ name: 'finance-receivable-edit', params: { id: String(record.value.id) } })
+    void router.push({
+    name: 'finance-receivable-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
   }
 }
 
@@ -64,15 +70,27 @@ function createReceipt() {
 }
 
 function viewReceipt(id: ResourceId) {
-  void router.push({ name: 'finance-receipt-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'finance-receipt-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function viewSalesOrder(id: ResourceId) {
-  void router.push({ name: 'sales-order-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'sales-order-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function viewSalesShipment(id: ResourceId) {
-  void router.push({ name: 'sales-shipment-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'sales-shipment-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function auditText(audit: unknown) {
@@ -91,7 +109,7 @@ async function runReceivableAction(action: 'confirm' | 'cancel' | 'close') {
     return
   }
   const labels = { confirm: '确认', cancel: '取消', close: '关闭' }
-  if (!window.confirm(`确认${labels[action]}应收“${record.value.receivableNo}”？`)) {
+  if (!(await confirmAction(`确认${labels[action]}应收“${record.value.receivableNo}”？`))) {
     return
   }
 

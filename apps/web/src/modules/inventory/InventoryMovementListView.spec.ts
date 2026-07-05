@@ -143,7 +143,7 @@ const salesShipmentMovement: InventoryMovementRecord = {
 const movementPage: PageResult<InventoryMovementRecord> = {
   items: [movement],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 1,
   totalPages: 1,
 }
@@ -221,7 +221,7 @@ describe('库存变动流水页', () => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({
       items: [productionIssueMovement, productionReceiptMovement],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 2,
       totalPages: 1,
     })
@@ -258,8 +258,35 @@ describe('库存变动流水页', () => {
       dateFrom: '2026-07-01',
       dateTo: '2026-07-03',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
+  })
+
+  it('默认每页显示 10 条并支持切换每页条数', async () => {
+    const { wrapper } = await mountMovements()
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 10,
+    }))
+
+    const pagination = wrapper.findComponent({ name: 'ElPagination' })
+    expect(pagination.props('pageSize')).toBe(10)
+    expect(pagination.props('pageSizes')).toEqual([10, 20, 50, 100])
+
+    pagination.vm.$emit('current-change', 2)
+    await flushPromises()
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 2,
+      pageSize: 10,
+    }))
+
+    pagination.vm.$emit('size-change', 50)
+    await flushPromises()
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 50,
+    }))
   })
 
   it('支持从路由查询参数初始化销售出库流水类型', async () => {
@@ -349,7 +376,7 @@ describe('库存变动流水页', () => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({
       items: [purchaseReceiptMovement],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 1,
       totalPages: 1,
     })
@@ -367,7 +394,7 @@ describe('库存变动流水页', () => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({
       items: [purchaseReceiptMovement],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 1,
       totalPages: 1,
     })
@@ -381,7 +408,7 @@ describe('库存变动流水页', () => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({
       items: [salesShipmentMovement],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 1,
       totalPages: 1,
     })
@@ -399,7 +426,7 @@ describe('库存变动流水页', () => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({
       items: [salesShipmentMovement],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 1,
       totalPages: 1,
     })

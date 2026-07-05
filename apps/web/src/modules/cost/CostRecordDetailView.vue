@@ -6,6 +6,7 @@ import {
   type CostRecordDetailRecord,
   type ResourceId,
 } from '../../shared/api/costCollectionApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import CostSourceTypeTag from './CostSourceTypeTag.vue'
@@ -43,21 +44,29 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'cost-records' })
+  void router.push(returnLocation(route, { name: 'cost-records' }))
 }
 
 function viewWorkOrder() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'production-work-order-detail', params: { id: String(record.value.workOrderId) } })
+  void router.push({
+    name: 'production-work-order-detail',
+    params: { id: String(record.value.workOrderId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editRecord() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'cost-record-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'cost-record-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 onMounted(loadRecord)

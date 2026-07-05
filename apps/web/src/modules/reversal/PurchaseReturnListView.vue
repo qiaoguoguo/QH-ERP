@@ -1,18 +1,21 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   returnRefundReversalApi,
   type PurchaseReturnSummary,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import { formatSalesAmount, formatSalesQuantity, normalizeOptionalId, salesErrorMessage } from '../sales/salesPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -31,7 +34,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<PurchaseReturnSummary[]>([])
@@ -91,12 +94,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createPurchaseReturn() {
   void router.push({ name: 'procurement-return-create' })
 }
 
 function viewPurchaseReturn(record: PurchaseReturnSummary) {
-  void router.push({ name: 'procurement-return-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'procurement-return-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editPurchaseReturn(record: PurchaseReturnSummary) {
@@ -104,7 +117,7 @@ function editPurchaseReturn(record: PurchaseReturnSummary) {
 }
 
 async function postPurchaseReturn(record: PurchaseReturnSummary) {
-  if (actionLoading.value || !window.confirm(`确认过账采购退货“${record.returnNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认过账采购退货“${record.returnNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -120,7 +133,7 @@ async function postPurchaseReturn(record: PurchaseReturnSummary) {
 }
 
 async function cancelPurchaseReturn(record: PurchaseReturnSummary) {
-  if (actionLoading.value || !window.confirm(`确认取消采购退货“${record.returnNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认取消采购退货“${record.returnNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -169,7 +182,6 @@ onMounted(() => {
             name="purchase-return-supplier-id"
             clearable
             placeholder="供应商 ID"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item label="仓库 ID">
@@ -178,21 +190,20 @@ onMounted(() => {
             name="purchase-return-warehouse-id"
             clearable
             placeholder="仓库 ID"
-            style="width: 120px"
           />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 120px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已过账" value="POSTED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="filters.dateFrom" name="purchase-return-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="purchase-return-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="purchase-return-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="purchase-return-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-purchase-returns" type="primary" @click="search">查询</el-button>
@@ -274,11 +285,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

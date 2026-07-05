@@ -77,7 +77,7 @@ const completedWorkOrder: ProductionWorkOrderSummaryRecord = {
 const workOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
   items: [draftWorkOrder, releasedWorkOrder, inProgressWorkOrder, completedWorkOrder],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 4,
   totalPages: 1,
 }
@@ -85,7 +85,7 @@ const workOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
 const emptyWorkOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -145,7 +145,6 @@ async function mountList(permissions = [
 describe('生产工单列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     productionApiMock.workOrders.list.mockResolvedValue(workOrderPage)
     productionApiMock.workOrders.release.mockResolvedValue(releasedWorkOrder)
     productionApiMock.workOrders.complete.mockResolvedValue(completedWorkOrder)
@@ -165,7 +164,7 @@ describe('生产工单列表页', () => {
       dateFrom: '',
       dateTo: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
     expect(wrapper.text()).toContain('WO-DRAFT-001')
     expect(wrapper.text()).toContain('FG-001 成品 A')
@@ -191,7 +190,7 @@ describe('生产工单列表页', () => {
       dateFrom: '2026-07-01',
       dateTo: '2026-07-31',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     await wrapper.find('[data-test="reset-production-work-orders"]').trigger('click')
@@ -202,7 +201,7 @@ describe('生产工单列表页', () => {
       dateFrom: '',
       dateTo: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 

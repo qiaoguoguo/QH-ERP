@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   returnRefundReversalApi,
   type ProductionMaterialReturnDetail,
@@ -274,7 +275,11 @@ async function submit() {
     const detail = isEdit.value && routeId.value
       ? await returnRefundReversalApi.productionMaterialReturns.update(routeId.value, payload)
       : await returnRefundReversalApi.productionMaterialReturns.create(payload as ProductionMaterialReturnPayload)
-    await router.push({ name: 'production-material-return-detail', params: { id: String(detail.id) } })
+    await router.push({
+      name: 'production-material-return-detail',
+      params: { id: String(detail.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     submitError.value = productionErrorMessage(caught)
   } finally {
@@ -290,7 +295,11 @@ function returnToDetail() {
   if (!routeId.value) {
     return
   }
-  void router.push({ name: 'production-material-return-detail', params: { id: routeId.value } })
+  void router.push({
+    name: 'production-material-return-detail',
+    params: { id: routeId.value },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 onMounted(() => {
@@ -369,10 +378,10 @@ onMounted(() => {
             <span>{{ sourceDisplayText }}</span>
           </el-form-item>
           <el-form-item label="业务日期">
-            <el-input
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
               v-model="form.businessDate"
               name="material-return-business-date"
-              placeholder="YYYY-MM-DD"
+              placeholder="选择日期"
               style="width: 180px"
             />
           </el-form-item>

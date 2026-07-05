@@ -56,7 +56,7 @@ const reportPage = <T>(summary: T, items: unknown[], total = items.length) => ({
   summary,
   items,
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total,
   totalPages: total > 0 ? 1 : 0,
 })
@@ -213,7 +213,7 @@ describe('经营报表页面', () => {
         },
       ],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 2,
       totalPages: 1,
     })
@@ -323,7 +323,7 @@ describe('经营报表页面', () => {
         },
       ],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 2,
       totalPages: 1,
     })
@@ -465,7 +465,7 @@ describe('经营报表页面', () => {
         },
       ],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 1,
       totalPages: 1,
     })
@@ -505,7 +505,7 @@ describe('经营报表页面', () => {
     businessReportingApiMock.exceptions.traces.list.mockResolvedValue({
       items: [],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 0,
       totalPages: 0,
     })
@@ -515,6 +515,8 @@ describe('经营报表页面', () => {
     const { wrapper } = await mountReport(ReportOverviewView, '/reports/overview')
 
     expect(wrapper.text()).toContain('经营概览')
+    expect(wrapper.find('[data-test="report-date-picker-report-date-from"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="report-date-picker-report-date-to"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('2026-07-01')
     expect(wrapper.text()).toContain('2026-07-31')
     expect(wrapper.text()).toContain('120000.00')
@@ -630,6 +632,7 @@ describe('经营报表页面', () => {
       dateFrom: '2026-07-01',
       dateTo: '2026-07-31',
     }))
+    expect(wrapper.find('[data-test="report-trace-drawer"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('来源追溯')
     expect(wrapper.text()).toContain('SS202607040001')
     expect(wrapper.text()).toContain('销售退货')
@@ -642,10 +645,12 @@ describe('经营报表页面', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('sales-shipment-detail')
     expect(router.currentRoute.value.params.id).toBe('1001')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/sales')
     await wrapper.findAll('[data-test="view-trace-source"]')[1].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('sales-return-detail')
     expect(router.currentRoute.value.params.id).toBe('5001')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/sales')
 
     businessReportingApiMock.sales.list.mockResolvedValueOnce(reportPage({
       shipmentQuantity: '0.000',
@@ -691,15 +696,18 @@ describe('经营报表页面', () => {
     expect(wrapper.text()).toContain('生产补料')
     expect(wrapper.text()).toContain('PMR202607050001')
     expect(wrapper.text()).toContain('PMS202607050001')
+    expect(wrapper.find('[data-test="report-trace-drawer"]').exists()).toBe(true)
 
     await wrapper.findAll('[data-test="view-trace-source"]')[0].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('production-material-return-detail')
     expect(router.currentRoute.value.params.id).toBe('7001')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/inventory')
     await wrapper.findAll('[data-test="view-trace-source"]')[1].trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('production-material-supplement-detail')
     expect(router.currentRoute.value.params.id).toBe('7002')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/inventory')
   })
 
   it('采购、生产、成本报表展示原发生、反向发生和净额口径', async () => {
@@ -725,6 +733,8 @@ describe('经营报表页面', () => {
     expect(costWrapper.text()).toContain('补料成本')
     expect(costWrapper.text()).toContain('材料净成本')
     expect(costWrapper.text()).toContain('5200.00')
+    expect(costWrapper.find('[data-test="report-cost-type"]').text()).toBe('材料')
+    expect(costWrapper.text()).not.toContain('MATERIAL')
   })
 
   it('往来收付报表展示往来冲减净额并按冲减来源追溯', async () => {
@@ -748,11 +758,13 @@ describe('经营报表页面', () => {
     expect(businessReportingApiMock.settlement.traces.list).toHaveBeenCalledWith(expect.objectContaining({
       traceKey: 'settlement-summary:SETTLEMENT_ADJUSTMENT:8001',
     }))
+    expect(wrapper.find('[data-test="report-trace-drawer"]').exists()).toBe(true)
     expect(wrapper.text()).toContain('往来冲减')
     await wrapper.find('[data-test="view-trace-source"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('finance-settlement-adjustment-detail')
     expect(router.currentRoute.value.params.id).toBe('8001')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/settlement')
   })
 
   it('经营异常清单支持异常追溯，来源受限行不展示追溯入口和敏感来源字段', async () => {

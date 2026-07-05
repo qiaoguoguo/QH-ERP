@@ -333,7 +333,7 @@ const materialSupplementSource = {
   ],
 }
 
-const page = <T>(items: T[]) => ({ items, page: 1, pageSize: 20, total: items.length })
+const page = <T>(items: T[], pageSize = 10) => ({ items, page: 1, pageSize, total: items.length })
 
 async function mountReversalView(component: Component, path: string, permissions: string[]) {
   const pinia = createPinia()
@@ -375,21 +375,20 @@ async function mountReversalView(component: Component, path: string, permissions
 describe('生产退料补料前端页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     returnRefundReversalApiMock.productionMaterialReturns.list.mockResolvedValue(page([materialReturnDetail]))
     returnRefundReversalApiMock.productionMaterialReturns.get.mockResolvedValue(materialReturnDetail)
     returnRefundReversalApiMock.productionMaterialReturns.create.mockResolvedValue({ ...materialReturnDetail, status: 'DRAFT' })
     returnRefundReversalApiMock.productionMaterialReturns.update.mockResolvedValue({ ...materialReturnDetail, remark: '更新退料' })
     returnRefundReversalApiMock.productionMaterialReturns.post.mockResolvedValue({ ...materialReturnDetail, status: 'POSTED' })
     returnRefundReversalApiMock.productionMaterialReturns.cancel.mockResolvedValue({ ...materialReturnDetail, status: 'CANCELLED' })
-    returnRefundReversalApiMock.productionMaterialReturnSources.list.mockResolvedValue(page([materialReturnSource]))
+    returnRefundReversalApiMock.productionMaterialReturnSources.list.mockResolvedValue(page([materialReturnSource], 20))
     returnRefundReversalApiMock.productionMaterialSupplements.list.mockResolvedValue(page([materialSupplementDetail]))
     returnRefundReversalApiMock.productionMaterialSupplements.get.mockResolvedValue(materialSupplementDetail)
     returnRefundReversalApiMock.productionMaterialSupplements.create.mockResolvedValue({ ...materialSupplementDetail, status: 'DRAFT' })
     returnRefundReversalApiMock.productionMaterialSupplements.update.mockResolvedValue({ ...materialSupplementDetail, remark: '更新补料' })
     returnRefundReversalApiMock.productionMaterialSupplements.post.mockResolvedValue({ ...materialSupplementDetail, status: 'POSTED' })
     returnRefundReversalApiMock.productionMaterialSupplements.cancel.mockResolvedValue({ ...materialSupplementDetail, status: 'CANCELLED' })
-    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValue(page([materialSupplementSource]))
+    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValue(page([materialSupplementSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(materialReturnDetail.traces)
   })
 
@@ -464,6 +463,11 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('MI202607050001')
     expect(wrapper.text()).toContain('已领数量')
     expect(wrapper.text()).toContain('可退数量')
+    expect(returnRefundReversalApiMock.productionMaterialReturnSources.list).toHaveBeenCalledWith({
+      keyword: '',
+      page: 1,
+      pageSize: 20,
+    })
     await wrapper.find('input[name="material-return-business-date"]').setValue('2026-07-05')
     await wrapper.find('textarea[name="material-return-remark"]').setValue('余料退回')
     await wrapper.find('input[name="material-return-line-quantity-401"]').setValue('3.000000')
@@ -489,6 +493,11 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('可用库存')
     expect(wrapper.text()).not.toContain('已退数量')
     expect(wrapper.text()).not.toContain('可退数量')
+    expect(returnRefundReversalApiMock.productionMaterialSupplementSources.list).toHaveBeenCalledWith({
+      keyword: '',
+      page: 1,
+      pageSize: 20,
+    })
     await wrapper.find('input[name="material-supplement-business-date"]').setValue('2026-07-05')
     await wrapper.find('textarea[name="material-supplement-remark"]').setValue('损耗补料')
     await wrapper.find('input[name="material-supplement-line-quantity-501"]').setValue('2.000000')

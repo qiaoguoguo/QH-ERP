@@ -139,7 +139,7 @@ const paymentSource = {
   status: 'POSTED',
 }
 
-const page = <T>(items: T[]) => ({ items, page: 1, pageSize: 20, total: items.length })
+const page = <T>(items: T[], pageSize = 10) => ({ items, page: 1, pageSize, total: items.length })
 
 async function mountSettlementView(component: Component, path: string, permissions: string[]) {
   const pinia = createPinia()
@@ -175,14 +175,13 @@ async function mountSettlementView(component: Component, path: string, permissio
 describe('往来冲减前端页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     returnRefundReversalApiMock.settlementAdjustments.list.mockResolvedValue(page([settlementAdjustmentDetail]))
     returnRefundReversalApiMock.settlementAdjustments.get.mockResolvedValue(settlementAdjustmentDetail)
     returnRefundReversalApiMock.settlementAdjustments.create.mockResolvedValue(settlementAdjustmentDetail)
     returnRefundReversalApiMock.settlementAdjustments.update.mockResolvedValue({ ...settlementAdjustmentDetail, amount: '70.00' })
     returnRefundReversalApiMock.settlementAdjustments.post.mockResolvedValue({ ...settlementAdjustmentDetail, status: 'POSTED' })
     returnRefundReversalApiMock.settlementAdjustments.cancel.mockResolvedValue({ ...settlementAdjustmentDetail, status: 'CANCELLED' })
-    returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValue(page([settlementAdjustmentSource, paymentSource]))
+    returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValue(page([settlementAdjustmentSource, paymentSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue([settlementTrace])
   })
 
@@ -226,6 +225,13 @@ describe('往来冲减前端页面', () => {
     expect(wrapper.text()).toContain('付款记录')
     expect(wrapper.text()).not.toContain('生产退料')
     expect(wrapper.text()).not.toContain('生产补料')
+    expect(returnRefundReversalApiMock.settlementAdjustmentSources.list).toHaveBeenCalledWith({
+      keyword: '',
+      settlementSide: 'RECEIVABLE',
+      sourceType: 'RECEIPT',
+      page: 1,
+      pageSize: 20,
+    })
 
     await wrapper.find('input[name="settlement-adjustment-amount"]').setValue('401.00')
     await wrapper.find('[data-test="submit-settlement-adjustment"]').trigger('click')
@@ -250,6 +256,38 @@ describe('往来冲减前端页面', () => {
       remark: '客户退款冲减',
     }))
     expect(router.currentRoute.value.name).toBe('finance-settlement-adjustment-detail')
+  })
+
+  it('新建往来冲减可在多候选来源之间切换并按选中来源校验提交', async () => {
+    const { wrapper } = await mountSettlementView(SettlementAdjustmentFormView, '/finance/settlement-adjustments/create', ['finance:settlement-adjustment:create'])
+
+    expect(wrapper.find('[data-test="settlement-adjustment-selected-source"]').text()).toContain('RCPT202607050001')
+
+    await wrapper.find('[data-test="select-settlement-adjustment-source-PAYMENT-71-81"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="settlement-adjustment-selected-source"]').text()).toContain('PAY202607050001')
+    expect(wrapper.find('[data-test="settlement-adjustment-selected-target"]').text()).toContain('AP202607050001')
+    expect(wrapper.find('[data-test="settlement-adjustment-adjustable-amount"]').text()).toContain('220.00')
+
+    await wrapper.find('input[name="settlement-adjustment-amount"]').setValue('221.00')
+    await wrapper.find('[data-test="submit-settlement-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('冲减金额不能超过可冲金额')
+    expect(returnRefundReversalApiMock.settlementAdjustments.create).not.toHaveBeenCalled()
+
+    await wrapper.find('input[name="settlement-adjustment-amount"]').setValue('80.00')
+    await wrapper.find('[data-test="submit-settlement-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.settlementAdjustments.create).toHaveBeenCalledWith(expect.objectContaining({
+      settlementSide: 'PAYABLE',
+      sourceType: 'PAYMENT',
+      sourceId: 71,
+      targetId: 81,
+      amount: '80.00',
+    }))
   })
 
   it('候选来源刷新为空后不能提交旧来源', async () => {

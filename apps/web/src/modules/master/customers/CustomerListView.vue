@@ -5,6 +5,7 @@ import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../shared/MasterDataTableView.vue'
 import { masterStatusLabel } from '../shared/masterPageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const authStore = useAuthStore()
 
@@ -17,7 +18,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<PartnerRecord[]>([])
@@ -75,6 +76,12 @@ function resetSearch() {
 
 function changePage(page: number) {
   pagination.page = page
+  void loadRecords()
+}
+
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
   void loadRecords()
 }
 
@@ -146,7 +153,7 @@ async function saveRecord() {
 
 async function changeStatus(record: PartnerRecord) {
   const nextAction = record.status === 'DISABLED' ? '启用' : '停用'
-  if (!window.confirm(`确认${nextAction}客户“${record.name}”？`)) {
+  if (!(await confirmAction(`确认${nextAction}客户“${record.name}”？`))) {
     return
   }
   actionError.value = ''
@@ -180,7 +187,7 @@ onMounted(loadRecords)
           <el-input v-model="filters.keyword" name="record-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="启用" value="ENABLED" />
             <el-option label="停用" value="DISABLED" />
           </el-select>
@@ -230,11 +237,11 @@ onMounted(loadRecords)
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
 
     <el-dialog v-model="formVisible" :title="editingRecord ? '编辑客户' : '新增客户'" width="560px">

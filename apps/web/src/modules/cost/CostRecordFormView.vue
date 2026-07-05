@@ -11,6 +11,7 @@ import {
 } from '../../shared/api/costCollectionApi'
 import { masterDataApi, type UnitRecord } from '../../shared/api/masterDataApi'
 import { productionApi, type ProductionWorkOrderSummaryRecord } from '../../shared/api/productionApi'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import CostSourceTypeTag from './CostSourceTypeTag.vue'
@@ -254,7 +255,11 @@ async function saveRecord() {
     const result = isEdit.value
       ? await costCollectionApi.records.update(editingRecord.value!.id, payload)
       : await costCollectionApi.records.create(payload)
-    await router.push({ name: 'cost-record-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'cost-record-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = costErrorMessage(caught)
   } finally {
@@ -264,7 +269,11 @@ async function saveRecord() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'cost-record-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'cost-record-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'cost-records' })
@@ -345,7 +354,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="form.businessDate" name="cost-business-date" placeholder="YYYY-MM-DD" :disabled="!editableManualRecord" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.businessDate" name="cost-business-date" placeholder="选择日期" :disabled="!editableManualRecord" />
         </el-form-item>
         <el-form-item v-if="needsUnitPriceQuantity" label="数量">
           <el-input v-model="form.quantity" name="cost-quantity" placeholder="大于 0，最多 6 位小数" :disabled="!editableManualRecord" />
