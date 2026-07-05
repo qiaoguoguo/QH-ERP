@@ -20,6 +20,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -1346,8 +1348,9 @@ public class ReversalAdminService {
 				where l.return_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> new ReversalDocumentLine(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("source_shipment_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				canViewSource ? rs.getLong("source_shipment_line_id") : null, rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
+				rs.getString("unit_name"),
 				quantity(rs.getBigDecimal("returned_quantity_before")),
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
@@ -1390,8 +1393,9 @@ public class ReversalAdminService {
 				where l.return_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> new ReversalDocumentLine(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("source_issue_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				canViewSource ? rs.getLong("source_issue_line_id") : null, rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
+				rs.getString("unit_name"),
 				quantity(rs.getBigDecimal("returned_quantity_before")),
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
@@ -1435,8 +1439,9 @@ public class ReversalAdminService {
 				where l.supplement_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> new ReversalDocumentLine(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("work_order_material_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				canViewSource ? rs.getLong("work_order_material_id") : null, rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
+				rs.getString("unit_name"),
 				quantity(rs.getBigDecimal("issued_quantity_before")),
 				quantity(rs.getBigDecimal("available_stock_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
@@ -1466,8 +1471,9 @@ public class ReversalAdminService {
 				where l.return_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> new ReversalDocumentLine(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("source_receipt_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				canViewSource ? rs.getLong("source_receipt_line_id") : null, rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
+				rs.getString("unit_name"),
 				quantity(rs.getBigDecimal("returned_quantity_before")),
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
@@ -3364,7 +3370,8 @@ public class ReversalAdminService {
 						quantity(link.quantity()), amount(link.amount()), canViewReturn, "sales-return-detail",
 						Map.of("id", link.reverseId()), Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewShipment || !canViewReturn;
-				return new ReversalTraceRecord(traceKey(link), direction, source, reverse,
+				return new ReversalTraceRecord(traceKey(link, canViewShipment, canViewReturn), direction, source,
+						reverse,
 						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
 						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
 						restricted ? null : amount(link.amount()), restricted ? null : link.returnStatus(),
@@ -3449,7 +3456,8 @@ public class ReversalAdminService {
 						"procurement-return-detail", Map.of("id", link.reverseId()),
 						Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewReceipt || !canViewReturn;
-				return new ReversalTraceRecord(traceKey(link), direction, source, reverse,
+				return new ReversalTraceRecord(traceKey(link, canViewReceipt, canViewReturn), direction, source,
+						reverse,
 						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
 						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
 						restricted ? null : amount(link.amount()), restricted ? null : link.returnStatus(),
@@ -3561,7 +3569,8 @@ public class ReversalAdminService {
 						quantity(link.quantity()), amount(link.amount()), canViewReverse, reverseRoute,
 						Map.of("id", link.reverseId()), Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewSource || !canViewReverse;
-				return new ReversalTraceRecord(traceKey(link), direction, source, reverse,
+				return new ReversalTraceRecord(traceKey(link, canViewSource, canViewReverse), direction, source,
+						reverse,
 						restricted ? null : link.stockMovementId(), null, restricted ? null : link.costRecordId(),
 						restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
 						restricted ? null : amount(link.amount()), restricted ? null : link.reverseStatus(),
@@ -3577,14 +3586,43 @@ public class ReversalAdminService {
 				+ link.reverseId() + ":" + link.reverseLineId();
 	}
 
+	private String traceKey(TraceLinkRow link, boolean canViewSource, boolean canViewReverse) {
+		return redactedTraceKey(traceKey(link), link.sourceType(), link.sourceId(), link.sourceLineId(),
+				link.reverseType(), link.reverseId(), link.reverseLineId(), canViewSource, canViewReverse);
+	}
+
 	private String traceKey(PurchaseTraceLinkRow link) {
 		return link.sourceType() + ":" + link.sourceId() + ":" + link.sourceLineId() + ":" + link.reverseType() + ":"
 				+ link.reverseId() + ":" + link.reverseLineId();
 	}
 
+	private String traceKey(PurchaseTraceLinkRow link, boolean canViewSource, boolean canViewReverse) {
+		return redactedTraceKey(traceKey(link), link.sourceType(), link.sourceId(), link.sourceLineId(),
+				link.reverseType(), link.reverseId(), link.reverseLineId(), canViewSource, canViewReverse);
+	}
+
 	private String traceKey(ProductionTraceLinkRow link) {
 		return link.sourceType() + ":" + link.sourceId() + ":" + link.sourceLineId() + ":" + link.reverseType() + ":"
 				+ link.reverseId() + ":" + link.reverseLineId();
+	}
+
+	private String traceKey(ProductionTraceLinkRow link, boolean canViewSource, boolean canViewReverse) {
+		return redactedTraceKey(traceKey(link), link.sourceType(), link.sourceId(), link.sourceLineId(),
+				link.reverseType(), link.reverseId(), link.reverseLineId(), canViewSource, canViewReverse);
+	}
+
+	private String redactedTraceKey(String fullTraceKey, String sourceType, Long sourceId, Long sourceLineId,
+			String reverseType, Long reverseId, Long reverseLineId, boolean canViewSource, boolean canViewReverse) {
+		if (canViewSource && canViewReverse) {
+			return fullTraceKey;
+		}
+		if (canViewReverse) {
+			return reverseType + ":" + reverseId + ":" + reverseLineId;
+		}
+		if (canViewSource) {
+			return sourceType + ":" + sourceId + ":" + sourceLineId;
+		}
+		return "restricted:" + UUID.nameUUIDFromBytes(fullTraceKey.getBytes(StandardCharsets.UTF_8));
 	}
 
 	private Map<String, Object> sourceView(String sourceType, Long sourceId, Long sourceLineId, String sourceNo,

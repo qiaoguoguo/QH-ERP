@@ -270,9 +270,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				List.of("sales:return:view", "business:reversal:view"));
 		JsonNode detail = data(get("/api/admin/sales/returns/" + returnId, restricted));
 		assertRestrictedSource(detail.get("source"), "SALES_SHIPMENT");
+		assertRestrictedDocumentLine(detail.get("lines").get(0));
 		assertRestrictedSource(detail.get("lines").get(0).get("source"), "SALES_SHIPMENT_LINE");
 		assertRestrictedSource(detail.get("traces").get(0).get("source"), "SALES_SHIPMENT_LINE");
 		assertRestrictedTraceRecord(detail.get("traces").get(0));
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(detail.get("traces").get(0), "SALES_SHIPMENT",
+				shipment.shipmentId(), shipment.firstShipmentLineId());
 		assertThat(detail.get("traces").get(0).get("reverse").get("sourceId").longValue()).isEqualTo(returnId);
 
 		JsonNode listItem = data(get("/api/admin/sales/returns", restricted)).get("items").get(0);
@@ -282,6 +285,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				restricted)).get(0);
 		assertRestrictedSource(trace.get("source"), "SALES_SHIPMENT_LINE");
 		assertRestrictedTraceRecord(trace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(trace, "SALES_SHIPMENT", shipment.shipmentId(),
+				shipment.firstShipmentLineId());
 		assertThat(trace.get("restricted").booleanValue()).isTrue();
 
 		JsonNode reverseDirectionTrace = data(get(
@@ -312,6 +317,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(updated);
 		JsonNode updatedData = data(updated);
 		assertRestrictedSource(updatedData.get("source"), "SALES_SHIPMENT");
+		assertRestrictedDocumentLine(updatedData.get("lines").get(0));
 		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "SALES_SHIPMENT_LINE");
 		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
 		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
@@ -509,15 +515,20 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				List.of("procurement:return:view", "business:reversal:view"));
 		JsonNode detail = data(get("/api/admin/procurement/returns/" + returnId, restricted));
 		assertRestrictedSource(detail.get("source"), "PURCHASE_RECEIPT");
+		assertRestrictedDocumentLine(detail.get("lines").get(0));
 		assertRestrictedSource(detail.get("lines").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
 		assertRestrictedSource(detail.get("traces").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
 		assertRestrictedTraceRecord(detail.get("traces").get(0));
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(detail.get("traces").get(0), "PURCHASE_RECEIPT",
+				receipt.receiptId(), receipt.firstReceiptLineId());
 		assertThat(detail.get("traces").get(0).get("reverse").get("sourceId").longValue()).isEqualTo(returnId);
 
 		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=PURCHASE_RETURN&sourceId=" + returnId,
 				restricted)).get(0);
 		assertRestrictedSource(trace.get("source"), "PURCHASE_RECEIPT_LINE");
 		assertRestrictedTraceRecord(trace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(trace, "PURCHASE_RECEIPT", receipt.receiptId(),
+				receipt.firstReceiptLineId());
 	}
 
 	@Test
@@ -549,6 +560,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(updated);
 		JsonNode updatedData = data(updated);
 		assertRestrictedSource(updatedData.get("source"), "PURCHASE_RECEIPT");
+		assertRestrictedDocumentLine(updatedData.get("lines").get(0));
 		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
 		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
 		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
@@ -687,11 +699,22 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(updated);
 		JsonNode updatedData = data(updated);
 		assertRestrictedSource(updatedData.get("source"), "PRODUCTION_MATERIAL_ISSUE");
+		assertRestrictedDocumentLine(updatedData.get("lines").get(0));
 		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "PRODUCTION_MATERIAL_ISSUE_LINE");
 		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
 		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
 
 		assertOk(put("/api/admin/production/material-returns/" + returnId + "/post", Map.of(), admin));
+		JsonNode restrictedPosted = data(get("/api/admin/production/material-returns/" + returnId, restricted));
+		assertRestrictedDocumentLine(restrictedPosted.get("lines").get(0));
+		assertRestrictedTraceRecord(restrictedPosted.get("traces").get(0));
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(restrictedPosted.get("traces").get(0),
+				"PRODUCTION_MATERIAL_ISSUE", issue.issueId(), issue.issueLineId());
+		JsonNode restrictedTrace = data(get("/api/admin/reversal-traces?sourceType=PRODUCTION_MATERIAL_RETURN&sourceId="
+				+ returnId, restricted)).get(0);
+		assertRestrictedTraceRecord(restrictedTrace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(restrictedTrace, "PRODUCTION_MATERIAL_ISSUE",
+				issue.issueId(), issue.issueLineId());
 		assertError(put("/api/admin/production/material-returns/" + returnId + "/post", Map.of(), admin),
 				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
 		assertError(put("/api/admin/production/material-returns/" + returnId,
@@ -817,9 +840,17 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				List.of("production:material-supplement:view", "business:reversal:view"));
 		JsonNode detail = data(get("/api/admin/production/material-supplements/" + supplementId, restricted));
 		assertRestrictedSource(detail.get("source"), "PRODUCTION_WORK_ORDER");
+		assertRestrictedDocumentLine(detail.get("lines").get(0));
 		assertRestrictedSource(detail.get("lines").get(0).get("source"), "PRODUCTION_WORK_ORDER");
 		assertRestrictedSource(detail.get("traces").get(0).get("source"), "PRODUCTION_WORK_ORDER");
 		assertRestrictedTraceRecord(detail.get("traces").get(0));
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(detail.get("traces").get(0), "PRODUCTION_WORK_ORDER",
+				issue.workOrderId(), issue.workOrderMaterialId());
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=PRODUCTION_MATERIAL_SUPPLEMENT&sourceId="
+				+ supplementId, restricted)).get(0);
+		assertRestrictedTraceRecord(trace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(trace, "PRODUCTION_WORK_ORDER", issue.workOrderId(),
+				issue.workOrderMaterialId());
 	}
 
 	@Test
@@ -1610,6 +1641,15 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(trace.has("resourceRouteName")).isFalse();
 		assertThat(trace.has("resourceRouteParams")).isFalse();
 		assertThat(trace.has("resourceRouteQuery")).isFalse();
+	}
+
+	private void assertRestrictedDocumentLine(JsonNode line) {
+		assertThat(!line.has("sourceLineId") || line.get("sourceLineId").isNull()).isTrue();
+	}
+
+	private void assertRestrictedTraceKeyDoesNotContainSourceCoordinates(JsonNode trace, String sourceType,
+			long sourceId, long sourceLineId) {
+		assertThat(trace.get("traceKey").asText()).doesNotContain(sourceType + ":" + sourceId + ":" + sourceLineId);
 	}
 
 	private AuthenticatedSession login(String username, String password) throws Exception {

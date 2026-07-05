@@ -669,8 +669,9 @@ type SettlementAdjustmentSource = {
   - `includeRestricted`：可选，默认 `true`。
 - 成功响应：`ReversalTraceRecord[]`。
 - 规则：
-  - `traceKey` 使用 `${sourceType}:${sourceId}:${sourceLineId || 0}:${reverseType}:${reverseId}:${reverseLineId || 0}` 生成，前端用它做稳定行键。
+  - 用户同时具备来源和反向资源查看权限时，`traceKey` 使用 `${sourceType}:${sourceId}:${sourceLineId}:${reverseType}:${reverseId}:${reverseLineId}` 生成，前端用它做稳定行键。
   - 用户有追溯入口权限但无来源模块权限时返回脱敏行，`canViewResource=false`、`restricted=true`，且不返回路由参数。
+  - 受限追溯行的 `traceKey` 不得包含无权限侧的来源单据主键或来源行主键；可使用当前用户可见侧坐标，或在两侧均不可见时使用服务端生成的稳定不透明键。
   - `resourceRouteName` 只能返回前端已注册路由名，使用当前仓库 kebab-case 命名，不使用 PascalCase。
 
 来源路由映射：
