@@ -1938,16 +1938,18 @@ public class ReportingAdminService {
 	}
 
 	private SettlementSummaryItemResponse toSettlementItem(SettlementRow row) {
-		BigDecimal netAmount = row.totalAmount().subtract(row.adjustedAmount());
+		BigDecimal periodAdjustmentAmount = "SETTLEMENT_ADJUSTMENT".equals(row.sourceType()) ? row.adjustedAmount()
+				: BigDecimal.ZERO;
+		BigDecimal netAmount = row.totalAmount().subtract(periodAdjustmentAmount);
 		return new SettlementSummaryItemResponse(row.settlementType(), row.sourceType(), row.sourceId(), row.sourceNo(),
 				row.partyType(), row.partyId(), row.partyName(), row.businessDate(), row.dueDate(),
 				amount(row.totalAmount()), amount(row.settledAmount()), amount(row.unsettledAmount()),
 				row.overdueDays(), row.agingBucket(), row.status(), row.sourceCount(), row.traceKey(),
 				amount("RECEIVABLE".equals(row.settlementType()) ? row.totalAmount() : BigDecimal.ZERO),
-				amount("RECEIVABLE".equals(row.settlementType()) ? row.adjustedAmount() : BigDecimal.ZERO),
+				amount("RECEIVABLE".equals(row.settlementType()) ? periodAdjustmentAmount : BigDecimal.ZERO),
 				amount("RECEIVABLE".equals(row.settlementType()) ? netAmount : BigDecimal.ZERO),
 				amount("PAYABLE".equals(row.settlementType()) ? row.totalAmount() : BigDecimal.ZERO),
-				amount("PAYABLE".equals(row.settlementType()) ? row.adjustedAmount() : BigDecimal.ZERO),
+				amount("PAYABLE".equals(row.settlementType()) ? periodAdjustmentAmount : BigDecimal.ZERO),
 				amount("PAYABLE".equals(row.settlementType()) ? netAmount : BigDecimal.ZERO),
 				amount(row.unsettledAmount()));
 	}

@@ -420,6 +420,85 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void settlementItemsExposeOnlyPeriodAdjustmentOccurrences() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate periodDate = LocalDate.of(2026, 7, 12);
+		LocalDate outsidePeriodDate = LocalDate.of(2026, 8, 2);
+		String period = "?dateFrom=2026-07-01&dateTo=2026-07-31";
+		ReportingFixture fixture = fixture();
+
+		SalesShipmentFixture outsideAdjustmentShipment = createSalesShipment(fixture, periodDate, "POSTED",
+				"3.000000", "100.000000", "本期应收非本期冲减");
+		ReceivableFixture outsideAdjustmentReceivable = createReceivable(outsideAdjustmentShipment, "300.00",
+				"100.00", "200.00", "PARTIALLY_RECEIVED");
+		updateReceivableAdjustment(outsideAdjustmentReceivable.receivableId(), "40.00", "160.00",
+				"PARTIALLY_RECEIVED");
+		createSettlementAdjustment("RECEIVABLE", "RETURN_OFFSET", "SALES_RETURN",
+				outsideAdjustmentShipment.shipmentId(), outsideAdjustmentReceivable.receivableId(),
+				outsidePeriodDate, "40.00");
+
+		SalesShipmentFixture currentAdjustmentShipment = createSalesShipment(fixture, periodDate, "POSTED",
+				"2.000000", "100.000000", "本期应收本期冲减");
+		ReceivableFixture currentAdjustmentReceivable = createReceivable(currentAdjustmentShipment, "200.00",
+				"50.00", "150.00", "PARTIALLY_RECEIVED");
+		updateReceivableAdjustment(currentAdjustmentReceivable.receivableId(), "30.00", "120.00",
+				"PARTIALLY_RECEIVED");
+		long currentReceivableAdjustmentId = createSettlementAdjustment("RECEIVABLE", "RETURN_OFFSET",
+				"SALES_RETURN", currentAdjustmentShipment.shipmentId(), currentAdjustmentReceivable.receivableId(),
+				periodDate, "30.00");
+
+		PurchaseReceiptFixture outsideAdjustmentReceipt = createPurchaseReceipt(fixture, periodDate, "POSTED",
+				"4.000000", "50.000000", "本期应付非本期冲减");
+		PayableFixture outsideAdjustmentPayable = createPayable(outsideAdjustmentReceipt, "200.00", "80.00",
+				"120.00", "PARTIALLY_PAID");
+		updatePayableAdjustment(outsideAdjustmentPayable.payableId(), "25.00", "95.00", "PARTIALLY_PAID");
+		createSettlementAdjustment("PAYABLE", "RETURN_OFFSET", "PURCHASE_RETURN",
+				outsideAdjustmentReceipt.receiptId(), outsideAdjustmentPayable.payableId(), outsidePeriodDate,
+				"25.00");
+
+		PurchaseReceiptFixture currentAdjustmentReceipt = createPurchaseReceipt(fixture, periodDate, "POSTED",
+				"3.000000", "50.000000", "本期应付本期冲减");
+		PayableFixture currentAdjustmentPayable = createPayable(currentAdjustmentReceipt, "150.00", "50.00",
+				"100.00", "PARTIALLY_PAID");
+		updatePayableAdjustment(currentAdjustmentPayable.payableId(), "15.00", "85.00", "PARTIALLY_PAID");
+		long currentPayableAdjustmentId = createSettlementAdjustment("PAYABLE", "RETURN_OFFSET",
+				"PURCHASE_RETURN", currentAdjustmentReceipt.receiptId(), currentAdjustmentPayable.payableId(),
+				periodDate, "15.00");
+
+		JsonNode receivableReport = data(get("/api/admin/reports/settlement-summary" + period + "&customerId="
+				+ fixture.customerId(), admin));
+		assertThat(receivableReport.get("summary").get("receivableAdjustmentAmount").asText()).isEqualTo("30.00");
+		JsonNode outsideReceivableItem = firstItemWithText(receivableReport, "traceKey",
+				"settlement-summary:RECEIVABLE:" + outsideAdjustmentReceivable.receivableId());
+		assertThat(outsideReceivableItem.get("receivableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(outsideReceivableItem.get("receivableNetAmount").asText()).isEqualTo("300.00");
+		JsonNode currentReceivableItem = firstItemWithText(receivableReport, "traceKey",
+				"settlement-summary:RECEIVABLE:" + currentAdjustmentReceivable.receivableId());
+		assertThat(currentReceivableItem.get("receivableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(currentReceivableItem.get("receivableNetAmount").asText()).isEqualTo("200.00");
+		JsonNode receivableAdjustmentItem = firstItemWithText(receivableReport, "traceKey",
+				"settlement-summary:SETTLEMENT_ADJUSTMENT:" + currentReceivableAdjustmentId);
+		assertThat(receivableAdjustmentItem.get("receivableAdjustmentAmount").asText()).isEqualTo("30.00");
+		assertThat(sumItemAmount(receivableReport, "receivableAdjustmentAmount")).isEqualByComparingTo("30.00");
+
+		JsonNode payableReport = data(get("/api/admin/reports/settlement-summary" + period + "&supplierId="
+				+ fixture.supplierId(), admin));
+		assertThat(payableReport.get("summary").get("payableAdjustmentAmount").asText()).isEqualTo("15.00");
+		JsonNode outsidePayableItem = firstItemWithText(payableReport, "traceKey",
+				"settlement-summary:PAYABLE:" + outsideAdjustmentPayable.payableId());
+		assertThat(outsidePayableItem.get("payableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(outsidePayableItem.get("payableNetAmount").asText()).isEqualTo("200.00");
+		JsonNode currentPayableItem = firstItemWithText(payableReport, "traceKey",
+				"settlement-summary:PAYABLE:" + currentAdjustmentPayable.payableId());
+		assertThat(currentPayableItem.get("payableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(currentPayableItem.get("payableNetAmount").asText()).isEqualTo("150.00");
+		JsonNode payableAdjustmentItem = firstItemWithText(payableReport, "traceKey",
+				"settlement-summary:SETTLEMENT_ADJUSTMENT:" + currentPayableAdjustmentId);
+		assertThat(payableAdjustmentItem.get("payableAdjustmentAmount").asText()).isEqualTo("15.00");
+		assertThat(sumItemAmount(payableReport, "payableAdjustmentAmount")).isEqualByComparingTo("15.00");
+	}
+
+	@Test
 	void reportEndpointsRequireAuthenticationAndReportPermission() throws Exception {
 		ResponseEntity<String> unauthenticated = this.restTemplate.getForEntity("/api/admin/reports/overview",
 				String.class);
@@ -1213,6 +1292,14 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		throw new AssertionError("缺少字段 " + field + "=" + value + " 的报表行");
+	}
+
+	private BigDecimal sumItemAmount(JsonNode page, String field) {
+		BigDecimal total = BigDecimal.ZERO;
+		for (JsonNode item : page.get("items")) {
+			total = total.add(new BigDecimal(item.get(field).asText()));
+		}
+		return total;
 	}
 
 	private JsonNode firstExceptionWithType(JsonNode page, String exceptionType) {
