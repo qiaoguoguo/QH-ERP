@@ -187,15 +187,13 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(current);
-		ValidatedSalesReturn validated = validateSalesReturnCreate(request);
-		if (!current.sourceShipmentId().equals(validated.sourceShipmentId())) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
-		}
+		List<SalesReturnLineRow> currentLines = lockSalesReturnLines(id);
+		ValidatedSalesReturn validated = validateSalesReturnUpdate(current, request);
 		ShipmentRow shipment = lockShipment(current.sourceShipmentId()).orElseThrow(this::sourceNotFoundException);
 		if (!"POSTED".equals(shipment.status())) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
-		List<ValidatedSalesReturnLine> lines = validateSalesReturnLines(shipment, validated.lines());
+		List<ValidatedSalesReturnLine> lines = validateSalesReturnLines(shipment, validated.lines(), currentLines);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -394,15 +392,13 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(current);
-		ValidatedPurchaseReturn validated = validatePurchaseReturnCreate(request);
-		if (!current.sourceReceiptId().equals(validated.sourceReceiptId())) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
-		}
+		List<PurchaseReturnLineRow> currentLines = lockPurchaseReturnLines(id);
+		ValidatedPurchaseReturn validated = validatePurchaseReturnUpdate(current, request);
 		ReceiptRow receipt = lockReceipt(current.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
 		if (!"POSTED".equals(receipt.status())) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
-		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines());
+		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines(), currentLines);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -958,18 +954,44 @@ public class ReversalAdminService {
 				blankToNull(request.clientRequestId()), blankToNull(request.remark()), request.lines());
 	}
 
+	private ValidatedSalesReturn validateSalesReturnUpdate(SalesReturnRow current, SalesReturnRequest request) {
+		if (request == null || request.businessDate() == null || request.lines() == null || request.lines().isEmpty()) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		if (request.sourceShipmentId() != null && !current.sourceShipmentId().equals(request.sourceShipmentId())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (hasText(request.clientRequestId()) && request.clientRequestId().length() > 64) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (request.remark() != null && request.remark().length() > 500) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return new ValidatedSalesReturn(current.sourceShipmentId(), request.businessDate(),
+				blankToNull(request.clientRequestId()), blankToNull(request.remark()), request.lines());
+	}
+
 	private List<ValidatedSalesReturnLine> validateSalesReturnLines(ShipmentRow shipment,
 			List<SalesReturnLineRequest> requests) {
+		return validateSalesReturnLines(shipment, requests, List.of());
+	}
+
+	private List<ValidatedSalesReturnLine> validateSalesReturnLines(ShipmentRow shipment,
+			List<SalesReturnLineRequest> requests, List<SalesReturnLineRow> currentLines) {
+		Map<Long, SalesReturnLineRow> currentLineById = new LinkedHashMap<>();
+		for (SalesReturnLineRow line : currentLines) {
+			currentLineById.put(line.id(), line);
+		}
 		Set<Long> sourceLineIds = new HashSet<>();
 		List<ValidatedSalesReturnLine> lines = new ArrayList<>();
 		int lineNo = 1;
 		for (SalesReturnLineRequest request : requests) {
-			if (request == null || request.sourceShipmentLineId() == null
-					|| !sourceLineIds.add(request.sourceShipmentLineId())) {
+			Long sourceShipmentLineId = resolveSalesSourceShipmentLineId(request, currentLineById);
+			if (sourceShipmentLineId == null || !sourceLineIds.add(sourceShipmentLineId)) {
 				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
 			}
 			BigDecimal quantity = validateQuantity(request.quantity());
-			ShipmentLineRow sourceLine = shipmentLine(shipment.id(), request.sourceShipmentLineId())
+			ShipmentLineRow sourceLine = shipmentLine(shipment.id(), sourceShipmentLineId)
 				.orElseThrow(this::sourceNotFoundException);
 			BigDecimal returnedQuantity = postedReturnedQuantity(sourceLine.id());
 			BigDecimal returnableQuantity = sourceLine.quantity().subtract(returnedQuantity);
@@ -986,6 +1008,25 @@ public class ReversalAdminService {
 					sourceLine.unitPrice(), amount, blankToNull(reason)));
 		}
 		return lines;
+	}
+
+	private Long resolveSalesSourceShipmentLineId(SalesReturnLineRequest request,
+			Map<Long, SalesReturnLineRow> currentLineById) {
+		if (request == null) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+		Long sourceShipmentLineId = request.sourceShipmentLineId();
+		if (request.id() != null) {
+			SalesReturnLineRow currentLine = currentLineById.get(request.id());
+			if (currentLine == null) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			if (sourceShipmentLineId != null && !sourceShipmentLineId.equals(currentLine.sourceShipmentLineId())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			sourceShipmentLineId = currentLine.sourceShipmentLineId();
+		}
+		return sourceShipmentLineId;
 	}
 
 	private void validateLineStillReturnable(ShipmentLineRow sourceLine, SalesReturnLineRow line) {
@@ -1118,18 +1159,44 @@ public class ReversalAdminService {
 				blankToNull(request.clientRequestId()), blankToNull(request.remark()), request.lines());
 	}
 
+	private ValidatedPurchaseReturn validatePurchaseReturnUpdate(PurchaseReturnRow current, PurchaseReturnRequest request) {
+		if (request == null || request.businessDate() == null || request.lines() == null || request.lines().isEmpty()) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		if (request.sourceReceiptId() != null && !current.sourceReceiptId().equals(request.sourceReceiptId())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (hasText(request.clientRequestId()) && request.clientRequestId().length() > 64) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (request.remark() != null && request.remark().length() > 500) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return new ValidatedPurchaseReturn(current.sourceReceiptId(), request.businessDate(),
+				blankToNull(request.clientRequestId()), blankToNull(request.remark()), request.lines());
+	}
+
 	private List<ValidatedPurchaseReturnLine> validatePurchaseReturnLines(ReceiptRow receipt,
 			List<PurchaseReturnLineRequest> requests) {
+		return validatePurchaseReturnLines(receipt, requests, List.of());
+	}
+
+	private List<ValidatedPurchaseReturnLine> validatePurchaseReturnLines(ReceiptRow receipt,
+			List<PurchaseReturnLineRequest> requests, List<PurchaseReturnLineRow> currentLines) {
+		Map<Long, PurchaseReturnLineRow> currentLineById = new LinkedHashMap<>();
+		for (PurchaseReturnLineRow line : currentLines) {
+			currentLineById.put(line.id(), line);
+		}
 		Set<Long> sourceLineIds = new HashSet<>();
 		List<ValidatedPurchaseReturnLine> lines = new ArrayList<>();
 		int lineNo = 1;
 		for (PurchaseReturnLineRequest request : requests) {
-			if (request == null || request.sourceReceiptLineId() == null
-					|| !sourceLineIds.add(request.sourceReceiptLineId())) {
+			Long sourceReceiptLineId = resolvePurchaseSourceReceiptLineId(request, currentLineById);
+			if (sourceReceiptLineId == null || !sourceLineIds.add(sourceReceiptLineId)) {
 				throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
 			}
 			BigDecimal quantity = validateQuantity(request.quantity());
-			ReceiptLineRow sourceLine = receiptLine(receipt.id(), request.sourceReceiptLineId())
+			ReceiptLineRow sourceLine = receiptLine(receipt.id(), sourceReceiptLineId)
 				.orElseThrow(this::sourceNotFoundException);
 			BigDecimal returnedQuantity = postedPurchaseReturnedQuantity(sourceLine.id());
 			BigDecimal returnableQuantity = sourceLine.quantity().subtract(returnedQuantity);
@@ -1146,6 +1213,25 @@ public class ReversalAdminService {
 					sourceLine.unitPrice(), amount, blankToNull(reason)));
 		}
 		return lines;
+	}
+
+	private Long resolvePurchaseSourceReceiptLineId(PurchaseReturnLineRequest request,
+			Map<Long, PurchaseReturnLineRow> currentLineById) {
+		if (request == null) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+		Long sourceReceiptLineId = request.sourceReceiptLineId();
+		if (request.id() != null) {
+			PurchaseReturnLineRow currentLine = currentLineById.get(request.id());
+			if (currentLine == null) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			if (sourceReceiptLineId != null && !sourceReceiptLineId.equals(currentLine.sourceReceiptLineId())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			sourceReceiptLineId = currentLine.sourceReceiptLineId();
+		}
+		return sourceReceiptLineId;
 	}
 
 	private void validatePurchaseLineStillReturnable(ReceiptLineRow sourceLine, PurchaseReturnLineRow line) {
@@ -2045,19 +2131,19 @@ public class ReversalAdminService {
 		return value != null && !value.isBlank();
 	}
 
-	public record SalesReturnRequest(@NotNull Long sourceShipmentId, @NotNull LocalDate businessDate,
+	public record SalesReturnRequest(Long sourceShipmentId, @NotNull LocalDate businessDate,
 			String clientRequestId, String remark, @Valid List<SalesReturnLineRequest> lines) {
 	}
 
-	public record SalesReturnLineRequest(@NotNull Long sourceShipmentLineId, @NotNull BigDecimal quantity,
+	public record SalesReturnLineRequest(Long id, Long sourceShipmentLineId, @NotNull BigDecimal quantity,
 			String reason) {
 	}
 
-	public record PurchaseReturnRequest(@NotNull Long sourceReceiptId, @NotNull LocalDate businessDate,
+	public record PurchaseReturnRequest(Long sourceReceiptId, @NotNull LocalDate businessDate,
 			String clientRequestId, String remark, @Valid List<PurchaseReturnLineRequest> lines) {
 	}
 
-	public record PurchaseReturnLineRequest(@NotNull Long sourceReceiptLineId, @NotNull BigDecimal quantity,
+	public record PurchaseReturnLineRequest(Long id, Long sourceReceiptLineId, @NotNull BigDecimal quantity,
 			String reason) {
 	}
 

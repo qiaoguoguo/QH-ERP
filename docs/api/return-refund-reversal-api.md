@@ -492,7 +492,11 @@ type SettlementAdjustmentSource = {
 
 - `GET /api/admin/sales/returns`：权限 `sales:return:view`；查询参数 `page`、`pageSize`、`keyword`、`customerId`、`warehouseId`、`status`、`dateFrom`、`dateTo`；成功响应 `PageResponse<SalesReturnSummary>`。
 - `GET /api/admin/sales/returns/{id}`：权限 `sales:return:view`；成功响应 `SalesReturnDetail`。
-- `PUT /api/admin/sales/returns/{id}`：权限 `sales:return:update`；仅 `DRAFT` 可更新；请求体与创建一致但不允许改变 `sourceShipmentId`；成功响应 `SalesReturnDetail`。
+- `PUT /api/admin/sales/returns/{id}`：权限 `sales:return:update`；仅 `DRAFT` 可更新；不允许改变来源销售出库；成功响应 `SalesReturnDetail`。
+  - 来源可见时，请求体可继续传 `sourceShipmentId` 与明细 `sourceShipmentLineId`，后端必须校验与当前草稿来源一致。
+  - 来源受限时，请求体允许省略 `sourceShipmentId`，明细允许只传当前销售退货明细 `id`、`quantity`、`reason`；后端用当前草稿行 `id` 映射既有 `sourceShipmentLineId`，不得要求前端回传受限来源主键。
+  - 如果同一明细同时传 `id` 与 `sourceShipmentLineId`，两者必须对应当前草稿同一行，否则返回受控错误；如果 `id` 不属于当前草稿，也必须拒绝。
+  - 创建接口仍必须提供 `sourceShipmentId` 与 `sourceShipmentLineId`。
 - `PUT /api/admin/sales/returns/{id}/cancel`：权限 `sales:return:cancel`；仅 `DRAFT` 可取消；成功响应 `SalesReturnDetail`。
 
 ### 过账销售退货
@@ -534,7 +538,11 @@ type SettlementAdjustmentSource = {
 
 成功响应 `PurchaseReturnDetail`。来源采购入库必须已过账，明细数量必须大于 0 且不超过当前可退数量，金额由后端按来源采购单价计算。
 
-- `PUT /api/admin/procurement/returns/{id}`：权限 `procurement:return:update`；仅 `DRAFT` 可更新；请求体与创建一致但不允许改变 `sourceReceiptId`；成功响应 `PurchaseReturnDetail`。
+- `PUT /api/admin/procurement/returns/{id}`：权限 `procurement:return:update`；仅 `DRAFT` 可更新；不允许改变来源采购入库；成功响应 `PurchaseReturnDetail`。
+  - 来源可见时，请求体可继续传 `sourceReceiptId` 与明细 `sourceReceiptLineId`，后端必须校验与当前草稿来源一致。
+  - 来源受限时，请求体允许省略 `sourceReceiptId`，明细允许只传当前采购退货明细 `id`、`quantity`、`reason`；后端用当前草稿行 `id` 映射既有 `sourceReceiptLineId`，不得要求前端回传受限来源主键。
+  - 如果同一明细同时传 `id` 与 `sourceReceiptLineId`，两者必须对应当前草稿同一行，否则返回受控错误；如果 `id` 不属于当前草稿，也必须拒绝。
+  - 创建接口仍必须提供 `sourceReceiptId` 与 `sourceReceiptLineId`。
 - `PUT /api/admin/procurement/returns/{id}/post`：权限 `procurement:return:post`；仅 `DRAFT` 可过账；事务内锁定来源采购入库行和库存余额，生成 `PURCHASE_RETURN_OUT` 库存流水并扣减库存余额，生成应付冲减，写入 `biz_reversal_link`；库存不足时返回 `REVERSAL_STOCK_INSUFFICIENT`，且不得产生部分写入；成功响应 `PurchaseReturnDetail`。
 - `PUT /api/admin/procurement/returns/{id}/cancel`：权限 `procurement:return:cancel`；仅 `DRAFT` 可取消；成功响应 `PurchaseReturnDetail`。
 

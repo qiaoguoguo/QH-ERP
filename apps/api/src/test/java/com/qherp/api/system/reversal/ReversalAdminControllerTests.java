@@ -292,6 +292,37 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesReturnDraftUpdateAllowsRestrictedSourceLineIdsAndRejectsMismatchedSourceLine() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "5.000000", "10.000000",
+				"3.000000", "20.000000", "CONFIRMED", "110.00", "0.00", "110.00");
+		long returnId = createSalesReturn(admin, shipment.shipmentId(), shipment.firstShipmentLineId(), "1.000000");
+		long returnLineId = data(get("/api/admin/sales/returns/" + returnId, admin))
+			.get("lines")
+			.get(0)
+			.get("id")
+			.longValue();
+
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("sales-return-update-restricted",
+				List.of("sales:return:view", "sales:return:update"));
+		ResponseEntity<String> updated = put("/api/admin/sales/returns/" + returnId,
+				salesReturnUpdatePayload(List.of(returnLineById(returnLineId, "2.000000", "受限来源编辑保存"))),
+				restricted);
+		assertOk(updated);
+		JsonNode updatedData = data(updated);
+		assertRestrictedSource(updatedData.get("source"), "SALES_SHIPMENT");
+		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "SALES_SHIPMENT_LINE");
+		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
+		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
+
+		assertError(put("/api/admin/sales/returns/" + returnId,
+				salesReturnUpdatePayload(List.of(returnLineByIdAndSourceLine(returnLineId,
+						shipment.secondShipmentLineId(), "1.000000", "行ID与来源行不匹配"))),
+				restricted), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
+	}
+
+	@Test
 	void salesReturnPaginationHandlesExtremePageWithoutNegativeOffset() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -487,6 +518,45 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				restricted)).get(0);
 		assertRestrictedSource(trace.get("source"), "PURCHASE_RECEIPT_LINE");
 		assertRestrictedTraceRecord(trace);
+	}
+
+	@Test
+	void procurementReturnDraftUpdateAllowsRestrictedSourceLineIdsAndRejectsForeignLineId() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"3.000000", "20.000000", "CONFIRMED", "110.00", "0.00", "110.00");
+		long returnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(), "1.000000");
+		long returnLineId = data(get("/api/admin/procurement/returns/" + returnId, admin))
+			.get("lines")
+			.get(0)
+			.get("id")
+			.longValue();
+		long otherReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.secondReceiptLineId(),
+				"1.000000");
+		long otherReturnLineId = data(get("/api/admin/procurement/returns/" + otherReturnId, admin))
+			.get("lines")
+			.get(0)
+			.get("id")
+			.longValue();
+
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("purchase-return-update-restricted",
+				List.of("procurement:return:view", "procurement:return:update"));
+		ResponseEntity<String> updated = put("/api/admin/procurement/returns/" + returnId,
+				purchaseReturnUpdatePayload(
+						List.of(purchaseReturnLineById(returnLineId, "2.000000", "受限来源编辑保存"))),
+				restricted);
+		assertOk(updated);
+		JsonNode updatedData = data(updated);
+		assertRestrictedSource(updatedData.get("source"), "PURCHASE_RECEIPT");
+		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
+		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
+		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
+
+		assertError(put("/api/admin/procurement/returns/" + returnId,
+				purchaseReturnUpdatePayload(
+						List.of(purchaseReturnLineById(otherReturnLineId, "1.000000", "其他草稿行"))),
+				restricted), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
 	}
 
 	@Test
@@ -886,6 +956,29 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> salesReturnUpdatePayload(List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("remark", "销售退货受限编辑测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> returnLineById(long id, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("id", id);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
+	private Map<String, Object> returnLineByIdAndSourceLine(long id, long sourceShipmentLineId, String quantity,
+			String reason) {
+		Map<String, Object> line = returnLineById(id, quantity, reason);
+		line.put("sourceShipmentLineId", sourceShipmentLineId);
+		return line;
+	}
+
 	private Map<String, Object> purchaseReturnPayload(long sourceReceiptId, String clientRequestId,
 			List<Map<String, Object>> lines) {
 		Map<String, Object> payload = new LinkedHashMap<>();
@@ -902,6 +995,22 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	private Map<String, Object> purchaseReturnLine(long sourceReceiptLineId, String quantity, String reason) {
 		Map<String, Object> line = new LinkedHashMap<>();
 		line.put("sourceReceiptLineId", sourceReceiptLineId);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
+	private Map<String, Object> purchaseReturnUpdatePayload(List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("remark", "采购退货受限编辑测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> purchaseReturnLineById(long id, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("id", id);
 		line.put("quantity", quantity);
 		line.put("reason", reason);
 		return line;
