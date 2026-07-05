@@ -202,7 +202,10 @@
 - Task 5 完成：生产退料、生产补料、库存反向或补充流水、成本业务影响、统一追溯和前端页面完成；后端修复反向追溯受限来源泄露，前端修复反向追溯与编辑数量展示；UI 规格复审和测试复审通过。
 - Task 6 后端完成：后端开发完成往来冲减、退款记录和统一追溯接口；测试初审发现生产退料/补料被误允许作为往来冲减来源后，后端提交 `5252c9f` 修复，产品经理和测试复审通过。当前阶段明确生产退料/补料只影响库存与成本，不作为往来冲减来源。
 - Task 6 前端完成：前端开发完成往来冲减 API、列表、创建/编辑草稿、详情、过账、取消、追溯、菜单和路由权限，提交 `3bfc890`；测试初审发现候选来源刷新后可能隐藏提交旧来源，前端提交 `7d5b0b0` 修复并补回归测试；产品经理规格复审和测试复审均通过。
+- Task 7 后端完成：后端开发完成销售、采购、库存、生产、成本和往来报表原发生、反向发生和净额字段及反向来源追溯。产品经理两轮复审发现并推动修复跨期反向发生口径和往来 item 本期冲减口径，后端提交 `c7c5117`、`9346d24` 修复后，产品经理和测试复审通过。
+- Task 7 前端完成：前端开发完成 `businessReportingApi` 类型、六个固定报表页面净额展示、反向来源中文追溯和测试，提交 `b32276b`。UI 设计师规格复审和测试代码质量复审均通过，确认可进入 Task 8 浏览器验收与视觉分析。
 - 验证：文档占位词扫描无输出；旧退款来源枚举、旧状态名和旧 PascalCase 来源路由名扫描无输出；`git diff --check` 退出码为 `0`。
 - Task 6 主线程验证：前端定向测试 `returnRefundReversalApi.spec.ts`、`SettlementAdjustmentViews.spec.ts`、`permissionGuard.spec.ts`、`App.spec.ts` 共 4 个文件 99 条通过；`npm run typecheck` 通过；`git diff --check` 通过。后端定向测试 `ReversalAdminControllerTests` 22 条通过，Task6 相关后端回归 65 条通过。
+- Task 7 主线程验证：后端定向测试 `ReportingAdminControllerTests` 21 条、`ReversalAdminControllerTests` 22 条通过；前端定向测试 `businessReportingApi.spec.ts`、`ReportViews.spec.ts` 共 2 个文件 14 条通过；`npm run typecheck` 通过；`git diff --check` 通过。
 - 视觉分析：待执行。
 - 结论：待阶段完成后填写。
