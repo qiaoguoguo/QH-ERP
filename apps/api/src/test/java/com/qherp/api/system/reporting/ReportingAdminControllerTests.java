@@ -62,6 +62,54 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(overviewData.get("exceptionCount").intValue()).isZero();
 		assertThat(overviewData.get("formalAccounting").booleanValue()).isFalse();
 
+		JsonNode emptySales = data(get("/api/admin/reports/sales-summary" + emptyPeriod, admin));
+		assertThat(emptySales.get("summary").get("salesOriginalAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySales.get("summary").get("salesReturnAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySales.get("summary").get("salesNetAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySales.get("summary").get("salesOriginalQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptySales.get("summary").get("salesReturnQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptySales.get("summary").get("salesNetQuantity").asText()).isEqualTo("0.000");
+
+		JsonNode emptyProcurement = data(get("/api/admin/reports/procurement-summary" + emptyPeriod, admin));
+		assertThat(emptyProcurement.get("summary").get("purchaseOriginalAmount").asText()).isEqualTo("0.00");
+		assertThat(emptyProcurement.get("summary").get("purchaseReturnAmount").asText()).isEqualTo("0.00");
+		assertThat(emptyProcurement.get("summary").get("purchaseNetAmount").asText()).isEqualTo("0.00");
+		assertThat(emptyProcurement.get("summary").get("purchaseOriginalQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProcurement.get("summary").get("purchaseReturnQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProcurement.get("summary").get("purchaseNetQuantity").asText()).isEqualTo("0.000");
+
+		JsonNode emptyInventory = data(get("/api/admin/reports/inventory-stock-flow" + emptyPeriod, admin));
+		assertThat(emptyInventory.get("summary").get("inboundOriginalQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("inboundReverseQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("inboundNetQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("outboundOriginalQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("outboundReverseQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("outboundNetQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyInventory.get("summary").get("inventoryNetChangeQuantity").asText()).isEqualTo("0.000");
+
+		JsonNode emptyProduction = data(get("/api/admin/reports/production-execution" + emptyPeriod, admin));
+		assertThat(emptyProduction.get("summary").get("issuedOriginalQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProduction.get("summary").get("materialReturnQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProduction.get("summary").get("materialSupplementQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProduction.get("summary").get("issuedNetQuantity").asText()).isEqualTo("0.000");
+		assertThat(emptyProduction.get("summary").get("completedQuantity").asText()).isEqualTo("0.000");
+
+		JsonNode emptyCost = data(get("/api/admin/reports/cost-collection" + emptyPeriod, admin));
+		assertThat(emptyCost.get("summary").get("materialOriginalCost").asText()).isEqualTo("0.00");
+		assertThat(emptyCost.get("summary").get("materialReturnCost").asText()).isEqualTo("0.00");
+		assertThat(emptyCost.get("summary").get("materialSupplementCost").asText()).isEqualTo("0.00");
+		assertThat(emptyCost.get("summary").get("materialNetCost").asText()).isEqualTo("0.00");
+		assertThat(emptyCost.get("summary").get("totalNetCost").asText()).isEqualTo("0.00");
+
+		JsonNode emptySettlement = data(get("/api/admin/reports/settlement-summary" + emptyPeriod, admin));
+		assertThat(emptySettlement.get("summary").get("receivableOriginalAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("receivableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("receivableNetAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("payableOriginalAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("payableAdjustmentAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("payableNetAmount").asText()).isEqualTo("0.00");
+		assertThat(emptySettlement.get("summary").get("settlementRemainingAmount").asText()).isEqualTo("0.00");
+
 		for (String path : List.of("/api/admin/reports/sales-summary", "/api/admin/reports/procurement-summary",
 				"/api/admin/reports/inventory-stock-flow", "/api/admin/reports/production-execution",
 				"/api/admin/reports/cost-collection", "/api/admin/reports/settlement-summary",
@@ -69,6 +117,168 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 			assertEmptyReportPage(get(path + emptyPeriod, admin));
 		}
 
+	}
+
+	@Test
+	void businessReportsExposeReversalNetFieldsAndTraceSources() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate date = LocalDate.of(2026, 6, 24);
+		ReportingFixture fixture = fixture();
+
+		SalesShipmentFixture shipment = createSalesShipment(fixture, date, "POSTED", "10.000000", "20.000000",
+				"销售净额");
+		ReceivableFixture receivable = createReceivable(shipment, "200.00", "50.00", "150.00",
+				"PARTIALLY_RECEIVED");
+		updateReceivableAdjustment(receivable.receivableId(), "40.00", "110.00", "PARTIALLY_RECEIVED");
+		long receiptId = createReceipt(fixture.customerId(), receivable.receivableId(), date, "50.00", "POSTED");
+		ReturnLineFixture salesReturn = createPostedSalesReturn(fixture, shipment, date, "2.000000", "20.000000");
+		long receivableAdjustmentId = createSettlementAdjustment("RECEIVABLE", "RETURN_OFFSET", "SALES_RETURN",
+				salesReturn.documentId(), receivable.receivableId(), date, "40.00");
+
+		PurchaseReceiptFixture receipt = createPurchaseReceipt(fixture, date, "POSTED", "8.000000", "10.000000",
+				"采购净额");
+		PayableFixture payable = createPayable(receipt, "80.00", "20.00", "60.00", "PARTIALLY_PAID");
+		updatePayableAdjustment(payable.payableId(), "30.00", "30.00", "PARTIALLY_PAID");
+		createPayment(fixture.supplierId(), payable.payableId(), date, "20.00", "POSTED");
+		ReturnLineFixture purchaseReturn = createPostedPurchaseReturn(fixture, receipt, date, "3.000000",
+				"10.000000");
+		createSettlementAdjustment("PAYABLE", "RETURN_OFFSET", "PURCHASE_RETURN", purchaseReturn.documentId(),
+				payable.payableId(), date, "30.00");
+
+		ProductionFixture production = createProductionWorkOrder(fixture, date, "IN_PROGRESS", "12.000000",
+				"生产净额");
+		MaterialIssueFixture issue = createMaterialIssue(fixture, production, date, "POSTED", "6.000000");
+		ReturnLineFixture materialReturn = createPostedMaterialReturn(fixture, production, issue, date,
+				"2.000000");
+		ReturnLineFixture materialSupplement = createPostedMaterialSupplement(fixture, production, date,
+				"3.000000");
+		createCompletionReceipt(fixture, production, date, "POSTED", "7.000000");
+		createCostRecord(fixture, production, date, "MATERIAL", "PRODUCTION_MATERIAL_ISSUE", issue.issueNo(),
+				issue.issueId(), issue.issueLineId(), production.workOrderMaterialId(), fixture.rawMaterialId(),
+				"6.000000", "10.000000", "60.000000", "MANUAL_UNIT_PRICE_QUANTITY", "ACTIVE");
+		CostRecordFixture materialReturnCost = createCostRecord(fixture, production, date, "MATERIAL",
+				"PRODUCTION_MATERIAL_RETURN", materialReturn.documentNo(), materialReturn.documentId(),
+				materialReturn.lineId(), production.workOrderMaterialId(), fixture.rawMaterialId(), "2.000000",
+				"10.000000", "20.000000", "MANUAL_UNIT_PRICE_QUANTITY", "ACTIVE");
+		createCostRecord(fixture, production, date, "MATERIAL", "PRODUCTION_MATERIAL_SUPPLEMENT",
+				materialSupplement.documentNo(), materialSupplement.documentId(), materialSupplement.lineId(),
+				production.workOrderMaterialId(), fixture.rawMaterialId(), "3.000000", "10.000000", "30.000000",
+				"MANUAL_UNIT_PRICE_QUANTITY", "ACTIVE");
+		createCostRecord(fixture, production, date, "LABOR", "PRODUCTION_WORK_REPORT", "人工净额", null, null,
+				null, null, null, null, "15.000000", "MANUAL_AMOUNT", "ACTIVE");
+
+		insertStockMovement(fixture, fixture.rawMaterialId(), date, "PURCHASE_RECEIPT", "IN", "8.000000",
+				"PURCHASE_RECEIPT", receipt.receiptId(), receipt.receiptLineId(), "采购入库原发生");
+		insertStockMovement(fixture, fixture.finishedMaterialId(), date, "SALES_SHIPMENT", "OUT", "10.000000",
+				"SALES_SHIPMENT", shipment.shipmentId(), shipment.shipmentLineId(), "销售出库原发生");
+		insertStockMovement(fixture, fixture.finishedMaterialId(), date, "SALES_RETURN_IN", "IN", "2.000000",
+				"SALES_RETURN", salesReturn.documentId(), salesReturn.lineId(), "销售退货反向入库");
+		insertStockMovement(fixture, fixture.rawMaterialId(), date, "PRODUCTION_MATERIAL_RETURN_IN", "IN",
+				"2.000000", "PRODUCTION_MATERIAL_RETURN", materialReturn.documentId(), materialReturn.lineId(),
+				"生产退料反向入库");
+		insertStockMovement(fixture, fixture.rawMaterialId(), date, "PURCHASE_RETURN_OUT", "OUT", "3.000000",
+				"PURCHASE_RETURN", purchaseReturn.documentId(), purchaseReturn.lineId(), "采购退货反向出库");
+		insertStockMovement(fixture, fixture.rawMaterialId(), date, "PRODUCTION_MATERIAL_SUPPLEMENT_OUT", "OUT",
+				"3.000000", "PRODUCTION_MATERIAL_SUPPLEMENT", materialSupplement.documentId(),
+				materialSupplement.lineId(), "生产补料反向出库");
+
+		String period = "?dateFrom=" + date + "&dateTo=" + date;
+		JsonNode sales = data(get("/api/admin/reports/sales-summary" + period + "&keyword=" + shipment.shipmentNo(),
+				admin));
+		assertThat(sales.get("summary").get("salesOriginalAmount").asText()).isEqualTo("200.00");
+		assertThat(sales.get("summary").get("salesReturnAmount").asText()).isEqualTo("40.00");
+		assertThat(sales.get("summary").get("salesNetAmount").asText()).isEqualTo("160.00");
+		assertThat(sales.get("summary").get("salesOriginalQuantity").asText()).isEqualTo("10.000");
+		assertThat(sales.get("summary").get("salesReturnQuantity").asText()).isEqualTo("2.000");
+		assertThat(sales.get("summary").get("salesNetQuantity").asText()).isEqualTo("8.000");
+		JsonNode salesItem = sales.get("items").get(0);
+		assertThat(salesItem.get("salesReturnAmount").asText()).isEqualTo("40.00");
+		assertThat(salesItem.get("salesNetQuantity").asText()).isEqualTo("8.000");
+		JsonNode salesTrace = data(get("/api/admin/reports/sales-summary/traces?traceKey="
+				+ salesItem.get("traceKey").asText() + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(salesTrace, "SALES_RETURN").get("resourceRouteName").asText())
+			.isEqualTo("sales-return-detail");
+
+		JsonNode procurement = data(get(
+				"/api/admin/reports/procurement-summary" + period + "&keyword=" + receipt.receiptNo(), admin));
+		assertThat(procurement.get("summary").get("purchaseOriginalAmount").asText()).isEqualTo("80.00");
+		assertThat(procurement.get("summary").get("purchaseReturnAmount").asText()).isEqualTo("30.00");
+		assertThat(procurement.get("summary").get("purchaseNetAmount").asText()).isEqualTo("50.00");
+		assertThat(procurement.get("summary").get("purchaseOriginalQuantity").asText()).isEqualTo("8.000");
+		assertThat(procurement.get("summary").get("purchaseReturnQuantity").asText()).isEqualTo("3.000");
+		assertThat(procurement.get("summary").get("purchaseNetQuantity").asText()).isEqualTo("5.000");
+		JsonNode procurementItem = procurement.get("items").get(0);
+		JsonNode procurementTrace = data(get("/api/admin/reports/procurement-summary/traces?traceKey="
+				+ procurementItem.get("traceKey").asText() + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(procurementTrace, "PURCHASE_RETURN").get("resourceRouteName").asText())
+			.isEqualTo("procurement-return-detail");
+
+		JsonNode inventory = data(get("/api/admin/reports/inventory-stock-flow" + period + "&warehouseId="
+				+ fixture.warehouseId(), admin));
+		assertThat(inventory.get("summary").get("inboundOriginalQuantity").asText()).isEqualTo("8.000");
+		assertThat(inventory.get("summary").get("inboundReverseQuantity").asText()).isEqualTo("4.000");
+		assertThat(inventory.get("summary").get("inboundNetQuantity").asText()).isEqualTo("12.000");
+		assertThat(inventory.get("summary").get("outboundOriginalQuantity").asText()).isEqualTo("10.000");
+		assertThat(inventory.get("summary").get("outboundReverseQuantity").asText()).isEqualTo("6.000");
+		assertThat(inventory.get("summary").get("outboundNetQuantity").asText()).isEqualTo("16.000");
+		assertThat(inventory.get("summary").get("inventoryNetChangeQuantity").asText()).isEqualTo("-4.000");
+
+		JsonNode productionReport = data(get("/api/admin/reports/production-execution" + period
+				+ "&workOrderId=" + production.workOrderId(), admin));
+		assertThat(productionReport.get("summary").get("issuedOriginalQuantity").asText()).isEqualTo("6.000");
+		assertThat(productionReport.get("summary").get("materialReturnQuantity").asText()).isEqualTo("2.000");
+		assertThat(productionReport.get("summary").get("materialSupplementQuantity").asText()).isEqualTo("3.000");
+		assertThat(productionReport.get("summary").get("issuedNetQuantity").asText()).isEqualTo("7.000");
+		assertThat(productionReport.get("summary").get("completedQuantity").asText()).isEqualTo("7.000");
+		JsonNode productionTrace = data(get("/api/admin/reports/production-execution/traces?traceKey=production-execution:WORK_ORDER:"
+				+ production.workOrderId() + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(productionTrace, "PRODUCTION_MATERIAL_RETURN")
+			.get("resourceRouteName")
+			.asText()).isEqualTo("production-material-return-detail");
+		assertThat(firstItemWithSourceType(productionTrace, "PRODUCTION_MATERIAL_SUPPLEMENT")
+			.get("resourceRouteName")
+			.asText()).isEqualTo("production-material-supplement-detail");
+
+		JsonNode cost = data(get("/api/admin/reports/cost-collection" + period + "&workOrderId="
+				+ production.workOrderId(), admin));
+		assertThat(cost.get("summary").get("materialOriginalCost").asText()).isEqualTo("60.00");
+		assertThat(cost.get("summary").get("materialReturnCost").asText()).isEqualTo("20.00");
+		assertThat(cost.get("summary").get("materialSupplementCost").asText()).isEqualTo("30.00");
+		assertThat(cost.get("summary").get("materialNetCost").asText()).isEqualTo("70.00");
+		assertThat(cost.get("summary").get("totalNetCost").asText()).isEqualTo("85.00");
+		JsonNode returnCostTrace = data(get("/api/admin/reports/cost-collection/traces?traceKey=cost-collection:COST_RECORD:"
+				+ materialReturnCost.costRecordId() + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(returnCostTrace, "PRODUCTION_MATERIAL_RETURN")
+			.get("resourceRouteName")
+			.asText()).isEqualTo("production-material-return-detail");
+
+		JsonNode settlement = data(get("/api/admin/reports/settlement-summary" + period + "&customerId="
+				+ fixture.customerId(), admin));
+		assertThat(settlement.get("summary").get("receivableOriginalAmount").asText()).isEqualTo("200.00");
+		assertThat(settlement.get("summary").get("receivableAdjustmentAmount").asText()).isEqualTo("40.00");
+		assertThat(settlement.get("summary").get("receivableNetAmount").asText()).isEqualTo("160.00");
+		assertThat(settlement.get("summary").get("settlementRemainingAmount").asText()).isEqualTo("110.00");
+		JsonNode receivableTrace = data(get("/api/admin/reports/settlement-summary/traces?traceKey=settlement-summary:RECEIVABLE:"
+				+ receivable.receivableId() + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(receivableTrace, "SETTLEMENT_ADJUSTMENT").get("sourceId").longValue())
+			.isEqualTo(receivableAdjustmentId);
+		JsonNode adjustmentTrace = data(get("/api/admin/reports/settlement-summary/traces?traceKey=settlement-summary:SETTLEMENT_ADJUSTMENT:"
+				+ receivableAdjustmentId + "&dateFrom=" + date + "&dateTo=" + date, admin));
+		assertThat(firstItemWithSourceType(adjustmentTrace, "SETTLEMENT_ADJUSTMENT")
+			.get("resourceRouteName")
+			.asText()).isEqualTo("finance-settlement-adjustment-detail");
+
+		JsonNode payableSettlement = data(get("/api/admin/reports/settlement-summary" + period + "&supplierId="
+				+ fixture.supplierId(), admin));
+		assertThat(payableSettlement.get("summary").get("payableOriginalAmount").asText()).isEqualTo("80.00");
+		assertThat(payableSettlement.get("summary").get("payableAdjustmentAmount").asText()).isEqualTo("30.00");
+		assertThat(payableSettlement.get("summary").get("payableNetAmount").asText()).isEqualTo("50.00");
+		assertThat(payableSettlement.get("summary").get("settlementRemainingAmount").asText()).isEqualTo("30.00");
+
+		assertError(get(
+				"/api/admin/reports/settlement-summary/traces?traceKey=settlement-summary:SETTLEMENT_ADJUSTMENT:999999999",
+				admin), HttpStatus.BAD_REQUEST, "REPORT_TRACE_KEY_INVALID");
+		assertThat(receiptId).isPositive();
 	}
 
 	@Test
@@ -1406,6 +1616,167 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		return new CostRecordFixture(costRecordId);
 	}
 
+	private ReturnLineFixture createPostedSalesReturn(ReportingFixture fixture, SalesShipmentFixture shipment,
+			LocalDate businessDate, String quantity, String unitPrice) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String returnNo = "RPT-SR-" + suffix;
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
+		long returnId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_return (
+					return_no, customer_id, source_shipment_id, source_shipment_no, warehouse_id, business_date,
+					status, total_amount, remark, created_by, created_at, updated_by, updated_at, posted_by,
+					posted_at
+				)
+				values (?, ?, ?, ?, ?, ?, 'POSTED', ?, '报表销售退货', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, returnNo, shipment.customerId(), shipment.shipmentId(), shipment.shipmentNo(),
+				fixture.warehouseId(), businessDate, amount);
+		long lineId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_return_line (
+					return_id, source_shipment_line_id, sales_order_line_id, material_id, unit_id, line_no,
+					returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
+					created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, '报表销售退货', now(), now())
+				returning id
+				""", Long.class, returnId, shipment.shipmentLineId(), shipment.orderLineId(),
+				fixture.finishedMaterialId(), fixture.unitId(), quantityValue, quantityValue, unitPriceValue, amount);
+		return new ReturnLineFixture(returnId, returnNo, lineId);
+	}
+
+	private ReturnLineFixture createPostedPurchaseReturn(ReportingFixture fixture, PurchaseReceiptFixture receipt,
+			LocalDate businessDate, String quantity, String unitPrice) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String returnNo = "RPT-PRTN-" + suffix;
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
+		long returnId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_return (
+					return_no, supplier_id, source_receipt_id, source_receipt_no, warehouse_id, business_date,
+					status, total_amount, remark, created_by, created_at, updated_by, updated_at, posted_by,
+					posted_at
+				)
+				values (?, ?, ?, ?, ?, ?, 'POSTED', ?, '报表采购退货', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, returnNo, receipt.supplierId(), receipt.receiptId(), receipt.receiptNo(),
+				fixture.warehouseId(), businessDate, amount);
+		long lineId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_return_line (
+					return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
+					returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
+					created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, '报表采购退货', now(), now())
+				returning id
+				""", Long.class, returnId, receipt.receiptLineId(), receipt.orderLineId(), fixture.rawMaterialId(),
+				fixture.unitId(), quantityValue, quantityValue, unitPriceValue, amount);
+		return new ReturnLineFixture(returnId, returnNo, lineId);
+	}
+
+	private ReturnLineFixture createPostedMaterialReturn(ReportingFixture fixture, ProductionFixture production,
+			MaterialIssueFixture issue, LocalDate businessDate, String quantity) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String returnNo = "RPT-MR-" + suffix;
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		long returnId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_return (
+					return_no, work_order_id, source_issue_id, warehouse_id, business_date, status, remark,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, ?, 'POSTED', '报表生产退料', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, returnNo, production.workOrderId(), issue.issueId(), fixture.warehouseId(),
+				businessDate);
+		long lineId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_return_line (
+					return_id, source_issue_line_id, work_order_material_id, material_id, unit_id, line_no,
+					returned_quantity_before, returnable_quantity_before, quantity, reason, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 1, 0, ?, ?, '报表生产退料', now(), now())
+				returning id
+				""", Long.class, returnId, issue.issueLineId(), production.workOrderMaterialId(),
+				fixture.rawMaterialId(), fixture.unitId(), quantityValue, quantityValue);
+		return new ReturnLineFixture(returnId, returnNo, lineId);
+	}
+
+	private ReturnLineFixture createPostedMaterialSupplement(ReportingFixture fixture, ProductionFixture production,
+			LocalDate businessDate, String quantity) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String supplementNo = "RPT-MS-" + suffix;
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		long supplementId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_supplement (
+					supplement_no, work_order_id, warehouse_id, business_date, status, remark,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, 'POSTED', '报表生产补料', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, supplementNo, production.workOrderId(), fixture.warehouseId(), businessDate);
+		long lineId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_supplement_line (
+					supplement_id, work_order_material_id, material_id, unit_id, line_no, issued_quantity_before,
+					supplemented_quantity_before, available_stock_quantity_before, quantity, reason, created_at,
+					updated_at
+				)
+				values (?, ?, ?, ?, 1, 0, 0, 100, ?, '报表生产补料', now(), now())
+				returning id
+				""", Long.class, supplementId, production.workOrderMaterialId(), fixture.rawMaterialId(),
+				fixture.unitId(), quantityValue);
+		return new ReturnLineFixture(supplementId, supplementNo, lineId);
+	}
+
+	private void updateReceivableAdjustment(long receivableId, String adjustedAmount, String unreceivedAmount,
+			String status) {
+		this.jdbcTemplate.update("""
+				update fin_receivable
+				set adjusted_amount = ?, unreceived_amount = ?, status = ?, updated_by = 'test', updated_at = now()
+				where id = ?
+				""", new BigDecimal(adjustedAmount), new BigDecimal(unreceivedAmount), status, receivableId);
+	}
+
+	private void updatePayableAdjustment(long payableId, String adjustedAmount, String unpaidAmount, String status) {
+		this.jdbcTemplate.update("""
+				update fin_payable
+				set adjusted_amount = ?, unpaid_amount = ?, status = ?, updated_by = 'test', updated_at = now()
+				where id = ?
+				""", new BigDecimal(adjustedAmount), new BigDecimal(unpaidAmount), status, payableId);
+	}
+
+	private long createSettlementAdjustment(String settlementSide, String adjustmentType, String sourceType,
+			long sourceId, long targetId, LocalDate businessDate, String amount) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_settlement_adjustment (
+					adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+					business_date, amount, status, remark, created_by, created_at, updated_by, updated_at,
+					posted_by, posted_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, 'POSTED', '报表往来冲减', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "RPT-ADJ-" + suffix, settlementSide, adjustmentType, sourceType, sourceId,
+				targetId, businessDate, new BigDecimal(amount));
+	}
+
+	private long insertStockMovement(ReportingFixture fixture, long materialId, LocalDate businessDate,
+			String movementType, String direction, String quantity, String sourceType, long sourceId,
+			long sourceLineId, String reason) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
+					reason, remark, operator_name, occurred_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, 100, 100, ?, ?, ?, ?, ?, ?, 'test', now())
+				returning id
+				""", Long.class, "RPT-MOV-" + suffix, movementType, direction, fixture.warehouseId(), materialId,
+				fixture.unitId(), new BigDecimal(quantity), sourceType, sourceId, sourceLineId, businessDate, reason,
+				reason);
+	}
+
 	private BigDecimal decimalOrNull(String value) {
 		return value == null ? null : new BigDecimal(value);
 	}
@@ -1608,6 +1979,9 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record CostRecordFixture(long costRecordId) {
+	}
+
+	private record ReturnLineFixture(long documentId, String documentNo, long lineId) {
 	}
 
 }
