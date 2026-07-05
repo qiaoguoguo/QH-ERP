@@ -4,6 +4,7 @@ import { businessReportingApi, type ReportTraceRecord, type SalesReportRow, type
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
+import { reportSourceTypeText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({
   dateFrom: '',
@@ -34,8 +35,12 @@ const traceLoading = ref(false)
 const traceError = ref('')
 
 const metrics = computed(() => summary.value ? [
-  { label: '出库数量', value: summary.value.shipmentQuantity },
-  { label: '经营金额', value: summary.value.shipmentAmount },
+  { label: '原发生金额', value: summary.value.salesOriginalAmount ?? summary.value.shipmentAmount ?? '0.00' },
+  { label: '退货金额', value: summary.value.salesReturnAmount ?? '0.00' },
+  { label: '销售净额', value: summary.value.salesNetAmount ?? summary.value.shipmentAmount ?? '0.00' },
+  { label: '原发生数量', value: summary.value.salesOriginalQuantity ?? summary.value.shipmentQuantity ?? '0.000' },
+  { label: '退货数量', value: summary.value.salesReturnQuantity ?? '0.000' },
+  { label: '净数量', value: summary.value.salesNetQuantity ?? summary.value.shipmentQuantity ?? '0.000' },
   { label: '应收金额', value: summary.value.receivableAmount ?? '0.00' },
   { label: '已收金额', value: summary.value.receivedAmount ?? '0.00' },
   { label: '未收金额', value: summary.value.unreceivedAmount ?? '0.00' },
@@ -131,13 +136,32 @@ onMounted(() => {
     <ReportMetricStrip :metrics="metrics" />
     <div class="report-table-scroll">
       <el-table :data="rows" empty-text="暂无销售经营数据" stripe>
-        <el-table-column prop="sourceNo" label="销售出库" min-width="160" show-overflow-tooltip />
+        <el-table-column label="来源类型" min-width="110">
+          <template #default="{ row }">{{ reportSourceTypeText(row.sourceType) }}</template>
+        </el-table-column>
+        <el-table-column prop="sourceNo" label="来源单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="salesOrderNo" label="销售订单" min-width="160" show-overflow-tooltip />
         <el-table-column prop="customerName" label="客户" min-width="140" show-overflow-tooltip />
         <el-table-column prop="materialName" label="物料" min-width="140" show-overflow-tooltip />
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
-        <el-table-column prop="quantity" label="数量" min-width="110" align="right" />
-        <el-table-column prop="amount" label="经营金额" min-width="130" align="right" />
+        <el-table-column label="原发生数量" min-width="120" align="right">
+          <template #default="{ row }">{{ row.salesOriginalQuantity ?? row.quantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="退货数量" min-width="120" align="right">
+          <template #default="{ row }">{{ row.salesReturnQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="净数量" min-width="110" align="right">
+          <template #default="{ row }">{{ row.salesNetQuantity ?? row.quantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="原发生金额" min-width="130" align="right">
+          <template #default="{ row }">{{ row.salesOriginalAmount ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="退货金额" min-width="120" align="right">
+          <template #default="{ row }">{{ row.salesReturnAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="销售净额" min-width="120" align="right">
+          <template #default="{ row }">{{ row.salesNetAmount ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
         <el-table-column label="来源" width="100">
           <template #default="{ row }">
             <el-button data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>

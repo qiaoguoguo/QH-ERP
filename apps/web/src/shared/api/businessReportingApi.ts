@@ -63,6 +63,12 @@ export interface SalesReportListParams extends DateRangeParams, KeywordParams, P
 export interface SalesReportSummary {
   shipmentQuantity: ReportDecimal
   shipmentAmount: ReportMoney
+  salesOriginalAmount?: ReportMoney
+  salesReturnAmount?: ReportMoney
+  salesNetAmount?: ReportMoney
+  salesOriginalQuantity?: ReportDecimal
+  salesReturnQuantity?: ReportDecimal
+  salesNetQuantity?: ReportDecimal
   receivableAmount?: ReportMoney
   receivedAmount?: ReportMoney
   unreceivedAmount?: ReportMoney
@@ -70,7 +76,7 @@ export interface SalesReportSummary {
 }
 
 export interface SalesReportRow {
-  sourceType: 'SALES_SHIPMENT'
+  sourceType: 'SALES_SHIPMENT' | 'SALES_RETURN'
   sourceId: ResourceId
   sourceNo: string
   salesOrderId?: ResourceId
@@ -83,6 +89,12 @@ export interface SalesReportRow {
   quantity: ReportDecimal
   unitPrice?: ReportMoney
   amount: ReportMoney
+  salesOriginalAmount?: ReportMoney
+  salesReturnAmount?: ReportMoney
+  salesNetAmount?: ReportMoney
+  salesOriginalQuantity?: ReportDecimal
+  salesReturnQuantity?: ReportDecimal
+  salesNetQuantity?: ReportDecimal
   receivableAmount?: ReportMoney
   receivedAmount?: ReportMoney
   unreceivedAmount?: ReportMoney
@@ -99,6 +111,12 @@ export interface ProcurementReportListParams extends DateRangeParams, KeywordPar
 export interface ProcurementReportSummary {
   receiptQuantity: ReportDecimal
   receiptAmount: ReportMoney
+  purchaseOriginalAmount?: ReportMoney
+  purchaseReturnAmount?: ReportMoney
+  purchaseNetAmount?: ReportMoney
+  purchaseOriginalQuantity?: ReportDecimal
+  purchaseReturnQuantity?: ReportDecimal
+  purchaseNetQuantity?: ReportDecimal
   payableAmount?: ReportMoney
   paidAmount?: ReportMoney
   unpaidAmount?: ReportMoney
@@ -106,7 +124,7 @@ export interface ProcurementReportSummary {
 }
 
 export interface ProcurementReportRow {
-  sourceType: 'PURCHASE_RECEIPT'
+  sourceType: 'PURCHASE_RECEIPT' | 'PURCHASE_RETURN'
   sourceId: ResourceId
   sourceNo: string
   purchaseOrderId?: ResourceId
@@ -119,6 +137,12 @@ export interface ProcurementReportRow {
   quantity: ReportDecimal
   unitPrice?: ReportMoney
   amount: ReportMoney
+  purchaseOriginalAmount?: ReportMoney
+  purchaseReturnAmount?: ReportMoney
+  purchaseNetAmount?: ReportMoney
+  purchaseOriginalQuantity?: ReportDecimal
+  purchaseReturnQuantity?: ReportDecimal
+  purchaseNetQuantity?: ReportDecimal
   payableAmount?: ReportMoney
   paidAmount?: ReportMoney
   unpaidAmount?: ReportMoney
@@ -137,6 +161,13 @@ export interface InventoryReportSummary {
   outQuantity: ReportDecimal
   adjustQuantity: ReportDecimal
   closingQuantity: ReportDecimal
+  inboundOriginalQuantity?: ReportDecimal
+  inboundReverseQuantity?: ReportDecimal
+  inboundNetQuantity?: ReportDecimal
+  outboundOriginalQuantity?: ReportDecimal
+  outboundReverseQuantity?: ReportDecimal
+  outboundNetQuantity?: ReportDecimal
+  inventoryNetChangeQuantity?: ReportDecimal
   sourceCount: number
 }
 
@@ -158,6 +189,11 @@ export interface ProductionReportSummary {
   workOrderCount: number
   plannedQuantity: ReportDecimal
   issuedQuantity: ReportDecimal
+  issuedOriginalQuantity?: ReportDecimal
+  materialReturnQuantity?: ReportDecimal
+  materialSupplementQuantity?: ReportDecimal
+  issuedNetQuantity?: ReportDecimal
+  completedQuantity?: ReportDecimal
   reportedQuantity: ReportDecimal
   qualifiedQuantity: ReportDecimal
   defectiveQuantity: ReportDecimal
@@ -173,6 +209,11 @@ export interface ProductionReportRow {
   productMaterialName: string
   plannedQuantity: ReportDecimal
   issuedQuantity: ReportDecimal
+  issuedOriginalQuantity?: ReportDecimal
+  materialReturnQuantity?: ReportDecimal
+  materialSupplementQuantity?: ReportDecimal
+  issuedNetQuantity?: ReportDecimal
+  completedQuantity?: ReportDecimal
   reportedQuantity: ReportDecimal
   qualifiedQuantity: ReportDecimal
   defectiveQuantity: ReportDecimal
@@ -197,6 +238,11 @@ export interface CostReportSummary {
   manufacturingOverheadAmount: ReportMoney
   otherCostAmount: ReportMoney
   totalCostAmount: ReportMoney
+  materialOriginalCost?: ReportMoney
+  materialReturnCost?: ReportMoney
+  materialSupplementCost?: ReportMoney
+  materialNetCost?: ReportMoney
+  totalNetCost?: ReportMoney
   sourceCount: number
   formalAccounting: false
 }
@@ -217,6 +263,11 @@ export interface CostReportRow {
   quantity?: ReportDecimal
   unitPrice?: ReportMoney
   amount: ReportMoney
+  materialOriginalCost?: ReportMoney
+  materialReturnCost?: ReportMoney
+  materialSupplementCost?: ReportMoney
+  materialNetCost?: ReportMoney
+  totalNetCost?: ReportMoney
   basisType?: string
   formalAccounting: false
   sourceCount: number
@@ -236,11 +287,19 @@ export interface SettlementReportSummary {
   payableAmount: ReportMoney
   paidAmount: ReportMoney
   unpaidAmount: ReportMoney
+  receivableOriginalAmount?: ReportMoney
+  receivableAdjustmentAmount?: ReportMoney
+  receivableNetAmount?: ReportMoney
+  payableOriginalAmount?: ReportMoney
+  payableAdjustmentAmount?: ReportMoney
+  payableNetAmount?: ReportMoney
+  settlementRemainingAmount?: ReportMoney
   sourceCount: number
 }
 
 export interface SettlementReportRow {
-  settlementType: 'RECEIVABLE' | 'PAYABLE' | 'RECEIPT' | 'PAYMENT'
+  settlementType: 'RECEIVABLE' | 'PAYABLE' | 'RECEIPT' | 'PAYMENT' | 'SETTLEMENT_ADJUSTMENT'
+  sourceType?: 'RECEIVABLE' | 'PAYABLE' | 'RECEIPT' | 'PAYMENT' | 'SETTLEMENT_ADJUSTMENT' | string
   sourceId: ResourceId
   sourceNo: string
   partyType: 'CUSTOMER' | 'SUPPLIER'
@@ -251,6 +310,13 @@ export interface SettlementReportRow {
   totalAmount: ReportMoney
   settledAmount: ReportMoney
   unsettledAmount: ReportMoney
+  receivableOriginalAmount?: ReportMoney
+  receivableAdjustmentAmount?: ReportMoney
+  receivableNetAmount?: ReportMoney
+  payableOriginalAmount?: ReportMoney
+  payableAdjustmentAmount?: ReportMoney
+  payableNetAmount?: ReportMoney
+  settlementRemainingAmount?: ReportMoney
   overdueDays?: number
   agingBucket?: string
   status: string

@@ -4,6 +4,7 @@ import { businessReportingApi, type ReportTraceRecord, type SettlementReportRow,
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
+import { reportSourceTypeText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({ dateFrom: '', dateTo: '', keyword: '', status: '', customerId: '', supplierId: '' })
 const fields: ReportFilterField[] = [
@@ -26,6 +27,13 @@ const traceRows = ref<ReportTraceRecord[]>([])
 const traceLoading = ref(false)
 const traceError = ref('')
 const metrics = computed(() => summary.value ? [
+  { label: '应收原发生', value: summary.value.receivableOriginalAmount ?? summary.value.receivableAmount ?? '0.00' },
+  { label: '应收反向发生', value: summary.value.receivableAdjustmentAmount ?? '0.00' },
+  { label: '应收净额', value: summary.value.receivableNetAmount ?? summary.value.unreceivedAmount ?? '0.00' },
+  { label: '应付原发生', value: summary.value.payableOriginalAmount ?? summary.value.payableAmount ?? '0.00' },
+  { label: '应付反向发生', value: summary.value.payableAdjustmentAmount ?? '0.00' },
+  { label: '应付净额', value: summary.value.payableNetAmount ?? summary.value.unpaidAmount ?? '0.00' },
+  { label: '往来剩余', value: summary.value.settlementRemainingAmount ?? '0.00' },
   { label: '应收金额', value: summary.value.receivableAmount },
   { label: '已收金额', value: summary.value.receivedAmount },
   { label: '未收金额', value: summary.value.unreceivedAmount },
@@ -44,6 +52,7 @@ function settlementTypeText(type: SettlementReportRow['settlementType']) {
     PAYABLE: '应付',
     RECEIPT: '收款',
     PAYMENT: '付款',
+    SETTLEMENT_ADJUSTMENT: '往来冲减',
   }
   return map[type] ?? type
 }
@@ -117,13 +126,35 @@ onMounted(() => { void loadReport(1) })
         <el-table-column label="类型" min-width="90">
           <template #default="{ row }">{{ settlementTypeText(row.settlementType) }}</template>
         </el-table-column>
+        <el-table-column label="来源类型" min-width="110">
+          <template #default="{ row }">{{ reportSourceTypeText(row.sourceType ?? row.settlementType) }}</template>
+        </el-table-column>
         <el-table-column prop="sourceNo" label="来源单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="partyName" label="往来对象" min-width="150" show-overflow-tooltip />
         <el-table-column prop="businessDate" label="业务日期" min-width="120" />
         <el-table-column prop="dueDate" label="到期日" min-width="120" />
+        <el-table-column label="应收原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.receivableOriginalAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="应收反向发生" min-width="130" align="right">
+          <template #default="{ row }">{{ row.receivableAdjustmentAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="应收净额" min-width="110" align="right">
+          <template #default="{ row }">{{ row.receivableNetAmount ?? row.unsettledAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="应付原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.payableOriginalAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="应付反向发生" min-width="130" align="right">
+          <template #default="{ row }">{{ row.payableAdjustmentAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="应付净额" min-width="110" align="right">
+          <template #default="{ row }">{{ row.payableNetAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="往来剩余" min-width="110" align="right">
+          <template #default="{ row }">{{ row.settlementRemainingAmount ?? row.unsettledAmount ?? '0.00' }}</template>
+        </el-table-column>
         <el-table-column prop="totalAmount" label="总金额" min-width="120" align="right" />
-        <el-table-column prop="settledAmount" label="已结金额" min-width="120" align="right" />
-        <el-table-column prop="unsettledAmount" label="未结金额" min-width="120" align="right" />
         <el-table-column prop="status" label="状态" min-width="110" />
         <el-table-column label="来源" width="100">
           <template #default="{ row }">

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import type { ReportTraceRecord } from '../../shared/api/businessReportingApi'
+import { reportSourceTypeText } from './reportPageHelpers'
 
 defineProps<{
   visible: boolean
@@ -59,7 +60,7 @@ function viewSource(row: ReportTraceRecord) {
         </el-table-column>
         <el-table-column label="来源类型" min-width="150">
           <template #default="{ row }">
-            <span v-if="!restricted(row)">{{ row.sourceType }}</span>
+            <span v-if="!restricted(row)">{{ reportSourceTypeText(row.sourceType) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="业务日期" min-width="120">

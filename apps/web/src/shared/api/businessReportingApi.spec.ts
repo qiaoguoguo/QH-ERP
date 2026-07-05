@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createBusinessReportingApi } from './businessReportingApi'
+import {
+  createBusinessReportingApi,
+  type ReportTraceRecord,
+  type SalesReportRow,
+  type SalesReportSummary,
+  type SettlementReportRow,
+} from './businessReportingApi'
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -89,22 +95,38 @@ describe('经营报表 API', () => {
   })
 
   it('固定报表响应保留 summary + items，金额和数量保持字符串', async () => {
+    const summary: SalesReportSummary = {
+      shipmentQuantity: '10.000',
+      shipmentAmount: '12000.00',
+      salesOriginalAmount: '12000.00',
+      salesReturnAmount: '2400.00',
+      salesNetAmount: '9600.00',
+      salesOriginalQuantity: '10.000',
+      salesReturnQuantity: '2.000',
+      salesNetQuantity: '8.000',
+      sourceCount: 1,
+    }
+    const salesReturnRow: SalesReportRow = {
+      sourceType: 'SALES_RETURN',
+      sourceId: 5001,
+      sourceNo: 'SR202607050001',
+      customerName: '示例客户',
+      materialName: '示例成品',
+      businessDate: '2026-07-05',
+      quantity: '2.000',
+      amount: '2400.00',
+      salesOriginalAmount: '0.00',
+      salesReturnAmount: '2400.00',
+      salesNetAmount: '-2400.00',
+      salesOriginalQuantity: '0.000',
+      salesReturnQuantity: '2.000',
+      salesNetQuantity: '-2.000',
+      sourceCount: 1,
+      traceKey: 'sales-summary:SALES_RETURN:5001',
+    }
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({
-      summary: {
-        shipmentQuantity: '10.000',
-        shipmentAmount: '12000.00',
-        sourceCount: 1,
-      },
-      items: [
-        {
-          sourceType: 'SALES_SHIPMENT',
-          sourceId: 1001,
-          sourceNo: 'SS202607040001',
-          quantity: '10.000',
-          amount: '12000.00',
-          traceKey: 'sales-summary:SALES_SHIPMENT:1001',
-        },
-      ],
+      summary,
+      items: [salesReturnRow],
       page: 1,
       pageSize: 20,
       total: 1,
@@ -116,9 +138,168 @@ describe('经营报表 API', () => {
 
     expect(result.summary.shipmentAmount).toBe('12000.00')
     expect(typeof result.summary.shipmentAmount).toBe('string')
-    expect(result.items[0].quantity).toBe('10.000')
+    expect(result.summary.salesReturnAmount).toBe('2400.00')
+    expect(typeof result.summary.salesNetQuantity).toBe('string')
+    expect(result.items[0].sourceType).toBe('SALES_RETURN')
+    expect(result.items[0].quantity).toBe('2.000')
     expect(typeof result.items[0].quantity).toBe('string')
+    expect(result.items[0].salesNetAmount).toBe('-2400.00')
     expect(result.totalPages).toBe(1)
+  })
+
+  it('往来报表行和追溯响应兼容反向来源类型', async () => {
+    const settlementAdjustmentRow: SettlementReportRow = {
+      settlementType: 'SETTLEMENT_ADJUSTMENT',
+      sourceType: 'SETTLEMENT_ADJUSTMENT',
+      sourceId: 8001,
+      sourceNo: 'SA202607050001',
+      partyType: 'CUSTOMER',
+      partyId: 8,
+      partyName: '示例客户',
+      businessDate: '2026-07-05',
+      totalAmount: '60.00',
+      settledAmount: '60.00',
+      unsettledAmount: '0.00',
+      receivableOriginalAmount: '500.00',
+      receivableAdjustmentAmount: '60.00',
+      receivableNetAmount: '440.00',
+      payableOriginalAmount: '0.00',
+      payableAdjustmentAmount: '0.00',
+      payableNetAmount: '0.00',
+      settlementRemainingAmount: '440.00',
+      status: 'POSTED',
+      sourceCount: 1,
+      traceKey: 'settlement-summary:SETTLEMENT_ADJUSTMENT:8001',
+    }
+    const traceRows: ReportTraceRecord[] = [
+      {
+        sourceType: 'SALES_RETURN',
+        sourceId: 5001,
+        sourceNo: 'SR202607050001',
+        sourceLineId: null,
+        businessDate: '2026-07-05',
+        status: 'POSTED',
+        quantity: '2.000',
+        amount: '2400.00',
+        resourceRouteName: 'sales-return-detail',
+        resourceRouteParams: { id: 5001 },
+        resourceRouteQuery: null,
+        canViewResource: true,
+        restricted: false,
+        restrictedMessage: null,
+      },
+      {
+        sourceType: 'PURCHASE_RETURN',
+        sourceId: 6001,
+        sourceNo: 'PR202607050001',
+        sourceLineId: null,
+        businessDate: '2026-07-05',
+        status: 'POSTED',
+        quantity: '1.000',
+        amount: '800.00',
+        resourceRouteName: 'procurement-return-detail',
+        resourceRouteParams: { id: 6001 },
+        resourceRouteQuery: null,
+        canViewResource: true,
+        restricted: false,
+        restrictedMessage: null,
+      },
+      {
+        sourceType: 'PRODUCTION_MATERIAL_RETURN',
+        sourceId: 7001,
+        sourceNo: 'PMR202607050001',
+        sourceLineId: null,
+        businessDate: '2026-07-05',
+        status: 'POSTED',
+        quantity: '3.000',
+        amount: null,
+        resourceRouteName: 'production-material-return-detail',
+        resourceRouteParams: { id: 7001 },
+        resourceRouteQuery: null,
+        canViewResource: true,
+        restricted: false,
+        restrictedMessage: null,
+      },
+      {
+        sourceType: 'PRODUCTION_MATERIAL_SUPPLEMENT',
+        sourceId: 7002,
+        sourceNo: 'PMS202607050001',
+        sourceLineId: null,
+        businessDate: '2026-07-05',
+        status: 'POSTED',
+        quantity: '4.000',
+        amount: null,
+        resourceRouteName: 'production-material-supplement-detail',
+        resourceRouteParams: { id: 7002 },
+        resourceRouteQuery: null,
+        canViewResource: true,
+        restricted: false,
+        restrictedMessage: null,
+      },
+      {
+        sourceType: 'SETTLEMENT_ADJUSTMENT',
+        sourceId: 8001,
+        sourceNo: 'SA202607050001',
+        sourceLineId: null,
+        businessDate: '2026-07-05',
+        status: 'POSTED',
+        quantity: null,
+        amount: '60.00',
+        resourceRouteName: 'finance-settlement-adjustment-detail',
+        resourceRouteParams: { id: 8001 },
+        resourceRouteQuery: null,
+        canViewResource: true,
+        restricted: false,
+        restrictedMessage: null,
+      },
+    ]
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        summary: {
+          receivableAmount: '500.00',
+          receivedAmount: '0.00',
+          unreceivedAmount: '440.00',
+          payableAmount: '0.00',
+          paidAmount: '0.00',
+          unpaidAmount: '0.00',
+          receivableOriginalAmount: '500.00',
+          receivableAdjustmentAmount: '60.00',
+          receivableNetAmount: '440.00',
+          payableOriginalAmount: '0.00',
+          payableAdjustmentAmount: '0.00',
+          payableNetAmount: '0.00',
+          settlementRemainingAmount: '440.00',
+          sourceCount: 1,
+        },
+        items: [settlementAdjustmentRow],
+        page: 1,
+        pageSize: 20,
+        total: 1,
+        totalPages: 1,
+      }))
+      .mockResolvedValueOnce(apiResponse({ items: traceRows, page: 1, pageSize: 20, total: 5, totalPages: 1 }))
+    const api = createBusinessReportingApi({ fetcher })
+
+    const settlement = await api.settlement.list({ page: 1, pageSize: 20 })
+    const traces = await api.settlement.traces.list({ traceKey: 'settlement-summary:SETTLEMENT_ADJUSTMENT:8001', page: 1, pageSize: 20 })
+
+    expect(settlement.items[0].settlementType).toBe('SETTLEMENT_ADJUSTMENT')
+    expect(settlement.items[0].sourceType).toBe('SETTLEMENT_ADJUSTMENT')
+    expect(settlement.items[0].receivableAdjustmentAmount).toBe('60.00')
+    expect(traces.items.map((item) => item.sourceType)).toEqual([
+      'SALES_RETURN',
+      'PURCHASE_RETURN',
+      'PRODUCTION_MATERIAL_RETURN',
+      'PRODUCTION_MATERIAL_SUPPLEMENT',
+      'SETTLEMENT_ADJUSTMENT',
+    ])
+    expect(traces.items.map((item) => item.resourceRouteName)).toEqual([
+      'sales-return-detail',
+      'procurement-return-detail',
+      'production-material-return-detail',
+      'production-material-supplement-detail',
+      'finance-settlement-adjustment-detail',
+    ])
   })
 
   it('覆盖全部追溯接口并支持期间敏感追溯参数', async () => {

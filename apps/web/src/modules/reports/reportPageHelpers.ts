@@ -113,3 +113,24 @@ export function hasAnyReportViewPermission(hasPermission: (permission: string) =
 export function firstReportRouteByPermission(hasPermission: (permission: string) => boolean) {
   return reportRouteConfigs.find((item) => hasPermission(item.permission))?.path ?? null
 }
+
+export function reportSourceTypeText(sourceType: string | null | undefined) {
+  const labels: Record<string, string> = {
+    SALES_SHIPMENT: '销售出库',
+    SALES_RETURN: '销售退货',
+    PURCHASE_RECEIPT: '采购入库',
+    PURCHASE_RETURN: '采购退货',
+    INVENTORY_MOVEMENT: '库存流水',
+    PRODUCTION_MATERIAL_ISSUE: '生产领料',
+    PRODUCTION_MATERIAL_RETURN: '生产退料',
+    PRODUCTION_MATERIAL_SUPPLEMENT: '生产补料',
+    PRODUCTION_WORK_ORDER: '生产工单',
+    COST_RECORD: '成本记录',
+    RECEIVABLE: '应收',
+    PAYABLE: '应付',
+    RECEIPT: '收款',
+    PAYMENT: '付款',
+    SETTLEMENT_ADJUSTMENT: '往来冲减',
+  }
+  return sourceType ? labels[sourceType] ?? sourceType : '-'
+}

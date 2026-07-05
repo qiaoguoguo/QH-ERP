@@ -28,6 +28,11 @@ const traceError = ref('')
 const metrics = computed(() => summary.value ? [
   { label: '工单数量', value: summary.value.workOrderCount },
   { label: '计划数量', value: summary.value.plannedQuantity },
+  { label: '领料原发生', value: summary.value.issuedOriginalQuantity ?? summary.value.issuedQuantity ?? '0.000' },
+  { label: '退料数量', value: summary.value.materialReturnQuantity ?? '0.000' },
+  { label: '补料数量', value: summary.value.materialSupplementQuantity ?? '0.000' },
+  { label: '领料净数量', value: summary.value.issuedNetQuantity ?? summary.value.issuedQuantity ?? '0.000' },
+  { label: '完成数量', value: summary.value.completedQuantity ?? summary.value.completionReceiptQuantity ?? '0.000' },
   { label: '报工数量', value: summary.value.reportedQuantity },
   { label: '合格数量', value: summary.value.qualifiedQuantity },
   { label: '完工入库数量', value: summary.value.completionReceiptQuantity },
@@ -101,7 +106,22 @@ onMounted(() => { void loadReport(1) })
         <el-table-column prop="workOrderNo" label="工单" min-width="160" show-overflow-tooltip />
         <el-table-column prop="productMaterialName" label="产品" min-width="160" show-overflow-tooltip />
         <el-table-column prop="plannedQuantity" label="计划" min-width="100" align="right" />
+        <el-table-column label="领料原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.issuedOriginalQuantity ?? row.issuedQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="退料数量" min-width="110" align="right">
+          <template #default="{ row }">{{ row.materialReturnQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="补料数量" min-width="110" align="right">
+          <template #default="{ row }">{{ row.materialSupplementQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="领料净数量" min-width="120" align="right">
+          <template #default="{ row }">{{ row.issuedNetQuantity ?? row.issuedQuantity ?? '0.000' }}</template>
+        </el-table-column>
         <el-table-column prop="reportedQuantity" label="报工" min-width="100" align="right" />
+        <el-table-column label="完成数量" min-width="110" align="right">
+          <template #default="{ row }">{{ row.completedQuantity ?? row.completionReceiptQuantity ?? '0.000' }}</template>
+        </el-table-column>
         <el-table-column prop="completionReceiptQuantity" label="完工入库" min-width="120" align="right" />
         <el-table-column prop="completionRate" label="完工率" min-width="100" align="right" />
         <el-table-column prop="status" label="状态" min-width="120" />

@@ -33,8 +33,13 @@ const traceError = ref('')
 
 const metrics = computed(() => summary.value ? [
   { label: '期初数量', value: summary.value.openingQuantity },
-  { label: '入库数量', value: summary.value.inQuantity },
-  { label: '出库数量', value: summary.value.outQuantity },
+  { label: '入库原发生', value: summary.value.inboundOriginalQuantity ?? summary.value.inQuantity ?? '0.000' },
+  { label: '入库反向发生', value: summary.value.inboundReverseQuantity ?? '0.000' },
+  { label: '入库净额', value: summary.value.inboundNetQuantity ?? summary.value.inQuantity ?? '0.000' },
+  { label: '出库原发生', value: summary.value.outboundOriginalQuantity ?? summary.value.outQuantity ?? '0.000' },
+  { label: '出库反向发生', value: summary.value.outboundReverseQuantity ?? '0.000' },
+  { label: '出库净额', value: summary.value.outboundNetQuantity ?? summary.value.outQuantity ?? '0.000' },
+  { label: '库存净变化', value: summary.value.inventoryNetChangeQuantity ?? '0.000' },
   { label: '调整数量', value: summary.value.adjustQuantity },
   { label: '期末数量', value: summary.value.closingQuantity },
   { label: '来源数量', value: summary.value.sourceCount },
@@ -130,8 +135,27 @@ onMounted(() => {
         <el-table-column prop="warehouseName" label="仓库" min-width="140" />
         <el-table-column prop="materialName" label="物料" min-width="160" show-overflow-tooltip />
         <el-table-column prop="openingQuantity" label="期初" min-width="110" align="right" />
-        <el-table-column prop="inQuantity" label="入库" min-width="110" align="right" />
-        <el-table-column prop="outQuantity" label="出库" min-width="110" align="right" />
+        <el-table-column label="入库原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.inboundOriginalQuantity ?? row.inQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="入库反向发生" min-width="130" align="right">
+          <template #default="{ row }">{{ row.inboundReverseQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="入库净额" min-width="110" align="right">
+          <template #default="{ row }">{{ row.inboundNetQuantity ?? row.inQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="出库原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.outboundOriginalQuantity ?? row.outQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="出库反向发生" min-width="130" align="right">
+          <template #default="{ row }">{{ row.outboundReverseQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="出库净额" min-width="110" align="right">
+          <template #default="{ row }">{{ row.outboundNetQuantity ?? row.outQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="库存净变化" min-width="120" align="right">
+          <template #default="{ row }">{{ row.inventoryNetChangeQuantity ?? '0.000' }}</template>
+        </el-table-column>
         <el-table-column prop="adjustQuantity" label="调整" min-width="110" align="right" />
         <el-table-column prop="closingQuantity" label="期末" min-width="110" align="right" />
         <el-table-column label="来源" width="100">

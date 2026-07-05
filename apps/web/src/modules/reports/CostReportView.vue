@@ -26,11 +26,15 @@ const traceRows = ref<ReportTraceRecord[]>([])
 const traceLoading = ref(false)
 const traceError = ref('')
 const metrics = computed(() => summary.value ? [
-  { label: '材料成本', value: summary.value.materialCostAmount },
+  { label: '材料原发生', value: summary.value.materialOriginalCost ?? summary.value.materialCostAmount ?? '0.00' },
+  { label: '退料成本', value: summary.value.materialReturnCost ?? '0.00' },
+  { label: '补料成本', value: summary.value.materialSupplementCost ?? '0.00' },
+  { label: '材料净成本', value: summary.value.materialNetCost ?? summary.value.materialCostAmount ?? '0.00' },
   { label: '人工成本', value: summary.value.laborCostAmount },
   { label: '制造费用', value: summary.value.manufacturingOverheadAmount },
   { label: '其他成本', value: summary.value.otherCostAmount },
   { label: '成本合计', value: summary.value.totalCostAmount },
+  { label: '总净成本', value: summary.value.totalNetCost ?? summary.value.totalCostAmount ?? '0.00' },
   { label: '来源数量', value: summary.value.sourceCount },
 ] : [])
 
@@ -109,7 +113,21 @@ onMounted(() => { void loadReport(1) })
         <el-table-column prop="productMaterialName" label="产品" min-width="150" show-overflow-tooltip />
         <el-table-column prop="costType" label="成本类型" min-width="120" />
         <el-table-column prop="sourceDocumentNo" label="来源单据" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="amount" label="成本金额" min-width="120" align="right" />
+        <el-table-column label="材料原发生" min-width="120" align="right">
+          <template #default="{ row }">{{ row.materialOriginalCost ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="退料成本" min-width="110" align="right">
+          <template #default="{ row }">{{ row.materialReturnCost ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="补料成本" min-width="110" align="right">
+          <template #default="{ row }">{{ row.materialSupplementCost ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="材料净成本" min-width="120" align="right">
+          <template #default="{ row }">{{ row.materialNetCost ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="总净成本" min-width="120" align="right">
+          <template #default="{ row }">{{ row.totalNetCost ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
         <el-table-column prop="formalAccounting" label="正式入账" min-width="100">
           <template #default="{ row }">{{ row.formalAccounting ? '是' : '否' }}</template>
         </el-table-column>

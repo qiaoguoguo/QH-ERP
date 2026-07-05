@@ -4,6 +4,7 @@ import { businessReportingApi, type ProcurementReportRow, type ProcurementReport
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
+import { reportSourceTypeText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({ dateFrom: '', dateTo: '', keyword: '', status: '', supplierId: '', materialId: '' })
 const fields: ReportFilterField[] = [
@@ -26,8 +27,12 @@ const traceRows = ref<ReportTraceRecord[]>([])
 const traceLoading = ref(false)
 const traceError = ref('')
 const metrics = computed(() => summary.value ? [
-  { label: '入库数量', value: summary.value.receiptQuantity },
-  { label: '入库金额', value: summary.value.receiptAmount },
+  { label: '采购原发生', value: summary.value.purchaseOriginalAmount ?? summary.value.receiptAmount ?? '0.00' },
+  { label: '采购退货', value: summary.value.purchaseReturnAmount ?? '0.00' },
+  { label: '采购净额', value: summary.value.purchaseNetAmount ?? summary.value.receiptAmount ?? '0.00' },
+  { label: '原发生数量', value: summary.value.purchaseOriginalQuantity ?? summary.value.receiptQuantity ?? '0.000' },
+  { label: '退货数量', value: summary.value.purchaseReturnQuantity ?? '0.000' },
+  { label: '净数量', value: summary.value.purchaseNetQuantity ?? summary.value.receiptQuantity ?? '0.000' },
   { label: '应付金额', value: summary.value.payableAmount ?? '0.00' },
   { label: '已付金额', value: summary.value.paidAmount ?? '0.00' },
   { label: '未付金额', value: summary.value.unpaidAmount ?? '0.00' },
@@ -101,12 +106,31 @@ onMounted(() => { void loadReport(1) })
     <ReportMetricStrip :metrics="metrics" />
     <div class="report-table-scroll">
       <el-table :data="rows" empty-text="暂无采购经营数据" stripe>
-        <el-table-column prop="sourceNo" label="采购入库" min-width="160" show-overflow-tooltip />
+        <el-table-column label="来源类型" min-width="110">
+          <template #default="{ row }">{{ reportSourceTypeText(row.sourceType) }}</template>
+        </el-table-column>
+        <el-table-column prop="sourceNo" label="来源单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="purchaseOrderNo" label="采购订单" min-width="160" show-overflow-tooltip />
         <el-table-column prop="supplierName" label="供应商" min-width="140" show-overflow-tooltip />
         <el-table-column prop="materialName" label="物料" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="quantity" label="数量" min-width="110" align="right" />
-        <el-table-column prop="amount" label="经营金额" min-width="130" align="right" />
+        <el-table-column label="原发生数量" min-width="120" align="right">
+          <template #default="{ row }">{{ row.purchaseOriginalQuantity ?? row.quantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="退货数量" min-width="120" align="right">
+          <template #default="{ row }">{{ row.purchaseReturnQuantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="净数量" min-width="110" align="right">
+          <template #default="{ row }">{{ row.purchaseNetQuantity ?? row.quantity ?? '0.000' }}</template>
+        </el-table-column>
+        <el-table-column label="采购原发生" min-width="130" align="right">
+          <template #default="{ row }">{{ row.purchaseOriginalAmount ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="采购退货" min-width="120" align="right">
+          <template #default="{ row }">{{ row.purchaseReturnAmount ?? '0.00' }}</template>
+        </el-table-column>
+        <el-table-column label="采购净额" min-width="120" align="right">
+          <template #default="{ row }">{{ row.purchaseNetAmount ?? row.amount ?? '0.00' }}</template>
+        </el-table-column>
         <el-table-column label="来源" width="100"><template #default="{ row }"><el-button data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button></template></el-table-column>
       </el-table>
     </div>
