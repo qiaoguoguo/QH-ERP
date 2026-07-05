@@ -560,6 +560,269 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void productionMaterialReturnLifecyclePostsInventoryCostAndTraceLinks() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "12.000000", "10.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "0.000000");
+
+		ResponseEntity<String> sources = get(
+				"/api/admin/production/material-return-sources?keyword=" + issue.issueNo(), admin);
+		assertOk(sources);
+		JsonNode source = data(sources).get("items").get(0);
+		assertThat(source.get("issueId").longValue()).isEqualTo(issue.issueId());
+		assertThat(source.get("workOrderId").longValue()).isEqualTo(issue.workOrderId());
+		assertThat(source.get("status").asText()).isEqualTo("POSTED");
+		assertDecimalText(source.get("lines").get(0), "issuedQuantity", "12.000000");
+		assertDecimalText(source.get("lines").get(0), "returnedQuantity", "0");
+		assertDecimalText(source.get("lines").get(0), "returnableQuantity", "12.000000");
+
+		ResponseEntity<String> created = post("/api/admin/production/material-returns",
+				materialReturnPayload(issue.issueId(), "material-return-lifecycle-" + SEQUENCE.incrementAndGet(),
+						List.of(materialReturnLine(issue.issueLineId(), "3.000000", "余料退回"))),
+				admin);
+		assertOk(created);
+		JsonNode draft = data(created);
+		long returnId = draft.get("id").longValue();
+		assertThat(draft.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(draft.get("source").get("sourceId").longValue()).isEqualTo(issue.issueId());
+		assertDecimalText(draft, "totalQuantity", "3.000000");
+
+		ResponseEntity<String> updated = put("/api/admin/production/material-returns/" + returnId,
+				materialReturnPayload(issue.issueId(), null,
+						List.of(materialReturnLine(issue.issueLineId(), "4.000000", "退料调整"))),
+				admin);
+		assertOk(updated);
+		JsonNode updatedLine = data(updated).get("lines").get(0);
+		assertDecimalText(updatedLine, "quantity", "4.000000");
+		assertDecimalText(updatedLine, "amount", "40.00");
+
+		ResponseEntity<String> posted = put("/api/admin/production/material-returns/" + returnId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedData = data(posted);
+		JsonNode postedLine = postedData.get("lines").get(0);
+		long returnLineId = postedLine.get("id").longValue();
+		assertThat(postedData.get("status").asText()).isEqualTo("POSTED");
+		assertDecimalText(postedLine, "returnedQuantityBefore", "0");
+		assertDecimalText(postedLine, "returnableQuantityBefore", "12.000000");
+		assertThat(postedLine.get("stockMovementId").isNumber()).isTrue();
+		assertThat(postedLine.get("costRecordId").isNumber()).isTrue();
+
+		MovementRow movement = movementForSource("PRODUCTION_MATERIAL_RETURN", returnLineId);
+		assertThat(movement.movementType()).isEqualTo("PRODUCTION_MATERIAL_RETURN_IN");
+		assertThat(movement.direction()).isEqualTo("IN");
+		assertThat(movement.sourceId()).isEqualTo(returnId);
+		assertDecimal(movement.quantity(), "4.000000");
+		assertDecimal(movement.beforeQuantity(), "0.000000");
+		assertDecimal(movement.afterQuantity(), "4.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "4.000000");
+
+		CostRecordRow costRecord = costRecord("PRODUCTION_MATERIAL_RETURN", returnLineId);
+		assertThat(costRecord.status()).isEqualTo("ACTIVE");
+		assertDecimal(costRecord.quantity(), "4.000000");
+		assertDecimal(costRecord.unitPrice(), "10.000000");
+		assertDecimal(costRecord.amount(), "40.00");
+
+		ReversalLink link = reversalLink("PRODUCTION_MATERIAL_RETURN", returnId, returnLineId);
+		assertThat(link.sourceType()).isEqualTo("PRODUCTION_MATERIAL_ISSUE");
+		assertThat(link.sourceId()).isEqualTo(issue.issueId());
+		assertThat(link.sourceLineId()).isEqualTo(issue.issueLineId());
+		assertDecimal(link.quantity(), "4.000000");
+		assertDecimal(link.amount(), "40.00");
+
+		JsonNode detail = data(get("/api/admin/production/material-returns/" + returnId, admin));
+		assertThat(detail.get("traces").size()).isOne();
+		assertThat(detail.get("traces").get(0).get("traceKey").asText()).contains("PRODUCTION_MATERIAL_RETURN");
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=PRODUCTION_MATERIAL_RETURN&sourceId="
+				+ returnId + "&direction=REVERSE_TO_SOURCE", admin)).get(0);
+		assertThat(trace.get("direction").asText()).isEqualTo("REVERSE_TO_SOURCE");
+		JsonNode listItem = data(get("/api/admin/production/material-returns?keyword="
+				+ postedData.get("returnNo").asText(), admin)).get("items").get(0);
+		assertThat(listItem.get("id").longValue()).isEqualTo(returnId);
+		assertDecimalText(listItem, "totalQuantity", "4.000000");
+	}
+
+	@Test
+	void productionMaterialReturnBlocksInvalidOperationsAndSupportsRestrictedDraftUpdate() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "2.000000", "10.000000");
+
+		assertError(post("/api/admin/production/material-returns",
+				materialReturnPayload(issue.issueId(), null,
+						List.of(materialReturnLine(issue.issueLineId(), "2.000001", "超退"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_QUANTITY_EXCEEDS_AVAILABLE");
+		assertError(post("/api/admin/production/material-returns",
+				materialReturnPayload(issue.issueId(), null,
+						List.of(materialReturnLine(issue.issueLineId(), "0.000000", "非法数量"))),
+				admin), HttpStatus.BAD_REQUEST, "REVERSAL_QUANTITY_INVALID");
+
+		long cancelledId = createMaterialReturn(admin, issue.issueId(), issue.issueLineId(), "1.000000");
+		assertOk(put("/api/admin/production/material-returns/" + cancelledId + "/cancel", Map.of(), admin));
+		assertThat(data(get("/api/admin/production/material-returns/" + cancelledId, admin)).get("status").asText())
+			.isEqualTo("CANCELLED");
+		assertError(put("/api/admin/production/material-returns/" + cancelledId + "/cancel", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_STATUS_NOT_ALLOWED");
+
+		ProductionReversalFixture draftFixture = productionReversalFixture();
+		PostedMaterialIssue draftIssue = createMaterialIssueWithCost(draftFixture, "DRAFT", "1.000000", "10.000000");
+		assertError(post("/api/admin/production/material-returns",
+				materialReturnPayload(draftIssue.issueId(), null,
+						List.of(materialReturnLine(draftIssue.issueLineId(), "1.000000", "未过账来源"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
+
+		long returnId = createMaterialReturn(admin, issue.issueId(), issue.issueLineId(), "1.000000");
+		long returnLineId = data(get("/api/admin/production/material-returns/" + returnId, admin))
+			.get("lines")
+			.get(0)
+			.get("id")
+			.longValue();
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("material-return-update-restricted",
+				List.of("production:material-return:view", "production:material-return:update",
+						"business:reversal:view"));
+		ResponseEntity<String> updated = put("/api/admin/production/material-returns/" + returnId,
+				materialReturnUpdatePayload(List.of(materialReturnLineById(returnLineId, "2.000000", "受限来源编辑保存"))),
+				restricted);
+		assertOk(updated);
+		JsonNode updatedData = data(updated);
+		assertRestrictedSource(updatedData.get("source"), "PRODUCTION_MATERIAL_ISSUE");
+		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "PRODUCTION_MATERIAL_ISSUE_LINE");
+		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
+		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
+
+		assertOk(put("/api/admin/production/material-returns/" + returnId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/production/material-returns/" + returnId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+		assertError(put("/api/admin/production/material-returns/" + returnId,
+				materialReturnPayload(issue.issueId(), null,
+						List.of(materialReturnLine(issue.issueLineId(), "1.000000", "已过账不可改"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+	}
+
+	@Test
+	void productionMaterialSupplementLifecyclePostsInventoryCostAndTraceLinks() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "12.000000", "10.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000");
+
+		ResponseEntity<String> sources = get("/api/admin/production/material-supplement-sources?keyword="
+				+ issue.workOrderNo() + "&warehouseId=" + fixture.warehouseId(), admin);
+		assertOk(sources);
+		JsonNode source = data(sources).get("items").get(0);
+		assertThat(source.get("workOrderId").longValue()).isEqualTo(issue.workOrderId());
+		assertThat(source.get("workOrderStatus").asText()).isEqualTo("RELEASED");
+		JsonNode material = source.get("materials").get(0);
+		assertThat(material.get("workOrderMaterialId").longValue()).isEqualTo(issue.workOrderMaterialId());
+		assertDecimalText(material, "issuedQuantity", "12.000000");
+		assertDecimalText(material, "supplementedQuantity", "0");
+		assertDecimalText(material, "availableStockQuantity", "5.000000");
+
+		ResponseEntity<String> created = post("/api/admin/production/material-supplements",
+				materialSupplementPayload(issue.workOrderId(), fixture.warehouseId(),
+						"material-supplement-lifecycle-" + SEQUENCE.incrementAndGet(),
+						List.of(materialSupplementLine(issue.workOrderMaterialId(), "2.000000", "损耗补料"))),
+				admin);
+		assertOk(created);
+		JsonNode draft = data(created);
+		long supplementId = draft.get("id").longValue();
+		assertThat(draft.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(draft.get("source").get("sourceId").longValue()).isEqualTo(issue.workOrderId());
+		assertDecimalText(draft, "totalQuantity", "2.000000");
+
+		ResponseEntity<String> updated = put("/api/admin/production/material-supplements/" + supplementId,
+				materialSupplementPayload(issue.workOrderId(), fixture.warehouseId(), null,
+						List.of(materialSupplementLine(issue.workOrderMaterialId(), "3.000000", "补料调整"))),
+				admin);
+		assertOk(updated);
+		JsonNode updatedLine = data(updated).get("lines").get(0);
+		assertDecimalText(updatedLine, "quantity", "3.000000");
+		assertDecimalText(updatedLine, "amount", "30.00");
+
+		ResponseEntity<String> posted = put("/api/admin/production/material-supplements/" + supplementId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedData = data(posted);
+		JsonNode postedLine = postedData.get("lines").get(0);
+		long supplementLineId = postedLine.get("id").longValue();
+		assertThat(postedData.get("status").asText()).isEqualTo("POSTED");
+		assertThat(postedLine.get("stockMovementId").isNumber()).isTrue();
+		assertThat(postedLine.get("costRecordId").isNumber()).isTrue();
+
+		MovementRow movement = movementForSource("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId);
+		assertThat(movement.movementType()).isEqualTo("PRODUCTION_MATERIAL_SUPPLEMENT_OUT");
+		assertThat(movement.direction()).isEqualTo("OUT");
+		assertThat(movement.sourceId()).isEqualTo(supplementId);
+		assertDecimal(movement.quantity(), "3.000000");
+		assertDecimal(movement.beforeQuantity(), "5.000000");
+		assertDecimal(movement.afterQuantity(), "2.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "2.000000");
+
+		CostRecordRow costRecord = costRecord("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId);
+		assertThat(costRecord.status()).isEqualTo("ACTIVE");
+		assertDecimal(costRecord.quantity(), "3.000000");
+		assertDecimal(costRecord.unitPrice(), "10.000000");
+		assertDecimal(costRecord.amount(), "30.00");
+
+		ReversalLink link = reversalLink("PRODUCTION_MATERIAL_SUPPLEMENT", supplementId, supplementLineId);
+		assertThat(link.sourceType()).isEqualTo("PRODUCTION_WORK_ORDER");
+		assertThat(link.sourceId()).isEqualTo(issue.workOrderId());
+		assertThat(link.sourceLineId()).isEqualTo(issue.workOrderMaterialId());
+		assertDecimal(link.quantity(), "3.000000");
+		assertDecimal(link.amount(), "30.00");
+
+		JsonNode detail = data(get("/api/admin/production/material-supplements/" + supplementId, admin));
+		assertThat(detail.get("traces").size()).isOne();
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=PRODUCTION_MATERIAL_SUPPLEMENT&sourceId="
+				+ supplementId + "&direction=REVERSE_TO_SOURCE", admin)).get(0);
+		assertThat(trace.get("direction").asText()).isEqualTo("REVERSE_TO_SOURCE");
+
+		long stockBlockedId = createMaterialSupplement(admin, issue.workOrderId(), fixture.warehouseId(),
+				issue.workOrderMaterialId(), "3.000000");
+		assertError(put("/api/admin/production/material-supplements/" + stockBlockedId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+	}
+
+	@Test
+	void productionMaterialSupplementBlocksInvalidOperationsAndMasksRestrictedSource() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "6.000000", "10.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000");
+
+		ProductionReversalFixture draftFixture = productionReversalFixture();
+		PostedMaterialIssue draftWorkOrder = createMaterialIssueWithCost(draftFixture, "DRAFT", "1.000000",
+				"10.000000");
+		assertError(post("/api/admin/production/material-supplements",
+				materialSupplementPayload(draftWorkOrder.workOrderId(), draftFixture.warehouseId(), null,
+						List.of(materialSupplementLine(draftWorkOrder.workOrderMaterialId(), "1.000000", "草稿工单"))),
+				admin), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
+
+		long cancelledId = createMaterialSupplement(admin, issue.workOrderId(), fixture.warehouseId(),
+				issue.workOrderMaterialId(), "1.000000");
+		assertOk(put("/api/admin/production/material-supplements/" + cancelledId + "/cancel", Map.of(), admin));
+		assertThat(data(get("/api/admin/production/material-supplements/" + cancelledId, admin)).get("status").asText())
+			.isEqualTo("CANCELLED");
+		assertError(put("/api/admin/production/material-supplements/" + cancelledId + "/cancel", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_STATUS_NOT_ALLOWED");
+
+		long supplementId = createMaterialSupplement(admin, issue.workOrderId(), fixture.warehouseId(),
+				issue.workOrderMaterialId(), "1.000000");
+		assertOk(put("/api/admin/production/material-supplements/" + supplementId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/production/material-supplements/" + supplementId + "/cancel", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("material-supplement-restricted",
+				List.of("production:material-supplement:view", "business:reversal:view"));
+		JsonNode detail = data(get("/api/admin/production/material-supplements/" + supplementId, restricted));
+		assertRestrictedSource(detail.get("source"), "PRODUCTION_WORK_ORDER");
+		assertRestrictedSource(detail.get("lines").get(0).get("source"), "PRODUCTION_WORK_ORDER");
+		assertRestrictedSource(detail.get("traces").get(0).get("source"), "PRODUCTION_WORK_ORDER");
+		assertRestrictedTraceRecord(detail.get("traces").get(0));
+	}
+
+	@Test
 	void adminCanQueryStableEmptyReversalSkeletons() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -567,9 +830,10 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				"/api/admin/sales/returns?keyword=NO_SUCH_RETURN",
 				"/api/admin/procurement/return-sources?keyword=NO_SUCH_SOURCE",
 				"/api/admin/procurement/returns?keyword=NO_SUCH_RETURN",
-				"/api/admin/production/material-return-sources", "/api/admin/production/material-returns",
-				"/api/admin/production/material-supplement-sources",
-				"/api/admin/production/material-supplements",
+				"/api/admin/production/material-return-sources?keyword=NO_SUCH_SOURCE",
+				"/api/admin/production/material-returns?keyword=NO_SUCH_RETURN",
+				"/api/admin/production/material-supplement-sources?keyword=NO_SUCH_SOURCE",
+				"/api/admin/production/material-supplements?keyword=NO_SUCH_RETURN",
 				"/api/admin/finance/settlement-adjustment-sources",
 				"/api/admin/finance/settlement-adjustments")) {
 			assertEmptyPage(get(path, admin));
@@ -675,6 +939,111 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long secondMaterialId = insertMaterial("REV_PUR_MAT_B_" + suffix, "采购退货物料B" + suffix, categoryId,
 				unitId);
 		return new PurchaseReturnFixture(unitId, warehouseId, supplierId, categoryId, materialId, secondMaterialId);
+	}
+
+	private ProductionReversalFixture productionReversalFixture() {
+		int suffix = SEQUENCE.incrementAndGet();
+		long unitId = insertUnit("REV_MFG_UNIT_" + suffix, "生产反向单位" + suffix);
+		long warehouseId = insertWarehouse("REV_MFG_WH_" + suffix, "生产反向仓" + suffix);
+		long categoryId = insertMaterialCategory("REV_MFG_CAT_" + suffix);
+		long productMaterialId = insertMaterial("REV_MFG_PRODUCT_" + suffix, "生产反向成品" + suffix, categoryId,
+				unitId);
+		long materialId = insertMaterial("REV_MFG_MAT_" + suffix, "生产反向物料" + suffix, categoryId, unitId);
+		return new ProductionReversalFixture(unitId, warehouseId, categoryId, productMaterialId, materialId);
+	}
+
+	private PostedMaterialIssue createPostedMaterialIssueWithCost(ProductionReversalFixture fixture,
+			String issuedQuantity, String unitPrice) {
+		return createMaterialIssueWithCost(fixture, "POSTED", issuedQuantity, unitPrice);
+	}
+
+	private PostedMaterialIssue createMaterialIssueWithCost(ProductionReversalFixture fixture, String issueStatus,
+			String issuedQuantity, String unitPrice) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long bomId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom (
+					bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status,
+					effective_from, enabled_by, enabled_at, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, 1, ?, 'ENABLED', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "REV-BOM-" + suffix, fixture.productMaterialId(), "V" + suffix,
+				"生产反向BOM" + suffix, fixture.unitId(), LocalDate.now().minusDays(1));
+		long bomItemId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom_item (
+					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark, created_at, updated_at
+				)
+				values (?, 1, ?, ?, 1, 0, '生产反向BOM明细', now(), now())
+				returning id
+				""", Long.class, bomId, fixture.materialId(), fixture.unitId());
+		String workOrderStatus = "POSTED".equals(issueStatus) ? "RELEASED" : issueStatus;
+		String workOrderNo = "REV-WO-" + suffix;
+		long workOrderId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_work_order (
+					work_order_no, product_material_id, bom_id, planned_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_start_date, planned_finish_date, status, remark,
+					created_by, created_at, updated_by, updated_at, released_by, released_at
+				)
+				values (?, ?, ?, 10, ?, ?, ?, ?, ?, '生产反向工单', 'test', now(), 'test', now(), ?,
+					case when ? in ('RELEASED', 'IN_PROGRESS') then now() else null end)
+				returning id
+				""", Long.class, workOrderNo, fixture.productMaterialId(), bomId, fixture.warehouseId(),
+				fixture.warehouseId(), LocalDate.now(), LocalDate.now().plusDays(7), workOrderStatus,
+				"RELEASED".equals(workOrderStatus) || "IN_PROGRESS".equals(workOrderStatus) ? "test" : null,
+				workOrderStatus);
+		long workOrderMaterialId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_work_order_material (
+					work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity, issued_quantity,
+					loss_rate, remark, created_at, updated_at
+				)
+				values (?, 1, ?, ?, ?, 12, ?, 0, '生产反向工单用料', now(), now())
+				returning id
+				""", Long.class, workOrderId, bomItemId, fixture.materialId(), fixture.unitId(),
+				"POSTED".equals(issueStatus) ? new BigDecimal(issuedQuantity) : BigDecimal.ZERO);
+		String issueNo = "REV-ISS-" + suffix;
+		long issueId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_issue (
+					issue_no, work_order_id, status, business_date, reason, remark,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, '生产反向领料', '生产反向领料', 'test', now(), 'test', now(), ?,
+					case when ? = 'POSTED' then now() else null end)
+				returning id
+				""", Long.class, issueNo, workOrderId, issueStatus, LocalDate.now(),
+				"POSTED".equals(issueStatus) ? "test" : null, issueStatus);
+		long issueLineId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_issue_line (
+					issue_id, work_order_material_id, line_no, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, remark, created_at, updated_at
+				)
+				values (?, ?, 1, ?, ?, ?, ?, null, null, '生产反向领料行', now(), now())
+				returning id
+				""", Long.class, issueId, workOrderMaterialId, fixture.warehouseId(), fixture.materialId(),
+				fixture.unitId(), new BigDecimal(issuedQuantity));
+		if ("POSTED".equals(issueStatus)) {
+			insertProductionIssueCostRecord(fixture, workOrderId, workOrderNo, workOrderMaterialId, issueId, issueNo,
+					issueLineId, issuedQuantity, unitPrice);
+		}
+		return new PostedMaterialIssue(workOrderId, workOrderNo, workOrderMaterialId, issueId, issueNo, issueLineId);
+	}
+
+	private void insertProductionIssueCostRecord(ProductionReversalFixture fixture, long workOrderId,
+			String workOrderNo, long workOrderMaterialId, long issueId, String issueNo, long issueLineId,
+			String quantity, String unitPrice) {
+		BigDecimal qty = new BigDecimal(quantity);
+		BigDecimal price = new BigDecimal(unitPrice);
+		this.jdbcTemplate.update("""
+				insert into mfg_cost_record (
+					record_no, work_order_id, product_material_id, cost_type, source_type, source_document_type,
+					source_document_no, source_document_id, source_line_id, work_order_material_id, material_id,
+					unit_id, quantity, unit_price, amount, basis_type, business_date, status, remark,
+					recorded_by, recorded_at, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, 'MATERIAL', 'AUTO_PRODUCTION', 'PRODUCTION_MATERIAL_ISSUE', ?, ?, ?, ?, ?, ?, ?,
+					?, ?, 'MANUAL_UNIT_PRICE_QUANTITY', ?, 'ACTIVE', ?, 'test', now(), 'test', now(), 'test', now())
+				""", "REV-COST-" + SEQUENCE.incrementAndGet(), workOrderId, fixture.productMaterialId(), issueNo,
+				issueId, issueLineId, workOrderMaterialId, fixture.materialId(), fixture.unitId(), qty, price,
+				money(qty.multiply(price)), LocalDate.now(), "生产领料成本 " + workOrderNo);
 	}
 
 	private PostedSalesShipment createPostedShipmentWithReceivable(SalesReturnFixture fixture, String firstQuantity,
@@ -1016,6 +1385,65 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> materialReturnPayload(long sourceIssueId, String clientRequestId,
+			List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("sourceIssueId", sourceIssueId);
+		payload.put("businessDate", LocalDate.now().toString());
+		if (clientRequestId != null) {
+			payload.put("clientRequestId", clientRequestId);
+		}
+		payload.put("remark", "生产退料测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> materialReturnUpdatePayload(List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("remark", "生产退料受限编辑测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> materialReturnLine(long sourceIssueLineId, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("sourceIssueLineId", sourceIssueLineId);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
+	private Map<String, Object> materialReturnLineById(long id, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("id", id);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
+	private Map<String, Object> materialSupplementPayload(long workOrderId, long warehouseId, String clientRequestId,
+			List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("workOrderId", workOrderId);
+		payload.put("warehouseId", warehouseId);
+		payload.put("businessDate", LocalDate.now().toString());
+		if (clientRequestId != null) {
+			payload.put("clientRequestId", clientRequestId);
+		}
+		payload.put("remark", "生产补料测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> materialSupplementLine(long workOrderMaterialId, String quantity, String reason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("workOrderMaterialId", workOrderMaterialId);
+		line.put("quantity", quantity);
+		line.put("reason", reason);
+		return line;
+	}
+
 	private long createSalesReturn(AuthenticatedSession admin, long shipmentId, long shipmentLineId, String quantity)
 			throws Exception {
 		ResponseEntity<String> response = post("/api/admin/sales/returns",
@@ -1031,6 +1459,26 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		ResponseEntity<String> response = post("/api/admin/procurement/returns",
 				purchaseReturnPayload(receiptId, "purchase-return-" + SEQUENCE.incrementAndGet(),
 						List.of(purchaseReturnLine(receiptLineId, quantity, "测试采购退货"))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createMaterialReturn(AuthenticatedSession admin, long issueId, long issueLineId, String quantity)
+			throws Exception {
+		ResponseEntity<String> response = post("/api/admin/production/material-returns",
+				materialReturnPayload(issueId, "material-return-" + SEQUENCE.incrementAndGet(),
+						List.of(materialReturnLine(issueLineId, quantity, "测试生产退料"))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createMaterialSupplement(AuthenticatedSession admin, long workOrderId, long warehouseId,
+			long workOrderMaterialId, String quantity) throws Exception {
+		ResponseEntity<String> response = post("/api/admin/production/material-supplements",
+				materialSupplementPayload(workOrderId, warehouseId, "material-supplement-" + SEQUENCE.incrementAndGet(),
+						List.of(materialSupplementLine(workOrderMaterialId, quantity, "测试生产补料"))),
 				admin);
 		assertOk(response);
 		return data(response).get("id").longValue();
@@ -1091,12 +1539,23 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				reverseId, reverseLineId);
 	}
 
+	private CostRecordRow costRecord(String sourceDocumentType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select source_document_type, source_line_id, quantity, unit_price, amount, status
+				from mfg_cost_record
+				where source_document_type = ?
+				and source_line_id = ?
+				""", (rs, rowNum) -> new CostRecordRow(rs.getString("source_document_type"),
+				rs.getLong("source_line_id"), rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"),
+				rs.getBigDecimal("amount"), rs.getString("status")), sourceDocumentType, sourceLineId);
+	}
+
 	private BigDecimal money(BigDecimal value) {
 		return value.setScale(2, java.math.RoundingMode.HALF_UP);
 	}
 
 	private void assertEmptyPage(ResponseEntity<String> response) throws Exception {
-		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getStatusCode()).as(response.getBody()).isEqualTo(HttpStatus.OK);
 		JsonNode data = data(response);
 		assertThat(data.get("items").isArray()).isTrue();
 		assertThat(data.get("items").size()).isZero();
@@ -1107,7 +1566,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void assertOk(ResponseEntity<String> response) throws Exception {
-		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(response.getStatusCode()).as(response.getBody()).isEqualTo(HttpStatus.OK);
 		assertThat(this.objectMapper.readTree(response.getBody()).get("code").asText()).isEqualTo("OK");
 	}
 
@@ -1230,12 +1689,20 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 			long materialId, long secondMaterialId) {
 	}
 
+	private record ProductionReversalFixture(long unitId, long warehouseId, long categoryId, long productMaterialId,
+			long materialId) {
+	}
+
 	private record PostedSalesShipment(long shipmentId, String shipmentNo, long firstShipmentLineId,
 			long secondShipmentLineId, Long receivableId) {
 	}
 
 	private record PostedPurchaseReceipt(long receiptId, String receiptNo, long firstReceiptLineId,
 			long secondReceiptLineId, Long payableId) {
+	}
+
+	private record PostedMaterialIssue(long workOrderId, String workOrderNo, long workOrderMaterialId, long issueId,
+			String issueNo, long issueLineId) {
 	}
 
 	private record MovementRow(String movementType, String direction, long sourceId, long sourceLineId,
@@ -1250,6 +1717,10 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private record ReversalLink(String sourceType, long sourceId, long sourceLineId, BigDecimal quantity,
 			BigDecimal amount) {
+	}
+
+	private record CostRecordRow(String sourceDocumentType, long sourceLineId, BigDecimal quantity,
+			BigDecimal unitPrice, BigDecimal amount, String status) {
 	}
 
 }

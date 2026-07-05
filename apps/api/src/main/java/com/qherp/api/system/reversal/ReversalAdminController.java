@@ -143,79 +143,118 @@ public class ReversalAdminController {
 	}
 
 	@GetMapping("/production/material-return-sources")
-	public ApiResponse<PageResponse<Object>> materialReturnSources(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.ProductionMaterialReturnSourceResponse>> materialReturnSources(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long workOrderId,
+			@RequestParam(required = false) Long warehouseId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialReturnSources(keyword, workOrderId, warehouseId,
+				dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/production/material-returns")
-	public ApiResponse<PageResponse<Object>> materialReturns(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.ProductionMaterialReturnSummaryResponse>> materialReturns(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long workOrderId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialReturns(keyword, workOrderId, warehouseId, status,
+				dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/production/material-returns/{id}")
-	public ApiResponse<Object> materialReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> materialReturn(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialReturn(id, currentUser));
 	}
 
 	@PostMapping("/production/material-returns")
-	public ApiResponse<Object> createMaterialReturn(@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> createMaterialReturn(
+			@Valid @RequestBody ReversalAdminService.ProductionMaterialReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.createMaterialReturn(request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-returns/{id}")
-	public ApiResponse<Object> updateMaterialReturn(@PathVariable Long id,
-			@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> updateMaterialReturn(
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.ProductionMaterialReturnRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.updateMaterialReturn(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-returns/{id}/post")
-	public ApiResponse<Object> postMaterialReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> postMaterialReturn(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.postMaterialReturn(id, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-returns/{id}/cancel")
-	public ApiResponse<Object> cancelMaterialReturn(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> cancelMaterialReturn(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.cancelMaterialReturn(id, currentUser, servletRequest));
 	}
 
 	@GetMapping("/production/material-supplement-sources")
-	public ApiResponse<PageResponse<Object>> materialSupplementSources(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.ProductionMaterialSupplementSourceResponse>> materialSupplementSources(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long workOrderId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialSupplementSources(keyword, workOrderId, warehouseId,
+				page, pageSize, currentUser));
 	}
 
 	@GetMapping("/production/material-supplements")
-	public ApiResponse<PageResponse<Object>> materialSupplements(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.ProductionMaterialSupplementSummaryResponse>> materialSupplements(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long workOrderId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialSupplements(keyword, workOrderId, warehouseId,
+				status, dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/production/material-supplements/{id}")
-	public ApiResponse<Object> materialSupplement(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> materialSupplement(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.materialSupplement(id, currentUser));
 	}
 
 	@PostMapping("/production/material-supplements")
-	public ApiResponse<Object> createMaterialSupplement(@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> createMaterialSupplement(
+			@Valid @RequestBody ReversalAdminService.ProductionMaterialSupplementRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.createMaterialSupplement(request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-supplements/{id}")
-	public ApiResponse<Object> updateMaterialSupplement(@PathVariable Long id,
-			@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> updateMaterialSupplement(
+			@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.ProductionMaterialSupplementRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse
+			.ok(this.reversalAdminService.updateMaterialSupplement(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-supplements/{id}/post")
-	public ApiResponse<Object> postMaterialSupplement(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> postMaterialSupplement(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.postMaterialSupplement(id, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-supplements/{id}/cancel")
-	public ApiResponse<Object> cancelMaterialSupplement(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> cancelMaterialSupplement(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.cancelMaterialSupplement(id, currentUser, servletRequest));
 	}
 
 	@GetMapping("/finance/settlement-adjustment-sources")

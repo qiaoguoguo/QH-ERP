@@ -406,6 +406,8 @@ type ProductionMaterialReturnSource = {
     issuedQuantity: string;
     returnedQuantity: string;
     returnableQuantity: string;
+    unitPrice: string;
+    returnableAmount: string;
   }>;
 };
 
@@ -427,6 +429,7 @@ type ProductionMaterialSupplementSource = {
     issuedQuantity: string;
     supplementedQuantity: string;
     availableStockQuantity: string;
+    unitPrice: string;
   }>;
 };
 
@@ -573,7 +576,11 @@ type SettlementAdjustmentSource = {
 
 成功响应 `ProductionMaterialReturnDetail`。来源固定为已过账生产领料行，数量不得超过已领数量减已退数量。
 
-- `PUT /api/admin/production/material-returns/{id}`：权限 `production:material-return:update`；仅 `DRAFT` 可更新；请求体与创建一致但不允许改变 `sourceIssueId`；成功响应 `ProductionMaterialReturnDetail`。
+- `PUT /api/admin/production/material-returns/{id}`：权限 `production:material-return:update`；仅 `DRAFT` 可更新；不允许改变来源生产领料；成功响应 `ProductionMaterialReturnDetail`。
+  - 来源可见时，请求体可继续传 `sourceIssueId` 与明细 `sourceIssueLineId`，后端必须校验与当前草稿来源一致。
+  - 来源受限时，请求体允许省略 `sourceIssueId`，明细允许只传当前生产退料明细 `id`、`quantity`、`reason`；后端用当前草稿行 `id` 映射既有 `sourceIssueLineId`，不得要求前端回传受限来源主键。
+  - 如果同一明细同时传 `id` 与 `sourceIssueLineId`，两者必须对应当前草稿同一行，否则返回受控错误；如果 `id` 不属于当前草稿，也必须拒绝。
+  - 创建接口仍必须提供 `sourceIssueId` 与 `sourceIssueLineId`。
 - `PUT /api/admin/production/material-returns/{id}/post`：权限 `production:material-return:post`；生成 `PRODUCTION_MATERIAL_RETURN_IN` 库存流水，生成 `mfg_cost_record` 成本业务冲减来源，写入 `biz_reversal_link`；成功响应 `ProductionMaterialReturnDetail`。
 - `PUT /api/admin/production/material-returns/{id}/cancel`：权限 `production:material-return:cancel`；仅 `DRAFT` 可取消；成功响应 `ProductionMaterialReturnDetail`。
 
@@ -603,7 +610,11 @@ type SettlementAdjustmentSource = {
 
 成功响应 `ProductionMaterialSupplementDetail`。补料来源固定为有效生产工单和工单物料行，过账时必须校验库存可用数量。
 
-- `PUT /api/admin/production/material-supplements/{id}`：权限 `production:material-supplement:update`；仅 `DRAFT` 可更新；成功响应 `ProductionMaterialSupplementDetail`。
+- `PUT /api/admin/production/material-supplements/{id}`：权限 `production:material-supplement:update`；仅 `DRAFT` 可更新；不允许改变来源工单或补料仓库；成功响应 `ProductionMaterialSupplementDetail`。
+  - 来源可见时，请求体可继续传 `workOrderId`、`warehouseId` 与明细 `workOrderMaterialId`，后端必须校验与当前草稿来源一致。
+  - 来源受限时，请求体允许省略 `workOrderId`、`warehouseId`，明细允许只传当前生产补料明细 `id`、`quantity`、`reason`；后端用当前草稿行 `id` 映射既有 `workOrderMaterialId`，不得要求前端回传受限来源主键。
+  - 如果同一明细同时传 `id` 与 `workOrderMaterialId`，两者必须对应当前草稿同一行，否则返回受控错误；如果 `id` 不属于当前草稿，也必须拒绝。
+  - 创建接口仍必须提供 `workOrderId`、`warehouseId` 与 `workOrderMaterialId`。
 - `PUT /api/admin/production/material-supplements/{id}/post`：权限 `production:material-supplement:post`；生成 `PRODUCTION_MATERIAL_SUPPLEMENT_OUT` 库存流水，生成 `mfg_cost_record` 成本业务增加来源，写入 `biz_reversal_link`；库存不足返回 `REVERSAL_STOCK_INSUFFICIENT`；成功响应 `ProductionMaterialSupplementDetail`。
 - `PUT /api/admin/production/material-supplements/{id}/cancel`：权限 `production:material-supplement:cancel`；仅 `DRAFT` 可取消；成功响应 `ProductionMaterialSupplementDetail`。
 
