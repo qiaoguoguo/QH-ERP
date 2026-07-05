@@ -28,6 +28,7 @@ const financeReceivablePath = '/finance/receivables'
 const financeReceiptPath = '/finance/receipts'
 const financePayablePath = '/finance/payables'
 const financePaymentPath = '/finance/payments'
+const financeSettlementAdjustmentPath = '/finance/settlement-adjustments'
 const reportMenuPaths = new Set(reportRouteConfigs.map((item) => item.path))
 const supportedMenuPaths = new Set([
   '/accounts/users',
@@ -58,6 +59,7 @@ const supportedMenuPaths = new Set([
   financeReceiptPath,
   financePayablePath,
   financePaymentPath,
+  financeSettlementAdjustmentPath,
   ...reportMenuPaths,
 ])
 const inventoryChildren: MenuNode[] = [
@@ -168,6 +170,12 @@ const financeChildren: MenuNode[] = [
     code: financePermissions.paymentView,
     name: '付款记录',
     routePath: financePaymentPath,
+  },
+  {
+    id: 'finance-settlement-adjustments',
+    code: financePermissions.settlementAdjustmentView,
+    name: '往来冲减',
+    routePath: financeSettlementAdjustmentPath,
   },
 ]
 const financeMenuPaths = new Set(financeChildren.map((child) => child.routePath))

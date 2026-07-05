@@ -59,6 +59,9 @@ import PayableDetailView from '../modules/finance/PayableDetailView.vue'
 import PaymentListView from '../modules/finance/PaymentListView.vue'
 import PaymentFormView from '../modules/finance/PaymentFormView.vue'
 import PaymentDetailView from '../modules/finance/PaymentDetailView.vue'
+import SettlementAdjustmentDetailView from '../modules/reversal/SettlementAdjustmentDetailView.vue'
+import SettlementAdjustmentFormView from '../modules/reversal/SettlementAdjustmentFormView.vue'
+import SettlementAdjustmentListView from '../modules/reversal/SettlementAdjustmentListView.vue'
 import { reportRouteConfigs, reportPermissions } from '../modules/reports/reportPageHelpers'
 import ReportOverviewView from '../modules/reports/ReportOverviewView.vue'
 import SalesReportView from '../modules/reports/SalesReportView.vue'
@@ -366,6 +369,30 @@ describe('账号权限路由守卫', () => {
       ['finance-payments', '/finance/payments', 'finance:payment:view', PaymentListView],
       ['finance-payment-detail', '/finance/payments/:id', 'finance:payment:view', PaymentDetailView],
       ['finance-payment-edit', '/finance/payments/:id/edit', 'finance:payment:update', PaymentFormView],
+      [
+        'finance-settlement-adjustments',
+        '/finance/settlement-adjustments',
+        'finance:settlement-adjustment:view',
+        SettlementAdjustmentListView,
+      ],
+      [
+        'finance-settlement-adjustment-create',
+        '/finance/settlement-adjustments/create',
+        'finance:settlement-adjustment:create',
+        SettlementAdjustmentFormView,
+      ],
+      [
+        'finance-settlement-adjustment-detail',
+        '/finance/settlement-adjustments/:id',
+        'finance:settlement-adjustment:view',
+        SettlementAdjustmentDetailView,
+      ],
+      [
+        'finance-settlement-adjustment-edit',
+        '/finance/settlement-adjustments/:id/edit',
+        'finance:settlement-adjustment:update',
+        SettlementAdjustmentFormView,
+      ],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of financeRoutes) {
@@ -502,6 +529,16 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('finance-payables')
+  })
+
+  it('仅有往来冲减查看权限时访问财务根路径进入往来冲减', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:settlement-adjustment:view'] })
+
+    await router.push('/finance')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('finance-settlement-adjustments')
   })
 
   it('无任一财务查看权限时访问财务根路径进入无权限页', async () => {
@@ -813,6 +850,27 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
     expect(router.currentRoute.value.query.from).toBe('/finance/receivables')
+  })
+
+  it('已登录且拥有往来冲减查看权限时允许访问往来冲减列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:settlement-adjustment:view'] })
+
+    await router.push('/finance/settlement-adjustments')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('finance-settlement-adjustments')
+  })
+
+  it('已登录但缺少往来冲减创建权限时不能访问新建往来冲减', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:settlement-adjustment:view'] })
+
+    await router.push('/finance/settlement-adjustments/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/finance/settlement-adjustments/create')
   })
 
   it('已登录且拥有对应报表权限时允许访问经营报表子路由', async () => {

@@ -148,6 +148,35 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('收款记录')
     expect(wrapper.text()).toContain('应付台账')
     expect(wrapper.text()).not.toContain('付款记录')
+    expect(wrapper.text()).not.toContain('往来冲减')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/finance')
+  })
+
+  it('只有往来冲减查看权限且后端菜单缺失时补齐往来冲减入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'settlement_user', displayName: '往来用户', status: 'ENABLED' },
+      menus: [],
+      permissions: [financePermissions.settlementAdjustmentView],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('财务往来')
+    expect(wrapper.text()).toContain('往来冲减')
+    expect(wrapper.text()).not.toContain('应收台账')
+    expect(wrapper.text()).not.toContain('收款记录')
+    expect(wrapper.text()).not.toContain('应付台账')
+    expect(wrapper.text()).not.toContain('付款记录')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/finance')
   })
@@ -292,6 +321,7 @@ describe('ERP 应用骨架', () => {
           children: [
             { id: 71, code: 'finance:receivable:view', name: '应收台账', routePath: '/finance/receivables' },
             { id: 72, code: 'finance:payment:view', name: '付款记录', routePath: '/finance/payments' },
+            { id: 73, code: 'finance:settlement-adjustment:view', name: '往来冲减', routePath: '/finance/settlement-adjustments' },
           ],
         },
       ],
@@ -310,6 +340,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('财务往来')
     expect(wrapper.text()).not.toContain('应收台账')
     expect(wrapper.text()).not.toContain('付款记录')
+    expect(wrapper.text()).not.toContain('往来冲减')
     expect(wrapper.text()).not.toContain('业务管理')
   })
 
@@ -747,5 +778,6 @@ describe('ERP 应用骨架', () => {
     expect(financeSourceTypeText('PURCHASE_RECEIPT')).toBe('采购入库')
     expect(financePermissions.receivableView).toBe('finance:receivable:view')
     expect(financePermissions.paymentView).toBe('finance:payment:view')
+    expect(financePermissions.settlementAdjustmentView).toBe('finance:settlement-adjustment:view')
   })
 })

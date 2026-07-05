@@ -10,6 +10,8 @@ import {
   type PurchaseReturnPayload,
   type ReversalDocumentPayload,
   type SalesReturnDetail,
+  type SettlementAdjustmentDetail,
+  type SettlementAdjustmentPayload,
 } from './returnRefundReversalApi'
 
 function apiResponse<T>(data: T, status = 200) {
@@ -257,6 +259,40 @@ const productionMaterialSupplementDetail: ProductionMaterialSupplementDetail = {
       },
     },
   ],
+  traces: [],
+}
+
+const settlementAdjustmentDetail: SettlementAdjustmentDetail = {
+  id: 5,
+  adjustmentNo: 'SA202607050001',
+  settlementSide: 'RECEIVABLE',
+  adjustmentType: 'REFUND',
+  source: {
+    sourceType: 'RECEIPT',
+    sourceId: 70,
+    sourceNo: 'RCPT202607050001',
+    businessDate: '2026-07-05',
+    status: 'POSTED',
+    amount: '60.00',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'finance-receipt-detail',
+    resourceRouteParams: { id: 70 },
+  },
+  targetId: 80,
+  targetNo: 'AR202607050001',
+  businessDate: '2026-07-05',
+  targetOriginalAmount: '500.00',
+  targetAdjustedAmountBefore: '100.00',
+  targetAdjustableAmountBefore: '400.00',
+  amount: '60.00',
+  targetRemainingAmountAfterPost: '340.00',
+  targetStatusAfterPost: 'PARTIALLY_RECEIVED',
+  status: 'DRAFT',
+  createdAt: '2026-07-05T14:00:00+08:00',
+  updatedAt: '2026-07-05T14:00:00+08:00',
+  clientRequestId: 'settlement-adjustment-client-1',
+  remark: '客户退款冲减',
   traces: [],
 }
 
@@ -609,6 +645,99 @@ describe('退货退款与反冲 API', () => {
     }))
     expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/production/material-supplements/4/post', expect.objectContaining({ method: 'PUT' }))
     expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/production/material-supplements/4/cancel', expect.objectContaining({ method: 'PUT' }))
+  })
+
+  it('按查询条件获取往来冲减和候选来源，并过滤空查询值', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createReturnRefundReversalApi({ fetcher })
+
+    await api.settlementAdjustments.list({
+      keyword: 'SA',
+      settlementSide: 'RECEIVABLE',
+      adjustmentType: 'REFUND',
+      sourceType: 'RECEIPT',
+      status: 'DRAFT',
+      dateFrom: '2026-07-01',
+      dateTo: null,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.settlementAdjustmentSources.list({
+      keyword: 'RCPT',
+      settlementSide: 'RECEIVABLE',
+      sourceType: 'RECEIPT',
+      customerId: '',
+      supplierId: 9,
+      dateFrom: '2026-07-01',
+      dateTo: '',
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/finance/settlement-adjustments?keyword=SA&settlementSide=RECEIVABLE&adjustmentType=REFUND&sourceType=RECEIPT&status=DRAFT&dateFrom=2026-07-01&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/finance/settlement-adjustment-sources?keyword=RCPT&settlementSide=RECEIVABLE&sourceType=RECEIPT&supplierId=9&dateFrom=2026-07-01&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+  })
+
+  it('往来冲减写操作使用金额字符串并支持受限更新省略不可变来源字段', async () => {
+    const fetcher = vi.fn()
+    const responses = [
+      settlementAdjustmentDetail,
+      settlementAdjustmentDetail,
+      settlementAdjustmentDetail,
+      settlementAdjustmentDetail,
+    ]
+    responses.forEach((response, index) => {
+      fetcher.mockResolvedValueOnce(apiResponse({ token: `csrf-settlement-${index}`, headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }))
+      fetcher.mockResolvedValueOnce(apiResponse(response))
+    })
+    const api = createReturnRefundReversalApi({ fetcher })
+    const payload: SettlementAdjustmentPayload = {
+      settlementSide: 'RECEIVABLE',
+      adjustmentType: 'REFUND',
+      sourceType: 'RECEIPT',
+      sourceId: 70,
+      targetId: 80,
+      businessDate: '2026-07-05',
+      amount: '60.00',
+      clientRequestId: 'settlement-adjustment-client-1',
+      remark: '客户退款冲减',
+    }
+    const restrictedUpdate = {
+      adjustmentType: 'REFUND' as const,
+      businessDate: '2026-07-05',
+      amount: '70.00',
+      clientRequestId: 'settlement-adjustment-client-1',
+      remark: '受限来源更新',
+    }
+
+    await api.settlementAdjustments.create(payload)
+    await api.settlementAdjustments.update(5, restrictedUpdate)
+    await api.settlementAdjustments.post(5)
+    await api.settlementAdjustments.cancel(5)
+
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).amount).toBe('60.00')
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/finance/settlement-adjustments', expect.objectContaining({
+      body: JSON.stringify(payload),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-settlement-0' }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/finance/settlement-adjustments/5', expect.objectContaining({
+      body: JSON.stringify(restrictedUpdate),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-settlement-1' }),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/finance/settlement-adjustments/5/post', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/finance/settlement-adjustments/5/cancel', expect.objectContaining({ method: 'PUT' }))
   })
 
   it('按标识获取销售退货详情并保留来源受限结构', async () => {

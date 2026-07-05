@@ -556,6 +556,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/finance/PaymentFormView.vue'),
   },
   {
+    path: '/finance/settlement-adjustments',
+    name: 'finance-settlement-adjustments',
+    meta: { requiresAuth: true, requiredPermission: 'finance:settlement-adjustment:view' },
+    component: () => import('../modules/reversal/SettlementAdjustmentListView.vue'),
+  },
+  {
+    path: '/finance/settlement-adjustments/create',
+    name: 'finance-settlement-adjustment-create',
+    meta: { requiresAuth: true, requiredPermission: 'finance:settlement-adjustment:create' },
+    component: () => import('../modules/reversal/SettlementAdjustmentFormView.vue'),
+  },
+  {
+    path: '/finance/settlement-adjustments/:id',
+    name: 'finance-settlement-adjustment-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:settlement-adjustment:view' },
+    component: () => import('../modules/reversal/SettlementAdjustmentDetailView.vue'),
+  },
+  {
+    path: '/finance/settlement-adjustments/:id/edit',
+    name: 'finance-settlement-adjustment-edit',
+    meta: { requiresAuth: true, requiredPermission: 'finance:settlement-adjustment:update' },
+    component: () => import('../modules/reversal/SettlementAdjustmentFormView.vue'),
+  },
+  {
     path: '/reports',
     name: 'reports-root',
     meta: { requiresAuth: true },

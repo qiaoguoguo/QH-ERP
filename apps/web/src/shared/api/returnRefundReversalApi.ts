@@ -7,6 +7,9 @@ export type ReversalMoney = string
 export type ReversalRouteValue = string | number | boolean
 export type ReversalStatus = 'DRAFT' | 'POSTED' | 'CANCELLED'
 export type ReversalTraceDirection = 'SOURCE_TO_REVERSE' | 'REVERSE_TO_SOURCE'
+export type SettlementSide = 'RECEIVABLE' | 'PAYABLE'
+export type SettlementAdjustmentType = 'RETURN_OFFSET' | 'REFUND' | 'PAYMENT_OFFSET'
+export type SettlementAdjustmentSourceType = 'SALES_RETURN' | 'PURCHASE_RETURN' | 'RECEIPT' | 'PAYMENT' | 'SETTLEMENT_ADJUSTMENT'
 
 export interface ReversalSourceView {
   sourceType: string
@@ -158,6 +161,32 @@ export interface ProductionMaterialSupplementDetail extends ProductionMaterialSu
   traces: ReversalTraceRecord[]
 }
 
+export interface SettlementAdjustmentSummary {
+  id: ResourceId
+  adjustmentNo: string
+  settlementSide: SettlementSide
+  adjustmentType: SettlementAdjustmentType
+  source: ReversalSourceView
+  targetId: ResourceId
+  targetNo: string
+  businessDate: string
+  targetOriginalAmount: ReversalMoney
+  targetAdjustedAmountBefore: ReversalMoney
+  targetAdjustableAmountBefore: ReversalMoney
+  amount: ReversalMoney
+  targetRemainingAmountAfterPost: ReversalMoney
+  targetStatusAfterPost: string
+  status: ReversalStatus
+  createdAt: string
+  updatedAt: string
+}
+
+export interface SettlementAdjustmentDetail extends SettlementAdjustmentSummary {
+  clientRequestId?: string
+  remark?: string
+  traces: ReversalTraceRecord[]
+}
+
 export interface SalesReturnSourceLine {
   shipmentLineId: ResourceId
   salesOrderLineId?: ResourceId
@@ -267,6 +296,20 @@ export interface ProductionMaterialSupplementSource {
   materials: ProductionMaterialSupplementSourceMaterial[]
 }
 
+export interface SettlementAdjustmentSource {
+  sourceType: SettlementAdjustmentSourceType
+  sourceId: ResourceId
+  sourceNo: string
+  settlementSide: SettlementSide
+  targetId: ResourceId
+  targetNo: string
+  businessDate: string
+  originalAmount: ReversalMoney
+  adjustedAmount: ReversalMoney
+  adjustableAmount: ReversalMoney
+  status: string
+}
+
 export interface SalesReturnListParams {
   keyword?: string | null
   customerId?: ResourceId | null
@@ -345,6 +388,30 @@ export interface ProductionMaterialSupplementSourceListParams {
   keyword?: string | null
   workOrderId?: ResourceId | null
   warehouseId?: ResourceId | null
+  page: number
+  pageSize: number
+}
+
+export interface SettlementAdjustmentListParams {
+  keyword?: string | null
+  settlementSide?: SettlementSide | null
+  adjustmentType?: SettlementAdjustmentType | null
+  sourceType?: SettlementAdjustmentSourceType | null
+  status?: ReversalStatus | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface SettlementAdjustmentSourceListParams {
+  keyword?: string | null
+  settlementSide?: SettlementSide | null
+  sourceType?: SettlementAdjustmentSourceType | null
+  customerId?: ResourceId | null
+  supplierId?: ResourceId | null
+  dateFrom?: string | null
+  dateTo?: string | null
   page: number
   pageSize: number
 }
@@ -485,6 +552,32 @@ export interface ProductionMaterialSupplementUpdatePayload {
 
 export type ProductionMaterialSupplementPayload = ProductionMaterialSupplementCreatePayload
 
+export interface SettlementAdjustmentCreatePayload {
+  settlementSide: SettlementSide
+  adjustmentType: SettlementAdjustmentType
+  sourceType: SettlementAdjustmentSourceType
+  sourceId: ResourceId
+  targetId: ResourceId
+  businessDate: string
+  amount: ReversalMoney
+  clientRequestId: string
+  remark?: string
+}
+
+export interface SettlementAdjustmentUpdatePayload {
+  settlementSide?: SettlementSide
+  adjustmentType?: SettlementAdjustmentType
+  sourceType?: SettlementAdjustmentSourceType
+  sourceId?: ResourceId
+  targetId?: ResourceId
+  businessDate: string
+  amount: ReversalMoney
+  clientRequestId: string
+  remark?: string
+}
+
+export type SettlementAdjustmentPayload = SettlementAdjustmentCreatePayload
+
 export interface ReturnRefundReversalApi {
   salesReturns: {
     list(params: SalesReturnListParams): Promise<PageResult<SalesReturnSummary>>
@@ -529,6 +622,17 @@ export interface ReturnRefundReversalApi {
   }
   productionMaterialSupplementSources: {
     list(params: ProductionMaterialSupplementSourceListParams): Promise<PageResult<ProductionMaterialSupplementSource>>
+  }
+  settlementAdjustments: {
+    list(params: SettlementAdjustmentListParams): Promise<PageResult<SettlementAdjustmentSummary>>
+    get(id: ResourceId): Promise<SettlementAdjustmentDetail>
+    create(payload: SettlementAdjustmentPayload): Promise<SettlementAdjustmentDetail>
+    update(id: ResourceId, payload: SettlementAdjustmentUpdatePayload): Promise<SettlementAdjustmentDetail>
+    post(id: ResourceId): Promise<SettlementAdjustmentDetail>
+    cancel(id: ResourceId): Promise<SettlementAdjustmentDetail>
+  }
+  settlementAdjustmentSources: {
+    list(params: SettlementAdjustmentSourceListParams): Promise<PageResult<SettlementAdjustmentSource>>
   }
   traces: {
     list(params: ReversalTraceListParams): Promise<ReversalTraceRecord[]>
@@ -617,6 +721,28 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     'page',
     'pageSize',
   ] as const
+  const settlementAdjustmentQueryKeys = [
+    'keyword',
+    'settlementSide',
+    'adjustmentType',
+    'sourceType',
+    'status',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const settlementAdjustmentSourceQueryKeys = [
+    'keyword',
+    'settlementSide',
+    'sourceType',
+    'customerId',
+    'supplierId',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
   const traceQueryKeys = ['sourceType', 'sourceId', 'sourceLineId', 'direction', 'includeRestricted'] as const
 
   const pickQuery = (query: object | undefined, keys: readonly string[]) => {
@@ -690,6 +816,8 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     `/api/admin/production/material-returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
   const productionMaterialSupplementPath = (id?: ResourceId) =>
     `/api/admin/production/material-supplements${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
+  const settlementAdjustmentPath = (id?: ResourceId) =>
+    `/api/admin/finance/settlement-adjustments${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
 
   return {
     salesReturns: {
@@ -754,6 +882,25 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
         get<PageResult<ProductionMaterialSupplementSource>>(
           '/api/admin/production/material-supplement-sources',
           pickQuery(params, productionMaterialSupplementSourceQueryKeys),
+        ),
+    },
+    settlementAdjustments: {
+      list: (params) =>
+        get<PageResult<SettlementAdjustmentSummary>>(
+          '/api/admin/finance/settlement-adjustments',
+          pickQuery(params, settlementAdjustmentQueryKeys),
+        ),
+      get: (id) => get<SettlementAdjustmentDetail>(settlementAdjustmentPath(id)),
+      create: (payload) => write<SettlementAdjustmentDetail>('POST', settlementAdjustmentPath(), payload),
+      update: (id, payload) => write<SettlementAdjustmentDetail>('PUT', settlementAdjustmentPath(id), payload),
+      post: (id) => write<SettlementAdjustmentDetail>('PUT', `${settlementAdjustmentPath(id)}/post`),
+      cancel: (id) => write<SettlementAdjustmentDetail>('PUT', `${settlementAdjustmentPath(id)}/cancel`),
+    },
+    settlementAdjustmentSources: {
+      list: (params) =>
+        get<PageResult<SettlementAdjustmentSource>>(
+          '/api/admin/finance/settlement-adjustment-sources',
+          pickQuery(params, settlementAdjustmentSourceQueryKeys),
         ),
     },
     traces: {

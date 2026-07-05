@@ -25,6 +25,11 @@ export const financePermissions = {
   paymentUpdate: 'finance:payment:update',
   paymentPost: 'finance:payment:post',
   paymentCancel: 'finance:payment:cancel',
+  settlementAdjustmentView: 'finance:settlement-adjustment:view',
+  settlementAdjustmentCreate: 'finance:settlement-adjustment:create',
+  settlementAdjustmentUpdate: 'finance:settlement-adjustment:update',
+  settlementAdjustmentPost: 'finance:settlement-adjustment:post',
+  settlementAdjustmentCancel: 'finance:settlement-adjustment:cancel',
 } as const
 
 export const financeViewPermissions = [
@@ -32,6 +37,7 @@ export const financeViewPermissions = [
   financePermissions.receiptView,
   financePermissions.payableView,
   financePermissions.paymentView,
+  financePermissions.settlementAdjustmentView,
 ] as const
 
 export const receivableStatusText: Record<ReceivableStatus, string> = {
@@ -174,6 +180,9 @@ export function firstFinanceRouteByPermission(hasPermission: (permission: string
   }
   if (hasPermission(financePermissions.paymentView)) {
     return '/finance/payments'
+  }
+  if (hasPermission(financePermissions.settlementAdjustmentView)) {
+    return '/finance/settlement-adjustments'
   }
   return null
 }
