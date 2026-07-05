@@ -212,6 +212,6 @@ npm run build
 - 计划创建：2026-07-05。
 - 自动化测试：Task 2 到 Task 7 已完成定向自动化验证。Task6 后端 `ReversalAdminControllerTests` 22 条通过，Task6 相关后端回归 `ReversalAdminControllerTests,FinanceAdminControllerTests,SalesAdminControllerTests,ProcurementAdminControllerTests,ProductionAdminControllerTests,ReportingAdminControllerTests` 共 65 条通过；Task6 前端定向测试 `returnRefundReversalApi.spec.ts`、`SettlementAdjustmentViews.spec.ts`、`permissionGuard.spec.ts`、`App.spec.ts` 共 4 个文件 99 条通过；Task7 后端定向测试 `ReportingAdminControllerTests` 21 条、`ReversalAdminControllerTests` 22 条通过；Task7 前端定向测试 `businessReportingApi.spec.ts`、`ReportViews.spec.ts` 共 2 个文件 14 条通过；相关 `npm run typecheck` 与 `git diff --check` 均通过。
 - 缺陷复验：Task6 后端阻断项“生产退料/补料误作为往来冲减来源”已由 `5252c9f` 修复并通过产品经理、测试复审；Task6 前端 P1 “候选来源刷新后隐藏提交旧来源”已由 `7d5b0b0` 修复并通过测试复审；Task7 后端跨期反向发生口径和往来 item 本期冲减口径阻断分别由 `c7c5117`、`9346d24` 修复并通过产品经理、测试复审。
-- 浏览器验收：待执行。
-- 视觉分析：待执行。
-- 缺陷状态：截至 Task7 完成，未登记未解决阻断缺陷；全阶段浏览器验收、视觉分析和最终质量门待 Task8 执行。
+- 浏览器验收：已完成。前端 `http://127.0.0.1:5174`、后端 `http://127.0.0.1:18082` 在 Task8 验收期间可访问，健康检查返回 `status=UP`、`service=qherp-api`；主路径、权限路径、异常路径均通过，详细记录见 `docs/testing/return-refund-reversal-visual-audit/notes.md`。
+- 视觉分析：已完成。`docs/testing/return-refund-reversal-visual-audit/` 保存 22 张 PNG 截图和 `notes.md`，覆盖销售退货、采购退货、生产退料/补料、往来冲减、报表净额、追溯、受限、无权限、未登录、只读、空态和窄屏。
+- 缺陷状态：截至 Task8 完成，未登记未解决阻断缺陷；全阶段最终复审和交付判断待 Task9 执行。
