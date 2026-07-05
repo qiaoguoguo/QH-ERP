@@ -20,6 +20,12 @@ import ProductionWorkOrderDetailView from '../modules/production/ProductionWorkO
 import ProductionWorkOrderFormView from '../modules/production/ProductionWorkOrderFormView.vue'
 import ProductionWorkOrderListView from '../modules/production/ProductionWorkOrderListView.vue'
 import ProductionWorkReportView from '../modules/production/ProductionWorkReportView.vue'
+import ProductionMaterialReturnDetailView from '../modules/reversal/ProductionMaterialReturnDetailView.vue'
+import ProductionMaterialReturnFormView from '../modules/reversal/ProductionMaterialReturnFormView.vue'
+import ProductionMaterialReturnListView from '../modules/reversal/ProductionMaterialReturnListView.vue'
+import ProductionMaterialSupplementDetailView from '../modules/reversal/ProductionMaterialSupplementDetailView.vue'
+import ProductionMaterialSupplementFormView from '../modules/reversal/ProductionMaterialSupplementFormView.vue'
+import ProductionMaterialSupplementListView from '../modules/reversal/ProductionMaterialSupplementListView.vue'
 import CostRecordDetailView from '../modules/cost/CostRecordDetailView.vue'
 import CostRecordFormView from '../modules/cost/CostRecordFormView.vue'
 import CostRecordListView from '../modules/cost/CostRecordListView.vue'
@@ -187,6 +193,54 @@ describe('账号权限路由守卫', () => {
         '/production/work-orders/:id/completion-receipts',
         'production:receipt:view',
         ProductionCompletionReceiptView,
+      ],
+      [
+        'production-material-returns',
+        '/production/material-returns',
+        'production:material-return:view',
+        ProductionMaterialReturnListView,
+      ],
+      [
+        'production-material-return-create',
+        '/production/material-returns/create',
+        'production:material-return:create',
+        ProductionMaterialReturnFormView,
+      ],
+      [
+        'production-material-return-detail',
+        '/production/material-returns/:id',
+        'production:material-return:view',
+        ProductionMaterialReturnDetailView,
+      ],
+      [
+        'production-material-return-edit',
+        '/production/material-returns/:id/edit',
+        'production:material-return:update',
+        ProductionMaterialReturnFormView,
+      ],
+      [
+        'production-material-supplements',
+        '/production/material-supplements',
+        'production:material-supplement:view',
+        ProductionMaterialSupplementListView,
+      ],
+      [
+        'production-material-supplement-create',
+        '/production/material-supplements/create',
+        'production:material-supplement:create',
+        ProductionMaterialSupplementFormView,
+      ],
+      [
+        'production-material-supplement-detail',
+        '/production/material-supplements/:id',
+        'production:material-supplement:view',
+        ProductionMaterialSupplementDetailView,
+      ],
+      [
+        'production-material-supplement-edit',
+        '/production/material-supplements/:id/edit',
+        'production:material-supplement:update',
+        ProductionMaterialSupplementFormView,
       ],
     ] as const
 
@@ -579,6 +633,48 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('production-work-orders')
+  })
+
+  it('已登录且拥有生产退料查看权限时允许访问生产退料列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:material-return:view'] })
+
+    await router.push('/production/material-returns')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('production-material-returns')
+  })
+
+  it('已登录但缺少生产退料创建权限时不能访问新建生产退料', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:material-return:view'] })
+
+    await router.push('/production/material-returns/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/production/material-returns/create')
+  })
+
+  it('已登录且拥有生产补料查看权限时允许访问生产补料列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:material-supplement:view'] })
+
+    await router.push('/production/material-supplements')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('production-material-supplements')
+  })
+
+  it('已登录但缺少生产补料创建权限时不能访问新建生产补料', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:material-supplement:view'] })
+
+    await router.push('/production/material-supplements/create')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/production/material-supplements/create')
   })
 
   it('已登录且拥有成本记录查看权限时允许访问成本记录列表', async () => {

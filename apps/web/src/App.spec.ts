@@ -179,6 +179,70 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/report')
   })
 
+  it('有生产退料补料查看权限但后端菜单缺失时补齐生产管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'production_reversal_user', displayName: '生产反冲员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['production:material-return:view', 'production:material-supplement:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('生产管理')
+    expect(wrapper.text()).toContain('生产退料')
+    expect(wrapper.text()).toContain('生产补料')
+    expect(wrapper.text()).not.toContain('生产工单')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/production')
+  })
+
+  it('无生产查看权限时递归移除生产菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'no_production', displayName: '无生产权限', status: 'ENABLED' },
+      menus: [
+        {
+          id: 90,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            { id: 91, code: 'production:work-order:view', name: '生产工单', routePath: '/production/work-orders' },
+            { id: 92, code: 'production:material-return:view', name: '生产退料', routePath: '/production/material-returns' },
+            { id: 93, code: 'production:material-supplement:view', name: '生产补料', routePath: '/production/material-supplements' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('生产工单')
+    expect(wrapper.text()).not.toContain('生产退料')
+    expect(wrapper.text()).not.toContain('生产补料')
+    expect(wrapper.text()).not.toContain('业务管理')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .not.toContain('/menu/production')
+  })
+
   it('无报表查看权限时不显示经营报表入口并递归移除报表菜单', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

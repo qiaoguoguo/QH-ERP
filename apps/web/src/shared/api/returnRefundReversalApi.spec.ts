@@ -2,6 +2,10 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createReturnRefundReversalApi,
+  type ProductionMaterialReturnDetail,
+  type ProductionMaterialReturnPayload,
+  type ProductionMaterialSupplementDetail,
+  type ProductionMaterialSupplementPayload,
   type PurchaseReturnDetail,
   type PurchaseReturnPayload,
   type ReversalDocumentPayload,
@@ -139,6 +143,115 @@ const purchaseReturnDetail: PurchaseReturnDetail = {
         lineNo: 10,
         quantity: '8.000000',
         amount: '640.00',
+        canViewSource: true,
+        restricted: false,
+      },
+    },
+  ],
+  traces: [],
+}
+
+const productionMaterialReturnDetail: ProductionMaterialReturnDetail = {
+  id: 3,
+  returnNo: 'MR202607050001',
+  workOrderId: 30,
+  workOrderNo: 'WO202607050001',
+  warehouseId: 4,
+  warehouseName: '线边仓',
+  businessDate: '2026-07-05',
+  status: 'DRAFT',
+  totalQuantity: '3.000000',
+  source: {
+    sourceType: 'PRODUCTION_MATERIAL_ISSUE',
+    sourceId: 40,
+    sourceNo: 'MI202607050001',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'production-work-order-material-issues',
+    resourceRouteParams: { id: 30 },
+    resourceRouteQuery: { issueId: 40 },
+  },
+  createdAt: '2026-07-05T12:00:00+08:00',
+  updatedAt: '2026-07-05T12:00:00+08:00',
+  clientRequestId: 'material-return-client-1',
+  remark: '余料退回',
+  lines: [
+    {
+      id: 31,
+      lineNo: 10,
+      sourceLineId: 401,
+      materialId: 51,
+      materialCode: 'RM-RET-001',
+      materialName: '退料原料',
+      unitId: 1,
+      unitName: 'kg',
+      returnedQuantityBefore: '0.000000',
+      returnableQuantityBefore: '10.000000',
+      quantity: '3.000000',
+      unitPrice: '20.00',
+      amount: '60.00',
+      reason: '余料退回',
+      source: {
+        sourceType: 'PRODUCTION_MATERIAL_ISSUE_LINE',
+        sourceId: 40,
+        sourceLineId: 401,
+        sourceNo: 'MI202607050001',
+        lineNo: 10,
+        quantity: '10.000000',
+        amount: '200.00',
+        canViewSource: true,
+        restricted: false,
+      },
+    },
+  ],
+  traces: [],
+}
+
+const productionMaterialSupplementDetail: ProductionMaterialSupplementDetail = {
+  id: 4,
+  supplementNo: 'MS202607050001',
+  workOrderId: 30,
+  workOrderNo: 'WO202607050001',
+  warehouseId: 4,
+  warehouseName: '线边仓',
+  businessDate: '2026-07-05',
+  status: 'DRAFT',
+  totalQuantity: '2.000000',
+  source: {
+    sourceType: 'PRODUCTION_WORK_ORDER',
+    sourceId: 30,
+    sourceNo: 'WO202607050001',
+    canViewSource: true,
+    restricted: false,
+    resourceRouteName: 'production-work-order-detail',
+    resourceRouteParams: { id: 30 },
+  },
+  createdAt: '2026-07-05T13:00:00+08:00',
+  updatedAt: '2026-07-05T13:00:00+08:00',
+  clientRequestId: 'material-supplement-client-1',
+  remark: '损耗补料',
+  lines: [
+    {
+      id: 41,
+      lineNo: 10,
+      sourceLineId: 501,
+      materialId: 52,
+      materialCode: 'RM-SUP-001',
+      materialName: '补料原料',
+      unitId: 1,
+      unitName: 'kg',
+      quantity: '2.000000',
+      unitPrice: '30.00',
+      amount: '60.00',
+      reason: '损耗补料',
+      source: {
+        sourceType: 'PRODUCTION_WORK_ORDER_MATERIAL',
+        sourceId: 30,
+        sourceLineId: 501,
+        sourceNo: 'WO202607050001',
+        lineNo: 10,
+        quantity: '12.000000',
+        amount: '360.00',
         canViewSource: true,
         restricted: false,
       },
@@ -360,6 +473,142 @@ describe('退货退款与反冲 API', () => {
     expect(detail.source.canViewSource).toBe(false)
     expect(detail.source.sourceNo).toBeUndefined()
     expect(detail.source.resourceRouteName).toBeUndefined()
+  })
+
+  it('按查询条件获取生产退料、生产补料和候选来源，并过滤空查询值', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createReturnRefundReversalApi({ fetcher })
+
+    await api.productionMaterialReturns.list({
+      keyword: 'MR',
+      workOrderId: 30,
+      warehouseId: '',
+      status: 'DRAFT',
+      dateFrom: '2026-07-01',
+      dateTo: null,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.productionMaterialReturnSources.list({
+      keyword: 'MI',
+      workOrderId: '',
+      warehouseId: 4,
+      dateFrom: '2026-07-01',
+      dateTo: '',
+      page: 1,
+      pageSize: 20,
+    })
+    await api.productionMaterialSupplements.list({
+      keyword: 'MS',
+      workOrderId: 30,
+      warehouseId: '',
+      status: 'DRAFT',
+      dateFrom: '2026-07-01',
+      dateTo: null,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.productionMaterialSupplementSources.list({
+      keyword: 'WO',
+      workOrderId: '',
+      warehouseId: 4,
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/production/material-returns?keyword=MR&workOrderId=30&status=DRAFT&dateFrom=2026-07-01&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/production/material-return-sources?keyword=MI&warehouseId=4&dateFrom=2026-07-01&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/production/material-supplements?keyword=MS&workOrderId=30&status=DRAFT&dateFrom=2026-07-01&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      '/api/admin/production/material-supplement-sources?keyword=WO&warehouseId=4&page=1&pageSize=20',
+      { credentials: 'include', headers: { Accept: 'application/json' }, method: 'GET' },
+    )
+  })
+
+  it('生产退料和生产补料写操作使用对应来源字段，数量保持字符串', async () => {
+    const fetcher = vi.fn()
+    const responses = [
+      productionMaterialReturnDetail,
+      productionMaterialReturnDetail,
+      productionMaterialReturnDetail,
+      productionMaterialReturnDetail,
+      productionMaterialSupplementDetail,
+      productionMaterialSupplementDetail,
+      productionMaterialSupplementDetail,
+      productionMaterialSupplementDetail,
+    ]
+    responses.forEach((response, index) => {
+      fetcher.mockResolvedValueOnce(apiResponse({ token: `csrf-${index}`, headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }))
+      fetcher.mockResolvedValueOnce(apiResponse(response))
+    })
+    const api = createReturnRefundReversalApi({ fetcher })
+    const returnPayload: ProductionMaterialReturnPayload = {
+      sourceIssueId: 40,
+      businessDate: '2026-07-05',
+      clientRequestId: 'material-return-client-1',
+      remark: '余料退回',
+      lines: [{ sourceIssueLineId: 401, quantity: '3.000000', reason: '余料退回' }],
+    }
+    const supplementPayload: ProductionMaterialSupplementPayload = {
+      workOrderId: 30,
+      warehouseId: 4,
+      businessDate: '2026-07-05',
+      clientRequestId: 'material-supplement-client-1',
+      remark: '损耗补料',
+      lines: [{ workOrderMaterialId: 501, quantity: '2.000000', reason: '损耗补料' }],
+    }
+
+    await api.productionMaterialReturns.create(returnPayload)
+    await api.productionMaterialReturns.update(3, { ...returnPayload, sourceIssueId: undefined, lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }] })
+    await api.productionMaterialReturns.post(3)
+    await api.productionMaterialReturns.cancel(3)
+    await api.productionMaterialSupplements.create(supplementPayload)
+    await api.productionMaterialSupplements.update(4, { ...supplementPayload, workOrderId: undefined, warehouseId: undefined, lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }] })
+    await api.productionMaterialSupplements.post(4)
+    await api.productionMaterialSupplements.cancel(4)
+
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].quantity).toBe('3.000000')
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/production/material-returns', expect.objectContaining({
+      body: JSON.stringify(returnPayload),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-0' }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/production/material-returns/3', expect.objectContaining({
+      body: JSON.stringify({ ...returnPayload, sourceIssueId: undefined, lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }] }),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-1' }),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/production/material-returns/3/post', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/production/material-returns/3/cancel', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/production/material-supplements', expect.objectContaining({
+      body: JSON.stringify(supplementPayload),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-4' }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(12, '/api/admin/production/material-supplements/4', expect.objectContaining({
+      body: JSON.stringify({ ...supplementPayload, workOrderId: undefined, warehouseId: undefined, lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }] }),
+      headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-5' }),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/production/material-supplements/4/post', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/production/material-supplements/4/cancel', expect.objectContaining({ method: 'PUT' }))
   })
 
   it('按标识获取销售退货详情并保留来源受限结构', async () => {

@@ -21,6 +21,8 @@ const salesOrderPath = '/sales/orders'
 const salesShipmentPath = '/sales/shipments'
 const salesReturnPath = '/sales/returns'
 const productionWorkOrderPath = '/production/work-orders'
+const productionMaterialReturnPath = '/production/material-returns'
+const productionMaterialSupplementPath = '/production/material-supplements'
 const costRecordPath = '/cost/records'
 const financeReceivablePath = '/finance/receivables'
 const financeReceiptPath = '/finance/receipts'
@@ -49,6 +51,8 @@ const supportedMenuPaths = new Set([
   salesShipmentPath,
   salesReturnPath,
   productionWorkOrderPath,
+  productionMaterialReturnPath,
+  productionMaterialSupplementPath,
   costRecordPath,
   financeReceivablePath,
   financeReceiptPath,
@@ -119,6 +123,27 @@ const salesChildren: MenuNode[] = [
   },
 ]
 const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
+const productionChildren: MenuNode[] = [
+  {
+    id: 'production-work-orders',
+    code: 'production:work-order:view',
+    name: '生产工单',
+    routePath: productionWorkOrderPath,
+  },
+  {
+    id: 'production-material-returns',
+    code: 'production:material-return:view',
+    name: '生产退料',
+    routePath: productionMaterialReturnPath,
+  },
+  {
+    id: 'production-material-supplements',
+    code: 'production:material-supplement:view',
+    name: '生产补料',
+    routePath: productionMaterialSupplementPath,
+  },
+]
+const productionMenuPaths = new Set(productionChildren.map((child) => child.routePath))
 const financeChildren: MenuNode[] = [
   {
     id: 'finance-receivables',
@@ -298,43 +323,40 @@ function removeSalesMenus(menus: MenuNode[]): MenuNode[] {
 }
 
 function ensureProductionMenu(menus: MenuNode[]): MenuNode[] {
-  if (!authStore.hasPermission('production:work-order:view')) {
-    return menus.filter((menu) => menu.code !== 'production' && menu.routePath !== productionWorkOrderPath)
+  const allowedChildren = productionChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeProductionMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
   }
 
-  const productionChild: MenuNode = {
-    id: 'production-work-orders',
-    code: 'production:work-order:view',
-    name: '生产工单',
-    routePath: productionWorkOrderPath,
-  }
-  const productionIndex = menus.findIndex((menu) => menu.code === 'production' || menu.routePath === productionWorkOrderPath)
-
-  if (productionIndex === -1) {
-    return [
-      ...menus,
-      {
-        id: 'production',
-        code: 'production',
-        name: '生产管理',
-        routePath: null,
-        children: [productionChild],
-      },
-    ]
-  }
-
-  return menus.map((menu, index) => {
-    if (index !== productionIndex) {
-      return menu
-    }
-    const children = menu.children ?? []
-    const hasWorkOrderChild = children.some((child) => child.routePath === productionWorkOrderPath)
-    return {
-      ...menu,
+  return [
+    ...cleanedMenus,
+    {
+      id: 'production',
+      code: 'production',
       name: '生产管理',
-      children: hasWorkOrderChild ? children : [productionChild, ...children],
-    }
-  })
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isProductionMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'production'
+    || code.startsWith('production:')
+    || (menu.routePath ? productionMenuPaths.has(menu.routePath) : false)
+}
+
+function removeProductionMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeProductionMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isProductionMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 function ensureCostMenu(menus: MenuNode[]): MenuNode[] {

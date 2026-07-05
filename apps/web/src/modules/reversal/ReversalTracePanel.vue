@@ -35,10 +35,17 @@ function sourceTypeLabel(sourceType?: string) {
     PURCHASE_RECEIPT: '采购入库来源',
     PURCHASE_RECEIPT_LINE: '采购入库行',
     PURCHASE_RETURN: '采购退货',
+    PRODUCTION_MATERIAL_ISSUE: '生产领料来源',
+    PRODUCTION_MATERIAL_ISSUE_LINE: '生产领料行',
+    PRODUCTION_WORK_ORDER: '生产工单',
+    PRODUCTION_WORK_ORDER_MATERIAL: '工单用料行',
+    PRODUCTION_MATERIAL_RETURN: '生产退料',
+    PRODUCTION_MATERIAL_SUPPLEMENT: '生产补料',
     INVENTORY_MOVEMENT: '库存流水',
     RECEIVABLE: '应收冲减',
     PAYABLE: '应付冲减',
     SETTLEMENT_ADJUSTMENT: '往来冲减',
+    COST_RECORD: '成本记录',
   }
   return sourceType ? labels[sourceType] ?? sourceType : '-'
 }
@@ -50,9 +57,28 @@ function isPurchaseTrace(row: ReversalTraceRecord) {
     || routeName === 'finance-payable-detail'
 }
 
+function isProductionMaterialReturnTrace(row: ReversalTraceRecord) {
+  return row.source.sourceType?.startsWith('PRODUCTION_MATERIAL_ISSUE')
+    || row.reverse.sourceType === 'PRODUCTION_MATERIAL_RETURN'
+}
+
+function isProductionMaterialSupplementTrace(row: ReversalTraceRecord) {
+  return row.source.sourceType?.startsWith('PRODUCTION_WORK_ORDER')
+    || row.reverse.sourceType === 'PRODUCTION_MATERIAL_SUPPLEMENT'
+}
+
 function traceImpactType(row: ReversalTraceRecord) {
   if (row.inventoryMovementId) {
+    if (isProductionMaterialReturnTrace(row)) {
+      return '库存入库影响'
+    }
+    if (isProductionMaterialSupplementTrace(row)) {
+      return '库存出库影响'
+    }
     return isPurchaseTrace(row) ? '库存出库影响' : '库存入库影响'
+  }
+  if (row.costRecordId) {
+    return '成本影响'
   }
   if (row.settlementAdjustmentId) {
     return isPurchaseTrace(row) ? '应付冲减' : '应收冲减'
@@ -62,6 +88,12 @@ function traceImpactType(row: ReversalTraceRecord) {
   }
   if (row.source.sourceType === 'PURCHASE_RECEIPT' || row.source.sourceType === 'PURCHASE_RECEIPT_LINE') {
     return '采购入库来源'
+  }
+  if (row.source.sourceType === 'PRODUCTION_MATERIAL_ISSUE' || row.source.sourceType === 'PRODUCTION_MATERIAL_ISSUE_LINE') {
+    return '生产领料来源'
+  }
+  if (row.source.sourceType === 'PRODUCTION_WORK_ORDER' || row.source.sourceType === 'PRODUCTION_WORK_ORDER_MATERIAL') {
+    return '生产工单来源'
   }
   return sourceTypeLabel(row.reverse.sourceType || row.source.sourceType)
 }
@@ -100,7 +132,7 @@ function viewImpactResource(row: ReversalTraceRecord) {
 }
 
 function hasImpactResource(row: ReversalTraceRecord) {
-  return Boolean(row.inventoryMovementId || row.settlementAdjustmentId)
+  return Boolean(row.inventoryMovementId || row.settlementAdjustmentId || row.costRecordId)
 }
 
 function impactResourceLabel(row: ReversalTraceRecord) {
@@ -112,6 +144,9 @@ function impactResourceLabel(row: ReversalTraceRecord) {
   }
   if (row.settlementAdjustmentId) {
     return `${isPurchaseTrace(row) ? '应付冲减' : '应收冲减'} #${row.settlementAdjustmentId}`
+  }
+  if (row.costRecordId) {
+    return `成本记录 #${row.costRecordId}`
   }
   return '-'
 }
@@ -194,12 +229,12 @@ function sourceNo(source: ReversalSourceView) {
         </el-table-column>
         <el-table-column label="业务日期" min-width="120">
           <template #default="{ row }">
-            <span v-if="!restricted(row)">{{ row.businessDate }}</span>
+            <span v-if="!restricted(row)">{{ row.businessDate || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">
-            <span v-if="!restricted(row)">{{ row.status }}</span>
+            <span v-if="!restricted(row)">{{ row.status || '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="数量" min-width="110" align="right">

@@ -34,10 +34,10 @@ export interface ReversalTraceRecord {
   inventoryMovementId?: ResourceId
   settlementAdjustmentId?: ResourceId
   costRecordId?: ResourceId
-  businessDate: string
+  businessDate?: string
   quantity?: ReversalDecimal
   amount?: ReversalMoney
-  status: string
+  status?: string
   canViewResource: boolean
   restricted: boolean
   restrictedMessage?: string
@@ -112,6 +112,52 @@ export interface PurchaseReturnDetail extends PurchaseReturnSummary {
   traces: ReversalTraceRecord[]
 }
 
+export interface ProductionMaterialReturnSummary {
+  id: ResourceId
+  returnNo: string
+  workOrderId: ResourceId
+  workOrderNo: string
+  warehouseId: ResourceId
+  warehouseName: string
+  businessDate: string
+  status: ReversalStatus
+  totalQuantity: ReversalDecimal
+  totalAmount?: ReversalMoney
+  source: ReversalSourceView
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProductionMaterialReturnDetail extends ProductionMaterialReturnSummary {
+  clientRequestId?: string
+  remark?: string
+  lines: ReversalDocumentLine[]
+  traces: ReversalTraceRecord[]
+}
+
+export interface ProductionMaterialSupplementSummary {
+  id: ResourceId
+  supplementNo: string
+  workOrderId: ResourceId
+  workOrderNo: string
+  warehouseId: ResourceId
+  warehouseName: string
+  businessDate: string
+  status: ReversalStatus
+  totalQuantity: ReversalDecimal
+  totalAmount?: ReversalMoney
+  source: ReversalSourceView
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProductionMaterialSupplementDetail extends ProductionMaterialSupplementSummary {
+  clientRequestId?: string
+  remark?: string
+  lines: ReversalDocumentLine[]
+  traces: ReversalTraceRecord[]
+}
+
 export interface SalesReturnSourceLine {
   shipmentLineId: ResourceId
   salesOrderLineId?: ResourceId
@@ -169,6 +215,58 @@ export interface PurchaseReturnSource {
   lines: PurchaseReturnSourceLine[]
 }
 
+export interface ProductionMaterialReturnSourceLine {
+  issueLineId: ResourceId
+  workOrderMaterialId?: ResourceId
+  lineNo: number
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  issuedQuantity: ReversalDecimal
+  returnedQuantity: ReversalDecimal
+  returnableQuantity: ReversalDecimal
+  unitPrice: ReversalMoney
+  returnableAmount: ReversalMoney
+}
+
+export interface ProductionMaterialReturnSource {
+  issueId: ResourceId
+  issueNo: string
+  workOrderId: ResourceId
+  workOrderNo: string
+  warehouseId: ResourceId
+  warehouseName: string
+  businessDate: string
+  status: 'POSTED'
+  lines: ProductionMaterialReturnSourceLine[]
+}
+
+export interface ProductionMaterialSupplementSourceMaterial {
+  workOrderMaterialId: ResourceId
+  lineNo: number
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  plannedQuantity: ReversalDecimal
+  issuedQuantity: ReversalDecimal
+  supplementedQuantity: ReversalDecimal
+  availableStockQuantity: ReversalDecimal
+  unitPrice: ReversalMoney
+}
+
+export interface ProductionMaterialSupplementSource {
+  workOrderId: ResourceId
+  workOrderNo: string
+  workOrderStatus: string
+  warehouseId: ResourceId
+  warehouseName: string
+  materials: ProductionMaterialSupplementSourceMaterial[]
+}
+
 export interface SalesReturnListParams {
   keyword?: string | null
   customerId?: ResourceId | null
@@ -207,6 +305,46 @@ export interface PurchaseReturnSourceListParams {
   warehouseId?: ResourceId | null
   dateFrom?: string | null
   dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface ProductionMaterialReturnListParams {
+  keyword?: string | null
+  workOrderId?: ResourceId | null
+  warehouseId?: ResourceId | null
+  status?: ReversalStatus | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface ProductionMaterialReturnSourceListParams {
+  keyword?: string | null
+  workOrderId?: ResourceId | null
+  warehouseId?: ResourceId | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface ProductionMaterialSupplementListParams {
+  keyword?: string | null
+  workOrderId?: ResourceId | null
+  warehouseId?: ResourceId | null
+  status?: ReversalStatus | null
+  dateFrom?: string | null
+  dateTo?: string | null
+  page: number
+  pageSize: number
+}
+
+export interface ProductionMaterialSupplementSourceListParams {
+  keyword?: string | null
+  workOrderId?: ResourceId | null
+  warehouseId?: ResourceId | null
   page: number
   pageSize: number
 }
@@ -283,6 +421,70 @@ export interface PurchaseReturnUpdatePayload {
 export type PurchaseReturnPayloadLine = PurchaseReturnCreatePayloadLine
 export type PurchaseReturnPayload = PurchaseReturnCreatePayload
 
+export interface ProductionMaterialReturnCreatePayloadLine {
+  sourceIssueLineId: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface ProductionMaterialReturnUpdatePayloadLine {
+  id?: ResourceId
+  sourceIssueLineId?: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface ProductionMaterialReturnCreatePayload {
+  sourceIssueId: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: ProductionMaterialReturnCreatePayloadLine[]
+}
+
+export interface ProductionMaterialReturnUpdatePayload {
+  sourceIssueId?: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: ProductionMaterialReturnUpdatePayloadLine[]
+}
+
+export type ProductionMaterialReturnPayload = ProductionMaterialReturnCreatePayload
+
+export interface ProductionMaterialSupplementCreatePayloadLine {
+  workOrderMaterialId: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface ProductionMaterialSupplementUpdatePayloadLine {
+  id?: ResourceId
+  workOrderMaterialId?: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface ProductionMaterialSupplementCreatePayload {
+  workOrderId: ResourceId
+  warehouseId: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: ProductionMaterialSupplementCreatePayloadLine[]
+}
+
+export interface ProductionMaterialSupplementUpdatePayload {
+  workOrderId?: ResourceId
+  warehouseId?: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: ProductionMaterialSupplementUpdatePayloadLine[]
+}
+
+export type ProductionMaterialSupplementPayload = ProductionMaterialSupplementCreatePayload
+
 export interface ReturnRefundReversalApi {
   salesReturns: {
     list(params: SalesReturnListParams): Promise<PageResult<SalesReturnSummary>>
@@ -305,6 +507,28 @@ export interface ReturnRefundReversalApi {
   }
   purchaseReturnSources: {
     list(params: PurchaseReturnSourceListParams): Promise<PageResult<PurchaseReturnSource>>
+  }
+  productionMaterialReturns: {
+    list(params: ProductionMaterialReturnListParams): Promise<PageResult<ProductionMaterialReturnSummary>>
+    get(id: ResourceId): Promise<ProductionMaterialReturnDetail>
+    create(payload: ProductionMaterialReturnPayload): Promise<ProductionMaterialReturnDetail>
+    update(id: ResourceId, payload: ProductionMaterialReturnUpdatePayload): Promise<ProductionMaterialReturnDetail>
+    post(id: ResourceId): Promise<ProductionMaterialReturnDetail>
+    cancel(id: ResourceId): Promise<ProductionMaterialReturnDetail>
+  }
+  productionMaterialReturnSources: {
+    list(params: ProductionMaterialReturnSourceListParams): Promise<PageResult<ProductionMaterialReturnSource>>
+  }
+  productionMaterialSupplements: {
+    list(params: ProductionMaterialSupplementListParams): Promise<PageResult<ProductionMaterialSupplementSummary>>
+    get(id: ResourceId): Promise<ProductionMaterialSupplementDetail>
+    create(payload: ProductionMaterialSupplementPayload): Promise<ProductionMaterialSupplementDetail>
+    update(id: ResourceId, payload: ProductionMaterialSupplementUpdatePayload): Promise<ProductionMaterialSupplementDetail>
+    post(id: ResourceId): Promise<ProductionMaterialSupplementDetail>
+    cancel(id: ResourceId): Promise<ProductionMaterialSupplementDetail>
+  }
+  productionMaterialSupplementSources: {
+    list(params: ProductionMaterialSupplementSourceListParams): Promise<PageResult<ProductionMaterialSupplementSource>>
   }
   traces: {
     list(params: ReversalTraceListParams): Promise<ReversalTraceRecord[]>
@@ -354,6 +578,42 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     'warehouseId',
     'dateFrom',
     'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const productionMaterialReturnQueryKeys = [
+    'keyword',
+    'workOrderId',
+    'warehouseId',
+    'status',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const productionMaterialReturnSourceQueryKeys = [
+    'keyword',
+    'workOrderId',
+    'warehouseId',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const productionMaterialSupplementQueryKeys = [
+    'keyword',
+    'workOrderId',
+    'warehouseId',
+    'status',
+    'dateFrom',
+    'dateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const productionMaterialSupplementSourceQueryKeys = [
+    'keyword',
+    'workOrderId',
+    'warehouseId',
     'page',
     'pageSize',
   ] as const
@@ -426,6 +686,10 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     `/api/admin/sales/returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
   const purchaseReturnPath = (id?: ResourceId) =>
     `/api/admin/procurement/returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
+  const productionMaterialReturnPath = (id?: ResourceId) =>
+    `/api/admin/production/material-returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
+  const productionMaterialSupplementPath = (id?: ResourceId) =>
+    `/api/admin/production/material-supplements${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
 
   return {
     salesReturns: {
@@ -453,6 +717,44 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     purchaseReturnSources: {
       list: (params) =>
         get<PageResult<PurchaseReturnSource>>('/api/admin/procurement/return-sources', pickQuery(params, purchaseReturnSourceQueryKeys)),
+    },
+    productionMaterialReturns: {
+      list: (params) =>
+        get<PageResult<ProductionMaterialReturnSummary>>(
+          '/api/admin/production/material-returns',
+          pickQuery(params, productionMaterialReturnQueryKeys),
+        ),
+      get: (id) => get<ProductionMaterialReturnDetail>(productionMaterialReturnPath(id)),
+      create: (payload) => write<ProductionMaterialReturnDetail>('POST', productionMaterialReturnPath(), payload),
+      update: (id, payload) => write<ProductionMaterialReturnDetail>('PUT', productionMaterialReturnPath(id), payload),
+      post: (id) => write<ProductionMaterialReturnDetail>('PUT', `${productionMaterialReturnPath(id)}/post`),
+      cancel: (id) => write<ProductionMaterialReturnDetail>('PUT', `${productionMaterialReturnPath(id)}/cancel`),
+    },
+    productionMaterialReturnSources: {
+      list: (params) =>
+        get<PageResult<ProductionMaterialReturnSource>>(
+          '/api/admin/production/material-return-sources',
+          pickQuery(params, productionMaterialReturnSourceQueryKeys),
+        ),
+    },
+    productionMaterialSupplements: {
+      list: (params) =>
+        get<PageResult<ProductionMaterialSupplementSummary>>(
+          '/api/admin/production/material-supplements',
+          pickQuery(params, productionMaterialSupplementQueryKeys),
+        ),
+      get: (id) => get<ProductionMaterialSupplementDetail>(productionMaterialSupplementPath(id)),
+      create: (payload) => write<ProductionMaterialSupplementDetail>('POST', productionMaterialSupplementPath(), payload),
+      update: (id, payload) => write<ProductionMaterialSupplementDetail>('PUT', productionMaterialSupplementPath(id), payload),
+      post: (id) => write<ProductionMaterialSupplementDetail>('PUT', `${productionMaterialSupplementPath(id)}/post`),
+      cancel: (id) => write<ProductionMaterialSupplementDetail>('PUT', `${productionMaterialSupplementPath(id)}/cancel`),
+    },
+    productionMaterialSupplementSources: {
+      list: (params) =>
+        get<PageResult<ProductionMaterialSupplementSource>>(
+          '/api/admin/production/material-supplement-sources',
+          pickQuery(params, productionMaterialSupplementSourceQueryKeys),
+        ),
     },
     traces: {
       list: (params) =>
