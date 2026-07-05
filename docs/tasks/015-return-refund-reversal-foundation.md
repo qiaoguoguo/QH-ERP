@@ -205,9 +205,11 @@
 - Task 7 后端完成：后端开发完成销售、采购、库存、生产、成本和往来报表原发生、反向发生和净额字段及反向来源追溯。产品经理两轮复审发现并推动修复跨期反向发生口径和往来 item 本期冲减口径，后端提交 `c7c5117`、`9346d24` 修复后，产品经理和测试复审通过。
 - Task 7 前端完成：前端开发完成 `businessReportingApi` 类型、六个固定报表页面净额展示、反向来源中文追溯和测试，提交 `b32276b`。UI 设计师规格复审和测试代码质量复审均通过，确认可进入 Task 8 浏览器验收与视觉分析。
 - Task 8 完成：测试角色完成后端全量、前端全量、类型检查、构建、本地服务、浏览器主路径/权限路径/异常路径验收、视觉截图采集和最终质量门，提交 `10b51d0`。视觉证据目录为 `docs/testing/return-refund-reversal-visual-audit/`，共 22 张 PNG，主代理抽查截图非空且销售退货、往来净额和窄屏报表代表截图有效。
+- Task 9 完成：固定五角色最终复审通过。产品经理确认 015 产品范围和边界满足阶段目标；UI 设计师确认 22 张视觉证据覆盖桌面、窄屏、关键页面、权限态、空态、错误态和报表净额；前端开发确认前端范围、权限、脱敏、追溯和报表适配无合入前阻断；后端开发确认 V11/V12、反向业务、追溯、报表净额和关键历史修复具备交付可信度；测试确认自动化、浏览器验收、视觉分析和缺陷状态满足最终质量门。
 - 验证：文档占位词扫描无输出；旧退款来源枚举、旧状态名和旧 PascalCase 来源路由名扫描无输出；`git diff --check` 退出码为 `0`。
 - Task 6 主线程验证：前端定向测试 `returnRefundReversalApi.spec.ts`、`SettlementAdjustmentViews.spec.ts`、`permissionGuard.spec.ts`、`App.spec.ts` 共 4 个文件 99 条通过；`npm run typecheck` 通过；`git diff --check` 通过。后端定向测试 `ReversalAdminControllerTests` 22 条通过，Task6 相关后端回归 65 条通过。
 - Task 7 主线程验证：后端定向测试 `ReportingAdminControllerTests` 21 条、`ReversalAdminControllerTests` 22 条通过；前端定向测试 `businessReportingApi.spec.ts`、`ReportViews.spec.ts` 共 2 个文件 14 条通过；`npm run typecheck` 通过；`git diff --check` 通过。
 - Task 8 主线程复核：`docs/testing/return-refund-reversal-visual-audit/notes.md` 记录完整；22 张 PNG 无 0 字节文件；`git diff --check` 和工作区状态检查通过。
+- Task 9 主线程核查：`git diff --check`、`git diff --cached --check` 退出码均为 `0`；工作区在最终文档更新前为干净状态；015 分支基于 `6b54f7c 合入经营报表基础模块`，相对 `origin/main` ahead 29。
 - 视觉分析：已完成，记录和截图位于 `docs/testing/return-refund-reversal-visual-audit/`。
-- 结论：待阶段完成后填写。
+- 结论：015 退货退款与业务反冲基础模块已完成阶段交付判断，未发现阻断合入主分支的产品、视觉、前端、后端或测试缺口，可准备合入主分支、推送远端并启动本地验收服务。
