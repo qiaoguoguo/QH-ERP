@@ -94,8 +94,14 @@ public class ReportingAdminService {
 		List<SalesSummaryItemResponse> items = rows.stream().map((row) -> toSalesItem(row, query)).toList();
 		SalesFinancialTotals financialTotals = salesLineFinancialTotals(rows);
 		SalesReversalTotals reversalTotals = salesLineReversalTotals(rows, query);
-		BigDecimal originalQuantity = rows.stream().map(SalesRow::quantity).reduce(BigDecimal.ZERO, BigDecimal::add);
-		BigDecimal originalAmount = rows.stream().map(SalesRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal originalQuantity = rows.stream()
+			.filter(this::isSalesShipmentRow)
+			.map(SalesRow::quantity)
+			.reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal originalAmount = rows.stream()
+			.filter(this::isSalesShipmentRow)
+			.map(SalesRow::amount)
+			.reduce(BigDecimal.ZERO, BigDecimal::add);
 		SalesSummaryResponse summary = new SalesSummaryResponse(
 				quantity(originalQuantity), amount(originalAmount),
 				amount(financialTotals.receivableAmount()), amount(financialTotals.receivedAmount()),
@@ -109,17 +115,27 @@ public class ReportingAdminService {
 
 	public PageResponse<TraceSourceResponse> salesTraces(MultiValueMap<String, String> parameters) {
 		ReportQuery query = parseTraceQuery(parameters);
-		validateTraceKey(query.traceKey(), "sales-summary", Set.of("SALES_SHIPMENT"), 3);
-		long shipmentId = Long.parseLong(query.traceKey().split(":", -1)[2]);
+		validateTraceKey(query.traceKey(), "sales-summary", Set.of("SALES_SHIPMENT", "SALES_RETURN"), 3);
+		String[] parts = query.traceKey().split(":", -1);
+		String sourceType = parts[1];
+		long sourceId = Long.parseLong(parts[2]);
 		List<TraceSourceResponse> items = new ArrayList<>();
-		items.addAll(salesTraceRows(shipmentId).stream()
-			.map((row) -> trace(row, "sales:shipment:view", "sales-shipment-detail", Map.of("id", row.sourceId()),
-					null))
-			.toList());
-		items.addAll(salesReturnTraceRows(shipmentId, query).stream()
-			.map((row) -> trace(row, "sales:return:view", "sales-return-detail", Map.of("id", row.sourceId()),
-					null))
-			.toList());
+		if ("SALES_SHIPMENT".equals(sourceType)) {
+			items.addAll(salesTraceRows(sourceId).stream()
+				.map((row) -> trace(row, "sales:shipment:view", "sales-shipment-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+			items.addAll(salesReturnTraceRows(sourceId, query).stream()
+				.map((row) -> trace(row, "sales:return:view", "sales-return-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+		}
+		else {
+			items.addAll(salesReturnTraceRowsByReturnId(sourceId, query).stream()
+				.map((row) -> trace(row, "sales:return:view", "sales-return-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+		}
 		requireTraceRows(items);
 		return PageResponse.of(pageItems(items, query), query.page(), query.pageSize(), items.size());
 	}
@@ -133,9 +149,13 @@ public class ReportingAdminService {
 		ProcurementFinancialTotals financialTotals = procurementLineFinancialTotals(rows);
 		ProcurementReversalTotals reversalTotals = procurementLineReversalTotals(rows, query);
 		BigDecimal originalQuantity = rows.stream()
+			.filter(this::isPurchaseReceiptRow)
 			.map(ProcurementRow::quantity)
 			.reduce(BigDecimal.ZERO, BigDecimal::add);
-		BigDecimal originalAmount = rows.stream().map(ProcurementRow::amount).reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal originalAmount = rows.stream()
+			.filter(this::isPurchaseReceiptRow)
+			.map(ProcurementRow::amount)
+			.reduce(BigDecimal.ZERO, BigDecimal::add);
 		ProcurementSummaryResponse summary = new ProcurementSummaryResponse(
 				quantity(originalQuantity), amount(originalAmount),
 				amount(financialTotals.payableAmount()), amount(financialTotals.paidAmount()),
@@ -149,17 +169,27 @@ public class ReportingAdminService {
 
 	public PageResponse<TraceSourceResponse> procurementTraces(MultiValueMap<String, String> parameters) {
 		ReportQuery query = parseTraceQuery(parameters);
-		validateTraceKey(query.traceKey(), "procurement-summary", Set.of("PURCHASE_RECEIPT"), 3);
-		long receiptId = Long.parseLong(query.traceKey().split(":", -1)[2]);
+		validateTraceKey(query.traceKey(), "procurement-summary", Set.of("PURCHASE_RECEIPT", "PURCHASE_RETURN"), 3);
+		String[] parts = query.traceKey().split(":", -1);
+		String sourceType = parts[1];
+		long sourceId = Long.parseLong(parts[2]);
 		List<TraceSourceResponse> items = new ArrayList<>();
-		items.addAll(procurementTraceRows(receiptId).stream()
-			.map((row) -> trace(row, "procurement:receipt:view", "procurement-receipt-detail",
-					Map.of("id", row.sourceId()), null))
-			.toList());
-		items.addAll(procurementReturnTraceRows(receiptId, query).stream()
-			.map((row) -> trace(row, "procurement:return:view", "procurement-return-detail",
-					Map.of("id", row.sourceId()), null))
-			.toList());
+		if ("PURCHASE_RECEIPT".equals(sourceType)) {
+			items.addAll(procurementTraceRows(sourceId).stream()
+				.map((row) -> trace(row, "procurement:receipt:view", "procurement-receipt-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+			items.addAll(procurementReturnTraceRows(sourceId, query).stream()
+				.map((row) -> trace(row, "procurement:return:view", "procurement-return-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+		}
+		else {
+			items.addAll(procurementReturnTraceRowsByReturnId(sourceId, query).stream()
+				.map((row) -> trace(row, "procurement:return:view", "procurement-return-detail",
+						Map.of("id", row.sourceId()), null))
+				.toList());
+		}
 		requireTraceRows(items);
 		return PageResponse.of(pageItems(items, query), query.page(), query.pageSize(), items.size());
 	}
@@ -314,47 +344,42 @@ public class ReportingAdminService {
 		List<SettlementRow> rows = settlementRows(query);
 		List<SettlementSummaryItemResponse> items = rows.stream().map(this::toSettlementItem).toList();
 		BigDecimal receivableOriginalAmount = rows.stream()
-			.filter((row) -> "RECEIVABLE".equals(row.settlementType()))
+			.filter((row) -> "RECEIVABLE".equals(row.sourceType()))
 			.map(SettlementRow::totalAmount)
 			.reduce(BigDecimal.ZERO, BigDecimal::add);
-		BigDecimal receivableAdjustmentAmount = rows.stream()
-			.filter((row) -> "RECEIVABLE".equals(row.settlementType()))
-			.map(SettlementRow::adjustedAmount)
-			.reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal receivableAdjustmentAmount = receivableAdjustmentAmount(query);
 		BigDecimal payableOriginalAmount = rows.stream()
-			.filter((row) -> "PAYABLE".equals(row.settlementType()))
+			.filter((row) -> "PAYABLE".equals(row.sourceType()))
 			.map(SettlementRow::totalAmount)
 			.reduce(BigDecimal.ZERO, BigDecimal::add);
-		BigDecimal payableAdjustmentAmount = rows.stream()
-			.filter((row) -> "PAYABLE".equals(row.settlementType()))
-			.map(SettlementRow::adjustedAmount)
-			.reduce(BigDecimal.ZERO, BigDecimal::add);
+		BigDecimal payableAdjustmentAmount = payableAdjustmentAmount(query);
 		BigDecimal settlementRemainingAmount = rows.stream()
+			.filter((row) -> "RECEIVABLE".equals(row.sourceType()) || "PAYABLE".equals(row.sourceType()))
 			.map(SettlementRow::unsettledAmount)
 			.reduce(BigDecimal.ZERO, BigDecimal::add);
 		SettlementSummaryResponse summary = new SettlementSummaryResponse(
 				amount(rows.stream()
-					.filter((row) -> "RECEIVABLE".equals(row.settlementType()))
+					.filter((row) -> "RECEIVABLE".equals(row.sourceType()))
 					.map(SettlementRow::totalAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				amount(rows.stream()
-					.filter((row) -> "RECEIVABLE".equals(row.settlementType()))
+					.filter((row) -> "RECEIVABLE".equals(row.sourceType()))
 					.map(SettlementRow::settledAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				amount(rows.stream()
-					.filter((row) -> "RECEIVABLE".equals(row.settlementType()))
+					.filter((row) -> "RECEIVABLE".equals(row.sourceType()))
 					.map(SettlementRow::unsettledAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				amount(rows.stream()
-					.filter((row) -> "PAYABLE".equals(row.settlementType()))
+					.filter((row) -> "PAYABLE".equals(row.sourceType()))
 					.map(SettlementRow::totalAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				amount(rows.stream()
-					.filter((row) -> "PAYABLE".equals(row.settlementType()))
+					.filter((row) -> "PAYABLE".equals(row.sourceType()))
 					.map(SettlementRow::settledAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				amount(rows.stream()
-					.filter((row) -> "PAYABLE".equals(row.settlementType()))
+					.filter((row) -> "PAYABLE".equals(row.sourceType()))
 					.map(SettlementRow::unsettledAmount)
 					.reduce(BigDecimal.ZERO, BigDecimal::add)),
 				rows.size(), amount(receivableOriginalAmount), amount(receivableAdjustmentAmount),
@@ -758,6 +783,17 @@ public class ReportingAdminService {
 	}
 
 	private List<SalesRow> salesRows(ReportQuery query) {
+		List<SalesRow> rows = new ArrayList<>();
+		rows.addAll(salesShipmentRows(query));
+		rows.addAll(salesReturnOnlyRows(query));
+		return rows.stream()
+			.sorted(Comparator.comparing(SalesRow::businessDate, Comparator.reverseOrder())
+				.thenComparing(SalesRow::sourceId, Comparator.reverseOrder())
+				.thenComparing(SalesRow::sourceLineId))
+			.toList();
+	}
+
+	private List<SalesRow> salesShipmentRows(ReportQuery query) {
 		StringBuilder sql = new StringBuilder("""
 				select sh.id source_id, sh.shipment_no source_no, sh.business_date, sh.status,
 					ssl.id source_line_id, so.id sales_order_id, so.order_no sales_order_no,
@@ -790,7 +826,54 @@ public class ReportingAdminService {
 		return this.jdbcTemplate.query(sql.toString(), this::salesRow, args.toArray());
 	}
 
+	private List<SalesRow> salesReturnOnlyRows(ReportQuery query) {
+		StringBuilder sql = new StringBuilder("""
+				select sr.id source_id, sr.return_no source_no, sr.business_date, sr.status,
+					srl.id source_line_id, so.id sales_order_id, so.order_no sales_order_no,
+					sr.customer_id, c.name customer_name, srl.material_id, m.name material_name,
+					srl.quantity, srl.unit_price, srl.amount
+				from sal_sales_return sr
+				join sal_sales_return_line srl on srl.return_id = sr.id
+				join sal_sales_shipment sh on sh.id = sr.source_shipment_id
+				join sal_sales_order so on so.id = sh.order_id
+				join mst_customer c on c.id = sr.customer_id
+				join mst_material m on m.id = srl.material_id
+				where sr.status = 'POSTED'
+				and sr.business_date between ? and ?
+				and not (sh.status = 'POSTED' and sh.business_date between ? and ?)
+				""");
+		List<Object> args = new ArrayList<>(
+				List.of(query.dateFrom(), query.dateTo(), query.dateFrom(), query.dateTo()));
+		if (hasText(query.status())) {
+			sql.append(" and sr.status = ?");
+			args.add(query.status());
+		}
+		if (query.customerId() != null) {
+			sql.append(" and sr.customer_id = ?");
+			args.add(query.customerId());
+		}
+		if (query.materialId() != null) {
+			sql.append(" and srl.material_id = ?");
+			args.add(query.materialId());
+		}
+		appendKeyword(sql, args, query.keyword(), "sr.return_no", "sh.shipment_no", "so.order_no", "c.name",
+				"m.name");
+		sql.append(" order by sr.business_date desc, sr.id desc, srl.line_no");
+		return this.jdbcTemplate.query(sql.toString(), this::salesReturnRow, args.toArray());
+	}
+
 	private List<ProcurementRow> procurementRows(ReportQuery query) {
+		List<ProcurementRow> rows = new ArrayList<>();
+		rows.addAll(purchaseReceiptRows(query));
+		rows.addAll(purchaseReturnOnlyRows(query));
+		return rows.stream()
+			.sorted(Comparator.comparing(ProcurementRow::businessDate, Comparator.reverseOrder())
+				.thenComparing(ProcurementRow::sourceId, Comparator.reverseOrder())
+				.thenComparing(ProcurementRow::sourceLineId))
+			.toList();
+	}
+
+	private List<ProcurementRow> purchaseReceiptRows(ReportQuery query) {
 		StringBuilder sql = new StringBuilder("""
 				select pr.id source_id, pr.receipt_no source_no, pr.business_date, pr.status,
 					prl.id source_line_id, po.id purchase_order_id, po.order_no purchase_order_no,
@@ -821,6 +904,42 @@ public class ReportingAdminService {
 		appendKeyword(sql, args, query.keyword(), "pr.receipt_no", "po.order_no", "s.name", "m.name");
 		sql.append(" order by pr.business_date desc, pr.id desc, prl.line_no");
 		return this.jdbcTemplate.query(sql.toString(), this::procurementRow, args.toArray());
+	}
+
+	private List<ProcurementRow> purchaseReturnOnlyRows(ReportQuery query) {
+		StringBuilder sql = new StringBuilder("""
+				select pr.id source_id, pr.return_no source_no, pr.business_date, pr.status,
+					prl.id source_line_id, po.id purchase_order_id, po.order_no purchase_order_no,
+					pr.supplier_id, s.name supplier_name, prl.material_id, m.name material_name,
+					prl.quantity, prl.unit_price, prl.amount
+				from proc_purchase_return pr
+				join proc_purchase_return_line prl on prl.return_id = pr.id
+				join proc_purchase_receipt receipt on receipt.id = pr.source_receipt_id
+				join proc_purchase_order po on po.id = receipt.order_id
+				join mst_supplier s on s.id = pr.supplier_id
+				join mst_material m on m.id = prl.material_id
+				where pr.status = 'POSTED'
+				and pr.business_date between ? and ?
+				and not (receipt.status = 'POSTED' and receipt.business_date between ? and ?)
+				""");
+		List<Object> args = new ArrayList<>(
+				List.of(query.dateFrom(), query.dateTo(), query.dateFrom(), query.dateTo()));
+		if (hasText(query.status())) {
+			sql.append(" and pr.status = ?");
+			args.add(query.status());
+		}
+		if (query.supplierId() != null) {
+			sql.append(" and pr.supplier_id = ?");
+			args.add(query.supplierId());
+		}
+		if (query.materialId() != null) {
+			sql.append(" and prl.material_id = ?");
+			args.add(query.materialId());
+		}
+		appendKeyword(sql, args, query.keyword(), "pr.return_no", "receipt.receipt_no", "po.order_no", "s.name",
+				"m.name");
+		sql.append(" order by pr.business_date desc, pr.id desc, prl.line_no");
+		return this.jdbcTemplate.query(sql.toString(), this::purchaseReturnRow, args.toArray());
 	}
 
 	private List<InventoryStockFlowRow> inventoryStockFlowRows(ReportQuery query) {
@@ -938,7 +1057,8 @@ public class ReportingAdminService {
 					group by ms.work_order_id
 				)
 				select wo.id work_order_id, wo.work_order_no, wo.product_material_id, m.name product_material_name,
-					wo.planned_quantity, coalesce(i.issued_quantity, 0) issued_quantity,
+					case when wo.planned_start_date between ? and ? then wo.planned_quantity else 0 end planned_quantity,
+					coalesce(i.issued_quantity, 0) issued_quantity,
 					coalesce(i.issued_quantity, 0) issued_original_quantity,
 					coalesce(mr.material_return_quantity, 0) material_return_quantity,
 					coalesce(ms.material_supplement_quantity, 0) material_supplement_quantity,
@@ -956,11 +1076,17 @@ public class ReportingAdminService {
 				left join receipt_totals c on c.work_order_id = wo.id
 				left join material_return_totals mr on mr.work_order_id = wo.id
 				left join material_supplement_totals ms on ms.work_order_id = wo.id
-				where wo.planned_start_date between ? and ?
+				where (wo.planned_start_date between ? and ?
+					or i.work_order_id is not null
+					or r.work_order_id is not null
+					or c.work_order_id is not null
+					or mr.work_order_id is not null
+					or ms.work_order_id is not null)
 				""");
 		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo(), query.dateFrom(),
 				query.dateTo(), query.dateFrom(), query.dateTo(), query.dateFrom(), query.dateTo(),
-				query.dateFrom(), query.dateTo(), query.dateFrom(), query.dateTo()));
+				query.dateFrom(), query.dateTo(), query.dateFrom(), query.dateTo(), query.dateFrom(),
+				query.dateTo()));
 		if (hasText(query.status())) {
 			sql.append(" and wo.status = ?");
 			args.add(query.status());
@@ -1021,9 +1147,11 @@ public class ReportingAdminService {
 		List<SettlementRow> rows = new ArrayList<>();
 		if (query.supplierId() == null) {
 			rows.addAll(receivableRows(query));
+			rows.addAll(receivableAdjustmentRows(query));
 		}
 		if (query.customerId() == null) {
 			rows.addAll(payableRows(query));
+			rows.addAll(payableAdjustmentRows(query));
 		}
 		return rows.stream()
 			.sorted(Comparator.comparing(SettlementRow::businessDate, Comparator.reverseOrder())
@@ -1079,6 +1207,110 @@ public class ReportingAdminService {
 				args.toArray());
 	}
 
+	private List<SettlementRow> receivableAdjustmentRows(ReportQuery query) {
+		StringBuilder sql = new StringBuilder("""
+				select fsa.id, fsa.adjustment_no, r.customer_id party_id, c.name party_name, fsa.business_date,
+					r.due_date, r.unreceived_amount remaining_amount, fsa.amount adjusted_amount, fsa.status
+				from fin_settlement_adjustment fsa
+				join fin_receivable r on r.id = fsa.target_id
+				join mst_customer c on c.id = r.customer_id
+				where fsa.status = 'POSTED'
+				and fsa.settlement_side = 'RECEIVABLE'
+				and fsa.business_date between ? and ?
+				""");
+		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo()));
+		if (query.customerId() != null) {
+			sql.append(" and r.customer_id = ?");
+			args.add(query.customerId());
+		}
+		if (hasText(query.status())) {
+			sql.append(" and r.status = ?");
+			args.add(query.status());
+		}
+		appendKeyword(sql, args, query.keyword(), "fsa.adjustment_no", "r.receivable_no", "r.source_no",
+				"c.name");
+		return this.jdbcTemplate.query(sql.toString(),
+				(rs, rowNum) -> settlementAdjustmentRow(rs, "RECEIVABLE", "CUSTOMER"), args.toArray());
+	}
+
+	private List<SettlementRow> payableAdjustmentRows(ReportQuery query) {
+		StringBuilder sql = new StringBuilder("""
+				select fsa.id, fsa.adjustment_no, p.supplier_id party_id, s.name party_name, fsa.business_date,
+					p.due_date, p.unpaid_amount remaining_amount, fsa.amount adjusted_amount, fsa.status
+				from fin_settlement_adjustment fsa
+				join fin_payable p on p.id = fsa.target_id
+				join mst_supplier s on s.id = p.supplier_id
+				where fsa.status = 'POSTED'
+				and fsa.settlement_side = 'PAYABLE'
+				and fsa.business_date between ? and ?
+				""");
+		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo()));
+		if (query.supplierId() != null) {
+			sql.append(" and p.supplier_id = ?");
+			args.add(query.supplierId());
+		}
+		if (hasText(query.status())) {
+			sql.append(" and p.status = ?");
+			args.add(query.status());
+		}
+		appendKeyword(sql, args, query.keyword(), "fsa.adjustment_no", "p.payable_no", "p.source_no", "s.name");
+		return this.jdbcTemplate.query(sql.toString(),
+				(rs, rowNum) -> settlementAdjustmentRow(rs, "PAYABLE", "SUPPLIER"), args.toArray());
+	}
+
+	private BigDecimal receivableAdjustmentAmount(ReportQuery query) {
+		if (query.supplierId() != null) {
+			return BigDecimal.ZERO;
+		}
+		StringBuilder sql = new StringBuilder("""
+				select coalesce(sum(fsa.amount), 0)
+				from fin_settlement_adjustment fsa
+				join fin_receivable r on r.id = fsa.target_id
+				join mst_customer c on c.id = r.customer_id
+				where fsa.status = 'POSTED'
+				and fsa.settlement_side = 'RECEIVABLE'
+				and fsa.business_date between ? and ?
+				""");
+		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo()));
+		if (query.customerId() != null) {
+			sql.append(" and r.customer_id = ?");
+			args.add(query.customerId());
+		}
+		if (hasText(query.status())) {
+			sql.append(" and r.status = ?");
+			args.add(query.status());
+		}
+		appendKeyword(sql, args, query.keyword(), "fsa.adjustment_no", "r.receivable_no", "r.source_no",
+				"c.name");
+		return sum(sql.toString(), args.toArray());
+	}
+
+	private BigDecimal payableAdjustmentAmount(ReportQuery query) {
+		if (query.customerId() != null) {
+			return BigDecimal.ZERO;
+		}
+		StringBuilder sql = new StringBuilder("""
+				select coalesce(sum(fsa.amount), 0)
+				from fin_settlement_adjustment fsa
+				join fin_payable p on p.id = fsa.target_id
+				join mst_supplier s on s.id = p.supplier_id
+				where fsa.status = 'POSTED'
+				and fsa.settlement_side = 'PAYABLE'
+				and fsa.business_date between ? and ?
+				""");
+		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo()));
+		if (query.supplierId() != null) {
+			sql.append(" and p.supplier_id = ?");
+			args.add(query.supplierId());
+		}
+		if (hasText(query.status())) {
+			sql.append(" and p.status = ?");
+			args.add(query.status());
+		}
+		appendKeyword(sql, args, query.keyword(), "fsa.adjustment_no", "p.payable_no", "p.source_no", "s.name");
+		return sum(sql.toString(), args.toArray());
+	}
+
 	private List<TraceSourceRow> salesTraceRows(long shipmentId) {
 		return this.jdbcTemplate.query("""
 				select 'SALES_SHIPMENT' source_type, sh.id source_id, sh.shipment_no source_no,
@@ -1106,6 +1338,19 @@ public class ReportingAdminService {
 				""", this::traceSourceRow, shipmentId, query.dateFrom(), query.dateTo());
 	}
 
+	private List<TraceSourceRow> salesReturnTraceRowsByReturnId(long returnId, ReportQuery query) {
+		return this.jdbcTemplate.query("""
+				select 'SALES_RETURN' source_type, sr.id source_id, sr.return_no source_no,
+					srl.id source_line_id, sr.business_date, sr.status, srl.quantity, srl.amount
+				from sal_sales_return sr
+				join sal_sales_return_line srl on srl.return_id = sr.id
+				where sr.status = 'POSTED'
+				and sr.id = ?
+				and sr.business_date between ? and ?
+				order by sr.business_date, sr.id, srl.line_no
+				""", this::traceSourceRow, returnId, query.dateFrom(), query.dateTo());
+	}
+
 	private List<TraceSourceRow> procurementTraceRows(long receiptId) {
 		return this.jdbcTemplate.query("""
 				select 'PURCHASE_RECEIPT' source_type, pr.id source_id, pr.receipt_no source_no,
@@ -1131,6 +1376,19 @@ public class ReportingAdminService {
 				and pr.business_date between ? and ?
 				order by pr.business_date, pr.id, prl.line_no
 				""", this::traceSourceRow, receiptId, query.dateFrom(), query.dateTo());
+	}
+
+	private List<TraceSourceRow> procurementReturnTraceRowsByReturnId(long returnId, ReportQuery query) {
+		return this.jdbcTemplate.query("""
+				select 'PURCHASE_RETURN' source_type, pr.id source_id, pr.return_no source_no,
+					prl.id source_line_id, pr.business_date, pr.status, prl.quantity, prl.amount
+				from proc_purchase_return pr
+				join proc_purchase_return_line prl on prl.return_id = pr.id
+				where pr.status = 'POSTED'
+				and pr.id = ?
+				and pr.business_date between ? and ?
+				order by pr.business_date, pr.id, prl.line_no
+				""", this::traceSourceRow, returnId, query.dateFrom(), query.dateTo());
 	}
 
 	private List<TraceSourceRow> inventoryTraceRows(long warehouseId, long materialId, ReportQuery query) {
@@ -1607,30 +1865,42 @@ public class ReportingAdminService {
 	}
 
 	private SalesSummaryItemResponse toSalesItem(SalesRow row, ReportQuery query) {
-		SalesFinancialTotals totals = salesLineFinancialTotals(row.sourceId(), row.sourceLineId());
-		SalesReversalTotals reversalTotals = salesLineReversalTotals(row.sourceId(), row.sourceLineId(), query);
+		boolean originalRow = isSalesShipmentRow(row);
+		SalesFinancialTotals totals = originalRow ? salesLineFinancialTotals(row.sourceId(), row.sourceLineId())
+				: new SalesFinancialTotals(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+		SalesReversalTotals reversalTotals = salesLineReversalTotals(row, query);
+		BigDecimal originalAmount = originalRow ? row.amount() : BigDecimal.ZERO;
+		BigDecimal originalQuantity = originalRow ? row.quantity() : BigDecimal.ZERO;
+		String traceKey = originalRow ? "sales-summary:SALES_SHIPMENT:" + row.sourceId()
+				: "sales-summary:SALES_RETURN:" + row.sourceId();
 		return new SalesSummaryItemResponse(row.sourceType(), row.sourceId(), row.sourceNo(), row.salesOrderId(),
 				row.salesOrderNo(), row.customerId(), row.customerName(), row.materialId(), row.materialName(),
 				row.businessDate(), quantity(row.quantity()), amount(row.unitPrice()), amount(row.amount()),
 				amount(totals.receivableAmount()), amount(totals.receivedAmount()),
-				amount(totals.unreceivedAmount()), 1, "sales-summary:SALES_SHIPMENT:" + row.sourceId(),
-				amount(row.amount()), amount(reversalTotals.returnAmount()),
-				amount(row.amount().subtract(reversalTotals.returnAmount())), quantity(row.quantity()),
-				quantity(reversalTotals.returnQuantity()), quantity(row.quantity().subtract(reversalTotals.returnQuantity())));
+				amount(totals.unreceivedAmount()), 1, traceKey, amount(originalAmount),
+				amount(reversalTotals.returnAmount()), amount(originalAmount.subtract(reversalTotals.returnAmount())),
+				quantity(originalQuantity), quantity(reversalTotals.returnQuantity()),
+				quantity(originalQuantity.subtract(reversalTotals.returnQuantity())));
 	}
 
 	private ProcurementSummaryItemResponse toProcurementItem(ProcurementRow row, ReportQuery query) {
-		ProcurementFinancialTotals totals = procurementLineFinancialTotals(row.sourceId(), row.sourceLineId());
-		ProcurementReversalTotals reversalTotals = procurementLineReversalTotals(row.sourceId(), row.sourceLineId(),
-				query);
+		boolean originalRow = isPurchaseReceiptRow(row);
+		ProcurementFinancialTotals totals = originalRow
+				? procurementLineFinancialTotals(row.sourceId(), row.sourceLineId())
+				: new ProcurementFinancialTotals(BigDecimal.ZERO, BigDecimal.ZERO, BigDecimal.ZERO);
+		ProcurementReversalTotals reversalTotals = procurementLineReversalTotals(row, query);
+		BigDecimal originalAmount = originalRow ? row.amount() : BigDecimal.ZERO;
+		BigDecimal originalQuantity = originalRow ? row.quantity() : BigDecimal.ZERO;
+		String traceKey = originalRow ? "procurement-summary:PURCHASE_RECEIPT:" + row.sourceId()
+				: "procurement-summary:PURCHASE_RETURN:" + row.sourceId();
 		return new ProcurementSummaryItemResponse(row.sourceType(), row.sourceId(), row.sourceNo(),
 				row.purchaseOrderId(), row.purchaseOrderNo(), row.supplierId(), row.supplierName(), row.materialId(),
 				row.materialName(), row.businessDate(), quantity(row.quantity()), amount(row.unitPrice()),
 				amount(row.amount()), amount(totals.payableAmount()), amount(totals.paidAmount()),
-				amount(totals.unpaidAmount()), 1, "procurement-summary:PURCHASE_RECEIPT:" + row.sourceId(),
-				amount(row.amount()), amount(reversalTotals.returnAmount()),
-				amount(row.amount().subtract(reversalTotals.returnAmount())), quantity(row.quantity()),
-				quantity(reversalTotals.returnQuantity()), quantity(row.quantity().subtract(reversalTotals.returnQuantity())));
+				amount(totals.unpaidAmount()), 1, traceKey, amount(originalAmount),
+				amount(reversalTotals.returnAmount()), amount(originalAmount.subtract(reversalTotals.returnAmount())),
+				quantity(originalQuantity), quantity(reversalTotals.returnQuantity()),
+				quantity(originalQuantity.subtract(reversalTotals.returnQuantity())));
 	}
 
 	private InventoryStockFlowItemResponse toInventoryStockFlowItem(InventoryStockFlowRow row) {
@@ -1669,7 +1939,7 @@ public class ReportingAdminService {
 
 	private SettlementSummaryItemResponse toSettlementItem(SettlementRow row) {
 		BigDecimal netAmount = row.totalAmount().subtract(row.adjustedAmount());
-		return new SettlementSummaryItemResponse(row.settlementType(), row.sourceId(), row.sourceNo(),
+		return new SettlementSummaryItemResponse(row.settlementType(), row.sourceType(), row.sourceId(), row.sourceNo(),
 				row.partyType(), row.partyId(), row.partyName(), row.businessDate(), row.dueDate(),
 				amount(row.totalAmount()), amount(row.settledAmount()), amount(row.unsettledAmount()),
 				row.overdueDays(), row.agingBucket(), row.status(), row.sourceCount(), row.traceKey(),
@@ -1781,15 +2051,30 @@ public class ReportingAdminService {
 		};
 	}
 
+	private boolean isSalesShipmentRow(SalesRow row) {
+		return "SALES_SHIPMENT".equals(row.sourceType());
+	}
+
+	private boolean isPurchaseReceiptRow(ProcurementRow row) {
+		return "PURCHASE_RECEIPT".equals(row.sourceType());
+	}
+
 	private SalesReversalTotals salesLineReversalTotals(List<SalesRow> rows, ReportQuery query) {
 		BigDecimal returnQuantity = BigDecimal.ZERO;
 		BigDecimal returnAmount = BigDecimal.ZERO;
 		for (SalesRow row : rows) {
-			SalesReversalTotals totals = salesLineReversalTotals(row.sourceId(), row.sourceLineId(), query);
+			SalesReversalTotals totals = salesLineReversalTotals(row, query);
 			returnQuantity = returnQuantity.add(totals.returnQuantity());
 			returnAmount = returnAmount.add(totals.returnAmount());
 		}
 		return new SalesReversalTotals(returnQuantity, returnAmount);
+	}
+
+	private SalesReversalTotals salesLineReversalTotals(SalesRow row, ReportQuery query) {
+		if ("SALES_RETURN".equals(row.sourceType())) {
+			return new SalesReversalTotals(row.quantity(), row.amount());
+		}
+		return salesLineReversalTotals(row.sourceId(), row.sourceLineId(), query);
 	}
 
 	private SalesReversalTotals salesLineReversalTotals(Long shipmentId, Long shipmentLineId, ReportQuery query) {
@@ -1810,12 +2095,18 @@ public class ReportingAdminService {
 		BigDecimal returnQuantity = BigDecimal.ZERO;
 		BigDecimal returnAmount = BigDecimal.ZERO;
 		for (ProcurementRow row : rows) {
-			ProcurementReversalTotals totals = procurementLineReversalTotals(row.sourceId(), row.sourceLineId(),
-					query);
+			ProcurementReversalTotals totals = procurementLineReversalTotals(row, query);
 			returnQuantity = returnQuantity.add(totals.returnQuantity());
 			returnAmount = returnAmount.add(totals.returnAmount());
 		}
 		return new ProcurementReversalTotals(returnQuantity, returnAmount);
+	}
+
+	private ProcurementReversalTotals procurementLineReversalTotals(ProcurementRow row, ReportQuery query) {
+		if ("PURCHASE_RETURN".equals(row.sourceType())) {
+			return new ProcurementReversalTotals(row.quantity(), row.amount());
+		}
+		return procurementLineReversalTotals(row.sourceId(), row.sourceLineId(), query);
 	}
 
 	private ProcurementReversalTotals procurementLineReversalTotals(Long receiptId, Long receiptLineId,
@@ -1838,6 +2129,9 @@ public class ReportingAdminService {
 		BigDecimal receivedAmount = BigDecimal.ZERO;
 		BigDecimal unreceivedAmount = BigDecimal.ZERO;
 		for (SalesRow row : rows) {
+			if (!isSalesShipmentRow(row)) {
+				continue;
+			}
 			SalesFinancialTotals totals = salesLineFinancialTotals(row.sourceId(), row.sourceLineId());
 			receivableAmount = receivableAmount.add(totals.receivableAmount());
 			receivedAmount = receivedAmount.add(totals.receivedAmount());
@@ -1891,6 +2185,9 @@ public class ReportingAdminService {
 		BigDecimal paidAmount = BigDecimal.ZERO;
 		BigDecimal unpaidAmount = BigDecimal.ZERO;
 		for (ProcurementRow row : rows) {
+			if (!isPurchaseReceiptRow(row)) {
+				continue;
+			}
 			ProcurementFinancialTotals totals = procurementLineFinancialTotals(row.sourceId(), row.sourceLineId());
 			payableAmount = payableAmount.add(totals.payableAmount());
 			paidAmount = paidAmount.add(totals.paidAmount());
@@ -2276,8 +2573,24 @@ public class ReportingAdminService {
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"));
 	}
 
+	private SalesRow salesReturnRow(ResultSet rs, int rowNum) throws SQLException {
+		return new SalesRow("SALES_RETURN", rs.getLong("source_id"), rs.getString("source_no"),
+				rs.getObject("business_date", LocalDate.class), rs.getString("status"), rs.getLong("source_line_id"),
+				rs.getLong("sales_order_id"), rs.getString("sales_order_no"), rs.getLong("customer_id"),
+				rs.getString("customer_name"), rs.getLong("material_id"), rs.getString("material_name"),
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"));
+	}
+
 	private ProcurementRow procurementRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ProcurementRow("PURCHASE_RECEIPT", rs.getLong("source_id"), rs.getString("source_no"),
+				rs.getObject("business_date", LocalDate.class), rs.getString("status"), rs.getLong("source_line_id"),
+				rs.getLong("purchase_order_id"), rs.getString("purchase_order_no"), rs.getLong("supplier_id"),
+				rs.getString("supplier_name"), rs.getLong("material_id"), rs.getString("material_name"),
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"));
+	}
+
+	private ProcurementRow purchaseReturnRow(ResultSet rs, int rowNum) throws SQLException {
+		return new ProcurementRow("PURCHASE_RETURN", rs.getLong("source_id"), rs.getString("source_no"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("status"), rs.getLong("source_line_id"),
 				rs.getLong("purchase_order_id"), rs.getString("purchase_order_no"), rs.getLong("supplier_id"),
 				rs.getString("supplier_name"), rs.getLong("material_id"), rs.getString("material_name"),
@@ -2335,11 +2648,21 @@ public class ReportingAdminService {
 				: rs.getString("payable_no");
 		String partyType = settlementType.equals("RECEIVABLE") ? "CUSTOMER" : "SUPPLIER";
 		String traceKey = "settlement-summary:" + settlementType + ":" + rs.getLong("id");
-		return new SettlementRow(settlementType, rs.getLong("id"), sourceNo, partyType,
+		return new SettlementRow(settlementType, settlementType, rs.getLong("id"), sourceNo, partyType,
 				rs.getLong("party_id"), rs.getString("party_name"), rs.getObject("business_date", LocalDate.class),
 				rs.getObject("due_date", LocalDate.class), rs.getBigDecimal("total_amount"), settledAmount,
 				unsettledAmount, rs.getBigDecimal("adjusted_amount"), 0, "NOT_DUE", rs.getString("status"), 1,
 				traceKey);
+	}
+
+	private SettlementRow settlementAdjustmentRow(ResultSet rs, String settlementType, String partyType)
+			throws SQLException {
+		String traceKey = "settlement-summary:SETTLEMENT_ADJUSTMENT:" + rs.getLong("id");
+		return new SettlementRow(settlementType, "SETTLEMENT_ADJUSTMENT", rs.getLong("id"),
+				rs.getString("adjustment_no"), partyType, rs.getLong("party_id"), rs.getString("party_name"),
+				rs.getObject("business_date", LocalDate.class), rs.getObject("due_date", LocalDate.class),
+				BigDecimal.ZERO, BigDecimal.ZERO, rs.getBigDecimal("remaining_amount"),
+				rs.getBigDecimal("adjusted_amount"), 0, "NOT_DUE", rs.getString("status"), 1, traceKey);
 	}
 
 	private TraceSourceRow traceSourceRow(ResultSet rs, int rowNum) throws SQLException {
@@ -2392,7 +2715,7 @@ public class ReportingAdminService {
 			String status) {
 	}
 
-	private record SettlementRow(String settlementType, Long sourceId, String sourceNo, String partyType,
+	private record SettlementRow(String settlementType, String sourceType, Long sourceId, String sourceNo, String partyType,
 			Long partyId, String partyName, LocalDate businessDate, LocalDate dueDate, BigDecimal totalAmount,
 			BigDecimal settledAmount, BigDecimal unsettledAmount, BigDecimal adjustedAmount, int overdueDays,
 			String agingBucket, String status, int sourceCount, String traceKey) {
@@ -2526,10 +2849,10 @@ public class ReportingAdminService {
 			String settlementRemainingAmount) {
 	}
 
-	public record SettlementSummaryItemResponse(String settlementType, Long sourceId, String sourceNo,
-			String partyType, Long partyId, String partyName, LocalDate businessDate, LocalDate dueDate,
-			String totalAmount, String settledAmount, String unsettledAmount, int overdueDays, String agingBucket,
-			String status, int sourceCount, String traceKey, String receivableOriginalAmount,
+	public record SettlementSummaryItemResponse(String settlementType, String sourceType, Long sourceId,
+			String sourceNo, String partyType, Long partyId, String partyName, LocalDate businessDate,
+			LocalDate dueDate, String totalAmount, String settledAmount, String unsettledAmount, int overdueDays,
+			String agingBucket, String status, int sourceCount, String traceKey, String receivableOriginalAmount,
 			String receivableAdjustmentAmount, String receivableNetAmount, String payableOriginalAmount,
 			String payableAdjustmentAmount, String payableNetAmount, String settlementRemainingAmount) {
 	}
