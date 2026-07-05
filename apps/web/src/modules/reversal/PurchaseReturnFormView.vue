@@ -7,6 +7,9 @@ import {
   type PurchaseReturnPayload,
   type PurchaseReturnSource,
   type PurchaseReturnSourceLine,
+  type PurchaseReturnUpdatePayload,
+  type PurchaseReturnUpdatePayloadLine,
+  type ResourceId,
   type ReversalDocumentLine,
   type ReversalSourceView,
   type ReversalStatus,
@@ -21,7 +24,8 @@ import {
 } from '../sales/salesPageHelpers'
 
 interface PurchaseReturnLineDraft {
-  sourceReceiptLineId: string | number
+  id?: ResourceId
+  sourceReceiptLineId?: ResourceId
   lineNo: number
   materialCode: string
   materialName: string
@@ -82,6 +86,10 @@ function sourceRestricted(source?: ReversalSourceView | null) {
   return !source || source.restricted || !source.canViewSource
 }
 
+function lineInputKey(line: PurchaseReturnLineDraft) {
+  return line.sourceReceiptLineId ?? line.id ?? line.lineNo
+}
+
 function lineDraftFromSource(line: PurchaseReturnSourceLine): PurchaseReturnLineDraft {
   return {
     sourceReceiptLineId: line.receiptLineId,
@@ -103,7 +111,8 @@ function lineDraftFromSource(line: PurchaseReturnSourceLine): PurchaseReturnLine
 function lineDraftFromDetail(line: ReversalDocumentLine): PurchaseReturnLineDraft {
   const restricted = sourceRestricted(line.source)
   return {
-    sourceReceiptLineId: line.sourceLineId ?? line.id,
+    id: line.id,
+    sourceReceiptLineId: restricted ? undefined : line.sourceLineId,
     lineNo: line.lineNo,
     materialCode: line.materialCode,
     materialName: line.materialName,
@@ -139,7 +148,7 @@ async function loadDetail() {
   editDetail.value = detail
   if (detail.status !== 'DRAFT') {
     nonEditableStatus.value = detail.status
-    form.sourceReceiptId = detail.source.sourceId ?? ''
+    form.sourceReceiptId = sourceRestricted(detail.source) ? '' : detail.source.sourceId ?? ''
     form.businessDate = detail.businessDate
     form.remark = detail.remark ?? ''
     form.clientRequestId = detail.clientRequestId ?? `purchase-return-${detail.id}`
@@ -147,7 +156,7 @@ async function loadDetail() {
     return
   }
   nonEditableStatus.value = null
-  form.sourceReceiptId = detail.source.sourceId ?? ''
+  form.sourceReceiptId = sourceRestricted(detail.source) ? '' : detail.source.sourceId ?? ''
   form.businessDate = detail.businessDate
   form.remark = detail.remark ?? ''
   form.clientRequestId = detail.clientRequestId ?? `purchase-return-${detail.id}`
@@ -196,12 +205,12 @@ async function searchSources() {
   }
 }
 
-function buildPayload(): PurchaseReturnPayload | null {
+function buildPayload(): PurchaseReturnUpdatePayload | null {
   if (!canEditForm.value) {
     submitError.value = `当前采购退货${nonEditableStatusText.value}，不可编辑`
     return null
   }
-  const payloadLines = []
+  const payloadLines: PurchaseReturnUpdatePayloadLine[] = []
   for (const line of lines.value) {
     if (!line.quantity) {
       continue
@@ -211,13 +220,27 @@ function buildPayload(): PurchaseReturnPayload | null {
       submitError.value = `${line.materialName}：${quantity.message}`
       return null
     }
-    payloadLines.push({
-      sourceReceiptLineId: line.sourceReceiptLineId,
+    const payloadLine: PurchaseReturnUpdatePayloadLine = {
       quantity: quantity.payloadValue,
       reason: line.reason,
-    })
+    }
+    if (isEdit.value && line.id !== undefined) {
+      payloadLine.id = line.id
+    }
+    if (line.sourceReceiptLineId !== undefined) {
+      payloadLine.sourceReceiptLineId = line.sourceReceiptLineId
+    }
+    if (!isEdit.value && payloadLine.sourceReceiptLineId === undefined) {
+      submitError.value = `${line.materialName}：来源采购入库行缺失`
+      return null
+    }
+    if (isEdit.value && payloadLine.id === undefined && payloadLine.sourceReceiptLineId === undefined) {
+      submitError.value = `${line.materialName}：退货行标识缺失`
+      return null
+    }
+    payloadLines.push(payloadLine)
   }
-  if (!form.sourceReceiptId) {
+  if (!isEdit.value && !form.sourceReceiptId) {
     submitError.value = '请选择来源采购入库'
     return null
   }
@@ -230,13 +253,16 @@ function buildPayload(): PurchaseReturnPayload | null {
     return null
   }
 
-  return {
-    sourceReceiptId: form.sourceReceiptId,
+  const payload: PurchaseReturnUpdatePayload = {
     businessDate: form.businessDate,
     clientRequestId: form.clientRequestId || `purchase-return-${Date.now()}`,
     remark: form.remark,
     lines: payloadLines,
   }
+  if (form.sourceReceiptId) {
+    payload.sourceReceiptId = form.sourceReceiptId
+  }
+  return payload
 }
 
 async function submit() {
@@ -253,7 +279,7 @@ async function submit() {
   try {
     const detail = isEdit.value && routeId.value
       ? await returnRefundReversalApi.purchaseReturns.update(routeId.value, payload)
-      : await returnRefundReversalApi.purchaseReturns.create(payload)
+      : await returnRefundReversalApi.purchaseReturns.create(payload as PurchaseReturnPayload)
     await router.push({ name: 'procurement-return-detail', params: { id: String(detail.id) } })
   } catch (caught) {
     submitError.value = salesErrorMessage(caught)
@@ -408,7 +434,7 @@ onMounted(() => {
               <template #default="{ row }">
                 <el-input
                   v-model="row.quantity"
-                  :name="`purchase-return-line-quantity-${row.sourceReceiptLineId}`"
+                  :name="`purchase-return-line-quantity-${lineInputKey(row)}`"
                   placeholder="0.000000"
                 />
               </template>
@@ -417,7 +443,7 @@ onMounted(() => {
               <template #default="{ row }">
                 <el-input
                   v-model="row.reason"
-                  :name="`purchase-return-line-reason-${row.sourceReceiptLineId}`"
+                  :name="`purchase-return-line-reason-${lineInputKey(row)}`"
                   placeholder="原因"
                 />
               </template>

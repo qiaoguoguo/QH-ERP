@@ -219,40 +219,76 @@ export interface ReversalTraceListParams {
   includeRestricted?: boolean | null
 }
 
-export interface ReversalDocumentLinePayload {
+export interface SalesReturnCreatePayloadLine {
   sourceShipmentLineId: ResourceId
   quantity: ReversalDecimal
   reason?: string
 }
 
-export interface ReversalDocumentPayload {
+export interface SalesReturnUpdatePayloadLine {
+  id?: ResourceId
+  sourceShipmentLineId?: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface SalesReturnCreatePayload {
   sourceShipmentId: ResourceId
   businessDate: string
   clientRequestId: string
   remark?: string
-  lines: ReversalDocumentLinePayload[]
+  lines: SalesReturnCreatePayloadLine[]
 }
 
-export interface PurchaseReturnPayloadLine {
+export interface SalesReturnUpdatePayload {
+  sourceShipmentId?: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: SalesReturnUpdatePayloadLine[]
+}
+
+export type ReversalDocumentLinePayload = SalesReturnCreatePayloadLine
+export type ReversalDocumentPayload = SalesReturnCreatePayload
+
+export interface PurchaseReturnCreatePayloadLine {
   sourceReceiptLineId: ResourceId
   quantity: ReversalDecimal
   reason?: string
 }
 
-export interface PurchaseReturnPayload {
+export interface PurchaseReturnUpdatePayloadLine {
+  id?: ResourceId
+  sourceReceiptLineId?: ResourceId
+  quantity: ReversalDecimal
+  reason?: string
+}
+
+export interface PurchaseReturnCreatePayload {
   sourceReceiptId: ResourceId
   businessDate: string
   clientRequestId: string
   remark?: string
-  lines: PurchaseReturnPayloadLine[]
+  lines: PurchaseReturnCreatePayloadLine[]
 }
+
+export interface PurchaseReturnUpdatePayload {
+  sourceReceiptId?: ResourceId
+  businessDate: string
+  clientRequestId: string
+  remark?: string
+  lines: PurchaseReturnUpdatePayloadLine[]
+}
+
+export type PurchaseReturnPayloadLine = PurchaseReturnCreatePayloadLine
+export type PurchaseReturnPayload = PurchaseReturnCreatePayload
 
 export interface ReturnRefundReversalApi {
   salesReturns: {
     list(params: SalesReturnListParams): Promise<PageResult<SalesReturnSummary>>
     get(id: ResourceId): Promise<SalesReturnDetail>
     create(payload: ReversalDocumentPayload): Promise<SalesReturnDetail>
-    update(id: ResourceId, payload: ReversalDocumentPayload): Promise<SalesReturnDetail>
+    update(id: ResourceId, payload: SalesReturnUpdatePayload): Promise<SalesReturnDetail>
     post(id: ResourceId): Promise<SalesReturnDetail>
     cancel(id: ResourceId): Promise<SalesReturnDetail>
   }
@@ -263,7 +299,7 @@ export interface ReturnRefundReversalApi {
     list(params: PurchaseReturnListParams): Promise<PageResult<PurchaseReturnSummary>>
     get(id: ResourceId): Promise<PurchaseReturnDetail>
     create(payload: PurchaseReturnPayload): Promise<PurchaseReturnDetail>
-    update(id: ResourceId, payload: PurchaseReturnPayload): Promise<PurchaseReturnDetail>
+    update(id: ResourceId, payload: PurchaseReturnUpdatePayload): Promise<PurchaseReturnDetail>
     post(id: ResourceId): Promise<PurchaseReturnDetail>
     cancel(id: ResourceId): Promise<PurchaseReturnDetail>
   }

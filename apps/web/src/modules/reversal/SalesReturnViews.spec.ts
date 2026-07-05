@@ -326,6 +326,48 @@ describe('销售退货前端页面', () => {
     expect(router.currentRoute.value.name).toBe('sales-return-detail')
   })
 
+  it('编辑销售退货来源受限时可保存草稿行且不提交来源主键', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      source: {
+        sourceType: 'SALES_SHIPMENT',
+        canViewSource: false,
+        restricted: true,
+        restrictedMessage: '来源无查看权限',
+      },
+      lines: [
+        {
+          ...salesReturnDetail.lines[0],
+          sourceLineId: undefined,
+          source: {
+            sourceType: 'SALES_SHIPMENT_LINE',
+            canViewSource: false,
+            restricted: true,
+            restrictedMessage: '来源无查看权限',
+          },
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(SalesReturnFormView, '/sales/returns/1/edit', ['sales:return:update'])
+
+    expect(wrapper.text()).toContain('来源无查看权限')
+    expect(wrapper.text()).not.toContain('SS202607050001')
+
+    await wrapper.find('input[name="sales-return-line-quantity-11"]').setValue('3.000000')
+    await wrapper.find('input[name="sales-return-line-reason-11"]').setValue('受限来源更新')
+    await wrapper.find('[data-test="submit-sales-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.salesReturns.update).toHaveBeenCalledWith('1', expect.objectContaining({
+      businessDate: '2026-07-05',
+      remark: '客户退货',
+      lines: [{ id: 11, quantity: '3.000000', reason: '受限来源更新' }],
+    }))
+    const payload = returnRefundReversalApiMock.salesReturns.update.mock.calls[0][1]
+    expect(payload).not.toHaveProperty('sourceShipmentId')
+    expect(payload.lines[0]).not.toHaveProperty('sourceShipmentLineId')
+  })
+
   it.each([
     ['POSTED', '已过账'],
     ['CANCELLED', '已取消'],
@@ -461,14 +503,7 @@ describe('销售退货前端页面', () => {
 
   it('反向追溯来源受限时不展示跳转和敏感字段', async () => {
     returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce(impactedSalesReturnDetail)
-    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([{
-      ...restrictedInventoryTrace,
-      source: {
-        ...restrictedInventoryTrace.source,
-        sourceNo: 'SS-SECRET',
-        amount: '999.00',
-      },
-    }])
+    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([restrictedInventoryTrace])
     const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view', 'business:reversal:view'])
 
     await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')

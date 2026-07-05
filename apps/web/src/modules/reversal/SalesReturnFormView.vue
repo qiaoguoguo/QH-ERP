@@ -3,12 +3,16 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   returnRefundReversalApi,
+  type ResourceId,
   type ReversalDocumentLine,
   type ReversalDocumentPayload,
+  type ReversalSourceView,
   type ReversalStatus,
   type SalesReturnDetail,
   type SalesReturnSource,
   type SalesReturnSourceLine,
+  type SalesReturnUpdatePayload,
+  type SalesReturnUpdatePayloadLine,
 } from '../../shared/api/returnRefundReversalApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -20,7 +24,8 @@ import {
 } from '../sales/salesPageHelpers'
 
 interface SalesReturnLineDraft {
-  sourceShipmentLineId: string | number
+  id?: ResourceId
+  sourceShipmentLineId?: ResourceId
   lineNo: number
   materialCode: string
   materialName: string
@@ -69,6 +74,20 @@ const nonEditableStatusText = computed(() => {
   }
   return ''
 })
+const sourceDisplayText = computed(() => {
+  if (isEdit.value && sourceRestricted(editDetail.value?.source)) {
+    return editDetail.value?.source.restrictedMessage || '来源无查看权限'
+  }
+  return selectedSource.value?.shipmentNo || editDetail.value?.source.sourceNo || '-'
+})
+
+function sourceRestricted(source?: ReversalSourceView | null) {
+  return !source || source.restricted || !source.canViewSource
+}
+
+function lineInputKey(line: SalesReturnLineDraft) {
+  return line.sourceShipmentLineId ?? line.id ?? line.lineNo
+}
 
 function lineDraftFromSource(line: SalesReturnSourceLine): SalesReturnLineDraft {
   return {
@@ -88,13 +107,15 @@ function lineDraftFromSource(line: SalesReturnSourceLine): SalesReturnLineDraft 
 }
 
 function lineDraftFromDetail(line: ReversalDocumentLine): SalesReturnLineDraft {
+  const restricted = sourceRestricted(line.source)
   return {
-    sourceShipmentLineId: line.sourceLineId ?? line.id,
+    id: line.id,
+    sourceShipmentLineId: restricted ? undefined : line.sourceLineId,
     lineNo: line.lineNo,
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
-    shippedQuantity: line.source.quantity ?? '',
+    shippedQuantity: restricted ? '' : line.source.quantity ?? '',
     returnedQuantity: line.returnedQuantityBefore ?? '',
     returnableQuantity: line.returnableQuantityBefore ?? '',
     unitPrice: line.unitPrice ?? '',
@@ -124,7 +145,7 @@ async function loadDetail() {
   editDetail.value = detail
   if (detail.status !== 'DRAFT') {
     nonEditableStatus.value = detail.status
-    form.sourceShipmentId = detail.source.sourceId ?? ''
+    form.sourceShipmentId = sourceRestricted(detail.source) ? '' : detail.source.sourceId ?? ''
     form.businessDate = detail.businessDate
     form.remark = detail.remark ?? ''
     form.clientRequestId = detail.clientRequestId ?? `sales-return-${detail.id}`
@@ -132,7 +153,7 @@ async function loadDetail() {
     return
   }
   nonEditableStatus.value = null
-  form.sourceShipmentId = detail.source.sourceId ?? ''
+  form.sourceShipmentId = sourceRestricted(detail.source) ? '' : detail.source.sourceId ?? ''
   form.businessDate = detail.businessDate
   form.remark = detail.remark ?? ''
   form.clientRequestId = detail.clientRequestId ?? `sales-return-${detail.id}`
@@ -181,12 +202,12 @@ async function searchSources() {
   }
 }
 
-function buildPayload(): ReversalDocumentPayload | null {
+function buildPayload(): SalesReturnUpdatePayload | null {
   if (!canEditForm.value) {
     submitError.value = `当前销售退货${nonEditableStatusText.value}，不可编辑`
     return null
   }
-  const payloadLines = []
+  const payloadLines: SalesReturnUpdatePayloadLine[] = []
   for (const line of lines.value) {
     if (!line.quantity) {
       continue
@@ -196,13 +217,27 @@ function buildPayload(): ReversalDocumentPayload | null {
       submitError.value = `${line.materialName}：${quantity.message}`
       return null
     }
-    payloadLines.push({
-      sourceShipmentLineId: line.sourceShipmentLineId,
+    const payloadLine: SalesReturnUpdatePayloadLine = {
       quantity: quantity.payloadValue,
       reason: line.reason,
-    })
+    }
+    if (isEdit.value && line.id !== undefined) {
+      payloadLine.id = line.id
+    }
+    if (line.sourceShipmentLineId !== undefined) {
+      payloadLine.sourceShipmentLineId = line.sourceShipmentLineId
+    }
+    if (!isEdit.value && payloadLine.sourceShipmentLineId === undefined) {
+      submitError.value = `${line.materialName}：来源销售出库行缺失`
+      return null
+    }
+    if (isEdit.value && payloadLine.id === undefined && payloadLine.sourceShipmentLineId === undefined) {
+      submitError.value = `${line.materialName}：退货行标识缺失`
+      return null
+    }
+    payloadLines.push(payloadLine)
   }
-  if (!form.sourceShipmentId) {
+  if (!isEdit.value && !form.sourceShipmentId) {
     submitError.value = '请选择来源销售出库'
     return null
   }
@@ -215,13 +250,16 @@ function buildPayload(): ReversalDocumentPayload | null {
     return null
   }
 
-  return {
-    sourceShipmentId: form.sourceShipmentId,
+  const payload: SalesReturnUpdatePayload = {
     businessDate: form.businessDate,
     clientRequestId: form.clientRequestId || `sales-return-${Date.now()}`,
     remark: form.remark,
     lines: payloadLines,
   }
+  if (form.sourceShipmentId) {
+    payload.sourceShipmentId = form.sourceShipmentId
+  }
+  return payload
 }
 
 async function submit() {
@@ -238,7 +276,7 @@ async function submit() {
   try {
     const detail = isEdit.value && routeId.value
       ? await returnRefundReversalApi.salesReturns.update(routeId.value, payload)
-      : await returnRefundReversalApi.salesReturns.create(payload)
+      : await returnRefundReversalApi.salesReturns.create(payload as ReversalDocumentPayload)
     await router.push({ name: 'sales-return-detail', params: { id: String(detail.id) } })
   } catch (caught) {
     submitError.value = salesErrorMessage(caught)
@@ -331,7 +369,7 @@ onMounted(() => {
         <template #header>退货信息</template>
         <el-form class="document-form" label-width="96px">
           <el-form-item label="来源出库">
-            <span>{{ selectedSource?.shipmentNo || editDetail?.source.sourceNo || '-' }}</span>
+            <span>{{ sourceDisplayText }}</span>
           </el-form-item>
           <el-form-item label="业务日期">
             <el-input
@@ -388,7 +426,7 @@ onMounted(() => {
               <template #default="{ row }">
                 <el-input
                   v-model="row.quantity"
-                  :name="`sales-return-line-quantity-${row.sourceShipmentLineId}`"
+                  :name="`sales-return-line-quantity-${lineInputKey(row)}`"
                   placeholder="0.000000"
                 />
               </template>
@@ -397,7 +435,7 @@ onMounted(() => {
               <template #default="{ row }">
                 <el-input
                   v-model="row.reason"
-                  :name="`sales-return-line-reason-${row.sourceShipmentLineId}`"
+                  :name="`sales-return-line-reason-${lineInputKey(row)}`"
                   placeholder="原因"
                 />
               </template>

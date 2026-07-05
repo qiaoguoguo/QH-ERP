@@ -320,41 +320,24 @@ describe('采购退货前端页面', () => {
     expect(router.currentRoute.value.name).toBe('procurement-return-detail')
   })
 
-  it('编辑采购退货时来源采购入库受限只展示受限提示，不泄露来源字段', async () => {
+  it('编辑采购退货来源受限时可保存草稿行且不提交来源主键', async () => {
     returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
       ...purchaseReturnDetail,
       source: {
         sourceType: 'PURCHASE_RECEIPT',
-        sourceId: 987,
-        sourceNo: 'RC-SECRET',
-        businessDate: '2026-06-30',
-        status: 'POSTED',
-        quantity: '88.000000',
-        amount: '640.00',
         canViewSource: false,
         restricted: true,
         restrictedMessage: '来源无查看权限',
-        resourceRouteName: 'procurement-receipt-detail',
-        resourceRouteParams: { id: 987 },
       },
       lines: [
         {
           ...purchaseReturnDetail.lines[0],
+          sourceLineId: undefined,
           source: {
             sourceType: 'PURCHASE_RECEIPT_LINE',
-            sourceId: 987,
-            sourceLineId: 988,
-            sourceNo: 'RC-LINE-SECRET',
-            lineNo: 10,
-            businessDate: '2026-06-30',
-            status: 'POSTED',
-            quantity: '88.000000',
-            amount: '640.00',
             canViewSource: false,
             restricted: true,
             restrictedMessage: '来源无查看权限',
-            resourceRouteName: 'procurement-receipt-detail',
-            resourceRouteParams: { id: 987 },
           },
         },
       ],
@@ -365,15 +348,22 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).toContain('来源无查看权限')
     expect(wrapper.text()).toContain('编辑采购退货')
     expect(wrapper.find('[data-test="submit-purchase-return"]').exists()).toBe(true)
-    expect(wrapper.text()).not.toContain('RC-SECRET')
-    expect(wrapper.text()).not.toContain('RC-LINE-SECRET')
-    expect(wrapper.text()).not.toContain('987')
-    expect(wrapper.text()).not.toContain('988')
-    expect(wrapper.text()).not.toContain('88')
-    expect(wrapper.text()).not.toContain('640.00')
-    expect(wrapper.text()).not.toContain('2026-06-30')
-    expect(wrapper.text()).not.toContain('POSTED')
+    expect(wrapper.text()).not.toContain('RC202607050001')
     expect(wrapper.find('[data-test="view-source-document"]').exists()).toBe(false)
+
+    await wrapper.find('input[name="purchase-return-line-quantity-21"]').setValue('2.000000')
+    await wrapper.find('input[name="purchase-return-line-reason-21"]').setValue('受限来源更新')
+    await wrapper.find('[data-test="submit-purchase-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.purchaseReturns.update).toHaveBeenCalledWith('2', expect.objectContaining({
+      businessDate: '2026-07-05',
+      remark: '来料退回',
+      lines: [{ id: 21, quantity: '2.000000', reason: '受限来源更新' }],
+    }))
+    const payload = returnRefundReversalApiMock.purchaseReturns.update.mock.calls[0][1]
+    expect(payload).not.toHaveProperty('sourceReceiptId')
+    expect(payload.lines[0]).not.toHaveProperty('sourceReceiptLineId')
   })
 
   it.each([
@@ -478,14 +468,7 @@ describe('采购退货前端页面', () => {
 
   it('采购退货追溯来源受限时不展示跳转和敏感字段', async () => {
     returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce(impactedPurchaseReturnDetail)
-    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([{
-      ...restrictedInventoryTrace,
-      source: {
-        ...restrictedInventoryTrace.source,
-        sourceNo: 'RC-SECRET',
-        amount: '999.00',
-      },
-    }])
+    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([restrictedInventoryTrace])
     const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view', 'business:reversal:view'])
 
     await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
