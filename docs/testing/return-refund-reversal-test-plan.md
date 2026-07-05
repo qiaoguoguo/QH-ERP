@@ -210,7 +210,8 @@ npm run build
 ## 执行记录
 
 - 计划创建：2026-07-05。
-- 自动化测试：待执行。
+- 自动化测试：Task 2 到 Task 6 已完成定向自动化验证。后端 `ReversalAdminControllerTests` 22 条通过，Task6 相关后端回归 `ReversalAdminControllerTests,FinanceAdminControllerTests,SalesAdminControllerTests,ProcurementAdminControllerTests,ProductionAdminControllerTests,ReportingAdminControllerTests` 共 65 条通过；前端 Task6 定向测试 `returnRefundReversalApi.spec.ts`、`SettlementAdjustmentViews.spec.ts`、`permissionGuard.spec.ts`、`App.spec.ts` 共 4 个文件 99 条通过；`npm run typecheck` 通过；`git diff --check` 通过。
+- 缺陷复验：Task6 后端阻断项“生产退料/补料误作为往来冲减来源”已由 `5252c9f` 修复并通过产品经理、测试复审；Task6 前端 P1 “候选来源刷新后隐藏提交旧来源”已由 `7d5b0b0` 修复并通过测试复审。
 - 浏览器验收：待执行。
 - 视觉分析：待执行。
-- 缺陷状态：待执行。
+- 缺陷状态：截至 Task6 完成，未登记未解决阻断缺陷；全阶段浏览器验收、视觉分析和最终质量门待 Task7 完成后执行。
