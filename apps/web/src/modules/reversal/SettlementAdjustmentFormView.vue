@@ -19,7 +19,6 @@ import {
   financeErrorMessage,
   formatFinanceAmount,
   isPositiveFinanceAmount,
-  normalizeOptionalId,
 } from '../finance/financePageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -119,8 +118,8 @@ async function loadSources() {
     pageSize: 20,
   })
   sources.value = pageItems(page)
-  if (!isEdit.value && sources.value.length > 0 && form.sourceId === '') {
-    chooseSource(sources.value[0])
+  if (!isEdit.value) {
+    syncSourceSelection()
   }
 }
 
@@ -174,6 +173,31 @@ function chooseSource(source: SettlementAdjustmentSource) {
   form.businessDate = source.businessDate
 }
 
+function clearSourceSelection() {
+  form.sourceId = ''
+  form.targetId = ''
+}
+
+function matchesCurrentSource(source: SettlementAdjustmentSource) {
+  return source.sourceType === form.sourceType
+    && String(source.sourceId) === String(form.sourceId)
+    && String(source.targetId) === String(form.targetId)
+}
+
+function syncSourceSelection() {
+  const currentVisibleSource = sources.value.find(matchesCurrentSource)
+  if (currentVisibleSource) {
+    chooseSource(currentVisibleSource)
+    return
+  }
+  const firstSource = sources.value[0]
+  if (firstSource) {
+    chooseSource(firstSource)
+    return
+  }
+  clearSourceSelection()
+}
+
 async function searchSources() {
   if (isEdit.value) {
     return
@@ -216,7 +240,8 @@ function buildPayload(): SettlementAdjustmentUpdatePayload | null {
     submitError.value = amountError
     return null
   }
-  if (!isEdit.value && (!form.sourceId || !form.targetId)) {
+  const currentSource = isEdit.value ? null : selectedSource.value
+  if (!isEdit.value && !currentSource) {
     submitError.value = '请选择候选来源'
     return null
   }
@@ -228,12 +253,12 @@ function buildPayload(): SettlementAdjustmentUpdatePayload | null {
     remark: form.remark,
   }
 
-  if (!isEdit.value) {
-    payload.settlementSide = form.settlementSide
+  if (!isEdit.value && currentSource) {
+    payload.settlementSide = currentSource.settlementSide
     payload.adjustmentType = form.adjustmentType
-    payload.sourceType = form.sourceType
-    payload.sourceId = normalizeOptionalId(form.sourceId)
-    payload.targetId = normalizeOptionalId(form.targetId)
+    payload.sourceType = currentSource.sourceType
+    payload.sourceId = currentSource.sourceId
+    payload.targetId = currentSource.targetId
   }
   return payload
 }

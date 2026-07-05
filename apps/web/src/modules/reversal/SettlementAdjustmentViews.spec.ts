@@ -252,6 +252,52 @@ describe('往来冲减前端页面', () => {
     expect(router.currentRoute.value.name).toBe('finance-settlement-adjustment-detail')
   })
 
+  it('候选来源刷新为空后不能提交旧来源', async () => {
+    const { wrapper } = await mountSettlementView(SettlementAdjustmentFormView, '/finance/settlement-adjustments/create', ['finance:settlement-adjustment:create'])
+
+    expect(wrapper.text()).toContain('RCPT202607050001')
+    returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValueOnce(page([]))
+    await wrapper.find('[data-test="search-settlement-adjustment-sources"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无可冲减来源')
+    await wrapper.find('input[name="settlement-adjustment-business-date"]').setValue('2026-07-05')
+    await wrapper.find('input[name="settlement-adjustment-amount"]').setValue('60.00')
+    await wrapper.find('[data-test="submit-settlement-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请选择候选来源')
+    expect(returnRefundReversalApiMock.settlementAdjustments.create).not.toHaveBeenCalled()
+  })
+
+  it('候选来源刷新为不同来源后使用当前可见来源提交', async () => {
+    const { wrapper } = await mountSettlementView(SettlementAdjustmentFormView, '/finance/settlement-adjustments/create', ['finance:settlement-adjustment:create'])
+
+    expect(wrapper.text()).toContain('RCPT202607050001')
+    returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValueOnce(page([paymentSource]))
+    await wrapper.find('[data-test="search-settlement-adjustment-sources"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('PAY202607050001')
+    expect(wrapper.text()).not.toContain('RCPT202607050001')
+    await wrapper.find('input[name="settlement-adjustment-amount"]').setValue('80.00')
+    await wrapper.find('[data-test="submit-settlement-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.settlementAdjustments.create).toHaveBeenCalledWith(expect.objectContaining({
+      settlementSide: 'PAYABLE',
+      sourceType: 'PAYMENT',
+      sourceId: 71,
+      targetId: 81,
+      amount: '80.00',
+    }))
+    expect(returnRefundReversalApiMock.settlementAdjustments.create).not.toHaveBeenCalledWith(expect.objectContaining({
+      sourceType: 'RECEIPT',
+      sourceId: 70,
+      targetId: 80,
+    }))
+  })
+
   it('来源受限编辑只提交可变字段且不泄露来源字段', async () => {
     returnRefundReversalApiMock.settlementAdjustments.get.mockResolvedValueOnce({
       ...settlementAdjustmentDetail,
