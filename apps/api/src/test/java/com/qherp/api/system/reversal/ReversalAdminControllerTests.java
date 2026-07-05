@@ -1053,6 +1053,44 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void settlementAdjustmentRejectsProductionSourcesAndDoesNotMutateLedger() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture productionFixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(productionFixture, "8.000000", "10.000000");
+		long materialReturnId = createMaterialReturn(admin, issue.issueId(), issue.issueLineId(), "1.000000");
+		assertOk(put("/api/admin/production/material-returns/" + materialReturnId + "/post", Map.of(), admin));
+		seedStock(productionFixture.warehouseId(), productionFixture.materialId(), productionFixture.unitId(),
+				"5.000000");
+		long materialSupplementId = createMaterialSupplement(admin, issue.workOrderId(),
+				productionFixture.warehouseId(), issue.workOrderMaterialId(), "1.000000");
+		assertOk(put("/api/admin/production/material-supplements/" + materialSupplementId + "/post", Map.of(),
+				admin));
+
+		SalesReturnFixture salesFixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(salesFixture, "5.000000", "10.000000",
+				"5.000000", "10.000000", "CONFIRMED", "100.00", "0.00", "100.00");
+		ReceivableAmounts before = receivableAmounts(shipment.receivableId());
+
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "RETURN_OFFSET", "PRODUCTION_MATERIAL_RETURN",
+						materialReturnId, shipment.receivableId(), "10.00",
+						"settlement-prod-return-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "RETURN_OFFSET", "PRODUCTION_MATERIAL_SUPPLEMENT",
+						materialSupplementId, shipment.receivableId(), "10.00",
+						"settlement-prod-supplement-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
+
+		ReceivableAmounts after = receivableAmounts(shipment.receivableId());
+		assertDecimal(after.adjustedAmount(), before.adjustedAmount().toPlainString());
+		assertDecimal(after.unreceivedAmount(), before.unreceivedAmount().toPlainString());
+		assertThat(after.status()).isEqualTo(before.status());
+		assertSettlementAdjustmentCount("PRODUCTION_MATERIAL_RETURN", materialReturnId, 0);
+		assertSettlementAdjustmentCount("PRODUCTION_MATERIAL_SUPPLEMENT", materialSupplementId, 0);
+	}
+
+	@Test
 	void adminCanQueryStableEmptyReversalSkeletons() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -1819,6 +1857,16 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				where id = ?
 				""", (rs, rowNum) -> new PayableAmounts(rs.getBigDecimal("adjusted_amount"),
 				rs.getBigDecimal("unpaid_amount"), rs.getString("status")), payableId);
+	}
+
+	private void assertSettlementAdjustmentCount(String sourceType, long sourceId, long expected) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_settlement_adjustment
+				where source_type = ?
+				and source_id = ?
+				""", Long.class, sourceType, sourceId);
+		assertThat(count).isEqualTo(expected);
 	}
 
 	private ReversalLink reversalLink(String reverseType, long reverseId, long reverseLineId) {

@@ -434,7 +434,7 @@ type ProductionMaterialSupplementSource = {
 };
 
 type SettlementAdjustmentSource = {
-  sourceType: 'SALES_RETURN' | 'PURCHASE_RETURN' | 'RECEIPT' | 'PAYMENT' | 'PRODUCTION_MATERIAL_RETURN' | 'PRODUCTION_MATERIAL_SUPPLEMENT' | 'SETTLEMENT_ADJUSTMENT';
+  sourceType: 'SALES_RETURN' | 'PURCHASE_RETURN' | 'RECEIPT' | 'PAYMENT' | 'SETTLEMENT_ADJUSTMENT';
   sourceId: number;
   sourceNo: string;
   settlementSide: 'RECEIVABLE' | 'PAYABLE';
@@ -641,7 +641,7 @@ type SettlementAdjustmentSource = {
 }
 ```
 
-成功响应 `SettlementAdjustmentDetail`。来源可以是销售退货、采购退货、收款记录、付款记录、生产退料、生产补料或往来调整。客户退款和供应商退款由 `adjustmentType='REFUND'` 的往来冲减记录表达，不独立作为 `sourceType`；接口不单独接受泛化 `BUSINESS_REVERSAL` 单据。
+成功响应 `SettlementAdjustmentDetail`。来源可以是销售退货、采购退货、收款记录、付款记录或往来调整。生产退料和生产补料只影响库存与成本，不作为往来冲减来源。客户退款和供应商退款由 `adjustmentType='REFUND'` 的往来冲减记录表达，不独立作为 `sourceType`；接口不单独接受泛化 `BUSINESS_REVERSAL` 单据。
 
 - `PUT /api/admin/finance/settlement-adjustments/{id}`：权限 `finance:settlement-adjustment:update`；仅 `DRAFT` 可更新；不允许改变 `settlementSide`、`sourceType`、`sourceId` 和 `targetId`；成功响应 `SettlementAdjustmentDetail`。
   - 来源可见时，请求体可继续传 `settlementSide`、`sourceType`、`sourceId` 与 `targetId`，后端必须校验与当前草稿一致。

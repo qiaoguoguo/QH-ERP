@@ -4564,7 +4564,6 @@ public class ReversalAdminService {
 					and target_id = ?
 					and status = 'POSTED'
 					""", adjustment.sourceId(), adjustment.settlementSide(), adjustment.targetId());
-			case "PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT" -> true;
 			default -> false;
 		};
 	}
@@ -4763,18 +4762,6 @@ public class ReversalAdminService {
 					from fin_payment
 					where id = ?
 					""", sourceId);
-			case "PRODUCTION_MATERIAL_RETURN" -> descriptor("""
-					select 'PRODUCTION_MATERIAL_RETURN' as source_type, id as source_id, return_no as source_no,
-					       business_date, status
-					from mfg_material_return
-					where id = ?
-					""", sourceId);
-			case "PRODUCTION_MATERIAL_SUPPLEMENT" -> descriptor("""
-					select 'PRODUCTION_MATERIAL_SUPPLEMENT' as source_type, id as source_id,
-					       supplement_no as source_no, business_date, status
-					from mfg_material_supplement
-					where id = ?
-					""", sourceId);
 			case "SETTLEMENT_ADJUSTMENT" -> descriptor("""
 					select 'SETTLEMENT_ADJUSTMENT' as source_type, id as source_id,
 					       adjustment_no as source_no, business_date, status
@@ -4835,7 +4822,6 @@ public class ReversalAdminService {
 	private String normalizeRequiredSettlementSourceType(String value) {
 		String normalized = value == null ? null : value.trim().toUpperCase();
 		if (!Set.of(SALES_RETURN_SOURCE, PURCHASE_RETURN_SOURCE, "RECEIPT", "PAYMENT",
-				PRODUCTION_MATERIAL_RETURN_SOURCE, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
 				SETTLEMENT_ADJUSTMENT_SOURCE).contains(normalized)) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
 		}
@@ -4978,8 +4964,6 @@ public class ReversalAdminService {
 			case PRODUCTION_MATERIAL_ISSUE_SOURCE, PRODUCTION_MATERIAL_ISSUE_LINE_SOURCE -> canViewProductionIssue(
 					currentUser);
 			case PRODUCTION_WORK_ORDER_SOURCE -> canViewProductionWorkOrder(currentUser);
-			case PRODUCTION_MATERIAL_RETURN_SOURCE -> canViewMaterialReturn(currentUser);
-			case PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE -> canViewMaterialSupplement(currentUser);
 			case "RECEIPT" -> canViewReceipt(currentUser);
 			case "PAYMENT" -> canViewPayment(currentUser);
 			case SETTLEMENT_ADJUSTMENT_SOURCE -> canViewSettlementAdjustment(currentUser);
@@ -4991,8 +4975,6 @@ public class ReversalAdminService {
 		return switch (sourceType) {
 			case SALES_RETURN_SOURCE -> "sales-return-detail";
 			case PURCHASE_RETURN_SOURCE -> "procurement-return-detail";
-			case PRODUCTION_MATERIAL_RETURN_SOURCE -> "production-material-return-detail";
-			case PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE -> "production-material-supplement-detail";
 			case "RECEIPT" -> "finance-receipt-detail";
 			case "PAYMENT" -> "finance-payment-detail";
 			case SETTLEMENT_ADJUSTMENT_SOURCE -> "finance-settlement-adjustment-detail";
