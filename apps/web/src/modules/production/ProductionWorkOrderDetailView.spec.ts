@@ -357,6 +357,7 @@ async function mountDetail(
     'production:report:create',
     'production:receipt:create',
   ],
+  path = '/production/work-orders/9',
 ) {
   productionApiMock.workOrders.get.mockResolvedValue(record)
   const pinia = createPinia()
@@ -369,17 +370,19 @@ async function mountDetail(
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
+      { path: '/production/work-orders', name: 'production-work-orders', component: { render: () => null } },
       { path: '/production/work-orders/:id', name: 'production-work-order-detail', component: ProductionWorkOrderDetailView },
       { path: '/production/work-orders/:id/edit', name: 'production-work-order-edit', component: { render: () => null } },
       { path: '/production/work-orders/:id/material-issues', name: 'production-work-order-material-issues', component: { render: () => null } },
       { path: '/production/work-orders/:id/reports', name: 'production-work-order-reports', component: { render: () => null } },
       { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component: { render: () => null } },
+      { path: '/reports/cost', name: 'reports-cost', component: { render: () => null } },
       { path: '/cost/records/:id', name: 'cost-record-detail', component: { render: () => null } },
       { path: '/cost/records/:id/edit', name: 'cost-record-edit', component: { render: () => null } },
       { path: '/cost/records/create', name: 'cost-record-create', component: { render: () => null } },
     ],
   })
-  await router.push('/production/work-orders/9')
+  await router.push(path)
   await router.isReady()
   const wrapper = mount(ProductionWorkOrderDetailView, {
     global: {
@@ -393,7 +396,6 @@ async function mountDetail(
 describe('生产工单详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     productionApiMock.workOrders.release.mockResolvedValue(detailRecord)
     productionApiMock.workOrders.complete.mockResolvedValue({ ...detailRecord, status: 'COMPLETED' })
     productionApiMock.workOrders.cancel.mockResolvedValue({ ...detailRecord, status: 'CANCELLED' })
@@ -421,6 +423,19 @@ describe('生产工单详情页', () => {
     expect(wrapper.text()).toContain('40')
     expect(wrapper.text()).toContain('WO-20260703-001')
     expect(wrapper.text()).toContain('FG-001 成品 A')
+  })
+
+  it('提供返回列表按钮并优先返回来源上下文', async () => {
+    const { wrapper, router } = await mountDetail(
+      detailRecord,
+      ['production:work-order:view'],
+      '/production/work-orders/9?returnTo=/reports/cost',
+    )
+
+    await wrapper.find('[data-test="back-production-work-order-list"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/reports/cost')
   })
 
   it('展示 BOM 快照、执行记录和库存流水摘要', async () => {

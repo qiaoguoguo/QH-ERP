@@ -144,7 +144,10 @@ function buttonsByText(wrapper: ReturnType<typeof mount>, text: string): DOMWrap
   return wrapper.findAll('button').filter((button) => button.text().trim() === text)
 }
 
-async function mountDetail(permissions = ['cost:record:view', 'cost:record:update']) {
+async function mountDetail(
+  permissions = ['cost:record:view', 'cost:record:update'],
+  path = '/cost/records/702',
+) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -161,7 +164,7 @@ async function mountDetail(permissions = ['cost:record:view', 'cost:record:updat
       { path: '/production/work-orders/:id', name: 'production-work-order-detail', component: { render: () => null } },
     ],
   })
-  await router.push('/cost/records/702')
+  await router.push(path)
   await router.isReady()
   const wrapper = mount(CostRecordDetailView, {
     global: {
@@ -209,6 +212,19 @@ describe('成本记录详情页', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('cost-record-edit')
     expect(router.currentRoute.value.params.id).toBe('702')
+  })
+
+  it('从追溯来源进入详情后再编辑时保留原返回上下文', async () => {
+    const { wrapper, router } = await mountDetail(
+      ['cost:record:view', 'cost:record:update'],
+      '/cost/records/702?returnTo=/reports/cost',
+    )
+
+    await wrapper.find('[data-test="edit-cost-record-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('cost-record-edit')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/cost')
   })
 
   it('缺少更新权限时不展示编辑入口', async () => {

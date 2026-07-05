@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { InventoryDocumentDetailRecord, InventoryDocumentSummaryRecord } from '../../shared/api/inventoryApi'
+import { useConfirmActionMock } from '../../test/setup'
 import { useAuthStore } from '../../stores/authStore'
 import InventoryDocumentListView from './InventoryDocumentListView.vue'
+
+const confirmActionMock = useConfirmActionMock()
 
 const inventoryApiMock = vi.hoisted(() => ({
   documents: {
@@ -49,7 +52,7 @@ const postedDocument: InventoryDocumentSummaryRecord = {
 const documentPage: PageResult<InventoryDocumentSummaryRecord> = {
   items: [draftDocument, postedDocument],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 2,
   totalPages: 1,
 }
@@ -105,7 +108,6 @@ async function mountDocuments(permissions = [
 describe('库存单据列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     inventoryApiMock.documents.list.mockResolvedValue(documentPage)
     inventoryApiMock.documents.post.mockResolvedValue(postedDetail)
   })
@@ -171,7 +173,7 @@ describe('库存单据列表页', () => {
       dateFrom: '2026-07-01',
       dateTo: '2026-07-03',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 
@@ -182,7 +184,7 @@ describe('库存单据列表页', () => {
     await wrapper.find('[data-test="post-inventory-document"]').trigger('click')
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalledWith(expect.stringContaining('会影响库存余额且不可撤销'))
+    expect(confirmActionMock).toHaveBeenCalledWith(expect.stringContaining('会影响库存余额且不可撤销'))
     expect(inventoryApiMock.documents.post).toHaveBeenCalledWith(1)
     expect(wrapper.text()).toContain('库存不足，调减后库存不能小于 0')
     expect(wrapper.text()).toContain('INV-OPEN-001')

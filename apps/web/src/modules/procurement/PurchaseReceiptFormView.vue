@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   procurementApi,
@@ -296,7 +297,11 @@ async function saveReceipt() {
     } else {
       result = await procurementApi.receipts.create(route.params.orderId as ResourceId, payload)
     }
-    await router.push({ name: 'procurement-receipt-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'procurement-receipt-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = procurementErrorMessage(caught)
   } finally {
@@ -306,7 +311,11 @@ async function saveReceipt() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'procurement-receipt-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'procurement-receipt-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   void router.push({ name: 'procurement-receipts' })
@@ -384,10 +393,10 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="form.businessDate"
             name="purchase-receipt-business-date"
-            placeholder="YYYY-MM-DD"
+            placeholder="选择日期"
             :disabled="!canEditForm"
           />
         </el-form-item>

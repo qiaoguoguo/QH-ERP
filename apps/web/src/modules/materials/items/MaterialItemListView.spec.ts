@@ -59,7 +59,7 @@ const material: MaterialRecord = {
 const emptyMaterialPage: PageResult<MaterialRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -170,7 +170,7 @@ describe('物料档案页', () => {
   })
 
   it('详情抽屉展示物料分类、单位、类型和来源文案', async () => {
-    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountMaterials()
     await flushPromises()
 
@@ -217,7 +217,7 @@ describe('物料档案页', () => {
       keyword: '钢板',
       status: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       categoryId: 1,
       materialType: 'RAW_MATERIAL',
       sourceType: 'PURCHASED',

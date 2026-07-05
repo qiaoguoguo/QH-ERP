@@ -39,7 +39,6 @@ const payment: PaymentDetailRecord = {
 describe('付款详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     financeApiMock.payments.get.mockResolvedValue(payment)
     financeApiMock.payments.post.mockResolvedValue({ ...payment, status: 'POSTED' })
     financeApiMock.payments.cancel.mockResolvedValue({ ...payment, status: 'CANCELLED' })

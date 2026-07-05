@@ -1,19 +1,22 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   inventoryApi,
   type InventoryDocumentStatus,
   type InventoryDocumentSummaryRecord,
   type InventoryDocumentType,
 } from '../../shared/api/inventoryApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import InventoryStatusTag from './InventoryStatusTag.vue'
 import { documentTypeLabel } from './inventoryPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -30,7 +33,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<InventoryDocumentSummaryRecord[]>([])
@@ -87,12 +90,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createDocument(type: InventoryDocumentType) {
   void router.push({ name: 'inventory-document-create', query: { type } })
 }
 
 function viewDocument(record: InventoryDocumentSummaryRecord) {
-  void router.push({ name: 'inventory-document-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'inventory-document-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editDocument(record: InventoryDocumentSummaryRecord) {
@@ -103,7 +116,7 @@ async function postDocument(record: InventoryDocumentSummaryRecord) {
   if (actionLoading.value) {
     return
   }
-  if (!window.confirm(`确认过账库存单据“${record.documentNo}”？过账会影响库存余额且不可撤销。`)) {
+  if (!(await confirmAction(`确认过账库存单据“${record.documentNo}”？过账会影响库存余额且不可撤销。`))) {
     return
   }
   actionError.value = ''
@@ -166,7 +179,6 @@ onMounted(loadRecords)
             data-test="inventory-document-type-filter"
             clearable
             placeholder="全部类型"
-            style="width: 140px"
           >
             <el-option label="期初库存" value="OPENING" />
             <el-option label="库存调整" value="ADJUSTMENT" />
@@ -178,26 +190,23 @@ onMounted(loadRecords)
             data-test="inventory-document-status-filter"
             clearable
             placeholder="全部状态"
-            style="width: 120px"
           >
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已过账" value="POSTED" />
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.dateFrom"
             name="inventory-document-date-from"
             placeholder="起始日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.dateTo"
             name="inventory-document-date-to"
             placeholder="截止日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
@@ -269,11 +278,11 @@ onMounted(loadRecords)
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

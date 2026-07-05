@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { procurementApi, type PurchaseOrderDetailRecord, type ResourceId } from '../../shared/api/procurementApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
@@ -12,6 +13,7 @@ import {
   purchaseReceiptStatusLabel,
   purchaseReceiptStatusTagType,
 } from './procurementPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -65,14 +67,18 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'procurement-orders' })
+  void router.push(returnLocation(route, { name: 'procurement-orders' }))
 }
 
 function editOrder() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'procurement-order-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'procurement-order-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function createReceipt() {
@@ -83,7 +89,11 @@ function createReceipt() {
 }
 
 function viewReceipt(receiptId: ResourceId) {
-  void router.push({ name: 'procurement-receipt-detail', params: { id: String(receiptId) } })
+  void router.push({
+    name: 'procurement-receipt-detail',
+    params: { id: String(receiptId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
@@ -95,7 +105,7 @@ async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
     cancel: '取消',
     close: '关闭',
   }
-  if (!window.confirm(`确认${actionLabels[action]}采购订单“${record.value.orderNo}”？`)) {
+  if (!(await confirmAction(`确认${actionLabels[action]}采购订单“${record.value.orderNo}”？`))) {
     return
   }
 

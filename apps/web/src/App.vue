@@ -1,16 +1,34 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import type { Component } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import {
+  Box,
+  Coin,
+  Collection,
+  Cpu,
+  Grid,
+  House,
+  Money,
+  OfficeBuilding,
+  Sell,
+  Setting,
+  ShoppingCart,
+  TrendCharts,
+} from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuNode } from './shared/api/accountPermissionApi'
 import { financePermissions } from './modules/finance/financePageHelpers'
 import { reportMenuChildren, reportRouteConfigs } from './modules/reports/reportPageHelpers'
+import { activeMenuPath } from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
+import qhLogoUrl from './assets/logo.ico'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
+const sideMenuActivePath = computed(() => activeMenuPath(route.path, route.query.returnTo))
 const inventoryBalancePath = '/inventory/balances'
 const inventoryMovementPath = '/inventory/movements'
 const inventoryDocumentPath = '/inventory/documents'
@@ -179,12 +197,48 @@ const financeChildren: MenuNode[] = [
   },
 ]
 const financeMenuPaths = new Set(financeChildren.map((child) => child.routePath))
+const fallbackMainMenuIcon = Grid
+const mainMenuIconRules: Array<[RegExp, Component]> = [
+  [/system|系统/, Setting],
+  [/master|基础/, OfficeBuilding],
+  [/material|物料|bom/i, Collection],
+  [/inventory|库存/, Box],
+  [/procurement|purchase|采购/, ShoppingCart],
+  [/sales|销售/, Sell],
+  [/production|生产/, Cpu],
+  [/cost|成本/, Coin],
+  [/finance|财务|往来|应收|应付/, Money],
+  [/report|报表|经营/, TrendCharts],
+]
 const menuTree = computed<MenuNode[]>(() => ensureReportsMenu(ensureFinanceMenu(ensureCostMenu(
   ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))))),
 ))))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
+const sessionHydrating = ref(false)
+
+async function hydrateCurrentUser() {
+  if (isLogin.value || authStore.currentUser || sessionHydrating.value) {
+    return
+  }
+  sessionHydrating.value = true
+  try {
+    await authStore.fetchCurrentUser()
+  } catch {
+    // 未登录访问公开入口时保持未登录展示；有效后端会话会在这里恢复顶部用户。
+  } finally {
+    sessionHydrating.value = false
+  }
+}
+
+onMounted(() => {
+  void hydrateCurrentUser()
+})
+
+watch(isLogin, () => {
+  void hydrateCurrentUser()
+})
 
 function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
   return menus
@@ -492,6 +546,19 @@ function menuIndex(menu: MenuNode) {
   return menu.routePath || `/menu/${menu.code}`
 }
 
+function mainMenuIcon(menu: MenuNode): Component {
+  const signature = `${String(menu.code ?? '')} ${menu.name} ${String(menu.routePath ?? '')}`
+  return mainMenuIconRules.find(([pattern]) => pattern.test(signature))?.[1] ?? fallbackMainMenuIcon
+}
+
+function mainMenuIconKey(menu: MenuNode): string {
+  const source = String(menu.code ?? menu.routePath ?? menu.name)
+  return source
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(/(^-)|(-$)/g, '') || 'default'
+}
+
 async function logout() {
   if (logoutLoading.value) {
     return
@@ -516,27 +583,47 @@ async function logout() {
   <el-container v-else class="app-shell">
     <el-aside class="app-sidebar" width="232px">
       <div class="brand">
-        <strong>QH ERP</strong>
-        <span>制造业生产管理 ERP</span>
+        <img data-test="app-logo" class="brand-logo" :src="qhLogoUrl" alt="QH ERP 系统标识">
+        <div class="brand-copy">
+          <strong>QH ERP</strong>
+          <span>制造业生产管理 ERP</span>
+        </div>
       </div>
-      <el-menu :default-active="$route.path" router class="side-menu">
-        <el-menu-item index="/">工作台</el-menu-item>
-        <template v-for="menu in menuTree" :key="menu.code">
-          <el-sub-menu v-if="hasChildren(menu)" :index="menuIndex(menu)">
-            <template #title>{{ menu.name }}</template>
-            <el-menu-item
-              v-for="child in menu.children"
-              :key="child.code"
-              :index="menuIndex(child)"
-            >
-              {{ child.name }}
-            </el-menu-item>
-          </el-sub-menu>
-          <el-menu-item v-else-if="menu.routePath" :index="menu.routePath">
-            {{ menu.name }}
+      <el-scrollbar class="side-menu-scroll">
+        <el-menu :default-active="sideMenuActivePath" router class="side-menu" unique-opened>
+          <el-menu-item index="/">
+            <House class="side-menu-icon" data-test="main-menu-icon-home" />
+            <span>工作台</span>
           </el-menu-item>
-        </template>
-      </el-menu>
+          <template v-for="menu in menuTree" :key="menu.code">
+            <el-sub-menu v-if="hasChildren(menu)" :index="menuIndex(menu)">
+              <template #title>
+                <component
+                  :is="mainMenuIcon(menu)"
+                  class="side-menu-icon"
+                  :data-test="`main-menu-icon-${mainMenuIconKey(menu)}`"
+                />
+                <span>{{ menu.name }}</span>
+              </template>
+              <el-menu-item
+                v-for="child in menu.children"
+                :key="child.code"
+                :index="menuIndex(child)"
+              >
+                {{ child.name }}
+              </el-menu-item>
+            </el-sub-menu>
+            <el-menu-item v-else-if="menu.routePath" :index="menu.routePath">
+              <component
+                :is="mainMenuIcon(menu)"
+                class="side-menu-icon"
+                :data-test="`main-menu-icon-${mainMenuIconKey(menu)}`"
+              />
+              <span>{{ menu.name }}</span>
+            </el-menu-item>
+          </template>
+        </el-menu>
+      </el-scrollbar>
     </el-aside>
 
     <el-container>

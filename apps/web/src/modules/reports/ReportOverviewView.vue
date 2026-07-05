@@ -122,7 +122,7 @@ onMounted(() => {
     <div v-if="loading" class="report-state">经营概览加载中</div>
     <template v-else-if="record">
       <p class="report-note">
-        当前期间：{{ record.period.dateFrom }} 至 {{ record.period.dateTo }}。业务经营口径，formalAccounting=false，不等同正式财务入账。
+        当前期间：{{ record.period.dateFrom }} 至 {{ record.period.dateTo }}。业务经营口径用于经营分析，不等同正式财务入账。
       </p>
       <el-empty v-if="empty" description="暂无经营概览数据" />
       <ReportMetricStrip v-else :metrics="metrics" />
@@ -143,14 +143,14 @@ onMounted(() => {
 
 .report-page__header p,
 .report-note {
-  color: #606266;
+  color: var(--qherp-steel);
   margin: 0;
 }
 
 .report-entry-bar {
   align-items: center;
-  border-bottom: 1px solid #ebeef5;
-  border-top: 1px solid #ebeef5;
+  border-bottom: 1px solid var(--qherp-border-soft);
+  border-top: 1px solid var(--qherp-border-soft);
   display: flex;
   gap: 14px;
   margin: 0 0 16px;
@@ -158,7 +158,7 @@ onMounted(() => {
 }
 
 .report-entry-bar__label {
-  color: #303133;
+  color: var(--qherp-text);
   flex: 0 0 auto;
   font-size: 14px;
   font-weight: 600;
@@ -172,9 +172,9 @@ onMounted(() => {
 }
 
 .report-entry-bar__link {
-  border: 1px solid #dcdfe6;
+  border: 1px solid var(--qherp-border);
   border-radius: 6px;
-  color: #303133;
+  color: var(--qherp-text);
   font-size: 13px;
   line-height: 1;
   padding: 8px 10px;
@@ -184,12 +184,12 @@ onMounted(() => {
 
 .report-entry-bar__link:hover,
 .report-entry-bar__link.router-link-active {
-  border-color: #409eff;
-  color: #1677c2;
+  border-color: var(--qherp-brand-tag);
+  color: var(--qherp-brand-tag);
 }
 
 .report-state {
-  color: #606266;
+  color: var(--qherp-steel);
   padding: 16px 0;
 }
 </style>

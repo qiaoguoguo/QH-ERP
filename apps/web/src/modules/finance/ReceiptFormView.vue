@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { financeApi, type ReceivableDetailRecord, type ReceiptDetailRecord, type ResourceId } from '../../shared/api/financeApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ReceivableStatusTag from './ReceivableStatusTag.vue'
@@ -95,7 +96,11 @@ async function saveReceipt() {
     const result = isEdit.value
       ? await financeApi.receipts.update(route.params.id as ResourceId, payload)
       : await financeApi.receipts.create(targetReceivableId.value!, payload)
-    await router.push({ name: 'finance-receipt-detail', params: { id: String(result.id) } })
+    await router.push({
+      name: 'finance-receipt-detail',
+      params: { id: String(result.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     formError.value = financeErrorMessage(caught)
   } finally {
@@ -105,11 +110,19 @@ async function saveReceipt() {
 
 function cancel() {
   if (editingRecord.value) {
-    void router.push({ name: 'finance-receipt-detail', params: { id: String(editingRecord.value.id) } })
+    void router.push({
+      name: 'finance-receipt-detail',
+      params: { id: String(editingRecord.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
     return
   }
   if (receivable.value) {
-    void router.push({ name: 'finance-receivable-detail', params: { id: String(receivable.value.id) } })
+    void router.push({
+      name: 'finance-receivable-detail',
+      params: { id: String(receivable.value.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   }
 }
 
@@ -142,7 +155,7 @@ onMounted(loadData)
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
         <el-form-item label="收款日期">
-          <el-input v-model="form.receiptDate" name="receipt-date" placeholder="YYYY-MM-DD" :disabled="isReadonlyEdit" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.receiptDate" name="receipt-date" placeholder="选择日期" :disabled="isReadonlyEdit" />
         </el-form-item>
         <el-form-item label="收款金额">
           <el-input v-model="form.amount" name="receipt-amount" placeholder="0.00" :disabled="isReadonlyEdit" />

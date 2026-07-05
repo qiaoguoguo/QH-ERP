@@ -27,7 +27,7 @@ const error = ref('')
 const rows = ref<SalesReportRow[]>([])
 const summary = ref<SalesReportSummary | null>(null)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(10)
 const total = ref(0)
 const traceVisible = ref(false)
 const traceRows = ref<ReportTraceRecord[]>([])
@@ -63,7 +63,7 @@ async function loadReport(targetPage = page.value) {
       customerId: filters.customerId || undefined,
       materialId: filters.materialId || undefined,
       page: targetPage,
-      pageSize,
+      pageSize: pageSize.value,
     })
     rows.value = result.items
     summary.value = result.summary
@@ -92,6 +92,11 @@ function reset() {
   void loadReport(1)
 }
 
+function changePageSize(size: number) {
+  pageSize.value = size
+  void loadReport(1)
+}
+
 async function openTrace(row: SalesReportRow) {
   traceVisible.value = true
   traceLoading.value = true
@@ -102,7 +107,7 @@ async function openTrace(row: SalesReportRow) {
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       page: 1,
-      pageSize,
+      pageSize: pageSize.value,
     })
     traceRows.value = result.items
   } catch (cause) {
@@ -169,13 +174,13 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </div>
-    <el-pagination :current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next, total" @current-change="loadReport" />
+    <el-pagination :current-page="page" :page-size="pageSize" :page-sizes="[10, 20, 50, 100]" :total="total" layout="total, sizes, prev, pager, next" @current-change="loadReport" @size-change="changePageSize" />
     <ReportTracePanel :visible="traceVisible" :rows="traceRows" :loading="traceLoading" :error="traceError" @close="traceVisible = false" />
   </section>
 </template>
 
 <style scoped>
 .report-page__header h1 { font-size: 22px; margin: 0 0 6px; }
-.report-page__header p { color: #606266; margin: 0; }
+.report-page__header p { color: var(--qherp-steel); margin: 0; }
 .report-table-scroll { overflow-x: auto; }
 </style>

@@ -60,8 +60,8 @@ function valueOrEmpty(value: ResourceId | '') {
 
 <template>
   <div class="bom-line-editor">
-    <div class="table-scroll">
-      <el-table :data="lines" empty-text="暂无 BOM 明细" stripe>
+    <div data-test="bom-line-scroll" class="table-scroll bom-line-scroll">
+      <el-table class="bom-line-table" :data="lines" empty-text="暂无 BOM 明细" stripe>
         <el-table-column label="行号" width="82">
           <template #default="{ row }">
             {{ row.lineNo }}
@@ -135,7 +135,7 @@ function valueOrEmpty(value: ResourceId | '') {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="96">
           <template #default="{ $index }">
             <el-button
               data-test="remove-bom-line"
@@ -164,6 +164,17 @@ function valueOrEmpty(value: ResourceId | '') {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
+}
+
+.bom-line-scroll {
+  min-width: 0;
+  width: 100%;
+}
+
+.bom-line-table {
+  min-width: 980px;
 }
 
 .line-option-meta {

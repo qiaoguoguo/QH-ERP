@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   returnRefundReversalApi,
   type SettlementAdjustmentSourceType,
@@ -9,13 +9,16 @@ import {
   type SettlementSide,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import { financeErrorMessage, financePermissions, formatFinanceAmount } from '../finance/financePageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -36,7 +39,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<SettlementAdjustmentSummary[]>([])
@@ -122,12 +125,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createSettlementAdjustment() {
   void router.push({ name: 'finance-settlement-adjustment-create' })
 }
 
 function viewSettlementAdjustment(record: SettlementAdjustmentSummary) {
-  void router.push({ name: 'finance-settlement-adjustment-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'finance-settlement-adjustment-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editSettlementAdjustment(record: SettlementAdjustmentSummary) {
@@ -135,7 +148,7 @@ function editSettlementAdjustment(record: SettlementAdjustmentSummary) {
 }
 
 async function postSettlementAdjustment(record: SettlementAdjustmentSummary) {
-  if (actionLoading.value || !window.confirm(`确认过账往来冲减“${record.adjustmentNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认过账往来冲减“${record.adjustmentNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -151,7 +164,7 @@ async function postSettlementAdjustment(record: SettlementAdjustmentSummary) {
 }
 
 async function cancelSettlementAdjustment(record: SettlementAdjustmentSummary) {
-  if (actionLoading.value || !window.confirm(`确认取消往来冲减“${record.adjustmentNo}”？`)) {
+  if (actionLoading.value || !(await confirmAction(`确认取消往来冲减“${record.adjustmentNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -195,20 +208,20 @@ onMounted(() => {
           />
         </el-form-item>
         <el-form-item label="往来方向">
-          <el-select v-model="filters.settlementSide" clearable placeholder="全部方向" style="width: 130px">
+          <el-select v-model="filters.settlementSide" clearable placeholder="全部方向">
             <el-option label="应收冲减" value="RECEIVABLE" />
             <el-option label="应付冲减" value="PAYABLE" />
           </el-select>
         </el-form-item>
         <el-form-item label="冲减类型">
-          <el-select v-model="filters.adjustmentType" clearable placeholder="全部类型" style="width: 130px">
+          <el-select v-model="filters.adjustmentType" clearable placeholder="全部类型">
             <el-option label="退货冲减" value="RETURN_OFFSET" />
             <el-option label="退款记录" value="REFUND" />
             <el-option label="付款冲减" value="PAYMENT_OFFSET" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-select v-model="filters.sourceType" clearable placeholder="全部来源" style="width: 130px">
+          <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
             <el-option label="销售退货" value="SALES_RETURN" />
             <el-option label="采购退货" value="PURCHASE_RETURN" />
             <el-option label="收款记录" value="RECEIPT" />
@@ -217,17 +230,17 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 120px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已过账" value="POSTED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="filters.dateFrom" name="settlement-adjustment-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="settlement-adjustment-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="settlement-adjustment-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="settlement-adjustment-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-settlement-adjustments" type="primary" @click="search">查询</el-button>
@@ -314,11 +327,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

@@ -2,8 +2,11 @@ import { flushPromises } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { ReceiptSummaryRecord } from '../../shared/api/financeApi'
+import { useConfirmActionMock } from '../../test/setup'
 import ReceiptListView from './ReceiptListView.vue'
 import { mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+
+const confirmActionMock = useConfirmActionMock()
 
 const financeApiMock = vi.hoisted(() => ({
   receipts: { list: vi.fn(), post: vi.fn(), cancel: vi.fn() },
@@ -47,7 +50,6 @@ const draftReceipt: ReceiptSummaryRecord = {
 describe('收款记录列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     masterDataApiMock.customers.list.mockResolvedValue(page([customer]))
     financeApiMock.receipts.list.mockResolvedValue(page([receipt]))
     financeApiMock.receipts.post.mockResolvedValue({ ...draftReceipt, status: 'POSTED' })
@@ -81,7 +83,7 @@ describe('收款记录列表页', () => {
       dateTo: '2026-07-31',
       receivableId: '10',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     financeApiMock.receipts.list.mockResolvedValueOnce(page([]))
@@ -108,7 +110,7 @@ describe('收款记录列表页', () => {
     financeApiMock.receipts.list.mockResolvedValue({
       items: [receipt],
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
       total: 40,
       totalPages: 2,
     })
@@ -125,7 +127,7 @@ describe('收款记录列表页', () => {
       dateTo: '',
       receivableId: undefined,
       page: 2,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 
@@ -151,13 +153,13 @@ describe('收款记录列表页', () => {
     await flushPromises()
     await wrapper.find('[data-test="post-receipt"]').trigger('click')
     await flushPromises()
-    expect(window.confirm).toHaveBeenCalledWith('确认过账收款“RC-DRAFT”，金额 250.00？')
+    expect(confirmActionMock).toHaveBeenCalledWith('确认过账收款“RC-DRAFT”，金额 250.00？')
     expect(financeApiMock.receipts.post).toHaveBeenCalledWith(2)
     expect(financeApiMock.receipts.list).toHaveBeenCalledTimes(2)
 
     await wrapper.find('[data-test="cancel-receipt"]').trigger('click')
     await flushPromises()
-    expect(window.confirm).toHaveBeenCalledWith('确认取消收款“RC-DRAFT”，金额 250.00？')
+    expect(confirmActionMock).toHaveBeenCalledWith('确认取消收款“RC-DRAFT”，金额 250.00？')
     expect(financeApiMock.receipts.cancel).toHaveBeenCalledWith(2)
     expect(financeApiMock.receipts.list).toHaveBeenCalledTimes(3)
   })

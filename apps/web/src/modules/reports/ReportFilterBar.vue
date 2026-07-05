@@ -19,20 +19,38 @@ const emit = defineEmits<{
   reset: []
 }>()
 
-function updateField(key: string, value: string | number | undefined) {
+function updateField(key: string, value: string | number | null | undefined) {
   emit('update:modelValue', {
     ...props.modelValue,
-    [key]: value,
+    [key]: value ?? '',
   })
 }
 </script>
 
 <template>
-  <el-form class="report-filter-bar" label-position="top">
+  <el-form class="query-form report-filter-bar" label-position="top">
     <el-form-item v-for="field in fields" :key="field.key" :label="field.label">
+      <div
+        v-if="field.type === 'date'"
+        class="report-date-field"
+        :data-test="`report-date-picker-${field.name}`"
+      >
+        <el-date-picker value-on-clear=""
+          class="report-date-picker"
+          type="date"
+          format="YYYY-MM-DD"
+          value-format="YYYY-MM-DD"
+          :name="field.name"
+          :placeholder="field.placeholder ?? field.label"
+          :model-value="modelValue[field.key] ? String(modelValue[field.key]) : ''"
+          :disabled="loading"
+          clearable
+          @update:model-value="updateField(field.key, $event)"
+        />
+      </div>
       <el-input
+        v-else
         :name="field.name"
-        :type="field.type ?? 'text'"
         :placeholder="field.placeholder"
         :model-value="modelValue[field.key]"
         :disabled="loading"
@@ -52,13 +70,47 @@ function updateField(key: string, value: string | number | undefined) {
   align-items: end;
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  margin: 16px 0;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  margin: 0;
+}
+
+.report-filter-bar :deep(.el-form-item) {
+  margin-bottom: 0;
+}
+
+.report-filter-bar :deep(.el-form-item__label) {
+  color: var(--qherp-slate);
+  font-size: 13px;
+  line-height: 1.3;
+  margin-bottom: 6px;
+}
+
+.report-filter-bar :deep(.el-input),
+.report-date-field,
+.report-date-picker {
+  width: 100%;
 }
 
 .report-filter-bar__actions {
+  align-self: end;
+  align-items: center;
   display: flex;
   gap: 8px;
+  height: 40px;
   min-width: 136px;
+}
+
+@media (max-width: 760px) {
+  .report-filter-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .report-filter-bar__actions {
+    width: 100%;
+  }
+
+  .report-filter-bar__actions .el-button {
+    flex: 1 1 0;
+  }
 }
 </style>

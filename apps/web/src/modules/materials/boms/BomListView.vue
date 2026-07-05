@@ -17,6 +17,7 @@ import { errorMessage, pageItems } from '../../system/shared/pageHelpers'
 import BomLineEditor from './BomLineEditor.vue'
 import BomStatusTag from './BomStatusTag.vue'
 import { type BomLineDraft, lossRateNumber, newBomLine, positiveNumber } from './bomPageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const authStore = useAuthStore()
 const filters = reactive<{
@@ -30,7 +31,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<BomSummaryRecord[]>([])
@@ -158,6 +159,12 @@ function resetSearch() {
 
 function changePage(page: number) {
   pagination.page = page
+  void loadRecords()
+}
+
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
   void loadRecords()
 }
 
@@ -354,7 +361,7 @@ async function submitCopy() {
 }
 
 async function enableRecord(record: BomSummaryRecord) {
-  if (!window.confirm(`确认启用 BOM“${record.bomCode}”？`)) {
+  if (!(await confirmAction(`确认启用 BOM“${record.bomCode}”？`))) {
     return
   }
   actionError.value = ''
@@ -370,7 +377,7 @@ async function enableRecord(record: BomSummaryRecord) {
 }
 
 async function disableRecord(record: BomSummaryRecord) {
-  if (!window.confirm(`确认停用 BOM“${record.bomCode}”？`)) {
+  if (!(await confirmAction(`确认停用 BOM“${record.bomCode}”？`))) {
     return
   }
   actionError.value = ''
@@ -417,7 +424,6 @@ onMounted(() => {
             data-test="filter-bom-status"
             clearable
             placeholder="全部状态"
-            style="width: 140px"
           >
             <el-option label="草稿" value="DRAFT" />
             <el-option label="启用" value="ENABLED" />
@@ -431,7 +437,6 @@ onMounted(() => {
             filterable
             clearable
             placeholder="全部父项"
-            style="width: 190px"
           >
             <el-option
               v-for="material in parentMaterials"
@@ -528,14 +533,18 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
 
-    <el-dialog v-model="formVisible" :title="editingRecord ? '编辑 BOM' : '新增 BOM'" width="900px">
+    <el-dialog
+      v-model="formVisible"
+      :title="editingRecord ? '编辑 BOM' : '新增 BOM'"
+      width="min(1120px, calc(100vw - 48px))"
+    >
       <el-alert v-if="formError" class="form-alert" type="error" :title="formError" :closable="false" />
       <el-form label-position="top">
         <div class="bom-form-grid">
@@ -582,10 +591,10 @@ onMounted(() => {
             </el-select>
           </el-form-item>
           <el-form-item label="生效日期">
-            <el-input v-model="form.effectiveFrom" name="bom-effective-from" placeholder="YYYY-MM-DD" />
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.effectiveFrom" name="bom-effective-from" placeholder="选择日期" />
           </el-form-item>
           <el-form-item label="失效日期">
-            <el-input v-model="form.effectiveTo" name="bom-effective-to" placeholder="YYYY-MM-DD" />
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.effectiveTo" name="bom-effective-to" placeholder="选择日期" />
           </el-form-item>
         </div>
         <el-form-item label="备注">

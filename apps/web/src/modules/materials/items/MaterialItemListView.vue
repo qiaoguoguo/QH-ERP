@@ -15,6 +15,7 @@ import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { masterStatusLabel, materialTypeLabel, sourceTypeLabel } from '../../master/shared/masterPageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const materialTypeOptions: Array<{ label: string; value: MaterialType }> = [
   { label: '原材料', value: 'RAW_MATERIAL' },
@@ -44,7 +45,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<MaterialRecord[]>([])
@@ -170,6 +171,12 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function resetForm(record?: MaterialRecord) {
   Object.assign(form, {
     code: record?.code ?? '',
@@ -278,7 +285,7 @@ async function saveRecord() {
 
 async function changeStatus(record: MaterialRecord) {
   const nextAction = record.status === 'DISABLED' ? '启用' : '停用'
-  if (!window.confirm(`确认${nextAction}物料“${record.name}”？`)) {
+  if (!(await confirmAction(`确认${nextAction}物料“${record.name}”？`))) {
     return
   }
   actionError.value = ''
@@ -317,7 +324,7 @@ onMounted(() => {
           <el-input v-model="filters.keyword" name="material-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="启用" value="ENABLED" />
             <el-option label="停用" value="DISABLED" />
           </el-select>
@@ -328,7 +335,6 @@ onMounted(() => {
             data-test="filter-material-category-id"
             clearable
             placeholder="全部分类"
-            style="width: 160px"
           >
             <el-option v-for="category in categories" :key="category.id" :label="category.name" :value="category.id" />
           </el-select>
@@ -339,7 +345,6 @@ onMounted(() => {
             data-test="filter-material-type"
             clearable
             placeholder="全部类型"
-            style="width: 140px"
           >
             <el-option
               v-for="option in materialTypeOptions"
@@ -355,7 +360,6 @@ onMounted(() => {
             data-test="filter-source-type"
             clearable
             placeholder="全部来源"
-            style="width: 140px"
           >
             <el-option
               v-for="option in sourceTypeOptions"
@@ -431,11 +435,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
 
     <el-dialog v-model="formVisible" :title="editingRecord ? '编辑物料' : '新增物料'" width="640px">

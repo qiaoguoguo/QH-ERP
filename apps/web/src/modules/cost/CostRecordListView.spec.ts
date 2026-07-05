@@ -19,7 +19,7 @@ vi.mock('../../shared/api/costCollectionApi', () => ({
 }))
 
 function pageResult<T>(items: T[], total = items.length): PageResult<T> {
-  return { items, total, page: 1, pageSize: 20 }
+  return { items, total, page: 1, pageSize: 10 }
 }
 
 const records: CostRecordSummaryRecord[] = [
@@ -136,6 +136,12 @@ const stubs = {
     emits: ['update:modelValue'],
     template:
       '<input :name="name" :disabled="disabled" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+  },
+  ElDatePicker: {
+    props: ['modelValue', 'disabled', 'name', 'placeholder'],
+    emits: ['update:modelValue'],
+    template:
+      '<input type="date" :name="name" :disabled="disabled" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
   ElOption: {
     props: ['label', 'value'],

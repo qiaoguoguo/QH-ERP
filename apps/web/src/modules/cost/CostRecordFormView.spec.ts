@@ -171,6 +171,12 @@ const stubs = {
     template:
       '<input :name="name" :disabled="disabled" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
+  ElDatePicker: {
+    props: ['modelValue', 'disabled', 'name', 'placeholder'],
+    emits: ['update:modelValue'],
+    template:
+      '<input type="date" :name="name" :disabled="disabled" :placeholder="placeholder" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+  },
   ElOption: {
     props: ['label', 'value'],
     template: '<option :value="value">{{ label }}</option>',
@@ -203,6 +209,14 @@ async function mountForm(path: string) {
   })
   await flushPromises()
   return { router, wrapper }
+}
+
+function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
+  const button = wrapper.findAll('button').find((item) => item.text().trim() === text)
+  if (!button) {
+    throw new Error(`未找到按钮：${text}`)
+  }
+  return button
 }
 
 describe('成本记录表单页关键保存保护', () => {
@@ -373,5 +387,31 @@ describe('成本记录表单页关键保存保护', () => {
     }))
     expect(router.currentRoute.value.name).toBe('cost-record-detail')
     expect(router.currentRoute.value.params.id).toBe('12')
+  })
+
+  it('编辑页取消时保留原返回上下文回到详情', async () => {
+    costCollectionApiMock.records.get.mockResolvedValue(manualDetail)
+    const { router, wrapper } = await mountForm('/cost/records/12/edit?returnTo=/reports/cost')
+
+    await buttonByText(wrapper, '取消').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe('cost-record-detail')
+    expect(router.currentRoute.value.params.id).toBe('12')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/cost')
+  })
+
+  it('编辑页保存后保留原返回上下文回到详情', async () => {
+    costCollectionApiMock.records.get.mockResolvedValue(manualDetail)
+    costCollectionApiMock.records.update.mockResolvedValue({ id: 12 })
+    const { router, wrapper } = await mountForm('/cost/records/12/edit?returnTo=/reports/cost')
+
+    await wrapper.find('[data-test="save-cost-record"]').trigger('click')
+    await flushPromises()
+
+    expect(costCollectionApiMock.records.update).toHaveBeenCalled()
+    expect(router.currentRoute.value.name).toBe('cost-record-detail')
+    expect(router.currentRoute.value.params.id).toBe('12')
+    expect(router.currentRoute.value.query.returnTo).toBe('/reports/cost')
   })
 })

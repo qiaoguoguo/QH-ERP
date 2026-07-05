@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { procurementApi, type PurchaseReceiptDetailRecord, type ResourceId } from '../../shared/api/procurementApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
@@ -11,6 +12,7 @@ import {
   formatProcurementQuantity,
   procurementErrorMessage,
 } from './procurementPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,28 +68,36 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'procurement-receipts' })
+  void router.push(returnLocation(route, { name: 'procurement-receipts' }))
 }
 
 function editReceipt() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'procurement-receipt-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'procurement-receipt-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function viewSourceOrder() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'procurement-order-detail', params: { id: String(record.value.orderId) } })
+  void router.push({
+    name: 'procurement-order-detail',
+    params: { id: String(record.value.orderId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 async function postReceipt() {
   if (!record.value || actionLoading.value) {
     return
   }
-  if (!window.confirm(`确认过账采购入库“${record.value.receiptNo}”？`)) {
+  if (!(await confirmAction(`确认过账采购入库“${record.value.receiptNo}”？`))) {
     return
   }
 

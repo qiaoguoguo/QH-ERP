@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   costCollectionApi,
   type CostRecordSummaryRecord,
@@ -8,6 +8,7 @@ import {
   type CostSourceType,
   type CostType,
 } from '../../shared/api/costCollectionApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -24,6 +25,7 @@ import {
 } from './costPageHelpers'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -44,7 +46,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const records = ref<CostRecordSummaryRecord[]>([])
@@ -102,12 +104,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createRecord() {
   void router.push({ name: 'cost-record-create' })
 }
 
 function viewRecord(record: CostRecordSummaryRecord) {
-  void router.push({ name: 'cost-record-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'cost-record-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editRecord(record: CostRecordSummaryRecord) {
@@ -135,7 +147,7 @@ onMounted(loadRecords)
           <el-input v-model="filters.keyword" name="cost-record-keyword" clearable placeholder="记录号、工单、产品、来源" />
         </el-form-item>
         <el-form-item label="成本类型">
-          <el-select v-model="filters.costType" clearable placeholder="全部类型" style="width: 140px">
+          <el-select v-model="filters.costType" clearable placeholder="全部类型">
             <el-option label="材料" value="MATERIAL" />
             <el-option label="人工" value="LABOR" />
             <el-option label="制造费用" value="MANUFACTURING_OVERHEAD" />
@@ -143,13 +155,13 @@ onMounted(loadRecords)
           </el-select>
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-select v-model="filters.sourceType" clearable placeholder="全部来源" style="width: 150px">
+          <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
             <el-option label="生产自动来源" value="AUTO_PRODUCTION" />
             <el-option label="手工记录" value="MANUAL_ENTRY" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源单据">
-          <el-select v-model="filters.sourceDocumentType" clearable placeholder="全部单据" style="width: 150px">
+          <el-select v-model="filters.sourceDocumentType" clearable placeholder="全部单据">
             <el-option label="生产领料" value="PRODUCTION_MATERIAL_ISSUE" />
             <el-option label="生产报工" value="PRODUCTION_WORK_REPORT" />
             <el-option label="完工入库" value="PRODUCTION_COMPLETION_RECEIPT" />
@@ -157,13 +169,13 @@ onMounted(loadRecords)
           </el-select>
         </el-form-item>
         <el-form-item label="来源号">
-          <el-input v-model="filters.sourceDocumentNo" name="cost-source-document-no" clearable placeholder="来源单据号" style="width: 160px" />
+          <el-input v-model="filters.sourceDocumentNo" name="cost-source-document-no" clearable placeholder="来源单据号" />
         </el-form-item>
         <el-form-item label="业务日期">
-          <el-input v-model="filters.dateFrom" name="cost-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="cost-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="cost-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="cost-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-cost-records" type="primary" @click="search">查询</el-button>
@@ -242,11 +254,11 @@ onMounted(loadRecords)
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

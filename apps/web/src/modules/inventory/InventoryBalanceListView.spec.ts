@@ -73,7 +73,7 @@ const balance: InventoryBalanceRecord = {
 const balancePage: PageResult<InventoryBalanceRecord> = {
   items: [balance],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 1,
   totalPages: 1,
 }
@@ -81,7 +81,7 @@ const balancePage: PageResult<InventoryBalanceRecord> = {
 const emptyBalancePage: PageResult<InventoryBalanceRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -169,7 +169,7 @@ describe('库存余额页', () => {
       materialType: 'RAW_MATERIAL',
       onlyPositive: true,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     await wrapper.find('[data-test="reset-inventory-balances"]').trigger('click')
@@ -181,7 +181,7 @@ describe('库存余额页', () => {
       materialType: undefined,
       onlyPositive: false,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 

@@ -112,10 +112,10 @@ function removeLine(index: number) {
         </el-table-column>
         <el-table-column label="预计到货" width="140">
           <template #default="{ row, $index }">
-            <el-input
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
               :model-value="row.expectedArrivalDate"
               :name="`purchase-order-line-expected-date-${$index}`"
-              placeholder="YYYY-MM-DD"
+              placeholder="选择日期"
               :disabled="readOnly"
               @update:model-value="updateText($index, 'expectedArrivalDate', $event)"
             />

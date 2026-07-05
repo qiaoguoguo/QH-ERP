@@ -21,36 +21,39 @@ defineProps<{
 <style scoped>
 .report-metric-strip {
   display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  margin: 14px 0;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  margin: 0;
 }
 
 .report-metric {
-  border: 1px solid #dcdfe6;
+  background: var(--qherp-surface);
+  border: 1px solid var(--qherp-border);
   border-radius: 6px;
-  padding: 12px;
+  min-height: 76px;
   min-width: 0;
+  padding: 12px;
 }
 
 .report-metric__label {
-  color: #606266;
+  color: var(--qherp-steel);
   display: block;
   font-size: 13px;
   margin-bottom: 6px;
 }
 
 .report-metric__value {
-  color: #1f2d3d;
+  color: var(--qherp-text);
   display: block;
   font-size: 18px;
   font-variant-numeric: tabular-nums;
+  font-weight: 700;
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
 
 .report-metric__hint {
-  color: #909399;
+  color: var(--qherp-stone);
   display: block;
   margin-top: 4px;
 }

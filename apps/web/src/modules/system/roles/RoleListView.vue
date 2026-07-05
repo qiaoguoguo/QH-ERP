@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { accountPermissionApi, type RoleRecord, type RoleStatus } from '../../../shared/api/accountPermissionApi'
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusLabel, statusTagType } from '../shared/pageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -17,7 +18,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const roles = ref<RoleRecord[]>([])
@@ -81,6 +82,12 @@ function resetSearch() {
 
 function changePage(page: number) {
   pagination.page = page
+  void loadRoles()
+}
+
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
   void loadRoles()
 }
 
@@ -158,7 +165,7 @@ async function saveRole() {
 
 async function changeStatus(role: RoleRecord) {
   const nextAction = role.status === 'DISABLED' ? '启用' : '停用'
-  if (!window.confirm(`确认${nextAction}角色“${role.name}”？`)) {
+  if (!(await confirmAction(`确认${nextAction}角色“${role.name}”？`))) {
     return
   }
   loading.value = true
@@ -200,7 +207,7 @@ onMounted(loadRoles)
           <el-input v-model="filters.keyword" name="role-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="启用" value="ENABLED" />
             <el-option label="停用" value="DISABLED" />
           </el-select>
@@ -248,11 +255,11 @@ onMounted(loadRoles)
       </div>
       <el-pagination
         class="table-pagination"
-        layout="total, prev, pager, next"
+        layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
         :total="pagination.total"
         :page-size="pagination.pageSize"
         :current-page="pagination.page"
-        @current-change="changePage"
+        @current-change="changePage" @size-change="changePageSize"
       />
     </el-card>
 

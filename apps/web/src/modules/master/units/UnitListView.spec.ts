@@ -31,7 +31,7 @@ const unit: UnitRecord = {
   remark: '基本计件单位',
 }
 const disabledUnit: UnitRecord = { ...unit, id: 2, code: 'KG', name: '千克', status: 'DISABLED' }
-const emptyPage: PageResult<UnitRecord> = { items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 }
+const emptyPage: PageResult<UnitRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
 
 function mountUnits(permissions = ['master:unit:view', 'master:unit:create', 'master:unit:update']) {
   const pinia = createPinia()
@@ -150,7 +150,7 @@ describe('计量单位列表页', () => {
   })
 
   it('编辑单位时精度为 NaN 类输入不提交 update 并保持弹窗', async () => {
-    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUnits()
     await flushPromises()
 
@@ -166,7 +166,7 @@ describe('计量单位列表页', () => {
   })
 
   it('编辑单位时排序为 NaN 类输入不提交 update 并保持弹窗', async () => {
-    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.units.list.mockResolvedValue({ items: [unit], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     const wrapper = mountUnits()
     await flushPromises()
 
@@ -190,21 +190,20 @@ describe('计量单位列表页', () => {
     await wrapper.find('[data-test="search-record"]').trigger('click')
     await flushPromises()
 
-    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '件', status: undefined, page: 1, pageSize: 20 })
+    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '件', status: undefined, page: 1, pageSize: 10 })
 
     wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)
     await flushPromises()
-    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '件', status: undefined, page: 2, pageSize: 20 })
+    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '件', status: undefined, page: 2, pageSize: 10 })
 
     await wrapper.find('[data-test="reset-record"]').trigger('click')
     await flushPromises()
-    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '', status: undefined, page: 1, pageSize: 20 })
+    expect(apiMock.units.list).toHaveBeenLastCalledWith({ keyword: '', status: undefined, page: 1, pageSize: 10 })
   })
 
   it('单位启停失败时展示错误提示', async () => {
-    apiMock.units.list.mockResolvedValue({ items: [disabledUnit], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+    apiMock.units.list.mockResolvedValue({ items: [disabledUnit], page: 1, pageSize: 10, total: 1, totalPages: 1 })
     apiMock.units.enable.mockRejectedValue(new Error('单位状态已变化'))
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     const wrapper = mountUnits()
     await flushPromises()
 

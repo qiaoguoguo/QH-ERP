@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeApi, type PayableDetailRecord, type ResourceId } from '../../shared/api/financeApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
@@ -12,6 +13,7 @@ import {
   financePermissions,
   formatFinanceAmount,
 } from './financePageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,12 +50,16 @@ async function loadRecord() {
 }
 
 function backToList() {
-  void router.push({ name: 'finance-payables' })
+  void router.push(returnLocation(route, { name: 'finance-payables' }))
 }
 
 function editPayable() {
   if (record.value) {
-    void router.push({ name: 'finance-payable-edit', params: { id: String(record.value.id) } })
+    void router.push({
+    name: 'finance-payable-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
   }
 }
 
@@ -64,15 +70,27 @@ function createPayment() {
 }
 
 function viewPayment(id: ResourceId) {
-  void router.push({ name: 'finance-payment-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'finance-payment-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function viewPurchaseOrder(id: ResourceId) {
-  void router.push({ name: 'procurement-order-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'procurement-order-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function viewPurchaseReceipt(id: ResourceId) {
-  void router.push({ name: 'procurement-receipt-detail', params: { id: String(id) } })
+  void router.push({
+    name: 'procurement-receipt-detail',
+    params: { id: String(id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function auditText(audit: unknown) {
@@ -91,7 +109,7 @@ async function runPayableAction(action: 'confirm' | 'cancel' | 'close') {
     return
   }
   const labels = { confirm: '确认', cancel: '取消', close: '关闭' }
-  if (!window.confirm(`确认${labels[action]}应付“${record.value.payableNo}”？`)) {
+  if (!(await confirmAction(`确认${labels[action]}应付“${record.value.payableNo}”？`))) {
     return
   }
 

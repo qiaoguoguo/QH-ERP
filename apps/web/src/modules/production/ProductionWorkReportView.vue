@@ -165,7 +165,7 @@ onMounted(loadWorkOrder)
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
           <el-form-item label="报工日期">
-            <el-input v-model="form.businessDate" name="production-report-date" placeholder="YYYY-MM-DD" :disabled="!canSubmitReport" />
+            <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.businessDate" name="production-report-date" placeholder="选择日期" :disabled="!canSubmitReport" />
           </el-form-item>
           <el-form-item label="合格数量">
             <el-input v-model="form.qualifiedQuantity" name="production-qualified-quantity" placeholder="0.000000" :disabled="!canSubmitReport" />

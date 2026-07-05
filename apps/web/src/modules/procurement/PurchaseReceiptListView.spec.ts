@@ -81,7 +81,7 @@ const postedReceipt: PurchaseReceiptSummaryRecord = {
 const receiptPage: PageResult<PurchaseReceiptSummaryRecord> = {
   items: [draftReceipt, postedReceipt],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 2,
   totalPages: 1,
 }
@@ -89,7 +89,7 @@ const receiptPage: PageResult<PurchaseReceiptSummaryRecord> = {
 const emptyReceiptPage: PageResult<PurchaseReceiptSummaryRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -139,7 +139,6 @@ async function mountList(permissions = [
 describe('采购入库列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     procurementApiMock.receipts.list.mockResolvedValue(receiptPage)
     procurementApiMock.receipts.post.mockResolvedValue(postedReceipt)
     masterDataApiMock.suppliers.list.mockResolvedValue({
@@ -186,7 +185,7 @@ describe('采购入库列表页', () => {
       dateTo: '',
       orderId: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
     expect(wrapper.text()).toContain('采购入库')
     expect(wrapper.text()).toContain('PR-20260705-001')
@@ -221,7 +220,7 @@ describe('采购入库列表页', () => {
       dateTo: '2026-07-31',
       orderId: 99,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     await wrapper.find('[data-test="reset-purchase-receipts"]').trigger('click')
@@ -235,7 +234,7 @@ describe('采购入库列表页', () => {
       dateTo: '',
       orderId: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 

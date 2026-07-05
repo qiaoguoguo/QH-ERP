@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   returnRefundReversalApi,
   type ResourceId,
@@ -70,6 +71,12 @@ const selectedSource = computed(() => sources.value.find((source) =>
   source.sourceType === form.sourceType
     && String(source.sourceId) === String(form.sourceId)
     && String(source.targetId) === String(form.targetId)))
+const selectedSourceKey = computed(() => {
+  if (!form.sourceId || !form.targetId) {
+    return ''
+  }
+  return `${form.sourceType}-${form.sourceId}-${form.targetId}`
+})
 const nonEditableStatusText = computed(() => {
   if (nonEditableStatus.value === 'POSTED') {
     return '已过账'
@@ -107,6 +114,14 @@ function adjustmentTypeText(value: SettlementAdjustmentType | string) {
 
 function sourceTypeText(value: SettlementAdjustmentSourceType | string) {
   return allowedSourceTypes.find((item) => item.value === value)?.label ?? value
+}
+
+function sourceKey(source: SettlementAdjustmentSource) {
+  return `${source.sourceType}-${source.sourceId}-${source.targetId}`
+}
+
+function sourceRowClassName({ row }: { row: SettlementAdjustmentSource }) {
+  return matchesCurrentSource(row) ? 'is-selected-settlement-source' : ''
 }
 
 async function loadSources() {
@@ -179,9 +194,7 @@ function clearSourceSelection() {
 }
 
 function matchesCurrentSource(source: SettlementAdjustmentSource) {
-  return source.sourceType === form.sourceType
-    && String(source.sourceId) === String(form.sourceId)
-    && String(source.targetId) === String(form.targetId)
+  return sourceKey(source) === selectedSourceKey.value
 }
 
 function syncSourceSelection() {
@@ -278,7 +291,11 @@ async function submit() {
     const detail = isEdit.value && routeId.value
       ? await returnRefundReversalApi.settlementAdjustments.update(routeId.value, payload)
       : await returnRefundReversalApi.settlementAdjustments.create(payload as SettlementAdjustmentPayload)
-    await router.push({ name: 'finance-settlement-adjustment-detail', params: { id: String(detail.id) } })
+    await router.push({
+      name: 'finance-settlement-adjustment-detail',
+      params: { id: String(detail.id) },
+      query: queryWithReturnTo({}, routeReturnTo(route)),
+    })
   } catch (caught) {
     submitError.value = financeErrorMessage(caught)
   } finally {
@@ -294,7 +311,11 @@ function returnToDetail() {
   if (!routeId.value) {
     return
   }
-  void router.push({ name: 'finance-settlement-adjustment-detail', params: { id: routeId.value } })
+  void router.push({
+    name: 'finance-settlement-adjustment-detail',
+    params: { id: routeId.value },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 onMounted(() => {
@@ -319,13 +340,13 @@ onMounted(() => {
           />
         </el-form-item>
         <el-form-item label="往来方向">
-          <el-select v-model="sourceFilters.settlementSide" clearable placeholder="全部方向" style="width: 130px">
+          <el-select v-model="sourceFilters.settlementSide" clearable placeholder="全部方向">
             <el-option label="应收冲减" value="RECEIVABLE" />
             <el-option label="应付冲减" value="PAYABLE" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-select v-model="sourceFilters.sourceType" clearable placeholder="全部来源" style="width: 140px">
+          <el-select v-model="sourceFilters.sourceType" clearable placeholder="全部来源">
             <el-option
               v-for="item in allowedSourceTypes"
               :key="item.value"
@@ -362,16 +383,24 @@ onMounted(() => {
         <template #header>候选来源</template>
         <el-empty v-if="!loading && sources.length === 0" description="暂无可冲减来源" />
         <div v-else class="table-scroll">
-          <el-table :data="sources" :empty-text="loading ? '加载中' : '暂无可冲减来源'" stripe>
-            <el-table-column label="选择" width="80">
+          <el-table
+            :data="sources"
+            :empty-text="loading ? '加载中' : '暂无可冲减来源'"
+            :row-key="sourceKey"
+            :row-class-name="sourceRowClassName"
+            stripe
+          >
+            <el-table-column label="选择" width="96" fixed="left">
               <template #default="{ row }">
-                <el-radio
-                  :model-value="`${form.sourceType}-${form.sourceId}-${form.targetId}`"
-                  :label="`${row.sourceType}-${row.sourceId}-${row.targetId}`"
-                  @change="chooseSource(row)"
+                <el-button
+                  size="small"
+                  :type="matchesCurrentSource(row) ? 'primary' : 'default'"
+                  :plain="!matchesCurrentSource(row)"
+                  :data-test="`select-settlement-adjustment-source-${sourceKey(row)}`"
+                  @click="chooseSource(row)"
                 >
-                  选择
-                </el-radio>
+                  {{ matchesCurrentSource(row) ? '已选择' : '选择' }}
+                </el-button>
               </template>
             </el-table-column>
             <el-table-column label="来源类型" min-width="110">
@@ -393,10 +422,10 @@ onMounted(() => {
         <template #header>冲减信息</template>
         <el-form class="document-form" label-width="110px">
           <el-form-item label="来源">
-            <span>{{ sourceDisplayText }}</span>
+            <span data-test="settlement-adjustment-selected-source">{{ sourceDisplayText }}</span>
           </el-form-item>
           <el-form-item label="目标单号">
-            <span>{{ targetDisplayText }}</span>
+            <span data-test="settlement-adjustment-selected-target">{{ targetDisplayText }}</span>
           </el-form-item>
           <el-form-item label="往来方向">
             <span>{{ settlementSideText(form.settlementSide) }}</span>
@@ -416,13 +445,16 @@ onMounted(() => {
             <span>{{ formatFinanceAmount(selectedSource?.adjustedAmount || editDetail?.targetAdjustedAmountBefore) }}</span>
           </el-form-item>
           <el-form-item label="可冲金额">
-            <span>{{ formatFinanceAmount(adjustableAmount) }}</span>
+            <span data-test="settlement-adjustment-adjustable-amount">{{ formatFinanceAmount(adjustableAmount) }}</span>
           </el-form-item>
           <el-form-item label="业务日期">
-            <el-input
+            <el-date-picker value-on-clear=""
               v-model="form.businessDate"
               name="settlement-adjustment-business-date"
-              placeholder="YYYY-MM-DD"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              placeholder="选择业务日期"
               style="width: 180px"
             />
           </el-form-item>
@@ -478,6 +510,10 @@ onMounted(() => {
 
 .table-scroll {
   overflow-x: auto;
+}
+
+:deep(.is-selected-settlement-source > .el-table__cell) {
+  background: #eef6ff !important;
 }
 
 .numeric-cell {

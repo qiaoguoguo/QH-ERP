@@ -11,11 +11,13 @@ import {
   type SettlementAdjustmentType,
   type SettlementSide,
 } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import { financeErrorMessage, financePermissions, formatFinanceAmount } from '../finance/financePageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -96,14 +98,18 @@ async function loadDetail() {
 }
 
 function backToList() {
-  void router.push({ name: 'finance-settlement-adjustments' })
+  void router.push(returnLocation(route, { name: 'finance-settlement-adjustments' }))
 }
 
 function editSettlementAdjustment() {
   if (!record.value) {
     return
   }
-  void router.push({ name: 'finance-settlement-adjustment-edit', params: { id: String(record.value.id) } })
+  void router.push({
+    name: 'finance-settlement-adjustment-edit',
+    params: { id: String(record.value.id) },
+    query: queryWithReturnTo({}, routeReturnTo(route)),
+  })
 }
 
 function viewSourceDocument(source: ReversalSourceView) {
@@ -113,12 +119,12 @@ function viewSourceDocument(source: ReversalSourceView) {
   void router.push({
     name: source.resourceRouteName,
     params: routeValues(source.resourceRouteParams),
-    query: routeValues(source.resourceRouteQuery),
+    query: queryWithReturnTo(routeValues(source.resourceRouteQuery), currentRouteReturnTo(route)),
   })
 }
 
 async function postSettlementAdjustment() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认过账往来冲减“${record.value.adjustmentNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认过账往来冲减“${record.value.adjustmentNo}”？`))) {
     return
   }
   actionError.value = ''
@@ -133,7 +139,7 @@ async function postSettlementAdjustment() {
 }
 
 async function cancelSettlementAdjustment() {
-  if (!record.value || actionLoading.value || !window.confirm(`确认取消往来冲减“${record.value.adjustmentNo}”？`)) {
+  if (!record.value || actionLoading.value || !(await confirmAction(`确认取消往来冲减“${record.value.adjustmentNo}”？`))) {
     return
   }
   actionError.value = ''

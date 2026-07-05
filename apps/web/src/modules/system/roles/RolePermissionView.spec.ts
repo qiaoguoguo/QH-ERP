@@ -5,7 +5,10 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import RolePermissionView from './RolePermissionView.vue'
 import type { PermissionNode, RoleRecord } from '../../../shared/api/accountPermissionApi'
+import { useConfirmActionMock } from '../../../test/setup'
 import { useAuthStore } from '../../../stores/authStore'
+
+const confirmActionMock = useConfirmActionMock()
 
 const apiMock = vi.hoisted(() => ({
   roles: {
@@ -113,7 +116,7 @@ describe('角色权限配置页', () => {
   })
 
   it('有未保存修改时取消会二次确认', async () => {
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    confirmActionMock.mockResolvedValueOnce(false)
     const { router, wrapper } = await mountPermissions()
     await flushPromises()
 
@@ -121,7 +124,7 @@ describe('角色权限配置页', () => {
     await wrapper.find('[data-test="cancel-permissions"]').trigger('click')
     await flushPromises()
 
-    expect(window.confirm).toHaveBeenCalled()
+    expect(confirmActionMock).toHaveBeenCalledWith('存在未保存的权限修改，确认取消？')
     expect(router.currentRoute.value.fullPath).toBe('/accounts/roles/1/permissions')
   })
 })

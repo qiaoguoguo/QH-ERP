@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { accountPermissionApi, type PermissionNode, type RoleRecord } from '../../../shared/api/accountPermissionApi'
 import { errorMessage } from '../shared/pageHelpers'
 import PermissionTree from '../shared/PermissionTree.vue'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const route = useRoute()
 const router = useRouter()
@@ -63,8 +64,8 @@ async function savePermissions() {
   }
 }
 
-function cancel() {
-  if (dirty.value && !window.confirm('存在未保存的权限修改，确认取消？')) {
+async function cancel() {
+  if (dirty.value && !(await confirmAction('存在未保存的权限修改，确认取消？'))) {
     return
   }
   void router.push({ name: 'system-roles' })

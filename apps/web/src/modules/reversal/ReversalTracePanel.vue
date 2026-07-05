@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import type { ReversalRouteValue, ReversalSourceView, ReversalTraceRecord } from '../../shared/api/returnRefundReversalApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 
 interface ImpactResourceItem {
   key: string
@@ -22,6 +23,7 @@ const emit = defineEmits<{
 }>()
 
 const router = useRouter()
+const route = useRoute()
 
 function restricted(row: ReversalTraceRecord) {
   return row.restricted || !row.canViewResource
@@ -113,7 +115,7 @@ function viewSource(row: ReversalTraceRecord) {
   void router.push({
     name: row.source.resourceRouteName,
     params: routeValues(row.source.resourceRouteParams),
-    query: routeValues(row.source.resourceRouteQuery),
+    query: queryWithReturnTo(routeValues(row.source.resourceRouteQuery), currentRouteReturnTo(route)),
   })
 }
 
@@ -124,7 +126,7 @@ function viewReverse(row: ReversalTraceRecord) {
   void router.push({
     name: row.reverse.resourceRouteName,
     params: routeValues(row.reverse.resourceRouteParams),
-    query: routeValues(row.reverse.resourceRouteQuery),
+    query: queryWithReturnTo(routeValues(row.reverse.resourceRouteQuery), currentRouteReturnTo(route)),
   })
 }
 
@@ -135,7 +137,7 @@ function viewImpactResource(resource: ImpactResourceItem) {
   void router.push({
     name: resource.routeName,
     params: routeValues(resource.routeParams),
-    query: routeValues(resource.routeQuery),
+    query: queryWithReturnTo(routeValues(resource.routeQuery), currentRouteReturnTo(route)),
   })
 }
 

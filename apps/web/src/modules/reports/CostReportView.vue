@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { businessReportingApi, type CostReportRow, type CostReportSummary, type ReportTraceRecord } from '../../shared/api/businessReportingApi'
+import { costTypeLabel } from '../cost/costPageHelpers'
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
@@ -19,7 +20,7 @@ const error = ref('')
 const rows = ref<CostReportRow[]>([])
 const summary = ref<CostReportSummary | null>(null)
 const page = ref(1)
-const pageSize = 20
+const pageSize = ref(10)
 const total = ref(0)
 const traceVisible = ref(false)
 const traceRows = ref<ReportTraceRecord[]>([])
@@ -54,7 +55,7 @@ async function loadReport(targetPage = page.value) {
       workOrderId: filters.workOrderId || undefined,
       materialId: filters.materialId || undefined,
       page: targetPage,
-      pageSize,
+      pageSize: pageSize.value,
     })
     rows.value = result.items
     summary.value = result.summary
@@ -73,12 +74,17 @@ function reset() {
   Object.assign(filters, { dateFrom: '', dateTo: '', keyword: '', status: '', workOrderId: '', materialId: '' })
   void loadReport(1)
 }
+function changePageSize(size: number) {
+  pageSize.value = size
+  void loadReport(1)
+}
+
 async function openTrace(row: CostReportRow) {
   traceVisible.value = true
   traceLoading.value = true
   traceError.value = ''
   try {
-    const result = await businessReportingApi.cost.traces.list({ traceKey: row.traceKey, dateFrom: filters.dateFrom, dateTo: filters.dateTo, page: 1, pageSize })
+    const result = await businessReportingApi.cost.traces.list({ traceKey: row.traceKey, dateFrom: filters.dateFrom, dateTo: filters.dateTo, page: 1, pageSize: pageSize.value })
     traceRows.value = result.items
   } catch (cause) {
     traceError.value = cause instanceof Error ? cause.message : '来源追溯加载失败'
@@ -94,7 +100,7 @@ onMounted(() => { void loadReport(1) })
   <section class="report-page">
     <header class="report-page__header">
       <h1>成本归集</h1>
-      <p>成本归集展示生产相关经营成本归集口径，formalAccounting=false，不等同正式财务成本入账。</p>
+      <p>成本归集展示生产相关经营成本口径，用于经营分析，不作为正式财务入账依据。</p>
     </header>
     <ReportFilterBar
       :model-value="filters"
@@ -111,7 +117,11 @@ onMounted(() => { void loadReport(1) })
         <el-table-column prop="recordNo" label="成本单号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="workOrderNo" label="生产工单" min-width="150" show-overflow-tooltip />
         <el-table-column prop="productMaterialName" label="产品" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="costType" label="成本类型" min-width="120" />
+        <el-table-column label="成本类型" min-width="120">
+          <template #default="{ row }">
+            <span data-test="report-cost-type">{{ costTypeLabel(row.costType) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="sourceDocumentNo" label="来源单据" min-width="150" show-overflow-tooltip />
         <el-table-column label="材料原发生" min-width="120" align="right">
           <template #default="{ row }">{{ row.materialOriginalCost ?? row.amount ?? '0.00' }}</template>
@@ -138,13 +148,13 @@ onMounted(() => { void loadReport(1) })
         </el-table-column>
       </el-table>
     </div>
-    <el-pagination :current-page="page" :page-size="pageSize" :total="total" layout="prev, pager, next, total" @current-change="loadReport" />
+    <el-pagination :current-page="page" :page-size="pageSize" :page-sizes="[10, 20, 50, 100]" :total="total" layout="total, sizes, prev, pager, next" @current-change="loadReport" @size-change="changePageSize" />
     <ReportTracePanel :visible="traceVisible" :rows="traceRows" :loading="traceLoading" :error="traceError" @close="traceVisible = false" />
   </section>
 </template>
 
 <style scoped>
 .report-page__header h1 { font-size: 22px; margin: 0 0 6px; }
-.report-page__header p { color: #606266; margin: 0; }
+.report-page__header p { color: var(--qherp-steel); margin: 0; }
 .report-table-scroll { overflow-x: auto; }
 </style>

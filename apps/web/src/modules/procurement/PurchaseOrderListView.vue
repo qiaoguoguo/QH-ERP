@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
 import {
   procurementApi,
   type PurchaseOrderStatus,
   type PurchaseOrderSummaryRecord,
 } from '../../shared/api/procurementApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
@@ -17,8 +18,10 @@ import {
   normalizeOptionalId,
   procurementErrorMessage,
 } from './procurementPageHelpers'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
@@ -39,7 +42,7 @@ const filters = reactive<{
 })
 const pagination = reactive({
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
 })
 const suppliers = ref<PartnerRecord[]>([])
@@ -125,12 +128,22 @@ function changePage(page: number) {
   void loadRecords()
 }
 
+function changePageSize(pageSize: number) {
+  pagination.pageSize = pageSize
+  pagination.page = 1
+  void loadRecords()
+}
+
 function createOrder() {
   void router.push({ name: 'procurement-order-create' })
 }
 
 function viewOrder(record: PurchaseOrderSummaryRecord) {
-  void router.push({ name: 'procurement-order-detail', params: { id: String(record.id) } })
+  void router.push({
+    name: 'procurement-order-detail',
+    params: { id: String(record.id) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 function editOrder(record: PurchaseOrderSummaryRecord) {
@@ -162,7 +175,7 @@ async function runOrderAction(record: PurchaseOrderSummaryRecord, action: 'confi
     cancel: '取消',
     close: '关闭',
   }
-  if (!window.confirm(`确认${actionLabels[action]}采购订单“${record.orderNo}”？`)) {
+  if (!(await confirmAction(`确认${actionLabels[action]}采购订单“${record.orderNo}”？`))) {
     return
   }
 
@@ -209,7 +222,6 @@ onMounted(() => {
             clearable
             filterable
             placeholder="全部供应商"
-            style="width: 170px"
           >
             <el-option
               v-for="supplier in suppliers"
@@ -220,7 +232,7 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态" style="width: 140px">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已确认" value="CONFIRMED" />
             <el-option label="部分入库" value="PARTIALLY_RECEIVED" />
@@ -230,25 +242,23 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="订单日期">
-          <el-input v-model="filters.dateFrom" name="purchase-order-date-from" placeholder="起始日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="purchase-order-date-from" placeholder="起始日期" />
         </el-form-item>
         <el-form-item>
-          <el-input v-model="filters.dateTo" name="purchase-order-date-to" placeholder="截止日期" style="width: 130px" />
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateTo" name="purchase-order-date-to" placeholder="截止日期" />
         </el-form-item>
         <el-form-item label="预计到货">
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.expectedDateFrom"
             name="purchase-order-expected-date-from"
             placeholder="起始日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
-          <el-input
+          <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.expectedDateTo"
             name="purchase-order-expected-date-to"
             placeholder="截止日期"
-            style="width: 130px"
           />
         </el-form-item>
         <el-form-item>
@@ -367,11 +377,11 @@ onMounted(() => {
     </div>
     <el-pagination
       class="table-pagination"
-      layout="total, prev, pager, next"
+      layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
-      @current-change="changePage"
+      @current-change="changePage" @size-change="changePageSize"
     />
   </MasterDataTableView>
 </template>

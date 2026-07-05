@@ -43,7 +43,6 @@ const payable: PayableSummaryRecord = {
 describe('应付台账列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     masterDataApiMock.suppliers.list.mockResolvedValue(page([supplier]))
     financeApiMock.payables.list.mockResolvedValue(page([payable]))
     financeApiMock.payables.confirm.mockResolvedValue({ ...payable, status: 'CONFIRMED' })
@@ -82,7 +81,7 @@ describe('应付台账列表页', () => {
       dueDateTo: '2026-08-31',
       sourceNo: 'PR',
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)

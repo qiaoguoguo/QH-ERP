@@ -6,8 +6,11 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { PartnerRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { SalesShipmentSummaryRecord } from '../../shared/api/salesApi'
+import { useConfirmActionMock } from '../../test/setup'
 import { useAuthStore } from '../../stores/authStore'
 import SalesShipmentListView from './SalesShipmentListView.vue'
+
+const confirmActionMock = useConfirmActionMock()
 
 const salesApiMock = vi.hoisted(() => ({
   shipments: {
@@ -81,7 +84,7 @@ const postedShipment: SalesShipmentSummaryRecord = {
 const shipmentPage: PageResult<SalesShipmentSummaryRecord> = {
   items: [draftShipment, postedShipment],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 2,
   totalPages: 1,
 }
@@ -89,7 +92,7 @@ const shipmentPage: PageResult<SalesShipmentSummaryRecord> = {
 const emptyShipmentPage: PageResult<SalesShipmentSummaryRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -139,7 +142,6 @@ async function mountList(permissions = [
 describe('销售出库列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     salesApiMock.shipments.list.mockResolvedValue(shipmentPage)
     salesApiMock.shipments.post.mockResolvedValue(postedShipment)
     masterDataApiMock.customers.list.mockResolvedValue({
@@ -186,7 +188,7 @@ describe('销售出库列表页', () => {
       dateTo: '',
       orderId: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
     expect(wrapper.text()).toContain('销售出库')
     expect(wrapper.text()).toContain('SS-20260705-001')
@@ -221,7 +223,7 @@ describe('销售出库列表页', () => {
       dateTo: '2026-07-31',
       orderId: 99,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
 
     await wrapper.find('[data-test="reset-sales-shipments"]').trigger('click')
@@ -235,7 +237,7 @@ describe('销售出库列表页', () => {
       dateTo: '',
       orderId: undefined,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 
@@ -279,7 +281,7 @@ describe('销售出库列表页', () => {
 
     await wrapper.find('[data-test="post-sales-shipment"]').trigger('click')
     await flushPromises()
-    expect(window.confirm).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
+    expect(confirmActionMock).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
     expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700)
     expect(salesApiMock.shipments.list).toHaveBeenCalledTimes(2)
 

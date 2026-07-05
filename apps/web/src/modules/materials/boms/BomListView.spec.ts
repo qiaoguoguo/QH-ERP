@@ -115,14 +115,14 @@ const draftDetail: BomDetailRecord = {
 const bomPage: PageResult<BomSummaryRecord> = {
   items: [draftBom, enabledBom],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 2,
   totalPages: 1,
 }
 const emptyBomPage: PageResult<BomSummaryRecord> = {
   items: [],
   page: 1,
-  pageSize: 20,
+  pageSize: 10,
   total: 0,
   totalPages: 0,
 }
@@ -175,7 +175,6 @@ async function fillValidBomForm(wrapper: VueWrapper) {
 describe('BOM 管理页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    vi.stubGlobal('confirm', vi.fn(() => true))
     bomApiMock.list.mockResolvedValue(bomPage)
     bomApiMock.get.mockResolvedValue(draftDetail)
     bomApiMock.create.mockResolvedValue(draftDetail)
@@ -225,7 +224,7 @@ describe('BOM 管理页', () => {
       status: 'DRAFT',
       parentMaterialId: 1,
       page: 1,
-      pageSize: 20,
+      pageSize: 10,
     })
   })
 
@@ -266,6 +265,19 @@ describe('BOM 管理页', () => {
 
     expect(wrapper.text()).toContain('请完整填写 BOM 编码、版本、名称和父项物料')
     expect(bomApiMock.create).not.toHaveBeenCalled()
+  })
+
+  it('新增 BOM 弹窗为明细操作列提供响应式宽度和横向滚动容器', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-bom"]').trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.findComponent({ name: 'ElDialog' })
+    expect(dialog.props('width')).toBe('min(1120px, calc(100vw - 48px))')
+    expect(wrapper.find('[data-test="bom-line-scroll"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="remove-bom-line"]').exists()).toBe(true)
   })
 
   it('明细用量为 0 时展示错误并不提交', async () => {
