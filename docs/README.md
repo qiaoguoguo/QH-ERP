@@ -97,6 +97,7 @@
 - [经营报表基础测试计划](testing/business-reporting-test-plan.md)
 - [退货退款与业务反冲测试计划](testing/return-refund-reversal-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
+- [电气制造业验收模拟数据链](testing/electrical-manufacturing-demo-data.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
 - [部署与阶段验收](ops/deployment-acceptance.md)
