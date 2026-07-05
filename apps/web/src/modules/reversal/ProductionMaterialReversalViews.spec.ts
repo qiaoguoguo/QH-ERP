@@ -10,6 +10,7 @@ import ProductionMaterialReturnListView from './ProductionMaterialReturnListView
 import ProductionMaterialSupplementDetailView from './ProductionMaterialSupplementDetailView.vue'
 import ProductionMaterialSupplementFormView from './ProductionMaterialSupplementFormView.vue'
 import ProductionMaterialSupplementListView from './ProductionMaterialSupplementListView.vue'
+import ReversalTracePanel from './ReversalTracePanel.vue'
 import { useAuthStore } from '../../stores/authStore'
 
 const returnRefundReversalApiMock = vi.hoisted(() => ({
@@ -141,6 +142,16 @@ const returnCostTrace = {
   resourceRouteParams: { id: 1001 },
 }
 
+const returnInventoryAndCostTrace = {
+  ...returnInventoryTrace,
+  traceKey: 'PRODUCTION_MATERIAL_RETURN:3:INVENTORY_MOVEMENT:901:COST_RECORD:1001',
+  direction: 'SOURCE_TO_REVERSE' as const,
+  settlementAdjustmentId: 777,
+  costRecordId: 1001,
+  resourceRouteName: 'inventory-movements',
+  resourceRouteQuery: { sourceType: 'PRODUCTION_MATERIAL_RETURN', sourceId: 3 },
+}
+
 const supplementInventoryTrace = {
   traceKey: 'PRODUCTION_WORK_ORDER_MATERIAL:30:501:PRODUCTION_MATERIAL_SUPPLEMENT:4:0:INVENTORY_MOVEMENT:902',
   direction: 'SOURCE_TO_REVERSE',
@@ -171,6 +182,15 @@ const supplementCostTrace = {
   restricted: false,
   resourceRouteName: 'cost-record-detail',
   resourceRouteParams: { id: 1002 },
+}
+
+const supplementInventoryAndCostTrace = {
+  ...supplementInventoryTrace,
+  traceKey: 'PRODUCTION_MATERIAL_SUPPLEMENT:4:INVENTORY_MOVEMENT:902:COST_RECORD:1002',
+  direction: 'SOURCE_TO_REVERSE' as const,
+  costRecordId: 1002,
+  resourceRouteName: 'inventory-movements',
+  resourceRouteQuery: { sourceType: 'PRODUCTION_MATERIAL_SUPPLEMENT', sourceId: 4 },
 }
 
 const restrictedTrace = {
@@ -538,6 +558,32 @@ describe('生产退料补料前端页面', () => {
     expect(payload.lines[0]).not.toHaveProperty('sourceIssueLineId')
   })
 
+  it('生产退料编辑页不把通用来源数量展示成已领数量', async () => {
+    returnRefundReversalApiMock.productionMaterialReturns.get.mockResolvedValueOnce({
+      ...materialReturnDetail,
+      lines: [
+        {
+          ...materialReturnDetail.lines[0],
+          quantity: '3.123456',
+          returnedQuantityBefore: '8.888888',
+          returnableQuantityBefore: '9.999999',
+          source: {
+            ...materialIssueLineSource,
+            quantity: '7.777777',
+            amount: '155.55',
+          },
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnFormView, '/production/material-returns/3/edit', ['production:material-return:update'])
+
+    expect(wrapper.text()).toContain('编辑生产退料')
+    expect(wrapper.text()).toContain('已领数量')
+    expect(wrapper.text()).not.toContain('7.777777')
+    const quantityInput = wrapper.find('input[name="material-return-line-quantity-401"]')
+    expect((quantityInput.element as HTMLInputElement).value).toBe('3.123456')
+  })
+
   it('生产补料来源受限编辑可保存草稿行且不提交来源主键', async () => {
     returnRefundReversalApiMock.productionMaterialSupplements.get.mockResolvedValueOnce({
       ...materialSupplementDetail,
@@ -580,8 +626,78 @@ describe('生产退料补料前端页面', () => {
     expect(payload.lines[0]).not.toHaveProperty('workOrderMaterialId')
   })
 
+  it('追溯面板同一条记录同时展示库存、往来和成本影响资源', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/', name: 'home', component: { render: () => null } },
+        { path: '/inventory/movements', name: 'inventory-movements', component: { render: () => null } },
+        { path: '/cost/records/:id', name: 'cost-record-detail', component: { render: () => null } },
+      ],
+    })
+    await router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(ReversalTracePanel, {
+      props: {
+        visible: true,
+        rows: [returnInventoryAndCostTrace],
+      },
+      global: {
+        plugins: [router, ElementPlus],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('库存流水 #901')
+    expect(wrapper.text()).toContain('往来冲减 #777')
+    expect(wrapper.text()).toContain('成本记录 #1001')
+
+    const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
+    expect(impactButtons).toHaveLength(2)
+    await impactButtons[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('inventory-movements')
+    expect(router.currentRoute.value.query.sourceId).toBe('3')
+    await impactButtons[1].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('cost-record-detail')
+    expect(router.currentRoute.value.params.id).toBe('1001')
+  })
+
+  it('生产补料编辑页不把通用反向字段展示成计划、已领、已补或可用库存', async () => {
+    returnRefundReversalApiMock.productionMaterialSupplements.get.mockResolvedValueOnce({
+      ...materialSupplementDetail,
+      lines: [
+        {
+          ...materialSupplementDetail.lines[0],
+          quantity: '2.123456',
+          returnedQuantityBefore: '22.222222',
+          returnableQuantityBefore: '33.333333',
+          source: {
+            ...workOrderMaterialSource,
+            quantity: '11.111111',
+            amount: '444.44',
+          },
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/4/edit', ['production:material-supplement:update'])
+
+    expect(wrapper.text()).toContain('编辑生产补料')
+    expect(wrapper.text()).toContain('计划用量')
+    expect(wrapper.text()).toContain('已领数量')
+    expect(wrapper.text()).toContain('已补数量')
+    expect(wrapper.text()).toContain('可用库存')
+    expect(wrapper.text()).not.toContain('11.111111')
+    expect(wrapper.text()).not.toContain('22.222222')
+    expect(wrapper.text()).not.toContain('33.333333')
+    const quantityInput = wrapper.find('input[name="material-supplement-line-quantity-501"]')
+    expect((quantityInput.element as HTMLInputElement).value).toBe('2.123456')
+  })
+
   it('生产退料详情展示库存入库、成本影响、追溯和权限操作', async () => {
-    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([returnInventoryTrace, returnCostTrace, restrictedTrace])
+    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([returnInventoryAndCostTrace, restrictedTrace])
     const { wrapper, router } = await mountReversalView(ProductionMaterialReturnDetailView, '/production/material-returns/3', [
       'production:material-return:view',
       'production:material-return:update',
@@ -608,19 +724,21 @@ describe('生产退料补料前端页面', () => {
       includeRestricted: true,
     })
     expect(wrapper.text()).toContain('生产退料')
+    expect(wrapper.text()).toContain('库存流水 #901')
+    expect(wrapper.text()).toContain('成本记录 #1001')
     expect(wrapper.text()).toContain('来源无查看权限')
 
     const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
-    expect(impactButtons.length).toBeGreaterThanOrEqual(2)
-    await impactButtons[1].trigger('click')
+    expect(impactButtons.length).toBeGreaterThanOrEqual(1)
+    await impactButtons[0].trigger('click')
     await flushPromises()
-    expect(router.currentRoute.value.name).toBe('cost-record-detail')
-    expect(router.currentRoute.value.params.id).toBe('1001')
+    expect(router.currentRoute.value.name).toBe('inventory-movements')
+    expect(router.currentRoute.value.query.sourceId).toBe('3')
   })
 
   it('生产补料详情展示库存出库、成本影响且不沿用退料语义', async () => {
     returnRefundReversalApiMock.productionMaterialSupplements.get.mockResolvedValueOnce({ ...materialSupplementDetail, status: 'POSTED' })
-    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([supplementInventoryTrace, supplementCostTrace])
+    returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([supplementInventoryAndCostTrace])
     const { wrapper } = await mountReversalView(ProductionMaterialSupplementDetailView, '/production/material-supplements/4', [
       'production:material-supplement:view',
       'business:reversal:view',
@@ -643,6 +761,7 @@ describe('生产退料补料前端页面', () => {
       includeRestricted: true,
     })
     expect(wrapper.text()).toContain('生产补料')
+    expect(wrapper.text()).toContain('库存流水 #902')
     expect(wrapper.text()).toContain('成本记录 #1002')
   })
 })

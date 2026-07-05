@@ -116,7 +116,7 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialReturnLineDraf
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
-    issuedQuantity: restricted ? '' : line.source.quantity ?? '',
+    issuedQuantity: '',
     returnedQuantity: line.returnedQuantityBefore ?? '',
     returnableQuantity: line.returnableQuantityBefore ?? '',
     unitPrice: line.unitPrice ?? '',

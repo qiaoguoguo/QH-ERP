@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
-import type { ReversalSourceView, ReversalTraceRecord } from '../../shared/api/returnRefundReversalApi'
+import type { ReversalRouteValue, ReversalSourceView, ReversalTraceRecord } from '../../shared/api/returnRefundReversalApi'
+
+interface ImpactResourceItem {
+  key: string
+  label: string
+  routeName?: string
+  routeParams?: Record<string, ReversalRouteValue>
+  routeQuery?: Record<string, ReversalRouteValue>
+}
 
 defineProps<{
   visible: boolean
@@ -23,7 +31,7 @@ function sourceRestricted(source?: ReversalSourceView | null) {
   return !source || source.restricted || !source.canViewSource
 }
 
-function routeValues(values?: Record<string, string | number | boolean>) {
+function routeValues(values?: Record<string, ReversalRouteValue>) {
   return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]))
 }
 
@@ -120,35 +128,84 @@ function viewReverse(row: ReversalTraceRecord) {
   })
 }
 
-function viewImpactResource(row: ReversalTraceRecord) {
-  if (restricted(row) || !row.resourceRouteName || !hasImpactResource(row)) {
+function viewImpactResource(resource: ImpactResourceItem) {
+  if (!resource.routeName) {
     return
   }
   void router.push({
-    name: row.resourceRouteName,
-    params: routeValues(row.resourceRouteParams),
-    query: routeValues(row.resourceRouteQuery),
+    name: resource.routeName,
+    params: routeValues(resource.routeParams),
+    query: routeValues(resource.routeQuery),
   })
 }
 
-function hasImpactResource(row: ReversalTraceRecord) {
-  return Boolean(row.inventoryMovementId || row.settlementAdjustmentId || row.costRecordId)
+function settlementImpactLabel(row: ReversalTraceRecord) {
+  if (isPurchaseTrace(row)) {
+    return '应付冲减'
+  }
+  if (row.source.sourceType?.startsWith('SALES_') || row.reverse.sourceType?.startsWith('SALES_')) {
+    return '应收冲减'
+  }
+  return '往来冲减'
 }
 
-function impactResourceLabel(row: ReversalTraceRecord) {
-  if (restricted(row)) {
-    return row.restrictedMessage || '来源无查看权限'
+function topLevelRoute(row: ReversalTraceRecord) {
+  return {
+    routeName: row.resourceRouteName,
+    routeParams: row.resourceRouteParams,
+    routeQuery: row.resourceRouteQuery,
   }
+}
+
+function inventoryRoute(row: ReversalTraceRecord) {
+  return row.resourceRouteName === 'inventory-movements' ? topLevelRoute(row) : {}
+}
+
+function settlementRoute(row: ReversalTraceRecord) {
+  const routeName = String(row.resourceRouteName ?? '')
+  return routeName.startsWith('finance-') ? topLevelRoute(row) : {}
+}
+
+function costRoute(row: ReversalTraceRecord) {
+  if (!row.costRecordId) {
+    return {}
+  }
+  if (row.resourceRouteName === 'cost-record-detail') {
+    return topLevelRoute(row)
+  }
+  return {
+    routeName: 'cost-record-detail',
+    routeParams: { id: row.costRecordId },
+  }
+}
+
+function impactResources(row: ReversalTraceRecord): ImpactResourceItem[] {
+  if (restricted(row)) {
+    return [{ key: 'restricted', label: row.restrictedMessage || '来源无查看权限' }]
+  }
+  const resources: ImpactResourceItem[] = []
   if (row.inventoryMovementId) {
-    return `库存流水 #${row.inventoryMovementId}`
+    resources.push({
+      key: 'inventory',
+      label: `库存流水 #${row.inventoryMovementId}`,
+      ...inventoryRoute(row),
+    })
   }
   if (row.settlementAdjustmentId) {
-    return `${isPurchaseTrace(row) ? '应付冲减' : '应收冲减'} #${row.settlementAdjustmentId}`
+    resources.push({
+      key: 'settlement',
+      label: `${settlementImpactLabel(row)} #${row.settlementAdjustmentId}`,
+      ...settlementRoute(row),
+    })
   }
   if (row.costRecordId) {
-    return `成本记录 #${row.costRecordId}`
+    resources.push({
+      key: 'cost',
+      label: `成本记录 #${row.costRecordId}`,
+      ...costRoute(row),
+    })
   }
-  return '-'
+  return resources.length ? resources : [{ key: 'empty', label: '-' }]
 }
 
 function sourceNo(source: ReversalSourceView) {
@@ -209,17 +266,20 @@ function sourceNo(source: ReversalSourceView) {
         </el-table-column>
         <el-table-column label="影响资源" min-width="160">
           <template #default="{ row }">
-            <span v-if="restricted(row)">{{ row.restrictedMessage || '来源无查看权限' }}</span>
-            <el-button
-              v-else-if="hasImpactResource(row) && row.resourceRouteName"
-              data-test="view-reversal-impact-resource"
-              link
-              type="primary"
-              @click="viewImpactResource(row)"
-            >
-              {{ impactResourceLabel(row) }}
-            </el-button>
-            <span v-else>{{ impactResourceLabel(row) }}</span>
+            <div class="impact-resource-list">
+              <template v-for="resource in impactResources(row)" :key="resource.key">
+                <el-button
+                  v-if="resource.routeName"
+                  data-test="view-reversal-impact-resource"
+                  link
+                  type="primary"
+                  @click="viewImpactResource(resource)"
+                >
+                  {{ resource.label }}
+                </el-button>
+                <span v-else>{{ resource.label }}</span>
+              </template>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="方向" min-width="140">
@@ -283,5 +343,12 @@ function sourceNo(source: ReversalSourceView) {
 
 .numeric-cell {
   font-variant-numeric: tabular-nums;
+}
+
+.impact-resource-list {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 </style>
