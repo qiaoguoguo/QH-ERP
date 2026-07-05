@@ -854,6 +854,205 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void settlementAdjustmentReceivableLifecyclePostsLedgerAndTrace() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "20.000000", "10.000000",
+				"30.000000", "10.000000", "PARTIALLY_RECEIVED", "500.00", "100.00", "400.00");
+		PostedReceipt receipt = createPostedReceiptForReceivable(fixture.customerId(), shipment.receivableId(),
+				"100.00");
+		PostedSalesShipment settledShipment = createPostedShipmentWithReceivable(fixture, "1.000000", "100.000000",
+				"1.000000", "100.000000", "RECEIVED", "200.00", "200.00", "0.00");
+		createPostedReceiptForReceivable(fixture.customerId(), settledShipment.receivableId(), "200.00");
+
+		JsonNode sources = data(get(
+				"/api/admin/finance/settlement-adjustment-sources?settlementSide=RECEIVABLE&sourceType=RECEIPT&keyword="
+						+ receipt.receiptNo(),
+				admin));
+		assertThat(sources.get("items").size()).isOne();
+		JsonNode source = sources.get("items").get(0);
+		assertThat(source.get("sourceType").asText()).isEqualTo("RECEIPT");
+		assertThat(source.get("sourceId").longValue()).isEqualTo(receipt.receiptId());
+		assertThat(source.get("targetId").longValue()).isEqualTo(shipment.receivableId());
+		assertDecimalText(source, "originalAmount", "500.00");
+		assertDecimalText(source, "adjustedAmount", "0.00");
+		assertDecimalText(source, "adjustableAmount", "400.00");
+
+		ResponseEntity<String> created = post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "REFUND", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "60.00", "settlement-ar-" + SEQUENCE.incrementAndGet()),
+				admin);
+		assertOk(created);
+		JsonNode draft = data(created);
+		long adjustmentId = draft.get("id").longValue();
+		assertThat(draft.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(draft.get("source").get("sourceId").longValue()).isEqualTo(receipt.receiptId());
+		assertDecimalText(draft, "amount", "60.00");
+		assertDecimalText(draft, "targetAdjustableAmountBefore", "400.00");
+
+		ResponseEntity<String> updated = put("/api/admin/finance/settlement-adjustments/" + adjustmentId,
+				settlementAdjustmentUpdatePayload("REFUND", "70.00", "调整客户退款冲减"), admin);
+		assertOk(updated);
+		assertDecimalText(data(updated), "amount", "70.00");
+
+		ResponseEntity<String> cancelledDraft = post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "PAYMENT_OFFSET", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "20.00", "settlement-ar-cancel-" + SEQUENCE.incrementAndGet()),
+				admin);
+		assertOk(cancelledDraft);
+		long cancelledId = data(cancelledDraft).get("id").longValue();
+		assertOk(put("/api/admin/finance/settlement-adjustments/" + cancelledId + "/cancel", Map.of(), admin));
+		assertThat(data(get("/api/admin/finance/settlement-adjustments/" + cancelledId, admin)).get("status").asText())
+			.isEqualTo("CANCELLED");
+
+		ResponseEntity<String> posted = put("/api/admin/finance/settlement-adjustments/" + adjustmentId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedData = data(posted);
+		assertThat(postedData.get("status").asText()).isEqualTo("POSTED");
+		assertDecimalText(postedData, "targetRemainingAmountAfterPost", "330.00");
+		assertThat(postedData.get("targetStatusAfterPost").asText()).isEqualTo("PARTIALLY_RECEIVED");
+
+		ReceivableAmounts receivable = receivableAmounts(shipment.receivableId());
+		assertDecimal(receivable.adjustedAmount(), "70.00");
+		assertDecimal(receivable.unreceivedAmount(), "330.00");
+		assertThat(receivable.status()).isEqualTo("PARTIALLY_RECEIVED");
+
+		ReversalLink link = reversalLink("SETTLEMENT_ADJUSTMENT", adjustmentId, 0L);
+		assertThat(link.sourceType()).isEqualTo("RECEIPT");
+		assertThat(link.sourceId()).isEqualTo(receipt.receiptId());
+		assertThat(link.sourceLineId()).isZero();
+		assertDecimal(link.amount(), "70.00");
+
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=SETTLEMENT_ADJUSTMENT&sourceId="
+				+ adjustmentId + "&direction=REVERSE_TO_SOURCE", admin)).get(0);
+		assertThat(trace.get("direction").asText()).isEqualTo("REVERSE_TO_SOURCE");
+		assertThat(trace.get("source").get("sourceType").asText()).isEqualTo("RECEIPT");
+		assertThat(trace.get("reverse").get("sourceType").asText()).isEqualTo("SETTLEMENT_ADJUSTMENT");
+
+		JsonNode listItem = data(get("/api/admin/finance/settlement-adjustments?keyword="
+				+ postedData.get("adjustmentNo").asText(), admin)).get("items").get(0);
+		assertThat(listItem.get("id").longValue()).isEqualTo(adjustmentId);
+		assertDecimalText(listItem, "amount", "70.00");
+
+		assertError(put("/api/admin/finance/settlement-adjustments/" + adjustmentId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
+		assertError(put("/api/admin/finance/settlement-adjustments/" + adjustmentId,
+				settlementAdjustmentUpdatePayload("REFUND", "10.00", "已过账不可改"), admin), HttpStatus.CONFLICT,
+				"REVERSAL_POSTED_IMMUTABLE");
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "REFUND", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "331.00", "settlement-ar-excess-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "REVERSAL_AMOUNT_EXCEEDS_AVAILABLE");
+	}
+
+	@Test
+	void settlementAdjustmentPayableRefundPostsLedgerAndBlocksExcess() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "20.000000", "10.000000",
+				"10.000000", "10.000000", "PARTIALLY_PAID", "300.00", "80.00", "220.00");
+		PostedPayment payment = createPostedPaymentForPayable(fixture.supplierId(), receipt.payableId(), "80.00");
+
+		JsonNode sources = data(get(
+				"/api/admin/finance/settlement-adjustment-sources?settlementSide=PAYABLE&sourceType=PAYMENT&keyword="
+						+ payment.paymentNo(),
+				admin));
+		assertThat(sources.get("items").size()).isOne();
+		JsonNode source = sources.get("items").get(0);
+		assertThat(source.get("sourceType").asText()).isEqualTo("PAYMENT");
+		assertThat(source.get("targetId").longValue()).isEqualTo(receipt.payableId());
+		assertDecimalText(source, "adjustableAmount", "220.00");
+
+		ResponseEntity<String> created = post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("PAYABLE", "REFUND", "PAYMENT", payment.paymentId(), receipt.payableId(),
+						"40.00", "settlement-ap-" + SEQUENCE.incrementAndGet()),
+				admin);
+		assertOk(created);
+		long adjustmentId = data(created).get("id").longValue();
+		ResponseEntity<String> posted = put("/api/admin/finance/settlement-adjustments/" + adjustmentId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedData = data(posted);
+		assertDecimalText(postedData, "targetRemainingAmountAfterPost", "180.00");
+		assertThat(postedData.get("targetStatusAfterPost").asText()).isEqualTo("PARTIALLY_PAID");
+
+		PayableAmounts payable = payableAmounts(receipt.payableId());
+		assertDecimal(payable.adjustedAmount(), "40.00");
+		assertDecimal(payable.unpaidAmount(), "180.00");
+		assertThat(payable.status()).isEqualTo("PARTIALLY_PAID");
+
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("PAYABLE", "PAYMENT_OFFSET", "PAYMENT", payment.paymentId(),
+						receipt.payableId(), "181.00", "settlement-ap-excess-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "REVERSAL_AMOUNT_EXCEEDS_AVAILABLE");
+	}
+
+	@Test
+	void settlementAdjustmentClientRequestIdRequiresMatchingCoreAndDoesNotReuseCancelled() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "10.000000", "10.000000",
+				"10.000000", "10.000000", "CONFIRMED", "200.00", "0.00", "200.00");
+		PostedReceipt receipt = createPostedReceiptForReceivable(fixture.customerId(), shipment.receivableId(),
+				"50.00");
+
+		String clientRequestId = "settlement-idempotent-" + SEQUENCE.incrementAndGet();
+		Map<String, Object> payload = settlementAdjustmentPayload("RECEIVABLE", "PAYMENT_OFFSET", "RECEIPT",
+				receipt.receiptId(), shipment.receivableId(), "30.00", clientRequestId);
+		JsonNode first = data(post("/api/admin/finance/settlement-adjustments", payload, admin));
+		JsonNode repeated = data(post("/api/admin/finance/settlement-adjustments", payload, admin));
+		assertThat(repeated.get("id").longValue()).isEqualTo(first.get("id").longValue());
+
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "PAYMENT_OFFSET", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "31.00", clientRequestId),
+				admin), HttpStatus.CONFLICT, "REVERSAL_DUPLICATED");
+
+		String cancelledClientRequestId = "settlement-cancelled-" + SEQUENCE.incrementAndGet();
+		JsonNode cancelled = data(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "PAYMENT_OFFSET", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "20.00", cancelledClientRequestId),
+				admin));
+		assertOk(put("/api/admin/finance/settlement-adjustments/" + cancelled.get("id").longValue() + "/cancel",
+				Map.of(), admin));
+		assertError(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "PAYMENT_OFFSET", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "20.00", cancelledClientRequestId),
+				admin), HttpStatus.CONFLICT, "REVERSAL_DUPLICATED");
+	}
+
+	@Test
+	void settlementAdjustmentRestrictedSourceAndTraceAreRedacted() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "10.000000", "10.000000",
+				"10.000000", "10.000000", "CONFIRMED", "200.00", "0.00", "200.00");
+		PostedReceipt receipt = createPostedReceiptForReceivable(fixture.customerId(), shipment.receivableId(),
+				"50.00");
+		JsonNode created = data(post("/api/admin/finance/settlement-adjustments",
+				settlementAdjustmentPayload("RECEIVABLE", "REFUND", "RECEIPT", receipt.receiptId(),
+						shipment.receivableId(), "50.00", "settlement-restricted-" + SEQUENCE.incrementAndGet()),
+				admin));
+		long adjustmentId = created.get("id").longValue();
+		assertOk(put("/api/admin/finance/settlement-adjustments/" + adjustmentId + "/post", Map.of(), admin));
+
+		AuthenticatedSession restricted = createUserAndLoginWithPermissions("settlement-restricted",
+				List.of("finance:settlement-adjustment:view", "business:reversal:view"));
+		JsonNode detail = data(get("/api/admin/finance/settlement-adjustments/" + adjustmentId, restricted));
+		assertRestrictedSource(detail.get("source"), "RECEIPT");
+		JsonNode detailTrace = detail.get("traces").get(0);
+		assertRestrictedSource(detailTrace.get("source"), "RECEIPT");
+		assertRestrictedTraceRecord(detailTrace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(detailTrace, "RECEIPT", receipt.receiptId(), 0L);
+
+		JsonNode trace = data(get("/api/admin/reversal-traces?sourceType=SETTLEMENT_ADJUSTMENT&sourceId="
+				+ adjustmentId, restricted)).get(0);
+		assertRestrictedTraceRecord(trace);
+		assertRestrictedTraceKeyDoesNotContainSourceCoordinates(trace, "RECEIPT", receipt.receiptId(), 0L);
+	}
+
+	@Test
 	void adminCanQueryStableEmptyReversalSkeletons() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -865,8 +1064,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				"/api/admin/production/material-returns?keyword=NO_SUCH_RETURN",
 				"/api/admin/production/material-supplement-sources?keyword=NO_SUCH_SOURCE",
 				"/api/admin/production/material-supplements?keyword=NO_SUCH_RETURN",
-				"/api/admin/finance/settlement-adjustment-sources",
-				"/api/admin/finance/settlement-adjustments")) {
+				"/api/admin/finance/settlement-adjustment-sources?keyword=NO_SUCH_SOURCE",
+				"/api/admin/finance/settlement-adjustments?keyword=NO_SUCH_RETURN")) {
 			assertEmptyPage(get(path, admin));
 		}
 
@@ -904,7 +1103,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
 		assertError(post("/api/admin/finance/settlement-adjustments",
 				Map.of("settlementSide", "RECEIVABLE", "sourceType", "SALES_RETURN", "sourceId", 1,
-						"targetId", 1, "amount", "1.00"),
+						"targetId", 999999999, "businessDate", LocalDate.now().toString(), "amount", "1.00"),
 				admin), HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
 	}
 
@@ -1416,6 +1615,32 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> settlementAdjustmentPayload(String settlementSide, String adjustmentType,
+			String sourceType, long sourceId, long targetId, String amount, String clientRequestId) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("settlementSide", settlementSide);
+		payload.put("adjustmentType", adjustmentType);
+		payload.put("sourceType", sourceType);
+		payload.put("sourceId", sourceId);
+		payload.put("targetId", targetId);
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("amount", amount);
+		if (clientRequestId != null) {
+			payload.put("clientRequestId", clientRequestId);
+		}
+		payload.put("remark", "往来冲减测试");
+		return payload;
+	}
+
+	private Map<String, Object> settlementAdjustmentUpdatePayload(String adjustmentType, String amount, String remark) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("adjustmentType", adjustmentType);
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("amount", amount);
+		payload.put("remark", remark);
+		return payload;
+	}
+
 	private Map<String, Object> materialReturnPayload(long sourceIssueId, String clientRequestId,
 			List<Map<String, Object>> lines) {
 		Map<String, Object> payload = new LinkedHashMap<>();
@@ -1493,6 +1718,44 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				admin);
 		assertOk(response);
 		return data(response).get("id").longValue();
+	}
+
+	private PostedReceipt createPostedReceiptForReceivable(long customerId, long receivableId, String amount) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String receiptNo = "REV-RCPT-" + suffix;
+		long receiptId = this.jdbcTemplate.queryForObject("""
+				insert into fin_receipt (
+					receipt_no, customer_id, receipt_date, amount, method, status, remark, created_by, created_at,
+					updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, 'BANK_TRANSFER', 'POSTED', '往来冲减测试收款', 'test', now(), 'test', now(),
+					'test', now())
+				returning id
+				""", Long.class, receiptNo, customerId, LocalDate.now(), new BigDecimal(amount));
+		this.jdbcTemplate.update("""
+				insert into fin_receipt_allocation (receipt_id, receivable_id, allocated_amount)
+				values (?, ?, ?)
+				""", receiptId, receivableId, new BigDecimal(amount));
+		return new PostedReceipt(receiptId, receiptNo);
+	}
+
+	private PostedPayment createPostedPaymentForPayable(long supplierId, long payableId, String amount) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String paymentNo = "REV-PAY-" + suffix;
+		long paymentId = this.jdbcTemplate.queryForObject("""
+				insert into fin_payment (
+					payment_no, supplier_id, payment_date, amount, method, status, remark, created_by, created_at,
+					updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, 'BANK_TRANSFER', 'POSTED', '往来冲减测试付款', 'test', now(), 'test', now(),
+					'test', now())
+				returning id
+				""", Long.class, paymentNo, supplierId, LocalDate.now(), new BigDecimal(amount));
+		this.jdbcTemplate.update("""
+				insert into fin_payment_allocation (payment_id, payable_id, allocated_amount)
+				values (?, ?, ?)
+				""", paymentId, payableId, new BigDecimal(amount));
+		return new PostedPayment(paymentId, paymentNo);
 	}
 
 	private long createMaterialReturn(AuthenticatedSession admin, long issueId, long issueLineId, String quantity)
@@ -1739,6 +2002,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private record PostedPurchaseReceipt(long receiptId, String receiptNo, long firstReceiptLineId,
 			long secondReceiptLineId, Long payableId) {
+	}
+
+	private record PostedReceipt(long receiptId, String receiptNo) {
+	}
+
+	private record PostedPayment(long paymentId, String paymentNo) {
 	}
 
 	private record PostedMaterialIssue(long workOrderId, String workOrderNo, long workOrderMaterialId, long issueId,

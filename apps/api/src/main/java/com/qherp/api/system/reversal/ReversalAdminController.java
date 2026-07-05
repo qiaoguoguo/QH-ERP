@@ -258,41 +258,65 @@ public class ReversalAdminController {
 	}
 
 	@GetMapping("/finance/settlement-adjustment-sources")
-	public ApiResponse<PageResponse<Object>> settlementAdjustmentSources(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.SettlementAdjustmentSourceResponse>> settlementAdjustmentSources(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String settlementSide,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long customerId,
+			@RequestParam(required = false) Long supplierId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.settlementAdjustmentSources(keyword, settlementSide,
+				sourceType, customerId, supplierId, dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/finance/settlement-adjustments")
-	public ApiResponse<PageResponse<Object>> settlementAdjustments(@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.reversalAdminService.emptyPage(page, pageSize));
+	public ApiResponse<PageResponse<ReversalAdminService.SettlementAdjustmentSummaryResponse>> settlementAdjustments(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String settlementSide,
+			@RequestParam(required = false) String adjustmentType, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.settlementAdjustments(keyword, settlementSide,
+				adjustmentType, sourceType, status, dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/finance/settlement-adjustments/{id}")
-	public ApiResponse<Object> settlementAdjustment(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SettlementAdjustmentDetailResponse> settlementAdjustment(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.reversalAdminService.settlementAdjustment(id, currentUser));
 	}
 
 	@PostMapping("/finance/settlement-adjustments")
-	public ApiResponse<Object> createSettlementAdjustment(@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SettlementAdjustmentDetailResponse> createSettlementAdjustment(
+			@Valid @RequestBody ReversalAdminService.SettlementAdjustmentRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse
+			.ok(this.reversalAdminService.createSettlementAdjustment(request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/finance/settlement-adjustments/{id}")
-	public ApiResponse<Object> updateSettlementAdjustment(@PathVariable Long id,
-			@RequestBody(required = false) Map<String, Object> request) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SettlementAdjustmentDetailResponse> updateSettlementAdjustment(
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.SettlementAdjustmentRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse
+			.ok(this.reversalAdminService.updateSettlementAdjustment(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/finance/settlement-adjustments/{id}/post")
-	public ApiResponse<Object> postSettlementAdjustment(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SettlementAdjustmentDetailResponse> postSettlementAdjustment(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.postSettlementAdjustment(id, currentUser, servletRequest));
 	}
 
 	@PutMapping("/finance/settlement-adjustments/{id}/cancel")
-	public ApiResponse<Object> cancelSettlementAdjustment(@PathVariable Long id) {
-		return ApiResponse.ok(this.reversalAdminService.sourceNotFound());
+	public ApiResponse<ReversalAdminService.SettlementAdjustmentDetailResponse> cancelSettlementAdjustment(
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.reversalAdminService.cancelSettlementAdjustment(id, currentUser, servletRequest));
 	}
 
 	@GetMapping("/reversal-traces")

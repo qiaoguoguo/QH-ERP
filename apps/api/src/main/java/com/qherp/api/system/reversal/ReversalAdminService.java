@@ -976,10 +976,215 @@ public class ReversalAdminService {
 	}
 
 	@Transactional(readOnly = true)
+	public PageResponse<SettlementAdjustmentSourceResponse> settlementAdjustmentSources(String keyword,
+			String settlementSide, String sourceType, Long customerId, Long supplierId, LocalDate dateFrom,
+			LocalDate dateTo, int page, int pageSize, CurrentUser currentUser) {
+		String sideFilter = normalizeOptionalSettlementSide(settlementSide);
+		String sourceTypeFilter = normalizeOptionalSettlementSourceType(sourceType);
+		List<SettlementSourceCandidate> candidates = new ArrayList<>();
+		if (sourceTypeMatches(sourceTypeFilter, SALES_RETURN_SOURCE) && sideMatches(sideFilter, "RECEIVABLE")
+				&& canViewSalesReturn(currentUser)) {
+			candidates.addAll(salesReturnSettlementCandidates());
+		}
+		if (sourceTypeMatches(sourceTypeFilter, "RECEIPT") && sideMatches(sideFilter, "RECEIVABLE")
+				&& canViewReceipt(currentUser)) {
+			candidates.addAll(receiptSettlementCandidates());
+		}
+		if (sourceTypeMatches(sourceTypeFilter, PURCHASE_RETURN_SOURCE) && sideMatches(sideFilter, "PAYABLE")
+				&& canViewPurchaseReturn(currentUser)) {
+			candidates.addAll(purchaseReturnSettlementCandidates());
+		}
+		if (sourceTypeMatches(sourceTypeFilter, "PAYMENT") && sideMatches(sideFilter, "PAYABLE")
+				&& canViewPayment(currentUser)) {
+			candidates.addAll(paymentSettlementCandidates());
+		}
+		if (sourceTypeMatches(sourceTypeFilter, SETTLEMENT_ADJUSTMENT_SOURCE)
+				&& canViewSettlementAdjustment(currentUser)) {
+			candidates.addAll(settlementAdjustmentSettlementCandidates(sideFilter));
+		}
+		List<SettlementAdjustmentSourceResponse> filtered = candidates.stream()
+			.filter((candidate) -> matchesSettlementSourceFilters(candidate, keyword, customerId, supplierId, dateFrom,
+					dateTo))
+			.sorted((left, right) -> {
+				int dateCompare = right.businessDate().compareTo(left.businessDate());
+				return dateCompare != 0 ? dateCompare : Long.compare(right.sourceId(), left.sourceId());
+			})
+			.map((candidate) -> new SettlementAdjustmentSourceResponse(candidate.sourceType(), candidate.sourceId(),
+					candidate.sourceNo(), candidate.settlementSide(), candidate.targetId(), candidate.targetNo(),
+					candidate.businessDate(), amount(candidate.originalAmount()), amount(candidate.adjustedAmount()),
+					amount(candidate.adjustableAmount()), candidate.status()))
+			.toList();
+		return PageResponse.of(pageItems(filtered, page, pageSize), page, limit(pageSize), filtered.size());
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<SettlementAdjustmentSummaryResponse> settlementAdjustments(String keyword,
+			String settlementSide, String adjustmentType, String sourceType, String status, LocalDate dateFrom,
+			LocalDate dateTo, int page, int pageSize, CurrentUser currentUser) {
+		QueryParts queryParts = settlementAdjustmentQuery(keyword, settlementSide, adjustmentType, sourceType, status,
+				dateFrom, dateTo);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_settlement_adjustment fsa
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> args = paginationArgs(queryParts, pageSize, page);
+		List<SettlementAdjustmentSummaryResponse> items = this.jdbcTemplate.query("""
+				select fsa.id, fsa.adjustment_no, fsa.settlement_side, fsa.adjustment_type, fsa.source_type,
+				       fsa.source_id, fsa.target_id, fsa.business_date, fsa.amount, fsa.status, fsa.remark,
+				       fsa.client_request_id, fsa.created_at, fsa.updated_at, fsa.posted_at
+				from fin_settlement_adjustment fsa
+				%s
+				order by fsa.updated_at desc, fsa.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapSettlementAdjustmentSummary(
+				mapSettlementAdjustmentRow(rs, rowNum), currentUser), args.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public SettlementAdjustmentDetailResponse settlementAdjustment(Long id, CurrentUser currentUser) {
+		SettlementAdjustmentRow row = settlementAdjustmentRow(id).orElseThrow(this::sourceNotFoundException);
+		return settlementAdjustmentDetail(row, currentUser);
+	}
+
+	@Transactional
+	public SettlementAdjustmentDetailResponse createSettlementAdjustment(SettlementAdjustmentRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		ValidatedSettlementAdjustment validated = validateSettlementAdjustmentCreate(request);
+		TargetSnapshot target = lockTarget(validated.settlementSide(), validated.targetId())
+			.orElseThrow(this::sourceNotFoundException);
+		validateSettlementSource(validated, true);
+		validateTargetAdjustable(target, validated.amount());
+		Optional<SettlementAdjustmentRow> existing = existingSettlementAdjustment(validated.sourceType(),
+				validated.sourceId(), validated.targetId(), validated.clientRequestId());
+		if (existing.isPresent()) {
+			return existingSettlementAdjustmentDetail(existing.get(), validated, operator);
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			CreatedDocument created = insertSettlementAdjustmentWithRetry(validated, operator.username(), now);
+			this.auditService.record(operator, "SETTLEMENT_ADJUSTMENT_CREATE", SETTLEMENT_ADJUSTMENT_SOURCE,
+					created.id(), created.documentNo(), servletRequest);
+			return settlementAdjustment(created.id(), operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public SettlementAdjustmentDetailResponse updateSettlementAdjustment(Long id, SettlementAdjustmentRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		SettlementAdjustmentRow current = lockSettlementAdjustment(id).orElseThrow(this::sourceNotFoundException);
+		if (current.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(current);
+		ValidatedSettlementAdjustment validated = validateSettlementAdjustmentUpdate(current, request);
+		TargetSnapshot target = lockTarget(validated.settlementSide(), validated.targetId())
+			.orElseThrow(this::sourceNotFoundException);
+		validateSettlementSource(validated, false);
+		validateTargetAdjustable(target, validated.amount());
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			this.jdbcTemplate.update("""
+					update fin_settlement_adjustment
+					set adjustment_type = ?, business_date = ?, amount = ?, remark = ?, client_request_id = ?,
+					    updated_by = ?, updated_at = ?, version = version + 1
+					where id = ?
+					""", validated.adjustmentType(), validated.businessDate(), validated.amount(),
+					blankToNull(validated.remark()), blankToNull(validated.clientRequestId()), operator.username(),
+					now, id);
+			this.auditService.record(operator, "SETTLEMENT_ADJUSTMENT_UPDATE", SETTLEMENT_ADJUSTMENT_SOURCE, id,
+					current.adjustmentNo(), servletRequest);
+			return settlementAdjustment(id, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public SettlementAdjustmentDetailResponse postSettlementAdjustment(Long id, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		SettlementAdjustmentRow row = lockSettlementAdjustment(id).orElseThrow(this::sourceNotFoundException);
+		if (row.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(row);
+		ValidatedSettlementAdjustment validated = new ValidatedSettlementAdjustment(row.settlementSide(),
+				row.adjustmentType(), row.sourceType(), row.sourceId(), row.targetId(), row.businessDate(),
+				row.amount(), row.clientRequestId(), row.remark());
+		TargetSnapshot target = lockTarget(validated.settlementSide(), validated.targetId())
+			.orElseThrow(this::sourceNotFoundException);
+		validateSettlementSource(validated, false);
+		validateTargetAdjustable(target, validated.amount());
+		OffsetDateTime now = OffsetDateTime.now();
+		try {
+			insertSettlementAdjustmentLink(row, operator.username(), now);
+			if ("RECEIVABLE".equals(row.settlementSide())) {
+				applyReceivableAdjustment(toReceivableRow(target), row.amount(), operator.username(), now);
+			}
+			else {
+				applyPayableAdjustment(toPayableRow(target), row.amount(), operator.username(), now);
+			}
+			TargetSnapshot updatedTarget = lockTarget(validated.settlementSide(), validated.targetId())
+				.orElseThrow(this::sourceNotFoundException);
+			this.jdbcTemplate.update("""
+					update fin_settlement_adjustment
+					set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+					    version = version + 1
+					where id = ?
+					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now,
+					id);
+			this.auditService.record(operator, "SETTLEMENT_ADJUSTMENT_POST", SETTLEMENT_ADJUSTMENT_SOURCE, id,
+					row.adjustmentNo(), servletRequest);
+			return settlementAdjustmentDetail(row.withPostedTarget(updatedTarget), operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw duplicateReversalException(exception);
+		}
+	}
+
+	@Transactional
+	public SettlementAdjustmentDetailResponse cancelSettlementAdjustment(Long id, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		SettlementAdjustmentRow row = lockSettlementAdjustment(id).orElseThrow(this::sourceNotFoundException);
+		if (row.status() == ReversalDocumentStatus.POSTED) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+		}
+		requireDraft(row);
+		OffsetDateTime now = OffsetDateTime.now();
+		this.jdbcTemplate.update("""
+				update fin_settlement_adjustment
+				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
+				    version = version + 1
+				where id = ?
+				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
+		this.auditService.record(operator, "SETTLEMENT_ADJUSTMENT_CANCEL", SETTLEMENT_ADJUSTMENT_SOURCE, id,
+				row.adjustmentNo(), servletRequest);
+		return settlementAdjustment(id, operator);
+	}
+
+	@Transactional(readOnly = true)
 	public List<ReversalTraceRecord> traces(String sourceType, Long sourceId, Long sourceLineId, String direction,
 			CurrentUser currentUser) {
 		if (!hasText(sourceType) || sourceId == null) {
 			return List.of();
+		}
+		if (isSettlementTraceType(sourceType)) {
+			List<SettlementTraceLinkRow> links;
+			List<ReversalTraceRecord> traces = new ArrayList<>();
+			if (!"REVERSE_TO_SOURCE".equals(direction)) {
+				links = settlementSourceTraceLinks(sourceType, sourceId, sourceLineId);
+				traces.addAll(settlementTraceRecords(links, currentUser, "SOURCE_TO_REVERSE"));
+			}
+			if (!"SOURCE_TO_REVERSE".equals(direction)) {
+				links = settlementReverseTraceLinks(sourceType, sourceId, sourceLineId);
+				traces.addAll(settlementTraceRecords(links, currentUser, "REVERSE_TO_SOURCE"));
+			}
+			return traces;
 		}
 		if (isProductionTraceType(sourceType)) {
 			List<ProductionTraceLinkRow> links;
@@ -1089,6 +1294,31 @@ public class ReversalAdminService {
 						row.businessDate(), row.sourceStatus(), null, null, canViewSource,
 						"production-work-order-detail", Map.of("id", row.workOrderId()), null),
 				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), lines, traces);
+	}
+
+	private SettlementAdjustmentDetailResponse settlementAdjustmentDetail(SettlementAdjustmentRow row,
+			CurrentUser currentUser, TargetSnapshot target) {
+		SourceDescriptor source = sourceDescriptor(row.sourceType(), row.sourceId())
+			.orElse(new SourceDescriptor(row.sourceType(), row.sourceId(), null, null, null));
+		boolean canViewSource = canViewSource(row.sourceType(), currentUser);
+		Map<String, Object> sourceView = sourceView(row.sourceType(), row.sourceId(), null, source.sourceNo(), null,
+				source.businessDate(), source.status(), null, amount(row.amount()), canViewSource,
+				routeName(row.sourceType()), routeParams(row.sourceType(), row.sourceId()), null);
+		List<ReversalTraceRecord> traces = settlementTraceRecords(
+				settlementReverseTraceLinks(SETTLEMENT_ADJUSTMENT_SOURCE, row.id(), null), currentUser,
+				"SOURCE_TO_REVERSE");
+		return new SettlementAdjustmentDetailResponse(row.id(), row.adjustmentNo(), row.settlementSide(),
+				row.adjustmentType(), sourceView, target.id(), target.no(), row.businessDate(),
+				amount(target.totalAmount()), amount(target.adjustedAmount()), amount(target.remainingAmount()),
+				amount(row.amount()), amount(row.targetRemainingAmountAfterPost()), row.targetStatusAfterPost(),
+				row.status().name(), row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), traces);
+	}
+
+	private SettlementAdjustmentDetailResponse settlementAdjustmentDetail(SettlementAdjustmentRow row,
+			CurrentUser currentUser) {
+		TargetSnapshot target = readTarget(row.settlementSide(), row.targetId())
+			.orElseThrow(this::sourceNotFoundException);
+		return settlementAdjustmentDetail(row.withCurrentTarget(target), currentUser, target);
 	}
 
 	private SalesReturnSourceResponse mapSalesReturnSource(ResultSet rs) throws SQLException {
@@ -3469,6 +3699,83 @@ public class ReversalAdminService {
 			.toList();
 	}
 
+	private List<SettlementTraceLinkRow> settlementReverseTraceLinks(String reverseType, Long reverseId,
+			Long reverseLineId) {
+		List<Object> args = new ArrayList<>();
+		args.add(reverseType);
+		args.add(reverseId);
+		String condition = "";
+		if (reverseLineId != null) {
+			condition = "and bl.reverse_line_id = ?";
+			args.add(reverseLineId);
+		}
+		return settlementTraceLinks("""
+				where bl.reverse_type = ?
+				and bl.reverse_id = ?
+				%s
+				""".formatted(condition), args);
+	}
+
+	private List<SettlementTraceLinkRow> settlementSourceTraceLinks(String sourceType, Long sourceId,
+			Long sourceLineId) {
+		List<Object> args = new ArrayList<>();
+		args.add(sourceType);
+		args.add(sourceId);
+		String condition = "";
+		if (sourceLineId != null) {
+			condition = "and bl.source_line_id = ?";
+			args.add(sourceLineId);
+		}
+		return settlementTraceLinks("""
+				where bl.source_type = ?
+				and bl.source_id = ?
+				%s
+				""".formatted(condition), args);
+	}
+
+	private List<SettlementTraceLinkRow> settlementTraceLinks(String where, List<Object> args) {
+		return this.jdbcTemplate.query("""
+				select bl.source_type, bl.source_id, bl.source_line_id, bl.reverse_type, bl.reverse_id,
+				       bl.reverse_line_id, bl.business_date, bl.amount
+				from biz_reversal_link bl
+				%s
+				and bl.reverse_type = 'SETTLEMENT_ADJUSTMENT'
+				order by bl.business_date asc, bl.id asc
+				""".formatted(where), this::mapSettlementTraceLinkRow, args.toArray());
+	}
+
+	private List<ReversalTraceRecord> settlementTraceRecords(List<SettlementTraceLinkRow> links,
+			CurrentUser currentUser, String direction) {
+		return links.stream()
+			.map((link) -> {
+				SourceDescriptor sourceDescriptor = sourceDescriptor(link.sourceType(), link.sourceId())
+					.orElse(new SourceDescriptor(link.sourceType(), link.sourceId(), null, null, null));
+				SourceDescriptor reverseDescriptor = sourceDescriptor(link.reverseType(), link.reverseId())
+					.orElse(new SourceDescriptor(link.reverseType(), link.reverseId(), null, null, null));
+				boolean canViewSource = canViewSource(link.sourceType(), currentUser);
+				boolean canViewReverse = canViewSource(link.reverseType(), currentUser);
+				Map<String, Object> source = sourceView(link.sourceType(), link.sourceId(),
+						zeroToNull(link.sourceLineId()), sourceDescriptor.sourceNo(), null,
+						sourceDescriptor.businessDate(), sourceDescriptor.status(), null, amount(link.amount()),
+						canViewSource, routeName(link.sourceType()), routeParams(link.sourceType(), link.sourceId()),
+						null);
+				Map<String, Object> reverse = sourceView(link.reverseType(), link.reverseId(),
+						zeroToNull(link.reverseLineId()), reverseDescriptor.sourceNo(), null,
+						reverseDescriptor.businessDate(), reverseDescriptor.status(), null, amount(link.amount()),
+						canViewReverse, routeName(link.reverseType()), routeParams(link.reverseType(),
+								link.reverseId()),
+						null);
+				boolean restricted = !canViewSource || !canViewReverse;
+				return new ReversalTraceRecord(traceKey(link, canViewSource, canViewReverse), direction, source,
+						reverse, null, restricted ? null : link.reverseId(), null,
+						restricted ? null : link.businessDate(), null, restricted ? null : amount(link.amount()),
+						restricted ? null : reverseDescriptor.status(), !restricted, restricted,
+						restricted ? RESTRICTED_MESSAGE : null, restricted ? null : routeName(link.reverseType()),
+						restricted ? null : routeParams(link.reverseType(), link.reverseId()), null);
+			})
+			.toList();
+	}
+
 	private List<ProductionTraceLinkRow> productionReverseTraceLinks(String reverseType, Long reverseId,
 			Long reverseLineId) {
 		List<Object> args = new ArrayList<>();
@@ -3607,6 +3914,16 @@ public class ReversalAdminService {
 	}
 
 	private String traceKey(ProductionTraceLinkRow link, boolean canViewSource, boolean canViewReverse) {
+		return redactedTraceKey(traceKey(link), link.sourceType(), link.sourceId(), link.sourceLineId(),
+				link.reverseType(), link.reverseId(), link.reverseLineId(), canViewSource, canViewReverse);
+	}
+
+	private String traceKey(SettlementTraceLinkRow link) {
+		return link.sourceType() + ":" + link.sourceId() + ":" + link.sourceLineId() + ":" + link.reverseType() + ":"
+				+ link.reverseId() + ":" + link.reverseLineId();
+	}
+
+	private String traceKey(SettlementTraceLinkRow link, boolean canViewSource, boolean canViewReverse) {
 		return redactedTraceKey(traceKey(link), link.sourceType(), link.sourceId(), link.sourceLineId(),
 				link.reverseType(), link.reverseId(), link.reverseLineId(), canViewSource, canViewReverse);
 	}
@@ -3832,6 +4149,13 @@ public class ReversalAdminService {
 				nullableLong(rs, "cost_record_id"));
 	}
 
+	private SettlementTraceLinkRow mapSettlementTraceLinkRow(ResultSet rs, int rowNum) throws SQLException {
+		return new SettlementTraceLinkRow(rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getString("reverse_type"), rs.getLong("reverse_id"),
+				rs.getLong("reverse_line_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("amount"));
+	}
+
 	private void requireDraft(SalesReturnRow salesReturn) {
 		if (salesReturn.status() != ReversalDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
@@ -3852,6 +4176,12 @@ public class ReversalAdminService {
 
 	private void requireDraft(MaterialSupplementRow supplement) {
 		if (supplement.status() != ReversalDocumentStatus.DRAFT) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
+		}
+	}
+
+	private void requireDraft(SettlementAdjustmentRow adjustment) {
+		if (adjustment.status() != ReversalDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
 		}
 	}
@@ -3894,6 +4224,8 @@ public class ReversalAdminService {
 				|| containsConstraint(exception, "uk_mfg_material_supplement_client_request")
 				|| containsConstraint(exception, "uk_mfg_material_supplement_line_material")
 				|| containsConstraint(exception, "uk_mfg_cost_record_source_line")
+				|| containsConstraint(exception, "uk_fin_settlement_adjustment_client_request")
+				|| containsConstraint(exception, "uk_fin_settlement_adjustment_no")
 				|| containsConstraint(exception, "uk_biz_reversal_link_reverse_line")
 				|| containsConstraint(exception, "uk_biz_reversal_link_source_reverse")) {
 			return new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
@@ -3912,6 +4244,615 @@ public class ReversalAdminService {
 
 	private BusinessException sourceNotFoundException() {
 		return new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+	}
+
+	private List<SettlementSourceCandidate> salesReturnSettlementCandidates() {
+		return this.jdbcTemplate.query("""
+				select 'SALES_RETURN' as source_type, r.id as source_id, r.return_no as source_no,
+				       'RECEIVABLE' as settlement_side, ar.id as target_id, ar.receivable_no as target_no,
+				       r.business_date, ar.total_amount as original_amount, ar.adjusted_amount,
+				       ar.unreceived_amount as adjustable_amount, r.status, r.customer_id, null::bigint as supplier_id
+				from sal_sales_return r
+				join fin_receivable ar on ar.source_type = 'SALES_SHIPMENT'
+					and ar.source_id = r.source_shipment_id
+				where r.status = 'POSTED'
+				and ar.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				and ar.unreceived_amount > 0
+				and not exists (
+					select 1
+					from fin_settlement_adjustment fsa
+					where fsa.source_type = 'SALES_RETURN'
+					and fsa.source_id = r.id
+					and fsa.status = 'POSTED'
+				)
+				""", this::mapSettlementSourceCandidate);
+	}
+
+	private List<SettlementSourceCandidate> receiptSettlementCandidates() {
+		return this.jdbcTemplate.query("""
+				select 'RECEIPT' as source_type, r.id as source_id, r.receipt_no as source_no,
+				       'RECEIVABLE' as settlement_side, ar.id as target_id, ar.receivable_no as target_no,
+				       r.receipt_date as business_date, ar.total_amount as original_amount, ar.adjusted_amount,
+				       ar.unreceived_amount as adjustable_amount, r.status, ar.customer_id,
+				       null::bigint as supplier_id
+				from fin_receipt r
+				join fin_receipt_allocation ra on ra.receipt_id = r.id
+				join fin_receivable ar on ar.id = ra.receivable_id
+				where r.status = 'POSTED'
+				and ar.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				and ar.unreceived_amount > 0
+				""", this::mapSettlementSourceCandidate);
+	}
+
+	private List<SettlementSourceCandidate> purchaseReturnSettlementCandidates() {
+		return this.jdbcTemplate.query("""
+				select 'PURCHASE_RETURN' as source_type, r.id as source_id, r.return_no as source_no,
+				       'PAYABLE' as settlement_side, ap.id as target_id, ap.payable_no as target_no,
+				       r.business_date, ap.total_amount as original_amount, ap.adjusted_amount,
+				       ap.unpaid_amount as adjustable_amount, r.status, null::bigint as customer_id,
+				       r.supplier_id
+				from proc_purchase_return r
+				join fin_payable ap on ap.source_type = 'PURCHASE_RECEIPT'
+					and ap.source_id = r.source_receipt_id
+				where r.status = 'POSTED'
+				and ap.status in ('CONFIRMED', 'PARTIALLY_PAID')
+				and ap.unpaid_amount > 0
+				and not exists (
+					select 1
+					from fin_settlement_adjustment fsa
+					where fsa.source_type = 'PURCHASE_RETURN'
+					and fsa.source_id = r.id
+					and fsa.status = 'POSTED'
+				)
+				""", this::mapSettlementSourceCandidate);
+	}
+
+	private List<SettlementSourceCandidate> paymentSettlementCandidates() {
+		return this.jdbcTemplate.query("""
+				select 'PAYMENT' as source_type, p.id as source_id, p.payment_no as source_no,
+				       'PAYABLE' as settlement_side, ap.id as target_id, ap.payable_no as target_no,
+				       p.payment_date as business_date, ap.total_amount as original_amount, ap.adjusted_amount,
+				       ap.unpaid_amount as adjustable_amount, p.status, null::bigint as customer_id,
+				       ap.supplier_id
+				from fin_payment p
+				join fin_payment_allocation pa on pa.payment_id = p.id
+				join fin_payable ap on ap.id = pa.payable_id
+				where p.status = 'POSTED'
+				and ap.status in ('CONFIRMED', 'PARTIALLY_PAID')
+				and ap.unpaid_amount > 0
+				""", this::mapSettlementSourceCandidate);
+	}
+
+	private List<SettlementSourceCandidate> settlementAdjustmentSettlementCandidates(String sideFilter) {
+		List<SettlementSourceCandidate> candidates = new ArrayList<>();
+		if (sideMatches(sideFilter, "RECEIVABLE")) {
+			candidates.addAll(this.jdbcTemplate.query("""
+					select 'SETTLEMENT_ADJUSTMENT' as source_type, fsa.id as source_id,
+					       fsa.adjustment_no as source_no, 'RECEIVABLE' as settlement_side,
+					       ar.id as target_id, ar.receivable_no as target_no, fsa.business_date,
+					       ar.total_amount as original_amount, ar.adjusted_amount,
+					       ar.unreceived_amount as adjustable_amount, fsa.status, ar.customer_id,
+					       null::bigint as supplier_id
+					from fin_settlement_adjustment fsa
+					join fin_receivable ar on ar.id = fsa.target_id
+					where fsa.status = 'POSTED'
+					and fsa.settlement_side = 'RECEIVABLE'
+					and ar.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+					and ar.unreceived_amount > 0
+					""", this::mapSettlementSourceCandidate));
+		}
+		if (sideMatches(sideFilter, "PAYABLE")) {
+			candidates.addAll(this.jdbcTemplate.query("""
+					select 'SETTLEMENT_ADJUSTMENT' as source_type, fsa.id as source_id,
+					       fsa.adjustment_no as source_no, 'PAYABLE' as settlement_side,
+					       ap.id as target_id, ap.payable_no as target_no, fsa.business_date,
+					       ap.total_amount as original_amount, ap.adjusted_amount,
+					       ap.unpaid_amount as adjustable_amount, fsa.status, null::bigint as customer_id,
+					       ap.supplier_id
+					from fin_settlement_adjustment fsa
+					join fin_payable ap on ap.id = fsa.target_id
+					where fsa.status = 'POSTED'
+					and fsa.settlement_side = 'PAYABLE'
+					and ap.status in ('CONFIRMED', 'PARTIALLY_PAID')
+					and ap.unpaid_amount > 0
+					""", this::mapSettlementSourceCandidate));
+		}
+		return candidates;
+	}
+
+	private SettlementSourceCandidate mapSettlementSourceCandidate(ResultSet rs, int rowNum) throws SQLException {
+		return new SettlementSourceCandidate(rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getString("source_no"), rs.getString("settlement_side"), rs.getLong("target_id"),
+				rs.getString("target_no"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("original_amount"), rs.getBigDecimal("adjusted_amount"),
+				rs.getBigDecimal("adjustable_amount"), rs.getString("status"), nullableLong(rs, "customer_id"),
+				nullableLong(rs, "supplier_id"));
+	}
+
+	private boolean matchesSettlementSourceFilters(SettlementSourceCandidate candidate, String keyword, Long customerId,
+			Long supplierId, LocalDate dateFrom, LocalDate dateTo) {
+		if (customerId != null && !customerId.equals(candidate.customerId())) {
+			return false;
+		}
+		if (supplierId != null && !supplierId.equals(candidate.supplierId())) {
+			return false;
+		}
+		if (dateFrom != null && candidate.businessDate().isBefore(dateFrom)) {
+			return false;
+		}
+		if (dateTo != null && candidate.businessDate().isAfter(dateTo)) {
+			return false;
+		}
+		if (!hasText(keyword)) {
+			return true;
+		}
+		String lowerKeyword = keyword.toLowerCase();
+		return containsIgnoreCase(candidate.sourceNo(), lowerKeyword) || containsIgnoreCase(candidate.targetNo(),
+				lowerKeyword);
+	}
+
+	private QueryParts settlementAdjustmentQuery(String keyword, String settlementSide, String adjustmentType,
+			String sourceType, String status, LocalDate dateFrom, LocalDate dateTo) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		String side = normalizeOptionalSettlementSide(settlementSide);
+		if (side != null) {
+			conditions.add("fsa.settlement_side = ?");
+			args.add(side);
+		}
+		String type = normalizeOptionalAdjustmentType(adjustmentType);
+		if (type != null) {
+			conditions.add("fsa.adjustment_type = ?");
+			args.add(type);
+		}
+		String normalizedSourceType = normalizeOptionalSettlementSourceType(sourceType);
+		if (normalizedSourceType != null) {
+			conditions.add("fsa.source_type = ?");
+			args.add(normalizedSourceType);
+		}
+		if (hasText(status)) {
+			conditions.add("fsa.status = ?");
+			args.add(parseReversalStatus(status.trim().toUpperCase()).name());
+		}
+		if (dateFrom != null) {
+			conditions.add("fsa.business_date >= ?");
+			args.add(dateFrom);
+		}
+		if (dateTo != null) {
+			conditions.add("fsa.business_date <= ?");
+			args.add(dateTo);
+		}
+		if (hasText(keyword)) {
+			conditions.add("lower(fsa.adjustment_no) like ?");
+			args.add("%" + keyword.toLowerCase() + "%");
+		}
+		return where(conditions, args);
+	}
+
+	private SettlementAdjustmentSummaryResponse mapSettlementAdjustmentSummary(SettlementAdjustmentRow row,
+			CurrentUser currentUser) {
+		TargetSnapshot target = readTarget(row.settlementSide(), row.targetId())
+			.orElseThrow(this::sourceNotFoundException);
+		SourceDescriptor source = sourceDescriptor(row.sourceType(), row.sourceId())
+			.orElse(new SourceDescriptor(row.sourceType(), row.sourceId(), null, null, null));
+		boolean canViewSource = canViewSource(row.sourceType(), currentUser);
+		return new SettlementAdjustmentSummaryResponse(row.id(), row.adjustmentNo(), row.settlementSide(),
+				row.adjustmentType(), sourceView(row.sourceType(), row.sourceId(), null, source.sourceNo(), null,
+						source.businessDate(), source.status(), null, amount(row.amount()), canViewSource,
+						routeName(row.sourceType()), routeParams(row.sourceType(), row.sourceId()), null),
+				target.id(), target.no(), row.businessDate(), amount(target.totalAmount()),
+				amount(target.adjustedAmount()), amount(target.remainingAmount()), amount(row.amount()),
+				amount(row.targetRemainingAmountAfterPost() == null ? target.remainingAmount()
+						: row.targetRemainingAmountAfterPost()),
+				row.targetStatusAfterPost() == null ? target.status() : row.targetStatusAfterPost(), row.status().name(),
+				row.createdAt(), row.updatedAt());
+	}
+
+	private SettlementAdjustmentRow mapSettlementAdjustmentRow(ResultSet rs, int rowNum) throws SQLException {
+		return new SettlementAdjustmentRow(rs.getLong("id"), rs.getString("adjustment_no"),
+				rs.getString("settlement_side"), rs.getString("adjustment_type"), rs.getString("source_type"),
+				rs.getLong("source_id"), rs.getLong("target_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("amount"), ReversalDocumentStatus.valueOf(rs.getString("status")),
+				rs.getString("remark"), rs.getString("client_request_id"),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
+				null, null);
+	}
+
+	private ValidatedSettlementAdjustment validateSettlementAdjustmentCreate(SettlementAdjustmentRequest request) {
+		if (request == null || !hasText(request.settlementSide()) || !hasText(request.adjustmentType())
+				|| !hasText(request.sourceType()) || request.sourceId() == null || request.targetId() == null
+				|| request.businessDate() == null) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		validateReversalCommonFields(request.clientRequestId(), request.remark());
+		return new ValidatedSettlementAdjustment(normalizeRequiredSettlementSide(request.settlementSide()),
+				normalizeRequiredAdjustmentType(request.adjustmentType()),
+				normalizeRequiredSettlementSourceType(request.sourceType()), request.sourceId(), request.targetId(),
+				request.businessDate(), validateAmount(request.amount()), blankToNull(request.clientRequestId()),
+				blankToNull(request.remark()));
+	}
+
+	private ValidatedSettlementAdjustment validateSettlementAdjustmentUpdate(SettlementAdjustmentRow current,
+			SettlementAdjustmentRequest request) {
+		if (request == null || request.businessDate() == null) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		String settlementSide = hasText(request.settlementSide())
+				? normalizeRequiredSettlementSide(request.settlementSide()) : current.settlementSide();
+		if (!current.settlementSide().equals(settlementSide)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		String sourceType = hasText(request.sourceType()) ? normalizeRequiredSettlementSourceType(request.sourceType())
+				: current.sourceType();
+		if (!current.sourceType().equals(sourceType)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		Long sourceId = request.sourceId() == null ? current.sourceId() : request.sourceId();
+		if (!current.sourceId().equals(sourceId)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		Long targetId = request.targetId() == null ? current.targetId() : request.targetId();
+		if (!current.targetId().equals(targetId)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		validateReversalCommonFields(request.clientRequestId(), request.remark());
+		return new ValidatedSettlementAdjustment(settlementSide,
+				hasText(request.adjustmentType()) ? normalizeRequiredAdjustmentType(request.adjustmentType())
+						: current.adjustmentType(),
+				sourceType, sourceId, targetId, request.businessDate(), validateAmount(request.amount()),
+				blankToNull(request.clientRequestId()), blankToNull(request.remark()));
+	}
+
+	private BigDecimal validateAmount(BigDecimal value) {
+		if (value == null || value.compareTo(ZERO) <= 0 || value.scale() > 2 || integerDigits(value) > 16L) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_INVALID);
+		}
+		return money(value);
+	}
+
+	private void validateSettlementSource(ValidatedSettlementAdjustment adjustment, boolean create) {
+		SourceDescriptor source = sourceDescriptor(adjustment.sourceType(), adjustment.sourceId())
+			.orElseThrow(this::sourceNotFoundException);
+		if (!"POSTED".equals(source.status())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (!sourceMatchesTarget(adjustment)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (create && (SALES_RETURN_SOURCE.equals(adjustment.sourceType())
+				|| PURCHASE_RETURN_SOURCE.equals(adjustment.sourceType()))
+				&& postedSettlementAdjustmentExists(adjustment.sourceType(), adjustment.sourceId())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+	}
+
+	private boolean sourceMatchesTarget(ValidatedSettlementAdjustment adjustment) {
+		return switch (adjustment.sourceType()) {
+			case "RECEIPT" -> "RECEIVABLE".equals(adjustment.settlementSide()) && exists("""
+					select count(*)
+					from fin_receipt_allocation
+					where receipt_id = ?
+					and receivable_id = ?
+					""", adjustment.sourceId(), adjustment.targetId());
+			case "PAYMENT" -> "PAYABLE".equals(adjustment.settlementSide()) && exists("""
+					select count(*)
+					from fin_payment_allocation
+					where payment_id = ?
+					and payable_id = ?
+					""", adjustment.sourceId(), adjustment.targetId());
+			case "SALES_RETURN" -> "RECEIVABLE".equals(adjustment.settlementSide()) && exists("""
+					select count(*)
+					from sal_sales_return r
+					join fin_receivable ar on ar.source_type = 'SALES_SHIPMENT'
+						and ar.source_id = r.source_shipment_id
+					where r.id = ?
+					and ar.id = ?
+					""", adjustment.sourceId(), adjustment.targetId());
+			case "PURCHASE_RETURN" -> "PAYABLE".equals(adjustment.settlementSide()) && exists("""
+					select count(*)
+					from proc_purchase_return r
+					join fin_payable ap on ap.source_type = 'PURCHASE_RECEIPT'
+						and ap.source_id = r.source_receipt_id
+					where r.id = ?
+					and ap.id = ?
+					""", adjustment.sourceId(), adjustment.targetId());
+			case "SETTLEMENT_ADJUSTMENT" -> exists("""
+					select count(*)
+					from fin_settlement_adjustment
+					where id = ?
+					and settlement_side = ?
+					and target_id = ?
+					and status = 'POSTED'
+					""", adjustment.sourceId(), adjustment.settlementSide(), adjustment.targetId());
+			case "PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT" -> true;
+			default -> false;
+		};
+	}
+
+	private boolean postedSettlementAdjustmentExists(String sourceType, Long sourceId) {
+		return exists("""
+				select count(*)
+				from fin_settlement_adjustment
+				where source_type = ?
+				and source_id = ?
+				and status = 'POSTED'
+				""", sourceType, sourceId);
+	}
+
+	private void validateTargetAdjustable(TargetSnapshot target, BigDecimal amount) {
+		if ("RECEIVABLE".equals(target.side())) {
+			if (!"CONFIRMED".equals(target.status()) && !"PARTIALLY_RECEIVED".equals(target.status())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+		}
+		else if (!"CONFIRMED".equals(target.status()) && !"PARTIALLY_PAID".equals(target.status())) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (amount.compareTo(target.remainingAmount()) > 0) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
+		}
+	}
+
+	private Optional<SettlementAdjustmentRow> existingSettlementAdjustment(String sourceType, Long sourceId,
+			Long targetId, String clientRequestId) {
+		if (!hasText(clientRequestId)) {
+			return Optional.empty();
+		}
+		return this.jdbcTemplate.query("""
+				select id, adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+				       business_date, amount, status, remark, client_request_id, created_at, updated_at, posted_at
+				from fin_settlement_adjustment
+				where source_type = ?
+				and source_id = ?
+				and target_id = ?
+				and client_request_id = ?
+				""", this::mapSettlementAdjustmentRow, sourceType, sourceId, targetId, clientRequestId)
+			.stream()
+			.findFirst();
+	}
+
+	private SettlementAdjustmentDetailResponse existingSettlementAdjustmentDetail(SettlementAdjustmentRow existing,
+			ValidatedSettlementAdjustment requested, CurrentUser operator) {
+		if (existing.status() == ReversalDocumentStatus.CANCELLED || !settlementAdjustmentCoreMatches(existing,
+				requested)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_DUPLICATED);
+		}
+		return settlementAdjustmentDetail(existing, operator);
+	}
+
+	private boolean settlementAdjustmentCoreMatches(SettlementAdjustmentRow existing,
+			ValidatedSettlementAdjustment requested) {
+		return existing.settlementSide().equals(requested.settlementSide())
+				&& existing.adjustmentType().equals(requested.adjustmentType())
+				&& existing.sourceType().equals(requested.sourceType())
+				&& existing.sourceId().equals(requested.sourceId())
+				&& existing.targetId().equals(requested.targetId())
+				&& money(existing.amount()).compareTo(requested.amount()) == 0;
+	}
+
+	private CreatedDocument insertSettlementAdjustmentWithRetry(ValidatedSettlementAdjustment adjustment,
+			String operator, OffsetDateTime now) {
+		for (int attempt = 1; attempt <= MAX_NO_ATTEMPTS; attempt++) {
+			String adjustmentNo = nextNo("ADJ", SETTLEMENT_ADJUSTMENT_NO_SEQUENCE);
+			try {
+				Long id = this.jdbcTemplate.queryForObject("""
+						insert into fin_settlement_adjustment (
+							adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+							business_date, amount, status, remark, client_request_id, created_by, created_at,
+							updated_by, updated_at
+						)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						returning id
+						""", Long.class, adjustmentNo, adjustment.settlementSide(), adjustment.adjustmentType(),
+						adjustment.sourceType(), adjustment.sourceId(), adjustment.targetId(),
+						adjustment.businessDate(), adjustment.amount(), ReversalDocumentStatus.DRAFT.name(),
+						blankToNull(adjustment.remark()), blankToNull(adjustment.clientRequestId()), operator, now,
+						operator, now);
+				return new CreatedDocument(id, adjustmentNo);
+			}
+			catch (DuplicateKeyException exception) {
+				if (containsConstraint(exception, "uk_fin_settlement_adjustment_no") && attempt < MAX_NO_ATTEMPTS) {
+					continue;
+				}
+				throw exception;
+			}
+		}
+		throw new BusinessException(ApiErrorCode.CONFLICT);
+	}
+
+	private void insertSettlementAdjustmentLink(SettlementAdjustmentRow row, String operator, OffsetDateTime now) {
+		this.jdbcTemplate.update("""
+				insert into biz_reversal_link (
+					source_type, source_id, source_line_id, reverse_type, reverse_id, reverse_line_id, business_date,
+					amount, created_by, created_at
+				)
+				values (?, ?, 0, ?, ?, 0, ?, ?, ?, ?)
+				""", row.sourceType(), row.sourceId(), SETTLEMENT_ADJUSTMENT_SOURCE, row.id(), row.businessDate(),
+				row.amount(), operator, now);
+	}
+
+	private Optional<SettlementAdjustmentRow> settlementAdjustmentRow(Long id) {
+		return this.jdbcTemplate.query("""
+				select id, adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+				       business_date, amount, status, remark, client_request_id, created_at, updated_at, posted_at
+				from fin_settlement_adjustment
+				where id = ?
+				""", this::mapSettlementAdjustmentRow, id).stream().findFirst();
+	}
+
+	private Optional<SettlementAdjustmentRow> lockSettlementAdjustment(Long id) {
+		return this.jdbcTemplate.query("""
+				select id, adjustment_no, settlement_side, adjustment_type, source_type, source_id, target_id,
+				       business_date, amount, status, remark, client_request_id, created_at, updated_at, posted_at
+				from fin_settlement_adjustment
+				where id = ?
+				for update
+				""", this::mapSettlementAdjustmentRow, id).stream().findFirst();
+	}
+
+	private Optional<TargetSnapshot> readTarget(String settlementSide, Long targetId) {
+		return targetSnapshotQuery(settlementSide, targetId, false);
+	}
+
+	private Optional<TargetSnapshot> lockTarget(String settlementSide, Long targetId) {
+		return targetSnapshotQuery(settlementSide, targetId, true);
+	}
+
+	private Optional<TargetSnapshot> targetSnapshotQuery(String settlementSide, Long targetId, boolean lock) {
+		if ("RECEIVABLE".equals(settlementSide)) {
+			return this.jdbcTemplate.query("""
+					select 'RECEIVABLE' as side, id, receivable_no as no, total_amount,
+					       received_amount as settled_amount, adjusted_amount,
+					       unreceived_amount as remaining_amount, status
+					from fin_receivable
+					where id = ?
+					%s
+					""".formatted(lock ? "for update" : ""), this::mapTargetSnapshot, targetId)
+				.stream()
+				.findFirst();
+		}
+		return this.jdbcTemplate.query("""
+				select 'PAYABLE' as side, id, payable_no as no, total_amount,
+				       paid_amount as settled_amount, adjusted_amount,
+				       unpaid_amount as remaining_amount, status
+				from fin_payable
+				where id = ?
+				%s
+				""".formatted(lock ? "for update" : ""), this::mapTargetSnapshot, targetId).stream().findFirst();
+	}
+
+	private TargetSnapshot mapTargetSnapshot(ResultSet rs, int rowNum) throws SQLException {
+		return new TargetSnapshot(rs.getString("side"), rs.getLong("id"), rs.getString("no"),
+				rs.getBigDecimal("total_amount"), rs.getBigDecimal("settled_amount"),
+				rs.getBigDecimal("adjusted_amount"), rs.getBigDecimal("remaining_amount"), rs.getString("status"));
+	}
+
+	private ReceivableRow toReceivableRow(TargetSnapshot target) {
+		return new ReceivableRow(target.id(), target.no(), null, target.totalAmount(), target.settledAmount(),
+				target.adjustedAmount(), target.remainingAmount(), ReceivableStatus.valueOf(target.status()));
+	}
+
+	private PayableRow toPayableRow(TargetSnapshot target) {
+		return new PayableRow(target.id(), target.no(), null, target.totalAmount(), target.settledAmount(),
+				target.adjustedAmount(), target.remainingAmount(), PayableStatus.valueOf(target.status()));
+	}
+
+	private Optional<SourceDescriptor> sourceDescriptor(String sourceType, Long sourceId) {
+		return switch (sourceType) {
+			case "SALES_RETURN" -> descriptor("""
+					select 'SALES_RETURN' as source_type, id as source_id, return_no as source_no,
+					       business_date, status
+					from sal_sales_return
+					where id = ?
+					""", sourceId);
+			case "PURCHASE_RETURN" -> descriptor("""
+					select 'PURCHASE_RETURN' as source_type, id as source_id, return_no as source_no,
+					       business_date, status
+					from proc_purchase_return
+					where id = ?
+					""", sourceId);
+			case "RECEIPT" -> descriptor("""
+					select 'RECEIPT' as source_type, id as source_id, receipt_no as source_no,
+					       receipt_date as business_date, status
+					from fin_receipt
+					where id = ?
+					""", sourceId);
+			case "PAYMENT" -> descriptor("""
+					select 'PAYMENT' as source_type, id as source_id, payment_no as source_no,
+					       payment_date as business_date, status
+					from fin_payment
+					where id = ?
+					""", sourceId);
+			case "PRODUCTION_MATERIAL_RETURN" -> descriptor("""
+					select 'PRODUCTION_MATERIAL_RETURN' as source_type, id as source_id, return_no as source_no,
+					       business_date, status
+					from mfg_material_return
+					where id = ?
+					""", sourceId);
+			case "PRODUCTION_MATERIAL_SUPPLEMENT" -> descriptor("""
+					select 'PRODUCTION_MATERIAL_SUPPLEMENT' as source_type, id as source_id,
+					       supplement_no as source_no, business_date, status
+					from mfg_material_supplement
+					where id = ?
+					""", sourceId);
+			case "SETTLEMENT_ADJUSTMENT" -> descriptor("""
+					select 'SETTLEMENT_ADJUSTMENT' as source_type, id as source_id,
+					       adjustment_no as source_no, business_date, status
+					from fin_settlement_adjustment
+					where id = ?
+					""", sourceId);
+			default -> Optional.empty();
+		};
+	}
+
+	private Optional<SourceDescriptor> descriptor(String sql, Long sourceId) {
+		return this.jdbcTemplate.query(sql, (rs, rowNum) -> new SourceDescriptor(rs.getString("source_type"),
+				rs.getLong("source_id"), rs.getString("source_no"), rs.getObject("business_date", LocalDate.class),
+				rs.getString("status")), sourceId).stream().findFirst();
+	}
+
+	private boolean exists(String sql, Object... args) {
+		Long count = this.jdbcTemplate.queryForObject(sql, Long.class, args);
+		return count != null && count > 0;
+	}
+
+	private boolean sourceTypeMatches(String filter, String sourceType) {
+		return filter == null || filter.equals(sourceType);
+	}
+
+	private boolean sideMatches(String filter, String settlementSide) {
+		return filter == null || filter.equals(settlementSide);
+	}
+
+	private boolean containsIgnoreCase(String value, String lowerKeyword) {
+		return value != null && value.toLowerCase().contains(lowerKeyword);
+	}
+
+	private String normalizeRequiredSettlementSide(String value) {
+		String normalized = value == null ? null : value.trim().toUpperCase();
+		if (!"RECEIVABLE".equals(normalized) && !"PAYABLE".equals(normalized)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		return normalized;
+	}
+
+	private String normalizeOptionalSettlementSide(String value) {
+		return hasText(value) ? normalizeRequiredSettlementSide(value) : null;
+	}
+
+	private String normalizeRequiredAdjustmentType(String value) {
+		String normalized = value == null ? null : value.trim().toUpperCase();
+		if (!Set.of("RETURN_OFFSET", "REFUND", "PAYMENT_OFFSET").contains(normalized)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		return normalized;
+	}
+
+	private String normalizeOptionalAdjustmentType(String value) {
+		return hasText(value) ? normalizeRequiredAdjustmentType(value) : null;
+	}
+
+	private String normalizeRequiredSettlementSourceType(String value) {
+		String normalized = value == null ? null : value.trim().toUpperCase();
+		if (!Set.of(SALES_RETURN_SOURCE, PURCHASE_RETURN_SOURCE, "RECEIPT", "PAYMENT",
+				PRODUCTION_MATERIAL_RETURN_SOURCE, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
+				SETTLEMENT_ADJUSTMENT_SOURCE).contains(normalized)) {
+			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_NOT_FOUND);
+		}
+		return normalized;
+	}
+
+	private String normalizeOptionalSettlementSourceType(String value) {
+		return hasText(value) ? normalizeRequiredSettlementSourceType(value) : null;
+	}
+
+	private <T> List<T> pageItems(List<T> items, int page, int pageSize) {
+		long start = offset(page, pageSize);
+		if (start >= items.size()) {
+			return List.of();
+		}
+		long end = Math.min(start + limit(pageSize), items.size());
+		return items.subList((int) start, (int) end);
 	}
 
 	private QueryParts where(List<String> conditions, List<Object> args) {
@@ -3980,6 +4921,10 @@ public class ReversalAdminService {
 		return rs.wasNull() ? null : value;
 	}
 
+	private Long zeroToNull(Long value) {
+		return value == null || value == 0 ? null : value;
+	}
+
 	private boolean canViewSalesShipment(CurrentUser currentUser) {
 		return currentUser != null && currentUser.permissions().contains("sales:shipment:view");
 	}
@@ -4012,9 +4957,61 @@ public class ReversalAdminService {
 		return currentUser != null && currentUser.permissions().contains("production:material-supplement:view");
 	}
 
+	private boolean canViewReceipt(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("finance:receipt:view");
+	}
+
+	private boolean canViewPayment(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("finance:payment:view");
+	}
+
+	private boolean canViewSettlementAdjustment(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("finance:settlement-adjustment:view");
+	}
+
+	private boolean canViewSource(String sourceType, CurrentUser currentUser) {
+		return switch (sourceType) {
+			case SALES_SHIPMENT_SOURCE, SALES_SHIPMENT_LINE_SOURCE -> canViewSalesShipment(currentUser);
+			case SALES_RETURN_SOURCE -> canViewSalesReturn(currentUser);
+			case PURCHASE_RECEIPT_SOURCE, PURCHASE_RECEIPT_LINE_SOURCE -> canViewPurchaseReceipt(currentUser);
+			case PURCHASE_RETURN_SOURCE -> canViewPurchaseReturn(currentUser);
+			case PRODUCTION_MATERIAL_ISSUE_SOURCE, PRODUCTION_MATERIAL_ISSUE_LINE_SOURCE -> canViewProductionIssue(
+					currentUser);
+			case PRODUCTION_WORK_ORDER_SOURCE -> canViewProductionWorkOrder(currentUser);
+			case PRODUCTION_MATERIAL_RETURN_SOURCE -> canViewMaterialReturn(currentUser);
+			case PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE -> canViewMaterialSupplement(currentUser);
+			case "RECEIPT" -> canViewReceipt(currentUser);
+			case "PAYMENT" -> canViewPayment(currentUser);
+			case SETTLEMENT_ADJUSTMENT_SOURCE -> canViewSettlementAdjustment(currentUser);
+			default -> false;
+		};
+	}
+
+	private String routeName(String sourceType) {
+		return switch (sourceType) {
+			case SALES_RETURN_SOURCE -> "sales-return-detail";
+			case PURCHASE_RETURN_SOURCE -> "procurement-return-detail";
+			case PRODUCTION_MATERIAL_RETURN_SOURCE -> "production-material-return-detail";
+			case PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE -> "production-material-supplement-detail";
+			case "RECEIPT" -> "finance-receipt-detail";
+			case "PAYMENT" -> "finance-payment-detail";
+			case SETTLEMENT_ADJUSTMENT_SOURCE -> "finance-settlement-adjustment-detail";
+			default -> null;
+		};
+	}
+
+	private Map<String, Object> routeParams(String sourceType, Long sourceId) {
+		return routeName(sourceType) == null ? null : Map.of("id", sourceId);
+	}
+
 	private boolean isPurchaseTraceType(String sourceType) {
 		return PURCHASE_RECEIPT_SOURCE.equals(sourceType) || PURCHASE_RECEIPT_LINE_SOURCE.equals(sourceType)
 				|| PURCHASE_RETURN_SOURCE.equals(sourceType);
+	}
+
+	private boolean isSettlementTraceType(String sourceType) {
+		return "RECEIPT".equals(sourceType) || "PAYMENT".equals(sourceType)
+				|| SETTLEMENT_ADJUSTMENT_SOURCE.equals(sourceType);
 	}
 
 	private boolean isProductionTraceType(String sourceType) {
@@ -4075,6 +5072,11 @@ public class ReversalAdminService {
 			@NotNull BigDecimal quantity, String reason) {
 	}
 
+	public record SettlementAdjustmentRequest(String settlementSide, String adjustmentType, String sourceType,
+			Long sourceId, Long targetId, @NotNull LocalDate businessDate, @NotNull BigDecimal amount,
+			String clientRequestId, String remark) {
+	}
+
 	public record SalesReturnSourceResponse(Long shipmentId, String shipmentNo, Long customerId, String customerName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status,
 			List<SalesReturnSourceLineResponse> lines) {
@@ -4093,6 +5095,11 @@ public class ReversalAdminService {
 	public record ProductionMaterialSupplementSourceResponse(Long workOrderId, String workOrderNo,
 			String workOrderStatus, Long warehouseId, String warehouseName,
 			List<ProductionMaterialSupplementSourceLineResponse> materials) {
+	}
+
+	public record SettlementAdjustmentSourceResponse(String sourceType, Long sourceId, String sourceNo,
+			String settlementSide, Long targetId, String targetNo, LocalDate businessDate, String originalAmount,
+			String adjustedAmount, String adjustableAmount, String status) {
 	}
 
 	public record SalesReturnSourceLineResponse(Long shipmentLineId, Long salesOrderLineId, Integer lineNo,
@@ -4139,6 +5146,13 @@ public class ReversalAdminService {
 			String workOrderNo, Long warehouseId, String warehouseName, LocalDate businessDate, String status,
 			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt) {
+	}
+
+	public record SettlementAdjustmentSummaryResponse(Long id, String adjustmentNo, String settlementSide,
+			String adjustmentType, Map<String, Object> source, Long targetId, String targetNo, LocalDate businessDate,
+			String targetOriginalAmount, String targetAdjustedAmountBefore, String targetAdjustableAmountBefore,
+			String amount, String targetRemainingAmountAfterPost, String targetStatusAfterPost, String status,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
 	public record SalesReturnDetailResponse(Long id, String returnNo, Long customerId, String customerName,
@@ -4202,6 +5216,14 @@ public class ReversalAdminService {
 			String workOrderNo, Long warehouseId, String warehouseName, LocalDate businessDate, String status,
 			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt, String clientRequestId, String remark, List<ReversalDocumentLine> lines,
+			List<ReversalTraceRecord> traces) {
+	}
+
+	public record SettlementAdjustmentDetailResponse(Long id, String adjustmentNo, String settlementSide,
+			String adjustmentType, Map<String, Object> source, Long targetId, String targetNo, LocalDate businessDate,
+			String targetOriginalAmount, String targetAdjustedAmountBefore, String targetAdjustableAmountBefore,
+			String amount, String targetRemainingAmountAfterPost, String targetStatusAfterPost, String status,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, String clientRequestId, String remark,
 			List<ReversalTraceRecord> traces) {
 	}
 
@@ -4379,6 +5401,11 @@ public class ReversalAdminService {
 			String clientRequestId, String remark, List<ProductionMaterialSupplementLineRequest> lines) {
 	}
 
+	private record ValidatedSettlementAdjustment(String settlementSide, String adjustmentType, String sourceType,
+			Long sourceId, Long targetId, LocalDate businessDate, BigDecimal amount, String clientRequestId,
+			String remark) {
+	}
+
 	private record ValidatedSalesReturnLine(Integer lineNo, Long sourceShipmentLineId, Long salesOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
 			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason) {
@@ -4423,6 +5450,29 @@ public class ReversalAdminService {
 			String sourceStatus, Long warehouseId, String warehouseName, LocalDate businessDate,
 			ReversalDocumentStatus status, String clientRequestId, String remark, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt) {
+	}
+
+	private record SettlementAdjustmentRow(Long id, String adjustmentNo, String settlementSide, String adjustmentType,
+			String sourceType, Long sourceId, Long targetId, LocalDate businessDate, BigDecimal amount,
+			ReversalDocumentStatus status, String remark, String clientRequestId, OffsetDateTime createdAt,
+			OffsetDateTime updatedAt, BigDecimal targetRemainingAmountAfterPost, String targetStatusAfterPost) {
+
+		private SettlementAdjustmentRow withCurrentTarget(TargetSnapshot target) {
+			if (this.status == ReversalDocumentStatus.POSTED && this.targetRemainingAmountAfterPost != null) {
+				return this;
+			}
+			return new SettlementAdjustmentRow(this.id, this.adjustmentNo, this.settlementSide, this.adjustmentType,
+					this.sourceType, this.sourceId, this.targetId, this.businessDate, this.amount, this.status,
+					this.remark, this.clientRequestId, this.createdAt, this.updatedAt, target.remainingAmount(),
+					target.status());
+		}
+
+		private SettlementAdjustmentRow withPostedTarget(TargetSnapshot target) {
+			return new SettlementAdjustmentRow(this.id, this.adjustmentNo, this.settlementSide, this.adjustmentType,
+					this.sourceType, this.sourceId, this.targetId, this.businessDate, this.amount,
+					ReversalDocumentStatus.POSTED, this.remark, this.clientRequestId, this.createdAt,
+					this.updatedAt, target.remainingAmount(), target.status());
+		}
 	}
 
 	private record SalesReturnLineRow(Long id, Long returnId, Long sourceShipmentLineId, Long salesOrderLineId,
@@ -4489,6 +5539,19 @@ public class ReversalAdminService {
 			BigDecimal adjustedAmount, BigDecimal unpaidAmount, PayableStatus status) {
 	}
 
+	private record TargetSnapshot(String side, Long id, String no, BigDecimal totalAmount, BigDecimal settledAmount,
+			BigDecimal adjustedAmount, BigDecimal remainingAmount, String status) {
+	}
+
+	private record SourceDescriptor(String sourceType, Long sourceId, String sourceNo, LocalDate businessDate,
+			String status) {
+	}
+
+	private record SettlementSourceCandidate(String sourceType, Long sourceId, String sourceNo, String settlementSide,
+			Long targetId, String targetNo, LocalDate businessDate, BigDecimal originalAmount,
+			BigDecimal adjustedAmount, BigDecimal adjustableAmount, String status, Long customerId, Long supplierId) {
+	}
+
 	private record TraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,
 			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal quantity, BigDecimal amount,
 			String shipmentNo, LocalDate shipmentDate, String shipmentStatus, Integer shipmentLineNo, String returnNo,
@@ -4508,6 +5571,10 @@ public class ReversalAdminService {
 			String sourceNo, LocalDate sourceDate, String sourceStatus, Integer sourceLineNo, Long workOrderId,
 			String reverseNo, LocalDate reverseDate, String reverseStatus, Integer reverseLineNo,
 			Long stockMovementId, Long costRecordId) {
+	}
+
+	private record SettlementTraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,
+			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal amount) {
 	}
 
 	private record CreatedDocument(Long id, String documentNo) {
