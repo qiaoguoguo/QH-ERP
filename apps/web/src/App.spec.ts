@@ -117,6 +117,55 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/inventory')
   })
 
+  it('支持收起和展开左侧菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+      menus: [
+        {
+          id: 4,
+          code: 'inventory',
+          name: '库存管理',
+          routePath: '/inventory/balances',
+          children: [
+            { id: 5, code: 'inventory:balance:view', name: '库存余额', routePath: '/inventory/balances' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/finance/payables')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    const menu = () => wrapper.findComponent({ name: 'ElMenu' })
+    const sidebar = () => wrapper.find('.app-sidebar')
+    const toggle = () => wrapper.find('[data-test="sidebar-toggle-button"]')
+
+    expect(toggle().exists()).toBe(true)
+    expect(menu().props('collapse')).toBe(false)
+    expect(sidebar().classes()).not.toContain('is-collapsed')
+
+    await toggle().trigger('click')
+
+    expect(menu().props('collapse')).toBe(true)
+    expect(sidebar().classes()).toContain('is-collapsed')
+    expect(toggle().attributes('aria-label')).toBe('展开菜单')
+
+    await toggle().trigger('click')
+
+    expect(menu().props('collapse')).toBe(false)
+    expect(sidebar().classes()).not.toContain('is-collapsed')
+    expect(toggle().attributes('aria-label')).toBe('收起菜单')
+  })
+
   it('登录成功进入工作台后顶部显示当前用户而不是未登录', async () => {
     const fetcher = vi
       .fn()

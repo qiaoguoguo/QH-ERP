@@ -6,6 +6,8 @@ import {
   Coin,
   Collection,
   Cpu,
+  Expand,
+  Fold,
   Grid,
   House,
   Money,
@@ -217,6 +219,9 @@ const displayName = computed(() => authStore.currentUser?.displayName ?? authSto
 const logoutError = ref('')
 const logoutLoading = ref(false)
 const sessionHydrating = ref(false)
+const sidebarCollapsed = ref(false)
+const sidebarToggleLabel = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
+const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
 
 async function hydrateCurrentUser() {
   if (isLogin.value || authStore.currentUser || sessionHydrating.value) {
@@ -559,6 +564,10 @@ function mainMenuIconKey(menu: MenuNode): string {
     .replace(/(^-)|(-$)/g, '') || 'default'
 }
 
+function toggleSidebarCollapsed() {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
 async function logout() {
   if (logoutLoading.value) {
     return
@@ -581,16 +590,42 @@ async function logout() {
   <router-view v-if="isLogin" />
 
   <el-container v-else class="app-shell">
-    <el-aside class="app-sidebar" width="232px">
+    <el-aside
+      :class="['app-sidebar', { 'is-collapsed': sidebarCollapsed }]"
+      :width="sidebarCollapsed ? '72px' : '232px'"
+    >
       <div class="brand">
         <img data-test="app-logo" class="brand-logo" :src="qhLogoUrl" alt="QH ERP 系统标识">
         <div class="brand-copy">
           <strong>QH ERP</strong>
           <span>制造业生产管理 ERP</span>
         </div>
+        <el-tooltip :content="sidebarToggleLabel" placement="right" :show-after="250">
+          <button
+            data-test="sidebar-toggle-button"
+            class="sidebar-toggle"
+            type="button"
+            :aria-label="sidebarToggleLabel"
+            :title="sidebarToggleLabel"
+            @click="toggleSidebarCollapsed"
+          >
+            <component
+              :is="sidebarToggleIcon"
+              class="sidebar-toggle-icon"
+              :data-test="sidebarCollapsed ? 'sidebar-toggle-icon-expand' : 'sidebar-toggle-icon-fold'"
+            />
+          </button>
+        </el-tooltip>
       </div>
       <el-scrollbar class="side-menu-scroll">
-        <el-menu :default-active="sideMenuActivePath" router class="side-menu" unique-opened>
+        <el-menu
+          :default-active="sideMenuActivePath"
+          :collapse="sidebarCollapsed"
+          :collapse-transition="false"
+          router
+          class="side-menu"
+          unique-opened
+        >
           <el-menu-item index="/">
             <House class="side-menu-icon" data-test="main-menu-icon-home" />
             <span>工作台</span>
