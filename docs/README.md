@@ -30,6 +30,7 @@
 - [经营报表基础模块任务记录](tasks/014-business-reporting-foundation.md)
 - [退货退款与业务反冲基础模块任务记录](tasks/015-return-refund-reversal-foundation.md)
 - [业务期间与历史数据保护基础任务记录](tasks/016-business-period-protection-foundation.md)
+- [质量检验与库存质量状态基础任务记录](tasks/017-quality-inventory-status-foundation.md)
 
 ## 产品
 
@@ -60,6 +61,7 @@
 - [经营报表基础接口契约](api/business-reporting-api.md)
 - [退货退款与业务反冲接口契约](api/return-refund-reversal-api.md)
 - [业务期间与历史数据保护接口契约](api/business-period-protection-api.md)
+- [质量检验与库存质量状态接口契约](api/quality-inventory-status-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -74,6 +76,7 @@
 - [经营报表基础模块设计规格](superpowers/specs/2026-07-04-business-reporting-design.md)
 - [退货退款与业务反冲基础模块设计规格](superpowers/specs/2026-07-05-return-refund-reversal-design.md)
 - [业务期间与历史数据保护基础设计规格](superpowers/specs/2026-07-10-business-period-protection-design.md)
+- [质量检验与库存质量状态基础设计规格](superpowers/specs/2026-07-10-quality-inventory-status-design.md)
 
 ## 实施计划
 
@@ -103,6 +106,7 @@
 - [经营报表基础测试计划](testing/business-reporting-test-plan.md)
 - [退货退款与业务反冲测试计划](testing/return-refund-reversal-test-plan.md)
 - [业务期间与历史数据保护测试计划](testing/business-period-protection-test-plan.md)
+- [质量检验与库存质量状态测试计划](testing/quality-inventory-status-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
