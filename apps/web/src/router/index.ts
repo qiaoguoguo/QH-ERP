@@ -90,6 +90,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/system/roles/RolePermissionView.vue'),
   },
   {
+    path: '/system/business-periods',
+    name: 'system-business-periods',
+    meta: { requiresAuth: true, requiredPermission: 'system:business-period:view' },
+    component: () => import('../modules/system/businessPeriods/BusinessPeriodListView.vue'),
+  },
+  {
     path: '/master/units',
     name: 'master-units',
     meta: { requiresAuth: true, requiredPermission: 'master:unit:view' },

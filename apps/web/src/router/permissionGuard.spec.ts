@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthSession, UserProfile } from '../shared/api/accountPermissionApi'
 import { useAuthStore } from '../stores/authStore'
+import BusinessPeriodListView from '../modules/system/businessPeriods/BusinessPeriodListView.vue'
 import MaterialCategoryView from '../modules/materials/categories/MaterialCategoryView.vue'
 import MaterialItemListView from '../modules/materials/items/MaterialItemListView.vue'
 import BomListView from '../modules/materials/boms/BomListView.vue'
@@ -125,6 +126,18 @@ describe('账号权限路由守卫', () => {
     expect(homeComponent.template).toBeUndefined()
     expect(homeComponent.render).toBeTypeOf('function')
     expect(router.currentRoute.value.name).toBe('home')
+  })
+
+  it('业务期间路由加载真实页面并配置系统期间查看权限', async () => {
+    const router = createQhErpRouter()
+    const route = router.getRoutes().find((item) => item.name === 'system-business-periods')
+    const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+    expect(route?.path).toBe('/system/business-periods')
+    expect(route?.meta.requiresAuth).toBe(true)
+    expect(route?.meta.requiredPermission).toBe('system:business-period:view')
+    expect(component).toBeTypeOf('function')
+    await expect(component?.()).resolves.toHaveProperty('default', BusinessPeriodListView)
   })
 
   it('基础资料和物料路由加载真实页面', async () => {

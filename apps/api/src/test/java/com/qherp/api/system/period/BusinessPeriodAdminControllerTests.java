@@ -100,6 +100,42 @@ class BusinessPeriodAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void listsPeriodsWithFiltersPaginationAndResolvesBusinessDate() throws Exception {
+		AuthenticatedSession admin = login();
+		createPeriod(admin, "2044-01", LocalDate.of(2044, 1, 1), LocalDate.of(2044, 1, 31));
+		long lockedId = createPeriod(admin, "2044-02", LocalDate.of(2044, 2, 1), LocalDate.of(2044, 2, 29));
+		createPeriod(admin, "2044-03", LocalDate.of(2044, 3, 1), LocalDate.of(2044, 3, 31));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/system/business-periods/" + lockedId + "/lock",
+				Map.of("reason", "月度经营数据核对完成"), admin));
+
+		ResponseEntity<String> list = exchange(HttpMethod.GET,
+				"/api/admin/system/business-periods?periodCode=2044&status=LOCKED&startDate=2044-02-01&endDate=2044-02-29&page=1&pageSize=10",
+				null, admin);
+		assertOk(list);
+		assertThat(data(list).get("items")).hasSize(1);
+		assertThat(data(list).get("items").get(0).get("periodCode").asText()).isEqualTo("2044-02");
+		assertThat(data(list).get("items").get(0).get("statusName").asText()).isEqualTo("已锁定");
+		assertThat(data(list).get("total").asLong()).isEqualTo(1L);
+		assertThat(data(list).get("page").asInt()).isOne();
+
+		ResponseEntity<String> resolvedLocked = exchange(HttpMethod.GET,
+				"/api/admin/system/business-periods/resolve?businessDate=2044-02-10", null, admin);
+		assertOk(resolvedLocked);
+		assertThat(data(resolvedLocked).get("configured").asBoolean()).isTrue();
+		assertThat(data(resolvedLocked).get("period").get("periodCode").asText()).isEqualTo("2044-02");
+		assertThat(data(resolvedLocked).get("statusName").asText()).isEqualTo("已锁定");
+		assertThat(data(resolvedLocked).get("message").asText()).contains("已锁定");
+
+		ResponseEntity<String> unresolved = exchange(HttpMethod.GET,
+				"/api/admin/system/business-periods/resolve?businessDate=2099-12-31", null, admin);
+		assertOk(unresolved);
+		assertThat(data(unresolved).get("configured").asBoolean()).isFalse();
+		assertThat(data(unresolved).get("period").isNull()).isTrue();
+		assertThat(data(unresolved).get("statusName").asText()).isEqualTo("未配置");
+		assertThat(data(unresolved).get("message").asText()).isEqualTo("未配置业务期间，按开放处理");
+	}
+
+	@Test
 	void generateMonthlyRejectsExistingCodeWithoutPartialWrites() throws Exception {
 		AuthenticatedSession admin = login();
 		createPeriod(admin, "2041-08", LocalDate.of(2042, 8, 1), LocalDate.of(2042, 8, 31));

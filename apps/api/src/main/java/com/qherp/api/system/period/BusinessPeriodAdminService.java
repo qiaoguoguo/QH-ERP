@@ -2,6 +2,7 @@ package com.qherp.api.system.period;
 
 import com.qherp.api.common.ApiErrorCode;
 import com.qherp.api.common.BusinessException;
+import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +18,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class BusinessPeriodAdminService {
@@ -32,7 +34,46 @@ public class BusinessPeriodAdminService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<BusinessPeriodRecord> list() {
+	public PageResponse<BusinessPeriodRecord> list(String periodCode, String status, LocalDate startDate,
+			LocalDate endDate, int page, int pageSize) {
+		String periodCodeFilter = blank(periodCode) ? null : periodCode.trim();
+		BusinessPeriodStatus statusFilter = parseStatus(status);
+		List<BusinessPeriodRecord> filtered = allPeriods().stream()
+				.filter(period -> periodCodeFilter == null || period.periodCode().contains(periodCodeFilter))
+				.filter(period -> statusFilter == null || period.status() == statusFilter)
+				.filter(period -> startDate == null || !period.endDate().isBefore(startDate))
+				.filter(period -> endDate == null || !period.startDate().isAfter(endDate))
+				.toList();
+		int safePage = Math.max(page, 1);
+		int safePageSize = Math.max(1, Math.min(pageSize, 100));
+		int fromIndex = Math.min((safePage - 1) * safePageSize, filtered.size());
+		int toIndex = Math.min(fromIndex + safePageSize, filtered.size());
+		return PageResponse.of(filtered.subList(fromIndex, toIndex), safePage, safePageSize, filtered.size());
+	}
+
+	@Transactional(readOnly = true)
+	public BusinessPeriodResolveResponse resolve(LocalDate businessDate) {
+		if (businessDate == null) {
+			throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_DATE_RANGE_INVALID);
+		}
+		List<BusinessPeriodRecord> records = this.jdbcTemplate.query("""
+				select id, period_code, period_name, start_date, end_date, status, locked_by, locked_at, lock_reason,
+				       unlocked_by, unlocked_at, unlock_reason, created_at, updated_at
+				from biz_business_period
+				where start_date <= ? and end_date >= ?
+				order by start_date, id
+				limit 1
+				""", (rs, rowNum) -> map(rs), businessDate, businessDate);
+		if (records.isEmpty()) {
+			return new BusinessPeriodResolveResponse(false, businessDate, null, "未配置", "未配置业务期间，按开放处理");
+		}
+		BusinessPeriodRecord period = records.getFirst();
+		String name = statusName(period.status());
+		String message = period.status() == BusinessPeriodStatus.LOCKED ? "业务日期处于已锁定期间" : "业务日期处于开放期间";
+		return new BusinessPeriodResolveResponse(true, businessDate, period, name, message);
+	}
+
+	private List<BusinessPeriodRecord> allPeriods() {
 		return this.jdbcTemplate.query("""
 				select id, period_code, period_name, start_date, end_date, status, locked_by, locked_at, lock_reason,
 				       unlocked_by, unlocked_at, unlock_reason, created_at, updated_at
@@ -179,6 +220,18 @@ public class BusinessPeriodAdminService {
 
 	private YearMonth invalidMonth() { throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_DATE_RANGE_INVALID); }
 
+	private BusinessPeriodStatus parseStatus(String value) {
+		if (blank(value)) {
+			return null;
+		}
+		try {
+			return BusinessPeriodStatus.valueOf(value.trim().toUpperCase(Locale.ROOT));
+		}
+		catch (IllegalArgumentException exception) {
+			throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_STATUS_INVALID);
+		}
+	}
+
 	private String requiredReason(ReasonRequest request) {
 		if (request == null || blank(request.reason())) throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_REASON_REQUIRED);
 		return request.reason().trim();
@@ -194,10 +247,15 @@ public class BusinessPeriodAdminService {
 	}
 
 	private BusinessPeriodRecord map(java.sql.ResultSet rs) throws java.sql.SQLException {
+		BusinessPeriodStatus status = BusinessPeriodStatus.valueOf(rs.getString("status"));
 		return new BusinessPeriodRecord(rs.getLong("id"), rs.getString("period_code"), rs.getString("period_name"),
-				rs.getObject("start_date", LocalDate.class), rs.getObject("end_date", LocalDate.class), BusinessPeriodStatus.valueOf(rs.getString("status")),
+				rs.getObject("start_date", LocalDate.class), rs.getObject("end_date", LocalDate.class), status, statusName(status),
 				rs.getString("locked_by"), rs.getObject("locked_at", OffsetDateTime.class), rs.getString("lock_reason"), rs.getString("unlocked_by"),
 				rs.getObject("unlocked_at", OffsetDateTime.class), rs.getString("unlock_reason"), rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private String statusName(BusinessPeriodStatus status) {
+		return status == BusinessPeriodStatus.LOCKED ? "已锁定" : "开放";
 	}
 
 	private boolean blank(String value) { return value == null || value.isBlank(); }
@@ -205,6 +263,7 @@ public class BusinessPeriodAdminService {
 	public record BusinessPeriodRequest(String periodCode, String periodName, LocalDate startDate, LocalDate endDate) {}
 	public record GenerateMonthlyRequest(String startMonth, String endMonth) {}
 	public record ReasonRequest(String reason) {}
-	public record BusinessPeriodRecord(Long id, String periodCode, String periodName, LocalDate startDate, LocalDate endDate, BusinessPeriodStatus status, String lockedBy, OffsetDateTime lockedAt, String lockReason, String unlockedBy, OffsetDateTime unlockedAt, String unlockReason, OffsetDateTime createdAt, OffsetDateTime updatedAt) {}
+	public record BusinessPeriodResolveResponse(boolean configured, LocalDate businessDate, BusinessPeriodRecord period, String statusName, String message) {}
+	public record BusinessPeriodRecord(Long id, String periodCode, String periodName, LocalDate startDate, LocalDate endDate, BusinessPeriodStatus status, String statusName, String lockedBy, OffsetDateTime lockedAt, String lockReason, String unlockedBy, OffsetDateTime unlockedAt, String unlockReason, OffsetDateTime createdAt, OffsetDateTime updatedAt) {}
 	private record ValidatedPeriod(String periodCode, String periodName, LocalDate startDate, LocalDate endDate) {}
 }

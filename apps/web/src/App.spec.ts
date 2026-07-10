@@ -71,6 +71,7 @@ describe('ERP 应用骨架', () => {
           children: [
             { id: 2, code: 'system:user', name: '用户管理', routePath: '/system/users' },
             { id: 3, code: 'system:role', name: '角色管理', routePath: '/system/roles' },
+            { id: 8, code: 'system:business-period:view', name: '业务期间', routePath: '/system/business-periods' },
           ],
         },
         {
@@ -103,6 +104,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('用户管理')
     expect(wrapper.text()).toContain('角色管理')
+    expect(wrapper.text()).toContain('业务期间')
     expect(wrapper.text()).toContain('库存管理')
     expect(wrapper.text()).toContain('库存余额')
     expect(wrapper.text()).toContain('库存变动')
@@ -274,6 +276,30 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('成本记录')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/cost')
+  })
+
+  it('有业务期间查看权限但后端菜单缺失时补齐系统管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'period_admin', displayName: '期间管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['system:business-period:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('系统管理')
+    expect(wrapper.text()).toContain('业务期间')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/system')
   })
 
   it('有财务查看权限但后端菜单缺失时补齐财务往来入口并按权限显示子项', async () => {

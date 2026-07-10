@@ -31,6 +31,7 @@ const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
 const sideMenuActivePath = computed(() => activeMenuPath(route.path, route.query.returnTo))
+const businessPeriodPath = '/system/business-periods'
 const inventoryBalancePath = '/inventory/balances'
 const inventoryMovementPath = '/inventory/movements'
 const inventoryDocumentPath = '/inventory/documents'
@@ -55,6 +56,7 @@ const supportedMenuPaths = new Set([
   '/system/users',
   '/accounts/roles',
   '/system/roles',
+  businessPeriodPath,
   '/master/units',
   '/master/warehouses',
   '/master/suppliers',
@@ -82,6 +84,15 @@ const supportedMenuPaths = new Set([
   financeSettlementAdjustmentPath,
   ...reportMenuPaths,
 ])
+const systemChildren: MenuNode[] = [
+  {
+    id: 'system-business-periods',
+    code: 'system:business-period:view',
+    name: '业务期间',
+    routePath: businessPeriodPath,
+  },
+]
+const systemMenuPaths = new Set(systemChildren.map((child) => child.routePath))
 const inventoryChildren: MenuNode[] = [
   {
     id: 'inventory-balances',
@@ -213,7 +224,7 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/report|报表|经营/, TrendCharts],
 ]
 const menuTree = computed<MenuNode[]>(() => ensureReportsMenu(ensureFinanceMenu(ensureCostMenu(
-  ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(filterSupportedMenus(authStore.menus ?? []))))),
+  ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(ensureSystemMenu(filterSupportedMenus(authStore.menus ?? [])))))),
 ))))
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
@@ -252,6 +263,45 @@ function filterSupportedMenus(menus: MenuNode[]): MenuNode[] {
       children: filterSupportedMenus(menu.children ?? []),
     }))
     .filter((menu) => (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length))
+}
+
+function ensureSystemMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = systemChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  if (!allowedChildren.length) {
+    return menus
+  }
+
+  const systemIndex = menus.findIndex((menu) =>
+    menu.code === 'system' || (menu.routePath ? systemMenuPaths.has(menu.routePath) : false))
+  if (systemIndex === -1) {
+    return [
+      ...menus,
+      {
+        id: 'system',
+        code: 'system',
+        name: '系统管理',
+        routePath: null,
+        children: allowedChildren,
+      },
+    ]
+  }
+
+  return menus.map((menu, index) => {
+    if (index !== systemIndex) {
+      return menu
+    }
+    const children = [...(menu.children ?? [])]
+    for (const child of allowedChildren) {
+      if (!children.some((existing) => existing.routePath === child.routePath)) {
+        children.push(child)
+      }
+    }
+    return {
+      ...menu,
+      name: '系统管理',
+      children,
+    }
+  })
 }
 
 function ensureInventoryMenu(menus: MenuNode[]): MenuNode[] {
