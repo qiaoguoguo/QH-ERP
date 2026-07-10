@@ -87,7 +87,43 @@
 
 ### `GET /api/admin/system/business-periods/resolve?businessDate=YYYY-MM-DD`
 
-按业务日期解析期间，要求 `system:business-period:view`。匹配时返回核心响应类型；未匹配时返回 `configured: false`、`businessDate` 与开放处理提示，不返回错误。
+按业务日期解析期间，要求 `system:business-period:view`。无论是否匹配，`ApiResponse<T>` 的 `data` 都返回以下统一对象，不返回错误：
+
+```json
+{
+  "configured": true,
+  "businessDate": "2026-07-15",
+  "period": {
+    "id": 1,
+    "periodCode": "2026-07",
+    "periodName": "2026年07月",
+    "startDate": "2026-07-01",
+    "endDate": "2026-07-31",
+    "status": "OPEN",
+    "statusName": "开放",
+    "lockedBy": null,
+    "lockedAt": null,
+    "lockReason": null,
+    "unlockedBy": null,
+    "unlockedAt": null,
+    "unlockReason": null
+  },
+  "statusName": "开放",
+  "message": "业务日期处于开放期间"
+}
+```
+
+`configured` 表示该业务日期是否已配置业务期间；`businessDate` 为请求中经校验后的日期；`period` 的类型为 `BusinessPeriodRecord | null`，匹配时为核心响应类型，未匹配时必须为 `null`。`statusName` 为前端可直接展示的状态名称：匹配时与 `period.statusName` 一致，未匹配时为 `未配置`。`message` 为前端可展示的处理提示：匹配时说明业务日期处于开放或锁定期间，未匹配时为“未配置业务期间，按开放处理”。未匹配示例：
+
+```json
+{
+  "configured": false,
+  "businessDate": "2026-08-01",
+  "period": null,
+  "statusName": "未配置",
+  "message": "未配置业务期间，按开放处理"
+}
+```
 
 ## 错误码
 
