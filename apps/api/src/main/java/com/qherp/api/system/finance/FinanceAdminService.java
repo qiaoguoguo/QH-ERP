@@ -197,6 +197,8 @@ public class FinanceAdminService {
 		if (request == null || request.dueDate() == null) {
 			throw new BusinessException(ApiErrorCode.FINANCE_DUE_DATE_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(receivable.businessDate(), BusinessPeriodOperation.UPDATE,
+				"FINANCE_RECEIVABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receivable
@@ -545,6 +547,8 @@ public class FinanceAdminService {
 		if (request == null || request.dueDate() == null) {
 			throw new BusinessException(ApiErrorCode.FINANCE_DUE_DATE_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(payable.businessDate(), BusinessPeriodOperation.UPDATE,
+				"FINANCE_PAYABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payable

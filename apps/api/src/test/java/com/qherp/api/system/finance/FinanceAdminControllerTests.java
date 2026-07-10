@@ -90,6 +90,31 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void lockedPeriodRejectsReceivableAndPayableUpdates() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate date = LocalDate.of(2097, 7, 10);
+
+		SalesFixture salesFixture = fixture();
+		long shipmentId = createPostedShipment(salesFixture, "期间锁定应收更新来源", "1.000000", "10.000000");
+		this.jdbcTemplate.update("update sal_sales_shipment set business_date = ? where id = ?", date, shipmentId);
+		long receivableId = data(createReceivable(admin, shipmentId, "期间锁定应收更新")).get("id").longValue();
+
+		ProcurementFixture procurementFixture = procurementFixture();
+		long receiptId = createPostedPurchaseReceipt(procurementFixture, "期间锁定应付更新来源", "1.000000",
+				"10.000000");
+		this.jdbcTemplate.update("update proc_purchase_receipt set business_date = ? where id = ?", date, receiptId);
+		long payableId = data(createPayable(admin, receiptId, "期间锁定应付更新")).get("id").longValue();
+
+		lockPeriod(date);
+		assertError(updateReceivable(admin, receivableId,
+				Map.of("dueDate", date.plusDays(10).toString(), "remark", "期间锁定应收更新")),
+				HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertError(updatePayable(admin, payableId,
+				Map.of("dueDate", date.plusDays(10).toString(), "remark", "期间锁定应付更新")),
+				HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
 	void payableSourcesOnlyReturnPostedUngeneratedReceiptsAndRequireCreatePermission() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = procurementFixture();
