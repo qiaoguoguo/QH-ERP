@@ -260,6 +260,8 @@ public class FinanceAdminService {
 				&& receivable.status() != ReceivableStatus.PARTIALLY_RECEIVED) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
+		this.businessPeriodGuard.assertWritable(receivable.businessDate(), BusinessPeriodOperation.CLOSE,
+				"FINANCE_RECEIVABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receivable
@@ -609,6 +611,8 @@ public class FinanceAdminService {
 		if (payable.status() != PayableStatus.CONFIRMED && payable.status() != PayableStatus.PARTIALLY_PAID) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
+		this.businessPeriodGuard.assertWritable(payable.businessDate(), BusinessPeriodOperation.CLOSE,
+				"FINANCE_PAYABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payable

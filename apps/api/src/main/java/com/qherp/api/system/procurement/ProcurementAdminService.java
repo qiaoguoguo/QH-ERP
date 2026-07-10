@@ -202,6 +202,7 @@ public class ProcurementAdminService {
 				&& order.status() != PurchaseOrderStatus.RECEIVED) {
 			throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CLOSE, "PURCHASE_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update proc_purchase_order

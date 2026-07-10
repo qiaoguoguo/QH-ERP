@@ -201,6 +201,7 @@ public class SalesAdminService {
 				&& order.status() != SalesOrderStatus.SHIPPED) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CLOSE, "SALES_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update sal_sales_order

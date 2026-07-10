@@ -471,7 +471,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
-	void lockedPeriodRejectsSalesOrderConfirmationAndCancellation() throws Exception {
+	void lockedPeriodRejectsSalesOrderConfirmationCancellationAndClosing() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesFixture fixture = fixture();
 		LocalDate date = LocalDate.of(2092, 7, 10);
@@ -483,9 +483,15 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1", "1", null))));
 		cancelPayload.put("orderDate", date.toString());
 		long cancelId = createOrderId(admin, cancelPayload);
+		Map<String, Object> closePayload = new LinkedHashMap<>(orderPayload(fixture.customerId(), "期间锁定关闭测试",
+				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1", "1", null))));
+		closePayload.put("orderDate", date.toString());
+		long closeId = createOrderId(admin, closePayload);
+		assertOk(confirmOrder(admin, closeId));
 		lockPeriod(date);
 		assertError(confirmOrder(admin, confirmId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
 		assertError(cancelOrder(admin, cancelId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertError(closeOrder(admin, closeId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
 	}
 
 	private void lockPeriod(LocalDate date) {

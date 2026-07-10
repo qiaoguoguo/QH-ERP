@@ -6,6 +6,7 @@ public enum BusinessPeriodOperation {
 	CONFIRM,
 	POST,
 	CANCEL,
+	CLOSE,
 	REVERSE,
 	ADJUST
 }
