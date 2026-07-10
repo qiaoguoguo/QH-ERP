@@ -31,10 +31,10 @@ public class InventoryAdminController {
 	public ApiResponse<PageResponse<InventoryAdminService.InventoryBalanceResponse>> balances(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long warehouseId,
 			@RequestParam(required = false) Long materialId, @RequestParam(required = false) String materialType,
-			@RequestParam(defaultValue = "false") boolean onlyPositive, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
+			@RequestParam(required = false) String qualityStatus, @RequestParam(defaultValue = "false") boolean onlyPositive,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.inventoryAdminService.balances(keyword, warehouseId, materialId, materialType,
-				onlyPositive, page, pageSize));
+				qualityStatus, onlyPositive, page, pageSize));
 	}
 
 	@GetMapping("/movements")
@@ -42,10 +42,10 @@ public class InventoryAdminController {
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long warehouseId,
 			@RequestParam(required = false) Long materialId, @RequestParam(required = false) String movementType,
 			@RequestParam(required = false) String direction, @RequestParam(required = false) LocalDate dateFrom,
-			@RequestParam(required = false) LocalDate dateTo, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
+			@RequestParam(required = false) LocalDate dateTo, @RequestParam(required = false) String qualityStatus,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.inventoryAdminService.movements(keyword, warehouseId, materialId, movementType,
-				direction, dateFrom, dateTo, page, pageSize));
+				direction, dateFrom, dateTo, qualityStatus, page, pageSize));
 	}
 
 	@GetMapping("/documents")

@@ -112,6 +112,135 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void inventoryBalanceSeparatesQualityStatusAndAvailableQuantityUsesQualifiedOnly() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "10.000000",
+				InventoryQualityStatus.QUALIFIED);
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "3.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				InventoryQualityStatus.REJECTED);
+
+		ResponseEntity<String> balances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(balances);
+		JsonNode balance = firstItem(balances);
+		assertDecimal(balance, "quantityOnHand", "15.000000");
+		assertDecimal(balance, "availableQuantity", "10.000000");
+		assertDecimal(balance, "pendingInspectionQuantity", "3.000000");
+		assertDecimal(balance, "qualifiedQuantity", "10.000000");
+		assertDecimal(balance, "rejectedQuantity", "2.000000");
+		assertDecimal(balance, "frozenQuantity", "0.000000");
+
+		ResponseEntity<String> pendingBalances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId()
+				+ "&qualityStatus=PENDING_INSPECTION", admin);
+		assertOk(pendingBalances);
+		JsonNode pendingBalance = firstItem(pendingBalances);
+		assertThat(pendingBalance.get("qualityStatus").asText()).isEqualTo("PENDING_INSPECTION");
+		assertThat(pendingBalance.get("qualityStatusName").asText()).isEqualTo("待检");
+		assertDecimal(pendingBalance, "quantityOnHand", "3.000000");
+		assertDecimal(pendingBalance, "availableQuantity", "0.000000");
+
+		ResponseEntity<String> pendingMovements = get("/api/admin/inventory/movements?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId()
+				+ "&qualityStatus=PENDING_INSPECTION", admin);
+		assertOk(pendingMovements);
+		JsonNode pendingMovement = firstItem(pendingMovements);
+		assertThat(pendingMovement.get("qualityStatus").asText()).isEqualTo("PENDING_INSPECTION");
+		assertThat(pendingMovement.get("qualityStatusName").asText()).isEqualTo("待检");
+	}
+
+	@Test
+	void postingServiceRejectsNonQualifiedOrdinaryOutbound() {
+		InventoryFixture fixture = fixture();
+		long sourceId = 850_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 860_000L + SEQUENCE.incrementAndGet();
+
+		InventoryPostingService.PostingRequest request = new InventoryPostingService.PostingRequest(
+				InventoryMovementType.SALES_SHIPMENT, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("1.000000"),
+				InventoryQualityStatus.PENDING_INSPECTION, "SALES_SHIPMENT", sourceId, sourceLineId,
+				LocalDate.of(2026, 7, 10), "销售出库", null, "admin");
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(request))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_NON_QUALIFIED_NOT_AVAILABLE));
+		assertThat(movementCountBySource("SALES_SHIPMENT", sourceLineId)).isZero();
+	}
+
+	@Test
+	void postingServiceReturnsQualityBalanceErrorWhenQualifiedStockIsInsufficientButOtherStatusesExist() {
+		InventoryFixture fixture = fixture();
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "5.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long sourceId = 865_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 866_000L + SEQUENCE.incrementAndGet();
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(
+				new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
+						InventoryDirection.OUT, fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+						new BigDecimal("1.000000"), InventoryQualityStatus.QUALIFIED, "SALES_SHIPMENT", sourceId,
+						sourceLineId, LocalDate.of(2026, 7, 10), "销售出库", null, "admin")))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH));
+		assertThat(movementCountBySource("SALES_SHIPMENT", sourceLineId)).isZero();
+	}
+
+	@Test
+	void postingServiceTransfersQualityStatusWithoutChangingTotalQuantity() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "5.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long sourceId = 870_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 880_000L + SEQUENCE.incrementAndGet();
+
+		this.inventoryPostingService.transferQualityStatus(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), InventoryQualityStatus.PENDING_INSPECTION, InventoryQualityStatus.QUALIFIED,
+				new BigDecimal("2.000000"), "QUALITY_STATUS_TRANSFER", sourceId, sourceLineId, LocalDate.now(),
+				"质量状态转换", "待检转合格", "tester");
+
+		ResponseEntity<String> balances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(balances);
+		JsonNode balance = firstItem(balances);
+		assertDecimal(balance, "quantityOnHand", "5.000000");
+		assertDecimal(balance, "availableQuantity", "2.000000");
+		assertDecimal(balance, "pendingInspectionQuantity", "3.000000");
+		assertDecimal(balance, "qualifiedQuantity", "2.000000");
+		assertThat(movementCountBySource("QUALITY_STATUS_TRANSFER", sourceLineId * 10
+				+ InventoryQualityStatus.PENDING_INSPECTION.ordinal())).isOne();
+		assertThat(movementCountBySource("QUALITY_STATUS_TRANSFER", sourceLineId * 10
+				+ InventoryQualityStatus.QUALIFIED.ordinal())).isOne();
+	}
+
+	@Test
+	void postingServiceRejectsUnsupportedQualityStatusTransfer() {
+		InventoryFixture fixture = fixture();
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "1.000000",
+				InventoryQualityStatus.REJECTED);
+		long sourceId = 885_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 886_000L + SEQUENCE.incrementAndGet();
+
+		assertThatThrownBy(() -> this.inventoryPostingService.transferQualityStatus(fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), InventoryQualityStatus.REJECTED,
+				InventoryQualityStatus.QUALIFIED, new BigDecimal("1.000000"), "QUALITY_STATUS_TRANSFER", sourceId,
+				sourceLineId, LocalDate.now(), "质量状态转换", "不合格转合格", "tester"))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID));
+		assertThat(movementCountBySource("QUALITY_STATUS_TRANSFER", sourceLineId * 10
+				+ InventoryQualityStatus.REJECTED.ordinal())).isZero();
+		assertThat(movementCountBySource("QUALITY_STATUS_TRANSFER", sourceLineId * 10
+				+ InventoryQualityStatus.QUALIFIED.ordinal())).isZero();
+	}
+
+	@Test
 	void postingServiceRejectsDuplicateSourceLineAndKeepsBalanceUnchanged() {
 		InventoryFixture fixture = fixture();
 		long sourceId = 900_000L + SEQUENCE.incrementAndGet();
@@ -587,6 +716,16 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 						businessDate));
 		assertOk(postDocument(admin, documentId));
 		return documentId;
+	}
+
+	private InventoryPostingService.PostingResult postInventory(long warehouseId, long materialId, long unitId,
+			String quantity, InventoryQualityStatus qualityStatus) {
+		long sourceId = 1_200_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 1_210_000L + SEQUENCE.incrementAndGet();
+		return this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_INCREASE, InventoryDirection.IN, warehouseId, materialId, unitId,
+				new BigDecimal(quantity), qualityStatus, "INVENTORY_DOCUMENT", sourceId, sourceLineId, LocalDate.now(),
+				"质量状态库存测试", "质量状态库存测试", "tester"));
 	}
 
 	private long createDocumentId(AuthenticatedSession session, Map<String, Object> payload) throws Exception {

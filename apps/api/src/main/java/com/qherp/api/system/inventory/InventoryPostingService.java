@@ -33,27 +33,29 @@ public class InventoryPostingService {
 	@Transactional
 	public PostingResult post(PostingRequest request) {
 		validateRequest(request);
+		validateOutboundQualityStatus(request);
 		OffsetDateTime now = OffsetDateTime.now();
-		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(), now);
+		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(),
+				request.qualityStatus(), now);
 		BigDecimal beforeQuantity = balance.quantityOnHand();
 		BigDecimal afterQuantity = request.direction() == InventoryDirection.IN ? beforeQuantity.add(request.quantity())
 				: beforeQuantity.subtract(request.quantity());
 		if (afterQuantity.compareTo(ZERO) < 0) {
-			throw new BusinessException(stockNotEnoughErrorCode(request.sourceType()));
+			throw new BusinessException(stockNotEnoughErrorCode(request, request.quantity()));
 		}
 		try {
 			this.jdbcTemplate.update("""
 					insert into inv_stock_movement (
 						movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
 						before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-						reason, remark, operator_name, occurred_at
+						reason, remark, operator_name, occurred_at, quality_status
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", movementNo(request), request.movementType().name(), request.direction().name(),
 					request.warehouseId(), request.materialId(), request.unitId(), request.quantity(), beforeQuantity,
 					afterQuantity, request.sourceType(), request.sourceId(), request.sourceLineId(),
 					request.businessDate(), request.reason(), blankToNull(request.remark()), request.operatorName(),
-					now);
+					now, request.qualityStatus().name());
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateMovementException(exception, request.sourceType());
@@ -66,37 +68,60 @@ public class InventoryPostingService {
 		return new PostingResult(beforeQuantity, afterQuantity);
 	}
 
-	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, OffsetDateTime now) {
-		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId);
+	@Transactional
+	public QualityTransferResult transferQualityStatus(Long warehouseId, Long materialId, Long unitId,
+			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
+			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
+			String operatorName) {
+		if (!allowedQualityStatusTransfer(fromStatus, toStatus)) {
+			throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
+		}
+		Long fromSourceLineId = transferSourceLineId(sourceLineId, fromStatus);
+		Long toSourceLineId = transferSourceLineId(sourceLineId, toStatus);
+		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
+				InventoryDirection.OUT, warehouseId, materialId, unitId, quantity, fromStatus, sourceType, sourceId,
+				fromSourceLineId, businessDate, reason, remark, operatorName));
+		PostingResult toResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
+				InventoryDirection.IN, warehouseId, materialId, unitId, quantity, toStatus, sourceType, sourceId,
+				toSourceLineId, businessDate, reason, remark, operatorName));
+		return new QualityTransferResult(fromResult.beforeQuantity(), fromResult.afterQuantity(),
+				toResult.beforeQuantity(), toResult.afterQuantity());
+	}
+
+	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
+			OffsetDateTime now) {
+		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus);
 		if (balance.isEmpty()) {
 			try {
 				this.jdbcTemplate.update("""
 						insert into inv_stock_balance (
-							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
+							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+							quality_status
 						)
-						values (?, ?, ?, ?, ?, ?, ?)
-						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now);
+						values (?, ?, ?, ?, ?, ?, ?, ?)
+						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name());
 			}
 			catch (DuplicateKeyException exception) {
-				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material")) {
+				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")) {
 					throw exception;
 				}
 			}
-			balance = lockBalance(warehouseId, materialId);
+			balance = lockBalance(warehouseId, materialId, qualityStatus);
 		}
 		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
 	}
 
-	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId) {
+	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus) {
 		return this.jdbcTemplate
 			.query("""
 					select id, quantity_on_hand
 					from inv_stock_balance
 					where warehouse_id = ?
 					and material_id = ?
+					and quality_status = ?
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
-					warehouseId, materialId)
+					warehouseId, materialId, qualityStatus.name())
 			.stream()
 			.findFirst();
 	}
@@ -104,10 +129,22 @@ public class InventoryPostingService {
 	private void validateRequest(PostingRequest request) {
 		if (request == null || request.movementType() == null || request.direction() == null
 				|| request.warehouseId() == null || request.materialId() == null || request.unitId() == null
-				|| request.quantity() == null || request.quantity().compareTo(ZERO) <= 0
-				|| !hasText(request.sourceType()) || request.sourceId() == null || request.sourceLineId() == null
+				|| request.quantity() == null || request.quantity().compareTo(ZERO) <= 0) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (request.qualityStatus() == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_REQUIRED);
+		}
+		if (!hasText(request.sourceType()) || request.sourceId() == null || request.sourceLineId() == null
 				|| request.businessDate() == null || !hasText(request.reason()) || !hasText(request.operatorName())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private void validateOutboundQualityStatus(PostingRequest request) {
+		if (request.direction() == InventoryDirection.OUT && ordinaryOutboundSource(request.sourceType())
+				&& request.qualityStatus() != InventoryQualityStatus.QUALIFIED) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_NON_QUALIFIED_NOT_AVAILABLE);
 		}
 	}
 
@@ -121,7 +158,16 @@ public class InventoryPostingService {
 		return new BusinessException(ApiErrorCode.CONFLICT);
 	}
 
-	private ApiErrorCode stockNotEnoughErrorCode(String sourceType) {
+	private ApiErrorCode stockNotEnoughErrorCode(PostingRequest request, BigDecimal requestedQuantity) {
+		if (request.movementType() == InventoryMovementType.QUALITY_STATUS_TRANSFER
+				|| request.qualityStatus() != InventoryQualityStatus.QUALIFIED) {
+			return ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH;
+		}
+		if (request.direction() == InventoryDirection.OUT && ordinaryOutboundSource(request.sourceType())
+				&& totalQuantityOnHand(request.warehouseId(), request.materialId()).compareTo(requestedQuantity) >= 0) {
+			return ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH;
+		}
+		String sourceType = request.sourceType();
 		if (salesShipmentSource(sourceType)) {
 			return ApiErrorCode.SALES_STOCK_NOT_ENOUGH;
 		}
@@ -152,12 +198,38 @@ public class InventoryPostingService {
 		return "SALES_SHIPMENT".equals(sourceType);
 	}
 
+	private boolean ordinaryOutboundSource(String sourceType) {
+		return "SALES_SHIPMENT".equals(sourceType) || "PRODUCTION_MATERIAL_ISSUE".equals(sourceType)
+				|| "PRODUCTION_MATERIAL_SUPPLEMENT".equals(sourceType);
+	}
+
+	private boolean allowedQualityStatusTransfer(InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus) {
+		return (fromStatus == InventoryQualityStatus.PENDING_INSPECTION && toStatus == InventoryQualityStatus.QUALIFIED)
+				|| (fromStatus == InventoryQualityStatus.PENDING_INSPECTION
+						&& toStatus == InventoryQualityStatus.REJECTED)
+				|| (fromStatus == InventoryQualityStatus.PENDING_INSPECTION
+						&& toStatus == InventoryQualityStatus.FROZEN)
+				|| (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN)
+				|| (fromStatus == InventoryQualityStatus.FROZEN && toStatus == InventoryQualityStatus.QUALIFIED);
+	}
+
+	private BigDecimal totalQuantityOnHand(Long warehouseId, Long materialId) {
+		BigDecimal total = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				""", BigDecimal.class, warehouseId, materialId);
+		return total == null ? ZERO : total;
+	}
+
 	private String movementNo(PostingRequest request) {
 		String prefix = switch (request.movementType()) {
 			case PRODUCTION_ISSUE -> "MFG-ISS-MOV";
 			case PRODUCTION_RECEIPT -> "MFG-RCP-MOV";
 			case PURCHASE_RECEIPT -> "PROC-RCP-MOV";
 			case SALES_SHIPMENT -> "SAL-SHP-MOV";
+			case QUALITY_STATUS_TRANSFER -> "INV-QST-MOV";
 			default -> "INV-MOV";
 		};
 		int sequence = Math.floorMod(MOVEMENT_NO_SEQUENCE.getAndIncrement(), 1000);
@@ -171,6 +243,13 @@ public class InventoryPostingService {
 		return message != null && message.contains(constraintName);
 	}
 
+	private Long transferSourceLineId(Long sourceLineId, InventoryQualityStatus qualityStatus) {
+		if (sourceLineId == null || qualityStatus == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return Math.addExact(Math.multiplyExact(sourceLineId, 10L), qualityStatus.ordinal());
+	}
+
 	private static String blankToNull(String value) {
 		return hasText(value) ? value : null;
 	}
@@ -180,11 +259,23 @@ public class InventoryPostingService {
 	}
 
 	public record PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
-			Long materialId, Long unitId, BigDecimal quantity, String sourceType, Long sourceId, Long sourceLineId,
-			LocalDate businessDate, String reason, String remark, String operatorName) {
+			Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus, String sourceType,
+			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
+			String operatorName) {
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, String sourceType, Long sourceId, Long sourceLineId,
+				LocalDate businessDate, String reason, String remark, String operatorName) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED,
+					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName);
+		}
 	}
 
 	public record PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity) {
+	}
+
+	public record QualityTransferResult(BigDecimal fromBeforeQuantity, BigDecimal fromAfterQuantity,
+			BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity) {
 	}
 
 	private record BalanceRow(Long id, BigDecimal quantityOnHand) {

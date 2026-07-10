@@ -63,39 +63,66 @@ public class InventoryAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryBalanceResponse> balances(String keyword, Long warehouseId, Long materialId,
-			String materialType, boolean onlyPositive, int page, int pageSize) {
-		QueryParts queryParts = balanceQueryParts(keyword, warehouseId, materialId, materialType, onlyPositive);
+			String materialType, String qualityStatus, boolean onlyPositive, int page, int pageSize) {
+		InventoryQualityStatus selectedQualityStatus = parseNullableQualityStatus(qualityStatus);
+		QueryParts queryParts = balanceQueryParts(keyword, warehouseId, materialId, materialType);
+		HavingParts havingParts = balanceHavingParts(selectedQualityStatus, onlyPositive);
+		List<Object> countArgs = new ArrayList<>(queryParts.args());
+		countArgs.addAll(havingParts.args());
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
-				from inv_stock_balance b
-				left join mst_warehouse w on w.id = b.warehouse_id
-				left join mst_material m on m.id = b.material_id
-				left join mst_unit u on u.id = b.unit_id
-				%s
-				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
-		List<Object> args = paginationArgs(queryParts, pageSize, page);
+				from (
+					select b.warehouse_id, b.material_id, b.unit_id
+					from inv_stock_balance b
+					left join mst_warehouse w on w.id = b.warehouse_id
+					left join mst_material m on m.id = b.material_id
+					left join mst_unit u on u.id = b.unit_id
+					%s
+					group by b.warehouse_id, b.material_id, b.unit_id
+					%s
+				) grouped
+				""".formatted(queryParts.where(), havingParts.having()), Long.class, countArgs.toArray());
+		List<Object> args = new ArrayList<>(queryParts.args());
+		args.addAll(havingParts.args());
+		args.add(limit(pageSize));
+		args.add(offset(page, pageSize));
 		List<InventoryBalanceResponse> items = this.jdbcTemplate.query("""
-				select b.id, b.warehouse_id, w.code as warehouse_code, w.name as warehouse_name,
+				select min(b.id) as id, b.warehouse_id, w.code as warehouse_code, w.name as warehouse_name,
 				       b.material_id, m.code as material_code, m.name as material_name,
 				       m.specification as material_spec, m.material_type, b.unit_id, u.name as unit_name,
-				       b.quantity_on_hand, b.locked_quantity,
-				       (b.quantity_on_hand - b.locked_quantity) as available_quantity, b.updated_at
+				       sum(b.quantity_on_hand) as total_quantity_on_hand,
+				       sum(b.locked_quantity) as total_locked_quantity,
+				       sum(case when b.quality_status = 'PENDING_INSPECTION' then b.quantity_on_hand else 0 end) as pending_inspection_quantity,
+				       sum(case when b.quality_status = 'PENDING_INSPECTION' then b.locked_quantity else 0 end) as pending_inspection_locked_quantity,
+				       sum(case when b.quality_status = 'QUALIFIED' then b.quantity_on_hand else 0 end) as qualified_quantity,
+				       sum(case when b.quality_status = 'QUALIFIED' then b.locked_quantity else 0 end) as qualified_locked_quantity,
+				       sum(case when b.quality_status = 'REJECTED' then b.quantity_on_hand else 0 end) as rejected_quantity,
+				       sum(case when b.quality_status = 'REJECTED' then b.locked_quantity else 0 end) as rejected_locked_quantity,
+				       sum(case when b.quality_status = 'FROZEN' then b.quantity_on_hand else 0 end) as frozen_quantity,
+				       sum(case when b.quality_status = 'FROZEN' then b.locked_quantity else 0 end) as frozen_locked_quantity,
+				       max(b.updated_at) as updated_at
 				from inv_stock_balance b
 				left join mst_warehouse w on w.id = b.warehouse_id
 				left join mst_material m on m.id = b.material_id
 				left join mst_unit u on u.id = b.unit_id
 				%s
-				order by b.updated_at desc, b.id desc
+				group by b.warehouse_id, w.code, w.name, b.material_id, m.code, m.name, m.specification,
+				         m.material_type, b.unit_id, u.name
+				%s
+				order by max(b.updated_at) desc, min(b.id) desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), this::mapBalance, args.toArray());
+				""".formatted(queryParts.where(), havingParts.having()),
+				(rs, rowNum) -> mapBalance(rs, rowNum, selectedQualityStatus), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
-			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, int page, int pageSize) {
+			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus, int page,
+			int pageSize) {
+		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		QueryParts queryParts = movementQueryParts(keyword, warehouseId, materialId, movementType, direction, dateFrom,
-				dateTo);
+				dateTo, parsedQualityStatus);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from inv_stock_movement mv
@@ -110,7 +137,7 @@ public class InventoryAdminService {
 				       w.name as warehouse_name, mv.material_id, m.code as material_code, m.name as material_name,
 				       mv.unit_id, u.name as unit_name, mv.quantity, mv.before_quantity, mv.after_quantity,
 				       mv.source_type, mv.source_id, mv.source_line_id, mv.business_date, mv.reason, mv.remark,
-				       mv.operator_name, mv.occurred_at
+				       mv.operator_name, mv.occurred_at, mv.quality_status
 				from inv_stock_movement mv
 				join mst_warehouse w on w.id = mv.warehouse_id
 				join mst_material m on m.id = mv.material_id
@@ -245,8 +272,9 @@ public class InventoryAdminService {
 		InventoryMovementType movementType = movementType(document.documentType(), line.adjustmentDirection());
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(movementType, direction, line.warehouseId(),
-						line.materialId(), line.unitId(), line.quantity(), SOURCE_TYPE, document.id(), line.id(),
-						document.businessDate(), document.reason(), line.remark(), operatorName));
+						line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.QUALIFIED,
+						SOURCE_TYPE, document.id(), line.id(), document.businessDate(), document.reason(),
+						line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update inv_inventory_document_line
 				set before_quantity = ?, after_quantity = ?, updated_at = ?
@@ -261,7 +289,9 @@ public class InventoryAdminService {
 				where warehouse_id = ?
 				and material_id = ?
 				and movement_type = ?
-				""", Long.class, warehouseId, materialId, InventoryMovementType.OPENING.name());
+				and quality_status = ?
+				""", Long.class, warehouseId, materialId, InventoryMovementType.OPENING.name(),
+				InventoryQualityStatus.QUALIFIED.name());
 		if (count != null && count > 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_OPENING_EXISTS);
 		}
@@ -430,8 +460,7 @@ public class InventoryAdminService {
 		throw new BusinessException(ApiErrorCode.CONFLICT);
 	}
 
-	private QueryParts balanceQueryParts(String keyword, Long warehouseId, Long materialId, String materialType,
-			boolean onlyPositive) {
+	private QueryParts balanceQueryParts(String keyword, Long warehouseId, Long materialId, String materialType) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -453,14 +482,11 @@ public class InventoryAdminService {
 			conditions.add("m.material_type = ?");
 			args.add(materialType);
 		}
-		if (onlyPositive) {
-			conditions.add("b.quantity_on_hand > 0");
-		}
 		return where(conditions, args);
 	}
 
 	private QueryParts movementQueryParts(String keyword, Long warehouseId, Long materialId, String movementType,
-			String direction, LocalDate dateFrom, LocalDate dateTo) {
+			String direction, LocalDate dateFrom, LocalDate dateTo, InventoryQualityStatus qualityStatus) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -495,7 +521,29 @@ public class InventoryAdminService {
 			conditions.add("mv.business_date <= ?");
 			args.add(dateTo);
 		}
+		if (qualityStatus != null) {
+			conditions.add("mv.quality_status = ?");
+			args.add(qualityStatus.name());
+		}
 		return where(conditions, args);
+	}
+
+	private HavingParts balanceHavingParts(InventoryQualityStatus qualityStatus, boolean onlyPositive) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (qualityStatus != null) {
+			conditions.add("sum(case when b.quality_status = ? then 1 else 0 end) > 0");
+			args.add(qualityStatus.name());
+			if (onlyPositive) {
+				conditions.add("sum(case when b.quality_status = ? then b.quantity_on_hand else 0 end) > 0");
+				args.add(qualityStatus.name());
+			}
+		}
+		else if (onlyPositive) {
+			conditions.add("sum(b.quantity_on_hand) > 0");
+		}
+		String having = conditions.isEmpty() ? "" : "having " + String.join(" and ", conditions);
+		return new HavingParts(having, args);
 	}
 
 	private QueryParts documentQueryParts(String keyword, String documentType, String status, LocalDate dateFrom,
@@ -582,16 +630,36 @@ public class InventoryAdminService {
 				documentId);
 	}
 
-	private InventoryBalanceResponse mapBalance(ResultSet rs, int rowNum) throws SQLException {
+	private InventoryBalanceResponse mapBalance(ResultSet rs, int rowNum, InventoryQualityStatus qualityStatus)
+			throws SQLException {
+		BigDecimal totalQuantity = rs.getBigDecimal("total_quantity_on_hand");
+		BigDecimal totalLockedQuantity = rs.getBigDecimal("total_locked_quantity");
+		BigDecimal pendingInspectionQuantity = rs.getBigDecimal("pending_inspection_quantity");
+		BigDecimal pendingInspectionLockedQuantity = rs.getBigDecimal("pending_inspection_locked_quantity");
+		BigDecimal qualifiedQuantity = rs.getBigDecimal("qualified_quantity");
+		BigDecimal qualifiedLockedQuantity = rs.getBigDecimal("qualified_locked_quantity");
+		BigDecimal rejectedQuantity = rs.getBigDecimal("rejected_quantity");
+		BigDecimal rejectedLockedQuantity = rs.getBigDecimal("rejected_locked_quantity");
+		BigDecimal frozenQuantity = rs.getBigDecimal("frozen_quantity");
+		BigDecimal frozenLockedQuantity = rs.getBigDecimal("frozen_locked_quantity");
+		BigDecimal quantityOnHand = selectedQuantity(qualityStatus, totalQuantity, pendingInspectionQuantity,
+				qualifiedQuantity, rejectedQuantity, frozenQuantity);
+		BigDecimal lockedQuantity = selectedQuantity(qualityStatus, totalLockedQuantity,
+				pendingInspectionLockedQuantity, qualifiedLockedQuantity, rejectedLockedQuantity, frozenLockedQuantity);
+		BigDecimal availableQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? qualifiedQuantity.subtract(qualifiedLockedQuantity) : ZERO;
 		return new InventoryBalanceResponse(rs.getLong("id"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_code"), rs.getString("warehouse_name"), rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
 				rs.getString("material_type"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("quantity_on_hand"), rs.getBigDecimal("locked_quantity"),
-				rs.getBigDecimal("available_quantity"), rs.getObject("updated_at", OffsetDateTime.class));
+				qualityStatus == null ? null : qualityStatus.name(),
+				qualityStatus == null ? null : qualityStatus.displayName(), quantityOnHand, lockedQuantity,
+				availableQuantity, totalQuantity, pendingInspectionQuantity, qualifiedQuantity, rejectedQuantity,
+				frozenQuantity, rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum) throws SQLException {
+		InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
 		return new InventoryMovementResponse(rs.getLong("id"), rs.getString("movement_no"),
 				rs.getString("movement_type"), rs.getString("direction"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
@@ -599,7 +667,8 @@ public class InventoryAdminService {
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
 				rs.getString("source_type"), rs.getLong("source_id"), rs.getLong("source_line_id"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
-				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class));
+				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
+				qualityStatus.name(), qualityStatus.displayName());
 	}
 
 	private InventoryDocumentSummaryResponse mapDocumentSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -682,6 +751,18 @@ public class InventoryAdminService {
 		}
 	}
 
+	private InventoryQualityStatus parseNullableQualityStatus(String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		try {
+			return InventoryQualityStatus.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_INVALID);
+		}
+	}
+
 	private InventoryAdjustmentDirection parseAdjustmentDirection(String value) {
 		try {
 			return InventoryAdjustmentDirection.valueOf(value);
@@ -724,6 +805,20 @@ public class InventoryAdminService {
 		return new QueryParts(where, args);
 	}
 
+	private BigDecimal selectedQuantity(InventoryQualityStatus qualityStatus, BigDecimal totalQuantity,
+			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
+			BigDecimal frozenQuantity) {
+		if (qualityStatus == null) {
+			return totalQuantity;
+		}
+		return switch (qualityStatus) {
+			case PENDING_INSPECTION -> pendingInspectionQuantity;
+			case QUALIFIED -> qualifiedQuantity;
+			case REJECTED -> rejectedQuantity;
+			case FROZEN -> frozenQuantity;
+		};
+	}
+
 	private List<Object> paginationArgs(QueryParts queryParts, int pageSize, int page) {
 		List<Object> args = new ArrayList<>(queryParts.args());
 		args.add(limit(pageSize));
@@ -764,15 +859,17 @@ public class InventoryAdminService {
 
 	public record InventoryBalanceResponse(Long id, Long warehouseId, String warehouseCode, String warehouseName,
 			Long materialId, String materialCode, String materialName, String materialSpec, String materialType,
-			Long unitId, String unitName, BigDecimal quantityOnHand, BigDecimal lockedQuantity,
-			BigDecimal availableQuantity, OffsetDateTime updatedAt) {
+			Long unitId, String unitName, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
+			BigDecimal lockedQuantity, BigDecimal availableQuantity, BigDecimal totalQuantityOnHand,
+			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
+			BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
 	}
 
 	public record InventoryMovementResponse(Long id, String movementNo, String movementType, String direction,
 			Long warehouseId, String warehouseName, Long materialId, String materialCode, String materialName,
 			Long unitId, String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity,
 			String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
-			String operatorName, OffsetDateTime occurredAt) {
+			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName) {
 	}
 
 	public record InventoryDocumentSummaryResponse(Long id, String documentNo, String documentType, String status,
@@ -816,6 +913,9 @@ public class InventoryAdminService {
 	}
 
 	private record QueryParts(String where, List<Object> args) {
+	}
+
+	private record HavingParts(String having, List<Object> args) {
 	}
 
 }
