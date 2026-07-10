@@ -47,6 +47,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> INVENTORY_MENU_PERMISSIONS = List.of("inventory");
 
+	private static final List<String> QUALITY_MENU_PERMISSIONS = List.of("quality");
+
 	private static final List<String> PROCUREMENT_MENU_PERMISSIONS = List.of("procurement");
 
 	private static final List<String> SALES_MENU_PERMISSIONS = List.of("sales");
@@ -109,6 +111,16 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/inventory/documents/{id}"),
 			new ExpectedActionPermission("inventory:document:post", "inventory", "PUT",
 					"/api/admin/inventory/documents/{id}/post"));
+
+	private static final List<ExpectedActionPermission> QUALITY_ACTION_PERMISSIONS = List.of(
+			new ExpectedActionPermission("quality:inspection:view", "quality", "GET",
+					"/api/admin/quality/inspections/**"),
+			new ExpectedActionPermission("quality:inspection:process", "quality", "POST",
+					"/api/admin/quality/inspections/{id}/process"),
+			new ExpectedActionPermission("quality:status:freeze", "quality", "POST",
+					"/api/admin/inventory/quality-transfers/freeze"),
+			new ExpectedActionPermission("quality:status:unfreeze", "quality", "POST",
+					"/api/admin/inventory/quality-transfers/unfreeze"));
 
 	private static final List<ExpectedActionPermission> PROCUREMENT_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("procurement:order:view", "procurement", "GET",
@@ -416,7 +428,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		var movementColumns = columns("inv_stock_movement");
 
 		assertThat(balanceColumns).contains("id", "warehouse_id", "material_id", "unit_id", "quantity_on_hand",
-				"locked_quantity", "created_at", "updated_at", "version");
+				"locked_quantity", "created_at", "updated_at", "version", "quality_status");
 		assertThat(documentColumns).contains("id", "document_no", "document_type", "status", "business_date",
 				"reason", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
 				"posted_at", "version");
@@ -426,13 +438,15 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(movementColumns).contains("id", "movement_no", "movement_type", "direction", "warehouse_id",
 				"material_id", "unit_id", "quantity", "before_quantity", "after_quantity", "source_type",
 				"source_id", "source_line_id", "business_date", "reason", "remark", "operator_name",
-				"occurred_at");
+				"occurred_at", "quality_status");
 
-		assertThat(indexes("inv_stock_balance")).contains("uk_inv_stock_balance_warehouse_material",
-				"idx_inv_stock_balance_warehouse", "idx_inv_stock_balance_material");
+		assertThat(indexes("inv_stock_balance")).contains("uk_inv_stock_balance_warehouse_material_quality",
+				"idx_inv_stock_balance_warehouse", "idx_inv_stock_balance_material",
+				"idx_inv_stock_balance_quality_status");
 		assertThat(indexes("inv_stock_movement")).contains("uk_inv_stock_movement_no",
 				"uk_inv_stock_movement_source", "uk_inv_stock_movement_opening_once",
-				"idx_inv_stock_movement_business_date", "idx_inv_stock_movement_warehouse_material");
+				"idx_inv_stock_movement_business_date", "idx_inv_stock_movement_warehouse_material",
+				"idx_inv_stock_movement_quality_status");
 		assertThat(indexes("inv_inventory_document")).contains("uk_inv_inventory_document_no",
 				"idx_inv_inventory_document_business_date");
 	}
@@ -950,6 +964,23 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
 		});
 
+		QUALITY_MENU_PERMISSIONS.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(permission.getApiMethod()).as(code).isNull();
+			assertThat(permission.getApiPath()).as(code).isNull();
+		});
+
+		QUALITY_ACTION_PERMISSIONS.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+		});
+
 		PROCUREMENT_MENU_PERMISSIONS.forEach(code -> {
 			var permission = this.permissionRepository.findByCode(code).orElseThrow();
 			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
@@ -1140,6 +1171,24 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				.isTrue();
 		});
 		INVENTORY_ACTION_PERMISSIONS.forEach(expected -> {
+			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
+
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+		QUALITY_MENU_PERMISSIONS.forEach(code -> {
+			assertThat(this.permissionRepository.countByCode(code)).as(code).isOne();
+
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(),
+					permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		QUALITY_ACTION_PERMISSIONS.forEach(expected -> {
 			assertThat(this.permissionRepository.countByCode(expected.code())).as(expected.code()).isOne();
 
 			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();

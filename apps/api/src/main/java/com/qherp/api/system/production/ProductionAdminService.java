@@ -9,8 +9,11 @@ import com.qherp.api.system.cost.CostRecordWriter;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.quality.QualityAdminService;
+import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -76,14 +79,17 @@ public class ProductionAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final QualityAdminService qualityAdminService;
+
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService,
-			BusinessPeriodGuard businessPeriodGuard) {
+			BusinessPeriodGuard businessPeriodGuard, QualityAdminService qualityAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
 		this.inventoryPostingService = inventoryPostingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.qualityAdminService = qualityAdminService;
 	}
 
 	@Transactional(readOnly = true)
@@ -560,8 +566,11 @@ public class ProductionAdminService {
 			InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 					new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_RECEIPT,
 							InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
-							detail.quantity(), COMPLETION_RECEIPT_SOURCE, id, id, detail.businessDate(), "生产完工入库",
-							detail.remark(), operator.username()));
+							detail.quantity(), InventoryQualityStatus.PENDING_INSPECTION, COMPLETION_RECEIPT_SOURCE,
+							id, id, detail.businessDate(), "生产完工入库", detail.remark(), operator.username()));
+			this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PRODUCTION_COMPLETION, id, id,
+					detail.receiptWarehouseId(), product.id(), product.unitId(), detail.businessDate(),
+					detail.quantity(), operator.username());
 			this.jdbcTemplate.update("""
 					update mfg_completion_receipt
 					set before_quantity = ?, after_quantity = ?, status = ?, posted_by = ?, posted_at = ?,
@@ -598,8 +607,8 @@ public class ProductionAdminService {
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
 						InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
-						line.quantity(), MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), issue.businessDate(),
-						issue.reason(), line.remark(), operatorName));
+						line.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
+						line.id(), issue.businessDate(), issue.reason(), line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update mfg_work_order_material
 				set issued_quantity = issued_quantity + ?, updated_at = ?, version = version + 1

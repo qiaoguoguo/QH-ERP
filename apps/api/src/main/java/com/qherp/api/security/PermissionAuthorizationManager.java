@@ -85,6 +85,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return inventoryPermissionCode;
 		}
 
+		String qualityPermissionCode = qualityPermissionCode(method, path);
+		if (qualityPermissionCode != null) {
+			return qualityPermissionCode;
+		}
+
 		String procurementPermissionCode = procurementPermissionCode(method, path);
 		if (procurementPermissionCode != null) {
 			return procurementPermissionCode;
@@ -565,6 +570,23 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(documentPath) + "/\\d+/post")) {
 			return "inventory:document:post";
+		}
+		return null;
+	}
+
+	private String qualityPermissionCode(String method, String path) {
+		String inspectionPath = "/api/admin/quality/inspections";
+		if ("GET".equals(method) && (inspectionPath.equals(path) || matchesIdPath(path, inspectionPath))) {
+			return "quality:inspection:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(inspectionPath) + "/\\d+/process")) {
+			return "quality:inspection:process";
+		}
+		if ("POST".equals(method) && "/api/admin/inventory/quality-transfers/freeze".equals(path)) {
+			return "quality:status:freeze";
+		}
+		if ("POST".equals(method) && "/api/admin/inventory/quality-transfers/unfreeze".equals(path)) {
+			return "quality:status:unfreeze";
 		}
 		return null;
 	}

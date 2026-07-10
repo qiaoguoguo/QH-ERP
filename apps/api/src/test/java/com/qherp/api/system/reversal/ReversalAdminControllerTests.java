@@ -1,6 +1,7 @@
 package com.qherp.api.system.reversal;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -116,9 +117,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(movement.direction()).isEqualTo("IN");
 		assertThat(movement.sourceId()).isEqualTo(returnId);
 		assertDecimal(movement.quantity(), "3.000000");
-		assertDecimal(movement.beforeQuantity(), "7.000000");
-		assertDecimal(movement.afterQuantity(), "10.000000");
+		assertDecimal(movement.beforeQuantity(), "0.000000");
+		assertDecimal(movement.afterQuantity(), "3.000000");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "10.000000");
+		assertThat(movementQualityStatus("SALES_RETURN", returnLineId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "3.000000");
+		assertThat(qualityInspectionCount("SALES_RETURN", returnId, returnLineId, "PENDING")).isOne();
 
 		ReceivableAmounts receivable = receivableAmounts(shipment.receivableId());
 		assertDecimal(receivable.adjustedAmount(), "30.00");
@@ -521,6 +527,97 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void procurementReturnSourcesExposeQualityStatusCandidates() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "12.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "140.00", "0.00", "140.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000",
+				InventoryQualityStatus.QUALIFIED);
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000",
+				InventoryQualityStatus.REJECTED);
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "4.000000",
+				InventoryQualityStatus.FROZEN);
+
+		ResponseEntity<String> response = get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(),
+				admin);
+
+		assertOk(response);
+		JsonNode source = data(response).get("items").get(0);
+		JsonNode qualified = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "QUALIFIED");
+		assertThat(qualified.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimalText(qualified, "availableQuantity", "5.000000");
+		assertThat(qualified.get("selectable").booleanValue()).isTrue();
+		assertThat(qualified.get("disabledReasonCode").isNull()).isTrue();
+		assertThat(qualified.get("disabledReason").isNull()).isTrue();
+		assertDecimalText(qualified, "maxSelectableQuantity", "5.000000");
+
+		JsonNode pending = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "PENDING_INSPECTION");
+		assertThat(pending.get("qualityStatusName").asText()).isEqualTo("待检");
+		assertThat(pending.get("selectable").booleanValue()).isTrue();
+		assertDecimalText(pending, "maxSelectableQuantity", "2.000000");
+
+		JsonNode rejected = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "REJECTED");
+		assertThat(rejected.get("qualityStatusName").asText()).isEqualTo("不合格");
+		assertThat(rejected.get("selectable").booleanValue()).isTrue();
+		assertDecimalText(rejected, "maxSelectableQuantity", "3.000000");
+
+		JsonNode frozen = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "FROZEN");
+		assertThat(frozen.get("qualityStatusName").asText()).isEqualTo("冻结");
+		assertDecimalText(frozen, "availableQuantity", "4.000000");
+		assertThat(frozen.get("selectable").booleanValue()).isFalse();
+		assertThat(frozen.get("disabledReasonCode").asText()).isEqualTo("QUALITY_STATUS_FROZEN_NOT_RETURNABLE");
+		assertThat(frozen.get("disabledReason").asText()).isEqualTo("冻结库存不可采购退货");
+		assertDecimalText(frozen, "maxSelectableQuantity", "0.000000");
+	}
+
+	@Test
+	void procurementReturnPostsExplicitPendingAndRejectedQualityStatusAndRejectsFrozenBypass() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000",
+				InventoryQualityStatus.REJECTED);
+		seedStock(fixture.warehouseId(), fixture.secondMaterialId(), fixture.unitId(), "1.000000",
+				InventoryQualityStatus.FROZEN);
+
+		long pendingReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
+				"2.000000", InventoryQualityStatus.PENDING_INSPECTION);
+		assertOk(put("/api/admin/procurement/returns/" + pendingReturnId + "/post", Map.of(), admin));
+		long pendingReturnLineId = firstPurchaseReturnLineId(pendingReturnId);
+		assertThat(movementQualityStatus("PURCHASE_RETURN", pendingReturnLineId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "0.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.REJECTED), "3.000000");
+
+		long rejectedReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
+				"3.000000", InventoryQualityStatus.REJECTED);
+		assertOk(put("/api/admin/procurement/returns/" + rejectedReturnId + "/post", Map.of(), admin));
+		long rejectedReturnLineId = firstPurchaseReturnLineId(rejectedReturnId);
+		assertThat(movementQualityStatus("PURCHASE_RETURN", rejectedReturnLineId))
+			.isEqualTo(InventoryQualityStatus.REJECTED.name());
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.REJECTED), "0.000000");
+
+		long returnCountBeforeFrozenBypass = purchaseReturnCount(receipt.receiptId());
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-frozen-" + SEQUENCE.incrementAndGet(),
+						List.of(purchaseReturnLine(receipt.secondReceiptLineId(), "1.000000", "冻结绕过",
+								InventoryQualityStatus.FROZEN))),
+				admin), HttpStatus.CONFLICT, "QUALITY_STATUS_TRANSITION_INVALID");
+		assertThat(purchaseReturnCount(receipt.receiptId())).isEqualTo(returnCountBeforeFrozenBypass);
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.secondMaterialId(),
+				InventoryQualityStatus.FROZEN), "1.000000");
+	}
+
+	@Test
 	void procurementReturnMasksSourceFieldsWhenSourcePermissionMissing() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		PurchaseReturnFixture fixture = purchaseReturnFixture();
@@ -648,6 +745,11 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(movement.beforeQuantity(), "0.000000");
 		assertDecimal(movement.afterQuantity(), "4.000000");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "4.000000");
+		assertThat(movementQualityStatus("PRODUCTION_MATERIAL_RETURN", returnLineId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "4.000000");
+		assertThat(qualityInspectionCount("PRODUCTION_RETURN", returnId, returnLineId, "PENDING")).isOne();
 
 		CostRecordRow costRecord = costRecord("PRODUCTION_MATERIAL_RETURN", returnLineId);
 		assertThat(costRecord.status()).isEqualTo("ACTIVE");
@@ -824,6 +926,28 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				issue.workOrderMaterialId(), "3.000000");
 		assertError(put("/api/admin/production/material-supplements/" + stockBlockedId + "/post", Map.of(), admin),
 				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+	}
+
+	@Test
+	void productionMaterialSupplementRejectsWhenOnlyNonQualifiedStockCanCoverRequestedQuantity() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "6.000000", "10.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "1.000000",
+				InventoryQualityStatus.QUALIFIED);
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long supplementId = createMaterialSupplement(admin, issue.workOrderId(), fixture.warehouseId(),
+				issue.workOrderMaterialId(), "3.000000");
+		long supplementLineId = firstMaterialSupplementLineId(supplementId);
+
+		assertError(put("/api/admin/production/material-supplements/" + supplementId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(), InventoryQualityStatus.QUALIFIED),
+				"1.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
+		assertThat(movementCountBySource("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId)).isZero();
 	}
 
 	@Test
@@ -1580,15 +1704,21 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity) {
+		seedStock(warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
+			InventoryQualityStatus qualityStatus) {
 		this.jdbcTemplate.update("""
 				insert into inv_stock_balance (
-					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+					quality_status
 				)
-				values (?, ?, ?, ?, 0, now(), now())
-				on conflict (warehouse_id, material_id)
+				values (?, ?, ?, ?, 0, now(), now(), ?)
+				on conflict (warehouse_id, material_id, quality_status)
 				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
 					updated_at = now(), version = inv_stock_balance.version + 1
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
 	}
 
 	private Map<String, Object> salesReturnPayload(long sourceShipmentId, String clientRequestId,
@@ -1649,10 +1779,16 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private Map<String, Object> purchaseReturnLine(long sourceReceiptLineId, String quantity, String reason) {
+		return purchaseReturnLine(sourceReceiptLineId, quantity, reason, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private Map<String, Object> purchaseReturnLine(long sourceReceiptLineId, String quantity, String reason,
+			InventoryQualityStatus qualityStatus) {
 		Map<String, Object> line = new LinkedHashMap<>();
 		line.put("sourceReceiptLineId", sourceReceiptLineId);
 		line.put("quantity", quantity);
 		line.put("reason", reason);
+		line.put("qualityStatus", qualityStatus.name());
 		return line;
 	}
 
@@ -1669,6 +1805,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		line.put("id", id);
 		line.put("quantity", quantity);
 		line.put("reason", reason);
+		line.put("qualityStatus", "QUALIFIED");
 		return line;
 	}
 
@@ -1774,9 +1911,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private long createPurchaseReturn(AuthenticatedSession admin, long receiptId, long receiptLineId, String quantity)
 			throws Exception {
+		return createPurchaseReturn(admin, receiptId, receiptLineId, quantity, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private long createPurchaseReturn(AuthenticatedSession admin, long receiptId, long receiptLineId, String quantity,
+			InventoryQualityStatus qualityStatus) throws Exception {
 		ResponseEntity<String> response = post("/api/admin/procurement/returns",
 				purchaseReturnPayload(receiptId, "purchase-return-" + SEQUENCE.incrementAndGet(),
-						List.of(purchaseReturnLine(receiptLineId, quantity, "测试采购退货"))),
+						List.of(purchaseReturnLine(receiptLineId, quantity, "测试采购退货", qualityStatus))),
 				admin);
 		assertOk(response);
 		return data(response).get("id").longValue();
@@ -1841,15 +1983,79 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private BigDecimal balanceQuantity(long warehouseId, long materialId) {
-		return this.jdbcTemplate.query("""
-				select quantity_on_hand
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
-			.stream()
-			.findFirst()
-			.orElse(BigDecimal.ZERO);
+				""", BigDecimal.class, warehouseId, materialId);
+	}
+
+	private BigDecimal balanceQuantity(long warehouseId, long materialId, InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
+	}
+
+	private String movementQualityStatus(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select quality_status
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", String.class, sourceType, sourceLineId);
+	}
+
+	private long movementCountBySource(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from qua_quality_inspection
+				where source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				and status = ?
+				""", Long.class, sourceType, sourceId, sourceLineId, status);
+	}
+
+	private long purchaseReturnCount(long receiptId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from proc_purchase_return
+				where source_receipt_id = ?
+				""", Long.class, receiptId);
+	}
+
+	private long firstPurchaseReturnLineId(long returnId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from proc_purchase_return_line
+				where return_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", Long.class, returnId);
+	}
+
+	private long firstMaterialSupplementLineId(long supplementId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from mfg_material_supplement_line
+				where supplement_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", Long.class, supplementId);
 	}
 
 	private MovementRow movementForSource(String sourceType, long sourceLineId) {
@@ -2033,6 +2239,16 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private JsonNode data(ResponseEntity<String> response) throws Exception {
 		return this.objectMapper.readTree(response.getBody()).get("data");
+	}
+
+	private JsonNode purchaseReturnCandidate(JsonNode source, long receiptLineId, String qualityStatus) {
+		for (JsonNode line : source.get("lines")) {
+			if (line.get("receiptLineId").longValue() == receiptLineId && line.hasNonNull("qualityStatus")
+					&& qualityStatus.equals(line.get("qualityStatus").asText())) {
+				return line;
+			}
+		}
+		throw new AssertionError("采购退货候选缺少质量状态: " + qualityStatus);
 	}
 
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {

@@ -8,6 +8,7 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
@@ -358,8 +359,8 @@ public class SalesAdminService {
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
 						InventoryDirection.OUT, shipment.warehouseId(), line.materialId(), line.unitId(),
-						line.quantity(), SHIPMENT_SOURCE_TYPE, shipment.id(), line.id(), shipment.businessDate(),
-						"销售出库", line.remark(), operatorName));
+						line.quantity(), InventoryQualityStatus.QUALIFIED, SHIPMENT_SOURCE_TYPE, shipment.id(),
+						line.id(), shipment.businessDate(), "销售出库", line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update sal_sales_shipment_line
 				set ordered_quantity = ?, shipped_quantity_before = ?, remaining_quantity_before = ?,
