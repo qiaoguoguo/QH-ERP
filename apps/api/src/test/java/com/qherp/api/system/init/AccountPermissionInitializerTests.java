@@ -1073,6 +1073,33 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		});
 	}
 
+	@Test
+	void initializesBusinessPeriodPermissionsAndAssignsThemToSystemAdmin() {
+		var systemAdmin = this.roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
+		List<ExpectedActionPermission> actions = List.of(
+				new ExpectedActionPermission("system:business-period:view", "system:business-period", "GET",
+						"/api/admin/system/business-periods/**"),
+				new ExpectedActionPermission("system:business-period:create", "system:business-period", "POST",
+						"/api/admin/system/business-periods"),
+				new ExpectedActionPermission("system:business-period:update", "system:business-period", "PUT",
+						"/api/admin/system/business-periods/{id}"),
+				new ExpectedActionPermission("system:business-period:lock", "system:business-period", "POST",
+						"/api/admin/system/business-periods/{id}/lock"),
+				new ExpectedActionPermission("system:business-period:unlock", "system:business-period", "POST",
+						"/api/admin/system/business-periods/{id}/unlock"));
+
+		var menu = this.permissionRepository.findByCode("system:business-period").orElseThrow();
+		assertThat(menu.getType()).isEqualTo(SystemPermissionType.MENU);
+		actions.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(permission.getParentId()).isEqualTo(menu.getId());
+			assertThat(permission.getApiMethod()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).isEqualTo(expected.apiPath());
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.isTrue();
+		});
+	}
+
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
 		var systemAdmin = roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
 

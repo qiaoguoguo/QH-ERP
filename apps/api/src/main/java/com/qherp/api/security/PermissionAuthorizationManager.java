@@ -65,6 +65,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "business:reversal:view";
 		}
 
+		String businessPeriodPermissionCode = businessPeriodPermissionCode(method, path);
+		if (businessPeriodPermissionCode != null) {
+			return businessPeriodPermissionCode;
+		}
+
 		String masterDataPermissionCode = masterDataPermissionCode(method, path);
 		if (masterDataPermissionCode != null) {
 			return masterDataPermissionCode;
@@ -145,6 +150,29 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String businessPeriodPermissionCode(String method, String path) {
+		String basePath = "/api/admin/system/business-periods";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method)) {
+			return "system:business-period:view";
+		}
+		if ("POST".equals(method) && (basePath.equals(path) || (basePath + "/generate-monthly").equals(path))) {
+			return "system:business-period:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, basePath)) {
+			return "system:business-period:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/lock")) {
+			return "system:business-period:lock";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/unlock")) {
+			return "system:business-period:unlock";
+		}
 		return null;
 	}
 
