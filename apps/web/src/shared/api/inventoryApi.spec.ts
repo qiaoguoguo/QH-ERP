@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createInventoryApi, type InventoryDocumentPayload, type InventoryMovementType } from './inventoryApi'
+import {
+  createInventoryApi,
+  type InventoryDocumentPayload,
+  type InventoryMovementType,
+} from './inventoryApi'
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -46,6 +50,28 @@ describe('库存 API', () => {
 
     expect(fetcher).toHaveBeenCalledWith(
       '/api/admin/inventory/balances?keyword=%E5%8E%9F%E6%9D%90%E6%96%99&warehouseId=1&materialId=2&materialType=RAW_MATERIAL&onlyPositive=true&page=2&pageSize=50',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+      },
+    )
+  })
+
+  it('库存余额查询支持质量状态和零数量质量状态行参数', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createInventoryApi({ fetcher })
+
+    await api.balances.list({
+      keyword: '钢板',
+      qualityStatus: 'QUALIFIED',
+      includeZeroQualityStatuses: true,
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/admin/inventory/balances?keyword=%E9%92%A2%E6%9D%BF&qualityStatus=QUALIFIED&includeZeroQualityStatuses=true&page=1&pageSize=20',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -117,6 +143,29 @@ describe('库存 API', () => {
 
     expect(fetcher).toHaveBeenCalledWith(
       '/api/admin/inventory/movements?keyword=%E9%94%80%E5%94%AE%E5%87%BA%E5%BA%93&movementType=SALES_SHIPMENT&direction=OUT&page=1&pageSize=20',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+      },
+    )
+  })
+
+  it('库存变动查询支持质量状态和来源追溯筛选', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createInventoryApi({ fetcher })
+
+    await api.movements.list({
+      qualityStatus: 'PENDING_INSPECTION',
+      sourceType: 'QUALITY_INSPECTION',
+      sourceId: 9,
+      sourceLineId: 90,
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/admin/inventory/movements?qualityStatus=PENDING_INSPECTION&sourceType=QUALITY_INSPECTION&sourceId=9&sourceLineId=90&page=1&pageSize=20',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },

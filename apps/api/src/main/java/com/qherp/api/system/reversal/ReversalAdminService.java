@@ -81,6 +81,10 @@ public class ReversalAdminService {
 
 	private static final BigDecimal ZERO = BigDecimal.ZERO;
 
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH = "QUALIFIED_BALANCE_NOT_ENOUGH";
+
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE = "合格可用库存不足";
+
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final AtomicInteger SALES_RETURN_NO_SEQUENCE = new AtomicInteger();
@@ -973,7 +977,7 @@ public class ReversalAdminService {
 				validateMaterialSupplementLineStillValid(sourceLine, line);
 				if (lockedStockQuantity(supplement.warehouseId(), line.materialId(), InventoryQualityStatus.QUALIFIED)
 					.compareTo(line.quantity()) < 0) {
-					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
+					throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH);
 				}
 				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 						InventoryMovementType.PRODUCTION_MATERIAL_SUPPLEMENT_OUT, InventoryDirection.OUT,
@@ -1522,6 +1526,7 @@ public class ReversalAdminService {
 				           and r.status = 'POSTED'
 				       ), 0) as returned_quantity,
 				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0) as current_available_quantity,
 				       coalesce(sb.quality_status, 'QUALIFIED') as quality_status,
 				       pol.unit_price
 				from proc_purchase_receipt_line prl
@@ -1538,21 +1543,27 @@ public class ReversalAdminService {
 			BigDecimal returned = rs.getBigDecimal("returned_quantity");
 			BigDecimal returnable = received.subtract(returned);
 			BigDecimal availableStockQuantity = rs.getBigDecimal("available_stock_quantity");
+			BigDecimal currentAvailableQuantity = rs.getBigDecimal("current_available_quantity");
+			if (currentAvailableQuantity.compareTo(ZERO) < 0) {
+				currentAvailableQuantity = ZERO;
+			}
 			InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
 			boolean frozen = qualityStatus == InventoryQualityStatus.FROZEN;
-			BigDecimal maxSelectableQuantity = frozen ? ZERO : returnable.min(availableStockQuantity);
+			BigDecimal maxSelectableQuantity = frozen ? ZERO : returnable.min(currentAvailableQuantity);
 			boolean selectable = !frozen && maxSelectableQuantity.compareTo(ZERO) > 0;
 			String disabledReasonCode = frozen ? "QUALITY_STATUS_FROZEN_NOT_RETURNABLE"
 					: selectable ? null : "REVERSAL_STOCK_INSUFFICIENT";
 			String disabledReason = frozen ? "冻结库存不可采购退货" : selectable ? null : "当前质量状态库存不足";
+			BigDecimal availableQuantity = qualityStatus == InventoryQualityStatus.QUALIFIED ? currentAvailableQuantity
+					: ZERO;
 			return new PurchaseReturnSourceLineResponse(rs.getLong("id"), rs.getLong("order_line_id"),
 					rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					quantity(received), quantity(returned), quantity(returnable),
-					quantity(availableStockQuantity), quantity(rs.getBigDecimal("unit_price")),
-					amount(returnable.multiply(rs.getBigDecimal("unit_price"))), qualityStatus.name(),
-					qualityStatus.displayName(), quantity(availableStockQuantity), selectable, disabledReasonCode,
-					disabledReason, quantity(maxSelectableQuantity));
+					quantity(availableStockQuantity), quantity(availableStockQuantity),
+					quantity(rs.getBigDecimal("unit_price")), amount(returnable.multiply(rs.getBigDecimal("unit_price"))),
+					qualityStatus.name(), qualityStatus.displayName(), quantity(availableQuantity), selectable,
+					disabledReasonCode, disabledReason, quantity(maxSelectableQuantity));
 		}, receiptId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
 			.toList();
 	}
@@ -1610,7 +1621,8 @@ public class ReversalAdminService {
 				           where sl.work_order_material_id = wom.id
 				           and s.status = 'POSTED'
 				       ), 0) as supplemented_quantity,
-				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
+				       coalesce(sb.quantity_on_hand, 0) as qualified_quantity_on_hand,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0) as qualified_available_quantity,
 				       coalesce((
 				           select cr.unit_price
 				           from mfg_cost_record cr
@@ -1627,15 +1639,24 @@ public class ReversalAdminService {
 				join mst_unit u on u.id = wom.unit_id
 				left join inv_stock_balance sb on sb.warehouse_id = ?
 					and sb.material_id = wom.material_id
+					and sb.quality_status = 'QUALIFIED'
 				where wom.work_order_id = ?
 				order by wom.line_no asc, wom.id asc
-				""", (rs, rowNum) -> new ProductionMaterialSupplementSourceLineResponse(rs.getLong("id"),
-				rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				quantity(rs.getBigDecimal("required_quantity")), quantity(rs.getBigDecimal("issued_quantity")),
-				quantity(rs.getBigDecimal("supplemented_quantity")),
-				quantity(rs.getBigDecimal("available_stock_quantity")), quantity(rs.getBigDecimal("unit_price"))),
-				warehouseId, workOrderId);
+				""", (rs, rowNum) -> {
+			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
+			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal maxSelectableQuantity = availableQuantity.compareTo(ZERO) < 0 ? ZERO : availableQuantity;
+			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			return new ProductionMaterialSupplementSourceLineResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+					rs.getLong("unit_id"), rs.getString("unit_name"), quantity(rs.getBigDecimal("required_quantity")),
+					quantity(rs.getBigDecimal("issued_quantity")), quantity(rs.getBigDecimal("supplemented_quantity")),
+					quantity(quantityOnHand), quantity(rs.getBigDecimal("unit_price")),
+					InventoryQualityStatus.QUALIFIED.name(), InventoryQualityStatus.QUALIFIED.displayName(),
+					quantity(quantityOnHand), quantity(availableQuantity), selectable,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, quantity(maxSelectableQuantity));
+		}, warehouseId, workOrderId);
 	}
 
 	private List<ReversalDocumentLine> salesReturnLines(Long returnId, Long sourceShipmentId, String sourceShipmentNo,
@@ -5193,9 +5214,9 @@ public class ReversalAdminService {
 	public record PurchaseReturnSourceLineResponse(Long receiptLineId, Long purchaseOrderLineId, Integer lineNo,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			String receivedQuantity, String returnedQuantity, String returnableQuantity, String availableStockQuantity,
-			String unitPrice, String returnableAmount, String qualityStatus, String qualityStatusName,
-			String availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
-			String maxSelectableQuantity) {
+			String quantityOnHand, String unitPrice, String returnableAmount, String qualityStatus,
+			String qualityStatusName, String availableQuantity, boolean selectable, String disabledReasonCode,
+			String disabledReason, String maxSelectableQuantity) {
 	}
 
 	public record ProductionMaterialReturnSourceLineResponse(Long issueLineId, Long workOrderMaterialId,
@@ -5207,7 +5228,9 @@ public class ReversalAdminService {
 	public record ProductionMaterialSupplementSourceLineResponse(Long workOrderMaterialId, Integer lineNo,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			String plannedQuantity, String issuedQuantity, String supplementedQuantity, String availableStockQuantity,
-			String unitPrice) {
+			String unitPrice, String qualityStatus, String qualityStatusName, String quantityOnHand,
+			String availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
+			String maxSelectableQuantity) {
 	}
 
 	public record SalesReturnSummaryResponse(Long id, String returnNo, Long customerId, String customerName,

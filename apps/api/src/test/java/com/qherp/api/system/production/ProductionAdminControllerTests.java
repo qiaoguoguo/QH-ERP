@@ -152,6 +152,26 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void workOrderMaterialsExposeQualifiedIssueCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "4.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+
+		assertThat(rawRequirement.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(rawRequirement.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimal(rawRequirement, "quantityOnHand", "0.000000");
+		assertDecimal(rawRequirement, "availableQuantity", "0.000000");
+		assertThat(rawRequirement.get("selectable").booleanValue()).isFalse();
+		assertThat(rawRequirement.get("disabledReasonCode").asText()).isEqualTo("QUALIFIED_BALANCE_NOT_ENOUGH");
+		assertThat(rawRequirement.get("disabledReason").asText()).isEqualTo("合格可用库存不足");
+		assertDecimal(rawRequirement, "maxSelectableQuantity", "0.000000");
+	}
+
+	@Test
 	void lockedPeriodRejectsProductionMaterialIssuePosting() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);

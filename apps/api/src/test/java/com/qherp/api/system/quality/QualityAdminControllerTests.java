@@ -251,6 +251,8 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(data.get("createdBy").asText()).isEqualTo("test");
 		assertThat(data.hasNonNull("createdAt")).isTrue();
 		assertThat(data.hasNonNull("updatedAt")).isTrue();
+		assertThat(data.get("currentQualityStatus").asText()).isEqualTo("PENDING_INSPECTION");
+		assertThat(data.get("currentQualityStatusName").asText()).isEqualTo("待检");
 	}
 
 	@Test
@@ -277,6 +279,25 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode matchedItem = itemByInspectionId(items, matchedId);
 		assertThat(matchedItem.hasNonNull("version")).isTrue();
 		assertThat(matchedItem.get("version").intValue()).isZero();
+	}
+
+	@Test
+	void qualityInspectionListFiltersByBusinessDateContractParams() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		long beforeId = pendingInspection(fixture, "2.000000", LocalDate.of(2091, 10, 9));
+		long matchedId = pendingInspection(fixture, "3.000000", LocalDate.of(2091, 10, 10));
+		long afterId = pendingInspection(fixture, "4.000000", LocalDate.of(2091, 10, 11));
+
+		ResponseEntity<String> response = get(
+				"/api/admin/quality/inspections?businessDateFrom=2091-10-10&businessDateTo=2091-10-10&page=1&pageSize=100",
+				admin);
+
+		assertOk(response);
+		JsonNode items = data(response).get("items");
+		assertThat(containsInspectionId(items, matchedId)).isTrue();
+		assertThat(containsInspectionId(items, beforeId)).isFalse();
+		assertThat(containsInspectionId(items, afterId)).isFalse();
 	}
 
 	@Test

@@ -346,6 +346,27 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesShipmentSourceLinesExposeQualifiedCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long orderId = createAndConfirmOrder(admin, fixture, "候选字段合格不足", "4.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "4.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+
+		JsonNode sourceLine = firstLine(data(getOrder(admin, orderId)));
+		assertSalesQualifiedCandidateUnavailable(sourceLine);
+
+		long shipmentId = createShipmentId(admin, orderId,
+				shipmentPayload(fixture.warehouseId(), "出库候选字段",
+						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"4.000000", "只存在待检库存"))));
+
+		JsonNode shipmentLine = firstLine(data(getShipment(admin, shipmentId)));
+		assertSalesQualifiedCandidateUnavailable(shipmentLine);
+	}
+
+	@Test
 	void shipmentRequiresCurrentWarehouseMaterialAndUnitValidityButIgnoresDisabledCustomerAfterConfirm()
 			throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -1010,6 +1031,17 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private void assertDecimal(JsonNode node, String field, String expected) {
 		assertDecimal(decimal(node, field), expected);
+	}
+
+	private void assertSalesQualifiedCandidateUnavailable(JsonNode line) {
+		assertThat(line.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(line.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimal(line, "quantityOnHand", "0.000000");
+		assertDecimal(line, "availableQuantity", "0.000000");
+		assertThat(line.get("selectable").booleanValue()).isFalse();
+		assertThat(line.get("disabledReasonCode").asText()).isEqualTo("QUALIFIED_BALANCE_NOT_ENOUGH");
+		assertThat(line.get("disabledReason").asText()).isEqualTo("合格可用库存不足");
+		assertDecimal(line, "maxSelectableQuantity", "0.000000");
 	}
 
 	private void assertDecimal(BigDecimal actual, String expected) {

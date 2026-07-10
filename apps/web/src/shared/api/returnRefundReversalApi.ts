@@ -1,4 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
+import type { InventoryQualityStatus } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -63,6 +64,8 @@ export interface ReversalDocumentLine {
   quantity: ReversalDecimal
   unitPrice?: ReversalMoney
   amount?: ReversalMoney
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
   reason?: string
   stockMovementId?: ResourceId
   costRecordId?: ResourceId
@@ -228,6 +231,14 @@ export interface PurchaseReturnSourceLine {
   returnedQuantity: ReversalDecimal
   returnableQuantity: ReversalDecimal
   availableStockQuantity: ReversalDecimal
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: ReversalDecimal | null
+  availableQuantity?: ReversalDecimal | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: ReversalDecimal | null
   unitPrice: ReversalMoney
   returnableAmount: ReversalMoney
 }
@@ -284,6 +295,14 @@ export interface ProductionMaterialSupplementSourceMaterial {
   issuedQuantity: ReversalDecimal
   supplementedQuantity: ReversalDecimal
   availableStockQuantity: ReversalDecimal
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: ReversalDecimal | null
+  availableQuantity?: ReversalDecimal | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: ReversalDecimal | null
   unitPrice: ReversalMoney
 }
 
@@ -458,6 +477,7 @@ export type ReversalDocumentPayload = SalesReturnCreatePayload
 
 export interface PurchaseReturnCreatePayloadLine {
   sourceReceiptLineId: ResourceId
+  qualityStatus?: InventoryQualityStatus
   quantity: ReversalDecimal
   reason?: string
 }
@@ -465,6 +485,7 @@ export interface PurchaseReturnCreatePayloadLine {
 export interface PurchaseReturnUpdatePayloadLine {
   id?: ResourceId
   sourceReceiptLineId?: ResourceId
+  qualityStatus?: InventoryQualityStatus
   quantity: ReversalDecimal
   reason?: string
 }

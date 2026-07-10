@@ -44,6 +44,7 @@ const salesReturnPath = '/sales/returns'
 const productionWorkOrderPath = '/production/work-orders'
 const productionMaterialReturnPath = '/production/material-returns'
 const productionMaterialSupplementPath = '/production/material-supplements'
+const qualityInspectionPath = '/quality/inspections'
 const costRecordPath = '/cost/records'
 const financeReceivablePath = '/finance/receivables'
 const financeReceiptPath = '/finance/receipts'
@@ -76,6 +77,7 @@ const supportedMenuPaths = new Set([
   productionWorkOrderPath,
   productionMaterialReturnPath,
   productionMaterialSupplementPath,
+  qualityInspectionPath,
   costRecordPath,
   financeReceivablePath,
   financeReceiptPath,
@@ -177,6 +179,15 @@ const productionChildren: MenuNode[] = [
   },
 ]
 const productionMenuPaths = new Set(productionChildren.map((child) => child.routePath))
+const qualityChildren: MenuNode[] = [
+  {
+    id: 'quality-inspections',
+    code: 'quality:inspection:view',
+    name: '质量确认',
+    routePath: qualityInspectionPath,
+  },
+]
+const qualityMenuPaths = new Set(qualityChildren.map((child) => child.routePath))
 const financeChildren: MenuNode[] = [
   {
     id: 'finance-receivables',
@@ -216,6 +227,7 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/master|基础/, OfficeBuilding],
   [/material|物料|bom/i, Collection],
   [/inventory|库存/, Box],
+  [/quality|质量/, Collection],
   [/procurement|purchase|采购/, ShoppingCart],
   [/sales|销售/, Sell],
   [/production|生产/, Cpu],
@@ -223,9 +235,18 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/finance|财务|往来|应收|应付/, Money],
   [/report|报表|经营/, TrendCharts],
 ]
-const menuTree = computed<MenuNode[]>(() => ensureReportsMenu(ensureFinanceMenu(ensureCostMenu(
-  ensureProductionMenu(ensureSalesMenu(ensureProcurementMenu(ensureInventoryMenu(ensureSystemMenu(filterSupportedMenus(authStore.menus ?? [])))))),
-))))
+const menuTree = computed<MenuNode[]>(() => {
+  const supportedMenus = filterSupportedMenus(authStore.menus ?? [])
+  const systemMenus = ensureSystemMenu(supportedMenus)
+  const inventoryMenus = ensureInventoryMenu(systemMenus)
+  const procurementMenus = ensureProcurementMenu(inventoryMenus)
+  const salesMenus = ensureSalesMenu(procurementMenus)
+  const productionMenus = ensureProductionMenu(salesMenus)
+  const qualityMenus = ensureQualityMenu(productionMenus)
+  const costMenus = ensureCostMenu(qualityMenus)
+  const financeMenus = ensureFinanceMenu(costMenus)
+  return ensureReportsMenu(financeMenus)
+})
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')
 const logoutLoading = ref(false)
@@ -472,6 +493,43 @@ function removeProductionMenus(menus: MenuNode[]): MenuNode[] {
       children: removeProductionMenus(menu.children ?? []),
     }))
     .filter((menu) => !isProductionMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
+}
+
+function ensureQualityMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = qualityChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeQualityMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'quality',
+      code: 'quality',
+      name: '质量管理',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isQualityMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'quality'
+    || code.startsWith('quality:')
+    || (menu.routePath ? qualityMenuPaths.has(menu.routePath) : false)
+}
+
+function removeQualityMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeQualityMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isQualityMenu(menu) && (
       (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
     ))
 }

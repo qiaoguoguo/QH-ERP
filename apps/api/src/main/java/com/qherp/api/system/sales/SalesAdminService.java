@@ -46,6 +46,10 @@ public class SalesAdminService {
 
 	private static final BigDecimal ZERO = BigDecimal.ZERO;
 
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH = "QUALIFIED_BALANCE_NOT_ENOUGH";
+
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE = "合格可用库存不足";
+
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final int MAX_NO_ATTEMPTS = 3;
@@ -821,18 +825,37 @@ public class SalesAdminService {
 				select l.id, l.line_no, l.material_id, m.code as material_code, m.name as material_name,
 				       m.specification as material_spec, l.unit_id, u.name as unit_name, l.quantity,
 				       l.shipped_quantity, (l.quantity - l.shipped_quantity) as remaining_quantity,
-				       l.unit_price, l.expected_ship_date, l.remark
+				       l.unit_price, l.expected_ship_date, l.remark,
+				       coalesce(stock.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
+				       coalesce(stock.available_quantity, 0.000000) as qualified_available_quantity
 				from sal_sales_order_line l
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
+				left join (
+					select material_id, sum(quantity_on_hand) as quantity_on_hand,
+					       sum(quantity_on_hand - locked_quantity) as available_quantity
+					from inv_stock_balance
+					where quality_status = 'QUALIFIED'
+					group by material_id
+				) stock on stock.material_id = l.material_id
 				where l.order_id = ?
 				order by l.line_no asc, l.id asc
-				""", (rs, rowNum) -> new SalesOrderLineResponse(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
-				rs.getString("material_spec"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("quantity"), rs.getBigDecimal("shipped_quantity"),
-				rs.getBigDecimal("remaining_quantity"), rs.getBigDecimal("unit_price"),
-				rs.getObject("expected_ship_date", LocalDate.class), rs.getString("remark")), orderId);
+				""", (rs, rowNum) -> {
+			BigDecimal remainingQuantity = rs.getBigDecimal("remaining_quantity");
+			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
+			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal maxSelectableQuantity = maxSelectableQuantity(remainingQuantity, availableQuantity);
+			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			return new SalesOrderLineResponse(rs.getLong("id"), rs.getInt("line_no"), rs.getLong("material_id"),
+					rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
+					rs.getLong("unit_id"), rs.getString("unit_name"), rs.getBigDecimal("quantity"),
+					rs.getBigDecimal("shipped_quantity"), remainingQuantity, rs.getBigDecimal("unit_price"),
+					rs.getObject("expected_ship_date", LocalDate.class), rs.getString("remark"),
+					InventoryQualityStatus.QUALIFIED.name(), InventoryQualityStatus.QUALIFIED.displayName(),
+					quantityOnHand, availableQuantity, selectable,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
+		}, orderId);
 	}
 
 	private List<SalesShipmentSummaryResponse> orderShipments(Long orderId) {
@@ -856,19 +879,34 @@ public class SalesAdminService {
 				select l.id, l.line_no, l.order_line_id, l.material_id, m.code as material_code,
 				       m.name as material_name, l.unit_id, u.name as unit_name, l.ordered_quantity,
 				       l.shipped_quantity_before, l.remaining_quantity_before, l.quantity, l.before_quantity,
-				       l.after_quantity, l.remark
+				       l.after_quantity, l.remark,
+				       coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0.000000) as qualified_available_quantity
 				from sal_sales_shipment_line l
+				join sal_sales_shipment sh on sh.id = l.shipment_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
+				left join inv_stock_balance sb on sb.warehouse_id = sh.warehouse_id
+					and sb.material_id = l.material_id
+					and sb.quality_status = 'QUALIFIED'
 				where l.shipment_id = ?
 				order by l.line_no asc, l.id asc
-				""", (rs, rowNum) -> new SalesShipmentLineResponse(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("shipped_quantity_before"),
-				rs.getBigDecimal("remaining_quantity_before"), rs.getBigDecimal("quantity"),
-				rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), rs.getString("remark")),
-				shipmentId);
+				""", (rs, rowNum) -> {
+			BigDecimal quantity = rs.getBigDecimal("quantity");
+			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
+			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal maxSelectableQuantity = maxSelectableQuantity(quantity, availableQuantity);
+			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			return new SalesShipmentLineResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
+					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+					rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("shipped_quantity_before"),
+					rs.getBigDecimal("remaining_quantity_before"), quantity, rs.getBigDecimal("before_quantity"),
+					rs.getBigDecimal("after_quantity"), rs.getString("remark"), InventoryQualityStatus.QUALIFIED.name(),
+					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, availableQuantity, selectable,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
+		}, shipmentId);
 	}
 
 	private List<SalesShipmentInventoryMovementResponse> shipmentInventoryMovements(Long shipmentId) {
@@ -1054,6 +1092,14 @@ public class SalesAdminService {
 		return Math.max(0L, (long) value.precision() - value.scale());
 	}
 
+	private BigDecimal maxSelectableQuantity(BigDecimal requestedQuantity, BigDecimal availableQuantity) {
+		BigDecimal normalizedRequested = requestedQuantity == null || requestedQuantity.compareTo(ZERO) < 0 ? ZERO
+				: requestedQuantity;
+		BigDecimal normalizedAvailable = availableQuantity == null || availableQuantity.compareTo(ZERO) < 0 ? ZERO
+				: availableQuantity;
+		return normalizedRequested.min(normalizedAvailable);
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -1097,7 +1143,9 @@ public class SalesAdminService {
 	public record SalesOrderLineResponse(Long id, Integer lineNo, Long materialId, String materialCode,
 			String materialName, String materialSpec, Long unitId, String unitName, BigDecimal quantity,
 			BigDecimal shippedQuantity, BigDecimal remainingQuantity, BigDecimal unitPrice, LocalDate expectedShipDate,
-			String remark) {
+			String remark, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
+			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
+			BigDecimal maxSelectableQuantity) {
 	}
 
 	public record SalesOrderDetailResponse(Long id, String orderNo, Long customerId, String customerCode,
@@ -1117,7 +1165,9 @@ public class SalesAdminService {
 	public record SalesShipmentLineResponse(Long id, Integer lineNo, Long orderLineId, Long materialId,
 			String materialCode, String materialName, Long unitId, String unitName, BigDecimal orderedQuantity,
 			BigDecimal shippedQuantityBefore, BigDecimal remainingQuantityBefore, BigDecimal quantity,
-			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark) {
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark, String qualityStatus,
+			String qualityStatusName, BigDecimal quantityOnHand, BigDecimal availableQuantity, boolean selectable,
+			String disabledReasonCode, String disabledReason, BigDecimal maxSelectableQuantity) {
 	}
 
 	public record SalesShipmentInventoryMovementResponse(Long id, String movementNo, String movementType,

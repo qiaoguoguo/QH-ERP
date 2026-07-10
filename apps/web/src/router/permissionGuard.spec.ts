@@ -11,6 +11,7 @@ import InventoryDocumentDetailView from '../modules/inventory/InventoryDocumentD
 import InventoryDocumentFormView from '../modules/inventory/InventoryDocumentFormView.vue'
 import InventoryDocumentListView from '../modules/inventory/InventoryDocumentListView.vue'
 import InventoryMovementListView from '../modules/inventory/InventoryMovementListView.vue'
+import QualityInspectionListView from '../modules/quality/QualityInspectionListView.vue'
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
@@ -188,6 +189,18 @@ describe('账号权限路由守卫', () => {
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
+  })
+
+  it('质量确认路由加载真实页面并配置质量查看权限', async () => {
+    const router = createQhErpRouter()
+    const route = router.getRoutes().find((item) => item.name === 'quality-inspections')
+    const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+    expect(route?.path).toBe('/quality/inspections')
+    expect(route?.meta.requiresAuth).toBe(true)
+    expect(route?.meta.requiredPermission).toBe('quality:inspection:view')
+    expect(component).toBeTypeOf('function')
+    await expect(component?.()).resolves.toHaveProperty('default', QualityInspectionListView)
   })
 
   it('生产路由加载真实页面并配置对应权限', async () => {
@@ -673,6 +686,27 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('forbidden')
+  })
+
+  it('已登录且拥有质量确认查看权限时允许访问质量确认列表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['quality:inspection:view'] })
+
+    await router.push('/quality/inspections')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('quality-inspections')
+  })
+
+  it('已登录但缺少质量确认查看权限时直访质量确认进入无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await router.push('/quality/inspections')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/quality/inspections')
   })
 
   it('已登录且拥有生产工单查看权限时允许访问工单列表', async () => {

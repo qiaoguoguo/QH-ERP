@@ -284,6 +284,8 @@ public class QualityAdminService {
 				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
 				rs.getLong("unit_id"), rs.getString("unit_name"), rs.getObject("business_date", LocalDate.class),
 				formatQuantity(inspectionQuantity), InventoryQualityStatus.PENDING_INSPECTION.name(),
+				InventoryQualityStatus.PENDING_INSPECTION.displayName(),
+				InventoryQualityStatus.PENDING_INSPECTION.name(),
 				InventoryQualityStatus.PENDING_INSPECTION.displayName(), status.name(), status.displayName(),
 				formatQuantity(qualifiedQuantity), formatQuantity(rejectedQuantity), formatQuantity(frozenQuantity),
 				formatQuantity(remainingQuantity), status == QualityInspectionStatus.PENDING,
@@ -474,10 +476,11 @@ public class QualityAdminService {
 			Long sourceId, Long sourceLineId, String sourceDocumentNo, Long warehouseId, String warehouseCode,
 			String warehouseName, Long materialId, String materialCode, String materialName, Long unitId,
 			String unitName, LocalDate businessDate, String inspectionQuantity, String qualityStatus,
-			String qualityStatusName, String status, String statusName, String qualifiedQuantity,
-			String rejectedQuantity, String frozenQuantity, String remainingQuantity, boolean canProcess,
-			String disabledReason, String reason, String remark, String createdBy, OffsetDateTime createdAt,
-			String updatedBy, OffsetDateTime updatedAt, String completedBy, OffsetDateTime completedAt, Integer version) {
+			String qualityStatusName, String currentQualityStatus, String currentQualityStatusName, String status,
+			String statusName, String qualifiedQuantity, String rejectedQuantity, String frozenQuantity,
+			String remainingQuantity, boolean canProcess, String disabledReason, String reason, String remark,
+			String createdBy, OffsetDateTime createdAt, String updatedBy, OffsetDateTime updatedAt, String completedBy,
+			OffsetDateTime completedAt, Integer version) {
 	}
 
 	public record QualityStatusTransferResponse(String fromQualityStatus, String fromQualityStatusName,

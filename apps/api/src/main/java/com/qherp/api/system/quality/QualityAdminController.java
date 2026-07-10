@@ -32,9 +32,13 @@ public class QualityAdminController {
 			@RequestParam(required = false) String status, @RequestParam(required = false) String qualityStatus,
 			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) Long materialId,
 			@RequestParam(required = false) LocalDate dateFrom, @RequestParam(required = false) LocalDate dateTo,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
+		LocalDate effectiveDateFrom = businessDateFrom != null ? businessDateFrom : dateFrom;
+		LocalDate effectiveDateTo = businessDateTo != null ? businessDateTo : dateTo;
 		return ApiResponse.ok(this.qualityAdminService.inspections(keyword, sourceType, status, qualityStatus,
-				warehouseId, materialId, dateFrom, dateTo, page, pageSize));
+				warehouseId, materialId, effectiveDateFrom, effectiveDateTo, page, pageSize));
 	}
 
 	@GetMapping("/quality/inspections/{id}")

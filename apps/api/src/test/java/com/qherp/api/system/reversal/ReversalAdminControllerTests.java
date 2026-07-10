@@ -548,6 +548,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode source = data(response).get("items").get(0);
 		JsonNode qualified = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "QUALIFIED");
 		assertThat(qualified.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimalText(qualified, "quantityOnHand", "5.000000");
+		assertDecimalText(qualified, "availableStockQuantity", "5.000000");
 		assertDecimalText(qualified, "availableQuantity", "5.000000");
 		assertThat(qualified.get("selectable").booleanValue()).isTrue();
 		assertThat(qualified.get("disabledReasonCode").isNull()).isTrue();
@@ -556,17 +558,25 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 		JsonNode pending = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "PENDING_INSPECTION");
 		assertThat(pending.get("qualityStatusName").asText()).isEqualTo("待检");
+		assertDecimalText(pending, "quantityOnHand", "2.000000");
+		assertDecimalText(pending, "availableStockQuantity", "2.000000");
+		assertDecimalText(pending, "availableQuantity", "0.000000");
 		assertThat(pending.get("selectable").booleanValue()).isTrue();
 		assertDecimalText(pending, "maxSelectableQuantity", "2.000000");
 
 		JsonNode rejected = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "REJECTED");
 		assertThat(rejected.get("qualityStatusName").asText()).isEqualTo("不合格");
+		assertDecimalText(rejected, "quantityOnHand", "3.000000");
+		assertDecimalText(rejected, "availableStockQuantity", "3.000000");
+		assertDecimalText(rejected, "availableQuantity", "0.000000");
 		assertThat(rejected.get("selectable").booleanValue()).isTrue();
 		assertDecimalText(rejected, "maxSelectableQuantity", "3.000000");
 
 		JsonNode frozen = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "FROZEN");
 		assertThat(frozen.get("qualityStatusName").asText()).isEqualTo("冻结");
-		assertDecimalText(frozen, "availableQuantity", "4.000000");
+		assertDecimalText(frozen, "quantityOnHand", "4.000000");
+		assertDecimalText(frozen, "availableStockQuantity", "4.000000");
+		assertDecimalText(frozen, "availableQuantity", "0.000000");
 		assertThat(frozen.get("selectable").booleanValue()).isFalse();
 		assertThat(frozen.get("disabledReasonCode").asText()).isEqualTo("QUALITY_STATUS_FROZEN_NOT_RETURNABLE");
 		assertThat(frozen.get("disabledReason").asText()).isEqualTo("冻结库存不可采购退货");
@@ -862,6 +872,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimalText(material, "issuedQuantity", "12.000000");
 		assertDecimalText(material, "supplementedQuantity", "0");
 		assertDecimalText(material, "availableStockQuantity", "5.000000");
+		assertThat(material.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(material.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimalText(material, "quantityOnHand", "5.000000");
+		assertDecimalText(material, "availableQuantity", "5.000000");
+		assertThat(material.get("selectable").booleanValue()).isTrue();
+		assertThat(material.get("disabledReasonCode").isNull()).isTrue();
+		assertThat(material.get("disabledReason").isNull()).isTrue();
+		assertDecimalText(material, "maxSelectableQuantity", "5.000000");
 
 		ResponseEntity<String> created = post("/api/admin/production/material-supplements",
 				materialSupplementPayload(issue.workOrderId(), fixture.warehouseId(),
@@ -925,7 +943,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long stockBlockedId = createMaterialSupplement(admin, issue.workOrderId(), fixture.warehouseId(),
 				issue.workOrderMaterialId(), "3.000000");
 		assertError(put("/api/admin/production/material-supplements/" + stockBlockedId + "/post", Map.of(), admin),
-				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+				HttpStatus.CONFLICT, "INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH");
 	}
 
 	@Test
@@ -942,12 +960,37 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long supplementLineId = firstMaterialSupplementLineId(supplementId);
 
 		assertError(put("/api/admin/production/material-supplements/" + supplementId + "/post", Map.of(), admin),
-				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
+				HttpStatus.CONFLICT, "INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(), InventoryQualityStatus.QUALIFIED),
 				"1.000000");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
 				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
 		assertThat(movementCountBySource("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId)).isZero();
+	}
+
+	@Test
+	void productionMaterialSupplementSourcesExposeUnavailableQualifiedCandidateFields() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "6.000000", "10.000000");
+		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+
+		ResponseEntity<String> sources = get("/api/admin/production/material-supplement-sources?keyword="
+				+ issue.workOrderNo() + "&warehouseId=" + fixture.warehouseId(), admin);
+
+		assertOk(sources);
+		JsonNode source = data(sources).get("items").get(0);
+		JsonNode material = productionSupplementMaterial(source, issue.workOrderMaterialId());
+		assertThat(material.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(material.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimalText(material, "quantityOnHand", "0.000000");
+		assertDecimalText(material, "availableStockQuantity", "0.000000");
+		assertDecimalText(material, "availableQuantity", "0.000000");
+		assertThat(material.get("selectable").booleanValue()).isFalse();
+		assertThat(material.get("disabledReasonCode").asText()).isEqualTo("QUALIFIED_BALANCE_NOT_ENOUGH");
+		assertThat(material.get("disabledReason").asText()).isEqualTo("合格可用库存不足");
+		assertDecimalText(material, "maxSelectableQuantity", "0.000000");
 	}
 
 	@Test
@@ -2249,6 +2292,15 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		throw new AssertionError("采购退货候选缺少质量状态: " + qualityStatus);
+	}
+
+	private JsonNode productionSupplementMaterial(JsonNode source, long workOrderMaterialId) {
+		for (JsonNode line : source.get("materials")) {
+			if (line.get("workOrderMaterialId").longValue() == workOrderMaterialId) {
+				return line;
+			}
+		}
+		throw new AssertionError("生产补料候选缺少工单用料: " + workOrderMaterialId);
 	}
 
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {

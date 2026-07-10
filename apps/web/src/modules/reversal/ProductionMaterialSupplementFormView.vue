@@ -15,8 +15,10 @@ import {
   type ReversalSourceView,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import type { InventoryQualityStatus } from '../../shared/api/inventoryApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
+import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import { formatSalesAmount } from '../sales/salesPageHelpers'
 import {
   formatProductionQuantity,
@@ -36,6 +38,14 @@ interface MaterialSupplementLineDraft {
   issuedQuantity: string
   supplementedQuantity: string
   availableStockQuantity: string
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | null
+  availableQuantity?: string | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | null
   unitPrice: string
   quantity: string
   reason: string
@@ -105,6 +115,14 @@ function lineDraftFromSource(line: ProductionMaterialSupplementSourceMaterial): 
     issuedQuantity: line.issuedQuantity,
     supplementedQuantity: line.supplementedQuantity,
     availableStockQuantity: line.availableStockQuantity,
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: line.quantityOnHand ?? null,
+    availableQuantity: line.availableQuantity ?? null,
+    selectable: line.selectable ?? null,
+    disabledReasonCode: line.disabledReasonCode ?? null,
+    disabledReason: line.disabledReason ?? null,
+    maxSelectableQuantity: line.maxSelectableQuantity ?? null,
     unitPrice: line.unitPrice,
     quantity: '',
     reason: '',
@@ -124,10 +142,36 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialSupplementLine
     issuedQuantity: '',
     supplementedQuantity: '',
     availableStockQuantity: '',
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: null,
+    availableQuantity: null,
+    selectable: null,
+    disabledReasonCode: null,
+    disabledReason: null,
+    maxSelectableQuantity: null,
     unitPrice: line.unitPrice ?? '',
     quantity: line.quantity,
     reason: line.reason ?? '',
   }
+}
+
+function numericLineValue(line: MaterialSupplementLineDraft, key: 'maxSelectableQuantity'): number | null {
+  const value = line[key]
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function lineDisabledReason(line: MaterialSupplementLineDraft): string {
+  return line.disabledReason ?? '该候选库存不可生产补料'
+}
+
+function lineUnavailable(line: MaterialSupplementLineDraft): boolean {
+  const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
+  return line.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
 
 async function loadSources() {
@@ -211,13 +255,27 @@ function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
     return null
   }
   const payloadLines: ProductionMaterialSupplementUpdatePayloadLine[] = []
+  let firstUnavailableReason = ''
   for (const line of lines.value) {
+    if (lineUnavailable(line)) {
+      firstUnavailableReason ||= `${line.materialName}：${lineDisabledReason(line)}`
+      if (line.quantity) {
+        submitError.value = `${line.materialName}：${lineDisabledReason(line)}`
+        return null
+      }
+      continue
+    }
     if (!line.quantity) {
       continue
     }
     const quantity = validateProductionQuantity(line.quantity)
     if (quantity.message || !quantity.payloadValue) {
       submitError.value = `${line.materialName}：${quantity.message}`
+      return null
+    }
+    const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
+    if (maxSelectableQuantity !== null && quantity.value !== null && quantity.value > maxSelectableQuantity) {
+      submitError.value = `${line.materialName}：补料数量不能超过最大可选数量`
       return null
     }
     const payloadLine: ProductionMaterialSupplementUpdatePayloadLine = {
@@ -249,7 +307,7 @@ function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
     return null
   }
   if (!payloadLines.length) {
-    submitError.value = '至少填写一行补料数量'
+    submitError.value = firstUnavailableReason || '至少填写一行补料数量'
     return null
   }
 
@@ -435,6 +493,31 @@ onMounted(() => {
                 <span class="numeric-cell">{{ formatProductionQuantity(row.availableStockQuantity) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="质量状态" min-width="110">
+              <template #default="{ row }">
+                <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
+              </template>
+            </el-table-column>
+            <el-table-column label="现存数量" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatProductionQuantity(row.quantityOnHand) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="合格可用" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatProductionQuantity(row.availableQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="最大可选" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatProductionQuantity(row.maxSelectableQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="candidate-disabled-reason">{{ row.disabledReason || '-' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="参考单价" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatSalesAmount(row.unitPrice) }}</span>
@@ -446,6 +529,7 @@ onMounted(() => {
                   v-model="row.quantity"
                   :name="`material-supplement-line-quantity-${lineInputKey(row)}`"
                   placeholder="0.000000"
+                  :disabled="lineUnavailable(row)"
                 />
               </template>
             </el-table-column>
@@ -501,6 +585,11 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.candidate-disabled-reason {
+  color: var(--el-color-danger);
+  font-size: 12px;
 }
 
 .form-actions {

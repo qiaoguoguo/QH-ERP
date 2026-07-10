@@ -1690,10 +1690,10 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		return this.jdbcTemplate.queryForObject("""
 				insert into inv_stock_movement (
 					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
-					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-					reason, remark, operator_name, occurred_at
+					quality_status, before_quantity, after_quantity, source_type, source_id, source_line_id,
+					business_date, reason, remark, operator_name, occurred_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, 100, 100, ?, ?, ?, ?, ?, ?, 'test', now())
+				values (?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', 100, 100, ?, ?, ?, ?, ?, ?, 'test', now())
 				returning id
 				""", Long.class, "RPT-MOV-" + suffix, movementType, direction, fixture.warehouseId(),
 				fixture.finishedMaterialId(), fixture.unitId(), new BigDecimal(quantity), movementType, suffix,
@@ -1703,9 +1703,10 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	private void insertStockBalance(ReportingFixture fixture, long materialId, String quantity) {
 		this.jdbcTemplate.update("""
 				insert into inv_stock_balance (
-					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity, created_at,
+					updated_at
 				)
-				values (?, ?, ?, ?, 0, now(), now())
+				values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
 				""", fixture.warehouseId(), materialId, fixture.unitId(), new BigDecimal(quantity));
 	}
 
@@ -1891,10 +1892,10 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long lineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_return_line (
 					return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
-					returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
-					created_at, updated_at
+					returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount,
+					quality_status, reason, created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, '报表采购退货', now(), now())
+				values (?, ?, ?, ?, ?, 1, 0, ?, ?, ?, ?, 'QUALIFIED', '报表采购退货', now(), now())
 				returning id
 				""", Long.class, returnId, receipt.receiptLineId(), receipt.orderLineId(), fixture.rawMaterialId(),
 				fixture.unitId(), quantityValue, quantityValue, unitPriceValue, amount);
@@ -1992,10 +1993,10 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		return this.jdbcTemplate.queryForObject("""
 				insert into inv_stock_movement (
 					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
-					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-					reason, remark, operator_name, occurred_at
+					quality_status, before_quantity, after_quantity, source_type, source_id, source_line_id,
+					business_date, reason, remark, operator_name, occurred_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, 100, 100, ?, ?, ?, ?, ?, ?, 'test', now())
+				values (?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', 100, 100, ?, ?, ?, ?, ?, ?, 'test', now())
 				returning id
 				""", Long.class, "RPT-MOV-" + suffix, movementType, direction, fixture.warehouseId(), materialId,
 				fixture.unitId(), new BigDecimal(quantity), sourceType, sourceId, sourceLineId, businessDate, reason,

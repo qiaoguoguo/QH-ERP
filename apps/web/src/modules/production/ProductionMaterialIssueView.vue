@@ -12,6 +12,7 @@ import {
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
+import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
@@ -108,6 +109,24 @@ function materialForLine(line: IssueLineDraft): ProductionWorkOrderMaterialRecor
   return workOrder.value?.materials.find((material) => String(material.id) === String(line.workOrderMaterialId))
 }
 
+function numericMaterialValue(material: ProductionWorkOrderMaterialRecord | undefined, key: 'maxSelectableQuantity'): number | null {
+  const value = material?.[key]
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function materialDisabledReason(material: ProductionWorkOrderMaterialRecord | undefined): string {
+  return material?.disabledReason ?? '该候选库存不可领料'
+}
+
+function materialUnavailable(material: ProductionWorkOrderMaterialRecord | undefined): boolean {
+  const maxSelectableQuantity = numericMaterialValue(material, 'maxSelectableQuantity')
+  return material?.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
+}
+
 function validateForm(): ProductionMaterialIssuePayload | null {
   if (!workOrder.value) {
     formError.value = '生产工单未加载'
@@ -128,11 +147,19 @@ function validateForm(): ProductionMaterialIssuePayload | null {
 
   const nextLineErrors: Record<number, string> = {}
   const payloadLines = []
+  let firstUnavailableReason = ''
   for (const line of lines.value) {
+    const material = materialForLine(line)
+    if (materialUnavailable(material)) {
+      firstUnavailableReason ||= materialDisabledReason(material)
+      if (line.quantity.trim()) {
+        nextLineErrors[line.lineNo] = materialDisabledReason(material)
+      }
+      continue
+    }
     if (!line.quantity.trim()) {
       continue
     }
-    const material = materialForLine(line)
     const quantityResult = validateProductionQuantity(line.quantity)
     if (quantityResult.payloadValue === null) {
       nextLineErrors[line.lineNo] = quantityResult.message ?? '数量不正确'
@@ -140,6 +167,11 @@ function validateForm(): ProductionMaterialIssuePayload | null {
     }
     if (material && quantityResult.value !== null && quantityResult.value > Number(material.remainingQuantity)) {
       nextLineErrors[line.lineNo] = '本次领料不能大于未领数量'
+      continue
+    }
+    const maxSelectableQuantity = numericMaterialValue(material, 'maxSelectableQuantity')
+    if (maxSelectableQuantity !== null && quantityResult.value !== null && quantityResult.value > maxSelectableQuantity) {
+      nextLineErrors[line.lineNo] = '本次领料不能大于最大可选数量'
       continue
     }
     const warehouseId = normalizeRequiredId(line.warehouseId)
@@ -162,7 +194,7 @@ function validateForm(): ProductionMaterialIssuePayload | null {
     return null
   }
   if (payloadLines.length === 0) {
-    formError.value = '至少填写一行本次领料数量'
+    formError.value = firstUnavailableReason || '至少填写一行本次领料数量'
     return null
   }
 
@@ -277,13 +309,41 @@ onMounted(() => {
               <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.remainingQuantity) }}</span>
             </template>
           </el-table-column>
+          <el-table-column label="质量状态" min-width="110">
+            <template #default="{ row }">
+              <QualityStatusTag
+                :quality-status="materialForLine(row)?.qualityStatus"
+                :quality-status-name="materialForLine(row)?.qualityStatusName"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column label="现存数量" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.quantityOnHand) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="合格可用" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.availableQuantity) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="最大可选" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.maxSelectableQuantity) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span class="candidate-disabled-reason">{{ materialForLine(row)?.disabledReason || '-' }}</span>
+            </template>
+          </el-table-column>
           <el-table-column label="本次领料" min-width="150">
             <template #default="{ row }">
               <el-input
-                v-model="row.quantity"
-                :disabled="!canSubmitIssue || Number(materialForLine(row)?.remainingQuantity ?? 0) <= 0"
-                placeholder="0.000000"
-              />
+                  v-model="row.quantity"
+                  :disabled="!canSubmitIssue || materialUnavailable(materialForLine(row)) || Number(materialForLine(row)?.remainingQuantity ?? 0) <= 0"
+                  placeholder="0.000000"
+                />
               <div v-if="lineErrors[row.lineNo]" class="line-error">{{ lineErrors[row.lineNo] }}</div>
             </template>
           </el-table-column>
@@ -366,6 +426,11 @@ onMounted(() => {
   color: var(--el-color-danger);
   font-size: 12px;
   margin-top: 4px;
+}
+
+.candidate-disabled-reason {
+  color: var(--el-color-danger);
+  font-size: 12px;
 }
 
 .form-footer {

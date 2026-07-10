@@ -15,12 +15,15 @@ export type InventoryMovementType =
 export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
 export type InventoryQuantityPayload = string
+export type InventoryQualityStatus = 'PENDING_INSPECTION' | 'QUALIFIED' | 'REJECTED' | 'FROZEN'
 
 export interface InventoryBalanceListParams {
   keyword?: string
   warehouseId?: ResourceId
   materialId?: ResourceId
   materialType?: string
+  qualityStatus?: InventoryQualityStatus
+  includeZeroQualityStatuses?: boolean
   onlyPositive?: boolean
   page: number
   pageSize: number
@@ -32,6 +35,10 @@ export interface InventoryMovementListParams {
   materialId?: ResourceId
   movementType?: InventoryMovementType
   direction?: InventoryDirection
+  qualityStatus?: InventoryQualityStatus
+  sourceType?: string
+  sourceId?: ResourceId
+  sourceLineId?: ResourceId
   dateFrom?: string
   dateTo?: string
   page: number
@@ -60,9 +67,17 @@ export interface InventoryBalanceRecord {
   materialType: string
   unitId: ResourceId
   unitName: string
-  quantityOnHand: number
-  lockedQuantity: number
-  availableQuantity: number
+  qualityStatus?: InventoryQualityStatus
+  qualityStatusName?: string
+  quantityOnHand: number | string
+  lockedQuantity: number | string
+  availableQuantity: number | string
+  totalQuantityOnHand?: number | string
+  pendingInspectionQuantity?: number | string
+  qualifiedQuantity?: number | string
+  rejectedQuantity?: number | string
+  frozenQuantity?: number | string
+  unavailableReason?: string | null
   updatedAt: string
 }
 
@@ -78,12 +93,16 @@ export interface InventoryMovementRecord {
   materialName: string
   unitId: ResourceId
   unitName: string
-  quantity: number
-  beforeQuantity: number
-  afterQuantity: number
+  qualityStatus?: InventoryQualityStatus
+  qualityStatusName?: string
+  quantity: number | string
+  beforeQuantity: number | string
+  afterQuantity: number | string
   sourceType: string
   sourceId: ResourceId
-  sourceLineId: ResourceId
+  sourceLineId?: ResourceId | null
+  sourceDocumentNo?: string | null
+  relatedMovementId?: ResourceId | null
   businessDate: string
   reason?: string | null
   remark?: string | null
@@ -175,6 +194,8 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'warehouseId',
     'materialId',
     'materialType',
+    'qualityStatus',
+    'includeZeroQualityStatuses',
     'onlyPositive',
     'page',
     'pageSize',
@@ -185,6 +206,10 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'materialId',
     'movementType',
     'direction',
+    'qualityStatus',
+    'sourceType',
+    'sourceId',
+    'sourceLineId',
     'dateFrom',
     'dateTo',
     'page',

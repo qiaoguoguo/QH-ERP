@@ -1,11 +1,17 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { inventoryApi, type InventoryBalanceRecord, type ResourceId } from '../../shared/api/inventoryApi'
+import {
+  inventoryApi,
+  type InventoryBalanceRecord,
+  type InventoryQualityStatus,
+  type ResourceId,
+} from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type MaterialType, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { materialTypeLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
+import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import { formatQuantity } from './inventoryPageHelpers'
 
 const router = useRouter()
@@ -14,13 +20,17 @@ const filters = reactive<{
   warehouseId: ResourceId | ''
   materialId: ResourceId | ''
   materialType?: MaterialType
+  qualityStatus?: InventoryQualityStatus
   onlyPositive: boolean
+  includeZeroQualityStatuses: boolean
 }>({
   keyword: '',
   warehouseId: '',
   materialId: '',
   materialType: undefined,
+  qualityStatus: undefined,
   onlyPositive: false,
+  includeZeroQualityStatuses: false,
 })
 const pagination = reactive({
   page: 1,
@@ -78,7 +88,9 @@ async function loadRecords() {
       warehouseId: normalizeOptionalId(filters.warehouseId),
       materialId: normalizeOptionalId(filters.materialId),
       materialType: filters.materialType,
+      qualityStatus: filters.qualityStatus,
       onlyPositive: filters.onlyPositive,
+      includeZeroQualityStatuses: filters.includeZeroQualityStatuses,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -103,7 +115,9 @@ function resetSearch() {
   filters.warehouseId = ''
   filters.materialId = ''
   filters.materialType = undefined
+  filters.qualityStatus = undefined
   filters.onlyPositive = false
+  filters.includeZeroQualityStatuses = false
   pagination.page = 1
   void loadRecords()
 }
@@ -125,6 +139,7 @@ function viewMovements(record: InventoryBalanceRecord) {
     query: {
       warehouseId: String(record.warehouseId),
       materialId: String(record.materialId),
+      ...(record.qualityStatus ? { qualityStatus: String(record.qualityStatus) } : {}),
     },
   })
 }
@@ -143,7 +158,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="库存余额" description="按仓库和物料查询当前现存、锁定和可用库存。">
+  <MasterDataTableView title="库存余额" description="可用数量仅包含合格库存，待检、不合格和冻结库存不参与出库或领料。">
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词">
@@ -199,10 +214,33 @@ onMounted(() => {
             <el-option label="辅料" value="AUXILIARY" />
           </el-select>
         </el-form-item>
+        <el-form-item label="质量状态">
+          <el-select
+            v-model="filters.qualityStatus"
+            data-test="inventory-balance-quality-status"
+            clearable
+            placeholder="全部状态"
+          >
+            <el-option label="待检" value="PENDING_INSPECTION" />
+            <el-option label="合格" value="QUALIFIED" />
+            <el-option label="不合格" value="REJECTED" />
+            <el-option label="冻结" value="FROZEN" />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <label class="checkbox-filter">
             <input v-model="filters.onlyPositive" name="inventory-balance-only-positive" type="checkbox" />
             只看有库存
+          </label>
+        </el-form-item>
+        <el-form-item>
+          <label class="checkbox-filter">
+            <input
+              v-model="filters.includeZeroQualityStatuses"
+              name="inventory-balance-include-zero-quality-statuses"
+              type="checkbox"
+            />
+            包含零数量质量状态
           </label>
         </el-form-item>
         <el-form-item>
@@ -237,6 +275,16 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column prop="unitName" label="单位" min-width="90" />
+        <el-table-column label="质量状态" min-width="100">
+          <template #default="{ row }">
+            <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
+          </template>
+        </el-table-column>
+        <el-table-column label="总现存" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.totalQuantityOnHand ?? row.quantityOnHand) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="现存数量" min-width="120" align="right">
           <template #default="{ row }">
             <span data-test="quantity-on-hand-cell" class="numeric-cell">{{ formatQuantity(row.quantityOnHand) }}</span>
@@ -247,11 +295,32 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatQuantity(row.lockedQuantity) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="可用数量" min-width="120" align="right">
+        <el-table-column label="合格可用" min-width="120" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="待检" min-width="110" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.pendingInspectionQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="合格" min-width="110" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.qualifiedQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="不合格" min-width="110" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.rejectedQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="冻结" min-width="110" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.frozenQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="unavailableReason" label="不可用说明" min-width="180" show-overflow-tooltip />
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }">
             {{ formatDateTime(row.updatedAt) }}

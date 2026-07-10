@@ -71,6 +71,14 @@ const sourceOrder: SalesOrderDetailRecord = {
       quantity: '12.500000',
       shippedQuantity: 5,
       remainingQuantity: 7.5,
+      qualityStatus: 'QUALIFIED',
+      qualityStatusName: '合格',
+      quantityOnHand: '9.000000',
+      availableQuantity: '9.000000',
+      selectable: true,
+      disabledReasonCode: null,
+      disabledReason: null,
+      maxSelectableQuantity: '7.500000',
       unitPrice: '88.100000',
       expectedShipDate: '2026-07-12',
       remark: '按周出库',
@@ -86,6 +94,14 @@ const sourceOrder: SalesOrderDetailRecord = {
       quantity: '3.000000',
       shippedQuantity: 0,
       remainingQuantity: 3,
+      qualityStatus: 'REJECTED',
+      qualityStatusName: '不合格',
+      quantityOnHand: '3.000000',
+      availableQuantity: '0.000000',
+      selectable: false,
+      disabledReasonCode: 'NON_QUALIFIED_NOT_AVAILABLE',
+      disabledReason: '不合格库存不可销售出库',
+      maxSelectableQuantity: '0.000000',
       unitPrice: '36.000000',
       expectedShipDate: '2026-07-12',
       remark: null,
@@ -232,6 +248,37 @@ describe('销售出库表单页', () => {
     expect(wrapper.text()).toContain('7.5')
   })
 
+  it('销售出库候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 1, 502)
+
+    expect(wrapper.text()).toContain('不合格')
+    expect(wrapper.text()).toContain('现存数量')
+    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('禁用原因')
+    expect(wrapper.text()).toContain('不合格库存不可销售出库')
+    expect(wrapper.text()).toContain('0')
+    expect(wrapper.text()).not.toContain('canUse')
+  })
+
+  it('销售出库不可选候选行禁用数量输入并阻止保存', async () => {
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 0, 30)
+    await wrapper.find('input[name="sales-shipment-business-date"]').setValue('2026-07-05')
+    await setSelectValue(wrapper, 1, 502)
+
+    const quantityInput = wrapper.find('input[name="sales-shipment-line-quantity-0"]')
+    expect(quantityInput.attributes('disabled')).toBeDefined()
+    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('不合格库存不可销售出库')
+    expect(salesApiMock.shipments.create).not.toHaveBeenCalled()
+  })
+
   it('销售出库明细在表单内提供独立横向滚动边界', async () => {
     const { wrapper } = await mountForm()
 
@@ -327,6 +374,23 @@ describe('销售出库表单页', () => {
   })
 
   it('编辑草稿时可追加同一来源订单的其他未出库行并保存', async () => {
+    salesApiMock.orders.get.mockResolvedValueOnce({
+      ...sourceOrder,
+      lines: sourceOrder.lines.map((line) => (
+        line.id === 502
+          ? {
+            ...line,
+            qualityStatus: 'QUALIFIED',
+            qualityStatusName: '合格',
+            availableQuantity: '3.000000',
+            selectable: true,
+            disabledReasonCode: null,
+            disabledReason: null,
+            maxSelectableQuantity: '3.000000',
+          }
+          : line
+      )),
+    })
     const { wrapper } = await mountForm('/sales/shipments/700/edit')
 
     expect(salesApiMock.shipments.get).toHaveBeenCalledWith('700')

@@ -5,6 +5,7 @@ import type {
   SalesShipmentLineRecord,
   SalesShipmentStatus,
 } from '../../shared/api/salesApi'
+import type { InventoryQualityStatus } from '../../shared/api/inventoryApi'
 
 export interface SalesDecimalValidationResult {
   value: number | null
@@ -34,6 +35,14 @@ export interface SalesShipmentSourceLine {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | number | null
+  availableQuantity?: string | number | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | number | null
 }
 
 export interface SalesShipmentLineDraft {
@@ -47,6 +56,14 @@ export interface SalesShipmentLineDraft {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | number | null
+  availableQuantity?: string | number | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | number | null
   quantity: string
   remark: string
 }
@@ -231,6 +248,14 @@ export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
     orderedQuantity: 0,
     shippedQuantityBefore: 0,
     remainingQuantityBefore: 0,
+    qualityStatus: null,
+    qualityStatusName: null,
+    quantityOnHand: null,
+    availableQuantity: null,
+    selectable: null,
+    disabledReasonCode: null,
+    disabledReason: null,
+    maxSelectableQuantity: null,
     quantity: '',
     remark: '',
   }
@@ -261,6 +286,14 @@ export function salesShipmentSourceFromOrderLine(line: SalesOrderLineRecord): Sa
     orderedQuantity: Number(line.quantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantity) || 0,
     remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: line.quantityOnHand ?? null,
+    availableQuantity: line.availableQuantity ?? null,
+    selectable: line.selectable ?? null,
+    disabledReasonCode: line.disabledReasonCode ?? null,
+    disabledReason: line.disabledReason ?? null,
+    maxSelectableQuantity: line.maxSelectableQuantity ?? null,
   }
 }
 
@@ -276,6 +309,14 @@ export function salesShipmentSourceFromShipmentLine(line: SalesShipmentLineRecor
     orderedQuantity: Number(line.orderedQuantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: line.quantityOnHand ?? null,
+    availableQuantity: line.availableQuantity ?? null,
+    selectable: line.selectable ?? null,
+    disabledReasonCode: line.disabledReasonCode ?? null,
+    disabledReason: line.disabledReason ?? null,
+    maxSelectableQuantity: line.maxSelectableQuantity ?? null,
   }
 }
 

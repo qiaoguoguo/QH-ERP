@@ -87,6 +87,14 @@ const workOrder: ProductionWorkOrderDetailRecord = {
       requiredQuantity: 100,
       issuedQuantity: 60,
       remainingQuantity: 40,
+      qualityStatus: 'PENDING_INSPECTION',
+      qualityStatusName: '待检',
+      quantityOnHand: '12.000000',
+      availableQuantity: '0.000000',
+      selectable: false,
+      disabledReasonCode: 'NON_QUALIFIED_NOT_AVAILABLE',
+      disabledReason: '待检库存不可领料',
+      maxSelectableQuantity: '0.000000',
       lossRate: 0,
       remark: null,
     },
@@ -95,6 +103,21 @@ const workOrder: ProductionWorkOrderDetailRecord = {
   reports: [],
   completionReceipts: [],
   movements: [],
+}
+
+const selectableWorkOrder: ProductionWorkOrderDetailRecord = {
+  ...workOrder,
+  materials: workOrder.materials.map((material) => ({
+    ...material,
+    qualityStatus: 'QUALIFIED',
+    qualityStatusName: '合格',
+    quantityOnHand: '50.000000',
+    availableQuantity: '50.000000',
+    selectable: true,
+    disabledReasonCode: null,
+    disabledReason: null,
+    maxSelectableQuantity: '40.000000',
+  })),
 }
 
 function deferred<T>() {
@@ -209,6 +232,7 @@ describe('生产执行表单页', () => {
   })
 
   it('领料数量不能超过未领数量', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -220,6 +244,38 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('本次领料不能大于未领数量')
+    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+  })
+
+  it('生产领料候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    expect(wrapper.text()).toContain('待检')
+    expect(wrapper.text()).toContain('现存数量')
+    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('禁用原因')
+    expect(wrapper.text()).toContain('待检库存不可领料')
+    expect(wrapper.text()).not.toContain('canUse')
+  })
+
+  it('生产领料不可选候选行禁用数量输入并保留禁用原因', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    const quantityInput = wrapper.find('input[placeholder="0.000000"]')
+    expect(quantityInput.attributes('disabled')).toBeDefined()
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('待检库存不可领料')
     expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 

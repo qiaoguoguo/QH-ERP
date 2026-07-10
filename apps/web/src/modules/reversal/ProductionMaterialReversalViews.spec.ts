@@ -328,6 +328,14 @@ const materialSupplementSource = {
       issuedQuantity: '8.000000',
       supplementedQuantity: '1.000000',
       availableStockQuantity: '9.000000',
+      qualityStatus: 'FROZEN',
+      qualityStatusName: '冻结',
+      quantityOnHand: '9.000000',
+      availableQuantity: '0.000000',
+      selectable: false,
+      disabledReasonCode: 'FROZEN_NOT_AVAILABLE',
+      disabledReason: '冻结库存不可参与可用量',
+      maxSelectableQuantity: '0.000000',
       unitPrice: '30.00',
     },
   ],
@@ -485,6 +493,21 @@ describe('生产退料补料前端页面', () => {
   })
 
   it('生产补料表单加载工单物料并以字符串数量提交创建请求', async () => {
+    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValueOnce(page([
+      {
+        ...materialSupplementSource,
+        materials: materialSupplementSource.materials.map((material) => ({
+          ...material,
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          availableQuantity: '9.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          maxSelectableQuantity: '9.000000',
+        })),
+      },
+    ], 20))
     const { wrapper, router } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/create', ['production:material-supplement:create'])
 
     expect(wrapper.text()).toContain('新建生产补料')
@@ -513,6 +536,27 @@ describe('生产退料补料前端页面', () => {
       lines: [{ workOrderMaterialId: 501, quantity: '2.000000', reason: '损耗补料' }],
     }))
     expect(router.currentRoute.value.name).toBe('production-material-supplement-detail')
+  })
+
+  it('生产补料候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/create', ['production:material-supplement:create'])
+
+    expect(wrapper.text()).toContain('冻结')
+    expect(wrapper.text()).toContain('现存数量')
+    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('禁用原因')
+    expect(wrapper.text()).toContain('冻结库存不可参与可用量')
+    expect(wrapper.text()).not.toContain('canUse')
+
+    const quantityInput = wrapper.find('input[name="material-supplement-line-quantity-501"]')
+    expect(quantityInput.attributes('disabled')).toBeDefined()
+    await quantityInput.setValue('1.000000')
+    await wrapper.find('[data-test="submit-material-supplement"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('冻结库存不可参与可用量')
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.create).not.toHaveBeenCalled()
   })
 
   it.each([
