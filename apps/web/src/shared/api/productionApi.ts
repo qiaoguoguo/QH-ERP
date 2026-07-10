@@ -1,4 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
+import type { InventoryQualityStatus } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -66,6 +67,14 @@ export interface ProductionWorkOrderMaterialRecord {
   requiredQuantity: number
   issuedQuantity: number
   remainingQuantity: number
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | number | null
+  availableQuantity?: string | number | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | number | null
   lossRate: number
   remark?: string | null
 }

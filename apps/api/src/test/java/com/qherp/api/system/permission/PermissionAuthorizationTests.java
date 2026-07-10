@@ -145,6 +145,18 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void qualityAdminPathsMapToQualityPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/quality/inspections", "quality:inspection:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/quality/inspections/1", "quality:inspection:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/quality/inspections/1/process",
+				"quality:inspection:process");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				"quality:status:freeze");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/inventory/quality-transfers/unfreeze",
+				"quality:status:unfreeze");
+	}
+
+	@Test
 	void procurementAdminPathsMapToProcurementPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/orders", "procurement:order:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/procurement/orders/1", "procurement:order:view");

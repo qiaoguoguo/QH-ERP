@@ -1,6 +1,7 @@
 package com.qherp.api.system.procurement;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -115,6 +116,11 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(movement.quantity(), "3.000000");
 		assertDecimal(movement.beforeQuantity(), "0");
 		assertDecimal(movement.afterQuantity(), "3.000000");
+		assertThat(movementQualityStatus("PURCHASE_RECEIPT", receiptLineId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "3.000000");
+		assertThat(qualityInspectionCount("PURCHASE_RECEIPT", receiptId, receiptLineId, "PENDING")).isOne();
 
 		JsonNode receiptDetail = data(getReceipt(admin, receiptId));
 		JsonNode inventoryMovements = receiptDetail.get("inventoryMovements");
@@ -669,15 +675,42 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private BigDecimal balanceQuantity(long warehouseId, long materialId) {
-		return this.jdbcTemplate.query("""
-				select quantity_on_hand
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
-			.stream()
-			.findFirst()
-			.orElse(BigDecimal.ZERO);
+				""", BigDecimal.class, warehouseId, materialId);
+	}
+
+	private BigDecimal balanceQuantity(long warehouseId, long materialId, InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
+	}
+
+	private String movementQualityStatus(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select quality_status
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", String.class, sourceType, sourceLineId);
+	}
+
+	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from qua_quality_inspection
+				where source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				and status = ?
+				""", Long.class, sourceType, sourceId, sourceLineId, status);
 	}
 
 	private MovementRow movementForSource(String sourceType, long sourceLineId) {

@@ -118,6 +118,14 @@ function draftFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentLine
     orderedQuantity: Number(line.orderedQuantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: line.quantityOnHand ?? null,
+    availableQuantity: line.availableQuantity ?? null,
+    selectable: line.selectable ?? null,
+    disabledReasonCode: line.disabledReasonCode ?? null,
+    disabledReason: line.disabledReason ?? null,
+    maxSelectableQuantity: line.maxSelectableQuantity ?? null,
     quantity: String(line.quantity),
     remark: line.remark ?? '',
   }
@@ -173,8 +181,43 @@ function refreshDraftLinesWithCurrentOrder(
       orderedQuantity: currentSourceLine.orderedQuantity,
       shippedQuantityBefore: currentSourceLine.shippedQuantityBefore,
       remainingQuantityBefore: currentSourceLine.remainingQuantityBefore,
+      qualityStatus: currentSourceLine.qualityStatus,
+      qualityStatusName: currentSourceLine.qualityStatusName,
+      quantityOnHand: currentSourceLine.quantityOnHand,
+      availableQuantity: currentSourceLine.availableQuantity,
+      selectable: currentSourceLine.selectable,
+      disabledReasonCode: currentSourceLine.disabledReasonCode,
+      disabledReason: currentSourceLine.disabledReason,
+      maxSelectableQuantity: currentSourceLine.maxSelectableQuantity,
     }
   })
+}
+
+function sourceLineForDraft(line: SalesShipmentLineDraft): SalesShipmentSourceLine | undefined {
+  return sourceLines.value.find((sourceLine) => String(sourceLine.id) === String(line.orderLineId))
+}
+
+function numericCandidateValue(line: SalesShipmentLineDraft, key: 'maxSelectableQuantity'): number | null {
+  const value = line[key] ?? sourceLineForDraft(line)?.[key]
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function candidateDisabledReason(line: SalesShipmentLineDraft): string {
+  return line.disabledReason
+    ?? sourceLineForDraft(line)?.disabledReason
+    ?? '该候选库存不可销售出库'
+}
+
+function candidateUnavailable(line: SalesShipmentLineDraft): boolean {
+  const sourceLine = sourceLineForDraft(line)
+  const maxSelectableQuantity = numericCandidateValue(line, 'maxSelectableQuantity')
+  return line.selectable === false
+    || sourceLine?.selectable === false
+    || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
 
 async function loadRecord() {
@@ -225,6 +268,10 @@ function validateForm(): SalesShipmentPayload | null {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择来源订单行`
       continue
     }
+    if (candidateUnavailable(line)) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${candidateDisabledReason(line)}`
+      continue
+    }
     const quantityResult = validateSalesQuantity(line.quantity)
     if (quantityResult.payloadValue === null || quantityResult.value === null) {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${quantityResult.message ?? '数量不正确'}`
@@ -232,6 +279,11 @@ function validateForm(): SalesShipmentPayload | null {
     }
     if (quantityResult.value > Number(line.remainingQuantityBefore)) {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行本次出库数量不能超过未出库数量`
+      continue
+    }
+    const maxSelectableQuantity = numericCandidateValue(line, 'maxSelectableQuantity')
+    if (maxSelectableQuantity !== null && quantityResult.value > maxSelectableQuantity) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行本次出库数量不能超过最大可选数量`
       continue
     }
     const duplicateKey = String(orderLineId)

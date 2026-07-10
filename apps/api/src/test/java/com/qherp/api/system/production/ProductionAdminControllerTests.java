@@ -1,6 +1,7 @@
 package com.qherp.api.system.production;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -116,10 +117,58 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(receiptMovement.get("movementType").asText()).isEqualTo("PRODUCTION_RECEIPT");
 		assertThat(receiptMovement.get("sourceType").asText()).isEqualTo("PRODUCTION_COMPLETION_RECEIPT");
 		assertDecimal(receiptMovement, "quantity", "5.000000");
+		assertThat(movementQualityStatus("PRODUCTION_COMPLETION_RECEIPT", receiptId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(balanceQuantity(fixture.receiptWarehouseId(), fixture.productMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "5.000000");
+		assertThat(qualityInspectionCount("PRODUCTION_COMPLETION", receiptId, receiptId, "PENDING")).isOne();
 
 		ResponseEntity<String> completed = completeWorkOrder(admin, workOrderId);
 		assertOk(completed);
 		assertThat(data(completed).get("status").asText()).isEqualTo("COMPLETED");
+	}
+
+	@Test
+	void materialIssueRejectsWhenOnlyNonQualifiedStockCanCoverRequestedQuantity() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "1.000000",
+				InventoryQualityStatus.QUALIFIED);
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "3.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("合格库存不足领料",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"4.000000"))));
+
+		assertError(postMaterialIssue(admin, workOrderId, issueId), HttpStatus.CONFLICT,
+				"INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH");
+		assertDecimal(balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId(),
+				InventoryQualityStatus.QUALIFIED), "1.000000");
+		assertDecimal(balanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "3.000000");
+		assertThat(productionIssueMovementCount(fixture.rawMaterialId())).isZero();
+	}
+
+	@Test
+	void workOrderMaterialsExposeQualifiedIssueCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "4.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+
+		assertThat(rawRequirement.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(rawRequirement.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimal(rawRequirement, "quantityOnHand", "0.000000");
+		assertDecimal(rawRequirement, "availableQuantity", "0.000000");
+		assertThat(rawRequirement.get("selectable").booleanValue()).isFalse();
+		assertThat(rawRequirement.get("disabledReasonCode").asText()).isEqualTo("QUALIFIED_BALANCE_NOT_ENOUGH");
+		assertThat(rawRequirement.get("disabledReason").asText()).isEqualTo("合格可用库存不足");
+		assertDecimal(rawRequirement, "maxSelectableQuantity", "0.000000");
 	}
 
 	@Test
@@ -453,6 +502,20 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		return documentId;
 	}
 
+	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
+			InventoryQualityStatus qualityStatus) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+					quality_status
+				)
+				values (?, ?, ?, ?, 0, now(), now(), ?)
+				on conflict (warehouse_id, material_id, quality_status)
+				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
+					updated_at = now(), version = inv_stock_balance.version + 1
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+	}
+
 	private long createWorkOrder(AuthenticatedSession admin, long productId, long bomId, long issueWarehouseId,
 			long receiptWarehouseId, String plannedQuantity) throws Exception {
 		ResponseEntity<String> response = createWorkOrder(admin,
@@ -645,6 +708,36 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 			return BigDecimal.ZERO;
 		}
 		return decimal(items.get(0), "quantityOnHand");
+	}
+
+	private BigDecimal balanceQuantity(long warehouseId, long materialId, InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
+	}
+
+	private String movementQualityStatus(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select quality_status
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", String.class, sourceType, sourceLineId);
+	}
+
+	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from qua_quality_inspection
+				where source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				and status = ?
+				""", Long.class, sourceType, sourceId, sourceLineId, status);
 	}
 
 	private long productionIssueMovementCount(long materialId) {

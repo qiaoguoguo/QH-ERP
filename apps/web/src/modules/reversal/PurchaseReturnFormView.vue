@@ -15,8 +15,10 @@ import {
   type ReversalSourceView,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import type { InventoryQualityStatus } from '../../shared/api/inventoryApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
+import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import {
   formatSalesAmount,
   formatSalesQuantity,
@@ -35,6 +37,14 @@ interface PurchaseReturnLineDraft {
   returnedQuantity: string
   returnableQuantity: string
   availableStockQuantity: string
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | null
+  availableQuantity?: string | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | null
   unitPrice: string
   returnableAmount: string
   quantity: string
@@ -102,6 +112,14 @@ function lineDraftFromSource(line: PurchaseReturnSourceLine): PurchaseReturnLine
     returnedQuantity: line.returnedQuantity,
     returnableQuantity: line.returnableQuantity,
     availableStockQuantity: line.availableStockQuantity,
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: line.quantityOnHand ?? null,
+    availableQuantity: line.availableQuantity ?? null,
+    selectable: line.selectable ?? null,
+    disabledReasonCode: line.disabledReasonCode ?? null,
+    disabledReason: line.disabledReason ?? null,
+    maxSelectableQuantity: line.maxSelectableQuantity ?? null,
     unitPrice: line.unitPrice,
     returnableAmount: line.returnableAmount,
     quantity: '',
@@ -122,11 +140,37 @@ function lineDraftFromDetail(line: ReversalDocumentLine): PurchaseReturnLineDraf
     returnedQuantity: line.returnedQuantityBefore ?? '',
     returnableQuantity: line.returnableQuantityBefore ?? '',
     availableStockQuantity: '',
+    qualityStatus: line.qualityStatus ?? null,
+    qualityStatusName: line.qualityStatusName ?? null,
+    quantityOnHand: null,
+    availableQuantity: null,
+    selectable: null,
+    disabledReasonCode: null,
+    disabledReason: null,
+    maxSelectableQuantity: null,
     unitPrice: line.unitPrice ?? '',
     returnableAmount: line.amount ?? '',
     quantity: line.quantity,
     reason: line.reason ?? '',
   }
+}
+
+function numericLineValue(line: PurchaseReturnLineDraft, key: 'maxSelectableQuantity'): number | null {
+  const value = line[key]
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function lineDisabledReason(line: PurchaseReturnLineDraft): string {
+  return line.disabledReason ?? '该候选库存不可采购退货'
+}
+
+function lineUnavailable(line: PurchaseReturnLineDraft): boolean {
+  const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
+  return line.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
 
 async function loadSources() {
@@ -212,7 +256,16 @@ function buildPayload(): PurchaseReturnUpdatePayload | null {
     return null
   }
   const payloadLines: PurchaseReturnUpdatePayloadLine[] = []
+  let firstUnavailableReason = ''
   for (const line of lines.value) {
+    if (lineUnavailable(line)) {
+      firstUnavailableReason ||= `${line.materialName}：${lineDisabledReason(line)}`
+      if (line.quantity) {
+        submitError.value = `${line.materialName}：${lineDisabledReason(line)}`
+        return null
+      }
+      continue
+    }
     if (!line.quantity) {
       continue
     }
@@ -221,9 +274,17 @@ function buildPayload(): PurchaseReturnUpdatePayload | null {
       submitError.value = `${line.materialName}：${quantity.message}`
       return null
     }
+    const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
+    if (maxSelectableQuantity !== null && quantity.value !== null && quantity.value > maxSelectableQuantity) {
+      submitError.value = `${line.materialName}：退货数量不能超过最大可选数量`
+      return null
+    }
     const payloadLine: PurchaseReturnUpdatePayloadLine = {
       quantity: quantity.payloadValue,
       reason: line.reason,
+    }
+    if (line.qualityStatus) {
+      payloadLine.qualityStatus = line.qualityStatus
     }
     if (isEdit.value && line.id !== undefined) {
       payloadLine.id = line.id
@@ -250,7 +311,7 @@ function buildPayload(): PurchaseReturnUpdatePayload | null {
     return null
   }
   if (!payloadLines.length) {
-    submitError.value = '至少填写一行退货数量'
+    submitError.value = firstUnavailableReason || '至少填写一行退货数量'
     return null
   }
 
@@ -434,6 +495,31 @@ onMounted(() => {
                 <span class="numeric-cell">{{ formatSalesQuantity(row.availableStockQuantity) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="质量状态" min-width="110">
+              <template #default="{ row }">
+                <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
+              </template>
+            </el-table-column>
+            <el-table-column label="现存数量" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatSalesQuantity(row.quantityOnHand) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="合格可用" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatSalesQuantity(row.availableQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="最大可选" min-width="120" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatSalesQuantity(row.maxSelectableQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                <span class="candidate-disabled-reason">{{ row.disabledReason || '-' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="可退金额" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatSalesAmount(row.returnableAmount) }}</span>
@@ -445,6 +531,7 @@ onMounted(() => {
                   v-model="row.quantity"
                   :name="`purchase-return-line-quantity-${lineInputKey(row)}`"
                   placeholder="0.000000"
+                  :disabled="lineUnavailable(row)"
                 />
               </template>
             </el-table-column>
@@ -500,6 +587,11 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.candidate-disabled-reason {
+  color: var(--el-color-danger);
+  font-size: 12px;
 }
 
 .form-actions {

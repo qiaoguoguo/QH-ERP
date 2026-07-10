@@ -1,5 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
-import type { InventoryDirection, InventoryMovementType } from './inventoryApi'
+import type { InventoryDirection, InventoryMovementType, InventoryQualityStatus } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -69,6 +69,14 @@ export interface SalesOrderLineRecord {
   quantity: string
   shippedQuantity: number
   remainingQuantity: number
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | number | null
+  availableQuantity?: string | number | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | number | null
   unitPrice: string
   expectedShipDate?: string | null
   remark?: string | null
@@ -113,6 +121,14 @@ export interface SalesShipmentLineRecord {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand?: string | number | null
+  availableQuantity?: string | number | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
+  maxSelectableQuantity?: string | number | null
   quantity: string
   beforeQuantity?: number | null
   afterQuantity?: number | null

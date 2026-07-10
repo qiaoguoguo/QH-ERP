@@ -64,9 +64,17 @@ const balance: InventoryBalanceRecord = {
   materialType: 'RAW_MATERIAL',
   unitId: 3,
   unitName: '千克',
+  qualityStatus: 'QUALIFIED',
+  qualityStatusName: '合格',
   quantityOnHand: 120.5,
+  totalQuantityOnHand: 140.5,
   lockedQuantity: 0,
   availableQuantity: 120.5,
+  pendingInspectionQuantity: 12,
+  qualifiedQuantity: 120.5,
+  rejectedQuantity: 3,
+  frozenQuantity: 5,
+  unavailableReason: null,
   updatedAt: '2026-07-03T09:30:00+08:00',
 }
 
@@ -144,21 +152,31 @@ describe('库存余额页', () => {
     const { wrapper } = await mountBalances()
 
     expect(wrapper.text()).toContain('库存余额')
+    expect(wrapper.text()).toContain('可用数量仅包含合格库存，待检、不合格和冻结库存不参与出库或领料。')
     expect(wrapper.text()).toContain('原料仓')
     expect(wrapper.text()).toContain('RM-STEEL')
     expect(wrapper.text()).toContain('原材料')
+    expect(wrapper.text()).toContain('合格')
+    expect(wrapper.text()).toContain('总现存')
+    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('待检')
+    expect(wrapper.text()).toContain('不合格')
+    expect(wrapper.text()).toContain('冻结')
+    expect(wrapper.text()).toContain('140.5')
     expect(wrapper.text()).toContain('120.5')
     expect(wrapper.find('[data-test="quantity-on-hand-cell"]').classes()).toContain('numeric-cell')
   })
 
-  it('按关键词、仓库、物料、物料类型和正库存条件查询并支持重置', async () => {
+  it('按关键词、仓库、物料、物料类型、质量状态和正库存条件查询并支持重置', async () => {
     const { wrapper } = await mountBalances()
 
     await wrapper.find('input[name="inventory-balance-keyword"]').setValue('钢板')
     await setSelectValue(wrapper, 'inventory-balance-warehouse-id', 1)
     await setSelectValue(wrapper, 'inventory-balance-material-id', 2)
     await setSelectValue(wrapper, 'inventory-balance-material-type', 'RAW_MATERIAL')
+    await setSelectValue(wrapper, 'inventory-balance-quality-status', 'QUALIFIED')
     await wrapper.find('input[name="inventory-balance-only-positive"]').setValue(true)
+    await wrapper.find('input[name="inventory-balance-include-zero-quality-statuses"]').setValue(true)
     await wrapper.find('[data-test="search-inventory-balances"]').trigger('click')
     await flushPromises()
 
@@ -167,7 +185,9 @@ describe('库存余额页', () => {
       warehouseId: 1,
       materialId: 2,
       materialType: 'RAW_MATERIAL',
+      qualityStatus: 'QUALIFIED',
       onlyPositive: true,
+      includeZeroQualityStatuses: true,
       page: 1,
       pageSize: 10,
     })
@@ -179,7 +199,9 @@ describe('库存余额页', () => {
       warehouseId: undefined,
       materialId: undefined,
       materialType: undefined,
+      qualityStatus: undefined,
       onlyPositive: false,
+      includeZeroQualityStatuses: false,
       page: 1,
       pageSize: 10,
     })
@@ -203,6 +225,6 @@ describe('库存余额页', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/inventory/movements')
-    expect(router.currentRoute.value.query).toEqual({ warehouseId: '1', materialId: '2' })
+    expect(router.currentRoute.value.query).toEqual({ warehouseId: '1', materialId: '2', qualityStatus: 'QUALIFIED' })
   })
 })

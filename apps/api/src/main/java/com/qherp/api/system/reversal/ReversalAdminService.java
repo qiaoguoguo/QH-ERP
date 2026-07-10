@@ -10,8 +10,11 @@ import com.qherp.api.system.finance.ReceivableStatus;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.quality.QualityAdminService;
+import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -78,6 +81,10 @@ public class ReversalAdminService {
 
 	private static final BigDecimal ZERO = BigDecimal.ZERO;
 
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH = "QUALIFIED_BALANCE_NOT_ENOUGH";
+
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE = "合格可用库存不足";
+
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final AtomicInteger SALES_RETURN_NO_SEQUENCE = new AtomicInteger();
@@ -102,12 +109,16 @@ public class ReversalAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final QualityAdminService qualityAdminService;
+
 	public ReversalAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
+			QualityAdminService qualityAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.qualityAdminService = qualityAdminService;
 	}
 
 	public PageResponse<Object> emptyPage(int page, int pageSize) {
@@ -277,8 +288,12 @@ public class ReversalAdminService {
 				InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 						new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_RETURN_IN,
 								InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(), line.unitId(),
-								line.quantity(), SALES_RETURN_SOURCE, salesReturn.id(), line.id(),
-								salesReturn.businessDate(), "销售退货入库", line.reason(), operator.username()));
+								line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, SALES_RETURN_SOURCE,
+								salesReturn.id(), line.id(), salesReturn.businessDate(), "销售退货入库", line.reason(),
+								operator.username()));
+				this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.SALES_RETURN,
+						salesReturn.id(), line.id(), salesReturn.warehouseId(), line.materialId(), line.unitId(),
+						salesReturn.businessDate(), line.quantity(), operator.username());
 				Long movementId = movementId(SALES_RETURN_SOURCE, line.id());
 				this.jdbcTemplate.update("""
 						update sal_sales_return_line
@@ -488,14 +503,18 @@ public class ReversalAdminService {
 				ReceiptLineRow sourceLine = lockReceiptLine(receipt.id(), line.sourceReceiptLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validatePurchaseLineStillReturnable(sourceLine, line);
-				if (lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId()).compareTo(line.quantity()) < 0) {
+				if (line.qualityStatus() == InventoryQualityStatus.FROZEN) {
+					throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
+				}
+				if (lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId(), line.qualityStatus())
+					.compareTo(line.quantity()) < 0) {
 					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
 				}
 				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 						InventoryMovementType.PURCHASE_RETURN_OUT, InventoryDirection.OUT,
 						purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(), purchaseReturn.businessDate(),
-						"采购退货出库", line.reason(), operator.username()));
+						line.qualityStatus(), PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
+						purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username()));
 				Long movementId = movementId(PURCHASE_RETURN_SOURCE, line.id());
 				this.jdbcTemplate.update("""
 						update proc_purchase_return_line
@@ -729,8 +748,12 @@ public class ReversalAdminService {
 				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 						InventoryMovementType.PRODUCTION_MATERIAL_RETURN_IN, InventoryDirection.IN,
 						line.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						PRODUCTION_MATERIAL_RETURN_SOURCE, materialReturn.id(), line.id(),
-						materialReturn.businessDate(), "生产退料入库", line.reason(), operator.username()));
+						InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_RETURN_SOURCE,
+						materialReturn.id(), line.id(), materialReturn.businessDate(), "生产退料入库", line.reason(),
+						operator.username()));
+				this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PRODUCTION_RETURN,
+						materialReturn.id(), line.id(), line.warehouseId(), line.materialId(), line.unitId(),
+						materialReturn.businessDate(), line.quantity(), operator.username());
 				Long movementId = movementId(PRODUCTION_MATERIAL_RETURN_SOURCE, line.id());
 				BigDecimal amount = money(line.quantity().multiply(line.unitPrice()));
 				Long costRecordId = insertProductionCostRecord(PRODUCTION_MATERIAL_RETURN_SOURCE,
@@ -952,13 +975,14 @@ public class ReversalAdminService {
 				ProductionWorkOrderMaterialRow sourceLine = lockProductionWorkOrderMaterial(workOrder.id(),
 						line.workOrderMaterialId()).orElseThrow(this::sourceNotFoundException);
 				validateMaterialSupplementLineStillValid(sourceLine, line);
-				if (lockedStockQuantity(supplement.warehouseId(), line.materialId()).compareTo(line.quantity()) < 0) {
-					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
+				if (lockedStockQuantity(supplement.warehouseId(), line.materialId(), InventoryQualityStatus.QUALIFIED)
+					.compareTo(line.quantity()) < 0) {
+					throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH);
 				}
 				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 						InventoryMovementType.PRODUCTION_MATERIAL_SUPPLEMENT_OUT, InventoryDirection.OUT,
 						supplement.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, supplement.id(), line.id(),
+						InventoryQualityStatus.QUALIFIED, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, supplement.id(), line.id(),
 						supplement.businessDate(), "生产补料出库", line.reason(), operator.username()));
 				Long movementId = movementId(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, line.id());
 				BigDecimal amount = money(line.quantity().multiply(line.unitPrice()));
@@ -1502,6 +1526,8 @@ public class ReversalAdminService {
 				           and r.status = 'POSTED'
 				       ), 0) as returned_quantity,
 				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0) as current_available_quantity,
+				       coalesce(sb.quality_status, 'QUALIFIED') as quality_status,
 				       pol.unit_price
 				from proc_purchase_receipt_line prl
 				join proc_purchase_order_line pol on pol.id = prl.order_line_id
@@ -1511,17 +1537,33 @@ public class ReversalAdminService {
 				left join inv_stock_balance sb on sb.warehouse_id = pr.warehouse_id
 					and sb.material_id = prl.material_id
 				where prl.receipt_id = ?
-				order by prl.line_no asc, prl.id asc
+				order by prl.line_no asc, prl.id asc, coalesce(sb.quality_status, 'QUALIFIED') asc
 				""", (rs, rowNum) -> {
 			BigDecimal received = rs.getBigDecimal("quantity");
 			BigDecimal returned = rs.getBigDecimal("returned_quantity");
 			BigDecimal returnable = received.subtract(returned);
+			BigDecimal availableStockQuantity = rs.getBigDecimal("available_stock_quantity");
+			BigDecimal currentAvailableQuantity = rs.getBigDecimal("current_available_quantity");
+			if (currentAvailableQuantity.compareTo(ZERO) < 0) {
+				currentAvailableQuantity = ZERO;
+			}
+			InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
+			boolean frozen = qualityStatus == InventoryQualityStatus.FROZEN;
+			BigDecimal maxSelectableQuantity = frozen ? ZERO : returnable.min(currentAvailableQuantity);
+			boolean selectable = !frozen && maxSelectableQuantity.compareTo(ZERO) > 0;
+			String disabledReasonCode = frozen ? "QUALITY_STATUS_FROZEN_NOT_RETURNABLE"
+					: selectable ? null : "REVERSAL_STOCK_INSUFFICIENT";
+			String disabledReason = frozen ? "冻结库存不可采购退货" : selectable ? null : "当前质量状态库存不足";
+			BigDecimal availableQuantity = qualityStatus == InventoryQualityStatus.QUALIFIED ? currentAvailableQuantity
+					: ZERO;
 			return new PurchaseReturnSourceLineResponse(rs.getLong("id"), rs.getLong("order_line_id"),
 					rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					quantity(received), quantity(returned), quantity(returnable),
-					quantity(rs.getBigDecimal("available_stock_quantity")), quantity(rs.getBigDecimal("unit_price")),
-					amount(returnable.multiply(rs.getBigDecimal("unit_price"))));
+					quantity(availableStockQuantity), quantity(availableStockQuantity),
+					quantity(rs.getBigDecimal("unit_price")), amount(returnable.multiply(rs.getBigDecimal("unit_price"))),
+					qualityStatus.name(), qualityStatus.displayName(), quantity(availableQuantity), selectable,
+					disabledReasonCode, disabledReason, quantity(maxSelectableQuantity));
 		}, receiptId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
 			.toList();
 	}
@@ -1579,7 +1621,8 @@ public class ReversalAdminService {
 				           where sl.work_order_material_id = wom.id
 				           and s.status = 'POSTED'
 				       ), 0) as supplemented_quantity,
-				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
+				       coalesce(sb.quantity_on_hand, 0) as qualified_quantity_on_hand,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0) as qualified_available_quantity,
 				       coalesce((
 				           select cr.unit_price
 				           from mfg_cost_record cr
@@ -1596,15 +1639,24 @@ public class ReversalAdminService {
 				join mst_unit u on u.id = wom.unit_id
 				left join inv_stock_balance sb on sb.warehouse_id = ?
 					and sb.material_id = wom.material_id
+					and sb.quality_status = 'QUALIFIED'
 				where wom.work_order_id = ?
 				order by wom.line_no asc, wom.id asc
-				""", (rs, rowNum) -> new ProductionMaterialSupplementSourceLineResponse(rs.getLong("id"),
-				rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				quantity(rs.getBigDecimal("required_quantity")), quantity(rs.getBigDecimal("issued_quantity")),
-				quantity(rs.getBigDecimal("supplemented_quantity")),
-				quantity(rs.getBigDecimal("available_stock_quantity")), quantity(rs.getBigDecimal("unit_price"))),
-				warehouseId, workOrderId);
+				""", (rs, rowNum) -> {
+			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
+			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal maxSelectableQuantity = availableQuantity.compareTo(ZERO) < 0 ? ZERO : availableQuantity;
+			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			return new ProductionMaterialSupplementSourceLineResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+					rs.getLong("unit_id"), rs.getString("unit_name"), quantity(rs.getBigDecimal("required_quantity")),
+					quantity(rs.getBigDecimal("issued_quantity")), quantity(rs.getBigDecimal("supplemented_quantity")),
+					quantity(quantityOnHand), quantity(rs.getBigDecimal("unit_price")),
+					InventoryQualityStatus.QUALIFIED.name(), InventoryQualityStatus.QUALIFIED.displayName(),
+					quantity(quantityOnHand), quantity(availableQuantity), selectable,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, quantity(maxSelectableQuantity));
+		}, warehouseId, workOrderId);
 	}
 
 	private List<ReversalDocumentLine> salesReturnLines(Long returnId, Long sourceShipmentId, String sourceShipmentNo,
@@ -2422,12 +2474,30 @@ public class ReversalAdminService {
 			if (reason != null && reason.length() > 200) {
 				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 			}
+			InventoryQualityStatus qualityStatus = validatePurchaseReturnQualityStatus(request.qualityStatus());
 			BigDecimal amount = money(quantity.multiply(sourceLine.unitPrice()));
 			lines.add(new ValidatedPurchaseReturnLine(lineNo++, sourceLine.id(), sourceLine.orderLineId(),
 					sourceLine.materialId(), sourceLine.unitId(), returnedQuantity, returnableQuantity, quantity,
-					sourceLine.unitPrice(), amount, blankToNull(reason)));
+					sourceLine.unitPrice(), amount, blankToNull(reason), qualityStatus));
 		}
 		return lines;
+	}
+
+	private InventoryQualityStatus validatePurchaseReturnQualityStatus(String qualityStatus) {
+		if (qualityStatus == null || qualityStatus.isBlank()) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_REQUIRED);
+		}
+		InventoryQualityStatus parsed;
+		try {
+			parsed = InventoryQualityStatus.valueOf(qualityStatus);
+		}
+		catch (IllegalArgumentException exception) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_INVALID);
+		}
+		if (parsed == InventoryQualityStatus.FROZEN) {
+			throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
+		}
+		return parsed;
 	}
 
 	private Long resolvePurchaseSourceReceiptLineId(PurchaseReturnLineRequest request,
@@ -2495,12 +2565,13 @@ public class ReversalAdminService {
 					insert into proc_purchase_return_line (
 						return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
 						returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
-						created_at, updated_at
+						quality_status, created_at, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", returnId, line.sourceReceiptLineId(), line.purchaseOrderLineId(), line.materialId(),
 					line.unitId(), line.lineNo(), line.returnedQuantityBefore(), line.returnableQuantityBefore(),
-					line.quantity(), line.unitPrice(), line.amount(), blankToNull(line.reason()), now, now);
+					line.quantity(), line.unitPrice(), line.amount(), blankToNull(line.reason()),
+					line.qualityStatus().name(), now, now);
 		}
 	}
 
@@ -3246,7 +3317,7 @@ public class ReversalAdminService {
 		return this.jdbcTemplate.query("""
 				select id, return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
 				       returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
-				       stock_movement_id
+				       quality_status, stock_movement_id
 				from proc_purchase_return_line
 				where return_id = ?
 				order by line_no asc, id asc
@@ -3509,14 +3580,16 @@ public class ReversalAdminService {
 		return supplemented == null ? ZERO : supplemented;
 	}
 
-	private BigDecimal lockedStockQuantity(Long warehouseId, Long materialId) {
+	private BigDecimal lockedStockQuantity(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus) {
 		return this.jdbcTemplate.query("""
 				select quantity_on_hand
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
+				and quality_status = ?
 				for update
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
+				qualityStatus.name())
 			.stream()
 			.findFirst()
 			.orElse(ZERO);
@@ -3528,7 +3601,9 @@ public class ReversalAdminService {
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
+				and quality_status = ?
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
+				InventoryQualityStatus.QUALIFIED.name())
 			.stream()
 			.findFirst()
 			.orElse(ZERO);
@@ -4059,7 +4134,8 @@ public class ReversalAdminService {
 				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getInt("line_no"),
 				rs.getBigDecimal("returned_quantity_before"), rs.getBigDecimal("returnable_quantity_before"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"),
-				rs.getString("reason"), nullableLong(rs, "stock_movement_id"));
+				rs.getString("reason"), InventoryQualityStatus.valueOf(rs.getString("quality_status")),
+				nullableLong(rs, "stock_movement_id"));
 	}
 
 	private MaterialReturnRow mapMaterialReturnRow(ResultSet rs, int rowNum) throws SQLException {
@@ -5079,7 +5155,7 @@ public class ReversalAdminService {
 	}
 
 	public record PurchaseReturnLineRequest(Long id, Long sourceReceiptLineId, @NotNull BigDecimal quantity,
-			String reason) {
+			String reason, String qualityStatus) {
 	}
 
 	public record ProductionMaterialReturnRequest(Long sourceIssueId, @NotNull LocalDate businessDate,
@@ -5138,7 +5214,9 @@ public class ReversalAdminService {
 	public record PurchaseReturnSourceLineResponse(Long receiptLineId, Long purchaseOrderLineId, Integer lineNo,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			String receivedQuantity, String returnedQuantity, String returnableQuantity, String availableStockQuantity,
-			String unitPrice, String returnableAmount) {
+			String quantityOnHand, String unitPrice, String returnableAmount, String qualityStatus,
+			String qualityStatusName, String availableQuantity, boolean selectable, String disabledReasonCode,
+			String disabledReason, String maxSelectableQuantity) {
 	}
 
 	public record ProductionMaterialReturnSourceLineResponse(Long issueLineId, Long workOrderMaterialId,
@@ -5150,7 +5228,9 @@ public class ReversalAdminService {
 	public record ProductionMaterialSupplementSourceLineResponse(Long workOrderMaterialId, Integer lineNo,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			String plannedQuantity, String issuedQuantity, String supplementedQuantity, String availableStockQuantity,
-			String unitPrice) {
+			String unitPrice, String qualityStatus, String qualityStatusName, String quantityOnHand,
+			String availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
+			String maxSelectableQuantity) {
 	}
 
 	public record SalesReturnSummaryResponse(Long id, String returnNo, Long customerId, String customerName,
@@ -5440,7 +5520,8 @@ public class ReversalAdminService {
 
 	private record ValidatedPurchaseReturnLine(Integer lineNo, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
-			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason) {
+			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason,
+			InventoryQualityStatus qualityStatus) {
 	}
 
 	private record ValidatedMaterialReturnLine(Integer lineNo, Long sourceIssueLineId, Long workOrderMaterialId,
@@ -5511,7 +5592,7 @@ public class ReversalAdminService {
 	private record PurchaseReturnLineRow(Long id, Long returnId, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, Integer lineNo, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, Long stockMovementId) {
+			String reason, InventoryQualityStatus qualityStatus, Long stockMovementId) {
 	}
 
 	private record MaterialReturnLineRow(Long id, Long returnId, Long sourceIssueLineId, Long workOrderMaterialId,

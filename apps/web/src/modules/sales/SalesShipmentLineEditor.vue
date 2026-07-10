@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ResourceId } from '../../shared/api/salesApi'
+import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import {
   formatSalesQuantity,
   type SalesShipmentLineDraft,
@@ -44,11 +45,49 @@ function updateSourceLine(index: number, value: ResourceId) {
     orderedQuantity: sourceLine?.orderedQuantity ?? 0,
     shippedQuantityBefore: sourceLine?.shippedQuantityBefore ?? 0,
     remainingQuantityBefore: sourceLine?.remainingQuantityBefore ?? 0,
+    qualityStatus: sourceLine?.qualityStatus ?? null,
+    qualityStatusName: sourceLine?.qualityStatusName ?? null,
+    quantityOnHand: sourceLine?.quantityOnHand ?? null,
+    availableQuantity: sourceLine?.availableQuantity ?? null,
+    selectable: sourceLine?.selectable ?? null,
+    disabledReasonCode: sourceLine?.disabledReasonCode ?? null,
+    disabledReason: sourceLine?.disabledReason ?? null,
+    maxSelectableQuantity: sourceLine?.maxSelectableQuantity ?? null,
   })
 }
 
 function updateText(index: number, key: 'quantity' | 'remark', value: string | number) {
   updateLine(index, { [key]: String(value) })
+}
+
+function sourceLineFor(row: SalesShipmentLineDraft): SalesShipmentSourceLine | undefined {
+  return props.sourceLines.find((line) => String(line.id) === String(row.orderLineId))
+}
+
+function candidateValue(
+  row: SalesShipmentLineDraft,
+  key: 'quantityOnHand' | 'availableQuantity' | 'maxSelectableQuantity' | 'disabledReason' | 'selectable',
+) {
+  return row[key] ?? sourceLineFor(row)?.[key] ?? null
+}
+
+function candidateText(row: SalesShipmentLineDraft, key: 'qualityStatus' | 'qualityStatusName') {
+  return row[key] ?? sourceLineFor(row)?.[key] ?? null
+}
+
+function numericCandidateValue(row: SalesShipmentLineDraft, key: 'maxSelectableQuantity'): number | null {
+  const value = candidateValue(row, key)
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numberValue = Number(value)
+  return Number.isFinite(numberValue) ? numberValue : null
+}
+
+function isCandidateUnavailable(row: SalesShipmentLineDraft): boolean {
+  const maxSelectableQuantity = numericCandidateValue(row, 'maxSelectableQuantity')
+  return candidateValue(row, 'selectable') === false
+    || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
 
 function addLine() {
@@ -85,10 +124,16 @@ function removeLine(index: number) {
                 :key="sourceLine.id"
                 :label="`${sourceLine.lineNo} ${sourceLine.materialCode} ${sourceLine.materialName}`"
                 :value="sourceLine.id"
+                :disabled="sourceLine.selectable === false"
               >
                 <span>{{ sourceLine.lineNo }} {{ sourceLine.materialCode }} {{ sourceLine.materialName }}</span>
                 <span class="line-option-meta">
-                  未出库 {{ formatSalesQuantity(sourceLine.remainingQuantityBefore) }}
+                  未出库 {{ formatSalesQuantity(sourceLine.remainingQuantityBefore) }} /
+                  {{ sourceLine.qualityStatusName || '-' }} /
+                  合格可用 {{ formatSalesQuantity(sourceLine.availableQuantity) }}
+                </span>
+                <span v-if="sourceLine.disabledReason" class="line-option-reason">
+                  {{ sourceLine.disabledReason }}
                 </span>
               </el-option>
             </el-select>
@@ -119,6 +164,34 @@ function removeLine(index: number) {
             <span class="numeric-cell">{{ formatSalesQuantity(row.remainingQuantityBefore) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="质量状态" width="110">
+          <template #default="{ row }">
+            <QualityStatusTag
+              :quality-status="candidateText(row, 'qualityStatus')"
+              :quality-status-name="candidateText(row, 'qualityStatusName')"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="现存数量" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'quantityOnHand')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="合格可用" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'availableQuantity')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="最大可选" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'maxSelectableQuantity')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span class="candidate-disabled-reason">{{ candidateValue(row, 'disabledReason') || '-' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="本次出库数量" width="150" align="right">
           <template #default="{ row, $index }">
             <el-input
@@ -126,7 +199,7 @@ function removeLine(index: number) {
               :name="`sales-shipment-line-quantity-${$index}`"
               inputmode="decimal"
               placeholder="> 0"
-              :disabled="readOnly"
+              :disabled="readOnly || isCandidateUnavailable(row)"
               @update:model-value="updateText($index, 'quantity', $event)"
             />
           </template>
@@ -187,6 +260,13 @@ function removeLine(index: number) {
   float: right;
   font-size: 12px;
   margin-left: 12px;
+}
+
+.line-option-reason,
+.candidate-disabled-reason {
+  color: var(--el-color-danger);
+  display: block;
+  font-size: 12px;
 }
 
 .numeric-cell {

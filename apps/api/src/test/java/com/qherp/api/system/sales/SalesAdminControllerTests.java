@@ -1,6 +1,7 @@
 package com.qherp.api.system.sales;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -317,6 +318,52 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
 								"1.000000", null)))),
 				HttpStatus.CONFLICT, "SALES_SHIPMENT_POSTED_IMMUTABLE");
+	}
+
+	@Test
+	void shipmentRejectsWhenOnlyNonQualifiedStockCanCoverRequestedQuantity() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long orderId = createAndConfirmOrder(admin, fixture, "合格库存不足", "4.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+		long shipmentId = createShipmentId(admin, orderId,
+				shipmentPayload(fixture.warehouseId(), "合格库存不足出库",
+						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"4.000000", "总库存足够但合格不足"))));
+		long shipmentLineId = shipmentLineId(shipmentId);
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+				InventoryQualityStatus.QUALIFIED);
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "3.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+
+		assertPostShipmentRejectedWithoutSideEffects(admin, shipmentId, shipmentLineId, orderLineId,
+				fixture.warehouseId(), fixture.finishedMaterialId(), HttpStatus.CONFLICT,
+				"INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.finishedMaterialId(),
+				InventoryQualityStatus.QUALIFIED), "1.000000");
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.finishedMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "3.000000");
+	}
+
+	@Test
+	void salesShipmentSourceLinesExposeQualifiedCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long orderId = createAndConfirmOrder(admin, fixture, "候选字段合格不足", "4.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "4.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+
+		JsonNode sourceLine = firstLine(data(getOrder(admin, orderId)));
+		assertSalesQualifiedCandidateUnavailable(sourceLine);
+
+		long shipmentId = createShipmentId(admin, orderId,
+				shipmentPayload(fixture.warehouseId(), "出库候选字段",
+						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"4.000000", "只存在待检库存"))));
+
+		JsonNode shipmentLine = firstLine(data(getShipment(admin, shipmentId)));
+		assertSalesQualifiedCandidateUnavailable(shipmentLine);
 	}
 
 	@Test
@@ -648,15 +695,21 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity) {
+		seedStock(warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
+			InventoryQualityStatus qualityStatus) {
 		this.jdbcTemplate.update("""
 				insert into inv_stock_balance (
-					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+					quality_status
 				)
-				values (?, ?, ?, ?, 0, now(), now())
-				on conflict (warehouse_id, material_id)
+				values (?, ?, ?, ?, 0, now(), now(), ?)
+				on conflict (warehouse_id, material_id, quality_status)
 				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
 					updated_at = now(), version = inv_stock_balance.version + 1
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
 	}
 
 	private void disableCustomer(long customerId) {
@@ -674,15 +727,22 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private BigDecimal balanceQuantity(long warehouseId, long materialId) {
-		return this.jdbcTemplate.query("""
-				select quantity_on_hand
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId)
-			.stream()
-			.findFirst()
-			.orElse(BigDecimal.ZERO);
+				""", BigDecimal.class, warehouseId, materialId);
+	}
+
+	private BigDecimal balanceQuantity(long warehouseId, long materialId, InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
 	}
 
 	private MovementRow movementForSource(String sourceType, long sourceLineId) {
@@ -971,6 +1031,17 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private void assertDecimal(JsonNode node, String field, String expected) {
 		assertDecimal(decimal(node, field), expected);
+	}
+
+	private void assertSalesQualifiedCandidateUnavailable(JsonNode line) {
+		assertThat(line.get("qualityStatus").asText()).isEqualTo(InventoryQualityStatus.QUALIFIED.name());
+		assertThat(line.get("qualityStatusName").asText()).isEqualTo("合格");
+		assertDecimal(line, "quantityOnHand", "0.000000");
+		assertDecimal(line, "availableQuantity", "0.000000");
+		assertThat(line.get("selectable").booleanValue()).isFalse();
+		assertThat(line.get("disabledReasonCode").asText()).isEqualTo("QUALIFIED_BALANCE_NOT_ENOUGH");
+		assertThat(line.get("disabledReason").asText()).isEqualTo("合格可用库存不足");
+		assertDecimal(line, "maxSelectableQuantity", "0.000000");
 	}
 
 	private void assertDecimal(BigDecimal actual, String expected) {

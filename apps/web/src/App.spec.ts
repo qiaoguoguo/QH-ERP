@@ -302,6 +302,31 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/system')
   })
 
+  it('有质量确认查看权限但后端菜单缺失时补齐质量管理入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'quality_user', displayName: '质量员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['quality:inspection:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('质量管理')
+    expect(wrapper.text()).toContain('质量确认')
+    expect(wrapper.find('[data-test="main-menu-icon-quality"]').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/quality')
+  })
+
   it('有财务查看权限但后端菜单缺失时补齐财务往来入口并按权限显示子项', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

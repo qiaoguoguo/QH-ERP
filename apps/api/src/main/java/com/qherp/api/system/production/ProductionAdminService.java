@@ -9,8 +9,11 @@ import com.qherp.api.system.cost.CostRecordWriter;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.quality.QualityAdminService;
+import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -54,6 +57,10 @@ public class ProductionAdminService {
 
 	private static final BigDecimal ONE = BigDecimal.ONE;
 
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH = "QUALIFIED_BALANCE_NOT_ENOUGH";
+
+	private static final String QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE = "合格可用库存不足";
+
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final int MAX_NO_ATTEMPTS = 3;
@@ -76,14 +83,17 @@ public class ProductionAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final QualityAdminService qualityAdminService;
+
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService,
-			BusinessPeriodGuard businessPeriodGuard) {
+			BusinessPeriodGuard businessPeriodGuard, QualityAdminService qualityAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
 		this.inventoryPostingService = inventoryPostingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.qualityAdminService = qualityAdminService;
 	}
 
 	@Transactional(readOnly = true)
@@ -560,8 +570,11 @@ public class ProductionAdminService {
 			InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 					new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_RECEIPT,
 							InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
-							detail.quantity(), COMPLETION_RECEIPT_SOURCE, id, id, detail.businessDate(), "生产完工入库",
-							detail.remark(), operator.username()));
+							detail.quantity(), InventoryQualityStatus.PENDING_INSPECTION, COMPLETION_RECEIPT_SOURCE,
+							id, id, detail.businessDate(), "生产完工入库", detail.remark(), operator.username()));
+			this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PRODUCTION_COMPLETION, id, id,
+					detail.receiptWarehouseId(), product.id(), product.unitId(), detail.businessDate(),
+					detail.quantity(), operator.username());
 			this.jdbcTemplate.update("""
 					update mfg_completion_receipt
 					set before_quantity = ?, after_quantity = ?, status = ?, posted_by = ?, posted_at = ?,
@@ -598,8 +611,8 @@ public class ProductionAdminService {
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
 						InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
-						line.quantity(), MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), issue.businessDate(),
-						issue.reason(), line.remark(), operatorName));
+						line.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
+						line.id(), issue.businessDate(), issue.reason(), line.remark(), operatorName));
 		this.jdbcTemplate.update("""
 				update mfg_work_order_material
 				set issued_quantity = issued_quantity + ?, updated_at = ?, version = version + 1
@@ -995,18 +1008,33 @@ public class ProductionAdminService {
 				       m.name as material_name, m.material_type, wom.unit_id, u.name as unit_name,
 				       wom.required_quantity, wom.issued_quantity,
 				       (wom.required_quantity - wom.issued_quantity) as remaining_quantity, wom.loss_rate,
-				       wom.remark
+				       wom.remark, coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
+				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0.000000) as qualified_available_quantity
 				from mfg_work_order_material wom
+				join mfg_work_order wo on wo.id = wom.work_order_id
 				join mst_material m on m.id = wom.material_id
 				join mst_unit u on u.id = wom.unit_id
+				left join inv_stock_balance sb on sb.warehouse_id = wo.issue_warehouse_id
+					and sb.material_id = wom.material_id
+					and sb.quality_status = 'QUALIFIED'
 				where wom.work_order_id = ?
 				order by wom.line_no asc, wom.id asc
-				""", (rs, rowNum) -> new WorkOrderMaterialResponse(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("bom_item_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getString("material_type"), rs.getLong("unit_id"),
-				rs.getString("unit_name"), rs.getBigDecimal("required_quantity"),
-				rs.getBigDecimal("issued_quantity"), rs.getBigDecimal("remaining_quantity"),
-				rs.getBigDecimal("loss_rate"), rs.getString("remark")), workOrderId);
+				""", (rs, rowNum) -> {
+			BigDecimal remainingQuantity = rs.getBigDecimal("remaining_quantity");
+			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
+			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal maxSelectableQuantity = maxSelectableQuantity(remainingQuantity, availableQuantity);
+			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			return new WorkOrderMaterialResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("bom_item_id"), rs.getLong("material_id"), rs.getString("material_code"),
+					rs.getString("material_name"), rs.getString("material_type"), rs.getLong("unit_id"),
+					rs.getString("unit_name"), rs.getBigDecimal("required_quantity"),
+					rs.getBigDecimal("issued_quantity"), remainingQuantity, rs.getBigDecimal("loss_rate"),
+					rs.getString("remark"), InventoryQualityStatus.QUALIFIED.name(),
+					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, availableQuantity, selectable,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
+		}, workOrderId);
 	}
 
 	private List<ProductionMovementResponse> productionMovements(Long workOrderId) {
@@ -1390,6 +1418,14 @@ public class ProductionAdminService {
 		return value;
 	}
 
+	private BigDecimal maxSelectableQuantity(BigDecimal requestedQuantity, BigDecimal availableQuantity) {
+		BigDecimal normalizedRequested = requestedQuantity == null || requestedQuantity.compareTo(ZERO) < 0 ? ZERO
+				: requestedQuantity;
+		BigDecimal normalizedAvailable = availableQuantity == null || availableQuantity.compareTo(ZERO) < 0 ? ZERO
+				: availableQuantity;
+		return normalizedRequested.min(normalizedAvailable);
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -1440,7 +1476,9 @@ public class ProductionAdminService {
 	public record WorkOrderMaterialResponse(Long id, Integer lineNo, Long bomItemId, Long materialId,
 			String materialCode, String materialName, String materialType, Long unitId, String unitName,
 			BigDecimal requiredQuantity, BigDecimal issuedQuantity, BigDecimal remainingQuantity, BigDecimal lossRate,
-			String remark) {
+			String remark, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
+			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
+			BigDecimal maxSelectableQuantity) {
 	}
 
 	public record WorkOrderDetailResponse(Long id, String workOrderNo, Long productMaterialId,

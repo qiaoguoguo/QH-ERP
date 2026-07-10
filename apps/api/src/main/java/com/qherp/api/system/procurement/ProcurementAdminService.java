@@ -8,8 +8,11 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.quality.QualityAdminService;
+import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -59,12 +62,16 @@ public class ProcurementAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final QualityAdminService qualityAdminService;
+
 	public ProcurementAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
+			QualityAdminService qualityAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.qualityAdminService = qualityAdminService;
 	}
 
 	@Transactional(readOnly = true)
@@ -361,8 +368,11 @@ public class ProcurementAdminService {
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
 						InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
-						line.quantity(), RECEIPT_SOURCE_TYPE, receipt.id(), line.id(), receipt.businessDate(), "采购入库",
-						line.remark(), operatorName));
+						line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE, receipt.id(),
+						line.id(), receipt.businessDate(), "采购入库", line.remark(), operatorName));
+		this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PURCHASE_RECEIPT, receipt.id(),
+				line.id(), receipt.warehouseId(), line.materialId(), line.unitId(), receipt.businessDate(),
+				line.quantity(), operatorName);
 		this.jdbcTemplate.update("""
 				update proc_purchase_receipt_line
 				set ordered_quantity = ?, received_quantity_before = ?, remaining_quantity_before = ?,

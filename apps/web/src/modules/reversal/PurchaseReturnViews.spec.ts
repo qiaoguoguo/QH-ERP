@@ -201,6 +201,14 @@ const purchaseReturnSource = {
       returnedQuantity: '0.000000',
       returnableQuantity: '8.000000',
       availableStockQuantity: '8.000000',
+      qualityStatus: 'QUALIFIED',
+      qualityStatusName: '合格',
+      quantityOnHand: '8.000000',
+      availableQuantity: '8.000000',
+      selectable: true,
+      disabledReasonCode: null,
+      disabledReason: null,
+      maxSelectableQuantity: '8.000000',
       unitPrice: '80.00',
       returnableAmount: '640.00',
     },
@@ -319,9 +327,45 @@ describe('采购退货前端页面', () => {
       sourceReceiptId: 20,
       businessDate: '2026-07-05',
       remark: '来料退回',
-      lines: [{ sourceReceiptLineId: 201, quantity: '1.500000', reason: '来料退回' }],
+      lines: [{ sourceReceiptLineId: 201, qualityStatus: 'QUALIFIED', quantity: '1.500000', reason: '来料退回' }],
     }))
     expect(router.currentRoute.value.name).toBe('procurement-return-detail')
+  })
+
+  it('采购退货候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+    returnRefundReversalApiMock.purchaseReturnSources.list.mockResolvedValueOnce(page([
+      {
+        ...purchaseReturnSource,
+        lines: purchaseReturnSource.lines.map((line) => ({
+          ...line,
+          qualityStatus: 'FROZEN',
+          qualityStatusName: '冻结',
+          availableQuantity: '0.000000',
+          selectable: false,
+          disabledReasonCode: 'FROZEN_NOT_AVAILABLE',
+          disabledReason: '冻结库存需先解冻后退货',
+          maxSelectableQuantity: '0.000000',
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(PurchaseReturnFormView, '/procurement/returns/create', ['procurement:return:create'])
+
+    expect(wrapper.text()).toContain('冻结')
+    expect(wrapper.text()).toContain('现存数量')
+    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('禁用原因')
+    expect(wrapper.text()).toContain('冻结库存需先解冻后退货')
+    expect(wrapper.text()).not.toContain('canUse')
+
+    const quantityInput = wrapper.find('input[name="purchase-return-line-quantity-201"]')
+    expect(quantityInput.attributes('disabled')).toBeDefined()
+    await quantityInput.setValue('1.000000')
+    await wrapper.find('[data-test="submit-purchase-return"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('冻结库存需先解冻后退货')
+    expect(returnRefundReversalApiMock.purchaseReturns.create).not.toHaveBeenCalled()
   })
 
   it('编辑采购退货来源受限时可保存草稿行且不提交来源主键', async () => {

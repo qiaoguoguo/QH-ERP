@@ -432,6 +432,17 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/reversal/ProductionMaterialSupplementFormView.vue'),
   },
   {
+    path: '/quality',
+    redirect: '/quality/inspections',
+    meta: { requiresAuth: true, requiredPermission: 'quality:inspection:view' },
+  },
+  {
+    path: '/quality/inspections',
+    name: 'quality-inspections',
+    meta: { requiresAuth: true, requiredPermission: 'quality:inspection:view' },
+    component: () => import('../modules/quality/QualityInspectionListView.vue'),
+  },
+  {
     path: '/cost',
     redirect: '/cost/records',
   },
