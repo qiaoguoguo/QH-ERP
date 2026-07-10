@@ -78,6 +78,18 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void lockedPeriodRejectsReceivableCreationFromHistoricalShipment() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		LocalDate date = LocalDate.of(2095, 7, 10);
+		long shipmentId = createPostedShipment(fixture, "期间锁定应收来源", "1.000000", "10.000000");
+		this.jdbcTemplate.update("update sal_sales_shipment set business_date = ? where id = ?", date, shipmentId);
+		lockPeriod(date);
+		assertError(createReceivable(admin, shipmentId, "期间锁定应收"), HttpStatus.CONFLICT,
+				"BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
 	void payableSourcesOnlyReturnPostedUngeneratedReceiptsAndRequireCreatePermission() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = procurementFixture();
@@ -811,6 +823,11 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 		payload.put("method", method);
 		payload.put("remark", remark);
 		return payload;
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-FIN-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
 	}
 
 	private long receivableSourceCount() {

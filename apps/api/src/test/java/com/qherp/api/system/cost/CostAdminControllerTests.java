@@ -156,6 +156,19 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void lockedPeriodRejectsManualCostRecordCreation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		CostFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		LocalDate date = LocalDate.of(2094, 7, 10);
+		Map<String, Object> payload = new LinkedHashMap<>(manualCostPayload(workOrderId, "MANUFACTURING_OVERHEAD",
+				"MANUAL_AMOUNT", null, null, "12.000000", "期间锁定成本"));
+		payload.put("businessDate", date.toString());
+		lockPeriod(date);
+		assertError(createCostRecord(admin, payload), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
 	void manualUnitPriceQuantityAmountOverflowReturnsCostAmountInvalid() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		CostFixture fixture = fixture(admin);
@@ -675,6 +688,11 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("sourceDocumentNo", remark);
 		body.put("remark", remark);
 		return body;
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-COST-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
 	}
 
 	private JsonNode workOrderMaterial(JsonNode workOrder, long materialId) {

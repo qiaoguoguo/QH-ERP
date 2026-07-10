@@ -10,6 +10,8 @@ import com.qherp.api.system.finance.ReceivableStatus;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -98,11 +100,14 @@ public class ReversalAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public ReversalAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	public PageResponse<Object> emptyPage(int page, int pageSize) {
@@ -187,6 +192,8 @@ public class ReversalAdminService {
 			return existingSalesReturnDetail(existing.get(), validated, operator);
 		}
 		List<ValidatedSalesReturnLine> lines = validateSalesReturnLines(shipment, validated.lines());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				SALES_RETURN_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertSalesReturnWithRetry(shipment, validated, totalAmount(lines),
@@ -216,6 +223,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
 		List<ValidatedSalesReturnLine> lines = validateSalesReturnLines(shipment, validated.lines(), currentLines);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				SALES_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -251,6 +260,8 @@ public class ReversalAdminService {
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.REVERSE,
+				SALES_RETURN_SOURCE, id);
 		ReceivableRow receivable = lockReceivableForShipment(shipment.id()).orElseThrow(this::sourceNotFoundException);
 		requireAdjustableReceivable(receivable);
 		BigDecimal totalAmount = totalAmountFromRows(lines);
@@ -301,6 +312,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(salesReturn);
+		this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.CANCEL,
+				SALES_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update sal_sales_return
@@ -392,6 +405,8 @@ public class ReversalAdminService {
 			return existingPurchaseReturnDetail(existing.get(), validated, operator);
 		}
 		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				PURCHASE_RETURN_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertPurchaseReturnWithRetry(receipt, validated, totalPurchaseAmount(lines),
@@ -421,6 +436,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
 		List<ValidatedPurchaseReturnLine> lines = validatePurchaseReturnLines(receipt, validated.lines(), currentLines);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				PURCHASE_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -457,6 +474,8 @@ public class ReversalAdminService {
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.REVERSE,
+				PURCHASE_RETURN_SOURCE, id);
 		PayableRow payable = lockPayableForReceipt(receipt.id()).orElseThrow(this::sourceNotFoundException);
 		requireAdjustablePayable(payable);
 		BigDecimal totalAmount = totalPurchaseAmountFromRows(lines);
@@ -511,6 +530,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(purchaseReturn);
+		this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.CANCEL,
+				PURCHASE_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update proc_purchase_return
@@ -627,6 +648,8 @@ public class ReversalAdminService {
 			return existingMaterialReturnDetail(existing.get(), validated, operator);
 		}
 		List<ValidatedMaterialReturnLine> lines = validateMaterialReturnLines(issue, validated.lines());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				PRODUCTION_MATERIAL_RETURN_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertMaterialReturnWithRetry(issue, validated, lines.get(0).warehouseId(),
@@ -656,6 +679,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
 		}
 		List<ValidatedMaterialReturnLine> lines = validateMaterialReturnLines(issue, validated.lines(), currentLines);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				PRODUCTION_MATERIAL_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -693,6 +718,8 @@ public class ReversalAdminService {
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(materialReturn.businessDate(), BusinessPeriodOperation.REVERSE,
+				PRODUCTION_MATERIAL_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			for (MaterialReturnLineRow line : lines) {
@@ -742,6 +769,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(materialReturn);
+		this.businessPeriodGuard.assertWritable(materialReturn.businessDate(), BusinessPeriodOperation.CANCEL,
+				PRODUCTION_MATERIAL_RETURN_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_material_return
@@ -847,6 +876,8 @@ public class ReversalAdminService {
 		}
 		List<ValidatedMaterialSupplementLine> lines = validateMaterialSupplementLines(workOrder,
 				validated.warehouseId(), validated.lines());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertMaterialSupplementWithRetry(workOrder, validated, operator.username(), now);
@@ -876,6 +907,8 @@ public class ReversalAdminService {
 		validateWarehouse(validated.warehouseId());
 		List<ValidatedMaterialSupplementLine> lines = validateMaterialSupplementLines(workOrder,
 				validated.warehouseId(), validated.lines(), currentLines);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -911,6 +944,8 @@ public class ReversalAdminService {
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(supplement.businessDate(), BusinessPeriodOperation.REVERSE,
+				PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			for (MaterialSupplementLineRow line : lines) {
@@ -963,6 +998,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(supplement);
+		this.businessPeriodGuard.assertWritable(supplement.businessDate(), BusinessPeriodOperation.CANCEL,
+				PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_material_supplement
@@ -1061,6 +1098,8 @@ public class ReversalAdminService {
 		if (existing.isPresent()) {
 			return existingSettlementAdjustmentDetail(existing.get(), validated, operator);
 		}
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				SETTLEMENT_ADJUSTMENT_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertSettlementAdjustmentWithRetry(validated, operator.username(), now);
@@ -1086,6 +1125,8 @@ public class ReversalAdminService {
 			.orElseThrow(this::sourceNotFoundException);
 		validateSettlementSource(validated, false);
 		validateTargetAdjustable(target, validated.amount());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				SETTLEMENT_ADJUSTMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -1120,6 +1161,8 @@ public class ReversalAdminService {
 			.orElseThrow(this::sourceNotFoundException);
 		validateSettlementSource(validated, false);
 		validateTargetAdjustable(target, validated.amount());
+		this.businessPeriodGuard.assertWritable(row.businessDate(), BusinessPeriodOperation.ADJUST,
+				SETTLEMENT_ADJUSTMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			insertSettlementAdjustmentLink(row, operator.username(), now);
@@ -1155,6 +1198,8 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
 		requireDraft(row);
+		this.businessPeriodGuard.assertWritable(row.businessDate(), BusinessPeriodOperation.CANCEL,
+				SETTLEMENT_ADJUSTMENT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_settlement_adjustment

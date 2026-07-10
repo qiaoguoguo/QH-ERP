@@ -5,6 +5,8 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -49,11 +51,14 @@ public class InventoryAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public InventoryAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -149,6 +154,7 @@ public class InventoryAdminService {
 	public InventoryDocumentDetailResponse createDocument(InventoryDocumentRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		ValidatedDocument document = validateDocument(request);
+		this.businessPeriodGuard.assertWritable(document.businessDate(), BusinessPeriodOperation.CREATE, SOURCE_TYPE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertDocumentHeaderWithRetry(document, operator, now);
@@ -170,6 +176,7 @@ public class InventoryAdminService {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_POSTED_IMMUTABLE);
 		}
 		ValidatedDocument document = validateDocument(request);
+		this.businessPeriodGuard.assertWritable(document.businessDate(), BusinessPeriodOperation.UPDATE, SOURCE_TYPE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			int updated = this.jdbcTemplate.update("""
@@ -200,6 +207,7 @@ public class InventoryAdminService {
 			if (document.status() != InventoryDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_DUPLICATE_POST);
 			}
+			this.businessPeriodGuard.assertWritable(document.businessDate(), BusinessPeriodOperation.POST, SOURCE_TYPE, id);
 			List<DocumentLineRow> lines = documentLineRows(id);
 			if (lines.isEmpty()) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_EMPTY_LINES);

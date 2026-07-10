@@ -206,6 +206,25 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void lockedPeriodRejectsSalesReturnPosting() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "2.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "40.00", "0.00", "40.00");
+		LocalDate date = LocalDate.of(2096, 7, 10);
+		Map<String, Object> payload = salesReturnPayload(shipment.shipmentId(),
+				"sales-return-locked-" + SEQUENCE.incrementAndGet(),
+				List.of(returnLine(shipment.firstShipmentLineId(), "1.000000", "期间锁定退货")));
+		payload.put("businessDate", date.toString());
+		ResponseEntity<String> created = post("/api/admin/sales/returns", payload, admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+		lockPeriod(date);
+		assertError(put("/api/admin/sales/returns/" + returnId + "/post", Map.of(), admin), HttpStatus.CONFLICT,
+				"BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
 	void salesReturnClientRequestIdIdempotencyRequiresMatchingCoreLines() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesReturnFixture fixture = salesReturnFixture();
@@ -1668,6 +1687,11 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		}
 		payload.put("remark", "往来冲减测试");
 		return payload;
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-REV-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
 	}
 
 	private Map<String, Object> settlementAdjustmentUpdatePayload(String adjustmentType, String amount, String remark) {

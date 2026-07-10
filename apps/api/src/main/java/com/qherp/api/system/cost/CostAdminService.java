@@ -5,6 +5,8 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.production.ProductionWorkOrderStatus;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DuplicateKeyException;
@@ -41,9 +43,13 @@ public class CostAdminService {
 
 	private final AuditService auditService;
 
-	public CostAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final BusinessPeriodGuard businessPeriodGuard;
+
+	public CostAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -91,6 +97,8 @@ public class CostAdminService {
 	public CostRecordDetailResponse createRecord(CostRecordPayload request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		ValidatedManualCost validated = validateManualCost(request, null);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE, "COST_RECORD",
+				null);
 		OffsetDateTime now = OffsetDateTime.now();
 		Long id = insertManualCostWithRetry(validated, operator.username(), now);
 		this.auditService.record(operator, "MFG_COST_RECORD_CREATE", TARGET_TYPE, id, recordNo(id), servletRequest);
@@ -105,6 +113,8 @@ public class CostAdminService {
 			throw new BusinessException(ApiErrorCode.COST_GENERATED_RECORD_IMMUTABLE);
 		}
 		ValidatedManualCost validated = validateManualCost(request, current.workOrderId());
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE, "COST_RECORD",
+				id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_cost_record

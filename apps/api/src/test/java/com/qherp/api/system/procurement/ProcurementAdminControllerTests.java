@@ -472,6 +472,29 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 				null, admin));
 	}
 
+	@Test
+	void lockedPeriodRejectsPurchaseOrderConfirmationAndCancellation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		LocalDate date = LocalDate.of(2091, 7, 10);
+		Map<String, Object> confirmPayload = new LinkedHashMap<>(orderPayload(fixture.supplierId(), "期间锁定确认测试",
+				List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1", "1", null))));
+		confirmPayload.put("orderDate", date.toString());
+		long confirmId = createOrderId(admin, confirmPayload);
+		Map<String, Object> cancelPayload = new LinkedHashMap<>(orderPayload(fixture.supplierId(), "期间锁定取消测试",
+				List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1", "1", null))));
+		cancelPayload.put("orderDate", date.toString());
+		long cancelId = createOrderId(admin, cancelPayload);
+		lockPeriod(date);
+		assertError(confirmOrder(admin, confirmId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertError(cancelOrder(admin, cancelId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
+	}
+
 	private long createAndConfirmOrder(AuthenticatedSession session, ProcurementFixture fixture, String remark,
 			String quantity) throws Exception {
 		long orderId = createOrderId(session,

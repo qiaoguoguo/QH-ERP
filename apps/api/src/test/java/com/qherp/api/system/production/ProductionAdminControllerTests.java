@@ -123,6 +123,23 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void lockedPeriodRejectsProductionMaterialIssuePosting() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "5.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "1.000000");
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+		LocalDate date = LocalDate.of(2093, 7, 10);
+		Map<String, Object> payload = new LinkedHashMap<>(materialIssuePayload("期间锁定领料",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000"))));
+		payload.put("businessDate", date.toString());
+		long issueId = createMaterialIssueId(admin, workOrderId, payload);
+		lockPeriod(date);
+		assertError(postMaterialIssue(admin, workOrderId, issueId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
 	void businessRulesReturnControlledProductionErrors() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -589,6 +606,11 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("quantity", quantity);
 		body.put("remark", "完工入库测试");
 		return body;
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-PROD-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
 	}
 
 	private JsonNode workOrderMaterial(JsonNode workOrder, long materialId) {

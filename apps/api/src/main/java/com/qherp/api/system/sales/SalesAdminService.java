@@ -8,6 +8,8 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -57,11 +59,14 @@ public class SalesAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public SalesAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -110,6 +115,7 @@ public class SalesAdminService {
 	public SalesOrderDetailResponse createOrder(SalesOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		ValidatedOrder order = validateOrderRequest(request);
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CREATE, "SALES_ORDER", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertOrderWithRetry(order, operator.username(), now);
@@ -131,6 +137,7 @@ public class SalesAdminService {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
 		}
 		ValidatedOrder order = validateOrderRequest(request);
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.UPDATE, "SALES_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -157,6 +164,7 @@ public class SalesAdminService {
 		if (order.status() != SalesOrderStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CONFIRM, "SALES_ORDER", id);
 		validateOrderForConfirmation(order);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
@@ -175,6 +183,7 @@ public class SalesAdminService {
 				&& !(order.status() == SalesOrderStatus.CONFIRMED && !hasPostedShipments(id))) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CANCEL, "SALES_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update sal_sales_order
@@ -249,6 +258,7 @@ public class SalesAdminService {
 		OrderRow order = lockOrder(orderId).orElseThrow(this::orderNotFound);
 		requireShippableOrder(order);
 		ValidatedShipment shipment = validateShipmentRequest(order, request);
+		this.businessPeriodGuard.assertWritable(shipment.businessDate(), BusinessPeriodOperation.CREATE, SHIPMENT_SOURCE_TYPE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertShipmentWithRetry(order, shipment, operator.username(), now);
@@ -272,6 +282,7 @@ public class SalesAdminService {
 		OrderRow order = lockOrder(current.orderId()).orElseThrow(this::orderNotFound);
 		requireShippableOrder(order);
 		ValidatedShipment shipment = validateShipmentRequest(order, request);
+		this.businessPeriodGuard.assertWritable(shipment.businessDate(), BusinessPeriodOperation.UPDATE, SHIPMENT_SOURCE_TYPE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -299,6 +310,7 @@ public class SalesAdminService {
 			if (shipment.status() != SalesShipmentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.SALES_DUPLICATE_POST);
 			}
+			this.businessPeriodGuard.assertWritable(shipment.businessDate(), BusinessPeriodOperation.POST, SHIPMENT_SOURCE_TYPE, id);
 			OrderRow order = lockOrder(shipment.orderId()).orElseThrow(this::orderNotFound);
 			requireShippableOrder(order);
 			validateEnabledWarehouse(shipment.warehouseId());

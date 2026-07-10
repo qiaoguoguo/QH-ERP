@@ -552,6 +552,22 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		return future.get(10, TimeUnit.SECONDS);
 	}
 
+	@Test
+	void lockedPeriodRejectsInventoryDocumentPost() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		LocalDate date = LocalDate.of(2090, 7, 10);
+		long id = createDocumentId(admin, withBusinessDate(openingPayload(fixture, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), "1", "期间锁定测试", null, null), date));
+		lockPeriod(date);
+		assertError(postDocument(admin, id), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
+				"LOCK-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
+	}
+
 	private long createAndPostOpening(AuthenticatedSession admin, InventoryFixture fixture, String quantity)
 			throws Exception {
 		return createAndPostOpening(admin, fixture, fixture.rawMaterialId(), fixture.kgUnitId(), quantity, "期初库存",

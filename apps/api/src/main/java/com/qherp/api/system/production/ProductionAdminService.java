@@ -9,6 +9,8 @@ import com.qherp.api.system.cost.CostRecordWriter;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -72,12 +74,16 @@ public class ProductionAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService) {
+			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService,
+			BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
 		this.inventoryPostingService = inventoryPostingService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -281,6 +287,8 @@ public class ProductionAdminService {
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
 		ValidatedMaterialIssue validated = validateMaterialIssueRequest(workOrder, null, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				MATERIAL_ISSUE_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertMaterialIssueWithRetry(workOrderId, validated, operator.username(), now);
@@ -304,6 +312,8 @@ public class ProductionAdminService {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE);
 		}
 		ValidatedMaterialIssue validated = validateMaterialIssueRequest(workOrder, id, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				MATERIAL_ISSUE_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_material_issue
@@ -328,6 +338,8 @@ public class ProductionAdminService {
 			if (issue.status() != ProductionDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 			}
+			this.businessPeriodGuard.assertWritable(issue.businessDate(), BusinessPeriodOperation.POST,
+					MATERIAL_ISSUE_SOURCE, id);
 			List<MaterialIssueLineRow> lines = materialIssueLineRows(id);
 			if (lines.isEmpty()) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EMPTY_LINES);
@@ -382,6 +394,8 @@ public class ProductionAdminService {
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
 		ValidatedReport validated = validateReportRequest(workOrder, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				"PRODUCTION_WORK_REPORT", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertReportWithRetry(workOrderId, validated, operator.username(), now);
@@ -404,6 +418,8 @@ public class ProductionAdminService {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE);
 		}
 		ValidatedReport validated = validateReportRequest(workOrder, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				"PRODUCTION_WORK_REPORT", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_work_report
@@ -426,6 +442,8 @@ public class ProductionAdminService {
 		if (report.status() != ProductionDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 		}
+		this.businessPeriodGuard.assertWritable(report.businessDate(), BusinessPeriodOperation.POST,
+				"PRODUCTION_WORK_REPORT", id);
 		WorkReportResponse detail = report(workOrderId, id);
 		BigDecimal total = detail.qualifiedQuantity().add(detail.defectiveQuantity());
 		if (workOrder.reportedQuantity().add(total).compareTo(workOrder.plannedQuantity()) > 0) {
@@ -481,6 +499,8 @@ public class ProductionAdminService {
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
 		ValidatedReceipt validated = validateReceiptRequest(workOrder, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.CREATE,
+				COMPLETION_RECEIPT_SOURCE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertReceiptWithRetry(workOrderId, validated, operator.username(), now);
@@ -503,6 +523,8 @@ public class ProductionAdminService {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_DOCUMENT_POSTED_IMMUTABLE);
 		}
 		ValidatedReceipt validated = validateReceiptRequest(workOrder, request);
+		this.businessPeriodGuard.assertWritable(validated.businessDate(), BusinessPeriodOperation.UPDATE,
+				COMPLETION_RECEIPT_SOURCE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_completion_receipt
@@ -526,6 +548,8 @@ public class ProductionAdminService {
 			if (receipt.status() != ProductionDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_DUPLICATE_POST);
 			}
+			this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.POST,
+					COMPLETION_RECEIPT_SOURCE, id);
 			CompletionReceiptResponse detail = completionReceipt(workOrderId, id);
 			validateEnabledWarehouse(detail.receiptWarehouseId());
 			if (workOrder.receivedQuantity().add(detail.quantity()).compareTo(workOrder.qualifiedQuantity()) > 0) {

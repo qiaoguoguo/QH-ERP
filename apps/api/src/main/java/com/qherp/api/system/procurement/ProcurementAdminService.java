@@ -8,6 +8,8 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -55,11 +57,14 @@ public class ProcurementAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public ProcurementAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -108,6 +113,7 @@ public class ProcurementAdminService {
 	public PurchaseOrderDetailResponse createOrder(PurchaseOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		ValidatedOrder order = validateOrderRequest(request);
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CREATE, "PURCHASE_ORDER", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertOrderWithRetry(order, operator.username(), now);
@@ -129,6 +135,7 @@ public class ProcurementAdminService {
 			throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_STATUS_INVALID);
 		}
 		ValidatedOrder order = validateOrderRequest(request);
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.UPDATE, "PURCHASE_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -155,6 +162,7 @@ public class ProcurementAdminService {
 		if (order.status() != PurchaseOrderStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CONFIRM, "PURCHASE_ORDER", id);
 		validateOrderForConfirmation(order);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
@@ -174,6 +182,7 @@ public class ProcurementAdminService {
 				&& !(order.status() == PurchaseOrderStatus.CONFIRMED && !hasPostedReceipts(id))) {
 			throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CANCEL, "PURCHASE_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update proc_purchase_order
@@ -251,6 +260,7 @@ public class ProcurementAdminService {
 		OrderRow order = lockOrder(orderId).orElseThrow(this::orderNotFound);
 		requireReceivableOrder(order);
 		ValidatedReceipt receipt = validateReceiptRequest(order, request);
+		this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.CREATE, RECEIPT_SOURCE_TYPE, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertReceiptWithRetry(order, receipt, operator.username(), now);
@@ -274,6 +284,7 @@ public class ProcurementAdminService {
 		OrderRow order = lockOrder(current.orderId()).orElseThrow(this::orderNotFound);
 		requireReceivableOrder(order);
 		ValidatedReceipt receipt = validateReceiptRequest(order, request);
+		this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.UPDATE, RECEIPT_SOURCE_TYPE, id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			this.jdbcTemplate.update("""
@@ -301,6 +312,7 @@ public class ProcurementAdminService {
 			if (receipt.status() != PurchaseReceiptStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.PROCUREMENT_DUPLICATE_POST);
 			}
+			this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.POST, RECEIPT_SOURCE_TYPE, id);
 			OrderRow order = lockOrder(receipt.orderId()).orElseThrow(this::orderNotFound);
 			requireReceivableOrder(order);
 			validateEnabledWarehouse(receipt.warehouseId());

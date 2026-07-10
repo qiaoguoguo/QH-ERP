@@ -5,6 +5,8 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.dao.DuplicateKeyException;
@@ -55,9 +57,13 @@ public class FinanceAdminService {
 
 	private final AuditService auditService;
 
-	public FinanceAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final BusinessPeriodGuard businessPeriodGuard;
+
+	public FinanceAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -165,6 +171,8 @@ public class FinanceAdminService {
 		if (totalAmount.compareTo(ZERO) <= 0) {
 			throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(shipment.businessDate(), BusinessPeriodOperation.CREATE,
+				"FINANCE_RECEIVABLE", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertReceivableWithRetry(shipment, request.dueDate(), totalAmount,
@@ -210,6 +218,8 @@ public class FinanceAdminService {
 		if (!"POSTED".equals(shipment.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(receivable.businessDate(), BusinessPeriodOperation.CONFIRM,
+				"FINANCE_RECEIVABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receivable
@@ -228,6 +238,8 @@ public class FinanceAdminService {
 				&& !(receivable.status() == ReceivableStatus.CONFIRMED && postedReceiptCount(id) == 0)) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
+		this.businessPeriodGuard.assertWritable(receivable.businessDate(), BusinessPeriodOperation.CANCEL,
+				"FINANCE_RECEIVABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receivable
@@ -291,6 +303,8 @@ public class FinanceAdminService {
 		ReceivableRow receivable = lockReceivable(receivableId).orElseThrow(this::receivableNotFound);
 		requireReceiptable(receivable);
 		ValidatedReceipt receipt = validateReceipt(request, receivable);
+		this.businessPeriodGuard.assertWritable(receipt.receiptDate(), BusinessPeriodOperation.CREATE,
+				"FINANCE_RECEIPT", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		CreatedDocument created = insertReceiptWithRetry(receivable, receipt, operator.username(), now);
 		this.jdbcTemplate.update("""
@@ -323,6 +337,8 @@ public class FinanceAdminService {
 		ReceivableRow receivable = lockReceivable(allocation.receivableId()).orElseThrow(this::receivableNotFound);
 		requireReceiptable(receivable);
 		ValidatedReceipt validated = validateReceipt(request, receivable);
+		this.businessPeriodGuard.assertWritable(validated.receiptDate(), BusinessPeriodOperation.UPDATE,
+				"FINANCE_RECEIPT", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receipt
@@ -350,6 +366,8 @@ public class FinanceAdminService {
 		}
 		ReceivableRow receivable = lockReceivable(allocation.receivableId()).orElseThrow(this::receivableNotFound);
 		requireReceiptable(receivable);
+		this.businessPeriodGuard.assertWritable(receipt.receiptDate(), BusinessPeriodOperation.POST,
+				"FINANCE_RECEIPT", id);
 		if (receipt.amount().compareTo(receivable.unreceivedAmount()) > 0) {
 			throw new BusinessException(ApiErrorCode.FINANCE_ALLOCATION_EXCEEDS_BALANCE);
 		}
@@ -380,6 +398,8 @@ public class FinanceAdminService {
 		if (receipt.status() != ReceiptStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.FINANCE_POSTED_IMMUTABLE);
 		}
+		this.businessPeriodGuard.assertWritable(receipt.receiptDate(), BusinessPeriodOperation.CANCEL,
+				"FINANCE_RECEIPT", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_receipt
@@ -499,6 +519,8 @@ public class FinanceAdminService {
 		if (totalAmount.compareTo(ZERO) <= 0) {
 			throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.CREATE,
+				"FINANCE_PAYABLE", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertPayableWithRetry(receipt, request.dueDate(), totalAmount,
@@ -544,6 +566,8 @@ public class FinanceAdminService {
 		if (!"POSTED".equals(receipt.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(payable.businessDate(), BusinessPeriodOperation.CONFIRM,
+				"FINANCE_PAYABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payable
@@ -562,6 +586,8 @@ public class FinanceAdminService {
 				&& !(payable.status() == PayableStatus.CONFIRMED && postedPaymentCount(id) == 0)) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
+		this.businessPeriodGuard.assertWritable(payable.businessDate(), BusinessPeriodOperation.CANCEL,
+				"FINANCE_PAYABLE", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payable
@@ -624,6 +650,8 @@ public class FinanceAdminService {
 		PayableRow payable = lockPayable(payableId).orElseThrow(this::payableNotFound);
 		requirePayable(payable);
 		ValidatedPayment payment = validatePayment(request, payable);
+		this.businessPeriodGuard.assertWritable(payment.paymentDate(), BusinessPeriodOperation.CREATE,
+				"FINANCE_PAYMENT", null);
 		OffsetDateTime now = OffsetDateTime.now();
 		CreatedDocument created = insertPaymentWithRetry(payable, payment, operator.username(), now);
 		this.jdbcTemplate.update("""
@@ -656,6 +684,8 @@ public class FinanceAdminService {
 		PayableRow payable = lockPayable(allocation.payableId()).orElseThrow(this::payableNotFound);
 		requirePayable(payable);
 		ValidatedPayment validated = validatePayment(request, payable);
+		this.businessPeriodGuard.assertWritable(validated.paymentDate(), BusinessPeriodOperation.UPDATE,
+				"FINANCE_PAYMENT", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payment
@@ -683,6 +713,8 @@ public class FinanceAdminService {
 		}
 		PayableRow payable = lockPayable(allocation.payableId()).orElseThrow(this::payableNotFound);
 		requirePayable(payable);
+		this.businessPeriodGuard.assertWritable(payment.paymentDate(), BusinessPeriodOperation.POST,
+				"FINANCE_PAYMENT", id);
 		if (payment.amount().compareTo(payable.unpaidAmount()) > 0) {
 			throw new BusinessException(ApiErrorCode.FINANCE_ALLOCATION_EXCEEDS_BALANCE);
 		}
@@ -713,6 +745,8 @@ public class FinanceAdminService {
 		if (payment.status() != PaymentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.FINANCE_POSTED_IMMUTABLE);
 		}
+		this.businessPeriodGuard.assertWritable(payment.paymentDate(), BusinessPeriodOperation.CANCEL,
+				"FINANCE_PAYMENT", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update fin_payment
@@ -1112,8 +1146,8 @@ public class FinanceAdminService {
 
 	private Optional<ReceivableRow> lockReceivable(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, receivable_no, customer_id, source_id, total_amount, received_amount, unreceived_amount,
-				       status
+				select id, receivable_no, customer_id, source_id, business_date, total_amount, received_amount,
+				       unreceived_amount, status
 				from fin_receivable
 				where id = ?
 				for update
@@ -1154,7 +1188,8 @@ public class FinanceAdminService {
 
 	private Optional<PayableRow> lockPayable(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, payable_no, supplier_id, source_id, total_amount, paid_amount, unpaid_amount, status
+				select id, payable_no, supplier_id, source_id, business_date, total_amount, paid_amount,
+				       unpaid_amount, status
 				from fin_payable
 				where id = ?
 				for update
@@ -1564,13 +1599,15 @@ public class FinanceAdminService {
 
 	private ReceivableRow mapReceivableRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ReceivableRow(rs.getLong("id"), rs.getString("receivable_no"), rs.getLong("customer_id"),
-				rs.getLong("source_id"), rs.getBigDecimal("total_amount"), rs.getBigDecimal("received_amount"),
+				rs.getLong("source_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("total_amount"), rs.getBigDecimal("received_amount"),
 				rs.getBigDecimal("unreceived_amount"), ReceivableStatus.valueOf(rs.getString("status")));
 	}
 
 	private PayableRow mapPayableRow(ResultSet rs, int rowNum) throws SQLException {
 		return new PayableRow(rs.getLong("id"), rs.getString("payable_no"), rs.getLong("supplier_id"),
-				rs.getLong("source_id"), rs.getBigDecimal("total_amount"), rs.getBigDecimal("paid_amount"),
+				rs.getLong("source_id"), rs.getObject("business_date", LocalDate.class),
+				rs.getBigDecimal("total_amount"), rs.getBigDecimal("paid_amount"),
 				rs.getBigDecimal("unpaid_amount"), PayableStatus.valueOf(rs.getString("status")));
 	}
 
@@ -1851,12 +1888,12 @@ public class FinanceAdminService {
 			BigDecimal unitPrice, BigDecimal sourceAmount) {
 	}
 
-	private record ReceivableRow(Long id, String receivableNo, Long customerId, Long sourceId, BigDecimal totalAmount,
-			BigDecimal receivedAmount, BigDecimal unreceivedAmount, ReceivableStatus status) {
+	private record ReceivableRow(Long id, String receivableNo, Long customerId, Long sourceId, LocalDate businessDate,
+			BigDecimal totalAmount, BigDecimal receivedAmount, BigDecimal unreceivedAmount, ReceivableStatus status) {
 	}
 
-	private record PayableRow(Long id, String payableNo, Long supplierId, Long sourceId, BigDecimal totalAmount,
-			BigDecimal paidAmount, BigDecimal unpaidAmount, PayableStatus status) {
+	private record PayableRow(Long id, String payableNo, Long supplierId, Long sourceId, LocalDate businessDate,
+			BigDecimal totalAmount, BigDecimal paidAmount, BigDecimal unpaidAmount, PayableStatus status) {
 	}
 
 	private record ReceiptRow(Long id, String receiptNo, Long customerId, LocalDate receiptDate, BigDecimal amount,
