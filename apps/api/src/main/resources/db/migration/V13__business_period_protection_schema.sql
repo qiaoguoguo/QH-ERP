@@ -15,7 +15,8 @@ create table biz_business_period (
     updated_at timestamptz not null,
     constraint uk_biz_business_period_code unique (period_code),
     constraint ck_biz_business_period_status check (status in ('OPEN', 'LOCKED')),
-    constraint ck_biz_business_period_date_range check (start_date <= end_date)
+    constraint ck_biz_business_period_date_range check (start_date <= end_date),
+    constraint ex_biz_business_period_no_overlap exclude using gist (daterange(start_date, end_date, '[]') with &&)
 );
 
 create index idx_biz_business_period_date_range on biz_business_period (start_date, end_date);

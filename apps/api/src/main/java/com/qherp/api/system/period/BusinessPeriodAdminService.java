@@ -6,6 +6,7 @@ import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,7 +44,7 @@ public class BusinessPeriodAdminService {
 	public BusinessPeriodRecord create(BusinessPeriodRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
 		ValidatedPeriod period = validate(request);
 		assertNoOverlap(null, period.startDate(), period.endDate());
-		long id = insert(period, operator.username());
+		long id = insertOrThrowOverlapped(period);
 		audit(operator, "BUSINESS_PERIOD_CREATE", id, period.periodCode(), servletRequest);
 		return get(id);
 	}
@@ -56,9 +57,14 @@ public class BusinessPeriodAdminService {
 		}
 		ValidatedPeriod period = validate(request);
 		assertNoOverlap(id, period.startDate(), period.endDate());
-		this.jdbcTemplate.update("""
-				update biz_business_period set period_code = ?, period_name = ?, start_date = ?, end_date = ?, updated_at = ? where id = ?
-				""", period.periodCode(), period.periodName(), period.startDate(), period.endDate(), OffsetDateTime.now(), id);
+		try {
+			this.jdbcTemplate.update("""
+					update biz_business_period set period_code = ?, period_name = ?, start_date = ?, end_date = ?, updated_at = ? where id = ?
+					""", period.periodCode(), period.periodName(), period.startDate(), period.endDate(), OffsetDateTime.now(), id);
+		}
+		catch (DataIntegrityViolationException exception) {
+			throw overlapped(exception);
+		}
 		audit(operator, "BUSINESS_PERIOD_UPDATE", id, period.periodCode(), servletRequest);
 		return get(id);
 	}
@@ -79,9 +85,10 @@ public class BusinessPeriodAdminService {
 		for (ValidatedPeriod period : periods) {
 			assertNoOverlap(null, period.startDate(), period.endDate());
 		}
+		assertNoExistingPeriodCodes(periods);
 		List<BusinessPeriodRecord> created = new ArrayList<>();
 		for (ValidatedPeriod period : periods) {
-			long id = insert(period, operator.username());
+			long id = insertOrThrowOverlapped(period);
 			audit(operator, "BUSINESS_PERIOD_CREATE", id, period.periodCode(), servletRequest);
 			created.add(get(id));
 		}
@@ -120,6 +127,15 @@ public class BusinessPeriodAdminService {
 				BusinessPeriodStatus.OPEN.name(), OffsetDateTime.now(), OffsetDateTime.now());
 	}
 
+	private long insertOrThrowOverlapped(ValidatedPeriod period) {
+		try {
+			return insert(period, null);
+		}
+		catch (DataIntegrityViolationException exception) {
+			throw overlapped(exception);
+		}
+	}
+
 	private BusinessPeriodRecord get(Long id) {
 		List<BusinessPeriodRecord> records = this.jdbcTemplate.query("""
 				select id, period_code, period_name, start_date, end_date, status, locked_by, locked_at, lock_reason,
@@ -134,6 +150,20 @@ public class BusinessPeriodAdminService {
 				select count(*) from biz_business_period where id <> coalesce(?, -1) and start_date <= ? and end_date >= ?
 				""", Long.class, id, endDate, startDate);
 		if (count != null && count > 0) throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_OVERLAPPED);
+	}
+
+	private void assertNoExistingPeriodCodes(List<ValidatedPeriod> periods) {
+		for (ValidatedPeriod period : periods) {
+			Long count = this.jdbcTemplate.queryForObject("select count(*) from biz_business_period where period_code = ?",
+					Long.class, period.periodCode());
+			if (count != null && count > 0) {
+				throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_OVERLAPPED);
+			}
+		}
+	}
+
+	private BusinessException overlapped(DataIntegrityViolationException exception) {
+		return new BusinessException(ApiErrorCode.BUSINESS_PERIOD_OVERLAPPED, ApiErrorCode.BUSINESS_PERIOD_OVERLAPPED.message());
 	}
 
 	private ValidatedPeriod validate(BusinessPeriodRequest request) {

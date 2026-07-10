@@ -14,12 +14,16 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,6 +33,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @AutoConfigureTestRestTemplate
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class BusinessPeriodAdminControllerTests extends PostgresIntegrationTest {
+
+	private static final AtomicInteger SEQUENCE = new AtomicInteger();
 
 	@Autowired
 	private TestRestTemplate restTemplate;
@@ -42,12 +48,20 @@ class BusinessPeriodAdminControllerTests extends PostgresIntegrationTest {
 	@Autowired
 	private BusinessPeriodGuard businessPeriodGuard;
 
+	@Autowired
+	private PasswordEncoder passwordEncoder;
+
 	@Test
 	void migrationCreatesBusinessPeriodTablesAndConstraints() {
 		assertThat(tableExists("biz_business_period")).isTrue();
 		assertThat(tableExists("biz_business_period_audit")).isTrue();
 		assertThat(this.jdbcTemplate.queryForObject("select count(*) from pg_indexes where indexname = ?", Long.class,
 				"idx_biz_business_period_date_range")).isOne();
+		assertThat(this.jdbcTemplate.queryForObject("select count(*) from pg_constraint where conname = ?", Long.class,
+				"ex_biz_business_period_no_overlap")).isOne();
+		insertPeriodDirectly("2045-01", LocalDate.of(2045, 1, 1), LocalDate.of(2045, 1, 31));
+		assertThatThrownBy(() -> insertPeriodDirectly("2045-01-B", LocalDate.of(2045, 1, 15),
+				LocalDate.of(2045, 2, 15))).isInstanceOf(DataIntegrityViolationException.class);
 	}
 
 	@Test
@@ -83,6 +97,45 @@ class BusinessPeriodAdminControllerTests extends PostgresIntegrationTest {
 		assertError(rejected, HttpStatus.CONFLICT, "BUSINESS_PERIOD_OVERLAPPED");
 		assertThat(this.jdbcTemplate.queryForObject("select count(*) from biz_business_period where period_code in (?, ?)",
 				Long.class, "2030-10", "2030-12")).isZero();
+	}
+
+	@Test
+	void generateMonthlyRejectsExistingCodeWithoutPartialWrites() throws Exception {
+		AuthenticatedSession admin = login();
+		createPeriod(admin, "2041-08", LocalDate.of(2042, 8, 1), LocalDate.of(2042, 8, 31));
+
+		ResponseEntity<String> rejected = exchange(HttpMethod.POST,
+				"/api/admin/system/business-periods/generate-monthly",
+				Map.of("startMonth", "2041-07", "endMonth", "2041-09"), admin);
+
+		assertError(rejected, HttpStatus.CONFLICT, "BUSINESS_PERIOD_OVERLAPPED");
+		assertThat(this.jdbcTemplate.queryForObject("select count(*) from biz_business_period where period_code in (?, ?)",
+				Long.class, "2041-07", "2041-09")).isZero();
+	}
+
+	@Test
+	void usersWithoutBusinessPeriodPermissionsCannotWriteOrChangePeriodState() throws Exception {
+		AuthenticatedSession admin = login();
+		long periodId = createPeriod(admin, "2043-01", LocalDate.of(2043, 1, 1), LocalDate.of(2043, 1, 31));
+		AuthenticatedSession unauthorized = login(createUserWithoutBusinessPeriodPermissions());
+
+		assertError(exchange(HttpMethod.POST, "/api/admin/system/business-periods",
+				periodPayload("2043-02", "越权创建", LocalDate.of(2043, 2, 1), LocalDate.of(2043, 2, 28)), unauthorized),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertError(exchange(HttpMethod.POST, "/api/admin/system/business-periods/generate-monthly",
+				Map.of("startMonth", "2043-03", "endMonth", "2043-04"), unauthorized), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
+		assertError(exchange(HttpMethod.POST, "/api/admin/system/business-periods/" + periodId + "/lock",
+				Map.of("reason", "越权锁定"), unauthorized), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		assertOk(exchange(HttpMethod.POST, "/api/admin/system/business-periods/" + periodId + "/lock",
+				Map.of("reason", "管理员锁定"), admin));
+		assertError(exchange(HttpMethod.POST, "/api/admin/system/business-periods/" + periodId + "/unlock",
+				Map.of("reason", "越权解锁"), unauthorized), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertThat(this.jdbcTemplate.queryForObject("select status from biz_business_period where id = ?", String.class,
+				periodId)).isEqualTo("LOCKED");
+		assertThat(this.jdbcTemplate.queryForObject("select count(*) from biz_business_period where period_code in (?, ?, ?)",
+				Long.class, "2043-02", "2043-03", "2043-04")).isZero();
 	}
 
 	@Test
@@ -123,14 +176,42 @@ class BusinessPeriodAdminControllerTests extends PostgresIntegrationTest {
 				Boolean.class, tableName));
 	}
 
+	private void insertPeriodDirectly(String code, LocalDate startDate, LocalDate endDate) {
+		this.jdbcTemplate.update("""
+				insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at)
+				values (?, ?, ?, ?, 'OPEN', ?, ?)
+				""", code, code, startDate, endDate, OffsetDateTime.now(), OffsetDateTime.now());
+	}
+
+	private String createUserWithoutBusinessPeriodPermissions() {
+		int sequence = SEQUENCE.incrementAndGet();
+		String username = "period-no-permission-" + sequence;
+		OffsetDateTime now = OffsetDateTime.now();
+		Long userId = this.jdbcTemplate.queryForObject("""
+				insert into sys_user (username, password_hash, display_name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, ?, 'ENABLED', 'test', ?, 'test', ?) returning id
+				""", Long.class, username, this.passwordEncoder.encode("Qherp@2026!"), username, now, now);
+		Long roleId = this.jdbcTemplate.queryForObject("""
+				insert into sys_role (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', ?, 'test', ?) returning id
+				""", Long.class, "PERIOD_NO_PERMISSION_" + sequence, "无业务期间权限", now, now);
+		this.jdbcTemplate.update("insert into sys_user_role (user_id, role_id, created_by, created_at) values (?, ?, 'test', ?)",
+				userId, roleId, now);
+		return username;
+	}
+
 	private AuthenticatedSession login() {
+		return login("admin");
+	}
+
+	private AuthenticatedSession login(String username) {
 		ResponseEntity<String> csrfResponse = this.restTemplate.getForEntity("/api/auth/csrf", String.class);
 		try {
 			JsonNode csrf = data(csrfResponse);
 			String sessionCookie = sessionCookie(csrfResponse);
 			CsrfSession csrfSession = new CsrfSession(sessionCookie, csrf.get("token").asText(), csrf.get("headerName").asText());
 			ResponseEntity<String> login = this.restTemplate.postForEntity("/api/auth/login",
-					entity(Map.of("username", "admin", "password", "Qherp@2026!"), sessionCookie, csrfSession), String.class);
+					entity(Map.of("username", username, "password", "Qherp@2026!"), sessionCookie, csrfSession), String.class);
 			return new AuthenticatedSession(sessionCookie(login), csrfSession);
 		}
 		catch (Exception exception) {
