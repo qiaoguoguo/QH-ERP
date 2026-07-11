@@ -86,6 +86,174 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void processInspectionKeepsBatchIdentityWhenSplittingQualityStatuses() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 7, 20);
+		long batchId = insertBatch(fixture, "QI-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "5.000000", batchId, null);
+		long inspectionId = insertPendingInspection(fixture, "5.000000", businessDate);
+
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", businessDate.toString());
+		payload.put("qualifiedQuantity", "3.000000");
+		payload.put("rejectedQuantity", "2.000000");
+		payload.put("frozenQuantity", "0.000000");
+		payload.put("reason", "批次质量拆分");
+		payload.put("trackingAllocations",
+				List.of(trackingAllocation(batchId, null, "3.000000", "QUALIFIED"),
+						trackingAllocation(batchId, null, "2.000000", "REJECTED")));
+
+		assertOk(exchange(HttpMethod.POST, "/api/admin/quality/inspections/" + inspectionId + "/process", payload,
+				admin));
+
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.PENDING_INSPECTION, batchId, null),
+				"0.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED, batchId, null), "3.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.REJECTED, batchId, null), "2.000000");
+		assertThat(trackedMovementCount("QUALITY_INSPECTION", inspectionId, batchId, null)).isEqualTo(4);
+	}
+
+	@Test
+	void processInspectionMovesSerialsAsSingleQualityIdentities() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		LocalDate businessDate = LocalDate.of(2091, 7, 21);
+		long firstSerialId = insertSerial(fixture, "QI-SN-A-" + SEQUENCE.incrementAndGet(), businessDate,
+				InventoryQualityStatus.PENDING_INSPECTION);
+		long secondSerialId = insertSerial(fixture, "QI-SN-B-" + SEQUENCE.incrementAndGet(), businessDate,
+				InventoryQualityStatus.PENDING_INSPECTION);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "1.000000", null, firstSerialId);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "1.000000", null, secondSerialId);
+		long inspectionId = insertPendingInspection(fixture, "2.000000", businessDate);
+
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", businessDate.toString());
+		payload.put("qualifiedQuantity", "1.000000");
+		payload.put("rejectedQuantity", "1.000000");
+		payload.put("frozenQuantity", "0.000000");
+		payload.put("reason", "序列质量逐件确认");
+		payload.put("trackingAllocations",
+				List.of(trackingAllocation(null, firstSerialId, "1.000000", "QUALIFIED"),
+						trackingAllocation(null, secondSerialId, "1.000000", "REJECTED")));
+
+		assertOk(exchange(HttpMethod.POST, "/api/admin/quality/inspections/" + inspectionId + "/process", payload,
+				admin));
+
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED, null, firstSerialId),
+				"1.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.REJECTED, null, secondSerialId),
+				"1.000000");
+		assertThat(serialQualityStatus(firstSerialId)).isEqualTo("QUALIFIED");
+		assertThat(serialQualityStatus(secondSerialId)).isEqualTo("REJECTED");
+	}
+
+	@Test
+	void freezeAndUnfreezeKeepBatchIdentityAndAffectAvailableQuantity() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 9, 20);
+		long batchId = insertBatch(fixture, "QI-FREEZE-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.QUALIFIED, "3.000000", batchId, null);
+
+		Map<String, Object> freezePayload = qualityTransferPayload(fixture, "1.000000", businessDate, "批次冻结");
+		freezePayload.put("trackingAllocations",
+				List.of(trackingAllocation(batchId, null, "1.000000", "FROZEN")));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freezePayload, admin));
+
+		JsonNode frozenBalance = firstItem(get("/api/admin/inventory/balances?trackingMethod=BATCH&batchId="
+				+ batchId, admin));
+		assertDecimal(frozenBalance, "availableQuantity", "2.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.FROZEN, batchId, null), "1.000000");
+
+		Map<String, Object> unfreezePayload = qualityTransferPayload(fixture, "1.000000", businessDate, "批次解冻");
+		unfreezePayload.put("trackingAllocations",
+				List.of(trackingAllocation(batchId, null, "1.000000", "QUALIFIED")));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/unfreeze", unfreezePayload, admin));
+
+		JsonNode unfrozenBalance = firstItem(get("/api/admin/inventory/balances?trackingMethod=BATCH&batchId="
+				+ batchId, admin));
+		assertDecimal(unfrozenBalance, "availableQuantity", "3.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.FROZEN, batchId, null), "0.000000");
+	}
+
+	@Test
+	void freezeAndUnfreezeDefaultTrackingAllocationQualityStatusWhenOmitted() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 9, 21);
+		long batchId = insertBatch(fixture, "QI-DEFAULT-QS-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.QUALIFIED, "2.000000", batchId, null);
+
+		Map<String, Object> freezeAllocation = trackingAllocation(batchId, null, "1.000000", "FROZEN");
+		freezeAllocation.remove("qualityStatus");
+		Map<String, Object> freezePayload = qualityTransferPayload(fixture, "1.000000", businessDate, "默认冻结状态");
+		freezePayload.put("trackingAllocations", List.of(freezeAllocation));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freezePayload, admin));
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.FROZEN, batchId, null), "1.000000");
+
+		Map<String, Object> unfreezeAllocation = trackingAllocation(batchId, null, "1.000000", "QUALIFIED");
+		unfreezeAllocation.remove("qualityStatus");
+		Map<String, Object> unfreezePayload = qualityTransferPayload(fixture, "1.000000", businessDate, "默认解冻状态");
+		unfreezePayload.put("trackingAllocations", List.of(unfreezeAllocation));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/unfreeze", unfreezePayload, admin));
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED, batchId, null), "2.000000");
+	}
+
+	@Test
+	void freezeTrackedBatchReservedQuantityReturnsTrackingUnavailable() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 9, 22);
+		long batchId = insertBatch(fixture, "QI-RSV-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.QUALIFIED, "3.000000", batchId, null);
+		insertReservation(fixture, "RESERVATION", "SALES_ORDER", "2.000000");
+
+		Map<String, Object> payload = qualityTransferPayload(fixture, "2.000000", businessDate, "追踪冻结预留不足");
+		payload.put("trackingAllocations", List.of(trackingAllocation(batchId, null, "2.000000", "FROZEN")));
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				payload, admin);
+
+		assertError(response, HttpStatus.CONFLICT, "INVENTORY_TRACKING_NOT_AVAILABLE");
+	}
+
+	@Test
+	void processInspectionAggregatesBatchAllocationsBeforeTransfer() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 7, 22);
+		long batchId = insertBatch(fixture, "QI-OVER-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "5.000000", batchId, null);
+		long inspectionId = insertPendingInspection(fixture, "6.000000", businessDate);
+
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", businessDate.toString());
+		payload.put("qualifiedQuantity", "6.000000");
+		payload.put("rejectedQuantity", "0.000000");
+		payload.put("frozenQuantity", "0.000000");
+		payload.put("reason", "批次聚合校验");
+		payload.put("trackingAllocations",
+				List.of(trackingAllocation(batchId, null, "3.000000", "QUALIFIED"),
+						trackingAllocation(batchId, null, "3.000000", "QUALIFIED")));
+
+		ResponseEntity<String> response = exchange(HttpMethod.POST,
+				"/api/admin/quality/inspections/" + inspectionId + "/process", payload, admin);
+
+		assertError(response, HttpStatus.CONFLICT, "INVENTORY_TRACKING_STOCK_NOT_ENOUGH");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.PENDING_INSPECTION, batchId, null),
+				"5.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED, batchId, null), "0.000000");
+		assertThat(trackedMovementCount("QUALITY_INSPECTION", inspectionId, batchId, null)).isZero();
+		assertThat(trackingAllocationCount("QUALITY_INSPECTION", inspectionId)).isZero();
+	}
+
+	@Test
 	void processInspectionRejectsQuantityMismatchWithoutPartialWrites() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		QualityFixture fixture = fixture();
@@ -389,6 +557,20 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 		return payload;
 	}
 
+	private Map<String, Object> trackingAllocation(Long batchId, Long serialId, String quantity,
+			String qualityStatus) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		if (batchId != null) {
+			allocation.put("batchId", batchId);
+		}
+		if (serialId != null) {
+			allocation.put("serialId", serialId);
+		}
+		allocation.put("quantity", quantity);
+		allocation.put("qualityStatus", qualityStatus);
+		return allocation;
+	}
+
 	private long pendingInspection(QualityFixture fixture, String quantity, LocalDate businessDate) {
 		long sourceId = 1_700_000L + SEQUENCE.incrementAndGet();
 		long sourceLineId = 1_710_000L + SEQUENCE.incrementAndGet();
@@ -403,6 +585,21 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				returning id
 				""", Long.class, "QI-TEST-" + SEQUENCE.incrementAndGet(), sourceId, sourceLineId, fixture.warehouseId(),
 				fixture.materialId(), fixture.unitId(), businessDate, new BigDecimal(quantity));
+	}
+
+	private long insertPendingInspection(QualityFixture fixture, String quantity, LocalDate businessDate) {
+		long sourceId = 1_705_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 1_715_000L + SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into qua_quality_inspection (
+					inspection_no, source_type, source_id, source_line_id, warehouse_id, material_id, unit_id,
+					business_date, inspection_quantity, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'PURCHASE_RECEIPT', ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-TRACK-" + SEQUENCE.incrementAndGet(), sourceId, sourceLineId,
+				fixture.warehouseId(), fixture.materialId(), fixture.unitId(), businessDate,
+				new BigDecimal(quantity));
 	}
 
 	private long productionCompletionInspection(QualityFixture fixture, String receiptNo, String quantity,
@@ -462,6 +659,45 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				sourceLineId, businessDate, "质量状态测试入库", "质量状态测试入库", "tester"));
 	}
 
+	private long insertBatch(QualityFixture fixture, String batchNo, LocalDate businessDate) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date, remark,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'QUALITY_TEST', ?, ?, ?, '质量追踪测试', 'tester', now(), 'tester', now())
+				returning id
+				""", Long.class, fixture.materialId(), batchNo, 1_760_000L + SEQUENCE.incrementAndGet(),
+				1_770_000L + SEQUENCE.incrementAndGet(), businessDate);
+	}
+
+	private long insertSerial(QualityFixture fixture, String serialNo, LocalDate businessDate,
+			InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_serial (
+					material_id, serial_no, source_type, source_id, source_line_id, warehouse_id, quality_status,
+					stock_status, business_date, remark, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'QUALITY_TEST', ?, ?, ?, ?, 'IN_STOCK', ?, '质量追踪测试',
+					'tester', now(), 'tester', now())
+				returning id
+				""", Long.class, fixture.materialId(), serialNo, 1_780_000L + SEQUENCE.incrementAndGet(),
+				1_790_000L + SEQUENCE.incrementAndGet(), fixture.warehouseId(), qualityStatus.name(),
+				businessDate);
+	}
+
+	private void insertTrackedBalance(QualityFixture fixture, InventoryQualityStatus qualityStatus, String quantity,
+			Long batchId, Long serialId) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					batch_id, serial_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, ?, ?, ?, now(), now())
+				""", fixture.warehouseId(), fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
+				qualityStatus.name(), batchId, serialId);
+	}
+
 	private long insertReservation(QualityFixture fixture, String reservationType, String sourceType, String quantity) {
 		long sourceId = 1_740_000L + SEQUENCE.incrementAndGet();
 		long sourceLineId = 1_750_000L + SEQUENCE.incrementAndGet();
@@ -479,6 +715,11 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				sourceType + "-" + sourceId, LocalDate.now(), "质量冻结预留约束测试");
 	}
 
+	private void setTrackingMethod(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
+				trackingMethod, materialId);
+	}
+
 	private void seedLegacyQualityStatusTransferSourceLineCollisions(QualityFixture fixture) {
 		this.jdbcTemplate.update("""
 				insert into inv_stock_movement (
@@ -490,7 +731,14 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				       1.000000, 0.000000, 'QUALITY_STATUS_TRANSFER', g, g * 10 + 1, ?,
 				       '旧内存来源键占位', null, 'legacy', now(), 'QUALIFIED'
 				from generate_series(2000000001::bigint, 2000000200::bigint) as g
-				on conflict (source_type, source_line_id) do nothing
+				where not exists (
+					select 1
+					from inv_stock_movement mv
+					where mv.source_type = 'QUALITY_STATUS_TRANSFER'
+					and mv.source_line_id = g * 10 + 1
+					and mv.batch_id is null
+					and mv.serial_id is null
+				)
 				""", fixture.warehouseId(), fixture.materialId(), fixture.unitId(), LocalDate.of(2090, 1, 1));
 	}
 
@@ -599,6 +847,20 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				""", BigDecimal.class, fixture.warehouseId(), fixture.materialId(), qualityStatus.name());
 	}
 
+	private BigDecimal trackingBalanceQuantity(QualityFixture fixture, InventoryQualityStatus qualityStatus,
+			Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				""", BigDecimal.class, fixture.warehouseId(), fixture.materialId(), qualityStatus.name(), batchId,
+				serialId);
+	}
+
 	private long movementCount(String sourceType, long sourceId) {
 		return this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -606,6 +868,31 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_id = ?
 				""", Long.class, sourceType, sourceId);
+	}
+
+	private long trackedMovementCount(String sourceType, long sourceId, Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_id = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				""", Long.class, sourceType, sourceId, batchId, serialId);
+	}
+
+	private long trackingAllocationCount(String documentType, long documentId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				""", Long.class, documentType, documentId);
+	}
+
+	private String serialQualityStatus(long serialId) {
+		return this.jdbcTemplate.queryForObject("select quality_status from inv_serial where id = ?", String.class,
+				serialId);
 	}
 
 	private List<LocalDate> movementBusinessDates(String sourceType, long sourceId) {

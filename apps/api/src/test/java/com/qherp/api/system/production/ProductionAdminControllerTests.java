@@ -129,6 +129,109 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void completionReceiptBatchAllocationCreatesFinishedGoodsTrackingFacts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.productMaterialId(), "BATCH");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "10.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+		long reportId = createReportId(admin, workOrderId, workReportPayload("2.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+
+		Map<String, Object> receiptPayload = completionReceiptPayload(fixture.receiptWarehouseId(), "2.000000");
+		receiptPayload.put("trackingAllocations",
+				List.of(trackingAllocation("MFG-BATCH-" + SEQUENCE.incrementAndGet(), "2.000000")));
+		long receiptId = createCompletionReceiptId(admin, workOrderId, receiptPayload);
+		JsonNode draftReceipt = data(getCompletionReceipt(admin, workOrderId, receiptId));
+		assertThat(draftReceipt.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(draftReceipt.get("trackingMethodName").asText()).isEqualTo("批次管理");
+		assertThat(draftReceipt.get("trackingAllocations").size()).isOne();
+		JsonNode allocation = draftReceipt.get("trackingAllocations").get(0);
+		assertThat(allocation.get("allocationId").isNumber()).isTrue();
+		assertThat(allocation.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(allocation.get("documentType").asText()).isEqualTo("PRODUCTION_COMPLETION_RECEIPT");
+		assertThat(allocation.get("documentId").longValue()).isEqualTo(receiptId);
+		assertThat(allocation.get("documentLineId").longValue()).isEqualTo(receiptId);
+		assertThat(allocation.get("sourceDocumentNo").asText()).isEqualTo(draftReceipt.get("receiptNo").asText());
+
+		assertOk(postCompletionReceipt(admin, workOrderId, receiptId));
+		long batchId = batchId(fixture.productMaterialId(),
+				draftReceipt.get("trackingAllocations").get(0).get("batchNo").asText());
+
+		assertDecimal(trackingBalanceQuantity(fixture.receiptWarehouseId(), fixture.productMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION, batchId, null), "2.000000");
+		assertThat(movementCountBySource("PRODUCTION_COMPLETION_RECEIPT", receiptId)).isOne();
+		assertThat(trackingAllocationMovementCount("PRODUCTION_COMPLETION_RECEIPT", receiptId, receiptId)).isOne();
+		assertThat(batchSourceId(batchId)).isEqualTo(receiptId);
+		assertThat(batchSourceWorkOrderId(batchId)).isEqualTo(workOrderId);
+		JsonNode receiptMovement = movementBySource(data(getWorkOrder(admin, workOrderId)).get("movements"),
+				"PRODUCTION_COMPLETION_RECEIPT");
+		assertThat(receiptMovement.get("batchId").longValue()).isEqualTo(batchId);
+		assertThat(receiptMovement.get("batchNo").asText()).isEqualTo(draftReceipt.get("trackingAllocations").get(0).get("batchNo").asText());
+	}
+
+	@Test
+	void completionReceiptSerialAllocationsCreateFinishedGoodsSerialFacts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.productMaterialId(), "SERIAL");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "10.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+		long reportId = createReportId(admin, workOrderId, workReportPayload("2.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+
+		Map<String, Object> receiptPayload = completionReceiptPayload(fixture.receiptWarehouseId(), "2.000000");
+		receiptPayload.put("trackingAllocations",
+				List.of(serialAllocation("MFG-SN-A-" + SEQUENCE.incrementAndGet(), "1.000000"),
+						serialAllocation("MFG-SN-B-" + SEQUENCE.incrementAndGet(), "1.000000")));
+		long receiptId = createCompletionReceiptId(admin, workOrderId, receiptPayload);
+
+		assertOk(postCompletionReceipt(admin, workOrderId, receiptId));
+
+		assertThat(serialCountByCompletion(receiptId)).isEqualTo(2);
+		assertThat(movementCountBySource("PRODUCTION_COMPLETION_RECEIPT", receiptId)).isEqualTo(2);
+		assertThat(trackingAllocationMovementCount("PRODUCTION_COMPLETION_RECEIPT", receiptId, receiptId)).isEqualTo(2);
+		assertDecimal(balanceQuantity(fixture.receiptWarehouseId(), fixture.productMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
+		assertThat(serialSourceWorkOrderIds(receiptId)).containsOnly(workOrderId);
+		JsonNode receiptMovement = movementBySource(data(getWorkOrder(admin, workOrderId)).get("movements"),
+				"PRODUCTION_COMPLETION_RECEIPT");
+		assertThat(receiptMovement.get("serialId").isNumber()).isTrue();
+		assertThat(receiptMovement.get("serialNo").asText()).startsWith("MFG-SN-");
+	}
+
+	@Test
+	void completionReceiptSerialDraftUpdateCanReusePreviousCancelledSerial() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.productMaterialId(), "SERIAL");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "10.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "1.000000");
+		long reportId = createReportId(admin, workOrderId, workReportPayload("1.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+		String firstSerialNo = "MFG-SN-REUSE-A-" + SEQUENCE.incrementAndGet();
+		String secondSerialNo = "MFG-SN-REUSE-B-" + SEQUENCE.incrementAndGet();
+
+		Map<String, Object> firstPayload = completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		firstPayload.put("trackingAllocations", List.of(serialAllocation(firstSerialNo, "1.000000")));
+		long receiptId = createCompletionReceiptId(admin, workOrderId, firstPayload);
+
+		Map<String, Object> secondPayload = completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		secondPayload.put("trackingAllocations", List.of(serialAllocation(secondSerialNo, "1.000000")));
+		assertOk(updateCompletionReceipt(admin, workOrderId, receiptId, secondPayload));
+
+		Map<String, Object> reusedPayload = completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		reusedPayload.put("trackingAllocations", List.of(serialAllocation(firstSerialNo, "1.000000")));
+		ResponseEntity<String> reused = updateCompletionReceipt(admin, workOrderId, receiptId, reusedPayload);
+
+		assertOk(reused);
+		assertThat(data(reused).get("trackingAllocations").get(0).get("serialNo").asText()).isEqualTo(firstSerialNo);
+	}
+
+	@Test
 	void workOrderReleaseReservesMaterialsAndIssueConsumesReservation() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
@@ -618,16 +721,24 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
 			InventoryQualityStatus qualityStatus) {
-		this.jdbcTemplate.update("""
-				insert into inv_stock_balance (
-					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
-					quality_status
-				)
-				values (?, ?, ?, ?, 0, now(), now(), ?)
-				on conflict (warehouse_id, material_id, quality_status)
-				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
-					updated_at = now(), version = inv_stock_balance.version + 1
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+		int updated = this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set unit_id = ?, quantity_on_hand = ?, updated_at = now(), version = version + 1
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is null
+				and serial_id is null
+				""", unitId, new BigDecimal(quantity), warehouseId, materialId, qualityStatus.name());
+		if (updated == 0) {
+			this.jdbcTemplate.update("""
+					insert into inv_stock_balance (
+						warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+						quality_status
+					)
+					values (?, ?, ?, ?, 0, now(), now(), ?)
+					""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+		}
 	}
 
 	private void ensureReleaseStock(ProductionFixture fixture, String plannedQuantity) {
@@ -769,6 +880,19 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				null, session);
 	}
 
+	private ResponseEntity<String> updateCompletionReceipt(AuthenticatedSession session, long workOrderId,
+			long receiptId, Map<String, Object> body) {
+		return exchange(HttpMethod.PUT,
+				"/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId, body,
+				session);
+	}
+
+	private ResponseEntity<String> getCompletionReceipt(AuthenticatedSession session, long workOrderId,
+			long receiptId) {
+		return get("/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId,
+				session);
+	}
+
 	private Map<String, Object> materialIssuePayload(String reason, List<Map<String, Object>> lines) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("businessDate", LocalDate.now().toString());
@@ -806,6 +930,20 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("quantity", quantity);
 		body.put("remark", "完工入库测试");
 		return body;
+	}
+
+	private Map<String, Object> trackingAllocation(String batchNo, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchNo", batchNo);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
+	private Map<String, Object> serialAllocation(String serialNo, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("serialNo", serialNo);
+		allocation.put("quantity", quantity);
+		return allocation;
 	}
 
 	private void lockPeriod(LocalDate date) {
@@ -857,6 +995,67 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
 	}
 
+	private BigDecimal trackingBalanceQuantity(long warehouseId, long materialId,
+			InventoryQualityStatus qualityStatus, Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), batchId, serialId);
+	}
+
+	private void setTrackingMethod(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
+				trackingMethod, materialId);
+	}
+
+	private long batchId(long materialId, String batchNo) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_batch
+				where material_id = ?
+				and batch_no = ?
+				""", Long.class, materialId, batchNo);
+	}
+
+	private long batchSourceId(long batchId) {
+		return this.jdbcTemplate.queryForObject("select source_id from inv_batch where id = ?", Long.class, batchId);
+	}
+
+	private long batchSourceWorkOrderId(long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select r.work_order_id
+				from inv_batch b
+				join mfg_completion_receipt r on r.id = b.source_id
+				where b.id = ?
+				and b.source_type = 'PRODUCTION_COMPLETION_RECEIPT'
+				""", Long.class, batchId);
+	}
+
+	private List<Long> serialSourceWorkOrderIds(long receiptId) {
+		return this.jdbcTemplate.query("""
+				select distinct r.work_order_id
+				from inv_serial s
+				join mfg_completion_receipt r on r.id = s.source_id
+				where s.source_type = 'PRODUCTION_COMPLETION_RECEIPT'
+				and s.source_id = ?
+				order by r.work_order_id
+				""", (rs, rowNum) -> rs.getLong("work_order_id"), receiptId);
+	}
+
+	private JsonNode movementBySource(JsonNode movements, String sourceType) {
+		for (JsonNode movement : movements) {
+			if (sourceType.equals(movement.get("sourceType").asText())) {
+				return movement;
+			}
+		}
+		throw new AssertionError("未找到生产流水：" + sourceType);
+	}
+
 	private String movementQualityStatus(String sourceType, long sourceLineId) {
 		return this.jdbcTemplate.queryForObject("""
 				select quality_status
@@ -905,6 +1104,28 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long trackingAllocationMovementCount(String documentType, long documentId, long documentLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and movement_id is not null
+				""", Long.class, documentType, documentId, documentLineId);
+	}
+
+	private long serialCountByCompletion(long receiptId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_serial
+				where source_type = 'PRODUCTION_COMPLETION_RECEIPT'
+				and source_id = ?
+				and source_line_id = ?
+				and stock_status = 'IN_STOCK'
+				""", Long.class, receiptId, receiptId);
 	}
 
 	private BigDecimal productionIssueMovementQuantity(long materialId) {

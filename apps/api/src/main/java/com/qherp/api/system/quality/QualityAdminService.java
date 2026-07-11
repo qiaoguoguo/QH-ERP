@@ -8,9 +8,12 @@ import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.inventory.InventoryAvailabilityService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.inventory.InventoryPostingService;
+import com.qherp.api.system.inventory.InventoryTrackingMethod;
+import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -56,14 +59,17 @@ public class QualityAdminService {
 
 	private final AuditService auditService;
 
+	private final InventoryTrackingService inventoryTrackingService;
+
 	public QualityAdminService(JdbcTemplate jdbcTemplate, InventoryPostingService inventoryPostingService,
 			InventoryAvailabilityService inventoryAvailabilityService, BusinessPeriodGuard businessPeriodGuard,
-			AuditService auditService) {
+			AuditService auditService, InventoryTrackingService inventoryTrackingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.inventoryPostingService = inventoryPostingService;
 		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.auditService = auditService;
+		this.inventoryTrackingService = inventoryTrackingService;
 	}
 
 	@Transactional(readOnly = true)
@@ -140,12 +146,24 @@ public class QualityAdminService {
 		}
 		String reason = validateText(request.reason(), 200, ApiErrorCode.QUALITY_STATUS_REASON_REQUIRED);
 		String remark = validateOptionalText(request.remark(), 500);
-		transferFromPending(inspection, InventoryQualityStatus.QUALIFIED, qualifiedQuantity, processBusinessDate, reason, remark,
-				operator.username());
-		transferFromPending(inspection, InventoryQualityStatus.REJECTED, rejectedQuantity, processBusinessDate, reason, remark,
-				operator.username());
-		transferFromPending(inspection, InventoryQualityStatus.FROZEN, frozenQuantity, processBusinessDate, reason, remark,
-				operator.username());
+		if (shouldUseTracking(inspection.materialId(), request.trackingAllocations())) {
+			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+				.resolveQualityAllocations(inspection.warehouseId(), inspection.materialId(), inspection.unitId(),
+						InventoryQualityStatus.PENDING_INSPECTION, total, request.trackingAllocations());
+			assertTrackedQualityQuantity(trackingAllocations, InventoryQualityStatus.QUALIFIED, qualifiedQuantity);
+			assertTrackedQualityQuantity(trackingAllocations, InventoryQualityStatus.REJECTED, rejectedQuantity);
+			assertTrackedQualityQuantity(trackingAllocations, InventoryQualityStatus.FROZEN, frozenQuantity);
+			transferTrackedFromPending(inspection, trackingAllocations, processBusinessDate, reason, remark,
+					operator.username());
+		}
+		else {
+			transferFromPending(inspection, InventoryQualityStatus.QUALIFIED, qualifiedQuantity, processBusinessDate, reason,
+					remark, operator.username());
+			transferFromPending(inspection, InventoryQualityStatus.REJECTED, rejectedQuantity, processBusinessDate, reason,
+					remark, operator.username());
+			transferFromPending(inspection, InventoryQualityStatus.FROZEN, frozenQuantity, processBusinessDate, reason,
+					remark, operator.username());
+		}
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update qua_quality_inspection
@@ -215,11 +233,32 @@ public class QualityAdminService {
 		BigDecimal quantity = parsePositiveQuantity(request.quantity());
 		String reason = validateText(request.reason(), 200, ApiErrorCode.QUALITY_STATUS_REASON_REQUIRED);
 		String remark = validateOptionalText(request.remark(), 500);
+		boolean useTracking = shouldUseTracking(request.materialId(), request.trackingAllocations());
 		if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
-			this.inventoryAvailabilityService.assertQualifiedAvailable(request.warehouseId(), request.materialId(),
-					quantity, ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+			if (useTracking) {
+				assertTrackedFreezeAvailable(request.warehouseId(), request.materialId(), quantity);
+			}
+			else {
+				this.inventoryAvailabilityService.assertQualifiedAvailable(request.warehouseId(), request.materialId(),
+						quantity, ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+			}
 		}
 		long sourceId = nextQualityStatusTransferSourceId();
+		if (useTracking) {
+			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+				.resolveQualityAllocations(request.warehouseId(), request.materialId(), request.unitId(), fromStatus,
+						quantity, request.trackingAllocations(), toStatus, "trackingAllocations");
+			assertTrackedQualityQuantity(trackingAllocations, toStatus, quantity);
+			TrackedTransferSummary trackedResult = transferTrackedQualityStatus(request.warehouseId(),
+					request.materialId(), request.unitId(), fromStatus, toStatus, trackingAllocations, sourceId,
+					request.businessDate(), hasText(reason) ? reason : defaultReason, remark, operator.username());
+			this.auditService.record(operator, auditAction, QUALITY_STATUS_TRANSFER_SOURCE, sourceId, reason,
+					servletRequest);
+			return new QualityStatusTransferResponse(fromStatus.name(), fromStatus.displayName(), toStatus.name(),
+					toStatus.displayName(), formatQuantity(quantity), formatQuantity(trackedResult.fromBeforeQuantity()),
+					formatQuantity(trackedResult.fromAfterQuantity()), formatQuantity(trackedResult.toBeforeQuantity()),
+					formatQuantity(trackedResult.toAfterQuantity()), trackedResult.trackingAllocations());
+		}
 		InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
 				request.warehouseId(), request.materialId(), request.unitId(), fromStatus, toStatus, quantity,
 				QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceId, request.businessDate(),
@@ -229,7 +268,7 @@ public class QualityAdminService {
 		return new QualityStatusTransferResponse(fromStatus.name(), fromStatus.displayName(), toStatus.name(),
 				toStatus.displayName(), formatQuantity(quantity), formatQuantity(result.fromBeforeQuantity()),
 				formatQuantity(result.fromAfterQuantity()), formatQuantity(result.toBeforeQuantity()),
-				formatQuantity(result.toAfterQuantity()));
+				formatQuantity(result.toAfterQuantity()), List.of());
 	}
 
 	private void transferFromPending(InspectionRow inspection, InventoryQualityStatus targetStatus, BigDecimal quantity,
@@ -242,6 +281,119 @@ public class QualityAdminService {
 				inspection.unitId(), InventoryQualityStatus.PENDING_INSPECTION, targetStatus, quantity,
 				QUALITY_INSPECTION_SOURCE, inspection.id(), sourceLineId, businessDate, reason, remark,
 				operatorName);
+	}
+
+	private void transferTrackedFromPending(InspectionRow inspection,
+			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations, LocalDate businessDate,
+			String reason, String remark, String operatorName) {
+		int index = 1;
+		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+			long sourceLineId = trackedSourceLineId(inspection.id(), index++);
+			InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
+					inspection.warehouseId(), inspection.materialId(), inspection.unitId(),
+					InventoryQualityStatus.PENDING_INSPECTION, allocation.qualityStatus(), allocation.quantity(),
+					QUALITY_INSPECTION_SOURCE, inspection.id(), sourceLineId, businessDate, reason, remark,
+					operatorName, allocation.batchId(), allocation.serialId());
+			this.inventoryTrackingService.recordQualityAllocation(QUALITY_INSPECTION_SOURCE, inspection.id(),
+					sourceLineId, inspection.warehouseId(), inspection.materialId(), inspection.unitId(),
+					allocation.qualityStatus(), allocation, result.toMovementId(), operatorName);
+			this.inventoryTrackingService.markSerialQuality(allocation, inspection.warehouseId(),
+					allocation.qualityStatus(), result.toMovementId(), operatorName);
+		}
+	}
+
+	private TrackedTransferSummary transferTrackedQualityStatus(Long warehouseId, Long materialId, Long unitId,
+			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus,
+			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations, Long sourceId,
+			LocalDate businessDate, String reason, String remark, String operatorName) {
+		BigDecimal fromBeforeQuantity = ZERO;
+		BigDecimal fromAfterQuantity = ZERO;
+		BigDecimal toBeforeQuantity = ZERO;
+		BigDecimal toAfterQuantity = ZERO;
+		List<InventoryTrackingService.TrackingAllocationResponse> responses = new ArrayList<>();
+		InventoryTrackingMethod trackingMethod = this.inventoryTrackingService.trackingMethod(materialId);
+		int index = 1;
+		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+			long sourceLineId = trackedSourceLineId(sourceId, index++);
+			InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
+					warehouseId, materialId, unitId, fromStatus, toStatus, allocation.quantity(),
+					QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceLineId, businessDate, reason, remark,
+					operatorName, allocation.batchId(), allocation.serialId());
+			Long allocationId = this.inventoryTrackingService.recordQualityAllocation(QUALITY_STATUS_TRANSFER_SOURCE, sourceId,
+					sourceLineId, warehouseId, materialId, unitId, toStatus, allocation, result.toMovementId(),
+					operatorName);
+			this.inventoryTrackingService.markSerialQuality(allocation, warehouseId, toStatus, result.toMovementId(),
+					operatorName);
+			fromBeforeQuantity = fromBeforeQuantity.add(result.fromBeforeQuantity());
+			fromAfterQuantity = fromAfterQuantity.add(result.fromAfterQuantity());
+			toBeforeQuantity = toBeforeQuantity.add(result.toBeforeQuantity());
+			toAfterQuantity = toAfterQuantity.add(result.toAfterQuantity());
+			responses.add(trackingResponse(allocation, toStatus, result.toMovementId(), allocationId, trackingMethod,
+					QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceLineId));
+		}
+		return new TrackedTransferSummary(fromBeforeQuantity, fromAfterQuantity, toBeforeQuantity, toAfterQuantity,
+				responses);
+	}
+
+	private void assertTrackedQualityQuantity(List<InventoryTrackingService.ResolvedTrackingAllocation> allocations,
+			InventoryQualityStatus qualityStatus, BigDecimal expectedQuantity) {
+		BigDecimal actualQuantity = allocations.stream()
+			.filter((allocation) -> allocation.qualityStatus() == qualityStatus)
+			.map(InventoryTrackingService.ResolvedTrackingAllocation::quantity)
+			.reduce(ZERO, BigDecimal::add);
+		if (actualQuantity.compareTo(expectedQuantity) != 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH);
+		}
+	}
+
+	private void assertTrackedFreezeAvailable(Long warehouseId, Long materialId, BigDecimal quantity) {
+		BigDecimal quantityOnHand = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				""", BigDecimal.class, warehouseId, materialId);
+		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+				.subtract(rs.getBigDecimal("released_quantity"))
+				.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal availableQuantity = (quantityOnHand == null ? ZERO : quantityOnHand).subtract(lockedQuantity);
+		if (availableQuantity.compareTo(quantity) < 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE);
+		}
+	}
+
+	private boolean shouldUseTracking(Long materialId,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
+		if (trackingAllocations != null && !trackingAllocations.isEmpty()) {
+			return true;
+		}
+		return this.inventoryTrackingService.trackingMethod(materialId) != InventoryTrackingMethod.NONE;
+	}
+
+	private long trackedSourceLineId(Long sourceId, int index) {
+		return Math.addExact(Math.multiplyExact(sourceId, 1000L), index);
+	}
+
+	private InventoryTrackingService.TrackingAllocationResponse trackingResponse(
+			InventoryTrackingService.ResolvedTrackingAllocation allocation, InventoryQualityStatus qualityStatus,
+			Long movementId, Long allocationId, InventoryTrackingMethod trackingMethod, String documentType,
+			Long documentId, Long documentLineId) {
+		return new InventoryTrackingService.TrackingAllocationResponse(allocationId, trackingMethod.name(),
+				trackingMethod.displayName(), allocation.batchId(), allocation.batchNo(), allocation.serialId(),
+				allocation.serialNo(), allocation.quantity(), qualityStatus.name(), qualityStatus.displayName(),
+				movementId, documentType, documentId, documentLineId, documentType, documentId, documentLineId,
+				documentType + "-" + documentId, null);
 	}
 
 	private long nextQualityStatusTransferSourceId() {
@@ -301,7 +453,8 @@ public class QualityAdminService {
 				status == QualityInspectionStatus.PENDING ? null : "当前质量确认已处理", rs.getString("reason"),
 				rs.getString("remark"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getString("updated_by"), rs.getObject("updated_at", OffsetDateTime.class),
-				rs.getString("completed_by"), rs.getObject("completed_at", OffsetDateTime.class), rs.getInt("version"));
+				rs.getString("completed_by"), rs.getObject("completed_at", OffsetDateTime.class), rs.getInt("version"),
+				this.inventoryTrackingService.allocationResponses(QUALITY_INSPECTION_SOURCE, rs.getLong("id")));
 	}
 
 	private String sourceDocumentNo(String sourceType, Long sourceId) {
@@ -474,11 +627,13 @@ public class QualityAdminService {
 	}
 
 	public record QualityInspectionProcessRequest(@NotNull LocalDate businessDate, String qualifiedQuantity,
-			String rejectedQuantity, String frozenQuantity, String reason, String remark) {
+			String rejectedQuantity, String frozenQuantity, String reason, String remark,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record QualityStatusTransferRequest(Long warehouseId, Long materialId, Long unitId,
-			@NotNull LocalDate businessDate, String quantity, String reason, String remark) {
+			@NotNull LocalDate businessDate, String quantity, String reason, String remark,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record QualityInspectionResponse(Long id, String inspectionNo, String sourceType, String sourceTypeName,
@@ -489,12 +644,14 @@ public class QualityAdminService {
 			String statusName, String qualifiedQuantity, String rejectedQuantity, String frozenQuantity,
 			String remainingQuantity, boolean canProcess, String disabledReason, String reason, String remark,
 			String createdBy, OffsetDateTime createdAt, String updatedBy, OffsetDateTime updatedAt, String completedBy,
-			OffsetDateTime completedAt, Integer version) {
+			OffsetDateTime completedAt, Integer version,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	public record QualityStatusTransferResponse(String fromQualityStatus, String fromQualityStatusName,
 			String toQualityStatus, String toQualityStatusName, String quantity, String fromBeforeQuantity,
-			String fromAfterQuantity, String toBeforeQuantity, String toAfterQuantity) {
+			String fromAfterQuantity, String toBeforeQuantity, String toAfterQuantity,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	private record InspectionRow(Long id, String inspectionNo, String sourceType, Long sourceId, Long sourceLineId,
@@ -507,6 +664,11 @@ public class QualityAdminService {
 	}
 
 	private record QueryParts(String where, List<Object> args) {
+	}
+
+	private record TrackedTransferSummary(BigDecimal fromBeforeQuantity, BigDecimal fromAfterQuantity,
+			BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 }

@@ -36,7 +36,7 @@ public class InventoryPostingService {
 		validateOutboundQualityStatus(request);
 		OffsetDateTime now = OffsetDateTime.now();
 		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(),
-				request.qualityStatus(), now);
+				request.qualityStatus(), request.batchId(), request.serialId(), now);
 		BigDecimal beforeQuantity = balance.quantityOnHand();
 		BigDecimal afterQuantity = request.direction() == InventoryDirection.IN ? beforeQuantity.add(request.quantity())
 				: beforeQuantity.subtract(request.quantity());
@@ -46,24 +46,27 @@ public class InventoryPostingService {
 		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED
 				&& !request.consumedReservation()) {
 			BigDecimal availableQuantity = beforeQuantity
-				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId()));
+				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId(), request.batchId(),
+						request.serialId()));
 			if (availableQuantity.compareTo(request.quantity()) < 0) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
 			}
 		}
+		Long movementId;
 		try {
-			this.jdbcTemplate.update("""
+			movementId = this.jdbcTemplate.queryForObject("""
 					insert into inv_stock_movement (
 						movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
 						before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-						reason, remark, operator_name, occurred_at, quality_status
+						reason, remark, operator_name, occurred_at, quality_status, batch_id, serial_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-					""", movementNo(request), request.movementType().name(), request.direction().name(),
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					returning id
+					""", Long.class, movementNo(request), request.movementType().name(), request.direction().name(),
 					request.warehouseId(), request.materialId(), request.unitId(), request.quantity(), beforeQuantity,
 					afterQuantity, request.sourceType(), request.sourceId(), request.sourceLineId(),
 					request.businessDate(), request.reason(), blankToNull(request.remark()), request.operatorName(),
-					now, request.qualityStatus().name());
+					now, request.qualityStatus().name(), request.batchId(), request.serialId());
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateMovementException(exception, request.sourceType());
@@ -73,7 +76,7 @@ public class InventoryPostingService {
 				set quantity_on_hand = ?, unit_id = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", afterQuantity, request.unitId(), now, balance.id());
-		return new PostingResult(beforeQuantity, afterQuantity);
+		return new PostingResult(beforeQuantity, afterQuantity, movementId);
 	}
 
 	@Transactional
@@ -81,6 +84,15 @@ public class InventoryPostingService {
 			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName) {
+		return transferQualityStatus(warehouseId, materialId, unitId, fromStatus, toStatus, quantity, sourceType,
+				sourceId, sourceLineId, businessDate, reason, remark, operatorName, null, null);
+	}
+
+	@Transactional
+	public QualityTransferResult transferQualityStatus(Long warehouseId, Long materialId, Long unitId,
+			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
+			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
+			String operatorName, Long batchId, Long serialId) {
 		if (!allowedQualityStatusTransfer(fromStatus, toStatus)) {
 			throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
 		}
@@ -88,39 +100,43 @@ public class InventoryPostingService {
 		Long toSourceLineId = transferSourceLineId(sourceLineId, toStatus);
 		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.OUT, warehouseId, materialId, unitId, quantity, fromStatus, sourceType, sourceId,
-				fromSourceLineId, businessDate, reason, remark, operatorName));
+				fromSourceLineId, businessDate, reason, remark, operatorName, batchId, serialId));
 		PostingResult toResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.IN, warehouseId, materialId, unitId, quantity, toStatus, sourceType, sourceId,
-				toSourceLineId, businessDate, reason, remark, operatorName));
+				toSourceLineId, businessDate, reason, remark, operatorName, batchId, serialId));
 		return new QualityTransferResult(fromResult.beforeQuantity(), fromResult.afterQuantity(),
-				toResult.beforeQuantity(), toResult.afterQuantity());
+				toResult.beforeQuantity(), toResult.afterQuantity(), fromResult.movementId(), toResult.movementId());
 	}
 
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
-			OffsetDateTime now) {
-		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus);
+			Long batchId, Long serialId, OffsetDateTime now) {
+		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId);
 		if (balance.isEmpty()) {
 			try {
 				this.jdbcTemplate.update("""
 						insert into inv_stock_balance (
 							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
-							quality_status
+							quality_status, batch_id, serial_id
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?)
-						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name());
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name(), batchId,
+						serialId);
 			}
 			catch (DuplicateKeyException exception) {
 				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")
-						&& !containsConstraint(exception, "uk_inv_stock_balance_untracked")) {
+						&& !containsConstraint(exception, "uk_inv_stock_balance_untracked")
+						&& !containsConstraint(exception, "uk_inv_stock_balance_batch")
+						&& !containsConstraint(exception, "uk_inv_stock_balance_serial")) {
 					throw exception;
 				}
 			}
-			balance = lockBalance(warehouseId, materialId, qualityStatus);
+			balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId);
 		}
 		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
 	}
 
-	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus) {
+	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
+			Long batchId, Long serialId) {
 		return this.jdbcTemplate
 			.query("""
 					select id, quantity_on_hand
@@ -128,29 +144,29 @@ public class InventoryPostingService {
 					where warehouse_id = ?
 					and material_id = ?
 					and quality_status = ?
-					and batch_id is null
-					and serial_id is null
+					and batch_id is not distinct from ?
+					and serial_id is not distinct from ?
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
-					warehouseId, materialId, qualityStatus.name())
+					warehouseId, materialId, qualityStatus.name(), batchId, serialId)
 			.stream()
 			.findFirst();
 	}
 
-	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId) {
+	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId) {
 		return this.jdbcTemplate.query("""
 				select quantity, released_quantity, consumed_quantity
 				from inv_stock_reservation
 				where warehouse_id = ?
 				and material_id = ?
 				and quality_status = 'QUALIFIED'
-				and batch_id is null
-				and serial_id is null
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
 				and status = 'ACTIVE'
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
-					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
+					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, batchId, serialId)
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
 	}
@@ -290,29 +306,55 @@ public class InventoryPostingService {
 	public record PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 			Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
-			String operatorName, boolean consumedReservation) {
+			String operatorName, boolean consumedReservation, Long batchId, Long serialId) {
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
 				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
 				String remark, String operatorName) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
-					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false);
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null);
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, Long batchId, Long serialId) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId);
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, boolean consumedReservation) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, consumedReservation, null,
+					null);
 		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 				Long materialId, Long unitId, BigDecimal quantity, String sourceType, Long sourceId, Long sourceLineId,
 				LocalDate businessDate, String reason, String remark, String operatorName) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED,
-					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName, false);
+					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null);
 		}
 	}
 
-	public record PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity) {
+	public record PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity, Long movementId) {
+
+		public PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity) {
+			this(beforeQuantity, afterQuantity, null);
+		}
 	}
 
 	public record QualityTransferResult(BigDecimal fromBeforeQuantity, BigDecimal fromAfterQuantity,
-			BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity) {
+			BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity, Long fromMovementId, Long toMovementId) {
+
+		public QualityTransferResult(BigDecimal fromBeforeQuantity, BigDecimal fromAfterQuantity,
+				BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity) {
+			this(fromBeforeQuantity, fromAfterQuantity, toBeforeQuantity, toAfterQuantity, null, null);
+		}
 	}
 
 	private record BalanceRow(Long id, BigDecimal quantityOnHand) {

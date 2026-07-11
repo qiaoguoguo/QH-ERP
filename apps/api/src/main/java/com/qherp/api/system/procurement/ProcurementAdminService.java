@@ -9,6 +9,8 @@ import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.inventory.InventoryTrackingMethod;
+import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.quality.QualityAdminService;
@@ -60,16 +62,19 @@ public class ProcurementAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryTrackingService inventoryTrackingService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	private final QualityAdminService qualityAdminService;
 
 	public ProcurementAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
-			QualityAdminService qualityAdminService) {
+			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
 	}
@@ -277,7 +282,7 @@ public class ProcurementAdminService {
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			CreatedDocument created = insertReceiptWithRetry(order, receipt, operator.username(), now);
-			insertReceiptLines(created.id(), receipt.lines(), now);
+			insertReceiptLines(created.id(), receipt, now, operator.username());
 			this.auditService.record(operator, "PROCUREMENT_RECEIPT_CREATE", RECEIPT_TARGET, created.id(),
 					created.documentNo(), servletRequest);
 			return receipt(created.id());
@@ -307,8 +312,9 @@ public class ProcurementAdminService {
 					where id = ?
 					""", receipt.warehouseId(), receipt.businessDate(), blankToNull(receipt.remark()),
 					operator.username(), now, id);
+		this.inventoryTrackingService.deleteDraftDocumentTracking(RECEIPT_SOURCE_TYPE, id);
 			this.jdbcTemplate.update("delete from proc_purchase_receipt_line where receipt_id = ?", id);
-			insertReceiptLines(id, receipt.lines(), now);
+			insertReceiptLines(id, receipt, now, operator.username());
 			this.auditService.record(operator, "PROCUREMENT_RECEIPT_UPDATE", RECEIPT_TARGET, id,
 					current.receiptNo(), servletRequest);
 			return receipt(id);
@@ -370,11 +376,35 @@ public class ProcurementAdminService {
 		if (line.quantity().compareTo(remainingQuantity) > 0) {
 			throw new BusinessException(ApiErrorCode.PROCUREMENT_RECEIPT_EXCEEDS_ORDER);
 		}
-		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-				new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
-						InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
-						line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE, receipt.id(),
-						line.id(), receipt.businessDate(), "采购入库", line.remark(), operatorName));
+		List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+			.storedAllocations(RECEIPT_SOURCE_TYPE, receipt.id(), line.id());
+		BigDecimal beforeQuantity = ZERO;
+		BigDecimal afterQuantity = ZERO;
+		if (trackingAllocations.isEmpty()) {
+			assertUntrackedInboundMaterial(line.materialId());
+			InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+					new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
+							InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
+							line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE,
+							receipt.id(), line.id(), receipt.businessDate(), "采购入库", line.remark(), operatorName));
+			beforeQuantity = posting.beforeQuantity();
+			afterQuantity = posting.afterQuantity();
+		}
+		else {
+			for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+				InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+						new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
+								InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
+								allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE,
+								receipt.id(), line.id(), receipt.businessDate(), "采购入库", line.remark(),
+								operatorName, allocation.batchId(), allocation.serialId()));
+				this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
+				this.inventoryTrackingService.markInboundPosted(allocation, receipt.warehouseId(),
+						InventoryQualityStatus.PENDING_INSPECTION, posting.movementId(), operatorName);
+				beforeQuantity = beforeQuantity.add(posting.beforeQuantity());
+				afterQuantity = afterQuantity.add(posting.afterQuantity());
+			}
+		}
 		this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PURCHASE_RECEIPT, receipt.id(),
 				line.id(), receipt.warehouseId(), line.materialId(), line.unitId(), receipt.businessDate(),
 				line.quantity(), operatorName);
@@ -383,13 +413,23 @@ public class ProcurementAdminService {
 				set ordered_quantity = ?, received_quantity_before = ?, remaining_quantity_before = ?,
 				    before_quantity = ?, after_quantity = ?, updated_at = ?
 				where id = ?
-				""", orderLine.quantity(), orderLine.receivedQuantity(), remainingQuantity, posting.beforeQuantity(),
-				posting.afterQuantity(), now, line.id());
+				""", orderLine.quantity(), orderLine.receivedQuantity(), remainingQuantity, beforeQuantity,
+				afterQuantity, now, line.id());
 		this.jdbcTemplate.update("""
 				update proc_purchase_order_line
 				set received_quantity = received_quantity + ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", line.quantity(), now, orderLine.id());
+	}
+
+	private void assertUntrackedInboundMaterial(Long materialId) {
+		InventoryTrackingMethod trackingMethod = this.inventoryTrackingService.trackingMethod(materialId);
+		if (trackingMethod == InventoryTrackingMethod.BATCH) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_BATCH_REQUIRED);
+		}
+		if (trackingMethod == InventoryTrackingMethod.SERIAL) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_SERIAL_REQUIRED);
+		}
 	}
 
 	private ValidatedOrder validateOrderRequest(PurchaseOrderRequest request) {
@@ -475,7 +515,7 @@ public class ProcurementAdminService {
 			}
 			lines.add(new ValidatedReceiptLine(line.lineNo(), orderLine.id(), orderLine.materialId(),
 					orderLine.unitId(), orderLine.quantity(), orderLine.receivedQuantity(), remainingQuantity,
-					quantity, validateOptionalText(line.remark(), 500)));
+					quantity, validateOptionalText(line.remark(), 500), line.trackingAllocations()));
 		}
 		return new ValidatedReceipt(request.warehouseId(), request.businessDate(), validateOptionalText(request.remark(),
 				500), lines);
@@ -625,17 +665,24 @@ public class ProcurementAdminService {
 		throw new BusinessException(ApiErrorCode.CONFLICT);
 	}
 
-	private void insertReceiptLines(Long receiptId, List<ValidatedReceiptLine> lines, OffsetDateTime now) {
-		for (ValidatedReceiptLine line : lines) {
-			this.jdbcTemplate.update("""
+	private void insertReceiptLines(Long receiptId, ValidatedReceipt receipt, OffsetDateTime now,
+			String operatorName) {
+		for (int i = 0; i < receipt.lines().size(); i++) {
+			ValidatedReceiptLine line = receipt.lines().get(i);
+			Long lineId = this.jdbcTemplate.queryForObject("""
 					insert into proc_purchase_receipt_line (
 						receipt_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
 						received_quantity_before, remaining_quantity_before, quantity, remark, created_at, updated_at
 					)
 					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-					""", receiptId, line.lineNo(), line.orderLineId(), line.materialId(), line.unitId(),
+					returning id
+					""", Long.class, receiptId, line.lineNo(), line.orderLineId(), line.materialId(), line.unitId(),
 					line.orderedQuantity(), line.receivedQuantityBefore(), line.remainingQuantityBefore(),
 					line.quantity(), blankToNull(line.remark()), now, now);
+			this.inventoryTrackingService.prepareInboundAllocations(RECEIPT_SOURCE_TYPE, receiptId, lineId,
+					receipt.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+					InventoryQualityStatus.PENDING_INSPECTION, receipt.businessDate(), line.trackingAllocations(),
+					operatorName, "lines[" + i + "].trackingAllocations");
 		}
 	}
 
@@ -882,7 +929,7 @@ public class ProcurementAdminService {
 	private List<PurchaseReceiptLineResponse> receiptLines(Long receiptId) {
 		return this.jdbcTemplate.query("""
 				select l.id, l.line_no, l.order_line_id, l.material_id, m.code as material_code,
-				       m.name as material_name, l.unit_id, u.name as unit_name, l.ordered_quantity,
+				       m.name as material_name, m.tracking_method, l.unit_id, u.name as unit_name, l.ordered_quantity,
 				       l.received_quantity_before, l.remaining_quantity_before, l.quantity, l.before_quantity,
 				       l.after_quantity,
 				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
@@ -901,11 +948,15 @@ public class ProcurementAdminService {
 					rs.getObject("expected_arrival_date", LocalDate.class));
 			return new PurchaseReceiptLineResponse(rs.getLong("id"), rs.getInt("line_no"),
 					rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+					rs.getString("material_name"), rs.getString("tracking_method"),
+					InventoryTrackingMethod.valueOf(rs.getString("tracking_method")).displayName(),
+					rs.getLong("unit_id"), rs.getString("unit_name"),
 					rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("received_quantity_before"),
 					rs.getBigDecimal("remaining_quantity_before"), rs.getBigDecimal("quantity"),
 					rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), inTransitQuantity,
-					inTransitStatus.code(), inTransitStatus.displayName(), rs.getString("remark"));
+					inTransitStatus.code(), inTransitStatus.displayName(), rs.getString("remark"),
+					this.inventoryTrackingService.allocationResponses(RECEIPT_SOURCE_TYPE, receiptId,
+							rs.getLong("id")));
 		},
 				receiptId);
 	}
@@ -914,11 +965,14 @@ public class ProcurementAdminService {
 		return this.jdbcTemplate.query("""
 				select sm.id, sm.movement_no, sm.movement_type, sm.direction, w.name as warehouse_name,
 				       m.code as material_code, m.name as material_name, sm.quantity, sm.before_quantity,
-				       sm.after_quantity, sm.business_date, sm.operator_name, sm.occurred_at
+				       sm.after_quantity, sm.business_date, sm.operator_name, sm.occurred_at,
+				       sm.batch_id, b.batch_no, sm.serial_id, s.serial_no
 				from inv_stock_movement sm
 				join proc_purchase_receipt_line rl on rl.id = sm.source_line_id
 				join mst_warehouse w on w.id = sm.warehouse_id
 				join mst_material m on m.id = sm.material_id
+				left join inv_batch b on b.id = sm.batch_id
+				left join inv_serial s on s.id = sm.serial_id
 				where sm.source_type = ?
 				and sm.source_id = ?
 				order by sm.occurred_at asc, rl.line_no asc, sm.id asc
@@ -928,7 +982,9 @@ public class ProcurementAdminService {
 						rs.getString("warehouse_name"), rs.getString("material_code"), rs.getString("material_name"),
 						rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"),
 						rs.getBigDecimal("after_quantity"), rs.getObject("business_date", LocalDate.class),
-						rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class)),
+						rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
+						nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
+						rs.getString("serial_no")),
 				RECEIPT_SOURCE_TYPE, receiptId);
 	}
 
@@ -1123,6 +1179,11 @@ public class ProcurementAdminService {
 		return hasText(value) ? value : null;
 	}
 
+	private Long nullableLong(ResultSet rs, String column) throws SQLException {
+		long value = rs.getLong(column);
+		return rs.wasNull() ? null : value;
+	}
+
 	private static boolean hasText(String value) {
 		return value != null && !value.isBlank();
 	}
@@ -1136,7 +1197,8 @@ public class ProcurementAdminService {
 	}
 
 	public record PurchaseReceiptLineRequest(@NotNull Integer lineNo, @NotNull Long orderLineId, Long materialId,
-			Long unitId, @NotNull BigDecimal quantity, String remark) {
+			Long unitId, @NotNull BigDecimal quantity, String remark,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record PurchaseReceiptRequest(@NotNull Long warehouseId, @NotNull LocalDate businessDate, String remark,
@@ -1175,16 +1237,18 @@ public class ProcurementAdminService {
 	}
 
 	public record PurchaseReceiptLineResponse(Long id, Integer lineNo, Long orderLineId, Long materialId,
-			String materialCode, String materialName, Long unitId, String unitName, BigDecimal orderedQuantity,
-			BigDecimal receivedQuantityBefore, BigDecimal remainingQuantityBefore, BigDecimal quantity,
-			BigDecimal beforeQuantity, BigDecimal afterQuantity, BigDecimal inTransitQuantity,
-			String inTransitStatus, String inTransitStatusName, String remark) {
+			String materialCode, String materialName, String trackingMethod, String trackingMethodName, Long unitId,
+			String unitName, BigDecimal orderedQuantity, BigDecimal receivedQuantityBefore,
+			BigDecimal remainingQuantityBefore, BigDecimal quantity, BigDecimal beforeQuantity,
+			BigDecimal afterQuantity, BigDecimal inTransitQuantity, String inTransitStatus,
+			String inTransitStatusName, String remark,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	public record PurchaseReceiptInventoryMovementResponse(Long id, String movementNo, String movementType,
 			String direction, String warehouseName, String materialCode, String materialName, BigDecimal quantity,
 			BigDecimal beforeQuantity, BigDecimal afterQuantity, LocalDate businessDate, String operatorName,
-			OffsetDateTime occurredAt) {
+			OffsetDateTime occurredAt, Long batchId, String batchNo, Long serialId, String serialNo) {
 	}
 
 	public record PurchaseReceiptDetailResponse(Long id, String receiptNo, Long orderId, String orderNo,
@@ -1209,7 +1273,8 @@ public class ProcurementAdminService {
 
 	private record ValidatedReceiptLine(Integer lineNo, Long orderLineId, Long materialId, Long unitId,
 			BigDecimal orderedQuantity, BigDecimal receivedQuantityBefore, BigDecimal remainingQuantityBefore,
-			BigDecimal quantity, String remark) {
+			BigDecimal quantity, String remark,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record OrderRow(Long id, String orderNo, Long supplierId, LocalDate orderDate,

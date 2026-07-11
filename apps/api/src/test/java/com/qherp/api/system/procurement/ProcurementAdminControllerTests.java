@@ -170,6 +170,203 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void purchaseReceiptBatchAllocationsCreateTrackingFacts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		long orderId = createAndConfirmOrder(admin, fixture, "批次采购入库", "5.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		Map<String, Object> receiptLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"5.000000", "批次拆分入库");
+		receiptLine.put("trackingAllocations",
+				List.of(trackingAllocation("PROC-BATCH-A-" + SEQUENCE.incrementAndGet(), "2.000000"),
+						trackingAllocation("PROC-BATCH-B-" + SEQUENCE.incrementAndGet(), "3.000000")));
+		long receiptId = createReceiptId(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "批次拆分入库", List.of(receiptLine)));
+		JsonNode draftReceipt = data(getReceipt(admin, receiptId));
+		JsonNode draftLine = firstLine(draftReceipt);
+		assertThat(draftLine.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(draftLine.get("trackingMethodName").asText()).isEqualTo("批次管理");
+		assertThat(draftLine.get("trackingAllocations").size()).isEqualTo(2);
+		JsonNode firstAllocation = draftLine.get("trackingAllocations").get(0);
+		assertThat(firstAllocation.get("allocationId").isNumber()).isTrue();
+		assertThat(firstAllocation.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(firstAllocation.get("trackingMethodName").asText()).isEqualTo("批次管理");
+		assertThat(firstAllocation.get("documentType").asText()).isEqualTo("PURCHASE_RECEIPT");
+		assertThat(firstAllocation.get("documentId").longValue()).isEqualTo(receiptId);
+		assertThat(firstAllocation.get("documentLineId").longValue()).isEqualTo(draftLine.get("id").longValue());
+		assertThat(firstAllocation.get("sourceType").asText()).isEqualTo("PURCHASE_RECEIPT");
+		assertThat(firstAllocation.get("sourceId").longValue()).isEqualTo(receiptId);
+		assertThat(firstAllocation.get("sourceLineId").longValue()).isEqualTo(draftLine.get("id").longValue());
+		assertThat(firstAllocation.get("sourceDocumentNo").asText()).isEqualTo(draftReceipt.get("receiptNo").asText());
+		assertThat(firstAllocation.get("sourceLineNo").intValue()).isEqualTo(1);
+
+		assertOk(postReceipt(admin, receiptId));
+		long receiptLineId = receiptLineId(receiptId);
+		long firstBatchId = batchId(fixture.materialId(),
+				draftLine.get("trackingAllocations").get(0).get("batchNo").asText());
+		long secondBatchId = batchId(fixture.materialId(),
+				draftLine.get("trackingAllocations").get(1).get("batchNo").asText());
+
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION, firstBatchId, null), "2.000000");
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION, secondBatchId, null), "3.000000");
+		assertThat(movementCountBySource("PURCHASE_RECEIPT", receiptLineId)).isEqualTo(2);
+		assertThat(trackingAllocationCount("PURCHASE_RECEIPT", receiptId, receiptLineId)).isEqualTo(2);
+		assertThat(trackingAllocationMovementCount("PURCHASE_RECEIPT", receiptId, receiptLineId)).isEqualTo(2);
+	}
+
+	@Test
+	void purchaseReceiptSerialAllocationsValidateQuantityAndCreateSerialFacts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		long orderId = createAndConfirmOrder(admin, fixture, "序列采购入库", "5.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		Map<String, Object> fractionalLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"1.500000", "序列数量非整数");
+		fractionalLine.put("trackingAllocations", List.of(serialAllocation("PROC-SN-FRAC", "1.000000")));
+		assertError(createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列数量非整数", List.of(fractionalLine))), HttpStatus.BAD_REQUEST,
+				"INVENTORY_TRACKING_QUANTITY_MISMATCH");
+
+		Map<String, Object> mismatchLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"2.000000", "序列数量不匹配");
+		mismatchLine.put("trackingAllocations", List.of(serialAllocation("PROC-SN-MISMATCH", "1.000000")));
+		assertError(createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列数量不匹配", List.of(mismatchLine))), HttpStatus.BAD_REQUEST,
+				"INVENTORY_TRACKING_QUANTITY_MISMATCH");
+
+		Map<String, Object> duplicatedLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"2.000000", "序列重复");
+		duplicatedLine.put("trackingAllocations",
+				List.of(serialAllocation("PROC-SN-DUP", "1.000000"), serialAllocation("PROC-SN-DUP", "1.000000")));
+		assertError(createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列重复", List.of(duplicatedLine))), HttpStatus.CONFLICT,
+				"INVENTORY_SERIAL_DUPLICATED");
+
+		Map<String, Object> validLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"2.000000", "序列入库");
+		validLine.put("trackingAllocations",
+				List.of(serialAllocation("PROC-SN-A-" + SEQUENCE.incrementAndGet(), "1.000000"),
+						serialAllocation("PROC-SN-B-" + SEQUENCE.incrementAndGet(), "1.000000")));
+		long receiptId = createReceiptId(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列入库", List.of(validLine)));
+		assertOk(postReceipt(admin, receiptId));
+		long receiptLineId = receiptLineId(receiptId);
+
+		assertThat(serialCountByReceipt(receiptId, receiptLineId)).isEqualTo(2);
+		assertThat(movementCountBySource("PURCHASE_RECEIPT", receiptLineId)).isEqualTo(2);
+		assertThat(trackingAllocationMovementCount("PURCHASE_RECEIPT", receiptId, receiptLineId)).isEqualTo(2);
+		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
+	}
+
+	@Test
+	void purchaseReceiptSerialDraftUpdateCanReusePreviousCancelledSerial() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		long orderId = createAndConfirmOrder(admin, fixture, "序列草稿更新", "1.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+		String firstSerialNo = "PROC-SN-REUSE-A-" + SEQUENCE.incrementAndGet();
+		String secondSerialNo = "PROC-SN-REUSE-B-" + SEQUENCE.incrementAndGet();
+
+		Map<String, Object> firstLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"1.000000", "序列草稿 A");
+		firstLine.put("trackingAllocations", List.of(serialAllocation(firstSerialNo, "1.000000")));
+		long receiptId = createReceiptId(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列草稿 A", List.of(firstLine)));
+
+		Map<String, Object> secondLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"1.000000", "序列草稿 B");
+		secondLine.put("trackingAllocations", List.of(serialAllocation(secondSerialNo, "1.000000")));
+		assertOk(updateReceipt(admin, receiptId, receiptPayload(fixture.warehouseId(), "序列草稿 B", List.of(secondLine))));
+
+		Map<String, Object> reusedLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"1.000000", "序列草稿 A 复用");
+		reusedLine.put("trackingAllocations", List.of(serialAllocation(firstSerialNo, "1.000000")));
+		ResponseEntity<String> reused = updateReceipt(admin, receiptId,
+				receiptPayload(fixture.warehouseId(), "序列草稿 A 复用", List.of(reusedLine)));
+
+		assertOk(reused);
+		JsonNode allocation = firstLine(data(reused)).get("trackingAllocations").get(0);
+		assertThat(allocation.get("serialNo").asText()).isEqualTo(firstSerialNo);
+	}
+
+	@Test
+	void purchaseReceiptTrackingValidationReturnsLineFieldDetails() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		long orderId = createAndConfirmOrder(admin, fixture, "序列错误详情", "2.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		Map<String, Object> duplicatedLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"2.000000", "序列重复错误详情");
+		duplicatedLine.put("trackingAllocations",
+				List.of(serialAllocation("PROC-SN-DETAIL", "1.000000"),
+						serialAllocation("PROC-SN-DETAIL", "1.000000")));
+		ResponseEntity<String> duplicated = createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列重复错误详情", List.of(duplicatedLine)));
+
+		assertError(duplicated, HttpStatus.CONFLICT, "INVENTORY_SERIAL_DUPLICATED");
+		assertErrorDetail(duplicated, "lines[0].trackingAllocations[1].serialNo");
+
+		Map<String, Object> mismatchLine = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(),
+				"2.000000", "序列数量错误详情");
+		mismatchLine.put("trackingAllocations", List.of(serialAllocation("PROC-SN-DETAIL-MISMATCH", "1.000000")));
+		ResponseEntity<String> mismatch = createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列数量错误详情", List.of(mismatchLine)));
+
+		assertError(mismatch, HttpStatus.BAD_REQUEST, "INVENTORY_TRACKING_QUANTITY_MISMATCH");
+		assertErrorDetail(mismatch, "lines[0].trackingAllocations");
+	}
+
+	@Test
+	void purchaseReceiptBatchAllocationRequiresBatchIdentityWithLineFieldDetail() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		long orderId = createAndConfirmOrder(admin, fixture, "批次必填错误详情", "1.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("quantity", "1.000000");
+		Map<String, Object> line = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(), "1.000000",
+				"批次必填错误详情");
+		line.put("trackingAllocations", List.of(allocation));
+		ResponseEntity<String> response = createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "批次必填错误详情", List.of(line)));
+
+		assertError(response, HttpStatus.BAD_REQUEST, "INVENTORY_BATCH_REQUIRED");
+		assertErrorDetail(response, "lines[0].trackingAllocations[0].batchNo");
+	}
+
+	@Test
+	void purchaseReceiptSerialAllocationRequiresSerialNoWithLineFieldDetail() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		long orderId = createAndConfirmOrder(admin, fixture, "序列必填错误详情", "1.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("quantity", "1.000000");
+		Map<String, Object> line = receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(), "1.000000",
+				"序列必填错误详情");
+		line.put("trackingAllocations", List.of(allocation));
+		ResponseEntity<String> response = createReceipt(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "序列必填错误详情", List.of(line)));
+
+		assertError(response, HttpStatus.BAD_REQUEST, "INVENTORY_SERIAL_REQUIRED");
+		assertErrorDetail(response, "lines[0].trackingAllocations[0].serialNo");
+	}
+
+	@Test
 	void confirmedPurchaseOrderExposesInTransitAndReceiptReducesIt() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = fixture();
@@ -621,6 +818,20 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> trackingAllocation(String batchNo, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchNo", batchNo);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
+	private Map<String, Object> serialAllocation(String serialNo, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("serialNo", serialNo);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
 	private ProcurementFixture fixture() {
 		int suffix = SEQUENCE.incrementAndGet();
 		long unitId = insertUnit("PROC_UNIT_" + suffix, "采购单位" + suffix);
@@ -707,6 +918,11 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 				materialId);
 	}
 
+	private void setTrackingMethod(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
+				trackingMethod, materialId);
+	}
+
 	private void disableUnit(long unitId) {
 		this.jdbcTemplate.update("update mst_unit set status = 'DISABLED', updated_at = now() where id = ?", unitId);
 	}
@@ -733,6 +949,28 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 				and material_id = ?
 				and quality_status = ?
 				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
+	}
+
+	private BigDecimal trackingBalanceQuantity(long warehouseId, long materialId,
+			InventoryQualityStatus qualityStatus, Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), batchId, serialId);
+	}
+
+	private long batchId(long materialId, String batchNo) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_batch
+				where material_id = ?
+				and batch_no = ?
+				""", Long.class, materialId, batchNo);
 	}
 
 	private String movementQualityStatus(String sourceType, long sourceLineId) {
@@ -775,6 +1013,38 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long trackingAllocationCount(String documentType, long documentId, long documentLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				""", Long.class, documentType, documentId, documentLineId);
+	}
+
+	private long trackingAllocationMovementCount(String documentType, long documentId, long documentLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and movement_id is not null
+				""", Long.class, documentType, documentId, documentLineId);
+	}
+
+	private long serialCountByReceipt(long receiptId, long receiptLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_serial
+				where source_type = 'PURCHASE_RECEIPT'
+				and source_id = ?
+				and source_line_id = ?
+				and stock_status = 'IN_STOCK'
+				""", Long.class, receiptId, receiptLineId);
 	}
 
 	private BigDecimal orderLineReceivedQuantity(long orderLineId) {
@@ -1011,6 +1281,17 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {
 		assertThat(response.getStatusCode()).isEqualTo(status);
 		assertThat(code(response)).isEqualTo(code);
+	}
+
+	private void assertErrorDetail(ResponseEntity<String> response, String field) throws Exception {
+		JsonNode details = this.objectMapper.readTree(response.getBody()).get("details");
+		assertThat(details).isNotNull();
+		assertThat(details.size()).isGreaterThan(0);
+		List<String> fields = new ArrayList<>();
+		for (JsonNode detail : details) {
+			fields.add(detail.get("field").asText());
+		}
+		assertThat(fields).contains(field);
 	}
 
 	private void assertErrorIn(ResponseEntity<String> response, HttpStatus status, List<String> codes) throws Exception {
