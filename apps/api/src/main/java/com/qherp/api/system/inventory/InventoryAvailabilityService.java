@@ -296,18 +296,18 @@ public class InventoryAvailabilityService {
 	}
 
 	private Optional<BalanceLock> lockQualifiedBalance(Long warehouseId, Long materialId) {
-		return this.jdbcTemplate
-			.query("""
-					select id, quantity_on_hand
-					from inv_stock_balance
-					where warehouse_id = ?
-					and material_id = ?
-					and quality_status = 'QUALIFIED'
-					for update
-					""", (rs, rowNum) -> new BalanceLock(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
-					warehouseId, materialId)
-			.stream()
-			.findFirst();
+		List<BigDecimal> quantities = this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId);
+		if (quantities.isEmpty()) {
+			return Optional.empty();
+		}
+		return Optional.of(new BalanceLock(null, quantities.stream().reduce(ZERO, BigDecimal::add)));
 	}
 
 	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId) {

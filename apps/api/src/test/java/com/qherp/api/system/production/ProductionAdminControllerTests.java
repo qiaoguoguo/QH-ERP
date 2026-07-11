@@ -272,6 +272,66 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void workOrderMaterialsAggregateTrackedBalancesWithoutDuplicatingRequirementLine() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.rawMaterialId(), "BATCH");
+		seedBatchStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(),
+				"MFG-AGG-A-" + SEQUENCE.incrementAndGet(), "2.000000");
+		seedBatchStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(),
+				"MFG-AGG-B-" + SEQUENCE.incrementAndGet(), "3.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		JsonNode released = data(releaseWorkOrder(admin, workOrderId));
+		int rawLineCount = 0;
+		for (JsonNode material : released.get("materials")) {
+			if (material.get("materialId").longValue() == fixture.rawMaterialId()) {
+				rawLineCount++;
+			}
+		}
+
+		assertThat(rawLineCount).isOne();
+		JsonNode rawRequirement = workOrderMaterial(released, fixture.rawMaterialId());
+		assertDecimal(rawRequirement, "quantityOnHand", "5.000000");
+		assertDecimal(rawRequirement, "availableQuantity", "5.000000");
+	}
+
+	@Test
+	void materialIssueBatchAllocationPostsTrackingMovementAndConsumesReservation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.rawMaterialId(), "BATCH");
+		TrackedBatch batch = seedBatchStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(),
+				"MFG-ISS-BATCH-" + SEQUENCE.incrementAndGet(), "10.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "2.000000");
+		JsonNode released = data(releaseWorkOrder(admin, workOrderId));
+		JsonNode rawRequirement = workOrderMaterial(released, fixture.rawMaterialId());
+
+		Map<String, Object> line = materialIssueLine(1, rawRequirement.get("id").longValue(),
+				fixture.issueWarehouseId(), "4.000000");
+		line.put("trackingAllocations", List.of(batchAllocation(batch.batchId(), "4.000000")));
+		long issueId = createMaterialIssueId(admin, workOrderId,
+				materialIssuePayload("批次生产领料", List.of(line)));
+
+		ResponseEntity<String> posted = postMaterialIssue(admin, workOrderId, issueId);
+		assertOk(posted);
+		JsonNode postedLine = materialIssueLine(data(posted), fixture.rawMaterialId());
+		long issueLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId(),
+				InventoryQualityStatus.QUALIFIED, batch.batchId(), null), "6.000000");
+		assertThat(trackingAllocationMovementCount("PRODUCTION_MATERIAL_ISSUE", issueId, issueLineId)).isOne();
+		assertThat(trackedMovementCount("PRODUCTION_MATERIAL_ISSUE", issueLineId, batch.batchId())).isOne();
+		assertDecimal(productionReservationRemainingForLine(rawRequirement.get("id").longValue()), "0.000000");
+	}
+
+	@Test
 	void workOrderReleaseRejectsWhenIssueWarehouseNetAvailableIsInsufficient() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
@@ -946,6 +1006,13 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		return allocation;
 	}
 
+	private Map<String, Object> batchAllocation(long batchId, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchId", batchId);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
 	private void lockPeriod(LocalDate date) {
 		this.jdbcTemplate.update("insert into biz_business_period (period_code, period_name, start_date, end_date, status, created_at, updated_at) values (?, ?, ?, ?, 'LOCKED', now(), now())",
 				"LOCK-PROD-" + date, "锁定期间", date.withDayOfMonth(1), date.withDayOfMonth(date.lengthOfMonth()));
@@ -1013,6 +1080,27 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				trackingMethod, materialId);
 	}
 
+	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
+			String quantity) {
+		long batchId = this.jdbcTemplate.queryForObject("""
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'TEST', ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, batchNo, 7_200_000L + SEQUENCE.incrementAndGet(),
+				7_210_000L + SEQUENCE.incrementAndGet(), LocalDate.now());
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
+					batch_id, created_at, updated_at
+				)
+				values (?, ?, ?, 'QUALIFIED', ?, 0, ?, now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), batchId);
+		return new TrackedBatch(batchId, batchNo);
+	}
+
 	private long batchId(long materialId, String batchNo) {
 		return this.jdbcTemplate.queryForObject("""
 				select id
@@ -1076,6 +1164,17 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				""", BigDecimal.class, workOrderId);
 	}
 
+	private BigDecimal productionReservationRemainingForLine(long workOrderMaterialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+				from inv_stock_reservation
+				where reservation_type = 'RESERVATION'
+				and source_type = 'PRODUCTION_WORK_ORDER'
+				and source_line_id = ?
+				and status = 'ACTIVE'
+				""", BigDecimal.class, workOrderMaterialId);
+	}
+
 	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
 		return this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -1115,6 +1214,16 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				and document_line_id = ?
 				and movement_id is not null
 				""", Long.class, documentType, documentId, documentLineId);
+	}
+
+	private long trackedMovementCount(String sourceType, long sourceLineId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				and batch_id = ?
+				""", Long.class, sourceType, sourceLineId, batchId);
 	}
 
 	private long serialCountByCompletion(long receiptId) {
@@ -1312,6 +1421,9 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private record ProductionFixture(long unitId, long issueWarehouseId, long receiptWarehouseId, long categoryId,
 			long productMaterialId, long rawMaterialId, long auxiliaryMaterialId, long bomId) {
+	}
+
+	private record TrackedBatch(long batchId, String batchNo) {
 	}
 
 }

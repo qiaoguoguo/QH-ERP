@@ -4,7 +4,6 @@ import com.qherp.api.common.ApiErrorCode;
 import com.qherp.api.common.ApiErrorDetail;
 import com.qherp.api.common.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -29,8 +28,11 @@ public class InventoryTrackingService {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	public InventoryTrackingService(JdbcTemplate jdbcTemplate) {
+	private final InventorySourceDocumentResolver sourceDocumentResolver;
+
+	public InventoryTrackingService(JdbcTemplate jdbcTemplate, InventorySourceDocumentResolver sourceDocumentResolver) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.sourceDocumentResolver = sourceDocumentResolver;
 	}
 
 	public List<ResolvedTrackingAllocation> prepareInboundAllocations(String documentType, Long documentId,
@@ -66,6 +68,215 @@ public class InventoryTrackingService {
 		}
 		return prepareSerialInbound(documentType, documentId, documentLineId, warehouseId, materialId, unitId,
 				lineQuantity, qualityStatus, businessDate, normalized, operatorName, fieldPrefix);
+	}
+
+	public List<ResolvedTrackingAllocation> prepareOutboundAllocations(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId, BigDecimal lineQuantity,
+			List<TrackingAllocationRequest> allocations, String operatorName, String fieldPrefix) {
+		return prepareOutboundAllocations(documentType, documentId, documentLineId, warehouseId, materialId, unitId,
+				lineQuantity, InventoryQualityStatus.QUALIFIED, allocations, operatorName, fieldPrefix);
+	}
+
+	public List<ResolvedTrackingAllocation> prepareOutboundAllocations(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId, BigDecimal lineQuantity,
+			InventoryQualityStatus qualityStatus, List<TrackingAllocationRequest> allocations, String operatorName,
+			String fieldPrefix) {
+		InventoryTrackingMethod trackingMethod = trackingMethod(materialId);
+		List<TrackingAllocationRequest> normalized = allocations == null ? List.of() : allocations;
+		if (trackingMethod == InventoryTrackingMethod.NONE) {
+			if (!normalized.isEmpty()) {
+				throw error(ApiErrorCode.VALIDATION_ERROR, fieldPrefix);
+			}
+			return List.of(new ResolvedTrackingAllocation(null, null, null, null, lineQuantity,
+					qualityStatus, null));
+		}
+		if (trackingMethod == InventoryTrackingMethod.BATCH && normalized.isEmpty()) {
+			throw error(ApiErrorCode.INVENTORY_BATCH_REQUIRED, fieldPrefix);
+		}
+		if (trackingMethod == InventoryTrackingMethod.SERIAL && normalized.isEmpty()) {
+			throw error(ApiErrorCode.INVENTORY_SERIAL_REQUIRED, fieldPrefix);
+		}
+		validateTotalQuantity(lineQuantity, normalized, fieldPrefix);
+		if (trackingMethod == InventoryTrackingMethod.BATCH) {
+			return prepareBatchOutbound(documentType, documentId, documentLineId, warehouseId, materialId, unitId,
+					qualityStatus, normalized, operatorName, fieldPrefix);
+		}
+		return prepareSerialOutbound(documentType, documentId, documentLineId, warehouseId, materialId, unitId,
+				lineQuantity, qualityStatus, normalized, operatorName, fieldPrefix);
+	}
+
+	public List<ResolvedTrackingAllocation> resolveStoredOutboundAllocations(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId, BigDecimal lineQuantity,
+			String fieldPrefix) {
+		return resolveStoredOutboundAllocations(documentType, documentId, documentLineId, warehouseId, materialId,
+				unitId, lineQuantity, InventoryQualityStatus.QUALIFIED, fieldPrefix);
+	}
+
+	public List<ResolvedTrackingAllocation> resolveStoredOutboundAllocations(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId, BigDecimal lineQuantity,
+			InventoryQualityStatus qualityStatus, String fieldPrefix) {
+		InventoryTrackingMethod trackingMethod = trackingMethod(materialId);
+		List<ResolvedTrackingAllocation> stored = storedAllocations(documentType, documentId, documentLineId);
+		if (trackingMethod == InventoryTrackingMethod.NONE) {
+			if (!stored.isEmpty()) {
+				throw error(ApiErrorCode.VALIDATION_ERROR, fieldPrefix);
+			}
+			return List.of(new ResolvedTrackingAllocation(null, null, null, null, lineQuantity,
+					qualityStatus, null));
+		}
+		if (trackingMethod == InventoryTrackingMethod.BATCH && stored.isEmpty()) {
+			throw error(ApiErrorCode.INVENTORY_BATCH_REQUIRED, fieldPrefix);
+		}
+		if (trackingMethod == InventoryTrackingMethod.SERIAL && stored.isEmpty()) {
+			throw error(ApiErrorCode.INVENTORY_SERIAL_REQUIRED, fieldPrefix);
+		}
+		BigDecimal total = stored.stream().map(ResolvedTrackingAllocation::quantity).reduce(ZERO, BigDecimal::add);
+		if (lineQuantity == null || total.compareTo(lineQuantity) != 0) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH, fieldPrefix);
+		}
+		if (trackingMethod == InventoryTrackingMethod.BATCH) {
+			Map<Long, BigDecimal> batchQuantities = new HashMap<>();
+			for (int i = 0; i < stored.size(); i++) {
+				ResolvedTrackingAllocation allocation = stored.get(i);
+				if (allocation.batchId() == null) {
+					throw error(ApiErrorCode.INVENTORY_BATCH_REQUIRED, indexedField(fieldPrefix, i) + ".batchId");
+				}
+				batchQuantities.merge(allocation.batchId(), allocation.quantity(), BigDecimal::add);
+			}
+			for (Map.Entry<Long, BigDecimal> entry : batchQuantities.entrySet()) {
+				validateTrackedBalance(warehouseId, materialId, qualityStatus, entry.getKey(), null,
+						entry.getValue());
+			}
+			return stored;
+		}
+		Set<Long> serialIds = new HashSet<>();
+		for (int i = 0; i < stored.size(); i++) {
+			ResolvedTrackingAllocation allocation = stored.get(i);
+			if (allocation.serialId() == null) {
+				throw error(ApiErrorCode.INVENTORY_SERIAL_REQUIRED, indexedField(fieldPrefix, i) + ".serialId");
+			}
+			if (allocation.quantity().compareTo(ONE) != 0 || !serialIds.add(allocation.serialId())) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH,
+						indexedField(fieldPrefix, i) + ".serialId");
+			}
+			validateSerialAvailableForOutbound(allocation.serialId(), warehouseId, materialId, qualityStatus,
+					indexedField(fieldPrefix, i) + ".serialId");
+			validateTrackedBalance(warehouseId, materialId, qualityStatus, null,
+					allocation.serialId(), allocation.quantity());
+		}
+		return stored;
+	}
+
+	public List<ResolvedTrackingAllocation> prepareSourceInheritedInboundAllocations(String documentType,
+			Long documentId, Long documentLineId, Long warehouseId, Long materialId, Long unitId,
+			BigDecimal lineQuantity, InventoryQualityStatus qualityStatus, String sourceType, Long sourceId,
+			Long sourceLineId, List<TrackingAllocationRequest> allocations, String operatorName, String fieldPrefix) {
+		InventoryTrackingMethod trackingMethod = trackingMethod(materialId);
+		List<TrackingAllocationRequest> normalized = allocations == null ? List.of() : allocations;
+		if (trackingMethod == InventoryTrackingMethod.NONE) {
+			if (!normalized.isEmpty()) {
+				throw error(ApiErrorCode.VALIDATION_ERROR, fieldPrefix);
+			}
+			return List.of(new ResolvedTrackingAllocation(null, null, null, null, lineQuantity, qualityStatus, null));
+		}
+		if (normalized.isEmpty()) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, fieldPrefix);
+		}
+		validateTotalQuantity(lineQuantity, normalized, fieldPrefix);
+		List<ResolvedTrackingAllocation> result = new ArrayList<>();
+		Set<Long> sourceAllocationIds = new HashSet<>();
+		Map<String, BigDecimal> inheritedQuantities = new HashMap<>();
+		for (int i = 0; i < normalized.size(); i++) {
+			TrackingAllocationRequest allocation = normalized.get(i);
+			String allocationField = indexedField(fieldPrefix, i);
+			Long sourceAllocationId = allocation.sourceAllocationId();
+			if (sourceAllocationId == null || !sourceAllocationIds.add(sourceAllocationId)) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH,
+						allocationField + ".sourceAllocationId");
+			}
+			SourceAllocation source = sourceAllocation(sourceType, sourceId, sourceLineId, sourceAllocationId);
+			validateSourceAllocationIdentity(trackingMethod, allocation, source, allocationField);
+			BigDecimal quantity = validateQuantity(allocation.quantity(), allocationField + ".quantity");
+			String identityKey = identityKey(source.batchId(), source.serialId());
+			inheritedQuantities.merge(identityKey, quantity, BigDecimal::add);
+			BigDecimal alreadyInherited = postedInheritedQuantity(sourceType, sourceId, sourceLineId, source.batchId(),
+					source.serialId(), documentType, documentId);
+			if (alreadyInherited.add(inheritedQuantities.get(identityKey)).compareTo(source.quantity()) > 0) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH,
+						allocationField + ".sourceAllocationId");
+			}
+			Long allocationId = insertAllocation(InventoryTrackingAllocationType.SOURCE_INHERIT, documentType,
+					documentId, documentLineId, sourceType, sourceId, sourceLineId, warehouseId, materialId, unitId,
+					qualityStatus, source.batchId(), source.serialId(), quantity, null, operatorName);
+			result.add(new ResolvedTrackingAllocation(source.batchId(), source.batchNo(), source.serialId(),
+					source.serialNo(), quantity, qualityStatus, allocationId));
+		}
+		return result;
+	}
+
+	public List<ResolvedTrackingAllocation> resolveStoredInboundAllocations(String documentType, Long documentId,
+			Long documentLineId, Long materialId, BigDecimal lineQuantity, InventoryQualityStatus qualityStatus,
+			String fieldPrefix) {
+		InventoryTrackingMethod trackingMethod = trackingMethod(materialId);
+		List<ResolvedTrackingAllocation> stored = storedAllocations(documentType, documentId, documentLineId);
+		if (trackingMethod == InventoryTrackingMethod.NONE) {
+			if (!stored.isEmpty()) {
+				throw error(ApiErrorCode.VALIDATION_ERROR, fieldPrefix);
+			}
+			return List.of(new ResolvedTrackingAllocation(null, null, null, null, lineQuantity, qualityStatus, null));
+		}
+		if (stored.isEmpty()) {
+			ApiErrorCode errorCode = trackingMethod == InventoryTrackingMethod.BATCH ? ApiErrorCode.INVENTORY_BATCH_REQUIRED
+					: ApiErrorCode.INVENTORY_SERIAL_REQUIRED;
+			throw error(errorCode, fieldPrefix);
+		}
+		BigDecimal total = stored.stream().map(ResolvedTrackingAllocation::quantity).reduce(ZERO, BigDecimal::add);
+		if (lineQuantity == null || total.compareTo(lineQuantity) != 0) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH, fieldPrefix);
+		}
+		for (int i = 0; i < stored.size(); i++) {
+			ResolvedTrackingAllocation allocation = stored.get(i);
+			String allocationField = indexedField(fieldPrefix, i);
+			if (trackingMethod == InventoryTrackingMethod.BATCH && allocation.batchId() == null) {
+				throw error(ApiErrorCode.INVENTORY_BATCH_REQUIRED, allocationField + ".batchId");
+			}
+			if (trackingMethod == InventoryTrackingMethod.SERIAL && allocation.serialId() == null) {
+				throw error(ApiErrorCode.INVENTORY_SERIAL_REQUIRED, allocationField + ".serialId");
+			}
+		}
+		return stored;
+	}
+
+	public List<ResolvedTrackingAllocation> resolveStoredSourceInheritedInboundAllocations(String documentType,
+			Long documentId, Long documentLineId, Long materialId, BigDecimal lineQuantity,
+			InventoryQualityStatus qualityStatus, String sourceType, Long sourceId, Long sourceLineId,
+			String fieldPrefix) {
+		List<ResolvedTrackingAllocation> stored = resolveStoredInboundAllocations(documentType, documentId,
+				documentLineId, materialId, lineQuantity, qualityStatus, fieldPrefix);
+		InventoryTrackingMethod trackingMethod = trackingMethod(materialId);
+		if (trackingMethod == InventoryTrackingMethod.NONE) {
+			return stored;
+		}
+		Map<String, BigDecimal> requestedByIdentity = new HashMap<>();
+		for (ResolvedTrackingAllocation allocation : stored) {
+			String identityKey = identityKey(allocation.batchId(), allocation.serialId());
+			requestedByIdentity.merge(identityKey, allocation.quantity(), BigDecimal::add);
+		}
+		for (Map.Entry<String, BigDecimal> entry : requestedByIdentity.entrySet()) {
+			ResolvedTrackingAllocation allocation = stored.stream()
+				.filter((candidate) -> identityKey(candidate.batchId(), candidate.serialId()).equals(entry.getKey()))
+				.findFirst()
+				.orElseThrow(() -> error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, fieldPrefix));
+			BigDecimal sourceQuantity = sourceIdentityQuantityForUpdate(sourceType, sourceId, sourceLineId,
+					allocation.batchId(), allocation.serialId());
+			BigDecimal alreadyInherited = postedInheritedQuantity(sourceType, sourceId, sourceLineId,
+					allocation.batchId(), allocation.serialId(), documentType, documentId);
+			if (sourceQuantity.compareTo(ZERO) <= 0
+					|| alreadyInherited.add(entry.getValue()).compareTo(sourceQuantity) > 0) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, fieldPrefix);
+			}
+		}
+		return stored;
 	}
 
 	public List<ResolvedTrackingAllocation> storedAllocations(String documentType, Long documentId,
@@ -158,6 +369,18 @@ public class InventoryTrackingService {
 				""", warehouseId, qualityStatus.name(), movementId, operatorName, allocation.serialId());
 	}
 
+	public void markOutboundPosted(ResolvedTrackingAllocation allocation, Long movementId, String operatorName) {
+		if (allocation.serialId() == null) {
+			return;
+		}
+		this.jdbcTemplate.update("""
+				update inv_serial
+				set stock_status = 'OUTBOUND', last_movement_id = ?, updated_by = ?, updated_at = now(),
+				    version = version + 1
+				where id = ?
+				""", movementId, operatorName, allocation.serialId());
+	}
+
 	public List<ResolvedTrackingAllocation> resolveQualityAllocations(Long warehouseId, Long materialId, Long unitId,
 			InventoryQualityStatus fromStatus, BigDecimal totalQuantity, List<TrackingAllocationRequest> allocations) {
 		return resolveQualityAllocations(warehouseId, materialId, unitId, fromStatus, totalQuantity, allocations, null,
@@ -247,6 +470,65 @@ public class InventoryTrackingService {
 		String value = this.jdbcTemplate.queryForObject("select tracking_method from mst_material where id = ?",
 				String.class, materialId);
 		return InventoryTrackingMethod.valueOf(value);
+	}
+
+	private List<ResolvedTrackingAllocation> prepareBatchOutbound(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId,
+			InventoryQualityStatus qualityStatus, List<TrackingAllocationRequest> allocations, String operatorName,
+			String fieldPrefix) {
+		List<ResolvedTrackingAllocation> result = new ArrayList<>();
+		Map<Long, BigDecimal> batchQuantities = new HashMap<>();
+		for (int i = 0; i < allocations.size(); i++) {
+			TrackingAllocationRequest allocation = allocations.get(i);
+			String allocationField = indexedField(fieldPrefix, i);
+			BigDecimal quantity = validateQuantity(allocation.quantity(), allocationField + ".quantity");
+			Long batchId = outboundBatchId(allocation, materialId, allocationField);
+			validateBatchMaterial(batchId, materialId);
+			batchQuantities.merge(batchId, quantity, BigDecimal::add);
+			Long allocationId = insertAllocation(InventoryTrackingAllocationType.OUTBOUND, documentType, documentId,
+					documentLineId, documentType, documentId, documentLineId, warehouseId, materialId, unitId,
+					qualityStatus, batchId, null, quantity, null, operatorName);
+			result.add(new ResolvedTrackingAllocation(batchId, batchNo(batchId), null, null, quantity,
+					qualityStatus, allocationId));
+		}
+		for (Map.Entry<Long, BigDecimal> entry : batchQuantities.entrySet()) {
+			validateTrackedBalance(warehouseId, materialId, qualityStatus, entry.getKey(), null,
+					entry.getValue());
+		}
+		return result;
+	}
+
+	private List<ResolvedTrackingAllocation> prepareSerialOutbound(String documentType, Long documentId,
+			Long documentLineId, Long warehouseId, Long materialId, Long unitId, BigDecimal lineQuantity,
+			InventoryQualityStatus qualityStatus, List<TrackingAllocationRequest> allocations, String operatorName,
+			String fieldPrefix) {
+		if (!integerQuantity(lineQuantity) || lineQuantity.intValueExact() != allocations.size()) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH, fieldPrefix);
+		}
+		List<ResolvedTrackingAllocation> result = new ArrayList<>();
+		Set<Long> serialIds = new HashSet<>();
+		for (int i = 0; i < allocations.size(); i++) {
+			TrackingAllocationRequest allocation = allocations.get(i);
+			String allocationField = indexedField(fieldPrefix, i);
+			BigDecimal quantity = validateQuantity(allocation.quantity(), allocationField + ".quantity");
+			if (quantity.compareTo(ONE) != 0) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH, allocationField + ".quantity");
+			}
+			Long serialId = outboundSerialId(allocation, materialId, allocationField);
+			if (!serialIds.add(serialId)) {
+				throw error(ApiErrorCode.INVENTORY_SERIAL_DUPLICATED, allocationField + ".serialId");
+			}
+			validateSerialAvailableForOutbound(serialId, warehouseId, materialId, qualityStatus,
+					allocationField + ".serialId");
+			validateTrackedBalance(warehouseId, materialId, qualityStatus, null, serialId,
+					quantity);
+			Long allocationId = insertAllocation(InventoryTrackingAllocationType.OUTBOUND, documentType, documentId,
+					documentLineId, documentType, documentId, documentLineId, warehouseId, materialId, unitId,
+					qualityStatus, null, serialId, quantity, null, operatorName);
+			result.add(new ResolvedTrackingAllocation(null, null, serialId, serialNo(serialId), quantity,
+					qualityStatus, allocationId));
+		}
+		return result;
 	}
 
 	private List<ResolvedTrackingAllocation> prepareBatchInbound(String documentType, Long documentId,
@@ -421,40 +703,65 @@ public class InventoryTrackingService {
 	}
 
 	private String sourceDocumentNo(String sourceType, Long sourceId) {
-		if (sourceType == null || sourceId == null) {
-			return null;
-		}
-		try {
-			return switch (sourceType) {
-				case "PURCHASE_RECEIPT" -> this.jdbcTemplate.queryForObject(
-						"select receipt_no from proc_purchase_receipt where id = ?", String.class, sourceId);
-				case "PRODUCTION_COMPLETION_RECEIPT", "PRODUCTION_COMPLETION" -> this.jdbcTemplate.queryForObject(
-						"select receipt_no from mfg_completion_receipt where id = ?", String.class, sourceId);
-				case "QUALITY_INSPECTION" -> this.jdbcTemplate.queryForObject(
-						"select inspection_no from qua_quality_inspection where id = ?", String.class, sourceId);
-				case "QUALITY_STATUS_TRANSFER" -> "QUALITY_STATUS_TRANSFER-" + sourceId;
-				default -> null;
-			};
-		}
-		catch (EmptyResultDataAccessException exception) {
-			return null;
-		}
+		return this.sourceDocumentResolver.documentNo(sourceType, sourceId);
 	}
 
 	private Integer sourceLineNo(String sourceType, Long sourceLineId) {
-		if (sourceType == null || sourceLineId == null) {
-			return null;
+		return this.sourceDocumentResolver.lineNo(sourceType, sourceLineId);
+	}
+
+	private Long outboundBatchId(TrackingAllocationRequest allocation, Long materialId, String allocationField) {
+		if (allocation.batchId() != null) {
+			return allocation.batchId();
 		}
-		try {
-			return switch (sourceType) {
-				case "PURCHASE_RECEIPT" -> this.jdbcTemplate.queryForObject(
-						"select line_no from proc_purchase_receipt_line where id = ?", Integer.class, sourceLineId);
-				case "PRODUCTION_COMPLETION_RECEIPT", "PRODUCTION_COMPLETION" -> 1;
-				default -> null;
-			};
+		if (!hasText(allocation.batchNo())) {
+			throw error(ApiErrorCode.INVENTORY_BATCH_REQUIRED, allocationField + ".batchId");
 		}
-		catch (EmptyResultDataAccessException exception) {
-			return null;
+		return this.jdbcTemplate.query("""
+				select id
+				from inv_batch
+				where material_id = ?
+				and batch_no = ?
+				""", (rs, rowNum) -> rs.getLong("id"), materialId, allocation.batchNo())
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> error(ApiErrorCode.INVENTORY_TRACKING_NOT_FOUND, allocationField + ".batchNo"));
+	}
+
+	private Long outboundSerialId(TrackingAllocationRequest allocation, Long materialId, String allocationField) {
+		if (allocation.serialId() != null) {
+			return allocation.serialId();
+		}
+		if (!hasText(allocation.serialNo())) {
+			throw error(ApiErrorCode.INVENTORY_SERIAL_REQUIRED, allocationField + ".serialId");
+		}
+		return this.jdbcTemplate.query("""
+				select id
+				from inv_serial
+				where material_id = ?
+				and serial_no = ?
+				""", (rs, rowNum) -> rs.getLong("id"), materialId, allocation.serialNo())
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> error(ApiErrorCode.INVENTORY_TRACKING_NOT_FOUND, allocationField + ".serialNo"));
+	}
+
+	private void validateSerialAvailableForOutbound(Long serialId, Long warehouseId, Long materialId,
+			InventoryQualityStatus qualityStatus, String field) {
+		List<SerialState> states = this.jdbcTemplate.query("""
+				select warehouse_id, material_id, quality_status, stock_status
+				from inv_serial
+				where id = ?
+				for update
+				""", (rs, rowNum) -> new SerialState(nullableLong(rs, "warehouse_id"), rs.getLong("material_id"),
+				InventoryQualityStatus.valueOf(rs.getString("quality_status")), rs.getString("stock_status")),
+				serialId);
+		SerialState state = states.stream()
+			.findFirst()
+			.orElseThrow(() -> error(ApiErrorCode.INVENTORY_TRACKING_NOT_FOUND, field));
+		if (!materialId.equals(state.materialId()) || !warehouseId.equals(state.warehouseId())
+				|| state.qualityStatus() != qualityStatus || !"IN_STOCK".equals(state.stockStatus())) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE, field);
 		}
 	}
 
@@ -482,20 +789,130 @@ public class InventoryTrackingService {
 		}
 	}
 
+	private SourceAllocation sourceAllocation(String sourceType, Long sourceId, Long sourceLineId,
+			Long sourceAllocationId) {
+		return this.jdbcTemplate.query("""
+				select a.id, a.batch_id, b.batch_no, a.serial_id, s.serial_no, a.quantity
+				from inv_stock_tracking_allocation a
+				left join inv_batch b on b.id = a.batch_id
+				left join inv_serial s on s.id = a.serial_id
+				where a.id = ?
+				and a.document_type = ?
+				and a.document_id = ?
+				and a.document_line_id = ?
+				and a.allocation_type = 'OUTBOUND'
+				""", (rs, rowNum) -> new SourceAllocation(rs.getLong("id"), nullableLong(rs, "batch_id"),
+				rs.getString("batch_no"), nullableLong(rs, "serial_id"), rs.getString("serial_no"),
+				rs.getBigDecimal("quantity")), sourceAllocationId, sourceType, sourceId, sourceLineId)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH,
+					"trackingAllocations.sourceAllocationId"));
+	}
+
+	private void validateSourceAllocationIdentity(InventoryTrackingMethod trackingMethod,
+			TrackingAllocationRequest allocation, SourceAllocation source, String allocationField) {
+		if (trackingMethod == InventoryTrackingMethod.BATCH) {
+			if (source.batchId() == null) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH,
+						allocationField + ".sourceAllocationId");
+			}
+			if (allocation.batchId() != null && !allocation.batchId().equals(source.batchId())) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, allocationField + ".batchId");
+			}
+			if (hasText(allocation.batchNo()) && !allocation.batchNo().equals(source.batchNo())) {
+				throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, allocationField + ".batchNo");
+			}
+			return;
+		}
+		if (source.serialId() == null) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, allocationField + ".sourceAllocationId");
+		}
+		if (allocation.serialId() != null && !allocation.serialId().equals(source.serialId())) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, allocationField + ".serialId");
+		}
+		if (hasText(allocation.serialNo()) && !allocation.serialNo().equals(source.serialNo())) {
+			throw error(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH, allocationField + ".serialNo");
+		}
+	}
+
+	private BigDecimal postedInheritedQuantity(String sourceType, Long sourceId, Long sourceLineId, Long batchId,
+			Long serialId, String currentDocumentType, Long currentDocumentId) {
+		BigDecimal quantity = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity), 0)
+				from inv_stock_tracking_allocation
+				where allocation_type = 'SOURCE_INHERIT'
+				and source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and movement_id is not null
+				and not (document_type = ? and document_id = ?)
+				""", BigDecimal.class, sourceType, sourceId, sourceLineId, batchId, serialId, currentDocumentType,
+				currentDocumentId);
+		return quantity == null ? ZERO : quantity;
+	}
+
+	private BigDecimal sourceIdentityQuantityForUpdate(String sourceType, Long sourceId, Long sourceLineId,
+			Long batchId, Long serialId) {
+		return this.jdbcTemplate.query("""
+				select quantity
+				from inv_stock_tracking_allocation
+				where allocation_type = 'OUTBOUND'
+				and document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity"), sourceType, sourceId, sourceLineId, batchId,
+				serialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+	}
+
+	private String identityKey(Long batchId, Long serialId) {
+		return (batchId == null ? "B:" : "B:" + batchId) + "|" + (serialId == null ? "S:" : "S:" + serialId);
+	}
+
 	private void validateTrackedBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
 			Long batchId, Long serialId, BigDecimal quantity) {
-		BigDecimal available = this.jdbcTemplate.queryForObject("""
-				select coalesce(sum(quantity_on_hand), 0)
+		List<BigDecimal> balances = this.jdbcTemplate.query("""
+				select quantity_on_hand
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
 				and quality_status = ?
 				and batch_id is not distinct from ?
 				and serial_id is not distinct from ?
-				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), batchId, serialId);
-		if (available == null || available.compareTo(quantity) < 0) {
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
+				qualityStatus.name(), batchId, serialId);
+		BigDecimal quantityOnHand = balances.stream().reduce(ZERO, BigDecimal::add);
+		if (balances.isEmpty() || quantityOnHand.compareTo(ZERO) <= 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE);
+		}
+		BigDecimal available = quantityOnHand.subtract(lockedTrackedQuantity(warehouseId, materialId, qualityStatus,
+				batchId, serialId));
+		if (available.compareTo(quantity) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH);
 		}
+	}
+
+	private BigDecimal lockedTrackedQuantity(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
+			Long batchId, Long serialId) {
+		BigDecimal locked = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+				from inv_stock_reservation
+				where status = 'ACTIVE'
+				and warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), batchId, serialId);
+		return locked == null ? ZERO : locked;
 	}
 
 	private String batchNo(Long batchId) {
@@ -570,6 +987,14 @@ public class InventoryTrackingService {
 			Long batchId, String batchNo, Long serialId, String serialNo, BigDecimal quantity, String qualityStatus,
 			String qualityStatusName, Long movementId, String documentType, Long documentId, Long documentLineId,
 			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, Integer sourceLineNo) {
+	}
+
+	private record SerialState(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
+			String stockStatus) {
+	}
+
+	private record SourceAllocation(Long id, Long batchId, String batchNo, Long serialId, String serialNo,
+			BigDecimal quantity) {
 	}
 
 }

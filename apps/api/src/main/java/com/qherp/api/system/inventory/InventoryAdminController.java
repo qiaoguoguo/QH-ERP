@@ -23,8 +23,12 @@ public class InventoryAdminController {
 
 	private final InventoryAdminService inventoryAdminService;
 
-	public InventoryAdminController(InventoryAdminService inventoryAdminService) {
+	private final InventoryTraceService inventoryTraceService;
+
+	public InventoryAdminController(InventoryAdminService inventoryAdminService,
+			InventoryTraceService inventoryTraceService) {
 		this.inventoryAdminService = inventoryAdminService;
+		this.inventoryTraceService = inventoryTraceService;
 	}
 
 	@GetMapping("/balances")
@@ -91,13 +95,15 @@ public class InventoryAdminController {
 	}
 
 	@GetMapping("/traces/batches/{id}")
-	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> batchTrace(@PathVariable Long id) {
-		return ApiResponse.ok(this.inventoryAdminService.batchTrace(id));
+	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> batchTrace(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.inventoryTraceService.batchTrace(id, currentUser));
 	}
 
 	@GetMapping("/traces/serials/{id}")
-	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> serialTrace(@PathVariable Long id) {
-		return ApiResponse.ok(this.inventoryAdminService.serialTrace(id));
+	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> serialTrace(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.inventoryTraceService.serialTrace(id, currentUser));
 	}
 
 	@GetMapping("/reservations")

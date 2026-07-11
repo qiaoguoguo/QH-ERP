@@ -462,6 +462,308 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void purchaseReturnBatchAllocationPostsTrackingOutboundMovement() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-PUR-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+
+		Map<String, Object> line = purchaseReturnLine(receipt.firstReceiptLineId(), "2.000000", "批次采购退货");
+		line.put("trackingAllocations", List.of(batchAllocation(batch.batchId(), "2.000000")));
+		ResponseEntity<String> created = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-batch-" + SEQUENCE.incrementAndGet(),
+						List.of(line)),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
+				admin);
+		assertOk(posted);
+		JsonNode postedLine = data(posted).get("lines").get(0);
+		long returnLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId()),
+				"3.000000");
+		assertThat(trackingAllocationMovementCount("PURCHASE_RETURN", returnId, returnLineId)).isOne();
+		assertThat(trackedMovementCount("PURCHASE_RETURN", returnLineId, batch.batchId())).isOne();
+	}
+
+	@Test
+	void purchaseReturnSourceLinesAggregateTrackedBalancesAndPostMultipleBatches() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch firstBatch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-PUR-AGG-A-" + SEQUENCE.incrementAndGet(), "2.000000");
+		TrackedBatch secondBatch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-PUR-AGG-B-" + SEQUENCE.incrementAndGet(), "3.000000");
+
+		JsonNode source = data(get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(), admin))
+			.get("items")
+			.get(0);
+		assertThat(source.get("lines").size()).isEqualTo(2);
+		JsonNode candidate = purchaseReturnCandidate(source, receipt.firstReceiptLineId(),
+				InventoryQualityStatus.QUALIFIED.name());
+		assertDecimalText(candidate, "quantityOnHand", "5.000000");
+		assertDecimalText(candidate, "availableQuantity", "5.000000");
+
+		Map<String, Object> insufficientLine = purchaseReturnLine(receipt.firstReceiptLineId(), "5.000000",
+				"批次超可用采购退货");
+		insufficientLine.put("trackingAllocations", List.of(batchAllocation(firstBatch.batchId(), "3.000000"),
+				batchAllocation(secondBatch.batchId(), "2.000000")));
+		assertError(post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-over-batch-"
+						+ SEQUENCE.incrementAndGet(), List.of(insufficientLine)),
+				admin), HttpStatus.CONFLICT, "INVENTORY_TRACKING_STOCK_NOT_ENOUGH");
+
+		Map<String, Object> line = purchaseReturnLine(receipt.firstReceiptLineId(), "5.000000", "多批采购退货");
+		line.put("trackingAllocations", List.of(batchAllocation(firstBatch.batchId(), "2.000000"),
+				batchAllocation(secondBatch.batchId(), "3.000000")));
+		ResponseEntity<String> created = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-multi-batch-"
+						+ SEQUENCE.incrementAndGet(), List.of(line)),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
+				admin);
+		assertOk(posted);
+		long returnLineId = data(posted).get("lines").get(0).get("id").longValue();
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), firstBatch.batchId()),
+				"0.000000");
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), secondBatch.batchId()),
+				"0.000000");
+		assertThat(trackingAllocationMovementCount("PURCHASE_RETURN", returnId, returnLineId)).isEqualTo(2);
+	}
+
+	@Test
+	void purchaseReturnBatchAllocationUsesRequestedNonFrozenQualityStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PurchaseReturnFixture fixture = purchaseReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedPurchaseReceipt receipt = createPostedReceiptWithPayable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-PUR-PENDING-BATCH-" + SEQUENCE.incrementAndGet(), "2.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+
+		Map<String, Object> line = purchaseReturnLine(receipt.firstReceiptLineId(), "2.000000", "待检批次采购退货",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		line.put("trackingAllocations", List.of(batchAllocation(batch.batchId(), "2.000000")));
+		ResponseEntity<String> created = post("/api/admin/procurement/returns",
+				purchaseReturnPayload(receipt.receiptId(), "purchase-return-pending-batch-"
+						+ SEQUENCE.incrementAndGet(), List.of(line)),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
+				admin);
+		assertOk(posted);
+		long returnLineId = data(posted).get("lines").get(0).get("id").longValue();
+		assertThat(movementQualityStatus("PURCHASE_RETURN", returnLineId))
+			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "0.000000");
+		assertThat(trackingAllocationMovementCount("PURCHASE_RETURN", returnId, returnLineId)).isOne();
+	}
+
+	@Test
+	void salesReturnInheritsSourceBatchAllocationAndRejectsTampering() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SALES-RETURN-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("SALES_SHIPMENT", shipment.shipmentId(),
+				shipment.firstShipmentLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				batch.batchId(), "5.000000", "SALES_SHIPMENT");
+
+		ResponseEntity<String> created = post("/api/admin/sales/returns",
+				salesReturnPayload(shipment.shipmentId(), "sales-return-tracking-" + SEQUENCE.incrementAndGet(),
+						List.of(returnLine(shipment.firstShipmentLineId(), "2.000000", "批次销售退货",
+								List.of(sourceInheritedBatchAllocation(sourceAllocationId, batch.batchId(),
+										"2.000000"))))),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/sales/returns/" + returnId + "/post", Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedLine = data(posted).get("lines").get(0);
+		long returnLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
+		assertThat(trackingAllocationMovementCount("SALES_RETURN", returnId, returnLineId)).isOne();
+		assertThat(trackedMovementCount("SALES_RETURN", returnLineId, batch.batchId())).isOne();
+
+		TrackedBatch tamperedBatch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SALES-TAMPER-BATCH-" + SEQUENCE.incrementAndGet(), "1.000000");
+		assertError(post("/api/admin/sales/returns",
+				salesReturnPayload(shipment.shipmentId(), null,
+						List.of(returnLine(shipment.firstShipmentLineId(), "1.000000", "篡改批次",
+								List.of(sourceInheritedBatchAllocation(sourceAllocationId, tamperedBatch.batchId(),
+										"1.000000"))))),
+				admin), HttpStatus.CONFLICT, "INVENTORY_TRACKING_SOURCE_MISMATCH");
+	}
+
+	@Test
+	void salesReturnRechecksSourceBatchRemainingAtPostWhenTwoDraftsUseSameSourceAllocation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SALES-POST-RECHECK-" + SEQUENCE.incrementAndGet(), "1.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("SALES_SHIPMENT", shipment.shipmentId(),
+				shipment.firstShipmentLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				batch.batchId(), "1.000000", "SALES_SHIPMENT");
+
+		long firstReturnId = createSalesReturnWithTracking(admin, shipment.shipmentId(), shipment.firstShipmentLineId(),
+				sourceAllocationId, batch.batchId(), "sales-return-recheck-a-" + SEQUENCE.incrementAndGet());
+		long secondReturnId = createSalesReturnWithTracking(admin, shipment.shipmentId(), shipment.firstShipmentLineId(),
+				sourceAllocationId, batch.batchId(), "sales-return-recheck-b-" + SEQUENCE.incrementAndGet());
+		long secondReturnLineId = firstSalesReturnLineId(secondReturnId);
+
+		assertOk(put("/api/admin/sales/returns/" + firstReturnId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/sales/returns/" + secondReturnId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_SOURCE_MISMATCH");
+		assertThat(movementCountBySource("SALES_RETURN", secondReturnLineId)).isZero();
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "1.000000");
+	}
+
+	@Test
+	void salesReturnRechecksSourceSerialRemainingAtPostWhenTwoDraftsUseSameSourceAllocation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "2.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "40.00", "0.00", "40.00");
+		TrackedSerial serial = seedSerialStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SALES-RETURN-SERIAL-" + SEQUENCE.incrementAndGet());
+		long sourceAllocationId = insertTrackedOutboundSerialSource("SALES_SHIPMENT", shipment.shipmentId(),
+				shipment.firstShipmentLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				serial.serialId(), "SALES_SHIPMENT");
+
+		long firstReturnId = createSalesReturnWithSerialTracking(admin, shipment.shipmentId(),
+				shipment.firstShipmentLineId(), sourceAllocationId, serial.serialId(),
+				"sales-return-serial-recheck-a-" + SEQUENCE.incrementAndGet());
+		long secondReturnId = createSalesReturnWithSerialTracking(admin, shipment.shipmentId(),
+				shipment.firstShipmentLineId(), sourceAllocationId, serial.serialId(),
+				"sales-return-serial-recheck-b-" + SEQUENCE.incrementAndGet());
+		long secondReturnLineId = firstSalesReturnLineId(secondReturnId);
+
+		assertOk(put("/api/admin/sales/returns/" + firstReturnId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/sales/returns/" + secondReturnId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_SOURCE_MISMATCH");
+		assertThat(movementCountBySource("SALES_RETURN", secondReturnLineId)).isZero();
+		assertDecimal(serialTrackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), serial.serialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "1.000000");
+	}
+
+	@Test
+	void productionMaterialReturnInheritsSourceBatchAllocation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "5.000000", "10.000000");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-MAT-RETURN-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("PRODUCTION_MATERIAL_ISSUE", issue.issueId(),
+				issue.issueLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(), batch.batchId(),
+				"5.000000", "PRODUCTION_ISSUE");
+
+		ResponseEntity<String> created = post("/api/admin/production/material-returns",
+				materialReturnPayload(issue.issueId(), "material-return-tracking-" + SEQUENCE.incrementAndGet(),
+						List.of(materialReturnLine(issue.issueLineId(), "2.000000", "批次生产退料",
+								List.of(sourceInheritedBatchAllocation(sourceAllocationId, batch.batchId(),
+										"2.000000"))))),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/production/material-returns/" + returnId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedLine = data(posted).get("lines").get(0);
+		long returnLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
+		assertThat(trackingAllocationMovementCount("PRODUCTION_MATERIAL_RETURN", returnId, returnLineId)).isOne();
+		assertThat(trackedMovementCount("PRODUCTION_MATERIAL_RETURN", returnLineId, batch.batchId())).isOne();
+	}
+
+	@Test
+	void productionMaterialReturnRechecksSourceBatchRemainingAtPostWhenTwoDraftsUseSameSourceAllocation()
+			throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "5.000000", "10.000000");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-MAT-POST-RECHECK-" + SEQUENCE.incrementAndGet(), "1.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("PRODUCTION_MATERIAL_ISSUE", issue.issueId(),
+				issue.issueLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(), batch.batchId(),
+				"1.000000", "PRODUCTION_ISSUE");
+
+		long firstReturnId = createMaterialReturnWithTracking(admin, issue.issueId(), issue.issueLineId(),
+				sourceAllocationId, batch.batchId(), "material-return-recheck-a-" + SEQUENCE.incrementAndGet());
+		long secondReturnId = createMaterialReturnWithTracking(admin, issue.issueId(), issue.issueLineId(),
+				sourceAllocationId, batch.batchId(), "material-return-recheck-b-" + SEQUENCE.incrementAndGet());
+		long secondReturnLineId = firstMaterialReturnLineId(secondReturnId);
+
+		assertOk(put("/api/admin/production/material-returns/" + firstReturnId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/production/material-returns/" + secondReturnId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_SOURCE_MISMATCH");
+		assertThat(movementCountBySource("PRODUCTION_MATERIAL_RETURN", secondReturnLineId)).isZero();
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "1.000000");
+	}
+
+	@Test
+	void productionMaterialReturnRechecksSourceSerialRemainingAtPostWhenTwoDraftsUseSameSourceAllocation()
+			throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		setTrackingMethod(fixture.materialId(), "SERIAL");
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "2.000000", "10.000000");
+		TrackedSerial serial = seedSerialStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-MAT-RETURN-SERIAL-" + SEQUENCE.incrementAndGet());
+		long sourceAllocationId = insertTrackedOutboundSerialSource("PRODUCTION_MATERIAL_ISSUE", issue.issueId(),
+				issue.issueLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(), serial.serialId(),
+				"PRODUCTION_ISSUE");
+
+		long firstReturnId = createMaterialReturnWithSerialTracking(admin, issue.issueId(), issue.issueLineId(),
+				sourceAllocationId, serial.serialId(), "material-return-serial-recheck-a-" + SEQUENCE.incrementAndGet());
+		long secondReturnId = createMaterialReturnWithSerialTracking(admin, issue.issueId(), issue.issueLineId(),
+				sourceAllocationId, serial.serialId(), "material-return-serial-recheck-b-" + SEQUENCE.incrementAndGet());
+		long secondReturnLineId = firstMaterialReturnLineId(secondReturnId);
+
+		assertOk(put("/api/admin/production/material-returns/" + firstReturnId + "/post", Map.of(), admin));
+		assertError(put("/api/admin/production/material-returns/" + secondReturnId + "/post", Map.of(), admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_SOURCE_MISMATCH");
+		assertThat(movementCountBySource("PRODUCTION_MATERIAL_RETURN", secondReturnLineId)).isZero();
+		assertDecimal(serialTrackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), serial.serialId(),
+				InventoryQualityStatus.PENDING_INSPECTION), "1.000000");
+	}
+
+	@Test
 	void procurementReturnSupportsPartialFullStockAndInvalidOperationRules() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		PurchaseReturnFixture fixture = purchaseReturnFixture();
@@ -946,6 +1248,38 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				issue.workOrderMaterialId(), "3.000000");
 		assertError(put("/api/admin/production/material-supplements/" + stockBlockedId + "/post", Map.of(), admin),
 				HttpStatus.CONFLICT, "INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH");
+	}
+
+	@Test
+	void productionMaterialSupplementBatchAllocationPostsTrackingOutboundMovement() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "6.000000", "10.000000");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SUPPLEMENT-BATCH-" + SEQUENCE.incrementAndGet(), "4.000000");
+
+		Map<String, Object> line = materialSupplementLine(issue.workOrderMaterialId(), "2.000000", "批次生产补料",
+				List.of(batchAllocation(batch.batchId(), "2.000000")));
+		ResponseEntity<String> created = post("/api/admin/production/material-supplements",
+				materialSupplementPayload(issue.workOrderId(), fixture.warehouseId(),
+						"material-supplement-batch-" + SEQUENCE.incrementAndGet(), List.of(line)),
+				admin);
+		assertOk(created);
+		long supplementId = data(created).get("id").longValue();
+
+		ResponseEntity<String> posted = put("/api/admin/production/material-supplements/" + supplementId + "/post",
+				Map.of(), admin);
+		assertOk(posted);
+		JsonNode postedLine = data(posted).get("lines").get(0);
+		long supplementLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), batch.batchId()),
+				"2.000000");
+		assertThat(trackingAllocationMovementCount("PRODUCTION_MATERIAL_SUPPLEMENT", supplementId,
+				supplementLineId)).isOne();
+		assertThat(trackedMovementCount("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId, batch.batchId())).isOne();
 	}
 
 	@Test
@@ -1761,9 +2095,160 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, ?, ?, ?, 0, now(), now(), ?)
 				on conflict (warehouse_id, material_id, quality_status)
+					where batch_id is null and serial_id is null
 				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
 					updated_at = now(), version = inv_stock_balance.version + 1
 				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+	}
+
+	private void setTrackingMethod(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
+				trackingMethod, materialId);
+	}
+
+	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
+			String quantity) {
+		return seedBatchStock(warehouseId, materialId, unitId, batchNo, quantity, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
+			String quantity, InventoryQualityStatus qualityStatus) {
+		long batchId = this.jdbcTemplate.queryForObject("""
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'TEST', ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, batchNo, 7_300_000L + SEQUENCE.incrementAndGet(),
+				7_310_000L + SEQUENCE.incrementAndGet(), LocalDate.now());
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
+					batch_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 0, ?, now(), now())
+				""", warehouseId, materialId, unitId, qualityStatus.name(), new BigDecimal(quantity), batchId);
+		return new TrackedBatch(batchId, batchNo);
+	}
+
+	private TrackedSerial seedSerialStock(long warehouseId, long materialId, long unitId, String serialNo) {
+		long serialId = this.jdbcTemplate.queryForObject("""
+				insert into inv_serial (
+					material_id, serial_no, source_type, source_id, source_line_id, warehouse_id, quality_status,
+					stock_status, business_date, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'TEST', ?, ?, ?, 'QUALIFIED', 'IN_STOCK', ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, serialNo, 7_320_000L + SEQUENCE.incrementAndGet(),
+				7_330_000L + SEQUENCE.incrementAndGet(), warehouseId, LocalDate.now());
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
+					serial_id, created_at, updated_at
+				)
+				values (?, ?, ?, 'QUALIFIED', 1.000000, 0, ?, now(), now())
+				""", warehouseId, materialId, unitId, serialId);
+		return new TrackedSerial(serialId, serialNo);
+	}
+
+	private Map<String, Object> batchAllocation(long batchId, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchId", batchId);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
+	private Map<String, Object> sourceInheritedBatchAllocation(long sourceAllocationId, long batchId,
+			String quantity) {
+		Map<String, Object> allocation = batchAllocation(batchId, quantity);
+		allocation.put("sourceAllocationId", sourceAllocationId);
+		return allocation;
+	}
+
+	private Map<String, Object> sourceInheritedSerialAllocation(long sourceAllocationId, long serialId) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("serialId", serialId);
+		allocation.put("quantity", "1.000000");
+		allocation.put("sourceAllocationId", sourceAllocationId);
+		return allocation;
+	}
+
+	private long insertTrackedOutboundSource(String documentType, long documentId, long documentLineId,
+			long warehouseId, long materialId, long unitId, long batchId, String quantity, String movementType) {
+		BigDecimal qty = new BigDecimal(quantity);
+		BigDecimal before = trackingBalanceQuantity(warehouseId, materialId, batchId);
+		BigDecimal after = before.subtract(qty);
+		long movementId = this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
+					reason, remark, operator_name, occurred_at, quality_status, batch_id
+				)
+				values (?, ?, 'OUT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'test', now(), 'QUALIFIED', ?)
+				returning id
+				""", Long.class, "REV-TRK-MOV-" + SEQUENCE.incrementAndGet(), movementType, warehouseId, materialId,
+				unitId, qty, before, after, documentType, documentId, documentLineId, LocalDate.now(), "测试追踪出库",
+				"测试追踪来源", batchId);
+		this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set quantity_on_hand = ?, updated_at = now(), version = version + 1
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id = ?
+				""", after, warehouseId, materialId, batchId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_tracking_allocation (
+					allocation_type, document_type, document_id, document_line_id, source_type, source_id,
+					source_line_id, warehouse_id, material_id, unit_id, quality_status, batch_id, quantity,
+					movement_id, created_by, created_at, updated_by, updated_at
+				)
+				values ('OUTBOUND', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, documentType, documentId, documentLineId, documentType, documentId, documentLineId,
+				warehouseId, materialId, unitId, batchId, qty, movementId);
+	}
+
+	private long insertTrackedOutboundSerialSource(String documentType, long documentId, long documentLineId,
+			long warehouseId, long materialId, long unitId, long serialId, String movementType) {
+		BigDecimal before = serialTrackingBalanceQuantity(warehouseId, materialId, serialId,
+				InventoryQualityStatus.QUALIFIED);
+		long movementId = this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
+					reason, remark, operator_name, occurred_at, quality_status, serial_id
+				)
+				values (?, ?, 'OUT', ?, ?, ?, 1.000000, ?, ?, ?, ?, ?, ?, ?, ?, 'test', now(), 'QUALIFIED', ?)
+				returning id
+				""", Long.class, "REV-TRK-SN-MOV-" + SEQUENCE.incrementAndGet(), movementType, warehouseId,
+				materialId, unitId, before, before.subtract(BigDecimal.ONE), documentType, documentId, documentLineId,
+				LocalDate.now(), "测试追踪序列出库", "测试追踪序列来源", serialId);
+		this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set quantity_on_hand = 0, updated_at = now(), version = version + 1
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and serial_id = ?
+				""", warehouseId, materialId, serialId);
+		this.jdbcTemplate.update("""
+				update inv_serial
+				set stock_status = 'OUTBOUND', last_movement_id = ?, updated_at = now(), version = version + 1
+				where id = ?
+				""", movementId, serialId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_tracking_allocation (
+					allocation_type, document_type, document_id, document_line_id, source_type, source_id,
+					source_line_id, warehouse_id, material_id, unit_id, quality_status, serial_id, quantity,
+					movement_id, created_by, created_at, updated_by, updated_at
+				)
+				values ('OUTBOUND', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'QUALIFIED', ?, 1.000000, ?, 'test', now(), 'test',
+					now())
+				returning id
+				""", Long.class, documentType, documentId, documentLineId, documentType, documentId, documentLineId,
+				warehouseId, materialId, unitId, serialId, movementId);
 	}
 
 	private long insertReservation(long warehouseId, long materialId, long unitId, String reservationType,
@@ -1802,6 +2287,13 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		line.put("sourceShipmentLineId", sourceShipmentLineId);
 		line.put("quantity", quantity);
 		line.put("reason", reason);
+		return line;
+	}
+
+	private Map<String, Object> returnLine(long sourceShipmentLineId, String quantity, String reason,
+			List<Map<String, Object>> trackingAllocations) {
+		Map<String, Object> line = returnLine(sourceShipmentLineId, quantity, reason);
+		line.put("trackingAllocations", trackingAllocations);
 		return line;
 	}
 
@@ -1932,6 +2424,13 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> materialReturnLine(long sourceIssueLineId, String quantity, String reason,
+			List<Map<String, Object>> trackingAllocations) {
+		Map<String, Object> line = materialReturnLine(sourceIssueLineId, quantity, reason);
+		line.put("trackingAllocations", trackingAllocations);
+		return line;
+	}
+
 	private Map<String, Object> materialReturnLineById(long id, String quantity, String reason) {
 		Map<String, Object> line = new LinkedHashMap<>();
 		line.put("id", id);
@@ -1962,11 +2461,29 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return line;
 	}
 
+	private Map<String, Object> materialSupplementLine(long workOrderMaterialId, String quantity, String reason,
+			List<Map<String, Object>> trackingAllocations) {
+		Map<String, Object> line = materialSupplementLine(workOrderMaterialId, quantity, reason);
+		line.put("trackingAllocations", trackingAllocations);
+		return line;
+	}
+
 	private long createSalesReturn(AuthenticatedSession admin, long shipmentId, long shipmentLineId, String quantity)
 			throws Exception {
 		ResponseEntity<String> response = post("/api/admin/sales/returns",
 				salesReturnPayload(shipmentId, "sales-return-" + SEQUENCE.incrementAndGet(),
 						List.of(returnLine(shipmentLineId, quantity, "测试退货"))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createSalesReturnWithTracking(AuthenticatedSession admin, long shipmentId, long shipmentLineId,
+			long sourceAllocationId, long batchId, String clientRequestId) throws Exception {
+		ResponseEntity<String> response = post("/api/admin/sales/returns",
+				salesReturnPayload(shipmentId, clientRequestId,
+						List.of(returnLine(shipmentLineId, "1.000000", "来源身份重查",
+								List.of(sourceInheritedBatchAllocation(sourceAllocationId, batchId, "1.000000"))))),
 				admin);
 		assertOk(response);
 		return data(response).get("id").longValue();
@@ -2035,6 +2552,39 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return data(response).get("id").longValue();
 	}
 
+	private long createSalesReturnWithSerialTracking(AuthenticatedSession admin, long shipmentId, long shipmentLineId,
+			long sourceAllocationId, long serialId, String clientRequestId) throws Exception {
+		ResponseEntity<String> response = post("/api/admin/sales/returns",
+				salesReturnPayload(shipmentId, clientRequestId,
+						List.of(returnLine(shipmentLineId, "1.000000", "来源序列身份重查",
+								List.of(sourceInheritedSerialAllocation(sourceAllocationId, serialId))))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createMaterialReturnWithTracking(AuthenticatedSession admin, long issueId, long issueLineId,
+			long sourceAllocationId, long batchId, String clientRequestId) throws Exception {
+		ResponseEntity<String> response = post("/api/admin/production/material-returns",
+				materialReturnPayload(issueId, clientRequestId,
+						List.of(materialReturnLine(issueLineId, "1.000000", "来源身份重查",
+								List.of(sourceInheritedBatchAllocation(sourceAllocationId, batchId, "1.000000"))))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
+	private long createMaterialReturnWithSerialTracking(AuthenticatedSession admin, long issueId, long issueLineId,
+			long sourceAllocationId, long serialId, String clientRequestId) throws Exception {
+		ResponseEntity<String> response = post("/api/admin/production/material-returns",
+				materialReturnPayload(issueId, clientRequestId,
+						List.of(materialReturnLine(issueLineId, "1.000000", "来源序列身份重查",
+								List.of(sourceInheritedSerialAllocation(sourceAllocationId, serialId))))),
+				admin);
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
 	private long createMaterialSupplement(AuthenticatedSession admin, long workOrderId, long warehouseId,
 			long workOrderMaterialId, String quantity) throws Exception {
 		ResponseEntity<String> response = post("/api/admin/production/material-supplements",
@@ -2064,6 +2614,34 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name());
 	}
 
+	private BigDecimal trackingBalanceQuantity(long warehouseId, long materialId, long batchId) {
+		return trackingBalanceQuantity(warehouseId, materialId, batchId, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private BigDecimal trackingBalanceQuantity(long warehouseId, long materialId, long batchId,
+			InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), batchId);
+	}
+
+	private BigDecimal serialTrackingBalanceQuantity(long warehouseId, long materialId, long serialId,
+			InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and serial_id = ?
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus.name(), serialId);
+	}
+
 	private String movementQualityStatus(String sourceType, long sourceLineId) {
 		return this.jdbcTemplate.queryForObject("""
 				select quality_status
@@ -2080,6 +2658,27 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long trackedMovementCount(String sourceType, long sourceLineId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				and batch_id = ?
+				""", Long.class, sourceType, sourceLineId, batchId);
+	}
+
+	private long trackingAllocationMovementCount(String documentType, long documentId, long documentLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and movement_id is not null
+				""", Long.class, documentType, documentId, documentLineId);
 	}
 
 	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
@@ -2105,6 +2704,26 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return this.jdbcTemplate.queryForObject("""
 				select id
 				from proc_purchase_return_line
+				where return_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", Long.class, returnId);
+	}
+
+	private long firstSalesReturnLineId(long returnId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from sal_sales_return_line
+				where return_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", Long.class, returnId);
+	}
+
+	private long firstMaterialReturnLineId(long returnId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from mfg_material_return_line
 				where return_id = ?
 				order by line_no asc, id asc
 				limit 1
@@ -2390,6 +3009,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private record CostRecordRow(String sourceDocumentType, long sourceLineId, BigDecimal quantity,
 			BigDecimal unitPrice, BigDecimal amount, String status) {
+	}
+
+	private record TrackedBatch(long batchId, String batchNo) {
+	}
+
+	private record TrackedSerial(long serialId, String serialNo) {
 	}
 
 }

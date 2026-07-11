@@ -25,6 +25,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -222,6 +227,132 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(consumedBalance, "bookQuantity", "8.000000");
 		assertDecimal(consumedBalance, "reservedQuantity", "4.000000");
 		assertDecimal(consumedBalance, "availableQuantity", "4.000000");
+	}
+
+	@Test
+	void salesOrderLinesAggregateTrackedBalancesWithoutDuplicatingSourceLine() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		setTrackingMethod(fixture.finishedMaterialId(), "BATCH");
+		seedBatchStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
+				"SAL-AGG-A-" + SEQUENCE.incrementAndGet(), "2.000000");
+		seedBatchStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
+				"SAL-AGG-B-" + SEQUENCE.incrementAndGet(), "3.000000");
+
+		ResponseEntity<String> created = createOrder(admin,
+				orderPayload(fixture.customerId(), "销售多批余额聚合",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "4.000000",
+								"1.000000", null))));
+		assertOk(created);
+		long orderId = data(created).get("id").longValue();
+		JsonNode detail = data(getOrder(admin, orderId));
+
+		assertThat(detail.get("lines").size()).isEqualTo(1);
+		JsonNode line = firstLine(detail);
+		assertDecimal(line, "quantityOnHand", "5.000000");
+		assertDecimal(line, "availableQuantity", "5.000000");
+		assertDecimal(line, "maxSelectableQuantity", "4.000000");
+	}
+
+	@Test
+	void salesShipmentBatchAllocationPostsTrackingMovementAndConsumesReservation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		setTrackingMethod(fixture.finishedMaterialId(), "BATCH");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
+				"SAL-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+
+		ResponseEntity<String> created = createOrder(admin,
+				orderPayload(fixture.customerId(), "销售批次出库",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "3.000000",
+								"10.000000", "批次出库行"))));
+		assertOk(created);
+		long orderId = data(created).get("id").longValue();
+		long orderLineId = firstLine(data(created)).get("id").longValue();
+		assertOk(confirmOrder(admin, orderId));
+
+		Map<String, Object> line = shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+				"3.000000", "批次出库");
+		line.put("trackingAllocations", List.of(trackingAllocation(batch.batchId(), "3.000000")));
+		long shipmentId = createShipmentId(admin, orderId,
+				shipmentPayload(fixture.warehouseId(), "批次出库", List.of(line)));
+
+		ResponseEntity<String> posted = postShipment(admin, shipmentId);
+		assertOk(posted);
+		JsonNode postedLine = firstLine(data(posted));
+		long shipmentLineId = postedLine.get("id").longValue();
+
+		assertThat(postedLine.get("trackingAllocations").get(0).get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.finishedMaterialId(), batch.batchId()),
+				"2.000000");
+		assertThat(trackingAllocationMovementCount("SALES_SHIPMENT", shipmentId, shipmentLineId)).isOne();
+		assertThat(trackedMovementCount("SALES_SHIPMENT", shipmentLineId, batch.batchId())).isOne();
+		JsonNode consumedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.warehouseId() + "&materialId=" + fixture.finishedMaterialId(), admin));
+		assertDecimal(consumedBalance, "reservedQuantity", "0.000000");
+	}
+
+	@Test
+	void concurrentSalesShipmentsSelectingSameSerialAllowOnlyOnePostWithoutPartialSideEffects() throws Exception {
+		AuthenticatedSession firstAdmin = login("admin", ADMIN_PASSWORD);
+		AuthenticatedSession secondAdmin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		setTrackingMethod(fixture.finishedMaterialId(), "SERIAL");
+		TrackedSerial targetSerial = seedSerialStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
+				"SAL-SN-RACE-" + SEQUENCE.incrementAndGet());
+		TrackedSerial spareSerial = seedSerialStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
+				"SAL-SN-SPARE-" + SEQUENCE.incrementAndGet());
+
+		long firstOrderId = createOrderId(firstAdmin,
+				orderPayload(fixture.customerId(), "销售序列并发一",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"10.000000", "序列并发出库"))));
+		long firstOrderLineId = firstLine(data(getOrder(firstAdmin, firstOrderId))).get("id").longValue();
+		assertOk(confirmOrder(firstAdmin, firstOrderId));
+		long secondOrderId = createOrderId(secondAdmin,
+				orderPayload(fixture.customerId(), "销售序列并发二",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"10.000000", "序列并发出库"))));
+		long secondOrderLineId = firstLine(data(getOrder(secondAdmin, secondOrderId))).get("id").longValue();
+		assertOk(confirmOrder(secondAdmin, secondOrderId));
+
+		long firstShipmentId = createSerialShipment(firstAdmin, fixture, firstOrderId, firstOrderLineId,
+				targetSerial.serialId(),
+				"销售序列并发一");
+		long secondShipmentId = createSerialShipment(secondAdmin, fixture, secondOrderId, secondOrderLineId,
+				targetSerial.serialId(),
+				"销售序列并发二");
+		long firstShipmentLineId = shipmentLineId(firstShipmentId);
+		long secondShipmentLineId = shipmentLineId(secondShipmentId);
+
+		ExecutorService executorService = Executors.newFixedThreadPool(2);
+		try {
+			CountDownLatch start = new CountDownLatch(1);
+			Future<ResponseEntity<String>> first = executorService.submit(() -> postShipmentAfterStart(firstShipmentId,
+					firstAdmin, start));
+			Future<ResponseEntity<String>> second = executorService.submit(() -> postShipmentAfterStart(secondShipmentId,
+					secondAdmin, start));
+			start.countDown();
+
+			ResponseEntity<String> firstResponse = first.get(20, TimeUnit.SECONDS);
+			ResponseEntity<String> secondResponse = second.get(20, TimeUnit.SECONDS);
+			List<String> codes = List.of(code(firstResponse), code(secondResponse));
+			assertThat(codes).contains("OK");
+			assertThat(codes).contains("INVENTORY_TRACKING_NOT_AVAILABLE");
+		}
+		finally {
+			executorService.shutdownNow();
+		}
+
+		assertDecimal(serialBalanceQuantity(fixture.warehouseId(), fixture.finishedMaterialId(), targetSerial.serialId()),
+				"0.000000");
+		assertThat(serialStockStatus(targetSerial.serialId())).isEqualTo("OUTBOUND");
+		assertDecimal(serialBalanceQuantity(fixture.warehouseId(), fixture.finishedMaterialId(), spareSerial.serialId()),
+				"1.000000");
+		assertThat(serialStockStatus(spareSerial.serialId())).isEqualTo("IN_STOCK");
+		assertThat(serialMovementCount("SALES_SHIPMENT", targetSerial.serialId())).isOne();
+		assertThat(trackingAllocationMovementCount("SALES_SHIPMENT", firstShipmentId, firstShipmentLineId)
+				+ trackingAllocationMovementCount("SALES_SHIPMENT", secondShipmentId, secondShipmentLineId)).isOne();
 	}
 
 	@Test
@@ -870,6 +1001,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 					locked_quantity, created_at, updated_at)
 				values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
 				on conflict (warehouse_id, material_id, quality_status)
+					where batch_id is null and serial_id is null
 				do update set quantity_on_hand = excluded.quantity_on_hand, updated_at = now()
 				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
 	}
@@ -883,6 +1015,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, ?, ?, ?, 0, now(), now(), ?)
 				on conflict (warehouse_id, material_id, quality_status)
+					where batch_id is null and serial_id is null
 				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
 					updated_at = now(), version = inv_stock_balance.version + 1
 				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
@@ -941,6 +1074,137 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private void setTrackingMethod(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
+				trackingMethod, materialId);
+	}
+
+	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
+			String quantity) {
+		long batchId = this.jdbcTemplate.queryForObject("""
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'TEST', ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, batchNo, 7_100_000L + SEQUENCE.incrementAndGet(),
+				7_110_000L + SEQUENCE.incrementAndGet(), LocalDate.now());
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
+					batch_id, created_at, updated_at
+				)
+				values (?, ?, ?, 'QUALIFIED', ?, 0, ?, now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), batchId);
+		return new TrackedBatch(batchId, batchNo);
+	}
+
+	private Map<String, Object> trackingAllocation(long batchId, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchId", batchId);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
+	private Map<String, Object> serialAllocation(long serialId) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("serialId", serialId);
+		allocation.put("quantity", "1.000000");
+		return allocation;
+	}
+
+	private long createSerialShipment(AuthenticatedSession session, SalesFixture fixture, long orderId,
+			long orderLineId, long serialId, String remark) throws Exception {
+		Map<String, Object> line = shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+				"1.000000", remark);
+		line.put("trackingAllocations", List.of(serialAllocation(serialId)));
+		return createShipmentId(session, orderId, shipmentPayload(fixture.warehouseId(), remark, List.of(line)));
+	}
+
+	private ResponseEntity<String> postShipmentAfterStart(long shipmentId, AuthenticatedSession session,
+			CountDownLatch start) throws Exception {
+		start.await(10, TimeUnit.SECONDS);
+		return postShipment(session, shipmentId);
+	}
+
+	private BigDecimal trackingBalanceQuantity(long warehouseId, long materialId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id = ?
+				""", BigDecimal.class, warehouseId, materialId, batchId);
+	}
+
+	private TrackedSerial seedSerialStock(long warehouseId, long materialId, long unitId, String serialNo) {
+		long serialId = this.jdbcTemplate.queryForObject("""
+				insert into inv_serial (
+					material_id, serial_no, source_type, source_id, source_line_id, warehouse_id, quality_status,
+					stock_status, business_date, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'TEST', ?, ?, ?, 'QUALIFIED', 'IN_STOCK', ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, serialNo, 7_120_000L + SEQUENCE.incrementAndGet(),
+				7_130_000L + SEQUENCE.incrementAndGet(), warehouseId, LocalDate.now());
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
+					serial_id, created_at, updated_at
+				)
+				values (?, ?, ?, 'QUALIFIED', 1.000000, 0, ?, now(), now())
+				""", warehouseId, materialId, unitId, serialId);
+		return new TrackedSerial(serialId, serialNo);
+	}
+
+	private BigDecimal serialBalanceQuantity(long warehouseId, long materialId, long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and serial_id = ?
+				""", BigDecimal.class, warehouseId, materialId, serialId);
+	}
+
+	private String serialStockStatus(long serialId) {
+		return this.jdbcTemplate.queryForObject("select stock_status from inv_serial where id = ?", String.class,
+				serialId);
+	}
+
+	private long serialMovementCount(String sourceType, long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and serial_id = ?
+				""", Long.class, sourceType, serialId);
+	}
+
+	private long trackingAllocationMovementCount(String documentType, long documentId, long documentLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and movement_id is not null
+				""", Long.class, documentType, documentId, documentLineId);
+	}
+
+	private long trackedMovementCount(String sourceType, long sourceLineId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where source_type = ?
+				and source_line_id = ?
+				and batch_id = ?
+				""", Long.class, sourceType, sourceLineId, batchId);
 	}
 
 	private BigDecimal orderLineShippedQuantity(long orderLineId) {
@@ -1253,6 +1517,12 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private record MovementRow(String movementType, String direction, long sourceId, long sourceLineId,
 			BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity) {
+	}
+
+	private record TrackedBatch(long batchId, String batchNo) {
+	}
+
+	private record TrackedSerial(long serialId, String serialNo) {
 	}
 
 }

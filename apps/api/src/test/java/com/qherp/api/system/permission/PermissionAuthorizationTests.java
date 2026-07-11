@@ -343,6 +343,16 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void inventoryTrackingAdminPathsMapToTrackingPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/batches", "inventory:batch:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/batches/1", "inventory:batch:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/serials", "inventory:serial:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/serials/1", "inventory:serial:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/traces/batches/1", "inventory:trace:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/traces/serials/1", "inventory:trace:view");
+	}
+
+	@Test
 	void reportAdminPathsMapToReportPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/overview", "report:overview:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/sales-summary", "report:sales:view");

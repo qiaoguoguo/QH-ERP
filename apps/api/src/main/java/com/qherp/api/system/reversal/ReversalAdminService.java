@@ -11,6 +11,8 @@ import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.inventory.InventoryTrackingMethod;
+import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.quality.QualityAdminService;
@@ -107,16 +109,19 @@ public class ReversalAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryTrackingService inventoryTrackingService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	private final QualityAdminService qualityAdminService;
 
 	public ReversalAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
-			QualityAdminService qualityAdminService) {
+			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
 	}
@@ -210,6 +215,8 @@ public class ReversalAdminService {
 			CreatedDocument created = insertSalesReturnWithRetry(shipment, validated, totalAmount(lines),
 					operator.username(), now);
 			insertSalesReturnLines(created.id(), lines, now);
+			prepareSalesReturnAllocations(created.id(), shipment.id(), shipment.warehouseId(), lines,
+					operator.username());
 			this.auditService.record(operator, "SALES_RETURN_CREATE", SALES_RETURN_TARGET, created.id(),
 					created.documentNo(), servletRequest);
 			return salesReturn(created.id(), operator);
@@ -245,8 +252,10 @@ public class ReversalAdminService {
 					where id = ?
 					""", validated.businessDate(), totalAmount(lines), blankToNull(validated.clientRequestId()),
 					blankToNull(validated.remark()), operator.username(), now, id);
+			this.inventoryTrackingService.deleteDraftDocumentTracking(SALES_RETURN_SOURCE, id);
 			this.jdbcTemplate.update("delete from sal_sales_return_line where return_id = ?", id);
 			insertSalesReturnLines(id, lines, now);
+			prepareSalesReturnAllocations(id, shipment.id(), shipment.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "SALES_RETURN_UPDATE", SALES_RETURN_TARGET, id, current.returnNo(),
 					servletRequest);
 			return salesReturn(id, operator);
@@ -285,16 +294,28 @@ public class ReversalAdminService {
 				ShipmentLineRow sourceLine = lockShipmentLine(shipment.id(), line.sourceShipmentLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validateLineStillReturnable(sourceLine, line);
-				InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-						new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_RETURN_IN,
-								InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(), line.unitId(),
-								line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, SALES_RETURN_SOURCE,
-								salesReturn.id(), line.id(), salesReturn.businessDate(), "销售退货入库", line.reason(),
-								operator.username()));
+				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+					.resolveStoredSourceInheritedInboundAllocations(SALES_RETURN_SOURCE, salesReturn.id(), line.id(),
+							line.materialId(), line.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
+							SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(),
+							"trackingAllocations");
+				Long movementId = null;
+				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+							new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_RETURN_IN,
+									InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(),
+									line.unitId(), allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
+									SALES_RETURN_SOURCE, salesReturn.id(), line.id(), salesReturn.businessDate(),
+									"销售退货入库", line.reason(), operator.username(), allocation.batchId(),
+									allocation.serialId()));
+					movementId = posting.movementId();
+					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
+					this.inventoryTrackingService.markInboundPosted(allocation, salesReturn.warehouseId(),
+							InventoryQualityStatus.PENDING_INSPECTION, movementId, operator.username());
+				}
 				this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.SALES_RETURN,
 						salesReturn.id(), line.id(), salesReturn.warehouseId(), line.materialId(), line.unitId(),
 						salesReturn.businessDate(), line.quantity(), operator.username());
-				Long movementId = movementId(SALES_RETURN_SOURCE, line.id());
 				this.jdbcTemplate.update("""
 						update sal_sales_return_line
 						set stock_movement_id = ?, updated_at = ?
@@ -427,6 +448,7 @@ public class ReversalAdminService {
 			CreatedDocument created = insertPurchaseReturnWithRetry(receipt, validated, totalPurchaseAmount(lines),
 					operator.username(), now);
 			insertPurchaseReturnLines(created.id(), lines, now);
+			preparePurchaseReturnAllocations(created.id(), receipt.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PURCHASE_RETURN_CREATE", PURCHASE_RETURN_TARGET, created.id(),
 					created.documentNo(), servletRequest);
 			return purchaseReturn(created.id(), operator);
@@ -462,8 +484,10 @@ public class ReversalAdminService {
 					where id = ?
 					""", validated.businessDate(), totalPurchaseAmount(lines), blankToNull(validated.clientRequestId()),
 					blankToNull(validated.remark()), operator.username(), now, id);
+			this.inventoryTrackingService.deleteDraftDocumentTracking(PURCHASE_RETURN_SOURCE, id);
 			this.jdbcTemplate.update("delete from proc_purchase_return_line where return_id = ?", id);
 			insertPurchaseReturnLines(id, lines, now);
+			preparePurchaseReturnAllocations(id, receipt.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PURCHASE_RETURN_UPDATE", PURCHASE_RETURN_TARGET, id,
 					current.returnNo(), servletRequest);
 			return purchaseReturn(id, operator);
@@ -506,16 +530,29 @@ public class ReversalAdminService {
 				if (line.qualityStatus() == InventoryQualityStatus.FROZEN) {
 					throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
 				}
-				if (lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId(), line.qualityStatus())
-					.compareTo(line.quantity()) < 0) {
+				if (this.inventoryTrackingService.trackingMethod(line.materialId()) == InventoryTrackingMethod.NONE
+						&& lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId(), line.qualityStatus())
+							.compareTo(line.quantity()) < 0) {
 					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
 				}
-				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
-						InventoryMovementType.PURCHASE_RETURN_OUT, InventoryDirection.OUT,
-						purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						line.qualityStatus(), PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
-						purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username()));
-				Long movementId = movementId(PURCHASE_RETURN_SOURCE, line.id());
+				List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
+					.resolveStoredOutboundAllocations(PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
+							purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+							line.qualityStatus(), "trackingAllocations");
+				Long movementId = null;
+				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+							new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RETURN_OUT,
+									InventoryDirection.OUT, purchaseReturn.warehouseId(), line.materialId(),
+									line.unitId(), allocation.quantity(), line.qualityStatus(),
+									PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
+									purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username(),
+									allocation.batchId(), allocation.serialId()));
+					this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
+					this.inventoryTrackingService.markOutboundPosted(allocation, posting.movementId(),
+							operator.username());
+					movementId = posting.movementId();
+				}
 				this.jdbcTemplate.update("""
 						update proc_purchase_return_line
 						set stock_movement_id = ?, updated_at = ?
@@ -674,6 +711,7 @@ public class ReversalAdminService {
 			CreatedDocument created = insertMaterialReturnWithRetry(issue, validated, lines.get(0).warehouseId(),
 					operator.username(), now);
 			insertMaterialReturnLines(created.id(), lines, now);
+			prepareMaterialReturnAllocations(created.id(), issue.id(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_CREATE",
 					PRODUCTION_MATERIAL_RETURN_TARGET, created.id(), created.documentNo(), servletRequest);
 			return materialReturn(created.id(), operator);
@@ -709,8 +747,10 @@ public class ReversalAdminService {
 					where id = ?
 					""", lines.get(0).warehouseId(), validated.businessDate(), blankToNull(validated.clientRequestId()),
 					blankToNull(validated.remark()), operator.username(), now, id);
+			this.inventoryTrackingService.deleteDraftDocumentTracking(PRODUCTION_MATERIAL_RETURN_SOURCE, id);
 			this.jdbcTemplate.update("delete from mfg_material_return_line where return_id = ?", id);
 			insertMaterialReturnLines(id, lines, now);
+			prepareMaterialReturnAllocations(id, issue.id(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_UPDATE",
 					PRODUCTION_MATERIAL_RETURN_TARGET, id, current.returnNo(), servletRequest);
 			return materialReturn(id, operator);
@@ -745,16 +785,28 @@ public class ReversalAdminService {
 				ProductionIssueLineRow sourceLine = lockProductionIssueLine(issue.id(), line.sourceIssueLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validateMaterialReturnLineStillReturnable(sourceLine, line);
-				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
-						InventoryMovementType.PRODUCTION_MATERIAL_RETURN_IN, InventoryDirection.IN,
-						line.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_RETURN_SOURCE,
-						materialReturn.id(), line.id(), materialReturn.businessDate(), "生产退料入库", line.reason(),
-						operator.username()));
+				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+					.resolveStoredSourceInheritedInboundAllocations(PRODUCTION_MATERIAL_RETURN_SOURCE,
+							materialReturn.id(), line.id(), line.materialId(), line.quantity(),
+							InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_ISSUE_SOURCE,
+							issue.id(), line.sourceIssueLineId(), "trackingAllocations");
+				Long movementId = null;
+				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+							new InventoryPostingService.PostingRequest(
+									InventoryMovementType.PRODUCTION_MATERIAL_RETURN_IN, InventoryDirection.IN,
+									line.warehouseId(), line.materialId(), line.unitId(), allocation.quantity(),
+									InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_RETURN_SOURCE,
+									materialReturn.id(), line.id(), materialReturn.businessDate(), "生产退料入库",
+									line.reason(), operator.username(), allocation.batchId(), allocation.serialId()));
+					movementId = posting.movementId();
+					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
+					this.inventoryTrackingService.markInboundPosted(allocation, line.warehouseId(),
+							InventoryQualityStatus.PENDING_INSPECTION, movementId, operator.username());
+				}
 				this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.PRODUCTION_RETURN,
 						materialReturn.id(), line.id(), line.warehouseId(), line.materialId(), line.unitId(),
 						materialReturn.businessDate(), line.quantity(), operator.username());
-				Long movementId = movementId(PRODUCTION_MATERIAL_RETURN_SOURCE, line.id());
 				BigDecimal amount = money(line.quantity().multiply(line.unitPrice()));
 				Long costRecordId = insertProductionCostRecord(PRODUCTION_MATERIAL_RETURN_SOURCE,
 						materialReturn.returnNo(), materialReturn.id(), line.id(), issue.workOrderId(),
@@ -905,6 +957,7 @@ public class ReversalAdminService {
 		try {
 			CreatedDocument created = insertMaterialSupplementWithRetry(workOrder, validated, operator.username(), now);
 			insertMaterialSupplementLines(created.id(), lines, now);
+			prepareMaterialSupplementAllocations(created.id(), validated.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_CREATE",
 					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, created.id(), created.documentNo(), servletRequest);
 			return materialSupplement(created.id(), operator);
@@ -941,8 +994,10 @@ public class ReversalAdminService {
 					where id = ?
 					""", validated.warehouseId(), validated.businessDate(), blankToNull(validated.clientRequestId()),
 					blankToNull(validated.remark()), operator.username(), now, id);
+			this.inventoryTrackingService.deleteDraftDocumentTracking(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, id);
 			this.jdbcTemplate.update("delete from mfg_material_supplement_line where supplement_id = ?", id);
 			insertMaterialSupplementLines(id, lines, now);
+			prepareMaterialSupplementAllocations(id, validated.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_UPDATE",
 					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, current.supplementNo(), servletRequest);
 			return materialSupplement(id, operator);
@@ -975,16 +1030,29 @@ public class ReversalAdminService {
 				ProductionWorkOrderMaterialRow sourceLine = lockProductionWorkOrderMaterial(workOrder.id(),
 						line.workOrderMaterialId()).orElseThrow(this::sourceNotFoundException);
 				validateMaterialSupplementLineStillValid(sourceLine, line);
-				if (lockedStockQuantity(supplement.warehouseId(), line.materialId(), InventoryQualityStatus.QUALIFIED)
-					.compareTo(line.quantity()) < 0) {
+				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+					.resolveStoredOutboundAllocations(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, supplement.id(), line.id(),
+							supplement.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+							"trackingAllocations");
+				if (trackingAllocations.size() == 1 && trackingAllocations.get(0).batchId() == null
+						&& trackingAllocations.get(0).serialId() == null
+						&& lockedStockQuantity(supplement.warehouseId(), line.materialId(),
+								InventoryQualityStatus.QUALIFIED).compareTo(line.quantity()) < 0) {
 					throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH);
 				}
-				this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
-						InventoryMovementType.PRODUCTION_MATERIAL_SUPPLEMENT_OUT, InventoryDirection.OUT,
-						supplement.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-						InventoryQualityStatus.QUALIFIED, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, supplement.id(), line.id(),
-						supplement.businessDate(), "生产补料出库", line.reason(), operator.username()));
-				Long movementId = movementId(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, line.id());
+				Long movementId = null;
+				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+							new InventoryPostingService.PostingRequest(
+									InventoryMovementType.PRODUCTION_MATERIAL_SUPPLEMENT_OUT, InventoryDirection.OUT,
+									supplement.warehouseId(), line.materialId(), line.unitId(), allocation.quantity(),
+									InventoryQualityStatus.QUALIFIED, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
+									supplement.id(), line.id(), supplement.businessDate(), "生产补料出库", line.reason(),
+									operator.username(), allocation.batchId(), allocation.serialId()));
+					movementId = posting.movementId();
+					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
+					this.inventoryTrackingService.markOutboundPosted(allocation, movementId, operator.username());
+				}
 				BigDecimal amount = money(line.quantity().multiply(line.unitPrice()));
 				Long costRecordId = insertProductionCostRecord(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
 						supplement.supplementNo(), supplement.id(), line.id(), workOrder.id(),
@@ -1539,16 +1607,23 @@ public class ReversalAdminService {
 				join proc_purchase_receipt pr on pr.id = prl.receipt_id
 				join mst_material m on m.id = prl.material_id
 				join mst_unit u on u.id = prl.unit_id
-				left join inv_stock_balance sb on sb.warehouse_id = pr.warehouse_id
+				left join (
+					select warehouse_id, material_id, quality_status,
+					       sum(quantity_on_hand) as quantity_on_hand,
+					       sum(locked_quantity) as locked_quantity
+					from inv_stock_balance
+					group by warehouse_id, material_id, quality_status
+				) sb on sb.warehouse_id = pr.warehouse_id
 					and sb.material_id = prl.material_id
 				left join (
-					select warehouse_id, material_id,
+					select warehouse_id, material_id, quality_status,
 					       sum(quantity - released_quantity - consumed_quantity) as locked_quantity
 					from inv_stock_reservation
 					where status = 'ACTIVE'
 					and quality_status = 'QUALIFIED'
-					group by warehouse_id, material_id
+					group by warehouse_id, material_id, quality_status
 				) locked on locked.warehouse_id = pr.warehouse_id and locked.material_id = prl.material_id
+					and locked.quality_status = sb.quality_status
 				where prl.receipt_id = ?
 				order by prl.line_no asc, prl.id asc, coalesce(sb.quality_status, 'QUALIFIED') asc
 				""", (rs, rowNum) -> {
@@ -1654,7 +1729,14 @@ public class ReversalAdminService {
 				from mfg_work_order_material wom
 				join mst_material m on m.id = wom.material_id
 				join mst_unit u on u.id = wom.unit_id
-				left join inv_stock_balance sb on sb.warehouse_id = ?
+				left join (
+					select warehouse_id, material_id, quality_status,
+					       sum(quantity_on_hand) as quantity_on_hand,
+					       sum(locked_quantity) as locked_quantity
+					from inv_stock_balance
+					where quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id, quality_status
+				) sb on sb.warehouse_id = ?
 					and sb.material_id = wom.material_id
 					and sb.quality_status = 'QUALIFIED'
 				where wom.work_order_id = ?
@@ -1699,6 +1781,7 @@ public class ReversalAdminService {
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
 				nullableLong(rs, "stock_movement_id"), null,
+				this.inventoryTrackingService.allocationResponses(SALES_RETURN_SOURCE, returnId, rs.getLong("id")),
 				sourceView(SALES_SHIPMENT_LINE_SOURCE, sourceShipmentId, rs.getLong("source_shipment_line_id"),
 						sourceShipmentNo, rs.getInt("source_line_no"),
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
@@ -1744,6 +1827,8 @@ public class ReversalAdminService {
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
 				nullableLong(rs, "stock_movement_id"), nullableLong(rs, "cost_record_id"),
+				this.inventoryTrackingService.allocationResponses(PRODUCTION_MATERIAL_RETURN_SOURCE, returnId,
+						rs.getLong("id")),
 				sourceView(PRODUCTION_MATERIAL_ISSUE_LINE_SOURCE, sourceIssueId, rs.getLong("source_issue_line_id"),
 						sourceIssueNo, rs.getInt("source_line_no"),
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
@@ -1790,6 +1875,8 @@ public class ReversalAdminService {
 				quantity(rs.getBigDecimal("available_stock_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
 				nullableLong(rs, "stock_movement_id"), nullableLong(rs, "cost_record_id"),
+				this.inventoryTrackingService.allocationResponses(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE, supplementId,
+						rs.getLong("id")),
 				sourceView(PRODUCTION_WORK_ORDER_SOURCE, workOrderId, rs.getLong("work_order_material_id"),
 						workOrderNo, rs.getInt("source_line_no"),
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
@@ -1822,6 +1909,7 @@ public class ReversalAdminService {
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
 				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
 				nullableLong(rs, "stock_movement_id"), null,
+				this.inventoryTrackingService.allocationResponses(PURCHASE_RETURN_SOURCE, returnId, rs.getLong("id")),
 				sourceView(PURCHASE_RECEIPT_LINE_SOURCE, sourceReceiptId, rs.getLong("source_receipt_line_id"),
 						sourceReceiptNo, rs.getInt("source_line_no"),
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
@@ -2273,7 +2361,8 @@ public class ReversalAdminService {
 			BigDecimal amount = money(quantity.multiply(sourceLine.unitPrice()));
 			lines.add(new ValidatedSalesReturnLine(lineNo++, sourceLine.id(), sourceLine.orderLineId(),
 					sourceLine.materialId(), sourceLine.unitId(), returnedQuantity, returnableQuantity, quantity,
-					sourceLine.unitPrice(), amount, blankToNull(reason)));
+					sourceLine.unitPrice(), amount, blankToNull(reason),
+					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
 	}
@@ -2428,6 +2517,23 @@ public class ReversalAdminService {
 				returnLine.id(), salesReturn.businessDate(), returnLine.quantity(), returnLine.amount(), operator, now);
 	}
 
+	private void prepareSalesReturnAllocations(Long returnId, Long sourceShipmentId, Long warehouseId,
+			List<ValidatedSalesReturnLine> lines, String operatorName) {
+		List<SalesReturnLineRow> rows = lockSalesReturnLines(returnId);
+		for (int i = 0; i < lines.size(); i++) {
+			ValidatedSalesReturnLine line = lines.get(i);
+			SalesReturnLineRow row = rows.stream()
+				.filter((candidate) -> candidate.sourceShipmentLineId().equals(line.sourceShipmentLineId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareSourceInheritedInboundAllocations(SALES_RETURN_SOURCE, returnId,
+					row.id(), warehouseId, line.materialId(), line.unitId(), line.quantity(),
+					InventoryQualityStatus.PENDING_INSPECTION, SALES_SHIPMENT_SOURCE, sourceShipmentId,
+					line.sourceShipmentLineId(), line.trackingAllocations(), operatorName,
+					"lines[" + i + "].trackingAllocations");
+		}
+	}
+
 	private ValidatedPurchaseReturn validatePurchaseReturnCreate(PurchaseReturnRequest request) {
 		if (request == null || request.sourceReceiptId() == null || request.businessDate() == null
 				|| request.lines() == null || request.lines().isEmpty()) {
@@ -2495,7 +2601,8 @@ public class ReversalAdminService {
 			BigDecimal amount = money(quantity.multiply(sourceLine.unitPrice()));
 			lines.add(new ValidatedPurchaseReturnLine(lineNo++, sourceLine.id(), sourceLine.orderLineId(),
 					sourceLine.materialId(), sourceLine.unitId(), returnedQuantity, returnableQuantity, quantity,
-					sourceLine.unitPrice(), amount, blankToNull(reason), qualityStatus));
+					sourceLine.unitPrice(), amount, blankToNull(reason), qualityStatus,
+					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
 	}
@@ -2589,6 +2696,21 @@ public class ReversalAdminService {
 					line.unitId(), line.lineNo(), line.returnedQuantityBefore(), line.returnableQuantityBefore(),
 					line.quantity(), line.unitPrice(), line.amount(), blankToNull(line.reason()),
 					line.qualityStatus().name(), now, now);
+		}
+	}
+
+	private void preparePurchaseReturnAllocations(Long returnId, Long warehouseId,
+			List<ValidatedPurchaseReturnLine> lines, String operatorName) {
+		List<PurchaseReturnLineRow> rows = lockPurchaseReturnLines(returnId);
+		for (int i = 0; i < lines.size(); i++) {
+			ValidatedPurchaseReturnLine line = lines.get(i);
+			PurchaseReturnLineRow row = rows.stream()
+				.filter((candidate) -> candidate.sourceReceiptLineId().equals(line.sourceReceiptLineId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareOutboundAllocations(PURCHASE_RETURN_SOURCE, returnId, row.id(),
+					warehouseId, line.materialId(), line.unitId(), line.quantity(), line.qualityStatus(),
+					line.trackingAllocations(), operatorName, "lines[" + i + "].trackingAllocations");
 		}
 	}
 
@@ -2707,7 +2829,8 @@ public class ReversalAdminService {
 			BigDecimal amount = money(quantity.multiply(unitPrice));
 			lines.add(new ValidatedMaterialReturnLine(lineNo++, sourceLine.id(), sourceLine.workOrderMaterialId(),
 					sourceLine.warehouseId(), sourceLine.materialId(), sourceLine.unitId(), returnedQuantity,
-					returnableQuantity, quantity, unitPrice, amount, reason));
+					returnableQuantity, quantity, unitPrice, amount, reason,
+					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
 	}
@@ -2788,6 +2911,23 @@ public class ReversalAdminService {
 		}
 	}
 
+	private void prepareMaterialReturnAllocations(Long returnId, Long sourceIssueId,
+			List<ValidatedMaterialReturnLine> lines, String operatorName) {
+		List<MaterialReturnLineRow> rows = lockMaterialReturnLines(returnId);
+		for (int i = 0; i < lines.size(); i++) {
+			ValidatedMaterialReturnLine line = lines.get(i);
+			MaterialReturnLineRow row = rows.stream()
+				.filter((candidate) -> candidate.sourceIssueLineId().equals(line.sourceIssueLineId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareSourceInheritedInboundAllocations(
+					PRODUCTION_MATERIAL_RETURN_SOURCE, returnId, row.id(), line.warehouseId(), line.materialId(),
+					line.unitId(), line.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
+					PRODUCTION_MATERIAL_ISSUE_SOURCE, sourceIssueId, line.sourceIssueLineId(),
+					line.trackingAllocations(), operatorName, "lines[" + i + "].trackingAllocations");
+		}
+	}
+
 	private ValidatedMaterialSupplement validateMaterialSupplementCreate(ProductionMaterialSupplementRequest request) {
 		if (request == null || request.workOrderId() == null || request.warehouseId() == null
 				|| request.businessDate() == null || request.lines() == null || request.lines().isEmpty()) {
@@ -2844,7 +2984,8 @@ public class ReversalAdminService {
 			BigDecimal amount = money(quantity.multiply(unitPrice));
 			lines.add(new ValidatedMaterialSupplementLine(lineNo++, sourceLine.id(), sourceLine.materialId(),
 					sourceLine.unitId(), sourceLine.issuedQuantity(), supplementedQuantity, availableStockQuantity,
-					quantity, unitPrice, amount, reason));
+					quantity, unitPrice, amount, reason,
+					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
 	}
@@ -2916,6 +3057,21 @@ public class ReversalAdminService {
 					""", supplementId, line.workOrderMaterialId(), line.materialId(), line.unitId(), line.lineNo(),
 					line.issuedQuantityBefore(), line.supplementedQuantityBefore(),
 					line.availableStockQuantityBefore(), line.quantity(), blankToNull(line.reason()), now, now);
+		}
+	}
+
+	private void prepareMaterialSupplementAllocations(Long supplementId, Long warehouseId,
+			List<ValidatedMaterialSupplementLine> lines, String operatorName) {
+		List<MaterialSupplementLineRow> rows = lockMaterialSupplementLines(supplementId);
+		for (int i = 0; i < lines.size(); i++) {
+			ValidatedMaterialSupplementLine line = lines.get(i);
+			MaterialSupplementLineRow row = rows.stream()
+				.filter((candidate) -> candidate.workOrderMaterialId().equals(line.workOrderMaterialId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareOutboundAllocations(PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
+					supplementId, row.id(), warehouseId, line.materialId(), line.unitId(), line.quantity(),
+					line.trackingAllocations(), operatorName, "lines[" + i + "].trackingAllocations");
 		}
 	}
 
@@ -3608,8 +3764,7 @@ public class ReversalAdminService {
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
 				qualityStatus.name())
 			.stream()
-			.findFirst()
-			.orElse(ZERO);
+			.reduce(ZERO, BigDecimal::add);
 		if (qualityStatus != InventoryQualityStatus.QUALIFIED) {
 			return quantityOnHand;
 		}
@@ -3640,8 +3795,7 @@ public class ReversalAdminService {
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
 				InventoryQualityStatus.QUALIFIED.name())
 			.stream()
-			.findFirst()
-			.orElse(ZERO);
+			.reduce(ZERO, BigDecimal::add);
 		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
 				select quantity - released_quantity - consumed_quantity as active_quantity
 				from inv_stock_reservation
@@ -5194,7 +5348,7 @@ public class ReversalAdminService {
 	}
 
 	public record SalesReturnLineRequest(Long id, Long sourceShipmentLineId, @NotNull BigDecimal quantity,
-			String reason) {
+			String reason, @Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record PurchaseReturnRequest(Long sourceReceiptId, @NotNull LocalDate businessDate,
@@ -5202,7 +5356,8 @@ public class ReversalAdminService {
 	}
 
 	public record PurchaseReturnLineRequest(Long id, Long sourceReceiptLineId, @NotNull BigDecimal quantity,
-			String reason, String qualityStatus) {
+			String reason, String qualityStatus,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record ProductionMaterialReturnRequest(Long sourceIssueId, @NotNull LocalDate businessDate,
@@ -5210,7 +5365,8 @@ public class ReversalAdminService {
 	}
 
 	public record ProductionMaterialReturnLineRequest(Long id, Long sourceIssueLineId,
-			@NotNull BigDecimal quantity, String reason) {
+			@NotNull BigDecimal quantity, String reason,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record ProductionMaterialSupplementRequest(Long workOrderId, Long warehouseId,
@@ -5219,7 +5375,8 @@ public class ReversalAdminService {
 	}
 
 	public record ProductionMaterialSupplementLineRequest(Long id, Long workOrderMaterialId,
-			@NotNull BigDecimal quantity, String reason) {
+			@NotNull BigDecimal quantity, String reason,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record SettlementAdjustmentRequest(String settlementSide, String adjustmentType, String sourceType,
@@ -5384,7 +5541,8 @@ public class ReversalAdminService {
 	public record ReversalDocumentLine(Long id, Integer lineNo, Long sourceLineId, Long materialId,
 			String materialCode, String materialName, Long unitId, String unitName, String returnedQuantityBefore,
 			String returnableQuantityBefore, String quantity, String unitPrice, String amount, String reason,
-			Long stockMovementId, Long costRecordId, Map<String, Object> source) {
+			Long stockMovementId, Long costRecordId,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations, Map<String, Object> source) {
 	}
 
 	public static final class ReversalTraceRecord extends LinkedHashMap<String, Object> {
@@ -5562,25 +5720,27 @@ public class ReversalAdminService {
 
 	private record ValidatedSalesReturnLine(Integer lineNo, Long sourceShipmentLineId, Long salesOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
-			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason) {
+			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record ValidatedPurchaseReturnLine(Integer lineNo, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
 			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason,
-			InventoryQualityStatus qualityStatus) {
+			InventoryQualityStatus qualityStatus,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record ValidatedMaterialReturnLine(Integer lineNo, Long sourceIssueLineId, Long workOrderMaterialId,
 			Long warehouseId, Long materialId, Long unitId, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason) {
+			String reason, List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record ValidatedMaterialSupplementLine(Integer lineNo, Long workOrderMaterialId, Long materialId,
 			Long unitId, BigDecimal issuedQuantityBefore, BigDecimal supplementedQuantityBefore,
 			BigDecimal availableStockQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason) {
+			String reason, List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record SalesReturnRow(Long id, String returnNo, Long customerId, String customerName, Long warehouseId,

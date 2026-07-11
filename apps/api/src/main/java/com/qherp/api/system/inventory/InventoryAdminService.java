@@ -54,12 +54,16 @@ public class InventoryAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final InventorySourceDocumentResolver sourceDocumentResolver;
+
 	public InventoryAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
+			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
+			InventorySourceDocumentResolver sourceDocumentResolver) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.sourceDocumentResolver = sourceDocumentResolver;
 	}
 
 	@Transactional(readOnly = true)
@@ -293,14 +297,25 @@ public class InventoryAdminService {
 		List<InventoryBatchSummaryResponse> items = this.jdbcTemplate.query("""
 				select b.id, b.batch_no, b.material_id, m.code as material_code, m.name as material_name,
 				       b.source_type, b.source_id, b.source_line_id, d.document_no as source_document_no,
+				       min(sb.warehouse_id) as warehouse_id, min(w.name) as warehouse_name,
+				       case
+				           when count(distinct sb.quality_status) filter (where sb.quantity_on_hand > 0) = 1
+				               then min(sb.quality_status) filter (where sb.quantity_on_hand > 0)
+				           else null
+				       end as quality_status,
 				       b.business_date, coalesce(sum(sb.quantity_on_hand), 0) as quantity_on_hand,
 				       greatest(coalesce(sum(case when sb.quality_status = 'QUALIFIED'
 				                              then sb.quantity_on_hand else 0 end), 0)
 				                - coalesce(max(l.locked_quantity), 0), 0) as available_quantity,
+				       case when greatest(coalesce(sum(case when sb.quality_status = 'QUALIFIED'
+				                                           then sb.quantity_on_hand else 0 end), 0)
+				                            - coalesce(max(l.locked_quantity), 0), 0) > 0
+				            then 'AVAILABLE' else 'UNAVAILABLE' end as stock_status,
 				       b.updated_at
 				from inv_batch b
 				join mst_material m on m.id = b.material_id
 				left join inv_stock_balance sb on sb.batch_id = b.id
+				left join mst_warehouse w on w.id = sb.warehouse_id
 				left join inv_inventory_document d on d.id = b.source_id and b.source_type = 'INVENTORY_DOCUMENT'
 				left join (
 					select batch_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
@@ -354,6 +369,7 @@ public class InventoryAdminService {
 		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		QueryParts queryParts = serialQueryParts(keyword, materialId, warehouseId, parsedQualityStatus, serialNo,
 				batchId, sourceType, sourceId, onlyAvailable);
+		String serialAvailabilityJoin = serialAvailabilityJoin();
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from inv_serial s
@@ -361,22 +377,28 @@ public class InventoryAdminService {
 				left join inv_batch b on b.id = s.batch_id
 				left join mst_warehouse w on w.id = s.warehouse_id
 				%s
-				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+				%s
+				""".formatted(serialAvailabilityJoin, queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
 		List<InventorySerialSummaryResponse> items = this.jdbcTemplate.query("""
 				select s.id, s.serial_no, s.material_id, m.code as material_code, m.name as material_name,
 				       s.batch_id, b.batch_no, s.warehouse_id, w.name as warehouse_name,
 				       s.quality_status, s.stock_status, s.source_type, s.source_id, s.source_line_id,
-				       d.document_no as source_document_no, s.updated_at
+				       d.document_no as source_document_no,
+				       case when s.stock_status = 'IN_STOCK' and s.quality_status = 'QUALIFIED'
+				            then greatest(coalesce(sb.quantity_on_hand, 0) - coalesce(l.locked_quantity, 0), 0)
+				            else 0 end as available_quantity,
+				       s.updated_at
 				from inv_serial s
 				join mst_material m on m.id = s.material_id
 				left join inv_batch b on b.id = s.batch_id
 				left join mst_warehouse w on w.id = s.warehouse_id
 				left join inv_inventory_document d on d.id = s.source_id and s.source_type = 'INVENTORY_DOCUMENT'
 				%s
+				%s
 				order by s.updated_at desc, s.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), this::mapSerialSummary, args.toArray());
+				""".formatted(serialAvailabilityJoin, queryParts.where()), this::mapSerialSummary, args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -399,20 +421,38 @@ public class InventoryAdminService {
 
 	@Transactional(readOnly = true)
 	public InventoryTraceDetailResponse batchTrace(Long id) {
-		InventoryTraceSubjectResponse subject = batchTraceSubject(id);
-		List<InventoryTraceNodeResponse> movements = traceMovementNodes("batch_id", id);
+		return batchTrace(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryTraceDetailResponse batchTrace(Long id, CurrentUser currentUser) {
+		InventoryTraceSubjectResponse rawSubject = batchTraceSubject(id);
+		InventoryTraceSubjectResponse subject = maskTraceSubject(rawSubject, currentUser);
+		List<InventoryTraceNodeResponse> activeReservations = maskTraceNodes(traceReservationNodes("batch_id", id),
+				currentUser);
+		List<InventoryTraceNodeResponse> sourceRecords = maskTraceNodes(sourceRecord(rawSubject), currentUser);
+		List<InventoryTraceNodeResponse> movements = maskTraceNodes(traceMovementNodes("batch_id", id), currentUser);
 		return new InventoryTraceDetailResponse(subject, traceBalances("batch_id", id),
-				traceReservationNodes("batch_id", id), sourceRecord(subject), qualityEvents(movements),
-				outboundRecords(movements), returnRecords(movements), movements, List.of());
+				activeReservations, sourceRecords, qualityEvents(movements), outboundRecords(movements),
+				returnRecords(movements), movements, restrictedSources(sourceRecords, activeReservations, movements));
 	}
 
 	@Transactional(readOnly = true)
 	public InventoryTraceDetailResponse serialTrace(Long id) {
-		InventoryTraceSubjectResponse subject = serialTraceSubject(id);
-		List<InventoryTraceNodeResponse> movements = traceMovementNodes("serial_id", id);
+		return serialTrace(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryTraceDetailResponse serialTrace(Long id, CurrentUser currentUser) {
+		InventoryTraceSubjectResponse rawSubject = serialTraceSubject(id);
+		InventoryTraceSubjectResponse subject = maskTraceSubject(rawSubject, currentUser);
+		List<InventoryTraceNodeResponse> activeReservations = maskTraceNodes(traceReservationNodes("serial_id", id),
+				currentUser);
+		List<InventoryTraceNodeResponse> sourceRecords = maskTraceNodes(sourceRecord(rawSubject), currentUser);
+		List<InventoryTraceNodeResponse> movements = maskTraceNodes(traceMovementNodes("serial_id", id), currentUser);
 		return new InventoryTraceDetailResponse(subject, traceBalances("serial_id", id),
-				traceReservationNodes("serial_id", id), sourceRecord(subject), qualityEvents(movements),
-				outboundRecords(movements), returnRecords(movements), movements, List.of());
+				activeReservations, sourceRecords, qualityEvents(movements), outboundRecords(movements),
+				returnRecords(movements), movements, restrictedSources(sourceRecords, activeReservations, movements));
 	}
 
 	@Transactional(readOnly = true)
@@ -973,8 +1013,25 @@ public class InventoryAdminService {
 		if (onlyAvailable) {
 			conditions.add("s.stock_status = 'IN_STOCK'");
 			conditions.add("s.quality_status = 'QUALIFIED'");
+			conditions.add("greatest(coalesce(sb.quantity_on_hand, 0) - coalesce(l.locked_quantity, 0), 0) > 0");
 		}
 		return where(conditions, args);
+	}
+
+	private String serialAvailabilityJoin() {
+		return """
+				left join inv_stock_balance sb on sb.serial_id = s.id
+					and sb.warehouse_id is not distinct from s.warehouse_id
+					and sb.material_id = s.material_id
+					and sb.quality_status = s.quality_status
+				left join (
+					select serial_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by serial_id
+				) l on l.serial_id = s.id
+				""";
 	}
 
 	private HavingParts trackingAvailableHaving(boolean onlyAvailable, String balanceAlias, String lockAlias) {
@@ -1201,34 +1258,53 @@ public class InventoryAdminService {
 	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum) throws SQLException {
 		InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
 		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventoryMovementResponse(rs.getLong("id"), rs.getString("movement_no"),
 				rs.getString("movement_type"), rs.getString("direction"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
 				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
-				rs.getString("source_type"), rs.getLong("source_id"), rs.getLong("source_line_id"),
+				sourceType, sourceId, sourceLineId,
 				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
 				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
 				qualityStatus.name(), qualityStatus.displayName(), trackingMethod.name(), trackingMethod.displayName(),
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
-				rs.getString("serial_no"), rs.getString("source_document_no"), rs.getString("target_document_no"));
+				rs.getString("serial_no"), sourceDocumentNo, rs.getString("target_document_no"));
 	}
 
 	private InventoryBatchSummaryResponse mapBatchSummary(ResultSet rs, int rowNum) throws SQLException {
 		Long batchId = rs.getLong("id");
+		String qualityStatus = rs.getString("quality_status");
+		String stockStatus = rs.getString("stock_status");
+		BigDecimal availableQuantity = rs.getBigDecimal("available_quantity");
+		boolean selectable = availableQuantity != null && availableQuantity.compareTo(ZERO) > 0;
+		String disabledReasonCode = selectable ? null : batchDisabledReasonCode(qualityStatus);
+		String disabledReason = selectable ? null : batchDisabledReason(qualityStatus);
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventoryBatchSummaryResponse(batchId, rs.getString("batch_no"), rs.getLong("material_id"),
-				rs.getString("material_code"), rs.getString("material_name"), rs.getString("source_type"),
-				rs.getLong("source_id"), rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getString("material_code"), rs.getString("material_name"), sourceType, sourceId, sourceLineId,
+				sourceDocumentNo, nullableLong(rs, "warehouse_id"), rs.getString("warehouse_name"), qualityStatus,
+				qualityStatusName(qualityStatus), stockStatus, stockStatusName(stockStatus),
 				rs.getObject("business_date", LocalDate.class), rs.getBigDecimal("quantity_on_hand"),
-				rs.getBigDecimal("available_quantity"), batchQualityStatusSummary(batchId),
+				availableQuantity, selectable, disabledReasonCode, disabledReason, batchQualityStatusSummary(batchId),
 				rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private InventoryBatchDetailResponse mapBatchDetail(ResultSet rs, int rowNum) throws SQLException {
 		Long batchId = rs.getLong("id");
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventoryBatchDetailResponse(batchId, rs.getString("batch_no"), rs.getLong("material_id"),
-				rs.getString("material_code"), rs.getString("material_name"), rs.getString("source_type"),
-				rs.getLong("source_id"), rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getString("material_code"), rs.getString("material_name"), sourceType, sourceId, sourceLineId,
+				sourceDocumentNo,
 				rs.getObject("business_date", LocalDate.class), rs.getBigDecimal("quantity_on_hand"),
 				rs.getBigDecimal("available_quantity"), batchQualityStatusSummary(batchId), rs.getString("remark"),
 				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
@@ -1238,24 +1314,35 @@ public class InventoryAdminService {
 	private InventorySerialSummaryResponse mapSerialSummary(ResultSet rs, int rowNum) throws SQLException {
 		String qualityStatus = rs.getString("quality_status");
 		String stockStatus = rs.getString("stock_status");
+		BigDecimal availableQuantity = rs.getBigDecimal("available_quantity");
+		boolean selectable = availableQuantity != null && availableQuantity.compareTo(ZERO) > 0;
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventorySerialSummaryResponse(rs.getLong("id"), rs.getString("serial_no"),
 				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "warehouse_id"),
 				rs.getString("warehouse_name"), qualityStatus, qualityStatusName(qualityStatus), stockStatus,
-				stockStatusName(stockStatus), rs.getString("source_type"), rs.getLong("source_id"),
-				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				stockStatusName(stockStatus), availableQuantity, selectable,
+				selectable ? null : serialDisabledReasonCode(stockStatus, qualityStatus),
+				selectable ? null : serialDisabledReason(stockStatus, qualityStatus), sourceType, sourceId,
+				sourceLineId, sourceDocumentNo,
 				rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private InventorySerialDetailResponse mapSerialDetail(ResultSet rs, int rowNum) throws SQLException {
 		String qualityStatus = rs.getString("quality_status");
 		String stockStatus = rs.getString("stock_status");
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventorySerialDetailResponse(rs.getLong("id"), rs.getString("serial_no"),
 				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "warehouse_id"),
 				rs.getString("warehouse_name"), qualityStatus, qualityStatusName(qualityStatus), stockStatus,
-				stockStatusName(stockStatus), rs.getString("source_type"), rs.getLong("source_id"),
-				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				stockStatusName(stockStatus), sourceType, sourceId, sourceLineId, sourceDocumentNo,
 				rs.getObject("business_date", LocalDate.class), rs.getString("remark"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getString("updated_by"),
 				rs.getObject("updated_at", OffsetDateTime.class));
@@ -1315,11 +1402,14 @@ public class InventoryAdminService {
 
 	private InventoryTraceSubjectResponse mapTraceSubject(ResultSet rs, InventoryTrackingMethod trackingMethod)
 			throws SQLException {
+		String sourceType = rs.getString("source_type");
+		Long sourceId = nullableLong(rs, "source_id");
+		Long sourceLineId = nullableLong(rs, "source_line_id");
+		String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 		return new InventoryTraceSubjectResponse(trackingMethod.name(), trackingMethod.displayName(),
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
 				rs.getString("serial_no"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getString("source_type"), rs.getLong("source_id"),
-				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getString("material_name"), sourceType, sourceId, sourceLineId, sourceDocumentNo,
 				rs.getObject("business_date", LocalDate.class));
 	}
 
@@ -1370,10 +1460,13 @@ public class InventoryAdminService {
 				""".formatted(trackingColumn), (rs, rowNum) -> {
 			InventoryReservationType reservationType = InventoryReservationType.valueOf(rs.getString("reservation_type"));
 			String qualityStatus = rs.getString("quality_status");
+			String sourceType = rs.getString("source_type");
+			Long sourceId = nullableLong(rs, "source_id");
+			Long sourceLineId = nullableLong(rs, "source_line_id");
+			String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 			return new InventoryTraceNodeResponse("RESERVATION", reservationType.displayName(),
-					rs.getString("source_type"), rs.getLong("source_id"), rs.getString("source_document_no"),
-					rs.getLong("source_line_id"), rs.getObject("business_date", LocalDate.class), null,
-					rs.getBigDecimal("quantity"), qualityStatus, qualityStatusName(qualityStatus),
+					sourceType, sourceId, sourceDocumentNo, sourceLineId, rs.getObject("business_date", LocalDate.class),
+					null, rs.getBigDecimal("quantity"), qualityStatus, qualityStatusName(qualityStatus),
 					rs.getString("warehouse_name"), rs.getString("created_by"), reservationType.name(), false);
 		}, trackingId);
 	}
@@ -1391,10 +1484,14 @@ public class InventoryAdminService {
 				""".formatted(trackingColumn), (rs, rowNum) -> {
 			String movementType = rs.getString("movement_type");
 			String qualityStatus = rs.getString("quality_status");
+			String sourceType = rs.getString("source_type");
+			Long sourceId = nullableLong(rs, "source_id");
+			Long sourceLineId = nullableLong(rs, "source_line_id");
+			String sourceDocumentNo = resolveSourceDocumentNo(sourceType, sourceId, rs.getString("source_document_no"));
 			return new InventoryTraceNodeResponse("MOVEMENT", movementTypeName(movementType),
-					rs.getString("source_type"), rs.getLong("source_id"), rs.getString("source_document_no"),
-					rs.getLong("source_line_id"), rs.getObject("business_date", LocalDate.class),
-					rs.getString("direction"), rs.getBigDecimal("quantity"), qualityStatus,
+					sourceType, sourceId, sourceDocumentNo, sourceLineId,
+					rs.getObject("business_date", LocalDate.class), rs.getString("direction"),
+					rs.getBigDecimal("quantity"), qualityStatus,
 					qualityStatusName(qualityStatus), rs.getString("warehouse_name"), rs.getString("operator_name"),
 					rs.getString("reason"), false);
 		}, trackingId);
@@ -1413,12 +1510,69 @@ public class InventoryAdminService {
 
 	private List<InventoryTraceNodeResponse> outboundRecords(List<InventoryTraceNodeResponse> movements) {
 		return movements.stream()
-			.filter((movement) -> "OUT".equals(movement.direction()) && !isReturnMovement(movement.nodeTypeName()))
+			.filter((movement) -> "OUT".equals(movement.direction()) && !isReturnMovement(movement.nodeTypeName())
+					&& !"QUALITY_STATUS_TRANSFER".equals(movement.nodeTypeName()))
 			.toList();
 	}
 
 	private List<InventoryTraceNodeResponse> returnRecords(List<InventoryTraceNodeResponse> movements) {
 		return movements.stream().filter((movement) -> isReturnMovement(movement.nodeTypeName())).toList();
+	}
+
+	private InventoryTraceSubjectResponse maskTraceSubject(InventoryTraceSubjectResponse subject,
+			CurrentUser currentUser) {
+		if (canViewTraceSource(subject.sourceType(), currentUser)) {
+			return subject;
+		}
+		return new InventoryTraceSubjectResponse(subject.trackingMethod(), subject.trackingMethodName(),
+				subject.batchId(), subject.batchNo(), subject.serialId(), subject.serialNo(), subject.materialId(),
+				subject.materialCode(), subject.materialName(), subject.sourceType(), null, null, null,
+				subject.businessDate());
+	}
+
+	private List<InventoryTraceNodeResponse> maskTraceNodes(List<InventoryTraceNodeResponse> nodes,
+			CurrentUser currentUser) {
+		return nodes.stream().map((node) -> maskTraceNode(node, currentUser)).toList();
+	}
+
+	private InventoryTraceNodeResponse maskTraceNode(InventoryTraceNodeResponse node, CurrentUser currentUser) {
+		if (canViewTraceSource(node.documentType(), currentUser)) {
+			return node;
+		}
+		return new InventoryTraceNodeResponse(node.nodeType(), node.nodeTypeName(), node.documentType(), null, null,
+				null, null, node.direction(), node.quantity(), node.qualityStatus(), node.qualityStatusName(),
+				node.warehouseName(), null, node.routeName(), true);
+	}
+
+	private List<InventoryTraceNodeResponse> restrictedSources(List<InventoryTraceNodeResponse> sourceRecords,
+			List<InventoryTraceNodeResponse> activeReservations, List<InventoryTraceNodeResponse> movements) {
+		List<InventoryTraceNodeResponse> restricted = new ArrayList<>();
+		sourceRecords.stream().filter(InventoryTraceNodeResponse::permissionRestricted).forEach(restricted::add);
+		activeReservations.stream().filter(InventoryTraceNodeResponse::permissionRestricted).forEach(restricted::add);
+		movements.stream().filter(InventoryTraceNodeResponse::permissionRestricted).forEach(restricted::add);
+		return List.copyOf(restricted);
+	}
+
+	private boolean canViewTraceSource(String sourceType, CurrentUser currentUser) {
+		if (!hasText(sourceType) || currentUser == null) {
+			return true;
+		}
+		String permission = switch (sourceType) {
+			case "INVENTORY_DOCUMENT" -> "inventory:document:view";
+			case "PURCHASE_RECEIPT" -> "procurement:receipt:view";
+			case "PURCHASE_RETURN" -> "procurement:return:view";
+			case "SALES_ORDER" -> "sales:order:view";
+			case "SALES_SHIPMENT" -> "sales:shipment:view";
+			case "SALES_RETURN" -> "sales:return:view";
+			case "PRODUCTION_WORK_ORDER" -> "production:work-order:view";
+			case "PRODUCTION_COMPLETION_RECEIPT", "PRODUCTION_COMPLETION" -> "production:receipt:view";
+			case "PRODUCTION_MATERIAL_ISSUE" -> "production:issue:view";
+			case "PRODUCTION_MATERIAL_RETURN" -> "production:material-return:view";
+			case "PRODUCTION_MATERIAL_SUPPLEMENT" -> "production:material-supplement:view";
+			case "QUALITY_INSPECTION", "QUALITY_STATUS_TRANSFER" -> "quality:inspection:view";
+			default -> null;
+		};
+		return permission != null && currentUser.permissions().contains(permission);
 	}
 
 	private boolean isReturnMovement(String movementType) {
@@ -1679,12 +1833,58 @@ public class InventoryAdminService {
 		return rs.wasNull() ? null : value;
 	}
 
+	private String resolveSourceDocumentNo(String sourceType, Long sourceId, String documentNo) {
+		if (hasText(documentNo)) {
+			return documentNo;
+		}
+		return this.sourceDocumentResolver.documentNo(sourceType, sourceId);
+	}
+
+	private String batchDisabledReasonCode(String qualityStatus) {
+		if (hasText(qualityStatus) && !"QUALIFIED".equals(qualityStatus)) {
+			return ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE.code();
+		}
+		return ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH.code();
+	}
+
+	private String batchDisabledReason(String qualityStatus) {
+		if (hasText(qualityStatus) && !"QUALIFIED".equals(qualityStatus)) {
+			return "非可用质量状态";
+		}
+		return ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH.message();
+	}
+
+	private String serialDisabledReasonCode(String stockStatus, String qualityStatus) {
+		if (!"IN_STOCK".equals(stockStatus)) {
+			return ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE.code();
+		}
+		if (!"QUALIFIED".equals(qualityStatus)) {
+			return ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE.code();
+		}
+		return ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH.code();
+	}
+
+	private String serialDisabledReason(String stockStatus, String qualityStatus) {
+		if (!"IN_STOCK".equals(stockStatus)) {
+			return "序列号不在库";
+		}
+		if (!"QUALIFIED".equals(qualityStatus)) {
+			return "非可用质量状态";
+		}
+		return ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH.message();
+	}
+
 	private String qualityStatusName(String qualityStatus) {
-		return hasText(qualityStatus) ? InventoryQualityStatus.valueOf(qualityStatus).displayName() : null;
+		if (!hasText(qualityStatus)) {
+			return null;
+		}
+		return InventoryQualityStatus.valueOf(qualityStatus).displayName();
 	}
 
 	private String stockStatusName(String stockStatus) {
 		return switch (stockStatus) {
+			case "AVAILABLE" -> "可用";
+			case "UNAVAILABLE" -> "不可用";
 			case "IN_STOCK" -> "在库";
 			case "RESERVED" -> "已预留";
 			case "OCCUPIED" -> "已占用";
@@ -1763,7 +1963,9 @@ public class InventoryAdminService {
 
 	public record InventoryBatchSummaryResponse(Long id, String batchNo, Long materialId, String materialCode,
 			String materialName, String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo,
-			LocalDate businessDate, BigDecimal quantityOnHand, BigDecimal availableQuantity,
+			Long warehouseId, String warehouseName, String qualityStatus, String qualityStatusName,
+			String stockStatus, String stockStatusName, LocalDate businessDate, BigDecimal quantityOnHand,
+			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
 			List<InventoryTrackingQualityStatusSummaryResponse> qualityStatusSummary, OffsetDateTime updatedAt) {
 	}
 
@@ -1777,6 +1979,7 @@ public class InventoryAdminService {
 	public record InventorySerialSummaryResponse(Long id, String serialNo, Long materialId, String materialCode,
 			String materialName, Long batchId, String batchNo, Long warehouseId, String warehouseName,
 			String qualityStatus, String qualityStatusName, String stockStatus, String stockStatusName,
+			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
 			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, OffsetDateTime updatedAt) {
 	}
 

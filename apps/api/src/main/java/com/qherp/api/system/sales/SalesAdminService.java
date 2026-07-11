@@ -11,6 +11,8 @@ import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.inventory.InventoryReservationType;
+import com.qherp.api.system.inventory.InventoryTrackingMethod;
+import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
@@ -68,15 +70,18 @@ public class SalesAdminService {
 
 	private final InventoryAvailabilityService inventoryAvailabilityService;
 
+	private final InventoryTrackingService inventoryTrackingService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	public SalesAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			InventoryPostingService inventoryPostingService, InventoryAvailabilityService inventoryAvailabilityService,
-			BusinessPeriodGuard businessPeriodGuard) {
+			InventoryTrackingService inventoryTrackingService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.inventoryAvailabilityService = inventoryAvailabilityService;
+		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
@@ -280,6 +285,7 @@ public class SalesAdminService {
 		try {
 			CreatedDocument created = insertShipmentWithRetry(order, shipment, operator.username(), now);
 			insertShipmentLines(created.id(), shipment.lines(), now);
+			prepareShipmentAllocations(created.id(), shipment, operator.username());
 			this.auditService.record(operator, "SALES_SHIPMENT_CREATE", SHIPMENT_TARGET, created.id(),
 					created.documentNo(), servletRequest);
 			return shipment(created.id());
@@ -309,8 +315,10 @@ public class SalesAdminService {
 					where id = ?
 					""", shipment.warehouseId(), shipment.businessDate(), blankToNull(shipment.remark()),
 					operator.username(), now, id);
+			this.inventoryTrackingService.deleteDraftDocumentTracking(SHIPMENT_SOURCE_TYPE, id);
 			this.jdbcTemplate.update("delete from sal_sales_shipment_line where shipment_id = ?", id);
 			insertShipmentLines(id, shipment.lines(), now);
+			prepareShipmentAllocations(id, shipment, operator.username());
 			this.auditService.record(operator, "SALES_SHIPMENT_UPDATE", SHIPMENT_TARGET, id, current.shipmentNo(),
 					servletRequest);
 			return shipment(id);
@@ -378,12 +386,30 @@ public class SalesAdminService {
 		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
 				InventoryReservationType.RESERVATION, InventoryAvailabilityService.SALES_ORDER_SOURCE,
 				orderLine.id(), line.quantity(), operator, servletRequest);
-		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-				new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
-						InventoryDirection.OUT, shipment.warehouseId(), line.materialId(), line.unitId(),
-						line.quantity(), InventoryQualityStatus.QUALIFIED, SHIPMENT_SOURCE_TYPE, shipment.id(),
-						line.id(), shipment.businessDate(), "销售出库", line.remark(), operator.username(),
-						consumedReservation));
+		List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
+			.resolveStoredOutboundAllocations(SHIPMENT_SOURCE_TYPE, shipment.id(), line.id(), shipment.warehouseId(),
+					line.materialId(), line.unitId(), line.quantity(), "trackingAllocations");
+		InventoryPostingService.PostingResult posting = null;
+		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+			InventoryPostingService.PostingResult current = this.inventoryPostingService.post(
+					new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
+							InventoryDirection.OUT, shipment.warehouseId(), line.materialId(), line.unitId(),
+							allocation.quantity(), InventoryQualityStatus.QUALIFIED, SHIPMENT_SOURCE_TYPE,
+							shipment.id(), line.id(), shipment.businessDate(), "销售出库", line.remark(),
+							operator.username(), consumedReservation, allocation.batchId(), allocation.serialId()));
+			this.inventoryTrackingService.attachMovement(allocation.allocationId(), current.movementId());
+			this.inventoryTrackingService.markOutboundPosted(allocation, current.movementId(), operator.username());
+			if (posting == null) {
+				posting = current;
+			}
+			else {
+				posting = new InventoryPostingService.PostingResult(posting.beforeQuantity(), current.afterQuantity(),
+						current.movementId());
+			}
+		}
+		if (posting == null) {
+			throw new BusinessException(ApiErrorCode.CONFLICT);
+		}
 		this.jdbcTemplate.update("""
 				update sal_sales_shipment_line
 				set ordered_quantity = ?, shipped_quantity_before = ?, remaining_quantity_before = ?,
@@ -507,7 +533,8 @@ public class SalesAdminService {
 			}
 			lines.add(new ValidatedShipmentLine(line.lineNo(), orderLine.id(), orderLine.materialId(),
 					orderLine.unitId(), orderLine.quantity(), orderLine.shippedQuantity(), remainingQuantity, quantity,
-					validateOptionalText(line.remark(), 500)));
+					validateOptionalText(line.remark(), 500),
+					line.trackingAllocations() == null ? List.of() : line.trackingAllocations()));
 		}
 		return new ValidatedShipment(request.warehouseId(), request.businessDate(), validateOptionalText(request.remark(),
 				500), lines);
@@ -671,6 +698,20 @@ public class SalesAdminService {
 					""", shipmentId, line.lineNo(), line.orderLineId(), line.materialId(), line.unitId(),
 					line.orderedQuantity(), line.shippedQuantityBefore(), line.remainingQuantityBefore(),
 					line.quantity(), blankToNull(line.remark()), now, now);
+		}
+	}
+
+	private void prepareShipmentAllocations(Long shipmentId, ValidatedShipment shipment, String operatorName) {
+		List<ShipmentLineRow> rows = shipmentLineRows(shipmentId);
+		for (int i = 0; i < shipment.lines().size(); i++) {
+			ValidatedShipmentLine line = shipment.lines().get(i);
+			ShipmentLineRow row = rows.stream()
+				.filter((candidate) -> candidate.orderLineId().equals(line.orderLineId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareOutboundAllocations(SHIPMENT_SOURCE_TYPE, shipmentId, row.id(),
+					shipment.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+					line.trackingAllocations(), operatorName, "lines[" + i + "].trackingAllocations");
 		}
 	}
 
@@ -881,7 +922,14 @@ public class SalesAdminService {
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				left join mst_warehouse rw on rw.id = l.reservation_warehouse_id
-				left join inv_stock_balance stock on stock.warehouse_id = l.reservation_warehouse_id
+				left join (
+					select warehouse_id, material_id, quality_status,
+					       sum(quantity_on_hand) as quantity_on_hand,
+					       sum(locked_quantity) as locked_quantity
+					from inv_stock_balance
+					where quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id, quality_status
+				) stock on stock.warehouse_id = l.reservation_warehouse_id
 					and stock.material_id = l.material_id
 					and stock.quality_status = 'QUALIFIED'
 				left join (
@@ -954,7 +1002,7 @@ public class SalesAdminService {
 				       m.name as material_name, l.unit_id, u.name as unit_name, l.ordered_quantity,
 				       l.shipped_quantity_before, l.remaining_quantity_before, l.quantity, l.before_quantity,
 				       l.after_quantity, sol.reservation_warehouse_id, rw.name as reservation_warehouse_name,
-				       l.remark,
+				       l.remark, m.tracking_method,
 				       coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
 				       coalesce(locked.reserved_quantity, 0.000000) as reserved_quantity,
 				       coalesce(locked.occupied_quantity, 0.000000) as occupied_quantity,
@@ -965,7 +1013,14 @@ public class SalesAdminService {
 				left join mst_warehouse rw on rw.id = sol.reservation_warehouse_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
-				left join inv_stock_balance sb on sb.warehouse_id = sh.warehouse_id
+				left join (
+					select warehouse_id, material_id, quality_status,
+					       sum(quantity_on_hand) as quantity_on_hand,
+					       sum(locked_quantity) as locked_quantity
+					from inv_stock_balance
+					where quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id, quality_status
+				) sb on sb.warehouse_id = sh.warehouse_id
 					and sb.material_id = l.material_id
 					and sb.quality_status = 'QUALIFIED'
 				left join (
@@ -998,6 +1053,8 @@ public class SalesAdminService {
 			BigDecimal availableQuantity = quantityOnHand.subtract(reservedQuantity).subtract(occupiedQuantity);
 			BigDecimal maxSelectableQuantity = maxSelectableQuantity(quantity, availableQuantity);
 			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
+			Long lineId = rs.getLong("id");
 			return new SalesShipmentLineResponse(rs.getLong("id"), rs.getInt("line_no"),
 					rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
@@ -1006,8 +1063,10 @@ public class SalesAdminService {
 					rs.getBigDecimal("after_quantity"), rs.getObject("reservation_warehouse_id", Long.class),
 					rs.getString("reservation_warehouse_name"), rs.getString("remark"),
 					InventoryQualityStatus.QUALIFIED.name(),
-					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, reservedQuantity,
-					occupiedQuantity, availableQuantity, availableQuantity, selectable,
+					InventoryQualityStatus.QUALIFIED.displayName(), trackingMethod.name(),
+					trackingMethod.displayName(), this.inventoryTrackingService.allocationResponses(
+							SHIPMENT_SOURCE_TYPE, shipmentId, lineId),
+					quantityOnHand, reservedQuantity, occupiedQuantity, availableQuantity, availableQuantity, selectable,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
 		}, shipmentId);
@@ -1231,7 +1290,8 @@ public class SalesAdminService {
 	}
 
 	public record SalesShipmentLineRequest(@NotNull Integer lineNo, @NotNull Long orderLineId, Long materialId,
-			Long unitId, @NotNull BigDecimal quantity, String remark) {
+			Long unitId, @NotNull BigDecimal quantity, String remark,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record SalesShipmentRequest(@NotNull Long warehouseId, @NotNull LocalDate businessDate, String remark,
@@ -1274,9 +1334,11 @@ public class SalesAdminService {
 			BigDecimal shippedQuantityBefore, BigDecimal remainingQuantityBefore, BigDecimal quantity,
 			BigDecimal beforeQuantity, BigDecimal afterQuantity, Long reservationWarehouseId,
 			String reservationWarehouseName, String remark, String qualityStatus, String qualityStatusName,
-			BigDecimal quantityOnHand, BigDecimal reservedQuantity, BigDecimal occupiedQuantity,
-			BigDecimal availableQuantity, BigDecimal availableToPromiseQuantity, boolean selectable,
-			String disabledReasonCode, String disabledReason, BigDecimal maxSelectableQuantity) {
+			String trackingMethod, String trackingMethodName,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations, BigDecimal quantityOnHand,
+			BigDecimal reservedQuantity, BigDecimal occupiedQuantity, BigDecimal availableQuantity,
+			BigDecimal availableToPromiseQuantity, boolean selectable, String disabledReasonCode,
+			String disabledReason, BigDecimal maxSelectableQuantity) {
 	}
 
 	public record SalesShipmentInventoryMovementResponse(Long id, String movementNo, String movementType,
@@ -1307,7 +1369,8 @@ public class SalesAdminService {
 
 	private record ValidatedShipmentLine(Integer lineNo, Long orderLineId, Long materialId, Long unitId,
 			BigDecimal orderedQuantity, BigDecimal shippedQuantityBefore, BigDecimal remainingQuantityBefore,
-			BigDecimal quantity, String remark) {
+			BigDecimal quantity, String remark,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record OrderRow(Long id, String orderNo, Long customerId, LocalDate orderDate, LocalDate expectedShipDate,

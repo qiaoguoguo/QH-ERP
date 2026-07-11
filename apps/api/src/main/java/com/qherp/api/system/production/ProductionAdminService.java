@@ -319,6 +319,7 @@ public class ProductionAdminService {
 		try {
 			CreatedDocument created = insertMaterialIssueWithRetry(workOrderId, validated, operator.username(), now);
 			insertMaterialIssueLines(created.id(), validated.lines(), now);
+			prepareMaterialIssueAllocations(created.id(), validated, operator.username());
 			this.auditService.record(operator, "MFG_MATERIAL_ISSUE_CREATE", MATERIAL_ISSUE_TARGET, created.id(),
 					created.documentNo(), servletRequest);
 			return materialIssue(workOrderId, created.id());
@@ -347,8 +348,10 @@ public class ProductionAdminService {
 				where id = ?
 				""", validated.businessDate(), validated.reason(), blankToNull(validated.remark()),
 				operator.username(), now, id);
+		this.inventoryTrackingService.deleteDraftDocumentTracking(MATERIAL_ISSUE_SOURCE, id);
 		this.jdbcTemplate.update("delete from mfg_material_issue_line where issue_id = ?", id);
 		insertMaterialIssueLines(id, validated.lines(), now);
+		prepareMaterialIssueAllocations(id, validated, operator.username());
 		this.auditService.record(operator, "MFG_MATERIAL_ISSUE_UPDATE", MATERIAL_ISSUE_TARGET, id,
 				issue.documentNo(), servletRequest);
 		return materialIssue(workOrderId, id);
@@ -674,12 +677,30 @@ public class ProductionAdminService {
 		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
 				InventoryReservationType.RESERVATION, InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE,
 				material.id(), line.quantity(), operator, servletRequest);
-		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
-						InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
-						line.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
-						line.id(), issue.businessDate(), issue.reason(), line.remark(), operator.username(),
-						consumedReservation));
+		List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
+			.resolveStoredOutboundAllocations(MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), line.warehouseId(),
+					material.materialId(), material.unitId(), line.quantity(), "trackingAllocations");
+		InventoryPostingService.PostingResult posting = null;
+		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+			InventoryPostingService.PostingResult current = this.inventoryPostingService.post(
+					new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
+							InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
+							allocation.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
+							line.id(), issue.businessDate(), issue.reason(), line.remark(), operator.username(),
+							consumedReservation, allocation.batchId(), allocation.serialId()));
+			this.inventoryTrackingService.attachMovement(allocation.allocationId(), current.movementId());
+			this.inventoryTrackingService.markOutboundPosted(allocation, current.movementId(), operator.username());
+			if (posting == null) {
+				posting = current;
+			}
+			else {
+				posting = new InventoryPostingService.PostingResult(posting.beforeQuantity(), current.afterQuantity(),
+						current.movementId());
+			}
+		}
+		if (posting == null) {
+			throw new BusinessException(ApiErrorCode.CONFLICT);
+		}
 		this.jdbcTemplate.update("""
 				update mfg_work_order_material
 				set issued_quantity = issued_quantity + ?, updated_at = ?, version = version + 1
@@ -738,7 +759,8 @@ public class ProductionAdminService {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EXCEEDS_REQUIRED);
 			}
 			lines.add(new ValidatedMaterialIssueLine(line.lineNo(), material.id(), line.warehouseId(),
-					material.materialId(), material.unitId(), quantity, validateOptionalText(line.remark(), 500)));
+					material.materialId(), material.unitId(), quantity, validateOptionalText(line.remark(), 500),
+					line.trackingAllocations() == null ? List.of() : line.trackingAllocations()));
 		}
 		return new ValidatedMaterialIssue(request.businessDate(), reason, remark, lines);
 	}
@@ -1016,6 +1038,20 @@ public class ProductionAdminService {
 				operatorName, "trackingAllocations");
 	}
 
+	private void prepareMaterialIssueAllocations(Long issueId, ValidatedMaterialIssue issue, String operatorName) {
+		List<MaterialIssueLineRow> rows = materialIssueLineRows(issueId);
+		for (int i = 0; i < issue.lines().size(); i++) {
+			ValidatedMaterialIssueLine line = issue.lines().get(i);
+			MaterialIssueLineRow row = rows.stream()
+				.filter((candidate) -> candidate.workOrderMaterialId().equals(line.workOrderMaterialId()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+			this.inventoryTrackingService.prepareOutboundAllocations(MATERIAL_ISSUE_SOURCE, issueId, row.id(),
+					line.warehouseId(), line.materialId(), line.unitId(), line.quantity(), line.trackingAllocations(),
+					operatorName, "lines[" + i + "].trackingAllocations");
+		}
+	}
+
 	private void insertMaterialIssueLines(Long issueId, List<ValidatedMaterialIssueLine> lines, OffsetDateTime now) {
 		for (ValidatedMaterialIssueLine line : lines) {
 			this.jdbcTemplate.update("""
@@ -1107,7 +1143,14 @@ public class ProductionAdminService {
 				join mfg_work_order wo on wo.id = wom.work_order_id
 				join mst_material m on m.id = wom.material_id
 				join mst_unit u on u.id = wom.unit_id
-				left join inv_stock_balance sb on sb.warehouse_id = wo.issue_warehouse_id
+				left join (
+					select warehouse_id, material_id, quality_status,
+					       sum(quantity_on_hand) as quantity_on_hand,
+					       sum(locked_quantity) as locked_quantity
+					from inv_stock_balance
+					where quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id, quality_status
+				) sb on sb.warehouse_id = wo.issue_warehouse_id
 					and sb.material_id = wom.material_id
 					and sb.quality_status = 'QUALIFIED'
 				left join (
@@ -1275,19 +1318,25 @@ public class ProductionAdminService {
 		return this.jdbcTemplate.query("""
 				select l.id, l.work_order_material_id, l.line_no, l.warehouse_id, w.name as warehouse_name,
 				       l.material_id, m.code as material_code, m.name as material_name, l.unit_id,
-				       u.name as unit_name, l.quantity, l.before_quantity, l.after_quantity, l.remark
+				       u.name as unit_name, l.quantity, l.before_quantity, l.after_quantity, l.remark,
+				       m.tracking_method
 				from mfg_material_issue_line l
 				join mst_warehouse w on w.id = l.warehouse_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				where l.issue_id = ?
 				order by l.line_no asc, l.id asc
-				""", (rs, rowNum) -> new MaterialIssueLineResponse(rs.getLong("id"),
-				rs.getLong("work_order_material_id"), rs.getInt("line_no"), rs.getLong("warehouse_id"),
-				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
-				rs.getString("remark")), issueId);
+				""", (rs, rowNum) -> {
+			InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
+			Long lineId = rs.getLong("id");
+			return new MaterialIssueLineResponse(lineId, rs.getLong("work_order_material_id"), rs.getInt("line_no"),
+					rs.getLong("warehouse_id"), rs.getString("warehouse_name"), rs.getLong("material_id"),
+					rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
+					rs.getString("unit_name"), rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"),
+					rs.getBigDecimal("after_quantity"), rs.getString("remark"), trackingMethod.name(),
+					trackingMethod.displayName(),
+					this.inventoryTrackingService.allocationResponses(MATERIAL_ISSUE_SOURCE, issueId, lineId));
+		}, issueId);
 	}
 
 	private Optional<WorkReportResponse> workReport(Long workOrderId, Long id) {
@@ -1589,7 +1638,8 @@ public class ProductionAdminService {
 	}
 
 	public record MaterialIssueLineRequest(@NotNull Integer lineNo, @NotNull Long workOrderMaterialId,
-			@NotNull Long warehouseId, @NotNull BigDecimal quantity, String remark) {
+			@NotNull Long warehouseId, @NotNull BigDecimal quantity, String remark,
+			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	public record MaterialIssueRequest(@NotNull LocalDate businessDate, @NotBlank String reason, String remark,
@@ -1644,7 +1694,9 @@ public class ProductionAdminService {
 
 	public record MaterialIssueLineResponse(Long id, Long workOrderMaterialId, Integer lineNo, Long warehouseId,
 			String warehouseName, Long materialId, String materialCode, String materialName, Long unitId,
-			String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark) {
+			String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark,
+			String trackingMethod, String trackingMethodName,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	public record MaterialIssueDetailResponse(Long id, String issueNo, Long workOrderId, String status,
@@ -1685,7 +1737,8 @@ public class ProductionAdminService {
 	}
 
 	private record ValidatedMaterialIssueLine(Integer lineNo, Long workOrderMaterialId, Long warehouseId,
-			Long materialId, Long unitId, BigDecimal quantity, String remark) {
+			Long materialId, Long unitId, BigDecimal quantity, String remark,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record ValidatedReport(LocalDate businessDate, BigDecimal qualifiedQuantity, BigDecimal defectiveQuantity,
