@@ -534,6 +534,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				"1.000000", "20.000000", "CONFIRMED", "140.00", "0.00", "140.00");
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000",
 				InventoryQualityStatus.QUALIFIED);
+		insertReservation(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "RESERVATION",
+				"SALES_ORDER", "4.000000");
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000",
 				InventoryQualityStatus.PENDING_INSPECTION);
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000",
@@ -549,12 +551,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode qualified = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "QUALIFIED");
 		assertThat(qualified.get("qualityStatusName").asText()).isEqualTo("合格");
 		assertDecimalText(qualified, "quantityOnHand", "5.000000");
-		assertDecimalText(qualified, "availableStockQuantity", "5.000000");
-		assertDecimalText(qualified, "availableQuantity", "5.000000");
+		assertDecimalText(qualified, "availableStockQuantity", "1.000000");
+		assertDecimalText(qualified, "availableQuantity", "1.000000");
 		assertThat(qualified.get("selectable").booleanValue()).isTrue();
 		assertThat(qualified.get("disabledReasonCode").isNull()).isTrue();
 		assertThat(qualified.get("disabledReason").isNull()).isTrue();
-		assertDecimalText(qualified, "maxSelectableQuantity", "5.000000");
+		assertDecimalText(qualified, "maxSelectableQuantity", "1.000000");
 
 		JsonNode pending = purchaseReturnCandidate(source, receipt.firstReceiptLineId(), "PENDING_INSPECTION");
 		assertThat(pending.get("qualityStatusName").asText()).isEqualTo("待检");
@@ -1762,6 +1764,24 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
 					updated_at = now(), version = inv_stock_balance.version + 1
 				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+	}
+
+	private long insertReservation(long warehouseId, long materialId, long unitId, String reservationType,
+			String sourceType, String quantity) {
+		long sourceId = 8_100_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 8_110_000L + SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, ?, ?, ?, ?, ?, ?, 'tester', now(), 'tester',
+					now())
+				returning id
+				""", Long.class, "REV-RSV-" + SEQUENCE.incrementAndGet(), reservationType, warehouseId, materialId,
+				unitId, new BigDecimal(quantity), sourceType, sourceId, sourceLineId, sourceType + "-" + sourceId,
+				LocalDate.now(), "反向来源候选预留约束测试");
 	}
 
 	private Map<String, Object> salesReturnPayload(long sourceShipmentId, String clientRequestId,

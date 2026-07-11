@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   productionApi,
   type ProductionMaterialIssuePayload,
@@ -11,7 +10,6 @@ import {
 } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
@@ -33,10 +31,8 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
-const warehouses = ref<WarehouseRecord[]>([])
 const lines = ref<IssueLineDraft[]>([])
 const loading = ref(true)
-const referenceLoading = ref(true)
 const error = ref('')
 const formError = ref('')
 const formSubmitting = ref(false)
@@ -68,19 +64,6 @@ function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
 
 function normalizeRequiredId(value: ResourceId | ''): ResourceId | null {
   return normalizeOptionalId(value) ?? null
-}
-
-async function loadReferences() {
-  referenceLoading.value = true
-  try {
-    const warehousePage = await masterDataApi.warehouses.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 })
-    warehouses.value = pageItems(warehousePage)
-  } catch (caught) {
-    warehouses.value = []
-    error.value = productionErrorMessage(caught)
-  } finally {
-    referenceLoading.value = false
-  }
 }
 
 async function loadWorkOrder() {
@@ -171,12 +154,16 @@ function validateForm(): ProductionMaterialIssuePayload | null {
     }
     const maxSelectableQuantity = numericMaterialValue(material, 'maxSelectableQuantity')
     if (maxSelectableQuantity !== null && quantityResult.value !== null && quantityResult.value > maxSelectableQuantity) {
-      nextLineErrors[line.lineNo] = '本次领料不能大于最大可选数量'
+      nextLineErrors[line.lineNo] = '本次领料不能大于本次最多领料'
       continue
     }
     const warehouseId = normalizeRequiredId(line.warehouseId)
     if (warehouseId === null) {
       nextLineErrors[line.lineNo] = '请选择仓库'
+      continue
+    }
+    if (String(warehouseId) !== String(workOrder.value.issueWarehouseId)) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行领料仓库必须与工单领料仓库一致，按工单领料仓库消耗预留`
       continue
     }
     payloadLines.push({
@@ -235,17 +222,16 @@ function cancel() {
 }
 
 onMounted(() => {
-  void loadReferences()
   void loadWorkOrder()
 })
 </script>
 
 <template>
-  <MasterDataTableView title="生产领料" description="从工单用料快照创建领料草稿，过账后扣减库存。">
+  <MasterDataTableView title="生产领料" description="从工单用料快照创建领料草稿，按工单领料仓库消耗预留，过账后扣减库存。">
     <template #alerts>
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
-      <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="生产领料页面加载中" :closable="false" />
+      <el-alert v-if="loading" class="state-alert" type="info" title="生产领料页面加载中" :closable="false" />
       <el-alert v-if="workOrder && !canCreateIssue" class="state-alert" type="warning" title="缺少生产领料创建权限，无法保存领料单" :closable="false" />
       <el-alert v-if="workOrder && !executable" class="state-alert" type="warning" title="当前工单状态不可领料" :closable="false" />
     </template>
@@ -265,7 +251,7 @@ onMounted(() => {
           <ProductionWorkOrderStatusTag :status="workOrder.status" />
         </div>
         <div>
-          <span>默认仓库</span>
+          <span>领料仓库</span>
           <strong>{{ workOrder.issueWarehouseName }}</strong>
         </div>
       </section>
@@ -322,12 +308,27 @@ onMounted(() => {
               <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.quantityOnHand) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="合格可用" min-width="120" align="right">
+          <el-table-column label="占用库存" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.occupiedQuantity) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="预留库存" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.reservedQuantity) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="现货净可用" min-width="130" align="right">
             <template #default="{ row }">
               <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.availableQuantity) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="最大可选" min-width="120" align="right">
+          <el-table-column label="可承诺量" min-width="120" align="right">
+            <template #default="{ row }">
+              <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.availableToPromiseQuantity) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="本次最多领料" min-width="140" align="right">
             <template #default="{ row }">
               <span class="numeric-cell">{{ formatProductionQuantity(materialForLine(row)?.maxSelectableQuantity) }}</span>
             </template>
@@ -347,10 +348,10 @@ onMounted(() => {
               <div v-if="lineErrors[row.lineNo]" class="line-error">{{ lineErrors[row.lineNo] }}</div>
             </template>
           </el-table-column>
-          <el-table-column label="仓库" min-width="170">
+          <el-table-column label="领料仓库" min-width="170">
             <template #default="{ row }">
-              <el-select v-model="row.warehouseId" filterable placeholder="仓库" style="width: 100%" :disabled="!canSubmitIssue">
-                <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.name" :value="warehouse.id" />
+              <el-select v-model="row.warehouseId" placeholder="工单领料仓库" style="width: 100%" disabled>
+                <el-option :label="workOrder.issueWarehouseName" :value="workOrder.issueWarehouseId" />
               </el-select>
             </template>
           </el-table-column>

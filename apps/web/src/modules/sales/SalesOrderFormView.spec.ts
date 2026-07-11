@@ -3,7 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import type { MaterialRecord, PartnerRecord } from '../../shared/api/masterDataApi'
+import type { MaterialRecord, PartnerRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { SalesOrderDetailRecord } from '../../shared/api/salesApi'
 import { useAuthStore } from '../../stores/authStore'
 import SalesOrderFormView from './SalesOrderFormView.vue'
@@ -22,6 +22,9 @@ const masterDataApiMock = vi.hoisted(() => ({
     list: vi.fn(),
   },
   materials: {
+    list: vi.fn(),
+  },
+  warehouses: {
     list: vi.fn(),
   },
 }))
@@ -80,6 +83,13 @@ const auxiliary: MaterialRecord = {
   materialType: 'AUXILIARY',
 }
 
+const warehouseA: WarehouseRecord = {
+  id: 30,
+  code: 'WH-FG',
+  name: '成品仓',
+  status: 'ENABLED',
+}
+
 const draftOrder: SalesOrderDetailRecord = {
   id: 99,
   orderNo: 'SO-20260704-001',
@@ -110,6 +120,8 @@ const draftOrder: SalesOrderDetailRecord = {
       quantity: '12.500000',
       shippedQuantity: 0,
       remainingQuantity: 12.5,
+      reservationWarehouseId: 30,
+      reservationWarehouseName: '成品仓',
       unitPrice: '88.100000',
       expectedShipDate: '2026-07-12',
       remark: '按周发货',
@@ -167,6 +179,7 @@ async function fillValidOrder(wrapper: VueWrapper, quantity = '12.500000', unitP
   await wrapper.find('input[name="sales-order-date"]').setValue('2026-07-04')
   await wrapper.find('input[name="sales-order-expected-date"]').setValue('2026-07-12')
   await setSelectValue(wrapper, 1, 10)
+  await setSelectValue(wrapper, 2, 30)
   await wrapper.find('input[name="sales-order-line-quantity-0"]').setValue(quantity)
   await wrapper.find('input[name="sales-order-line-unit-price-0"]').setValue(unitPrice)
   await wrapper.find('input[name="sales-order-line-expected-date-0"]').setValue('2026-07-12')
@@ -192,6 +205,13 @@ describe('销售订单表单页', () => {
       total: 4,
       totalPages: 1,
     })
+    masterDataApiMock.warehouses.list.mockResolvedValue({
+      items: [warehouseA],
+      page: 1,
+      pageSize: 200,
+      total: 1,
+      totalPages: 1,
+    })
   })
 
   it('加载客户和可销售物料，过滤原材料和辅料，缺少必填项时阻止保存', async () => {
@@ -204,6 +224,12 @@ describe('销售订单表单页', () => {
       pageSize: 200,
     })
     expect(masterDataApiMock.materials.list).toHaveBeenCalledWith({
+      keyword: '',
+      status: 'ENABLED',
+      page: 1,
+      pageSize: 200,
+    })
+    expect(masterDataApiMock.warehouses.list).toHaveBeenCalledWith({
       keyword: '',
       status: 'ENABLED',
       page: 1,
@@ -239,13 +265,29 @@ describe('销售订单表单页', () => {
     await wrapper.find('input[name="sales-order-line-unit-price-0"]').setValue('88.1')
     await wrapper.find('[data-test="add-sales-order-line"]').trigger('click')
     await flushPromises()
-    await setSelectValue(wrapper, 2, 10)
+    await setSelectValue(wrapper, 3, 10)
+    await setSelectValue(wrapper, 4, 30)
     await wrapper.find('input[name="sales-order-line-quantity-1"]').setValue('2')
     await wrapper.find('input[name="sales-order-line-unit-price-1"]').setValue('1')
     await wrapper.find('[data-test="save-sales-order"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('同一销售订单内物料不能重复')
+    expect(salesApiMock.orders.create).not.toHaveBeenCalled()
+  })
+
+  it('销售明细必须选择预留仓库，确认预留口径使用清晰中文提示', async () => {
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 0, 100)
+    await wrapper.find('input[name="sales-order-date"]').setValue('2026-07-04')
+    await setSelectValue(wrapper, 1, 10)
+    await wrapper.find('input[name="sales-order-line-quantity-0"]').setValue('2')
+    await wrapper.find('input[name="sales-order-line-unit-price-0"]').setValue('88.1')
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 10 行请选择预留仓库，销售订单确认会按该仓库预留现货库存')
     expect(salesApiMock.orders.create).not.toHaveBeenCalled()
   })
 
@@ -276,6 +318,7 @@ describe('销售订单表单页', () => {
           lineNo: 10,
           materialId: 10,
           unitId: 2,
+          reservationWarehouseId: 30,
           quantity: '12.500000',
           unitPrice: '88.100000',
           expectedShipDate: '2026-07-12',
@@ -301,7 +344,7 @@ describe('销售订单表单页', () => {
 
     expect(salesApiMock.orders.update).toHaveBeenCalledWith(99, expect.objectContaining({
       customerId: 100,
-      lines: [expect.objectContaining({ unitPrice: '99.200000' })],
+      lines: [expect.objectContaining({ reservationWarehouseId: 30, unitPrice: '99.200000' })],
     }))
     expect(router.currentRoute.value.name).toBe('sales-order-detail')
   })

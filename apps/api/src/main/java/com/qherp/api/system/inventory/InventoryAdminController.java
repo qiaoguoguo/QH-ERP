@@ -48,6 +48,25 @@ public class InventoryAdminController {
 				direction, dateFrom, dateTo, qualityStatus, page, pageSize));
 	}
 
+	@GetMapping("/reservations")
+	public ApiResponse<PageResponse<InventoryAdminService.InventoryReservationResponse>> reservations(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long warehouseId,
+			@RequestParam(required = false) Long materialId, @RequestParam(required = false) String reservationType,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId, @RequestParam(required = false) Long sourceLineId,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.inventoryAdminService.reservations(keyword, warehouseId, materialId,
+				reservationType, status, sourceType, sourceId, sourceLineId, businessDateFrom, businessDateTo, page,
+				pageSize));
+	}
+
+	@GetMapping("/reservations/{id}")
+	public ApiResponse<InventoryAdminService.InventoryReservationResponse> reservation(@PathVariable Long id) {
+		return ApiResponse.ok(this.inventoryAdminService.reservation(id));
+	}
+
 	@GetMapping("/documents")
 	public ApiResponse<PageResponse<InventoryAdminService.InventoryDocumentSummaryResponse>> documents(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String documentType,

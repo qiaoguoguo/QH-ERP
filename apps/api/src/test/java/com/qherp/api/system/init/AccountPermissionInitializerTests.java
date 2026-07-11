@@ -101,6 +101,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	private static final List<ExpectedActionPermission> INVENTORY_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("inventory:balance:view", "inventory", "GET",
 					"/api/admin/inventory/balances"),
+			new ExpectedActionPermission("inventory:reservation:view", "inventory", "GET",
+					"/api/admin/inventory/reservations/**"),
 			new ExpectedActionPermission("inventory:movement:view", "inventory", "GET",
 					"/api/admin/inventory/movements"),
 			new ExpectedActionPermission("inventory:document:view", "inventory", "GET",
@@ -379,6 +381,21 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(systemAdmin.getStatus()).isEqualTo(SystemRoleStatus.ENABLED);
 		assertThat(systemAdmin.getDescription()).isNull();
 		assertThat(userRoleRepository.existsByUserIdAndRoleId(admin.getId(), systemAdmin.getId())).isTrue();
+	}
+
+	@Test
+	void inventoryBalanceApiIsSeededOnlyUnderBalancePermission() {
+		assertThat(this.permissionRepository.countByCode("inventory:availability:view")).isZero();
+
+		List<String> balanceApiPermissionCodes = this.jdbcTemplate.queryForList("""
+				select code
+				from sys_permission
+				where api_method = 'GET'
+				and api_path = '/api/admin/inventory/balances'
+				order by code
+				""", String.class);
+
+		assertThat(balanceApiPermissionCodes).containsExactly("inventory:balance:view");
 	}
 
 	@Test

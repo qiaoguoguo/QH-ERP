@@ -13,6 +13,9 @@ const inventoryApiMock = vi.hoisted(() => ({
   balances: {
     list: vi.fn(),
   },
+  reservations: {
+    list: vi.fn(),
+  },
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
@@ -66,16 +69,60 @@ const balance: InventoryBalanceRecord = {
   unitName: '千克',
   qualityStatus: 'QUALIFIED',
   qualityStatusName: '合格',
-  quantityOnHand: 120.5,
-  totalQuantityOnHand: 140.5,
-  lockedQuantity: 0,
-  availableQuantity: 120.5,
-  pendingInspectionQuantity: 12,
-  qualifiedQuantity: 120.5,
-  rejectedQuantity: 3,
-  frozenQuantity: 5,
+  bookQuantity: '140.500000',
+  quantityOnHand: '120.500000',
+  totalQuantityOnHand: '140.500000',
+  lockedQuantity: '19.000000',
+  availableQuantity: '101.500000',
+  pendingInspectionQuantity: '12.000000',
+  qualifiedQuantity: '120.500000',
+  rejectedQuantity: '3.000000',
+  frozenQuantity: '5.000000',
+  reservedQuantity: '15.000000',
+  occupiedQuantity: '4.000000',
+  inTransitQuantity: '30.000000',
+  availableToPromiseQuantity: '101.500000',
+  netRequirementShortageQuantity: '10.000000',
   unavailableReason: null,
   updatedAt: '2026-07-03T09:30:00+08:00',
+}
+
+const reservationPage = {
+  items: [
+    {
+      id: 91,
+      reservationNo: 'RSV-20260711-001',
+      reservationType: 'RESERVATION',
+      reservationTypeName: '销售预留',
+      status: 'ACTIVE',
+      statusName: '生效',
+      warehouseId: 1,
+      warehouseName: '原料仓',
+      materialId: 2,
+      materialCode: 'RM-STEEL',
+      materialName: '冷轧钢板',
+      unitId: 3,
+      unitName: '千克',
+      qualityStatus: 'QUALIFIED',
+      qualityStatusName: '合格',
+      quantity: '15.000000',
+      remainingQuantity: '12.000000',
+      releasedQuantity: '3.000000',
+      consumedQuantity: '0.000000',
+      sourceType: 'SALES_ORDER',
+      sourceTypeName: '销售订单',
+      sourceId: 501,
+      sourceLineId: 5001,
+      sourceDocumentNo: 'SO-20260711-001',
+      businessDate: '2026-07-11',
+      createdByName: '销售员',
+      createdAt: '2026-07-11T09:00:00+08:00',
+    },
+  ],
+  page: 1,
+  pageSize: 20,
+  total: 1,
+  totalPages: 1,
 }
 
 const balancePage: PageResult<InventoryBalanceRecord> = {
@@ -102,12 +149,16 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
 }
 
 async function mountBalances() {
+  return mountBalancesWithPermissions(['inventory:balance:view', 'inventory:reservation:view', 'inventory:movement:view'])
+}
+
+async function mountBalancesWithPermissions(permissions: string[]) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
     user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
     menus: [],
-    permissions: ['inventory:balance:view', 'inventory:movement:view'],
+    permissions,
   })
   const router = createRouter({
     history: createMemoryHistory(),
@@ -132,6 +183,7 @@ describe('库存余额页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     inventoryApiMock.balances.list.mockResolvedValue(balancePage)
+    inventoryApiMock.reservations.list.mockResolvedValue(reservationPage)
     masterDataApiMock.warehouses.list.mockResolvedValue({
       items: [warehouse],
       page: 1,
@@ -152,19 +204,28 @@ describe('库存余额页', () => {
     const { wrapper } = await mountBalances()
 
     expect(wrapper.text()).toContain('库存余额')
-    expect(wrapper.text()).toContain('可用数量仅包含合格库存，待检、不合格和冻结库存不参与出库或领料。')
+    expect(wrapper.text()).toContain('展示账面库存、合格现存、占用预留、现货净可用、物料级采购在途参考、可承诺量和净需求缺口。')
     expect(wrapper.text()).toContain('原料仓')
     expect(wrapper.text()).toContain('RM-STEEL')
     expect(wrapper.text()).toContain('原材料')
     expect(wrapper.text()).toContain('合格')
-    expect(wrapper.text()).toContain('总现存')
-    expect(wrapper.text()).toContain('合格可用')
+    expect(wrapper.text()).toContain('账面库存')
+    expect(wrapper.text()).toContain('合格现存')
+    expect(wrapper.text()).toContain('占用库存')
+    expect(wrapper.text()).toContain('预留库存')
+    expect(wrapper.text()).toContain('现货净可用')
+    expect(wrapper.text()).toContain('采购在途参考')
+    expect(wrapper.text()).toContain('可承诺量')
+    expect(wrapper.text()).toContain('净需求缺口')
     expect(wrapper.text()).toContain('待检')
     expect(wrapper.text()).toContain('不合格')
     expect(wrapper.text()).toContain('冻结')
     expect(wrapper.text()).toContain('140.5')
     expect(wrapper.text()).toContain('120.5')
-    expect(wrapper.find('[data-test="quantity-on-hand-cell"]').classes()).toContain('numeric-cell')
+    expect(wrapper.text()).toContain('101.5')
+    expect(wrapper.text()).not.toContain('131.5')
+    expect(wrapper.text()).toContain('10')
+    expect(wrapper.find('[data-test="book-quantity-cell"]').classes()).toContain('numeric-cell')
   })
 
   it('按关键词、仓库、物料、物料类型、质量状态和正库存条件查询并支持重置', async () => {
@@ -226,5 +287,44 @@ describe('库存余额页', () => {
 
     expect(router.currentRoute.value.path).toBe('/inventory/movements')
     expect(router.currentRoute.value.query).toEqual({ warehouseId: '1', materialId: '2', qualityStatus: 'QUALIFIED' })
+  })
+
+  it('占用预留抽屉加载并展示真实来源字段，采购在途仅展示物料级参考摘要', async () => {
+    const { wrapper } = await mountBalances()
+
+    const drawers = wrapper.findAllComponents({ name: 'ElDrawer' })
+    expect(drawers[0].props('size')).toBe('min(520px, 92vw)')
+    expect(drawers[1].props('size')).toBe('min(520px, 92vw)')
+
+    await wrapper.find('[data-test="view-inventory-reservations"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.reservations.list).toHaveBeenCalledWith({
+      warehouseId: 1,
+      materialId: 2,
+      status: 'ACTIVE',
+      page: 1,
+      pageSize: 20,
+    })
+    expect(wrapper.text()).toContain('占用预留追溯')
+    expect(wrapper.text()).toContain('RSV-20260711-001')
+    expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.text()).toContain('SO-20260711-001')
+    expect(wrapper.text()).toContain('12')
+
+    await wrapper.find('[data-test="view-inventory-in-transit"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('采购在途参考摘要')
+    expect(wrapper.text()).toContain('采购在途按物料汇总展示，不代表当前仓库现货可用。')
+    expect(wrapper.text()).not.toContain('采购在途追溯')
+  })
+
+  it('缺少占用预留权限时隐藏抽屉入口，避免已进入页面后接口 403', async () => {
+    const { wrapper } = await mountBalancesWithPermissions(['inventory:balance:view', 'inventory:movement:view'])
+
+    expect(wrapper.find('[data-test="view-inventory-reservations"]').exists()).toBe(false)
+    expect(inventoryApiMock.reservations.list).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="view-inventory-movements"]').exists()).toBe(true)
   })
 })

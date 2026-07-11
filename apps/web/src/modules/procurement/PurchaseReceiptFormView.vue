@@ -118,6 +118,9 @@ function draftFromReceiptLine(line: PurchaseReceiptLineRecord): PurchaseReceiptL
     orderedQuantity: Number(line.orderedQuantity) || 0,
     receivedQuantityBefore: Number(line.receivedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    inTransitQuantity: line.inTransitQuantity ?? null,
+    inTransitStatus: line.inTransitStatus ?? null,
+    inTransitStatusName: line.inTransitStatusName ?? null,
     quantity: String(line.quantity),
     remark: line.remark ?? '',
   }
@@ -173,6 +176,9 @@ function refreshDraftLinesWithCurrentOrder(
       orderedQuantity: currentSourceLine.orderedQuantity,
       receivedQuantityBefore: currentSourceLine.receivedQuantityBefore,
       remainingQuantityBefore: currentSourceLine.remainingQuantityBefore,
+      inTransitQuantity: currentSourceLine.inTransitQuantity,
+      inTransitStatus: currentSourceLine.inTransitStatus,
+      inTransitStatusName: currentSourceLine.inTransitStatusName,
     }
   })
 }

@@ -45,10 +45,15 @@ function updateSourceLine(index: number, value: ResourceId) {
     orderedQuantity: sourceLine?.orderedQuantity ?? 0,
     shippedQuantityBefore: sourceLine?.shippedQuantityBefore ?? 0,
     remainingQuantityBefore: sourceLine?.remainingQuantityBefore ?? 0,
+    reservationWarehouseId: sourceLine?.reservationWarehouseId ?? null,
+    reservationWarehouseName: sourceLine?.reservationWarehouseName ?? null,
     qualityStatus: sourceLine?.qualityStatus ?? null,
     qualityStatusName: sourceLine?.qualityStatusName ?? null,
     quantityOnHand: sourceLine?.quantityOnHand ?? null,
+    reservedQuantity: sourceLine?.reservedQuantity ?? null,
+    occupiedQuantity: sourceLine?.occupiedQuantity ?? null,
     availableQuantity: sourceLine?.availableQuantity ?? null,
+    availableToPromiseQuantity: sourceLine?.availableToPromiseQuantity ?? null,
     selectable: sourceLine?.selectable ?? null,
     disabledReasonCode: sourceLine?.disabledReasonCode ?? null,
     disabledReason: sourceLine?.disabledReason ?? null,
@@ -66,7 +71,16 @@ function sourceLineFor(row: SalesShipmentLineDraft): SalesShipmentSourceLine | u
 
 function candidateValue(
   row: SalesShipmentLineDraft,
-  key: 'quantityOnHand' | 'availableQuantity' | 'maxSelectableQuantity' | 'disabledReason' | 'selectable',
+  key:
+    | 'quantityOnHand'
+    | 'reservedQuantity'
+    | 'occupiedQuantity'
+    | 'availableQuantity'
+    | 'availableToPromiseQuantity'
+    | 'maxSelectableQuantity'
+    | 'disabledReason'
+    | 'reservationWarehouseName'
+    | 'selectable',
 ) {
   return row[key] ?? sourceLineFor(row)?.[key] ?? null
 }
@@ -129,8 +143,10 @@ function removeLine(index: number) {
                 <span>{{ sourceLine.lineNo }} {{ sourceLine.materialCode }} {{ sourceLine.materialName }}</span>
                 <span class="line-option-meta">
                   未出库 {{ formatSalesQuantity(sourceLine.remainingQuantityBefore) }} /
+                  预留仓库 {{ sourceLine.reservationWarehouseName || '-' }} /
                   {{ sourceLine.qualityStatusName || '-' }} /
-                  合格可用 {{ formatSalesQuantity(sourceLine.availableQuantity) }}
+                  现货净可用 {{ formatSalesQuantity(sourceLine.availableQuantity) }} /
+                  本次最多出库 {{ formatSalesQuantity(sourceLine.maxSelectableQuantity) }}
                 </span>
                 <span v-if="sourceLine.disabledReason" class="line-option-reason">
                   {{ sourceLine.disabledReason }}
@@ -164,6 +180,11 @@ function removeLine(index: number) {
             <span class="numeric-cell">{{ formatSalesQuantity(row.remainingQuantityBefore) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="预留仓库" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ candidateValue(row, 'reservationWarehouseName') || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column label="质量状态" width="110">
           <template #default="{ row }">
             <QualityStatusTag
@@ -177,12 +198,27 @@ function removeLine(index: number) {
             <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'quantityOnHand')) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="合格可用" width="120" align="right">
+        <el-table-column label="占用库存" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'occupiedQuantity')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="预留库存" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'reservedQuantity')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="现货净可用" width="130" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'availableQuantity')) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="最大可选" width="120" align="right">
+        <el-table-column label="可承诺量" width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'availableToPromiseQuantity')) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="本次最多出库" width="140" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatSalesQuantity(candidateValue(row, 'maxSelectableQuantity')) }}</span>
           </template>

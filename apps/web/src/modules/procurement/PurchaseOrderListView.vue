@@ -310,6 +310,16 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatProcurementQuantity(row.remainingQuantity) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="采购在途参考" min-width="130" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatProcurementQuantity(row.inTransitQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="在途状态" min-width="120">
+          <template #default="{ row }">
+            {{ row.inTransitStatusName || '-' }}
+          </template>
+        </el-table-column>
         <el-table-column prop="lineCount" label="行数" min-width="80" />
         <el-table-column prop="createdByName" label="创建人" min-width="100" />
         <el-table-column label="更新时间" min-width="150">

@@ -34,6 +34,9 @@ export interface PurchaseReceiptSourceLine {
   orderedQuantity: number
   receivedQuantityBefore: number
   remainingQuantityBefore: number
+  inTransitQuantity?: string | number | null
+  inTransitStatus?: string | null
+  inTransitStatusName?: string | null
 }
 
 export interface PurchaseReceiptLineDraft {
@@ -47,6 +50,9 @@ export interface PurchaseReceiptLineDraft {
   orderedQuantity: number
   receivedQuantityBefore: number
   remainingQuantityBefore: number
+  inTransitQuantity?: string | number | null
+  inTransitStatus?: string | null
+  inTransitStatusName?: string | null
   quantity: string
   remark: string
 }
@@ -208,6 +214,9 @@ export function newPurchaseReceiptLine(lineNo = 10): PurchaseReceiptLineDraft {
     orderedQuantity: 0,
     receivedQuantityBefore: 0,
     remainingQuantityBefore: 0,
+    inTransitQuantity: null,
+    inTransitStatus: null,
+    inTransitStatusName: null,
     quantity: '',
     remark: '',
   }
@@ -225,6 +234,9 @@ export function purchaseReceiptSourceFromOrderLine(line: PurchaseOrderLineRecord
     orderedQuantity: Number(line.quantity) || 0,
     receivedQuantityBefore: Number(line.receivedQuantity) || 0,
     remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+    inTransitQuantity: line.inTransitQuantity ?? null,
+    inTransitStatus: line.inTransitStatus ?? null,
+    inTransitStatusName: line.inTransitStatusName ?? null,
   }
 }
 
@@ -240,6 +252,9 @@ export function purchaseReceiptSourceFromReceiptLine(line: PurchaseReceiptLineRe
     orderedQuantity: Number(line.orderedQuantity) || 0,
     receivedQuantityBefore: Number(line.receivedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    inTransitQuantity: line.inTransitQuantity ?? null,
+    inTransitStatus: line.inTransitStatus ?? null,
+    inTransitStatusName: line.inTransitStatusName ?? null,
   }
 }
 

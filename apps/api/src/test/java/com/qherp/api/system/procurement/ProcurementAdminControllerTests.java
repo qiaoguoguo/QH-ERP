@@ -170,6 +170,48 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void confirmedPurchaseOrderExposesInTransitAndReceiptReducesIt() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = fixture();
+
+		long orderId = createAndConfirmOrder(admin, fixture, "018 采购在途", "6.000000");
+		JsonNode confirmedOrder = data(getOrder(admin, orderId));
+		assertDecimal(confirmedOrder, "inTransitQuantity", "6.000000");
+		assertThat(confirmedOrder.get("inTransitStatus").asText()).isEqualTo("NORMAL");
+		assertThat(confirmedOrder.get("inTransitStatusName").asText()).isEqualTo("正常");
+		JsonNode orderLine = firstLine(confirmedOrder);
+		long orderLineId = orderLine.get("id").longValue();
+		assertDecimal(orderLine, "inTransitQuantity", "6.000000");
+		assertThat(orderLine.get("inTransitStatus").asText()).isEqualTo("NORMAL");
+		JsonNode orderListItem = firstItem(get("/api/admin/procurement/orders?keyword="
+				+ confirmedOrder.get("orderNo").asText(), admin));
+		assertDecimal(orderListItem, "inTransitQuantity", "6.000000");
+		assertThat(orderListItem.get("inTransitStatus").asText()).isEqualTo("NORMAL");
+
+		long receiptId = createReceiptId(admin, orderId,
+				receiptPayload(fixture.warehouseId(), "018 采购在途收货",
+						List.of(receiptLine(1, orderLineId, fixture.materialId(), fixture.unitId(), "2.000000",
+								null))));
+		JsonNode receiptLine = firstLine(data(getReceipt(admin, receiptId)));
+		assertDecimal(receiptLine, "inTransitQuantity", "6.000000");
+		assertThat(receiptLine.get("inTransitStatus").asText()).isEqualTo("NORMAL");
+		assertOk(postReceipt(admin, receiptId));
+
+		JsonNode partiallyReceived = data(getOrder(admin, orderId));
+		assertDecimal(partiallyReceived, "inTransitQuantity", "4.000000");
+		assertThat(partiallyReceived.get("inTransitStatus").asText()).isEqualTo("NORMAL");
+		JsonNode partiallyReceivedLine = firstLine(partiallyReceived);
+		assertDecimal(partiallyReceivedLine, "inTransitQuantity", "4.000000");
+
+		JsonNode balance = firstItem(get("/api/admin/inventory/balances?warehouseId=" + fixture.warehouseId()
+				+ "&materialId=" + fixture.materialId(), admin));
+		assertDecimal(balance, "pendingInspectionQuantity", "2.000000");
+		assertDecimal(balance, "availableQuantity", "0.000000");
+		assertDecimal(balance, "inTransitQuantity", "4.000000");
+		assertDecimal(balance, "availableToPromiseQuantity", "0.000000");
+	}
+
+	@Test
 	void stateErrorsAndDuplicatePostingKeepProcurementAndInventoryConsistent() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = fixture();
@@ -931,6 +973,12 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode lines = detail.get("lines");
 		assertThat(lines.size()).isGreaterThan(0);
 		return lines.get(0);
+	}
+
+	private JsonNode firstItem(ResponseEntity<String> response) throws Exception {
+		JsonNode items = data(response).get("items");
+		assertThat(items.size()).isGreaterThan(0);
+		return items.get(0);
 	}
 
 	private String keywordPath(String path, String keyword) {

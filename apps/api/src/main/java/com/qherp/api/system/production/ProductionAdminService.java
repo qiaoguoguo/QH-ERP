@@ -6,10 +6,12 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.cost.CostRecordWriter;
+import com.qherp.api.system.inventory.InventoryAvailabilityService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.inventory.InventoryReservationType;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.quality.QualityAdminService;
@@ -81,17 +83,21 @@ public class ProductionAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryAvailabilityService inventoryAvailabilityService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	private final QualityAdminService qualityAdminService;
 
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService,
-			BusinessPeriodGuard businessPeriodGuard, QualityAdminService qualityAdminService) {
+			InventoryAvailabilityService inventoryAvailabilityService, BusinessPeriodGuard businessPeriodGuard,
+			QualityAdminService qualityAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
 	}
@@ -211,6 +217,7 @@ public class ProductionAdminService {
 				where id = ?
 				""", ProductionWorkOrderStatus.RELEASED.name(), operator.username(), now, operator.username(), now,
 				id);
+		reserveWorkOrderMaterials(workOrder, operator, servletRequest);
 		this.auditService.record(operator, "MFG_WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
 				servletRequest);
 		return workOrder(id);
@@ -233,6 +240,8 @@ public class ProductionAdminService {
 				where id = ?
 				""", ProductionWorkOrderStatus.COMPLETED.name(), operator.username(), now, operator.username(), now,
 				id);
+		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, operator, servletRequest);
 		this.auditService.record(operator, "MFG_WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id,
 				workOrder.workOrderNo(), servletRequest);
 		return workOrder(id);
@@ -258,6 +267,8 @@ public class ProductionAdminService {
 				where id = ?
 				""", ProductionWorkOrderStatus.CANCELLED.name(), operator.username(), now, operator.username(), now,
 				id);
+		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, operator, servletRequest);
 		this.auditService.record(operator, "MFG_WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
 				servletRequest);
 		return workOrder(id);
@@ -356,7 +367,7 @@ public class ProductionAdminService {
 			}
 			OffsetDateTime now = OffsetDateTime.now();
 			for (MaterialIssueLineRow line : lines) {
-				postMaterialIssueLine(workOrderId, issue, line, operator.username(), now);
+				postMaterialIssueLine(workOrder, issue, line, operator, servletRequest, now);
 			}
 			this.jdbcTemplate.update("""
 					update mfg_material_issue
@@ -598,21 +609,28 @@ public class ProductionAdminService {
 		}
 	}
 
-	private void postMaterialIssueLine(Long workOrderId, ProductionDocumentRow issue, MaterialIssueLineRow line,
-			String operatorName, OffsetDateTime now) {
-		WorkOrderMaterialRow material = lockWorkOrderMaterial(workOrderId, line.workOrderMaterialId())
+	private void postMaterialIssueLine(WorkOrderRow workOrder, ProductionDocumentRow issue, MaterialIssueLineRow line,
+			CurrentUser operator, HttpServletRequest servletRequest, OffsetDateTime now) {
+		WorkOrderMaterialRow material = lockWorkOrderMaterial(workOrder.id(), line.workOrderMaterialId())
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.PRODUCTION_MATERIAL_INVALID));
 		validateEnabledWarehouse(line.warehouseId());
+		if (!line.warehouseId().equals(workOrder.issueWarehouseId())) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_WAREHOUSE_MISMATCH);
+		}
 		validateEnabledMaterial(material.materialId());
 		validateEnabledUnit(material.unitId());
 		if (material.issuedQuantity().add(line.quantity()).compareTo(material.requiredQuantity()) > 0) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EXCEEDS_REQUIRED);
 		}
+		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
+				InventoryReservationType.RESERVATION, InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE,
+				material.id(), line.quantity(), operator, servletRequest);
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
 						InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
 						line.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
-						line.id(), issue.businessDate(), issue.reason(), line.remark(), operatorName));
+						line.id(), issue.businessDate(), issue.reason(), line.remark(), operator.username(),
+						consumedReservation));
 		this.jdbcTemplate.update("""
 				update mfg_work_order_material
 				set issued_quantity = issued_quantity + ?, updated_at = ?, version = version + 1
@@ -674,6 +692,22 @@ public class ProductionAdminService {
 					material.materialId(), material.unitId(), quantity, validateOptionalText(line.remark(), 500)));
 		}
 		return new ValidatedMaterialIssue(request.businessDate(), reason, remark, lines);
+	}
+
+	private void reserveWorkOrderMaterials(WorkOrderRow workOrder, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		for (WorkOrderMaterialRow material : workOrderMaterialRows(workOrder.id())) {
+			BigDecimal remainingQuantity = material.requiredQuantity().subtract(material.issuedQuantity());
+			if (remainingQuantity.compareTo(ZERO) <= 0) {
+				continue;
+			}
+			this.inventoryAvailabilityService.reserveFromWarehouse(
+					new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
+							workOrder.issueWarehouseId(), material.materialId(), material.unitId(), remainingQuantity,
+							InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, workOrder.id(), material.id(),
+							workOrder.workOrderNo(), workOrder.plannedStartDate(), "生产工单释放预留", null),
+					operator, servletRequest);
+		}
 	}
 
 	private ValidatedReport validateReportRequest(WorkOrderRow workOrder, WorkReportRequest request) {
@@ -1009,7 +1043,9 @@ public class ProductionAdminService {
 				       wom.required_quantity, wom.issued_quantity,
 				       (wom.required_quantity - wom.issued_quantity) as remaining_quantity, wom.loss_rate,
 				       wom.remark, coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
-				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0.000000) as qualified_available_quantity
+				       coalesce(locked.reserved_quantity, 0.000000) as reserved_quantity,
+				       coalesce(locked.occupied_quantity, 0.000000) as occupied_quantity,
+				       coalesce(own.own_quantity, 0.000000) as own_reserved_quantity
 				from mfg_work_order_material wom
 				join mfg_work_order wo on wo.id = wom.work_order_id
 				join mst_material m on m.id = wom.material_id
@@ -1017,12 +1053,34 @@ public class ProductionAdminService {
 				left join inv_stock_balance sb on sb.warehouse_id = wo.issue_warehouse_id
 					and sb.material_id = wom.material_id
 					and sb.quality_status = 'QUALIFIED'
+				left join (
+					select warehouse_id, material_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) locked on locked.warehouse_id = wo.issue_warehouse_id and locked.material_id = wom.material_id
+				left join (
+					select source_line_id, sum(quantity - released_quantity - consumed_quantity) as own_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and reservation_type = 'RESERVATION'
+					and source_type = 'PRODUCTION_WORK_ORDER'
+					group by source_line_id
+				) own on own.source_line_id = wom.id
 				where wom.work_order_id = ?
 				order by wom.line_no asc, wom.id asc
 				""", (rs, rowNum) -> {
 			BigDecimal remainingQuantity = rs.getBigDecimal("remaining_quantity");
 			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
-			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal ownReservedQuantity = rs.getBigDecimal("own_reserved_quantity");
+			BigDecimal reservedQuantity = rs.getBigDecimal("reserved_quantity").subtract(ownReservedQuantity).max(ZERO);
+			BigDecimal occupiedQuantity = rs.getBigDecimal("occupied_quantity");
+			BigDecimal availableQuantity = quantityOnHand.subtract(reservedQuantity).subtract(occupiedQuantity);
 			BigDecimal maxSelectableQuantity = maxSelectableQuantity(remainingQuantity, availableQuantity);
 			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
 			return new WorkOrderMaterialResponse(rs.getLong("id"), rs.getInt("line_no"),
@@ -1031,7 +1089,8 @@ public class ProductionAdminService {
 					rs.getString("unit_name"), rs.getBigDecimal("required_quantity"),
 					rs.getBigDecimal("issued_quantity"), remainingQuantity, rs.getBigDecimal("loss_rate"),
 					rs.getString("remark"), InventoryQualityStatus.QUALIFIED.name(),
-					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, availableQuantity, selectable,
+					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, reservedQuantity,
+					occupiedQuantity, availableQuantity, availableQuantity, selectable,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
 		}, workOrderId);
@@ -1109,6 +1168,16 @@ public class ProductionAdminService {
 				where work_order_id = ?
 				and id = ?
 				""", this::mapWorkOrderMaterialRow, workOrderId, id).stream().findFirst();
+	}
+
+	private List<WorkOrderMaterialRow> workOrderMaterialRows(Long workOrderId) {
+		return this.jdbcTemplate.query("""
+				select id, work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity,
+				       issued_quantity, loss_rate, remark
+				from mfg_work_order_material
+				where work_order_id = ?
+				order by line_no asc, id asc
+				""", this::mapWorkOrderMaterialRow, workOrderId);
 	}
 
 	private Optional<WorkOrderMaterialRow> lockWorkOrderMaterial(Long workOrderId, Long id) {
@@ -1477,8 +1546,9 @@ public class ProductionAdminService {
 			String materialCode, String materialName, String materialType, Long unitId, String unitName,
 			BigDecimal requiredQuantity, BigDecimal issuedQuantity, BigDecimal remainingQuantity, BigDecimal lossRate,
 			String remark, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
-			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
-			BigDecimal maxSelectableQuantity) {
+			BigDecimal reservedQuantity, BigDecimal occupiedQuantity, BigDecimal availableQuantity,
+			BigDecimal availableToPromiseQuantity, boolean selectable, String disabledReasonCode,
+			String disabledReason, BigDecimal maxSelectableQuantity) {
 	}
 
 	public record WorkOrderDetailResponse(Long id, String workOrderNo, Long productMaterialId,

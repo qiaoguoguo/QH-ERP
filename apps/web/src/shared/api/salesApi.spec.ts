@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createSalesApi, type SalesOrderPayload, type SalesShipmentPayload } from './salesApi'
+import {
+  createSalesApi,
+  type SalesOrderLineRecord,
+  type SalesOrderPayload,
+  type SalesShipmentLineRecord,
+  type SalesShipmentPayload,
+} from './salesApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -30,6 +38,54 @@ function apiFailure(status = 409) {
 }
 
 describe('销售 API', () => {
+  const salesAvailabilityTypeContract = {
+    orderLineHasReservationWarehouseFields: true as AssertTrue<
+      'reservationWarehouseId' extends keyof SalesOrderLineRecord
+        ? 'reservationWarehouseName' extends keyof SalesOrderLineRecord
+          ? true
+          : false
+        : false
+    >,
+    orderPayloadLineHasReservationWarehouse: true as AssertTrue<
+      SalesOrderPayload['lines'][number] extends { reservationWarehouseId: unknown } ? true : false
+    >,
+    orderLineHasAvailabilityFields: true as AssertTrue<
+      'reservedQuantity' extends keyof SalesOrderLineRecord
+        ? 'occupiedQuantity' extends keyof SalesOrderLineRecord
+          ? 'availableToPromiseQuantity' extends keyof SalesOrderLineRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
+    shipmentLineHasAvailabilityFields: true as AssertTrue<
+      'reservedQuantity' extends keyof SalesShipmentLineRecord
+        ? 'occupiedQuantity' extends keyof SalesShipmentLineRecord
+          ? 'availableToPromiseQuantity' extends keyof SalesShipmentLineRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
+    shipmentLineHasReservationWarehouseFields: true as AssertTrue<
+      'reservationWarehouseId' extends keyof SalesShipmentLineRecord
+        ? 'reservationWarehouseName' extends keyof SalesShipmentLineRecord
+          ? true
+          : false
+        : false
+    >,
+  }
+
+  it('声明销售候选库存占用预留字段类型契约', () => {
+    expect(salesAvailabilityTypeContract).toMatchObject({
+      orderLineHasReservationWarehouseFields: true,
+      orderPayloadLineHasReservationWarehouse: true,
+      orderLineHasAvailabilityFields: true,
+      shipmentLineHasAvailabilityFields: true,
+      shipmentLineHasReservationWarehouseFields: true,
+    })
+  })
+
   it('按查询条件分页获取销售订单并过滤空查询值', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 2, pageSize: 50 }))
     const api = createSalesApi({ fetcher })
@@ -131,6 +187,7 @@ describe('销售 API', () => {
           lineNo: 1,
           materialId: 2,
           unitId: 3,
+          reservationWarehouseId: 4,
           quantity: '999999999999.999999',
           unitPrice: '123456789012.123456',
           expectedShipDate: '2026-07-10',
@@ -155,6 +212,7 @@ describe('销售 API', () => {
     await api.shipments.post(12)
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0]).toMatchObject({
+      reservationWarehouseId: 4,
       quantity: '999999999999.999999',
       unitPrice: '123456789012.123456',
     })

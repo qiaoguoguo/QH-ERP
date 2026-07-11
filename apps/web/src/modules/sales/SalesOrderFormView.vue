@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
-import { masterDataApi, type MaterialRecord, type PartnerRecord } from '../../shared/api/masterDataApi'
+import { masterDataApi, type MaterialRecord, type PartnerRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   salesApi,
   type ResourceId,
@@ -27,6 +27,7 @@ const route = useRoute()
 const router = useRouter()
 const customers = ref<PartnerRecord[]>([])
 const materials = ref<MaterialRecord[]>([])
+const warehouses = ref<WarehouseRecord[]>([])
 const editingRecord = ref<SalesOrderDetailRecord | null>(null)
 const referenceLoading = ref(true)
 const loading = ref(false)
@@ -54,7 +55,7 @@ async function loadReferences() {
   referenceLoading.value = true
   referenceError.value = ''
   try {
-    const [customerPage, materialPage] = await Promise.all([
+    const [customerPage, materialPage, warehousePage] = await Promise.all([
       masterDataApi.customers.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
       masterDataApi.materials.list({
         keyword: '',
@@ -62,12 +63,15 @@ async function loadReferences() {
         page: 1,
         pageSize: 200,
       }),
+      masterDataApi.warehouses.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
     ])
     customers.value = pageItems(customerPage)
     materials.value = pageItems(materialPage)
+    warehouses.value = pageItems(warehousePage)
   } catch (caught) {
     customers.value = []
     materials.value = []
+    warehouses.value = []
     referenceError.value = salesErrorMessage(caught)
   } finally {
     referenceLoading.value = false
@@ -136,10 +140,16 @@ function validateForm(): SalesOrderPayload | null {
     }
     duplicateMaterials.add(duplicateKey)
     const unitId = normalizeRequiredId(line.unitId)
+    const reservationWarehouseId = normalizeRequiredId(line.reservationWarehouseId)
+    if (reservationWarehouseId === null) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择预留仓库，销售订单确认会按该仓库预留现货库存`
+      continue
+    }
     payloadLines.push({
       lineNo: line.lineNo,
       materialId,
       ...(unitId !== null ? { unitId } : {}),
+      reservationWarehouseId,
       quantity: quantityResult.payloadValue,
       unitPrice: unitPriceResult.payloadValue,
       ...(line.expectedShipDate.trim() ? { expectedShipDate: line.expectedShipDate.trim() } : {}),
@@ -291,6 +301,7 @@ onMounted(async () => {
         <SalesOrderLineEditor
           v-model:lines="lines"
           :materials="sellableMaterials"
+          :warehouses="warehouses"
           :errors="lineErrors"
           :read-only="!canEditForm"
         />

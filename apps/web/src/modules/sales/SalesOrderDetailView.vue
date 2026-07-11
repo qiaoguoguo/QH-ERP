@@ -100,6 +100,10 @@ async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
   if (!record.value || actionLoading.value) {
     return
   }
+  if (action === 'confirm' && record.value.lines.some((line) => !line.reservationWarehouseId)) {
+    actionError.value = '销售订单确认前每行必须选择预留仓库，确认只会按预留仓库现货库存预留，不使用采购在途'
+    return
+  }
   const actionLabels = {
     confirm: '确认',
     cancel: '取消',
@@ -240,6 +244,11 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column prop="materialSpec" label="规格" min-width="120" show-overflow-tooltip />
             <el-table-column prop="unitName" label="单位" min-width="90" />
+            <el-table-column label="预留仓库" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.reservationWarehouseName || '-' }}
+              </template>
+            </el-table-column>
             <el-table-column label="销售数量" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatSalesQuantity(row.quantity) }}</span>

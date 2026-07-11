@@ -1,0 +1,41 @@
+{
+  "suffix": "181200",
+  "unitId": 6,
+  "mainWarehouseId": 7,
+  "altWarehouseId": 8,
+  "receiptWarehouseId": 9,
+  "supplierId": 5,
+  "customerId": 4,
+  "finishedMaterialId": 17,
+  "rawMaterialId": 18,
+  "auxMaterialId": 19,
+  "transitOnlyMaterialId": 20,
+  "bomId": 4,
+  "purchaseOrderId": 4,
+  "purchaseOrderLineIds": [
+    7,
+    8
+  ],
+  "salesOrderConfirmedId": 5,
+  "salesOrderConfirmedLineId": 5,
+  "salesOrderShortageId": 6,
+  "releasedWorkOrderId": 4,
+  "releasedWorkOrderMaterialIds": [
+    {
+      "id": 16,
+      "requiredQuantity": 6.0,
+      "remainingIssueQuantity": null,
+      "materialId": 18
+    },
+    {
+      "id": 17,
+      "requiredQuantity": 3.0,
+      "remainingIssueQuantity": null,
+      "materialId": 19
+    }
+  ],
+  "shortageWorkOrderId": 5,
+  "balanceOnlyUsername": "va018-balance-181200",
+  "balanceOnlyPassword": "Qherp@2026!",
+  "lockedPeriodCode": "VA018-LOCK-181200"
+}

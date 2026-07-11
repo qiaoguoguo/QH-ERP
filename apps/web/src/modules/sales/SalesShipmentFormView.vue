@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -118,10 +118,15 @@ function draftFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentLine
     orderedQuantity: Number(line.orderedQuantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    reservationWarehouseId: line.reservationWarehouseId ?? null,
+    reservationWarehouseName: line.reservationWarehouseName ?? null,
     qualityStatus: line.qualityStatus ?? null,
     qualityStatusName: line.qualityStatusName ?? null,
     quantityOnHand: line.quantityOnHand ?? null,
+    reservedQuantity: line.reservedQuantity ?? null,
+    occupiedQuantity: line.occupiedQuantity ?? null,
     availableQuantity: line.availableQuantity ?? null,
+    availableToPromiseQuantity: line.availableToPromiseQuantity ?? null,
     selectable: line.selectable ?? null,
     disabledReasonCode: line.disabledReasonCode ?? null,
     disabledReason: line.disabledReason ?? null,
@@ -181,10 +186,15 @@ function refreshDraftLinesWithCurrentOrder(
       orderedQuantity: currentSourceLine.orderedQuantity,
       shippedQuantityBefore: currentSourceLine.shippedQuantityBefore,
       remainingQuantityBefore: currentSourceLine.remainingQuantityBefore,
+      reservationWarehouseId: currentSourceLine.reservationWarehouseId,
+      reservationWarehouseName: currentSourceLine.reservationWarehouseName,
       qualityStatus: currentSourceLine.qualityStatus,
       qualityStatusName: currentSourceLine.qualityStatusName,
       quantityOnHand: currentSourceLine.quantityOnHand,
+      reservedQuantity: currentSourceLine.reservedQuantity,
+      occupiedQuantity: currentSourceLine.occupiedQuantity,
       availableQuantity: currentSourceLine.availableQuantity,
+      availableToPromiseQuantity: currentSourceLine.availableToPromiseQuantity,
       selectable: currentSourceLine.selectable,
       disabledReasonCode: currentSourceLine.disabledReasonCode,
       disabledReason: currentSourceLine.disabledReason,
@@ -195,6 +205,22 @@ function refreshDraftLinesWithCurrentOrder(
 
 function sourceLineForDraft(line: SalesShipmentLineDraft): SalesShipmentSourceLine | undefined {
   return sourceLines.value.find((sourceLine) => String(sourceLine.id) === String(line.orderLineId))
+}
+
+function reservationWarehouseIdForLine(line: SalesShipmentLineDraft): ResourceId | null {
+  return line.reservationWarehouseId ?? sourceLineForDraft(line)?.reservationWarehouseId ?? null
+}
+
+function syncWarehouseWithSelectedReservationLines() {
+  if (form.warehouseId !== '') {
+    return
+  }
+  const selectedReservationWarehouseIds = Array.from(new Set(lines.value
+    .map((line) => reservationWarehouseIdForLine(line))
+    .filter((value): value is ResourceId => value !== null && value !== undefined && value !== '')))
+  if (selectedReservationWarehouseIds.length === 1) {
+    form.warehouseId = selectedReservationWarehouseIds[0]
+  }
 }
 
 function numericCandidateValue(line: SalesShipmentLineDraft, key: 'maxSelectableQuantity'): number | null {
@@ -283,7 +309,16 @@ function validateForm(): SalesShipmentPayload | null {
     }
     const maxSelectableQuantity = numericCandidateValue(line, 'maxSelectableQuantity')
     if (maxSelectableQuantity !== null && quantityResult.value > maxSelectableQuantity) {
-      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行本次出库数量不能超过最大可选数量`
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行本次出库数量不能超过本次最多出库`
+      continue
+    }
+    const reservationWarehouseId = reservationWarehouseIdForLine(line)
+    if (!reservationWarehouseId) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行来源订单行缺少预留仓库，不能创建销售出库`
+      continue
+    }
+    if (String(reservationWarehouseId) !== String(warehouseId)) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行出库仓库必须与来源订单行预留仓库一致`
       continue
     }
     const duplicateKey = String(orderLineId)
@@ -379,6 +414,8 @@ onMounted(async () => {
     isEdit.value ? loadRecord() : loadSourceOrder(),
   ])
 })
+
+watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
 </script>
 
 <template>

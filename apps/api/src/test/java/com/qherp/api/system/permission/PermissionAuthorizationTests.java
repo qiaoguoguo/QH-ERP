@@ -136,6 +136,8 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	@Test
 	void inventoryAdminPathsMapToInventoryPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/balances", "inventory:balance:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/reservations", "inventory:reservation:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/reservations/1", "inventory:reservation:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/movements", "inventory:movement:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/documents", "inventory:document:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/documents/1", "inventory:document:view");

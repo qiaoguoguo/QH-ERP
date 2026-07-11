@@ -18,6 +18,8 @@ export interface SalesOrderLineDraft {
   materialId: ResourceId | ''
   unitId: ResourceId | ''
   unitName: string
+  reservationWarehouseId: ResourceId | ''
+  reservationWarehouseName: string
   quantity: string
   unitPrice: string
   expectedShipDate: string
@@ -35,10 +37,15 @@ export interface SalesShipmentSourceLine {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  reservationWarehouseId?: ResourceId | null
+  reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   quantityOnHand?: string | number | null
+  reservedQuantity?: string | number | null
+  occupiedQuantity?: string | number | null
   availableQuantity?: string | number | null
+  availableToPromiseQuantity?: string | number | null
   selectable?: boolean | null
   disabledReasonCode?: string | null
   disabledReason?: string | null
@@ -56,10 +63,15 @@ export interface SalesShipmentLineDraft {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  reservationWarehouseId?: ResourceId | null
+  reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   quantityOnHand?: string | number | null
+  reservedQuantity?: string | number | null
+  occupiedQuantity?: string | number | null
   availableQuantity?: string | number | null
+  availableToPromiseQuantity?: string | number | null
   selectable?: boolean | null
   disabledReasonCode?: string | null
   disabledReason?: string | null
@@ -224,6 +236,8 @@ export function newSalesOrderLine(lineNo = 10): SalesOrderLineDraft {
     materialId: '',
     unitId: '',
     unitName: '',
+    reservationWarehouseId: '',
+    reservationWarehouseName: '',
     quantity: '',
     unitPrice: '',
     expectedShipDate: '',
@@ -248,10 +262,15 @@ export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
     orderedQuantity: 0,
     shippedQuantityBefore: 0,
     remainingQuantityBefore: 0,
+    reservationWarehouseId: null,
+    reservationWarehouseName: null,
     qualityStatus: null,
     qualityStatusName: null,
     quantityOnHand: null,
+    reservedQuantity: null,
+    occupiedQuantity: null,
     availableQuantity: null,
+    availableToPromiseQuantity: null,
     selectable: null,
     disabledReasonCode: null,
     disabledReason: null,
@@ -267,6 +286,8 @@ export function salesOrderLineDraftFromRecord(line: SalesOrderLineRecord): Sales
     materialId: line.materialId,
     unitId: line.unitId,
     unitName: line.unitName,
+    reservationWarehouseId: line.reservationWarehouseId ?? '',
+    reservationWarehouseName: line.reservationWarehouseName ?? '',
     quantity: String(line.quantity),
     unitPrice: String(line.unitPrice),
     expectedShipDate: line.expectedShipDate ?? '',
@@ -286,10 +307,15 @@ export function salesShipmentSourceFromOrderLine(line: SalesOrderLineRecord): Sa
     orderedQuantity: Number(line.quantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantity) || 0,
     remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+    reservationWarehouseId: line.reservationWarehouseId ?? null,
+    reservationWarehouseName: line.reservationWarehouseName ?? null,
     qualityStatus: line.qualityStatus ?? null,
     qualityStatusName: line.qualityStatusName ?? null,
     quantityOnHand: line.quantityOnHand ?? null,
+    reservedQuantity: line.reservedQuantity ?? null,
+    occupiedQuantity: line.occupiedQuantity ?? null,
     availableQuantity: line.availableQuantity ?? null,
+    availableToPromiseQuantity: line.availableToPromiseQuantity ?? null,
     selectable: line.selectable ?? null,
     disabledReasonCode: line.disabledReasonCode ?? null,
     disabledReason: line.disabledReason ?? null,
@@ -309,10 +335,15 @@ export function salesShipmentSourceFromShipmentLine(line: SalesShipmentLineRecor
     orderedQuantity: Number(line.orderedQuantity) || 0,
     shippedQuantityBefore: Number(line.shippedQuantityBefore) || 0,
     remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    reservationWarehouseId: line.reservationWarehouseId ?? null,
+    reservationWarehouseName: line.reservationWarehouseName ?? null,
     qualityStatus: line.qualityStatus ?? null,
     qualityStatusName: line.qualityStatusName ?? null,
     quantityOnHand: line.quantityOnHand ?? null,
+    reservedQuantity: line.reservedQuantity ?? null,
+    occupiedQuantity: line.occupiedQuantity ?? null,
     availableQuantity: line.availableQuantity ?? null,
+    availableToPromiseQuantity: line.availableToPromiseQuantity ?? null,
     selectable: line.selectable ?? null,
     disabledReasonCode: line.disabledReasonCode ?? null,
     disabledReason: line.disabledReason ?? null,

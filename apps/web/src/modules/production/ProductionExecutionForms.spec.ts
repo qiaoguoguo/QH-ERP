@@ -48,6 +48,13 @@ const warehouse: WarehouseRecord = {
   status: 'ENABLED',
 }
 
+const spareWarehouse: WarehouseRecord = {
+  id: 31,
+  code: 'WH-SPARE',
+  name: '备品仓',
+  status: 'ENABLED',
+}
+
 const workOrder: ProductionWorkOrderDetailRecord = {
   id: 9,
   workOrderNo: 'WO-20260703-001',
@@ -90,7 +97,10 @@ const workOrder: ProductionWorkOrderDetailRecord = {
       qualityStatus: 'PENDING_INSPECTION',
       qualityStatusName: '待检',
       quantityOnHand: '12.000000',
+      reservedQuantity: '0.000000',
+      occupiedQuantity: '0.000000',
       availableQuantity: '0.000000',
+      availableToPromiseQuantity: '0.000000',
       selectable: false,
       disabledReasonCode: 'NON_QUALIFIED_NOT_AVAILABLE',
       disabledReason: '待检库存不可领料',
@@ -112,7 +122,10 @@ const selectableWorkOrder: ProductionWorkOrderDetailRecord = {
     qualityStatus: 'QUALIFIED',
     qualityStatusName: '合格',
     quantityOnHand: '50.000000',
-    availableQuantity: '50.000000',
+    reservedQuantity: '6.000000',
+    occupiedQuantity: '4.000000',
+    availableQuantity: '40.000000',
+    availableToPromiseQuantity: '45.000000',
     selectable: true,
     disabledReasonCode: null,
     disabledReason: null,
@@ -190,10 +203,10 @@ describe('生产执行表单页', () => {
     productionApiMock.reports.create.mockResolvedValue({ id: 2, reportNo: 'WR-001' })
     productionApiMock.completionReceipts.create.mockResolvedValue({ id: 3, receiptNo: 'CR-001' })
     masterDataApiMock.warehouses.list.mockResolvedValue({
-      items: [warehouse],
+      items: [warehouse, spareWarehouse],
       page: 1,
       pageSize: 200,
-      total: 1,
+      total: 2,
       totalPages: 1,
     })
   })
@@ -247,7 +260,30 @@ describe('生产执行表单页', () => {
     expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
-  it('生产领料候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+  it('领料数量不能超过后端返回的本次最多领料', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce({
+      ...selectableWorkOrder,
+      materials: selectableWorkOrder.materials.map((material) => ({
+        ...material,
+        remainingQuantity: 40,
+        maxSelectableQuantity: '12.000000',
+      })),
+    })
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    await wrapper.find('input[placeholder="0.000000"]').setValue('12.000001')
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('本次领料不能大于本次最多领料')
+    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+  })
+
+  it('生产领料候选行展示质量状态、现存、占用预留、可承诺、本次最多领料和禁用原因', async () => {
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -256,11 +292,36 @@ describe('生产执行表单页', () => {
 
     expect(wrapper.text()).toContain('待检')
     expect(wrapper.text()).toContain('现存数量')
-    expect(wrapper.text()).toContain('合格可用')
-    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('占用库存')
+    expect(wrapper.text()).toContain('预留库存')
+    expect(wrapper.text()).toContain('现货净可用')
+    expect(wrapper.text()).toContain('可承诺量')
+    expect(wrapper.text()).toContain('本次最多领料')
     expect(wrapper.text()).toContain('禁用原因')
     expect(wrapper.text()).toContain('待检库存不可领料')
     expect(wrapper.text()).not.toContain('canUse')
+  })
+
+  it('生产领料按工单领料仓库消耗预留，仓库不一致时阻止提交', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    expect(wrapper.text()).toContain('按工单领料仓库消耗预留')
+    expect(wrapper.text()).toContain('原料仓')
+
+    const warehouseSelect = wrapper.findComponent({ name: 'ElSelect' }) as VueWrapper
+    warehouseSelect.vm.$emit('update:modelValue', 31)
+    await flushPromises()
+    await wrapper.find('input[placeholder="0.000000"]').setValue('2')
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 10 行领料仓库必须与工单领料仓库一致，按工单领料仓库消耗预留')
+    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('生产领料不可选候选行禁用数量输入并保留禁用原因', async () => {

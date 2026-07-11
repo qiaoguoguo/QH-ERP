@@ -1525,8 +1525,13 @@ public class ReversalAdminService {
 				           where rl.source_receipt_line_id = prl.id
 				           and r.status = 'POSTED'
 				       ), 0) as returned_quantity,
-				       coalesce(sb.quantity_on_hand, 0) as available_stock_quantity,
-				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0) as current_available_quantity,
+				       coalesce(sb.quantity_on_hand, 0) as quantity_on_hand,
+				       coalesce(sb.quantity_on_hand, 0)
+				           - case when sb.quality_status = 'QUALIFIED' then coalesce(locked.locked_quantity, 0) else 0 end
+				           as available_stock_quantity,
+				       coalesce(sb.quantity_on_hand, 0)
+				           - case when sb.quality_status = 'QUALIFIED' then coalesce(locked.locked_quantity, 0) else 0 end
+				           as current_available_quantity,
 				       coalesce(sb.quality_status, 'QUALIFIED') as quality_status,
 				       pol.unit_price
 				from proc_purchase_receipt_line prl
@@ -1536,14 +1541,26 @@ public class ReversalAdminService {
 				join mst_unit u on u.id = prl.unit_id
 				left join inv_stock_balance sb on sb.warehouse_id = pr.warehouse_id
 					and sb.material_id = prl.material_id
+				left join (
+					select warehouse_id, material_id,
+					       sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) locked on locked.warehouse_id = pr.warehouse_id and locked.material_id = prl.material_id
 				where prl.receipt_id = ?
 				order by prl.line_no asc, prl.id asc, coalesce(sb.quality_status, 'QUALIFIED') asc
 				""", (rs, rowNum) -> {
 			BigDecimal received = rs.getBigDecimal("quantity");
 			BigDecimal returned = rs.getBigDecimal("returned_quantity");
 			BigDecimal returnable = received.subtract(returned);
+			BigDecimal quantityOnHand = rs.getBigDecimal("quantity_on_hand");
 			BigDecimal availableStockQuantity = rs.getBigDecimal("available_stock_quantity");
 			BigDecimal currentAvailableQuantity = rs.getBigDecimal("current_available_quantity");
+			if (availableStockQuantity.compareTo(ZERO) < 0) {
+				availableStockQuantity = ZERO;
+			}
 			if (currentAvailableQuantity.compareTo(ZERO) < 0) {
 				currentAvailableQuantity = ZERO;
 			}
@@ -1560,7 +1577,7 @@ public class ReversalAdminService {
 					rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					quantity(received), quantity(returned), quantity(returnable),
-					quantity(availableStockQuantity), quantity(availableStockQuantity),
+					quantity(availableStockQuantity), quantity(quantityOnHand),
 					quantity(rs.getBigDecimal("unit_price")), amount(returnable.multiply(rs.getBigDecimal("unit_price"))),
 					qualityStatus.name(), qualityStatus.displayName(), quantity(availableQuantity), selectable,
 					disabledReasonCode, disabledReason, quantity(maxSelectableQuantity));
@@ -3581,7 +3598,7 @@ public class ReversalAdminService {
 	}
 
 	private BigDecimal lockedStockQuantity(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus) {
-		return this.jdbcTemplate.query("""
+		BigDecimal quantityOnHand = this.jdbcTemplate.query("""
 				select quantity_on_hand
 				from inv_stock_balance
 				where warehouse_id = ?
@@ -3593,10 +3610,28 @@ public class ReversalAdminService {
 			.stream()
 			.findFirst()
 			.orElse(ZERO);
+		if (qualityStatus != InventoryQualityStatus.QUALIFIED) {
+			return quantityOnHand;
+		}
+		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+					.subtract(rs.getBigDecimal("released_quantity"))
+					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal availableQuantity = quantityOnHand.subtract(lockedQuantity);
+		return availableQuantity.compareTo(ZERO) < 0 ? ZERO : availableQuantity;
 	}
 
 	private BigDecimal stockQuantity(Long warehouseId, Long materialId) {
-		return this.jdbcTemplate.query("""
+		BigDecimal quantityOnHand = this.jdbcTemplate.query("""
 				select quantity_on_hand
 				from inv_stock_balance
 				where warehouse_id = ?
@@ -3607,6 +3642,18 @@ public class ReversalAdminService {
 			.stream()
 			.findFirst()
 			.orElse(ZERO);
+		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
+				select quantity - released_quantity - consumed_quantity as active_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and status = 'ACTIVE'
+				""", (rs, rowNum) -> rs.getBigDecimal("active_quantity"), warehouseId, materialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal availableQuantity = quantityOnHand.subtract(lockedQuantity);
+		return availableQuantity.compareTo(ZERO) < 0 ? ZERO : availableQuantity;
 	}
 
 	private BigDecimal materialIssueUnitPrice(Long issueLineId, Long workOrderMaterialId) {

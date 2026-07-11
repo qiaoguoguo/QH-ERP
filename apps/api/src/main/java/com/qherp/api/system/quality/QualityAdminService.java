@@ -5,6 +5,7 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.inventory.InventoryAvailabilityService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
@@ -49,14 +50,18 @@ public class QualityAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryAvailabilityService inventoryAvailabilityService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	private final AuditService auditService;
 
 	public QualityAdminService(JdbcTemplate jdbcTemplate, InventoryPostingService inventoryPostingService,
-			BusinessPeriodGuard businessPeriodGuard, AuditService auditService) {
+			InventoryAvailabilityService inventoryAvailabilityService, BusinessPeriodGuard businessPeriodGuard,
+			AuditService auditService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.auditService = auditService;
 	}
@@ -210,6 +215,10 @@ public class QualityAdminService {
 		BigDecimal quantity = parsePositiveQuantity(request.quantity());
 		String reason = validateText(request.reason(), 200, ApiErrorCode.QUALITY_STATUS_REASON_REQUIRED);
 		String remark = validateOptionalText(request.remark(), 500);
+		if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
+			this.inventoryAvailabilityService.assertQualifiedAvailable(request.warehouseId(), request.materialId(),
+					quantity, ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+		}
 		long sourceId = nextQualityStatusTransferSourceId();
 		InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
 				request.warehouseId(), request.materialId(), request.unitId(), fromStatus, toStatus, quantity,
@@ -301,7 +310,7 @@ public class QualityAdminService {
 				case "PURCHASE_RECEIPT" -> this.jdbcTemplate.queryForObject(
 						"select receipt_no from proc_purchase_receipt where id = ?", String.class, sourceId);
 				case "PRODUCTION_COMPLETION" -> this.jdbcTemplate.queryForObject(
-						"select document_no from mfg_completion_receipt where id = ?", String.class, sourceId);
+						"select receipt_no from mfg_completion_receipt where id = ?", String.class, sourceId);
 				case "SALES_RETURN" -> this.jdbcTemplate.queryForObject(
 						"select return_no from sal_sales_return where id = ?", String.class, sourceId);
 				case "PRODUCTION_RETURN" -> this.jdbcTemplate.queryForObject(

@@ -69,10 +69,15 @@ export interface SalesOrderLineRecord {
   quantity: string
   shippedQuantity: number
   remainingQuantity: number
+  reservationWarehouseId?: ResourceId | null
+  reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   quantityOnHand?: string | number | null
+  reservedQuantity?: string | number | null
+  occupiedQuantity?: string | number | null
   availableQuantity?: string | number | null
+  availableToPromiseQuantity?: string | number | null
   selectable?: boolean | null
   disabledReasonCode?: string | null
   disabledReason?: string | null
@@ -121,10 +126,15 @@ export interface SalesShipmentLineRecord {
   orderedQuantity: number
   shippedQuantityBefore: number
   remainingQuantityBefore: number
+  reservationWarehouseId?: ResourceId | null
+  reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   quantityOnHand?: string | number | null
+  reservedQuantity?: string | number | null
+  occupiedQuantity?: string | number | null
   availableQuantity?: string | number | null
+  availableToPromiseQuantity?: string | number | null
   selectable?: boolean | null
   disabledReasonCode?: string | null
   disabledReason?: string | null
@@ -161,6 +171,7 @@ export interface SalesOrderLinePayload {
   lineNo: number
   materialId: ResourceId
   unitId?: ResourceId
+  reservationWarehouseId: ResourceId
   quantity: SalesQuantityPayload
   unitPrice: SalesUnitPricePayload
   expectedShipDate?: string

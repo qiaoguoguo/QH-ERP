@@ -1229,6 +1229,38 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void inventoryShortageBalanceRouteUsesInventoryBalancePermission() throws Exception {
+		LocalDate today = LocalDate.now();
+		LocalDate dateFrom = today.minusDays(3);
+		LocalDate dateTo = today.plusDays(1);
+		ReportingFixture fixture = fixture();
+		createSalesOrder(fixture, today.minusDays(1), today, "CONFIRMED", "2.000000", "0.000000",
+				"90.000000", "余额权限库存短缺");
+		AuthenticatedSession balanceViewer = createUserAndLogin("report-inventory-balance-only",
+				List.of("report:exception:view", "inventory:balance:view"));
+		String traceKey = "exceptions:INVENTORY_SHORTAGE:INVENTORY_BALANCE:" + fixture.warehouseId() + ":"
+				+ fixture.finishedMaterialId();
+
+		JsonNode report = data(get("/api/admin/reports/exceptions?dateFrom=" + dateFrom + "&dateTo=" + dateTo
+				+ "&type=INVENTORY_SHORTAGE&keyword=" + fixture.marker(), balanceViewer));
+
+		JsonNode item = firstExceptionWithType(report, "INVENTORY_SHORTAGE");
+		assertThat(item.get("traceKey").asText()).isEqualTo(traceKey);
+		assertThat(item.get("canViewResource").booleanValue()).isTrue();
+
+		JsonNode trace = data(get("/api/admin/reports/exceptions/traces?traceKey=" + traceKey + "&dateFrom="
+				+ dateFrom + "&dateTo=" + dateTo, balanceViewer));
+		JsonNode inventoryBalance = firstItemWithSourceType(trace, "INVENTORY_BALANCE");
+		assertThat(inventoryBalance.get("resourceRouteName").asText()).isEqualTo("inventory-balances");
+		assertThat(inventoryBalance.get("resourceRouteQuery").get("warehouseId").longValue())
+			.isEqualTo(fixture.warehouseId());
+		assertThat(inventoryBalance.get("resourceRouteQuery").get("materialId").longValue())
+			.isEqualTo(fixture.finishedMaterialId());
+		assertThat(inventoryBalance.get("canViewResource").booleanValue()).isTrue();
+		assertThat(inventoryBalance.get("restricted").booleanValue()).isFalse();
+	}
+
+	@Test
 	void inventoryShortageIsReportedForSalesDemandWithoutStockBalanceOrMovement() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		LocalDate today = LocalDate.now();
@@ -1253,6 +1285,61 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 				+ dateFrom + "&dateTo=" + dateTo, admin));
 		assertThat(firstItemWithSourceType(trace, "INVENTORY_BALANCE").get("resourceRouteQuery").get("warehouseId")
 			.longValue()).isEqualTo(fixture.warehouseId());
+	}
+
+	@Test
+	void inventoryShortageDoesNotFallbackSalesDemandWithoutReservationWarehouse() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate today = LocalDate.now();
+		LocalDate dateFrom = today.minusDays(1);
+		LocalDate dateTo = today.plusDays(2);
+		ReportingFixture fixture = fixture();
+		createSalesOrderWithoutReservationWarehouse(fixture, today, today.plusDays(1), "CONFIRMED", "3.000000",
+				"0.000000", "1.000000", "缺少预留仓库不兜底");
+
+		JsonNode report = data(get("/api/admin/reports/exceptions?dateFrom=" + dateFrom + "&dateTo=" + dateTo
+				+ "&type=INVENTORY_SHORTAGE&keyword=" + fixture.marker(), admin));
+
+		assertThat(report.get("summary").get("exceptionCount").intValue()).isZero();
+		assertThat(report.get("items").size()).isZero();
+	}
+
+	@Test
+	void inventoryShortageUsesWarehouseNetAvailableAndKeepsInTransitAsReferenceOnly() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate today = LocalDate.now();
+		LocalDate dateFrom = today.minusDays(1);
+		LocalDate dateTo = today.plusDays(3);
+		ReportingFixture fixture = fixture();
+		insertStockBalance(fixture, fixture.finishedMaterialId(), "5.000000");
+		insertReservation(fixture, fixture.finishedMaterialId(), "RESERVATION", "SALES_ORDER", "2.000000");
+		insertReservation(fixture, fixture.finishedMaterialId(), "OCCUPATION", "PRODUCTION_WORK_ORDER", "4.000000");
+		createSalesOrder(fixture, today, today.plusDays(1), "CONFIRMED", "10.000000", "0.000000", "1.000000",
+				"预留占用在途短缺");
+		createPurchaseOrder(fixture, fixture.finishedMaterialId(), today, today.plusDays(2), "CONFIRMED",
+				"4.000000", "0.000000", "1.000000", "物料级在途参考");
+
+		String traceKey = "exceptions:INVENTORY_SHORTAGE:INVENTORY_BALANCE:" + fixture.warehouseId() + ":"
+				+ fixture.finishedMaterialId();
+		JsonNode report = data(get("/api/admin/reports/exceptions?dateFrom=" + dateFrom + "&dateTo=" + dateTo
+				+ "&type=INVENTORY_SHORTAGE&keyword=" + fixture.marker(), admin));
+
+		assertThat(report.get("summary").get("exceptionCount").intValue()).isOne();
+		JsonNode item = firstExceptionWithType(report, "INVENTORY_SHORTAGE");
+		assertThat(item.get("traceKey").asText()).isEqualTo(traceKey);
+		JsonNode trace = data(get("/api/admin/reports/exceptions/traces?traceKey=" + traceKey + "&dateFrom="
+				+ dateFrom + "&dateTo=" + dateTo, admin));
+		assertThat(firstItemWithSourceType(trace, "INVENTORY_BALANCE").get("quantity").asText()).isEqualTo("10.000");
+
+		createPurchaseOrder(fixture, fixture.finishedMaterialId(), today, today.plusDays(2), "CONFIRMED",
+				"20.000000", "0.000000", "1.000000", "额外在途仍不抵扣");
+		JsonNode unchanged = data(get("/api/admin/reports/exceptions?dateFrom=" + dateFrom + "&dateTo=" + dateTo
+				+ "&type=INVENTORY_SHORTAGE&keyword=" + fixture.marker(), admin));
+		assertThat(unchanged.get("summary").get("exceptionCount").intValue()).isOne();
+		JsonNode unchangedTrace = data(get("/api/admin/reports/exceptions/traces?traceKey=" + traceKey
+				+ "&dateFrom=" + dateFrom + "&dateTo=" + dateTo, admin));
+		assertThat(firstItemWithSourceType(unchangedTrace, "INVENTORY_BALANCE").get("quantity").asText())
+			.isEqualTo("10.000");
 	}
 
 	private void assertEmptyReportPage(ResponseEntity<String> response) throws Exception {
@@ -1374,12 +1461,12 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, orderId, fixture.finishedMaterialId(), fixture.unitId(), quantityValue,
-				shippedQuantity, new BigDecimal(unitPrice), businessDate.plusDays(3), remark);
+				shippedQuantity, new BigDecimal(unitPrice), businessDate.plusDays(3), remark, fixture.warehouseId());
 		String shipmentNo = "RPT-SH-" + suffix;
 		long shipmentId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_shipment (
@@ -1407,6 +1494,20 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	private SalesOrderFixture createSalesOrder(ReportingFixture fixture, LocalDate orderDate,
 			LocalDate expectedShipDate, String status, String quantity, String shippedQuantity, String unitPrice,
 			String remark) {
+		return createSalesOrder(fixture, orderDate, expectedShipDate, status, quantity, shippedQuantity, unitPrice,
+				remark, fixture.warehouseId());
+	}
+
+	private SalesOrderFixture createSalesOrderWithoutReservationWarehouse(ReportingFixture fixture, LocalDate orderDate,
+			LocalDate expectedShipDate, String status, String quantity, String shippedQuantity, String unitPrice,
+			String remark) {
+		return createSalesOrder(fixture, orderDate, expectedShipDate, status, quantity, shippedQuantity, unitPrice,
+				remark, null);
+	}
+
+	private SalesOrderFixture createSalesOrder(ReportingFixture fixture, LocalDate orderDate,
+			LocalDate expectedShipDate, String status, String quantity, String shippedQuantity, String unitPrice,
+			String remark, Long reservationWarehouseId) {
 		int suffix = SEQUENCE.incrementAndGet();
 		String orderNo = "RPT-SO-" + suffix;
 		long orderId = this.jdbcTemplate.queryForObject("""
@@ -1420,12 +1521,13 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, orderId, fixture.finishedMaterialId(), fixture.unitId(), new BigDecimal(quantity),
-				new BigDecimal(shippedQuantity), new BigDecimal(unitPrice), expectedShipDate, remark);
+				new BigDecimal(shippedQuantity), new BigDecimal(unitPrice), expectedShipDate, remark,
+				reservationWarehouseId);
 		return new SalesOrderFixture(orderId, orderNo, orderLineId);
 	}
 
@@ -1435,12 +1537,13 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, shipment.orderId(), lineNo, materialId, fixture.unitId(), quantityValue,
-				quantityValue, new BigDecimal(unitPrice), shipment.businessDate().plusDays(3), remark);
+				quantityValue, new BigDecimal(unitPrice), shipment.businessDate().plusDays(3), remark,
+				fixture.warehouseId());
 		long shipmentLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_shipment_line (
 					shipment_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
@@ -1504,6 +1607,13 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	private PurchaseOrderFixture createPurchaseOrder(ReportingFixture fixture, LocalDate orderDate,
 			LocalDate expectedArrivalDate, String status, String quantity, String receivedQuantity, String unitPrice,
 			String remark) {
+		return createPurchaseOrder(fixture, fixture.rawMaterialId(), orderDate, expectedArrivalDate, status, quantity,
+				receivedQuantity, unitPrice, remark);
+	}
+
+	private PurchaseOrderFixture createPurchaseOrder(ReportingFixture fixture, long materialId, LocalDate orderDate,
+			LocalDate expectedArrivalDate, String status, String quantity, String receivedQuantity, String unitPrice,
+			String remark) {
 		int suffix = SEQUENCE.incrementAndGet();
 		String orderNo = "RPT-PO-" + suffix;
 		long orderId = this.jdbcTemplate.queryForObject("""
@@ -1521,7 +1631,7 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
-				""", Long.class, orderId, fixture.rawMaterialId(), fixture.unitId(), new BigDecimal(quantity),
+				""", Long.class, orderId, materialId, fixture.unitId(), new BigDecimal(quantity),
 				new BigDecimal(receivedQuantity), new BigDecimal(unitPrice), expectedArrivalDate, remark);
 		return new PurchaseOrderFixture(orderId, orderNo, orderLineId);
 	}
@@ -1708,6 +1818,22 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
 				""", fixture.warehouseId(), materialId, fixture.unitId(), new BigDecimal(quantity));
+	}
+
+	private void insertReservation(ReportingFixture fixture, long materialId, String reservationType,
+			String sourceType, String quantity) {
+		int suffix = SEQUENCE.incrementAndGet();
+		this.jdbcTemplate.update("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, ?, ?, ?, ?, ?, ?, 'test', now(), 'test',
+					now())
+				""", "RPT-RSV-" + suffix, reservationType, fixture.warehouseId(), materialId, fixture.unitId(),
+				new BigDecimal(quantity), sourceType, 90_000L + suffix, 91_000L + suffix, sourceType + "-" + suffix,
+				LocalDate.now(), "报表短缺预留占用");
 	}
 
 	private ProductionFixture createProductionWorkOrder(ReportingFixture fixture, LocalDate businessDate,

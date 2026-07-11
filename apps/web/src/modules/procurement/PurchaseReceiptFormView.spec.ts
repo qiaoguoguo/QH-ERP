@@ -71,6 +71,9 @@ const sourceOrder: PurchaseOrderDetailRecord = {
       quantity: 12.5,
       receivedQuantity: 5,
       remainingQuantity: 7.5,
+      inTransitQuantity: '7.500000',
+      inTransitStatus: 'NORMAL',
+      inTransitStatusName: '正常在途',
       unitPrice: 3.1,
       expectedArrivalDate: '2026-07-12',
       remark: '按周到货',
@@ -86,6 +89,9 @@ const sourceOrder: PurchaseOrderDetailRecord = {
       quantity: 3,
       receivedQuantity: 0,
       remainingQuantity: 3,
+      inTransitQuantity: '3.000000',
+      inTransitStatus: 'DUE_SOON',
+      inTransitStatusName: '临近到货',
       unitPrice: 1.2,
       expectedArrivalDate: '2026-07-12',
       remark: null,
@@ -226,6 +232,8 @@ describe('采购入库表单页', () => {
 
     expect(wrapper.text()).toContain('RM-001 冷轧钢板')
     expect(wrapper.text()).toContain('7.5')
+    expect(wrapper.text()).toContain('采购在途参考')
+    expect(wrapper.text()).toContain('正常在途')
   })
 
   it('缺少必填项时阻止保存', async () => {

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import {
   inventoryApi,
   type InventoryBalanceRecord,
+  type InventoryReservationSummaryRecord,
   type InventoryQualityStatus,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type MaterialType, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { materialTypeLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
@@ -15,6 +17,7 @@ import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import { formatQuantity } from './inventoryPageHelpers'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
   warehouseId: ResourceId | ''
@@ -44,6 +47,14 @@ const loading = ref(true)
 const referenceLoading = ref(true)
 const error = ref('')
 const referenceError = ref('')
+const reservationDrawerVisible = ref(false)
+const inTransitDrawerVisible = ref(false)
+const selectedBalance = ref<InventoryBalanceRecord | null>(null)
+const reservationRecords = ref<InventoryReservationSummaryRecord[]>([])
+const reservationLoading = ref(false)
+const reservationError = ref('')
+const availabilityDrawerSize = 'min(520px, 92vw)'
+const canViewReservations = computed(() => authStore.hasPermission('inventory:reservation:view'))
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -144,6 +155,41 @@ function viewMovements(record: InventoryBalanceRecord) {
   })
 }
 
+async function loadReservations(record: InventoryBalanceRecord) {
+  reservationLoading.value = true
+  reservationError.value = ''
+  try {
+    const page = await inventoryApi.reservations.list({
+      warehouseId: record.warehouseId,
+      materialId: record.materialId,
+      status: 'ACTIVE',
+      page: 1,
+      pageSize: 20,
+    })
+    reservationRecords.value = pageItems(page)
+  } catch (caught) {
+    reservationRecords.value = []
+    reservationError.value = errorMessage(caught)
+  } finally {
+    reservationLoading.value = false
+  }
+}
+
+function viewReservations(record: InventoryBalanceRecord) {
+  if (!canViewReservations.value) {
+    return
+  }
+  selectedBalance.value = record
+  reservationRecords.value = []
+  reservationDrawerVisible.value = true
+  void loadReservations(record)
+}
+
+function viewInTransit(record: InventoryBalanceRecord) {
+  selectedBalance.value = record
+  inTransitDrawerVisible.value = true
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) {
     return '-'
@@ -158,7 +204,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="库存余额" description="可用数量仅包含合格库存，待检、不合格和冻结库存不参与出库或领料。">
+  <MasterDataTableView title="库存余额" description="展示账面库存、合格现存、占用预留、现货净可用、物料级采购在途参考、可承诺量和净需求缺口。">
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词">
@@ -280,24 +326,51 @@ onMounted(() => {
             <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
           </template>
         </el-table-column>
-        <el-table-column label="总现存" min-width="120" align="right">
+        <el-table-column label="账面库存" min-width="120" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ formatQuantity(row.totalQuantityOnHand ?? row.quantityOnHand) }}</span>
+            <span data-test="book-quantity-cell" class="numeric-cell">
+              {{ formatQuantity(row.bookQuantity ?? row.totalQuantityOnHand ?? row.quantityOnHand) }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="现存数量" min-width="120" align="right">
+        <el-table-column label="合格现存" min-width="120" align="right">
           <template #default="{ row }">
-            <span data-test="quantity-on-hand-cell" class="numeric-cell">{{ formatQuantity(row.quantityOnHand) }}</span>
+            <span class="numeric-cell">{{ formatQuantity(row.qualifiedQuantity) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="锁定数量" min-width="120" align="right">
+        <el-table-column label="占用库存" min-width="120" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ formatQuantity(row.lockedQuantity) }}</span>
+            <span class="numeric-cell">{{ formatQuantity(row.occupiedQuantity) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="合格可用" min-width="120" align="right">
+        <el-table-column label="预留库存" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.reservedQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="冻结库存" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.frozenQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="现货净可用" min-width="130" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购在途参考" min-width="130" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.inTransitQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="可承诺量" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.availableToPromiseQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="净需求缺口" min-width="130" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.netRequirementShortageQuantity) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="待检" min-width="110" align="right">
@@ -305,19 +378,9 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatQuantity(row.pendingInspectionQuantity) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="合格" min-width="110" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatQuantity(row.qualifiedQuantity) }}</span>
-          </template>
-        </el-table-column>
         <el-table-column label="不合格" min-width="110" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.rejectedQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="冻结" min-width="110" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatQuantity(row.frozenQuantity) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="unavailableReason" label="不可用说明" min-width="180" show-overflow-tooltip />
@@ -326,10 +389,16 @@ onMounted(() => {
             {{ formatDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="110">
+        <el-table-column label="操作" fixed="right" min-width="260">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-inventory-movements" @click="viewMovements(row)">
               查看流水
+            </el-button>
+            <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
+              占用预留
+            </el-button>
+            <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
+              在途参考
             </el-button>
           </template>
         </el-table-column>
@@ -343,6 +412,60 @@ onMounted(() => {
       :current-page="pagination.page"
       @current-change="changePage" @size-change="changePageSize"
     />
+
+    <el-drawer v-model="reservationDrawerVisible" title="占用预留追溯" :size="availabilityDrawerSize">
+      <dl v-if="selectedBalance" class="availability-detail-list">
+        <dt>仓库</dt>
+        <dd>{{ selectedBalance.warehouseName }}</dd>
+        <dt>物料</dt>
+        <dd>{{ selectedBalance.materialCode }} {{ selectedBalance.materialName }}</dd>
+        <dt>占用库存</dt>
+        <dd>{{ formatQuantity(selectedBalance.occupiedQuantity) }}</dd>
+        <dt>预留库存</dt>
+        <dd>{{ formatQuantity(selectedBalance.reservedQuantity) }}</dd>
+        <dt>现货净可用</dt>
+        <dd>{{ formatQuantity(selectedBalance.availableQuantity) }}</dd>
+      </dl>
+      <el-alert v-if="reservationError" class="state-alert" type="error" :title="reservationError" :closable="false" />
+      <el-table
+        v-loading="reservationLoading"
+        class="reservation-source-table"
+        :data="reservationRecords"
+        empty-text="暂无生效占用预留来源"
+        stripe
+      >
+        <el-table-column prop="reservationNo" label="台账编号" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="reservationTypeName" label="类型" min-width="100" />
+        <el-table-column prop="statusName" label="状态" min-width="90" />
+        <el-table-column prop="sourceTypeName" label="来源类型" min-width="110" show-overflow-tooltip />
+        <el-table-column prop="sourceDocumentNo" label="来源单号" min-width="160" show-overflow-tooltip />
+        <el-table-column label="剩余数量" min-width="110" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.remainingQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="businessDate" label="业务日期" min-width="110" />
+      </el-table>
+    </el-drawer>
+
+    <el-drawer v-model="inTransitDrawerVisible" title="采购在途参考摘要" :size="availabilityDrawerSize">
+      <el-alert
+        class="state-alert"
+        type="info"
+        title="采购在途按物料汇总展示，不代表当前仓库现货可用。"
+        :closable="false"
+      />
+      <dl v-if="selectedBalance" class="availability-detail-list">
+        <dt>库存行仓库</dt>
+        <dd>{{ selectedBalance.warehouseName }}</dd>
+        <dt>物料</dt>
+        <dd>{{ selectedBalance.materialCode }} {{ selectedBalance.materialName }}</dd>
+        <dt>采购在途参考</dt>
+        <dd>{{ formatQuantity(selectedBalance.inTransitQuantity) }}</dd>
+        <dt>可承诺量</dt>
+        <dd>{{ formatQuantity(selectedBalance.availableToPromiseQuantity) }}</dd>
+      </dl>
+    </el-drawer>
   </MasterDataTableView>
 </template>
 
@@ -360,5 +483,22 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.availability-detail-list {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px 12px;
+  margin: 0;
+}
+
+.availability-detail-list dt {
+  color: var(--qherp-muted);
+}
+
+.availability-detail-list dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
 }
 </style>

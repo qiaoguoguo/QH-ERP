@@ -5,10 +5,12 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.inventory.InventoryAvailabilityService;
 import com.qherp.api.system.inventory.InventoryDirection;
 import com.qherp.api.system.inventory.InventoryMovementType;
 import com.qherp.api.system.inventory.InventoryPostingService;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.inventory.InventoryReservationType;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
@@ -64,13 +66,17 @@ public class SalesAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryAvailabilityService inventoryAvailabilityService;
+
 	private final BusinessPeriodGuard businessPeriodGuard;
 
 	public SalesAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard) {
+			InventoryPostingService inventoryPostingService, InventoryAvailabilityService inventoryAvailabilityService,
+			BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
@@ -177,6 +183,7 @@ public class SalesAdminService {
 				set status = ?, confirmed_by = ?, confirmed_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", SalesOrderStatus.CONFIRMED.name(), operator.username(), now, operator.username(), now, id);
+		reserveSalesOrder(order, operator, servletRequest);
 		this.auditService.record(operator, "SALES_ORDER_CONFIRM", ORDER_TARGET, id, order.orderNo(), servletRequest);
 		return order(id);
 	}
@@ -195,6 +202,8 @@ public class SalesAdminService {
 				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", SalesOrderStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
+		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.SALES_ORDER_SOURCE, id, operator, servletRequest);
 		this.auditService.record(operator, "SALES_ORDER_CANCEL", ORDER_TARGET, id, order.orderNo(), servletRequest);
 		return order(id);
 	}
@@ -213,6 +222,8 @@ public class SalesAdminService {
 				set status = ?, closed_by = ?, closed_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", SalesOrderStatus.CLOSED.name(), operator.username(), now, operator.username(), now, id);
+		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.SALES_ORDER_SOURCE, id, operator, servletRequest);
 		this.auditService.record(operator, "SALES_ORDER_CLOSE", ORDER_TARGET, id, order.orderNo(), servletRequest);
 		return order(id);
 	}
@@ -326,7 +337,7 @@ public class SalesAdminService {
 			}
 			OffsetDateTime now = OffsetDateTime.now();
 			for (ShipmentLineRow line : lines) {
-				postShipmentLine(order.id(), shipment, line, operator.username(), now);
+				postShipmentLine(order.id(), shipment, line, operator, servletRequest, now);
 			}
 			SalesOrderStatus nextOrderStatus = shippedOrderStatus(order.id());
 			this.jdbcTemplate.update("""
@@ -348,23 +359,31 @@ public class SalesAdminService {
 		}
 	}
 
-	private void postShipmentLine(Long orderId, ShipmentRow shipment, ShipmentLineRow line, String operatorName,
-			OffsetDateTime now) {
+	private void postShipmentLine(Long orderId, ShipmentRow shipment, ShipmentLineRow line, CurrentUser operator,
+			HttpServletRequest servletRequest, OffsetDateTime now) {
 		OrderLineRow orderLine = lockOrderLine(orderId, line.orderLineId())
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_SHIPMENT_LINE_SOURCE_INVALID));
 		if (!line.materialId().equals(orderLine.materialId()) || !line.unitId().equals(orderLine.unitId())) {
 			throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_LINE_SOURCE_INVALID);
 		}
 		validateShipmentOrderLineMasterData(orderLine);
+		if (orderLine.reservationWarehouseId() == null
+				|| !orderLine.reservationWarehouseId().equals(shipment.warehouseId())) {
+			throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_RESERVATION_WAREHOUSE_MISMATCH);
+		}
 		BigDecimal remainingQuantity = orderLine.quantity().subtract(orderLine.shippedQuantity());
 		if (line.quantity().compareTo(remainingQuantity) > 0) {
 			throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_EXCEEDS_ORDER);
 		}
+		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
+				InventoryReservationType.RESERVATION, InventoryAvailabilityService.SALES_ORDER_SOURCE,
+				orderLine.id(), line.quantity(), operator, servletRequest);
 		InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
 				new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
 						InventoryDirection.OUT, shipment.warehouseId(), line.materialId(), line.unitId(),
 						line.quantity(), InventoryQualityStatus.QUALIFIED, SHIPMENT_SOURCE_TYPE, shipment.id(),
-						line.id(), shipment.businessDate(), "销售出库", line.remark(), operatorName));
+						line.id(), shipment.businessDate(), "销售出库", line.remark(), operator.username(),
+						consumedReservation));
 		this.jdbcTemplate.update("""
 				update sal_sales_shipment_line
 				set ordered_quantity = ?, shipped_quantity_before = ?, remaining_quantity_before = ?,
@@ -402,8 +421,11 @@ public class SalesAdminService {
 			Long unitId = validateUnit(line.unitId(), material);
 			BigDecimal quantity = validateQuantity(line.quantity());
 			BigDecimal unitPrice = validateUnitPrice(line.unitPrice());
+			if (line.reservationWarehouseId() != null) {
+				validateEnabledWarehouse(line.reservationWarehouseId());
+			}
 			lines.add(new ValidatedOrderLine(line.lineNo(), material.id(), unitId, quantity, unitPrice,
-					line.expectedShipDate(), validateOptionalText(line.remark(), 500)));
+					line.reservationWarehouseId(), line.expectedShipDate(), validateOptionalText(line.remark(), 500)));
 		}
 		return new ValidatedOrder(customer, request.orderDate(), request.expectedShipDate(), remark, lines);
 	}
@@ -427,6 +449,25 @@ public class SalesAdminService {
 			validateUnit(line.unitId(), material);
 			validateQuantity(line.quantity());
 			validateUnitPrice(line.unitPrice());
+			if (line.reservationWarehouseId() == null) {
+				throw new BusinessException(ApiErrorCode.SALES_RESERVATION_WAREHOUSE_REQUIRED);
+			}
+			validateEnabledWarehouse(line.reservationWarehouseId());
+		}
+	}
+
+	private void reserveSalesOrder(OrderRow order, CurrentUser operator, HttpServletRequest servletRequest) {
+		for (OrderLineRow line : orderLineRowsForValidation(order.id())) {
+			BigDecimal remainingQuantity = line.quantity().subtract(line.shippedQuantity());
+			if (remainingQuantity.compareTo(ZERO) <= 0) {
+				continue;
+			}
+			this.inventoryAvailabilityService.reserveFromWarehouse(
+					new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
+							line.reservationWarehouseId(), line.materialId(), line.unitId(), remainingQuantity,
+							InventoryAvailabilityService.SALES_ORDER_SOURCE, order.id(), line.id(), order.orderNo(),
+							order.orderDate(), "销售订单确认预留", null),
+					operator, servletRequest);
 		}
 	}
 
@@ -455,6 +496,10 @@ public class SalesAdminService {
 				throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_LINE_SOURCE_INVALID);
 			}
 			validateShipmentOrderLineMasterData(orderLine);
+			if (orderLine.reservationWarehouseId() == null
+					|| !orderLine.reservationWarehouseId().equals(request.warehouseId())) {
+				throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_RESERVATION_WAREHOUSE_MISMATCH);
+			}
 			BigDecimal quantity = validateQuantity(line.quantity());
 			BigDecimal remainingQuantity = orderLine.quantity().subtract(orderLine.shippedQuantity());
 			if (quantity.compareTo(remainingQuantity) > 0) {
@@ -579,11 +624,12 @@ public class SalesAdminService {
 			this.jdbcTemplate.update("""
 					insert into sal_sales_order_line (
 						order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-						expected_ship_date, remark, created_at, updated_at
+						expected_ship_date, reservation_warehouse_id, remark, created_at, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", orderId, line.lineNo(), line.materialId(), line.unitId(), line.quantity(), ZERO,
-					line.unitPrice(), line.expectedShipDate(), blankToNull(line.remark()), now, now);
+					line.unitPrice(), line.expectedShipDate(), line.reservationWarehouseId(),
+					blankToNull(line.remark()), now, now);
 		}
 	}
 
@@ -781,7 +827,7 @@ public class SalesAdminService {
 	private Optional<OrderLineRow> orderLine(Long orderId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select id, order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-				       expected_ship_date, remark
+				       expected_ship_date, reservation_warehouse_id, remark
 				from sal_sales_order_line
 				where order_id = ?
 				and id = ?
@@ -791,7 +837,7 @@ public class SalesAdminService {
 	private Optional<OrderLineRow> lockOrderLine(Long orderId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select id, order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-				       expected_ship_date, remark
+				       expected_ship_date, reservation_warehouse_id, remark
 				from sal_sales_order_line
 				where order_id = ?
 				and id = ?
@@ -802,7 +848,7 @@ public class SalesAdminService {
 	private List<OrderLineRow> orderLineRowsForValidation(Long orderId) {
 		return this.jdbcTemplate.query("""
 				select id, order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-				       expected_ship_date, remark
+				       expected_ship_date, reservation_warehouse_id, remark
 				from sal_sales_order_line
 				where order_id = ?
 				order by line_no asc, id asc
@@ -825,36 +871,64 @@ public class SalesAdminService {
 				select l.id, l.line_no, l.material_id, m.code as material_code, m.name as material_name,
 				       m.specification as material_spec, l.unit_id, u.name as unit_name, l.quantity,
 				       l.shipped_quantity, (l.quantity - l.shipped_quantity) as remaining_quantity,
-				       l.unit_price, l.expected_ship_date, l.remark,
+				       l.unit_price, l.expected_ship_date, l.reservation_warehouse_id,
+				       rw.name as reservation_warehouse_name, l.remark,
 				       coalesce(stock.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
-				       coalesce(stock.available_quantity, 0.000000) as qualified_available_quantity
+				       coalesce(locked.reserved_quantity, 0.000000) as reserved_quantity,
+				       coalesce(locked.occupied_quantity, 0.000000) as occupied_quantity,
+				       coalesce(own.own_quantity, 0.000000) as own_reserved_quantity
 				from sal_sales_order_line l
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
+				left join mst_warehouse rw on rw.id = l.reservation_warehouse_id
+				left join inv_stock_balance stock on stock.warehouse_id = l.reservation_warehouse_id
+					and stock.material_id = l.material_id
+					and stock.quality_status = 'QUALIFIED'
 				left join (
-					select material_id, sum(quantity_on_hand) as quantity_on_hand,
-					       sum(quantity_on_hand - locked_quantity) as available_quantity
-					from inv_stock_balance
-					where quality_status = 'QUALIFIED'
-					group by material_id
-				) stock on stock.material_id = l.material_id
+					select warehouse_id, material_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) locked on locked.warehouse_id = l.reservation_warehouse_id and locked.material_id = l.material_id
+				left join (
+					select source_line_id, sum(quantity - released_quantity - consumed_quantity) as own_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and reservation_type = 'RESERVATION'
+					and source_type = 'SALES_ORDER'
+					group by source_line_id
+				) own on own.source_line_id = l.id
 				where l.order_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> {
 			BigDecimal remainingQuantity = rs.getBigDecimal("remaining_quantity");
 			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
-			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal ownReservedQuantity = rs.getBigDecimal("own_reserved_quantity");
+			BigDecimal reservedQuantity = rs.getBigDecimal("reserved_quantity").subtract(ownReservedQuantity).max(ZERO);
+			BigDecimal occupiedQuantity = rs.getBigDecimal("occupied_quantity");
+			BigDecimal availableQuantity = quantityOnHand.subtract(reservedQuantity).subtract(occupiedQuantity);
 			BigDecimal maxSelectableQuantity = maxSelectableQuantity(remainingQuantity, availableQuantity);
-			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
+			boolean missingReservationWarehouse = rs.getObject("reservation_warehouse_id", Long.class) == null;
+			boolean selectable = !missingReservationWarehouse && maxSelectableQuantity.compareTo(ZERO) > 0;
+			String disabledReasonCode = missingReservationWarehouse ? ApiErrorCode.SALES_RESERVATION_WAREHOUSE_REQUIRED.code()
+					: selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH;
+			String disabledReason = missingReservationWarehouse ? ApiErrorCode.SALES_RESERVATION_WAREHOUSE_REQUIRED.message()
+					: selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE;
 			return new SalesOrderLineResponse(rs.getLong("id"), rs.getInt("line_no"), rs.getLong("material_id"),
 					rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
 					rs.getLong("unit_id"), rs.getString("unit_name"), rs.getBigDecimal("quantity"),
 					rs.getBigDecimal("shipped_quantity"), remainingQuantity, rs.getBigDecimal("unit_price"),
-					rs.getObject("expected_ship_date", LocalDate.class), rs.getString("remark"),
+					rs.getObject("expected_ship_date", LocalDate.class),
+					rs.getObject("reservation_warehouse_id", Long.class), rs.getString("reservation_warehouse_name"),
+					rs.getString("remark"),
 					InventoryQualityStatus.QUALIFIED.name(), InventoryQualityStatus.QUALIFIED.displayName(),
-					quantityOnHand, availableQuantity, selectable,
-					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
-					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
+					quantityOnHand, reservedQuantity, occupiedQuantity, availableQuantity, availableQuantity,
+					selectable, disabledReasonCode, disabledReason, maxSelectableQuantity);
 		}, orderId);
 	}
 
@@ -879,22 +953,49 @@ public class SalesAdminService {
 				select l.id, l.line_no, l.order_line_id, l.material_id, m.code as material_code,
 				       m.name as material_name, l.unit_id, u.name as unit_name, l.ordered_quantity,
 				       l.shipped_quantity_before, l.remaining_quantity_before, l.quantity, l.before_quantity,
-				       l.after_quantity, l.remark,
+				       l.after_quantity, sol.reservation_warehouse_id, rw.name as reservation_warehouse_name,
+				       l.remark,
 				       coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
-				       coalesce(sb.quantity_on_hand - sb.locked_quantity, 0.000000) as qualified_available_quantity
+				       coalesce(locked.reserved_quantity, 0.000000) as reserved_quantity,
+				       coalesce(locked.occupied_quantity, 0.000000) as occupied_quantity,
+				       coalesce(own.own_quantity, 0.000000) as own_reserved_quantity
 				from sal_sales_shipment_line l
 				join sal_sales_shipment sh on sh.id = l.shipment_id
+				join sal_sales_order_line sol on sol.id = l.order_line_id
+				left join mst_warehouse rw on rw.id = sol.reservation_warehouse_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				left join inv_stock_balance sb on sb.warehouse_id = sh.warehouse_id
 					and sb.material_id = l.material_id
 					and sb.quality_status = 'QUALIFIED'
+				left join (
+					select warehouse_id, material_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) locked on locked.warehouse_id = sh.warehouse_id and locked.material_id = l.material_id
+				left join (
+					select source_line_id, sum(quantity - released_quantity - consumed_quantity) as own_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and reservation_type = 'RESERVATION'
+					and source_type = 'SALES_ORDER'
+					group by source_line_id
+				) own on own.source_line_id = l.order_line_id
 				where l.shipment_id = ?
 				order by l.line_no asc, l.id asc
 				""", (rs, rowNum) -> {
 			BigDecimal quantity = rs.getBigDecimal("quantity");
 			BigDecimal quantityOnHand = rs.getBigDecimal("qualified_quantity_on_hand");
-			BigDecimal availableQuantity = rs.getBigDecimal("qualified_available_quantity");
+			BigDecimal ownReservedQuantity = rs.getBigDecimal("own_reserved_quantity");
+			BigDecimal reservedQuantity = rs.getBigDecimal("reserved_quantity").subtract(ownReservedQuantity).max(ZERO);
+			BigDecimal occupiedQuantity = rs.getBigDecimal("occupied_quantity");
+			BigDecimal availableQuantity = quantityOnHand.subtract(reservedQuantity).subtract(occupiedQuantity);
 			BigDecimal maxSelectableQuantity = maxSelectableQuantity(quantity, availableQuantity);
 			boolean selectable = maxSelectableQuantity.compareTo(ZERO) > 0;
 			return new SalesShipmentLineResponse(rs.getLong("id"), rs.getInt("line_no"),
@@ -902,8 +1003,11 @@ public class SalesAdminService {
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("shipped_quantity_before"),
 					rs.getBigDecimal("remaining_quantity_before"), quantity, rs.getBigDecimal("before_quantity"),
-					rs.getBigDecimal("after_quantity"), rs.getString("remark"), InventoryQualityStatus.QUALIFIED.name(),
-					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, availableQuantity, selectable,
+					rs.getBigDecimal("after_quantity"), rs.getObject("reservation_warehouse_id", Long.class),
+					rs.getString("reservation_warehouse_name"), rs.getString("remark"),
+					InventoryQualityStatus.QUALIFIED.name(),
+					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, reservedQuantity,
+					occupiedQuantity, availableQuantity, availableQuantity, selectable,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
 		}, shipmentId);
@@ -1015,7 +1119,8 @@ public class SalesAdminService {
 		return new OrderLineRow(rs.getLong("id"), rs.getLong("order_id"), rs.getInt("line_no"),
 				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getBigDecimal("quantity"),
 				rs.getBigDecimal("shipped_quantity"), rs.getBigDecimal("unit_price"),
-				rs.getObject("expected_ship_date", LocalDate.class), rs.getString("remark"));
+				rs.getObject("expected_ship_date", LocalDate.class),
+				rs.getObject("reservation_warehouse_id", Long.class), rs.getString("remark"));
 	}
 
 	private ShipmentLineRow mapShipmentLineRow(ResultSet rs, int rowNum) throws SQLException {
@@ -1117,7 +1222,8 @@ public class SalesAdminService {
 	}
 
 	public record SalesOrderLineRequest(@NotNull Integer lineNo, @NotNull Long materialId, Long unitId,
-			@NotNull BigDecimal quantity, @NotNull BigDecimal unitPrice, LocalDate expectedShipDate, String remark) {
+			@NotNull BigDecimal quantity, @NotNull BigDecimal unitPrice, Long reservationWarehouseId,
+			LocalDate expectedShipDate, String remark) {
 	}
 
 	public record SalesOrderRequest(@NotNull Long customerId, @NotNull LocalDate orderDate,
@@ -1143,9 +1249,10 @@ public class SalesAdminService {
 	public record SalesOrderLineResponse(Long id, Integer lineNo, Long materialId, String materialCode,
 			String materialName, String materialSpec, Long unitId, String unitName, BigDecimal quantity,
 			BigDecimal shippedQuantity, BigDecimal remainingQuantity, BigDecimal unitPrice, LocalDate expectedShipDate,
-			String remark, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
-			BigDecimal availableQuantity, boolean selectable, String disabledReasonCode, String disabledReason,
-			BigDecimal maxSelectableQuantity) {
+			Long reservationWarehouseId, String reservationWarehouseName, String remark, String qualityStatus,
+			String qualityStatusName, BigDecimal quantityOnHand, BigDecimal reservedQuantity,
+			BigDecimal occupiedQuantity, BigDecimal availableQuantity, BigDecimal availableToPromiseQuantity,
+			boolean selectable, String disabledReasonCode, String disabledReason, BigDecimal maxSelectableQuantity) {
 	}
 
 	public record SalesOrderDetailResponse(Long id, String orderNo, Long customerId, String customerCode,
@@ -1165,8 +1272,10 @@ public class SalesAdminService {
 	public record SalesShipmentLineResponse(Long id, Integer lineNo, Long orderLineId, Long materialId,
 			String materialCode, String materialName, Long unitId, String unitName, BigDecimal orderedQuantity,
 			BigDecimal shippedQuantityBefore, BigDecimal remainingQuantityBefore, BigDecimal quantity,
-			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark, String qualityStatus,
-			String qualityStatusName, BigDecimal quantityOnHand, BigDecimal availableQuantity, boolean selectable,
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, Long reservationWarehouseId,
+			String reservationWarehouseName, String remark, String qualityStatus, String qualityStatusName,
+			BigDecimal quantityOnHand, BigDecimal reservedQuantity, BigDecimal occupiedQuantity,
+			BigDecimal availableQuantity, BigDecimal availableToPromiseQuantity, boolean selectable,
 			String disabledReasonCode, String disabledReason, BigDecimal maxSelectableQuantity) {
 	}
 
@@ -1189,7 +1298,7 @@ public class SalesAdminService {
 	}
 
 	private record ValidatedOrderLine(Integer lineNo, Long materialId, Long unitId, BigDecimal quantity,
-			BigDecimal unitPrice, LocalDate expectedShipDate, String remark) {
+			BigDecimal unitPrice, Long reservationWarehouseId, LocalDate expectedShipDate, String remark) {
 	}
 
 	private record ValidatedShipment(Long warehouseId, LocalDate businessDate, String remark,
@@ -1207,7 +1316,7 @@ public class SalesAdminService {
 
 	private record OrderLineRow(Long id, Long orderId, Integer lineNo, Long materialId, Long unitId,
 			BigDecimal quantity, BigDecimal shippedQuantity, BigDecimal unitPrice, LocalDate expectedShipDate,
-			String remark) {
+			Long reservationWarehouseId, String remark) {
 	}
 
 	private record ShipmentRow(Long id, String shipmentNo, Long orderId, Long customerId, Long warehouseId,

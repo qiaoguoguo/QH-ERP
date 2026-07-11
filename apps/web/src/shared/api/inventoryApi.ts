@@ -16,6 +16,8 @@ export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
 export type InventoryQuantityPayload = string
 export type InventoryQualityStatus = 'PENDING_INSPECTION' | 'QUALIFIED' | 'REJECTED' | 'FROZEN'
+export type InventoryReservationType = 'RESERVATION' | 'OCCUPATION'
+export type InventoryReservationStatus = 'ACTIVE' | 'RELEASED' | 'CONSUMED' | 'CANCELLED'
 
 export interface InventoryBalanceListParams {
   keyword?: string
@@ -55,6 +57,21 @@ export interface InventoryDocumentListParams {
   pageSize: number
 }
 
+export interface InventoryReservationListParams {
+  keyword?: string
+  warehouseId?: ResourceId
+  materialId?: ResourceId
+  reservationType?: InventoryReservationType
+  status?: InventoryReservationStatus
+  sourceType?: string
+  sourceId?: ResourceId
+  sourceLineId?: ResourceId
+  businessDateFrom?: string
+  businessDateTo?: string
+  page: number
+  pageSize: number
+}
+
 export interface InventoryBalanceRecord {
   id: ResourceId
   warehouseId: ResourceId
@@ -69,6 +86,7 @@ export interface InventoryBalanceRecord {
   unitName: string
   qualityStatus?: InventoryQualityStatus
   qualityStatusName?: string
+  bookQuantity?: number | string
   quantityOnHand: number | string
   lockedQuantity: number | string
   availableQuantity: number | string
@@ -77,8 +95,62 @@ export interface InventoryBalanceRecord {
   qualifiedQuantity?: number | string
   rejectedQuantity?: number | string
   frozenQuantity?: number | string
+  reservedQuantity?: number | string
+  occupiedQuantity?: number | string
+  inTransitQuantity?: number | string
+  availableToPromiseQuantity?: number | string
+  netRequirementShortageQuantity?: number | string
   unavailableReason?: string | null
   updatedAt: string
+}
+
+export interface InventoryReservationSummaryRecord {
+  id: ResourceId
+  reservationNo: string
+  reservationType: InventoryReservationType
+  reservationTypeName: string
+  status: InventoryReservationStatus
+  statusName: string
+  warehouseId: ResourceId
+  warehouseName: string
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  unitId: ResourceId
+  unitName: string
+  qualityStatus: InventoryQualityStatus
+  qualityStatusName: string
+  quantity: number | string
+  remainingQuantity: number | string
+  releasedQuantity: number | string
+  consumedQuantity: number | string
+  sourceType: string
+  sourceTypeName: string
+  sourceId: ResourceId
+  sourceLineId: ResourceId
+  sourceDocumentNo: string
+  businessDate: string
+  reason?: string | null
+  remark?: string | null
+  createdByName: string
+  createdAt: string
+  releasedByName?: string | null
+  releasedAt?: string | null
+}
+
+export interface InventoryReservationAuditRecord {
+  action: string
+  actionName: string
+  operatorName: string
+  operatedAt: string
+  businessDate?: string | null
+  reason?: string | null
+  remark?: string | null
+}
+
+export interface InventoryReservationDetailRecord extends InventoryReservationSummaryRecord {
+  sourceSummary?: Record<string, unknown> | null
+  auditRecords?: InventoryReservationAuditRecord[]
 }
 
 export interface InventoryMovementRecord {
@@ -169,6 +241,10 @@ export interface InventoryApi {
   balances: {
     list(params: InventoryBalanceListParams): Promise<PageResult<InventoryBalanceRecord>>
   }
+  reservations: {
+    list(params: InventoryReservationListParams): Promise<PageResult<InventoryReservationSummaryRecord>>
+    get(id: ResourceId): Promise<InventoryReservationDetailRecord>
+  }
   movements: {
     list(params: InventoryMovementListParams): Promise<PageResult<InventoryMovementRecord>>
   }
@@ -216,6 +292,20 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'pageSize',
   ] as const
   const documentQueryKeys = ['keyword', 'documentType', 'status', 'dateFrom', 'dateTo', 'page', 'pageSize'] as const
+  const reservationQueryKeys = [
+    'keyword',
+    'warehouseId',
+    'materialId',
+    'reservationType',
+    'status',
+    'sourceType',
+    'sourceId',
+    'sourceLineId',
+    'businessDateFrom',
+    'businessDateTo',
+    'page',
+    'pageSize',
+  ] as const
 
   const pickQuery = (query: object | undefined, keys: readonly string[]) => {
     const result: Record<string, unknown> = {}
@@ -287,6 +377,17 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
         get<PageResult<InventoryBalanceRecord>>(
           '/api/admin/inventory/balances',
           pickQuery(params, balanceQueryKeys),
+        ),
+    },
+    reservations: {
+      list: (params) =>
+        get<PageResult<InventoryReservationSummaryRecord>>(
+          '/api/admin/inventory/reservations',
+          pickQuery(params, reservationQueryKeys),
+        ),
+      get: (id) =>
+        get<InventoryReservationDetailRecord>(
+          `/api/admin/inventory/reservations/${encodeURIComponent(String(id))}`,
         ),
     },
     movements: {

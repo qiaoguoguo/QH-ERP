@@ -33,6 +33,9 @@ const draftOrder: PurchaseOrderDetailRecord = {
   totalQuantity: 12.5,
   receivedQuantity: 0,
   remainingQuantity: 12.5,
+  inTransitQuantity: '0.000000',
+  inTransitStatus: 'NOT_COUNTED',
+  inTransitStatusName: '不计入在途',
   remark: '首批采购',
   createdByName: '采购员',
   createdAt: '2026-07-04T08:00:00+08:00',
@@ -50,6 +53,9 @@ const draftOrder: PurchaseOrderDetailRecord = {
       quantity: 12.5,
       receivedQuantity: 0,
       remainingQuantity: 12.5,
+      inTransitQuantity: '0.000000',
+      inTransitStatus: 'NOT_COUNTED',
+      inTransitStatusName: '不计入在途',
       unitPrice: 3.1,
       expectedArrivalDate: '2026-07-12',
       remark: '按周到货',
@@ -104,6 +110,15 @@ const confirmedOrder: PurchaseOrderDetailRecord = {
   status: 'CONFIRMED',
   receivedQuantity: 0,
   remainingQuantity: 12.5,
+  inTransitQuantity: '12.500000',
+  inTransitStatus: 'NORMAL',
+  inTransitStatusName: '正常在途',
+  lines: draftOrder.lines.map((line) => ({
+    ...line,
+    inTransitQuantity: '12.500000',
+    inTransitStatus: 'NORMAL',
+    inTransitStatusName: '正常在途',
+  })),
 }
 
 const partialOrder: PurchaseOrderDetailRecord = {
@@ -111,6 +126,17 @@ const partialOrder: PurchaseOrderDetailRecord = {
   status: 'PARTIALLY_RECEIVED',
   receivedQuantity: 5,
   remainingQuantity: 7.5,
+  inTransitQuantity: '7.500000',
+  inTransitStatus: 'DUE_SOON',
+  inTransitStatusName: '临近到货',
+  lines: draftOrder.lines.map((line) => ({
+    ...line,
+    receivedQuantity: 5,
+    remainingQuantity: 7.5,
+    inTransitQuantity: '7.500000',
+    inTransitStatus: 'DUE_SOON',
+    inTransitStatusName: '临近到货',
+  })),
 }
 
 function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
@@ -184,9 +210,13 @@ describe('采购订单详情页', () => {
     expect(wrapper.text()).toContain('12.5')
     expect(wrapper.text()).toContain('已入库')
     expect(wrapper.text()).toContain('未入库')
+    expect(wrapper.text()).toContain('采购在途参考')
+    expect(wrapper.text()).toContain('在途状态')
+    expect(wrapper.text()).toContain('不计入在途')
     expect(wrapper.text()).toContain('华东五金')
     expect(wrapper.text()).toContain('RM-001 冷轧钢板')
     expect(wrapper.text()).toContain('千克')
+    expect(wrapper.text()).toContain('行在途参考')
     expect(wrapper.text()).toContain('入库记录')
     expect(wrapper.text()).toContain('PR-20260705-001')
     expect(wrapper.text()).toContain('PR-20260706-001')

@@ -94,6 +94,10 @@ public class ProcurementAdminService {
 				       coalesce((select sum(l.quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as total_quantity,
 				       coalesce((select sum(l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as received_quantity,
 				       coalesce((select sum(l.quantity - l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as remaining_quantity,
+				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				            then coalesce((select sum(l.quantity - l.received_quantity)
+				                           from proc_purchase_order_line l where l.order_id = o.id), 0)
+				            else 0 end as in_transit_quantity,
 				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
 				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at
 				from proc_purchase_order o
@@ -111,7 +115,8 @@ public class ProcurementAdminService {
 		return new PurchaseOrderDetailResponse(summary.id(), summary.orderNo(), summary.supplierId(),
 				summary.supplierCode(), summary.supplierName(), summary.orderDate(), summary.expectedArrivalDate(),
 				summary.status(), summary.lineCount(), summary.totalQuantity(), summary.receivedQuantity(),
-				summary.remainingQuantity(), summary.remark(), summary.createdByName(), summary.createdAt(),
+				summary.remainingQuantity(), summary.inTransitQuantity(), summary.inTransitStatus(),
+				summary.inTransitStatusName(), summary.remark(), summary.createdByName(), summary.createdAt(),
 				summary.updatedAt(), summary.confirmedByName(), summary.confirmedAt(), summary.cancelledByName(),
 				summary.cancelledAt(), summary.closedByName(), summary.closedAt(), orderLines(id), orderReceipts(id));
 	}
@@ -743,6 +748,10 @@ public class ProcurementAdminService {
 				       coalesce((select sum(l.quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as total_quantity,
 				       coalesce((select sum(l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as received_quantity,
 				       coalesce((select sum(l.quantity - l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as remaining_quantity,
+				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				            then coalesce((select sum(l.quantity - l.received_quantity)
+				                           from proc_purchase_order_line l where l.order_id = o.id), 0)
+				            else 0 end as in_transit_quantity,
 				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
 				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at
 				from proc_purchase_order o
@@ -831,18 +840,27 @@ public class ProcurementAdminService {
 				select l.id, l.line_no, l.material_id, m.code as material_code, m.name as material_name,
 				       m.specification as material_spec, l.unit_id, u.name as unit_name, l.quantity,
 				       l.received_quantity, (l.quantity - l.received_quantity) as remaining_quantity,
+				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				            then l.quantity - l.received_quantity else 0 end as in_transit_quantity,
 				       l.unit_price, l.expected_arrival_date, l.remark
 				from proc_purchase_order_line l
+				join proc_purchase_order o on o.id = l.order_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				where l.order_id = ?
 				order by l.line_no asc, l.id asc
-				""", (rs, rowNum) -> new PurchaseOrderLineResponse(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
-				rs.getString("material_spec"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("quantity"), rs.getBigDecimal("received_quantity"),
-				rs.getBigDecimal("remaining_quantity"), rs.getBigDecimal("unit_price"),
-				rs.getObject("expected_arrival_date", LocalDate.class), rs.getString("remark")), orderId);
+				""", (rs, rowNum) -> {
+			BigDecimal inTransitQuantity = rs.getBigDecimal("in_transit_quantity");
+			LocalDate expectedArrivalDate = rs.getObject("expected_arrival_date", LocalDate.class);
+			InTransitStatus inTransitStatus = inTransitStatus(inTransitQuantity, expectedArrivalDate);
+			return new PurchaseOrderLineResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+					rs.getString("material_spec"), rs.getLong("unit_id"), rs.getString("unit_name"),
+					rs.getBigDecimal("quantity"), rs.getBigDecimal("received_quantity"),
+					rs.getBigDecimal("remaining_quantity"), inTransitQuantity, inTransitStatus.code(),
+					inTransitStatus.displayName(), rs.getBigDecimal("unit_price"), expectedArrivalDate,
+					rs.getString("remark"));
+		}, orderId);
 	}
 
 	private List<PurchaseReceiptSummaryResponse> orderReceipts(Long orderId) {
@@ -866,18 +884,29 @@ public class ProcurementAdminService {
 				select l.id, l.line_no, l.order_line_id, l.material_id, m.code as material_code,
 				       m.name as material_name, l.unit_id, u.name as unit_name, l.ordered_quantity,
 				       l.received_quantity_before, l.remaining_quantity_before, l.quantity, l.before_quantity,
-				       l.after_quantity, l.remark
+				       l.after_quantity,
+				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				            then ol.quantity - ol.received_quantity else 0 end as in_transit_quantity,
+				       ol.expected_arrival_date, l.remark
 				from proc_purchase_receipt_line l
+				join proc_purchase_order_line ol on ol.id = l.order_line_id
+				join proc_purchase_order o on o.id = ol.order_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				where l.receipt_id = ?
 				order by l.line_no asc, l.id asc
-				""", (rs, rowNum) -> new PurchaseReceiptLineResponse(rs.getLong("id"), rs.getInt("line_no"),
-				rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
-				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("received_quantity_before"),
-				rs.getBigDecimal("remaining_quantity_before"), rs.getBigDecimal("quantity"),
-				rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), rs.getString("remark")),
+				""", (rs, rowNum) -> {
+			BigDecimal inTransitQuantity = rs.getBigDecimal("in_transit_quantity");
+			InTransitStatus inTransitStatus = inTransitStatus(inTransitQuantity,
+					rs.getObject("expected_arrival_date", LocalDate.class));
+			return new PurchaseReceiptLineResponse(rs.getLong("id"), rs.getInt("line_no"),
+					rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getString("material_code"),
+					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+					rs.getBigDecimal("ordered_quantity"), rs.getBigDecimal("received_quantity_before"),
+					rs.getBigDecimal("remaining_quantity_before"), rs.getBigDecimal("quantity"),
+					rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), inTransitQuantity,
+					inTransitStatus.code(), inTransitStatus.displayName(), rs.getString("remark"));
+		},
 				receiptId);
 	}
 
@@ -949,12 +978,16 @@ public class ProcurementAdminService {
 	}
 
 	private PurchaseOrderSummaryResponse mapOrderSummary(ResultSet rs, int rowNum) throws SQLException {
+		BigDecimal inTransitQuantity = rs.getBigDecimal("in_transit_quantity");
+		LocalDate expectedArrivalDate = rs.getObject("expected_arrival_date", LocalDate.class);
+		InTransitStatus inTransitStatus = inTransitStatus(inTransitQuantity, expectedArrivalDate);
 		return new PurchaseOrderSummaryResponse(rs.getLong("id"), rs.getString("order_no"),
 				rs.getLong("supplier_id"), rs.getString("supplier_code"), rs.getString("supplier_name"),
-				rs.getObject("order_date", LocalDate.class), rs.getObject("expected_arrival_date", LocalDate.class),
+				rs.getObject("order_date", LocalDate.class), expectedArrivalDate,
 				rs.getString("status"), rs.getInt("line_count"), rs.getBigDecimal("total_quantity"),
-				rs.getBigDecimal("received_quantity"), rs.getBigDecimal("remaining_quantity"), rs.getString("remark"),
-				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
+				rs.getBigDecimal("received_quantity"), rs.getBigDecimal("remaining_quantity"), inTransitQuantity,
+				inTransitStatus.code(), inTransitStatus.displayName(), rs.getString("remark"), rs.getString("created_by"),
+				rs.getObject("created_at", OffsetDateTime.class),
 				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("confirmed_by"),
 				rs.getObject("confirmed_at", OffsetDateTime.class), rs.getString("cancelled_by"),
 				rs.getObject("cancelled_at", OffsetDateTime.class), rs.getString("closed_by"),
@@ -1064,6 +1097,20 @@ public class ProcurementAdminService {
 		return Math.max(0L, (long) value.precision() - value.scale());
 	}
 
+	private InTransitStatus inTransitStatus(BigDecimal inTransitQuantity, LocalDate expectedArrivalDate) {
+		if (inTransitQuantity == null || inTransitQuantity.compareTo(ZERO) <= 0 || expectedArrivalDate == null) {
+			return InTransitStatus.NOT_COUNTED;
+		}
+		LocalDate today = LocalDate.now();
+		if (expectedArrivalDate.isBefore(today)) {
+			return InTransitStatus.OVERDUE;
+		}
+		if (!expectedArrivalDate.isAfter(today.plusDays(2))) {
+			return InTransitStatus.DUE_SOON;
+		}
+		return InTransitStatus.NORMAL;
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -1098,7 +1145,8 @@ public class ProcurementAdminService {
 
 	public record PurchaseOrderSummaryResponse(Long id, String orderNo, Long supplierId, String supplierCode,
 			String supplierName, LocalDate orderDate, LocalDate expectedArrivalDate, String status, int lineCount,
-			BigDecimal totalQuantity, BigDecimal receivedQuantity, BigDecimal remainingQuantity, String remark,
+			BigDecimal totalQuantity, BigDecimal receivedQuantity, BigDecimal remainingQuantity,
+			BigDecimal inTransitQuantity, String inTransitStatus, String inTransitStatusName, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
 			OffsetDateTime confirmedAt, String cancelledByName, OffsetDateTime cancelledAt, String closedByName,
 			OffsetDateTime closedAt) {
@@ -1106,17 +1154,18 @@ public class ProcurementAdminService {
 
 	public record PurchaseOrderLineResponse(Long id, Integer lineNo, Long materialId, String materialCode,
 			String materialName, String materialSpec, Long unitId, String unitName, BigDecimal quantity,
-			BigDecimal receivedQuantity, BigDecimal remainingQuantity, BigDecimal unitPrice,
-			LocalDate expectedArrivalDate, String remark) {
+			BigDecimal receivedQuantity, BigDecimal remainingQuantity, BigDecimal inTransitQuantity,
+			String inTransitStatus, String inTransitStatusName, BigDecimal unitPrice, LocalDate expectedArrivalDate,
+			String remark) {
 	}
 
 	public record PurchaseOrderDetailResponse(Long id, String orderNo, Long supplierId, String supplierCode,
 			String supplierName, LocalDate orderDate, LocalDate expectedArrivalDate, String status, int lineCount,
-			BigDecimal totalQuantity, BigDecimal receivedQuantity, BigDecimal remainingQuantity, String remark,
+			BigDecimal totalQuantity, BigDecimal receivedQuantity, BigDecimal remainingQuantity,
+			BigDecimal inTransitQuantity, String inTransitStatus, String inTransitStatusName, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
 			OffsetDateTime confirmedAt, String cancelledByName, OffsetDateTime cancelledAt, String closedByName,
-			OffsetDateTime closedAt, List<PurchaseOrderLineResponse> lines,
-			List<PurchaseReceiptSummaryResponse> receipts) {
+			OffsetDateTime closedAt, List<PurchaseOrderLineResponse> lines, List<PurchaseReceiptSummaryResponse> receipts) {
 	}
 
 	public record PurchaseReceiptSummaryResponse(Long id, String receiptNo, Long orderId, String orderNo,
@@ -1128,7 +1177,8 @@ public class ProcurementAdminService {
 	public record PurchaseReceiptLineResponse(Long id, Integer lineNo, Long orderLineId, Long materialId,
 			String materialCode, String materialName, Long unitId, String unitName, BigDecimal orderedQuantity,
 			BigDecimal receivedQuantityBefore, BigDecimal remainingQuantityBefore, BigDecimal quantity,
-			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark) {
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, BigDecimal inTransitQuantity,
+			String inTransitStatus, String inTransitStatusName, String remark) {
 	}
 
 	public record PurchaseReceiptInventoryMovementResponse(Long id, String movementNo, String movementType,
@@ -1191,6 +1241,32 @@ public class ProcurementAdminService {
 	}
 
 	private record CreatedDocument(Long id, String documentNo) {
+	}
+
+	private enum InTransitStatus {
+
+		NOT_COUNTED("不计在途"),
+
+		NORMAL("正常"),
+
+		DUE_SOON("临近"),
+
+		OVERDUE("逾期");
+
+		private final String displayName;
+
+		InTransitStatus(String displayName) {
+			this.displayName = displayName;
+		}
+
+		String code() {
+			return name();
+		}
+
+		String displayName() {
+			return this.displayName;
+		}
+
 	}
 
 	private record QueryParts(String where, List<Object> args) {

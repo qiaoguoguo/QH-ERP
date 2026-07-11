@@ -1,6 +1,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createProcurementApi, type PurchaseOrderPayload, type PurchaseReceiptPayload } from './procurementApi'
+import {
+  createProcurementApi,
+  type PurchaseOrderLineRecord,
+  type PurchaseOrderPayload,
+  type PurchaseOrderSummaryRecord,
+  type PurchaseReceiptLineRecord,
+  type PurchaseReceiptPayload,
+} from './procurementApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -30,6 +39,44 @@ function apiFailure(status = 409) {
 }
 
 describe('采购 API', () => {
+  const procurementInTransitTypeContract = {
+    orderSummaryHasInTransitFields: true as AssertTrue<
+      'inTransitQuantity' extends keyof PurchaseOrderSummaryRecord
+        ? 'inTransitStatus' extends keyof PurchaseOrderSummaryRecord
+          ? 'inTransitStatusName' extends keyof PurchaseOrderSummaryRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
+    orderLineHasInTransitFields: true as AssertTrue<
+      'inTransitQuantity' extends keyof PurchaseOrderLineRecord
+        ? 'inTransitStatus' extends keyof PurchaseOrderLineRecord
+          ? 'inTransitStatusName' extends keyof PurchaseOrderLineRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
+    receiptLineHasInTransitFields: true as AssertTrue<
+      'inTransitQuantity' extends keyof PurchaseReceiptLineRecord
+        ? 'inTransitStatus' extends keyof PurchaseReceiptLineRecord
+          ? 'inTransitStatusName' extends keyof PurchaseReceiptLineRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
+  }
+
+  it('声明采购在途字段类型契约', () => {
+    expect(procurementInTransitTypeContract).toMatchObject({
+      orderSummaryHasInTransitFields: true,
+      orderLineHasInTransitFields: true,
+      receiptLineHasInTransitFields: true,
+    })
+  })
+
   it('按查询条件分页获取采购订单并过滤空查询值', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 2, pageSize: 50 }))
     const api = createProcurementApi({ fetcher })

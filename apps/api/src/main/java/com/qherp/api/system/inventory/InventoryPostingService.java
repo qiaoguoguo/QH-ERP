@@ -43,6 +43,14 @@ public class InventoryPostingService {
 		if (afterQuantity.compareTo(ZERO) < 0) {
 			throw new BusinessException(stockNotEnoughErrorCode(request, request.quantity()));
 		}
+		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED
+				&& !request.consumedReservation()) {
+			BigDecimal availableQuantity = beforeQuantity
+				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId()));
+			if (availableQuantity.compareTo(request.quantity()) < 0) {
+				throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+			}
+		}
 		try {
 			this.jdbcTemplate.update("""
 					insert into inv_stock_movement (
@@ -124,6 +132,22 @@ public class InventoryPostingService {
 					warehouseId, materialId, qualityStatus.name())
 			.stream()
 			.findFirst();
+	}
+
+	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId) {
+		return this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+					.subtract(rs.getBigDecimal("released_quantity"))
+					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
 	}
 
 	private void validateRequest(PostingRequest request) {
@@ -261,13 +285,21 @@ public class InventoryPostingService {
 	public record PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 			Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
-			String operatorName) {
+			String operatorName, boolean consumedReservation) {
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false);
+		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 				Long materialId, Long unitId, BigDecimal quantity, String sourceType, Long sourceId, Long sourceLineId,
 				LocalDate businessDate, String reason, String remark, String operatorName) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED,
-					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName);
+					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName, false);
 		}
 	}
 

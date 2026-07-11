@@ -41,6 +41,13 @@ const warehouseA: WarehouseRecord = {
   status: 'ENABLED',
 }
 
+const warehouseB: WarehouseRecord = {
+  id: 31,
+  code: 'WH-ALT',
+  name: '备品仓',
+  status: 'ENABLED',
+}
+
 const sourceOrder: SalesOrderDetailRecord = {
   id: 99,
   orderNo: 'SO-20260704-001',
@@ -71,14 +78,19 @@ const sourceOrder: SalesOrderDetailRecord = {
       quantity: '12.500000',
       shippedQuantity: 5,
       remainingQuantity: 7.5,
+      reservationWarehouseId: 30,
+      reservationWarehouseName: '成品仓',
       qualityStatus: 'QUALIFIED',
       qualityStatusName: '合格',
       quantityOnHand: '9.000000',
-      availableQuantity: '9.000000',
+      reservedQuantity: '2.000000',
+      occupiedQuantity: '1.000000',
+      availableQuantity: '6.000000',
+      availableToPromiseQuantity: '9.000000',
       selectable: true,
       disabledReasonCode: null,
       disabledReason: null,
-      maxSelectableQuantity: '7.500000',
+      maxSelectableQuantity: '6.000000',
       unitPrice: '88.100000',
       expectedShipDate: '2026-07-12',
       remark: '按周出库',
@@ -94,10 +106,15 @@ const sourceOrder: SalesOrderDetailRecord = {
       quantity: '3.000000',
       shippedQuantity: 0,
       remainingQuantity: 3,
+      reservationWarehouseId: 31,
+      reservationWarehouseName: '备品仓',
       qualityStatus: 'REJECTED',
       qualityStatusName: '不合格',
       quantityOnHand: '3.000000',
+      reservedQuantity: '0.000000',
+      occupiedQuantity: '0.000000',
       availableQuantity: '0.000000',
+      availableToPromiseQuantity: '0.000000',
       selectable: false,
       disabledReasonCode: 'NON_QUALIFIED_NOT_AVAILABLE',
       disabledReason: '不合格库存不可销售出库',
@@ -218,7 +235,7 @@ describe('销售出库表单页', () => {
     salesApiMock.shipments.create.mockResolvedValue(draftShipment)
     salesApiMock.shipments.update.mockResolvedValue(draftShipment)
     masterDataApiMock.warehouses.list.mockResolvedValue({
-      items: [warehouseA],
+      items: [warehouseA, warehouseB],
       page: 1,
       pageSize: 200,
       total: 1,
@@ -246,21 +263,47 @@ describe('销售出库表单页', () => {
 
     expect(wrapper.text()).toContain('FG-001 标准成品')
     expect(wrapper.text()).toContain('7.5')
+    expect((wrapper.find('input[data-test="sales-shipment-warehouse-id"]').exists())).toBe(false)
+    expect((wrapper.find('input[name="sales-shipment-business-date"]').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.findComponent(SalesShipmentLineEditor).props('sourceLines')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 501, reservationWarehouseId: 30, reservationWarehouseName: '成品仓' }),
+    ]))
   })
 
-  it('销售出库候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {
+  it('销售出库候选行展示质量状态、现存、占用预留、可承诺、本次最多出库和禁用原因', async () => {
     const { wrapper } = await mountForm()
 
     await setSelectValue(wrapper, 1, 502)
 
     expect(wrapper.text()).toContain('不合格')
     expect(wrapper.text()).toContain('现存数量')
-    expect(wrapper.text()).toContain('合格可用')
-    expect(wrapper.text()).toContain('最大可选')
+    expect(wrapper.text()).toContain('占用库存')
+    expect(wrapper.text()).toContain('预留库存')
+    expect(wrapper.text()).toContain('现货净可用')
+    expect(wrapper.text()).toContain('可承诺量')
+    expect(wrapper.text()).toContain('本次最多出库')
     expect(wrapper.text()).toContain('禁用原因')
     expect(wrapper.text()).toContain('不合格库存不可销售出库')
     expect(wrapper.text()).toContain('0')
     expect(wrapper.text()).not.toContain('canUse')
+  })
+
+  it('选择来源行时默认使用订单行预留仓库，仓库不一致时阻止保存', async () => {
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 1, 501)
+    await flushPromises()
+    const warehouseSelect = wrapper.findComponent('[data-test="sales-shipment-warehouse-id"]') as VueWrapper
+    expect((warehouseSelect.props() as Record<string, unknown>).modelValue).toBe(30)
+
+    await setSelectValue(wrapper, 0, 31)
+    await wrapper.find('input[name="sales-shipment-business-date"]').setValue('2026-07-05')
+    await wrapper.find('input[name="sales-shipment-line-quantity-0"]').setValue('2')
+    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('第 10 行出库仓库必须与来源订单行预留仓库一致')
+    expect(salesApiMock.shipments.create).not.toHaveBeenCalled()
   })
 
   it('销售出库不可选候选行禁用数量输入并阻止保存', async () => {
@@ -313,6 +356,11 @@ describe('销售出库表单页', () => {
     await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('本次出库数量不能超过未出库数量')
+
+    await wrapper.find('input[name="sales-shipment-line-quantity-0"]').setValue('7')
+    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('本次出库数量不能超过本次最多出库')
 
     await wrapper.find('input[name="sales-shipment-line-quantity-0"]').setValue('2')
     await wrapper.find('[data-test="add-sales-shipment-line"]').trigger('click')
@@ -382,11 +430,16 @@ describe('销售出库表单页', () => {
             ...line,
             qualityStatus: 'QUALIFIED',
             qualityStatusName: '合格',
+            reservedQuantity: '0.000000',
+            occupiedQuantity: '0.000000',
             availableQuantity: '3.000000',
+            availableToPromiseQuantity: '3.000000',
             selectable: true,
             disabledReasonCode: null,
             disabledReason: null,
             maxSelectableQuantity: '3.000000',
+            reservationWarehouseId: 30,
+            reservationWarehouseName: '成品仓',
           }
           : line
       )),

@@ -5,6 +5,7 @@ export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
 export type PurchaseOrderStatus = 'DRAFT' | 'CONFIRMED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED' | 'CANCELLED'
 export type PurchaseReceiptStatus = 'DRAFT' | 'POSTED'
+export type PurchaseInTransitStatus = 'NORMAL' | 'DUE_SOON' | 'OVERDUE' | 'NOT_COUNTED'
 export type ProcurementQuantityPayload = string
 export type ProcurementUnitPricePayload = string
 
@@ -45,6 +46,9 @@ export interface PurchaseOrderSummaryRecord {
   totalQuantity: number
   receivedQuantity: number
   remainingQuantity: number
+  inTransitQuantity?: string | number | null
+  inTransitStatus?: PurchaseInTransitStatus | string | null
+  inTransitStatusName?: string | null
   remark?: string | null
   createdByName: string
   createdAt: string
@@ -69,6 +73,9 @@ export interface PurchaseOrderLineRecord {
   quantity: number
   receivedQuantity: number
   remainingQuantity: number
+  inTransitQuantity?: string | number | null
+  inTransitStatus?: PurchaseInTransitStatus | string | null
+  inTransitStatusName?: string | null
   unitPrice: number
   expectedArrivalDate?: string | null
   remark?: string | null
@@ -112,6 +119,9 @@ export interface PurchaseReceiptLineRecord {
   orderedQuantity: number
   receivedQuantityBefore: number
   remainingQuantityBefore: number
+  inTransitQuantity?: string | number | null
+  inTransitStatus?: PurchaseInTransitStatus | string | null
+  inTransitStatusName?: string | null
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null

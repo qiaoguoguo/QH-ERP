@@ -555,6 +555,10 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && "/api/admin/inventory/balances".equals(path)) {
 			return "inventory:balance:view";
 		}
+		String reservationPath = "/api/admin/inventory/reservations";
+		if ("GET".equals(method) && (reservationPath.equals(path) || matchesIdPath(path, reservationPath))) {
+			return "inventory:reservation:view";
+		}
 		if ("GET".equals(method) && "/api/admin/inventory/movements".equals(path)) {
 			return "inventory:movement:view";
 		}

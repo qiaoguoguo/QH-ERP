@@ -3,8 +3,13 @@ import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createInventoryApi,
   type InventoryDocumentPayload,
+  type InventoryBalanceRecord,
   type InventoryMovementType,
+  type InventoryReservationStatus,
+  type InventoryReservationType,
 } from './inventoryApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -34,6 +39,22 @@ function apiFailure(status = 409) {
 }
 
 describe('库存 API', () => {
+  const inventoryBalanceTypeContract = {
+    hasNetRequirementShortageQuantity: true as AssertTrue<
+      'netRequirementShortageQuantity' extends keyof InventoryBalanceRecord ? true : false
+    >,
+    doesNotExposeLegacyNetRequirementQuantity: true as AssertTrue<
+      'netRequirementQuantity' extends keyof InventoryBalanceRecord ? false : true
+    >,
+  }
+
+  it('库存余额类型使用非负净需求缺口字段', () => {
+    expect(inventoryBalanceTypeContract).toMatchObject({
+      hasNetRequirementShortageQuantity: true,
+      doesNotExposeLegacyNetRequirementQuantity: true,
+    })
+  })
+
   it('按查询条件分页获取库存余额', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 2, pageSize: 50 }))
     const api = createInventoryApi({ fetcher })
@@ -78,6 +99,47 @@ describe('库存 API', () => {
         method: 'GET',
       },
     )
+  })
+
+  it('按查询条件分页获取库存占用预留并按标识获取详情', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ id: 9, reservationNo: 'IR-20260711-001' }))
+    const api = createInventoryApi({ fetcher })
+    const reservationType: InventoryReservationType = 'RESERVATION'
+    const status: InventoryReservationStatus = 'ACTIVE'
+
+    await api.reservations.list({
+      keyword: 'SO-20260711',
+      warehouseId: 1,
+      materialId: 2,
+      reservationType,
+      status,
+      sourceType: 'SALES_ORDER',
+      sourceId: 9,
+      sourceLineId: 90,
+      businessDateFrom: '2026-07-01',
+      businessDateTo: '2026-07-11',
+      page: 1,
+      pageSize: 20,
+    })
+    await api.reservations.get(9)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/inventory/reservations?keyword=SO-20260711&warehouseId=1&materialId=2&reservationType=RESERVATION&status=ACTIVE&sourceType=SALES_ORDER&sourceId=9&sourceLineId=90&businessDateFrom=2026-07-01&businessDateTo=2026-07-11&page=1&pageSize=20',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+      },
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/reservations/9', {
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+      method: 'GET',
+    })
   })
 
   it('按查询条件分页获取库存变动和库存单据', async () => {

@@ -102,6 +102,22 @@ public enum ApiErrorCode {
 
 	INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH(HttpStatus.CONFLICT, "指定质量状态库存不足"),
 
+	INVENTORY_AVAILABLE_NOT_ENOUGH(HttpStatus.CONFLICT, "库存可用量不足"),
+
+	INVENTORY_ATP_NOT_ENOUGH(HttpStatus.CONFLICT, "库存可承诺量不足"),
+
+	INVENTORY_RESERVATION_NOT_FOUND(HttpStatus.NOT_FOUND, "库存预留记录不存在"),
+
+	INVENTORY_RESERVATION_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "库存预留来源已存在"),
+
+	INVENTORY_RESERVATION_STATUS_INVALID(HttpStatus.CONFLICT, "库存预留状态不允许当前操作"),
+
+	INVENTORY_RESERVATION_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "库存预留并发更新冲突"),
+
+	INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE(HttpStatus.CONFLICT, "库存已被预留或占用，不可用于当前业务"),
+
+	INVENTORY_IN_TRANSIT_NOT_AVAILABLE(HttpStatus.CONFLICT, "在途库存不可用于现货出库"),
+
 	QUALITY_STATUS_TRANSITION_INVALID(HttpStatus.CONFLICT, "质量状态转换路径不允许"),
 
 	QUALITY_INSPECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "质量确认记录不存在"),
@@ -139,6 +155,8 @@ public enum ApiErrorCode {
 	PRODUCTION_ISSUE_EMPTY_LINES(HttpStatus.BAD_REQUEST, "生产领料明细不能为空"),
 
 	PRODUCTION_ISSUE_EXCEEDS_REQUIRED(HttpStatus.CONFLICT, "累计领料超过应领数量"),
+
+	PRODUCTION_ISSUE_WAREHOUSE_MISMATCH(HttpStatus.CONFLICT, "生产领料仓库必须与工单领料仓库一致"),
 
 	PRODUCTION_STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "生产领料库存不足"),
 
@@ -210,6 +228,8 @@ public enum ApiErrorCode {
 
 	SALES_WAREHOUSE_INVALID(HttpStatus.BAD_REQUEST, "销售出库仓库不存在或已停用"),
 
+	SALES_RESERVATION_WAREHOUSE_REQUIRED(HttpStatus.BAD_REQUEST, "销售订单明细预留仓库必填"),
+
 	SALES_MATERIAL_INVALID(HttpStatus.BAD_REQUEST, "销售物料不存在或已停用"),
 
 	SALES_MATERIAL_NOT_SELLABLE(HttpStatus.BAD_REQUEST, "物料类型当前不可销售"),
@@ -227,6 +247,8 @@ public enum ApiErrorCode {
 	SALES_SHIPMENT_EXCEEDS_ORDER(HttpStatus.CONFLICT, "销售出库数量超过订单未出库数量"),
 
 	SALES_SHIPMENT_LINE_SOURCE_INVALID(HttpStatus.CONFLICT, "销售出库明细来源不正确"),
+
+	SALES_SHIPMENT_RESERVATION_WAREHOUSE_MISMATCH(HttpStatus.CONFLICT, "销售出库仓库必须与订单行预留仓库一致"),
 
 	SALES_STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "销售出库库存不足"),
 

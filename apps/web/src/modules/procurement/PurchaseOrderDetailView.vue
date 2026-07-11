@@ -200,6 +200,14 @@ onMounted(loadRecord)
           <strong>{{ formatProcurementQuantity(record.remainingQuantity) }}</strong>
         </div>
         <div>
+          <span>采购在途参考</span>
+          <strong>{{ formatProcurementQuantity(record.inTransitQuantity) }}</strong>
+        </div>
+        <div>
+          <span>在途状态</span>
+          <strong>{{ record.inTransitStatusName || '-' }}</strong>
+        </div>
+        <div>
           <span>订单日期</span>
           <strong>{{ record.orderDate }}</strong>
         </div>
@@ -253,6 +261,16 @@ onMounted(loadRecord)
             <el-table-column label="未入库" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatProcurementQuantity(row.remainingQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="行在途参考" min-width="130" align="right">
+              <template #default="{ row }">
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.inTransitQuantity) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="在途状态" min-width="120">
+              <template #default="{ row }">
+                {{ row.inTransitStatusName || '-' }}
               </template>
             </el-table-column>
             <el-table-column label="采购单价" min-width="110" align="right">
@@ -313,7 +331,7 @@ onMounted(loadRecord)
 
 .summary-strip {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 16px;
 }

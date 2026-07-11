@@ -51,6 +51,8 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Autowired
 	private PasswordEncoder passwordEncoder;
 
+	private Long defaultReservationWarehouseId;
+
 	@Test
 	void adminCanRunSalesOrderAndShipmentLifecycle() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -88,10 +90,9 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(finishedLine, "unitPrice", "12.345678");
 		assertDecimal(semiFinishedLine, "unitPrice", "0.000000");
 
-		assertOk(confirmOrder(admin, orderId));
-
 		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "10.000000");
 		seedStock(fixture.warehouseId(), fixture.semiFinishedMaterialId(), fixture.unitId(), "10.000000");
+		assertOk(confirmOrder(admin, orderId));
 
 		long draftCancelId = createOrderId(admin,
 				orderPayload(fixture.customerId(), "草稿取消",
@@ -171,6 +172,113 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		assertAuditLog("SALES_SHIPMENT_CREATE", "SALES_SHIPMENT", shipmentId);
 		assertAuditLog("SALES_SHIPMENT_UPDATE", "SALES_SHIPMENT", shipmentId);
 		assertAuditLog("SALES_SHIPMENT_POST", "SALES_SHIPMENT", shipmentId);
+	}
+
+	@Test
+	void salesOrderConfirmationReservesAndShipmentConsumesQualifiedStock() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "10.000000");
+
+		ResponseEntity<String> created = createOrder(admin,
+				orderPayload(fixture.customerId(), "018 销售预留",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "6.000000",
+								"1.000000", null))));
+		assertOk(created);
+		long orderId = data(created).get("id").longValue();
+		long orderLineId = firstLine(data(created)).get("id").longValue();
+		assertOk(confirmOrder(admin, orderId));
+		JsonNode confirmedLine = firstLine(data(getOrder(admin, orderId)));
+		assertThat(confirmedLine.get("reservationWarehouseId").longValue()).isEqualTo(fixture.warehouseId());
+		assertThat(confirmedLine.get("reservationWarehouseName").asText()).isNotBlank();
+		assertDecimal(confirmedLine, "reservedQuantity", "0.000000");
+		assertDecimal(confirmedLine, "occupiedQuantity", "0.000000");
+		assertDecimal(confirmedLine, "availableToPromiseQuantity", "10.000000");
+		assertDecimal(confirmedLine, "maxSelectableQuantity", "6.000000");
+
+		JsonNode reservedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.warehouseId() + "&materialId=" + fixture.finishedMaterialId(), admin));
+		assertDecimal(reservedBalance, "bookQuantity", "10.000000");
+		assertDecimal(reservedBalance, "reservedQuantity", "6.000000");
+		assertDecimal(reservedBalance, "availableQuantity", "4.000000");
+		JsonNode reservation = firstItem(get("/api/admin/inventory/reservations?sourceType=SALES_ORDER&sourceId="
+				+ orderId, admin));
+		assertThat(reservation.get("sourceLineId").longValue()).isEqualTo(orderLineId);
+		assertDecimal(reservation, "remainingQuantity", "6.000000");
+
+		long shipmentId = createShipmentId(admin, orderId,
+				shipmentPayload(fixture.warehouseId(), "018 销售预留消耗",
+						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"2.000000", null))));
+		JsonNode shipmentLine = firstLine(data(getShipment(admin, shipmentId)));
+		assertDecimal(shipmentLine, "reservedQuantity", "0.000000");
+		assertDecimal(shipmentLine, "occupiedQuantity", "0.000000");
+		assertDecimal(shipmentLine, "availableToPromiseQuantity", "10.000000");
+		assertDecimal(shipmentLine, "maxSelectableQuantity", "2.000000");
+		assertOk(postShipment(admin, shipmentId));
+
+		JsonNode consumedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.warehouseId() + "&materialId=" + fixture.finishedMaterialId(), admin));
+		assertDecimal(consumedBalance, "bookQuantity", "8.000000");
+		assertDecimal(consumedBalance, "reservedQuantity", "4.000000");
+		assertDecimal(consumedBalance, "availableQuantity", "4.000000");
+	}
+
+	@Test
+	void confirmedSalesOrderCancellationReleasesReservation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "10.000000");
+		long orderId = createAndConfirmOrder(admin, fixture, "018 销售取消释放预留", "5.000000");
+
+		JsonNode reservedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.warehouseId() + "&materialId=" + fixture.finishedMaterialId(), admin));
+		assertDecimal(reservedBalance, "reservedQuantity", "5.000000");
+		assertDecimal(reservedBalance, "availableQuantity", "5.000000");
+
+		assertOk(cancelOrder(admin, orderId));
+
+		JsonNode releasedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.warehouseId() + "&materialId=" + fixture.finishedMaterialId(), admin));
+		assertDecimal(releasedBalance, "reservedQuantity", "0.000000");
+		assertDecimal(releasedBalance, "availableQuantity", "10.000000");
+	}
+
+	@Test
+	void salesOrderConfirmationRequiresReservationWarehouseAndSelectedWarehouseStock() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "6.000000");
+
+		long missingWarehouseOrderId = createOrderId(admin,
+				orderPayload(fixture.customerId(), "缺少预留仓库",
+						List.of(orderLineWithoutReservationWarehouse(1, fixture.finishedMaterialId(),
+								fixture.unitId(), "6.000000", "1.000000", null))));
+		assertError(confirmOrder(admin, missingWarehouseOrderId), HttpStatus.BAD_REQUEST,
+				"SALES_RESERVATION_WAREHOUSE_REQUIRED");
+
+		long inTransitOnlyOrderId = createOrderId(admin,
+				orderPayload(fixture.customerId(), "只有在途不能确认",
+						List.of(orderLine(1, fixture.semiFinishedMaterialId(), fixture.unitId(), "6.000000",
+								"1.000000", null))));
+		insertPurchaseInTransit(fixture.semiFinishedMaterialId(), fixture.unitId(), "6.000000");
+		assertError(confirmOrder(admin, inTransitOnlyOrderId), HttpStatus.CONFLICT,
+				"INVENTORY_AVAILABLE_NOT_ENOUGH");
+	}
+
+	@Test
+	void salesShipmentWarehouseMustMatchReservedWarehouse() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long otherWarehouseId = insertWarehouse("SAL_OTHER_WH_" + SEQUENCE.incrementAndGet(), "销售其他仓", "ENABLED");
+		long orderId = createAndConfirmOrder(admin, fixture, "出库仓库必须等于预留仓库", "2.000000");
+		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+
+		assertError(createShipment(admin, orderId,
+				shipmentPayload(otherWarehouseId, "跨预留仓出库",
+						List.of(shipmentLine(1, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"1.000000", null)))),
+				HttpStatus.CONFLICT, "SALES_SHIPMENT_RESERVATION_WAREHOUSE_MISMATCH");
 	}
 
 	@Test
@@ -351,6 +459,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		SalesFixture fixture = fixture();
 		long orderId = createAndConfirmOrder(admin, fixture, "候选字段合格不足", "4.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
+		setQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "0.000000");
 		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "4.000000",
 				InventoryQualityStatus.PENDING_INSPECTION);
 
@@ -480,6 +589,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				orderPayload(fixture.customerId(), "销售员创建",
 						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
 								"1.000000", null))));
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "1.000000");
 		assertOk(confirmOrder(salesUser, salesUserOrderId));
 		assertForbidden(createShipment(salesUser, orderId,
 				shipmentPayload(fixture.warehouseId(), "销售员不可出库",
@@ -534,6 +644,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1", "1", null))));
 		closePayload.put("orderDate", date.toString());
 		long closeId = createOrderId(admin, closePayload);
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "1.000000");
 		assertOk(confirmOrder(admin, closeId));
 		lockPeriod(date);
 		assertError(confirmOrder(admin, confirmId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
@@ -548,6 +659,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private long createAndConfirmOrder(AuthenticatedSession session, SalesFixture fixture, String remark,
 			String quantity) throws Exception {
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), quantity);
 		long orderId = createOrderId(session,
 				orderPayload(fixture.customerId(), remark,
 						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), quantity, "1.000000",
@@ -595,10 +707,20 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		}
 		line.put("quantity", quantity);
 		line.put("unitPrice", unitPrice);
+		if (this.defaultReservationWarehouseId != null) {
+			line.put("reservationWarehouseId", this.defaultReservationWarehouseId);
+		}
 		line.put("expectedShipDate", LocalDate.now().plusDays(3).toString());
 		if (remark != null) {
 			line.put("remark", remark);
 		}
+		return line;
+	}
+
+	private Map<String, Object> orderLineWithoutReservationWarehouse(int lineNo, long materialId, Long unitId,
+			String quantity, String unitPrice, String remark) {
+		Map<String, Object> line = orderLine(lineNo, materialId, unitId, quantity, unitPrice, remark);
+		line.remove("reservationWarehouseId");
 		return line;
 	}
 
@@ -631,6 +753,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		long otherUnitId = insertUnit("SAL_OTHER_UNIT_" + suffix, "销售其他单位" + suffix);
 		long warehouseId = insertWarehouse("SAL_WH_" + suffix, "销售仓" + suffix, "ENABLED");
 		long disabledWarehouseId = insertWarehouse("SAL_OFF_WH_" + suffix, "停用销售仓" + suffix, "DISABLED");
+		this.defaultReservationWarehouseId = warehouseId;
 		long customerId = insertCustomer("SAL_CUS_" + suffix, "销售客户" + suffix, "ENABLED");
 		long disabledCustomerId = insertCustomer("SAL_OFF_CUS_" + suffix, "停用客户" + suffix, "DISABLED");
 		long categoryId = insertMaterialCategory("SAL_CAT_" + suffix);
@@ -667,6 +790,32 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				""", Long.class, code, name, status);
 	}
 
+	private void insertPurchaseInTransit(long materialId, long unitId, String quantity) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long supplierId = this.jdbcTemplate.queryForObject("""
+				insert into mst_supplier (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SAL_PO_SUP_" + suffix, "销售测试供应商" + suffix);
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order (
+					order_no, supplier_id, order_date, expected_arrival_date, status, remark,
+					created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at
+				)
+				values (?, ?, ?, ?, 'CONFIRMED', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SAL_PO_" + suffix, supplierId, LocalDate.now(), LocalDate.now().plusDays(5),
+				"销售确认在途参考");
+		this.jdbcTemplate.update("""
+				insert into proc_purchase_order_line (
+					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
+					expected_arrival_date, remark, created_at, updated_at
+				)
+				values (?, 1, ?, ?, ?, 0, 1, ?, ?, now(), now())
+				""", orderId, materialId, unitId, new BigDecimal(quantity), LocalDate.now().plusDays(5),
+				"销售确认在途参考");
+	}
+
 	private long insertCustomer(String code, String name, String status) {
 		return this.jdbcTemplate.queryForObject("""
 				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
@@ -696,6 +845,33 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity) {
 		seedStock(warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED);
+	}
+
+	private void ensureQualifiedStock(long warehouseId, long materialId, long unitId, String quantity) {
+		BigDecimal target = new BigDecimal(quantity);
+		BigDecimal current = balanceQuantity(warehouseId, materialId, InventoryQualityStatus.QUALIFIED);
+		BigDecimal activeLocked = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and status = 'ACTIVE'
+				""", BigDecimal.class, warehouseId, materialId);
+		BigDecimal requiredOnHand = target.add(activeLocked);
+		if (current.compareTo(requiredOnHand) < 0) {
+			seedStock(warehouseId, materialId, unitId, requiredOnHand.toPlainString());
+		}
+	}
+
+	private void setQualifiedStock(long warehouseId, long materialId, long unitId, String quantity) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (warehouse_id, material_id, unit_id, quality_status, quantity_on_hand,
+					locked_quantity, created_at, updated_at)
+				values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
+				on conflict (warehouse_id, material_id, quality_status)
+				do update set quantity_on_hand = excluded.quantity_on_hand, updated_at = now()
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
 	}
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
@@ -977,6 +1153,12 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode lines = detail.get("lines");
 		assertThat(lines.size()).isGreaterThan(0);
 		return lines.get(0);
+	}
+
+	private JsonNode firstItem(ResponseEntity<String> response) throws Exception {
+		JsonNode items = data(response).get("items");
+		assertThat(items.size()).isGreaterThan(0);
+		return items.get(0);
 	}
 
 	private String keywordPath(String path, String keyword) {

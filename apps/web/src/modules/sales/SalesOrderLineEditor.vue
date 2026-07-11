@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import type { ResourceId } from '../../shared/api/salesApi'
-import type { MaterialRecord } from '../../shared/api/masterDataApi'
+import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
 import { type SalesOrderLineDraft, newSalesOrderLine, nextSalesOrderLineNo } from './salesPageHelpers'
 
 const props = withDefaults(defineProps<{
   lines: SalesOrderLineDraft[]
   materials: MaterialRecord[]
+  warehouses: WarehouseRecord[]
   readOnly?: boolean
   errors?: Record<number, string>
 }>(), {
@@ -33,6 +34,14 @@ function updateMaterial(index: number, value: ResourceId) {
     materialId: value,
     unitId: material?.unitId ?? '',
     unitName: material?.unitName ?? '',
+  })
+}
+
+function updateWarehouse(index: number, value: ResourceId) {
+  const warehouse = props.warehouses.find((item) => String(item.id) === String(value))
+  updateLine(index, {
+    reservationWarehouseId: value,
+    reservationWarehouseName: warehouse?.name ?? '',
   })
 }
 
@@ -84,6 +93,26 @@ function removeLine(index: number) {
         <el-table-column label="单位" width="100">
           <template #default="{ row }">
             {{ row.unitName || '基本单位' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="预留仓库" min-width="170">
+          <template #default="{ row, $index }">
+            <el-select
+              :model-value="valueOrEmpty(row.reservationWarehouseId)"
+              :data-test="`sales-order-line-reservation-warehouse-id-${$index}`"
+              filterable
+              placeholder="选择预留仓库"
+              style="width: 100%"
+              :disabled="readOnly"
+              @update:model-value="updateWarehouse($index, $event)"
+            >
+              <el-option
+                v-for="warehouse in warehouses"
+                :key="warehouse.id"
+                :label="`${warehouse.code} ${warehouse.name}`"
+                :value="warehouse.id"
+              />
+            </el-select>
           </template>
         </el-table-column>
         <el-table-column label="销售数量" width="140" align="right">

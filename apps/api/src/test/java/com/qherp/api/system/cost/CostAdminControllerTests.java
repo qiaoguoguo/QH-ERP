@@ -22,6 +22,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -544,8 +545,26 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		return body;
 	}
 
+	private Map<String, Object> inventoryAdjustmentIncreasePayload(long warehouseId, long materialId,
+			String quantity) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", 1);
+		line.put("warehouseId", warehouseId);
+		line.put("materialId", materialId);
+		line.put("quantity", quantity);
+		line.put("adjustmentDirection", "INCREASE");
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("documentType", "ADJUSTMENT");
+		body.put("businessDate", LocalDate.now().toString());
+		body.put("reason", "成本测试补足生产预留库存");
+		body.put("remark", "成本归集测试");
+		body.put("lines", List.of(line));
+		return body;
+	}
+
 	private long createAndReleaseWorkOrder(AuthenticatedSession admin, CostFixture fixture, String plannedQuantity)
 			throws Exception {
+		ensureBomMaterialsAvailableForRelease(admin, fixture, plannedQuantity);
 		ResponseEntity<String> created = exchange(HttpMethod.POST, "/api/admin/production/work-orders",
 				workOrderPayload(fixture.productMaterialId(), fixture.bomId(), fixture.issueWarehouseId(),
 						fixture.receiptWarehouseId(), plannedQuantity),
@@ -555,6 +574,82 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/release", null,
 				admin));
 		return workOrderId;
+	}
+
+	private void ensureBomMaterialsAvailableForRelease(AuthenticatedSession admin, CostFixture fixture,
+			String plannedQuantity) throws Exception {
+		BigDecimal planned = new BigDecimal(plannedQuantity);
+		List<MaterialRequirement> requirements = this.jdbcTemplate.query("""
+				select i.child_material_id, i.unit_id, b.base_quantity, i.quantity, i.loss_rate
+				from mfg_bom_item i
+				join mfg_bom b on b.id = i.bom_id
+				where i.bom_id = ?
+				order by i.line_no asc
+				""", (rs, rowNum) -> {
+			BigDecimal requiredQuantity = planned.divide(rs.getBigDecimal("base_quantity"), 12, RoundingMode.HALF_UP)
+				.multiply(rs.getBigDecimal("quantity"))
+				.multiply(BigDecimal.ONE.add(rs.getBigDecimal("loss_rate")))
+				.setScale(6, RoundingMode.HALF_UP);
+			return new MaterialRequirement(rs.getLong("child_material_id"), rs.getLong("unit_id"), requiredQuantity);
+		}, fixture.bomId());
+
+		for (MaterialRequirement requirement : requirements) {
+			ensureQualifiedStock(admin, fixture.issueWarehouseId(), requirement.materialId(), requirement.quantity());
+		}
+	}
+
+	private void ensureQualifiedStock(AuthenticatedSession admin, long warehouseId, long materialId,
+			BigDecimal requiredQuantity) throws Exception {
+		BigDecimal availableQuantity = qualifiedAvailableQuantity(warehouseId, materialId);
+		BigDecimal missingQuantity = requiredQuantity.subtract(availableQuantity).setScale(6, RoundingMode.HALF_UP);
+		if (missingQuantity.compareTo(BigDecimal.ZERO) <= 0) {
+			return;
+		}
+		if (hasOpeningMovement(warehouseId, materialId)) {
+			createAdjustmentIncreaseStock(admin, warehouseId, materialId, missingQuantity.toPlainString());
+			return;
+		}
+		createOpeningStock(admin, warehouseId, materialId, missingQuantity.toPlainString());
+	}
+
+	private BigDecimal qualifiedAvailableQuantity(long warehouseId, long materialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select (
+					select coalesce(sum(quantity_on_hand), 0)
+					from inv_stock_balance
+					where warehouse_id = ?
+					and material_id = ?
+					and quality_status = 'QUALIFIED'
+				) - (
+					select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+					from inv_stock_reservation
+					where warehouse_id = ?
+					and material_id = ?
+					and quality_status = 'QUALIFIED'
+					and status = 'ACTIVE'
+				)
+				""", BigDecimal.class, warehouseId, materialId, warehouseId, materialId);
+	}
+
+	private boolean hasOpeningMovement(long warehouseId, long materialId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_movement
+				where warehouse_id = ?
+				and material_id = ?
+				and movement_type = 'OPENING'
+				""", Long.class, warehouseId, materialId);
+		return count != null && count > 0;
+	}
+
+	private long createAdjustmentIncreaseStock(AuthenticatedSession admin, long warehouseId, long materialId,
+			String quantity) throws Exception {
+		ResponseEntity<String> created = exchange(HttpMethod.POST, "/api/admin/inventory/documents",
+				inventoryAdjustmentIncreasePayload(warehouseId, materialId, quantity), admin);
+		assertOk(created);
+		long documentId = data(created).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/documents/" + documentId + "/post", null, admin));
+		return documentId;
 	}
 
 	private Map<String, Object> workOrderPayload(long productId, long bomId, long issueWarehouseId,
@@ -917,6 +1012,9 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	private record CostFixture(long unitId, long issueWarehouseId, long receiptWarehouseId, long categoryId,
 			long productMaterialId, long rawMaterialId, long auxiliaryMaterialId, long bomId) {
+	}
+
+	private record MaterialRequirement(long materialId, long unitId, BigDecimal quantity) {
 	}
 
 }

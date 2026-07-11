@@ -129,14 +129,115 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void workOrderReleaseReservesMaterialsAndIssueConsumesReservation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "30.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "10.000000");
+
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "5.000000");
+		JsonNode released = data(releaseWorkOrder(admin, workOrderId));
+		JsonNode rawRequirement = workOrderMaterial(released, fixture.rawMaterialId());
+
+		JsonNode reservedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.issueWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin));
+		assertDecimal(reservedBalance, "reservedQuantity", "10.000000");
+		assertDecimal(reservedBalance, "occupiedQuantity", "0.000000");
+		assertDecimal(reservedBalance, "availableQuantity", "20.000000");
+		assertDecimal(rawRequirement, "reservedQuantity", "0.000000");
+		assertDecimal(rawRequirement, "occupiedQuantity", "0.000000");
+		assertDecimal(rawRequirement, "availableToPromiseQuantity", "30.000000");
+		JsonNode reservation = firstReservationForSourceLine(get(
+				"/api/admin/inventory/reservations?reservationType=RESERVATION&sourceType=PRODUCTION_WORK_ORDER&sourceId="
+						+ workOrderId,
+				admin), rawRequirement.get("id").longValue());
+		assertDecimal(reservation, "remainingQuantity", "10.000000");
+
+		long issueId = createMaterialIssueId(admin, workOrderId,
+				materialIssuePayload("018 生产领料预留消耗",
+						List.of(materialIssueLine(1, rawRequirement.get("id").longValue(),
+								fixture.issueWarehouseId(), "4.000000"))));
+		assertOk(postMaterialIssue(admin, workOrderId, issueId));
+
+		JsonNode consumedBalance = firstItem(get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.issueWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin));
+		assertDecimal(consumedBalance, "bookQuantity", "26.000000");
+		assertDecimal(consumedBalance, "reservedQuantity", "6.000000");
+		assertDecimal(consumedBalance, "occupiedQuantity", "0.000000");
+		assertDecimal(consumedBalance, "availableQuantity", "20.000000");
+	}
+
+	@Test
+	void workOrderReleaseRejectsWhenIssueWarehouseNetAvailableIsInsufficient() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "2.000000");
+
+		assertError(releaseWorkOrder(admin, workOrderId), HttpStatus.CONFLICT, "INVENTORY_AVAILABLE_NOT_ENOUGH");
+		assertThat(data(getWorkOrder(admin, workOrderId)).get("status").asText()).isEqualTo("DRAFT");
+		assertDecimal(productionReservationRemaining(workOrderId), "0");
+	}
+
+	@Test
+	void materialIssueRejectsWarehouseDifferentFromWorkOrderIssueWarehouse() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long otherWarehouseId = createWarehouse(admin, "MFG_OTHER_" + SEQUENCE.incrementAndGet(), "生产其他仓");
+		seedStock(otherWarehouseId, fixture.rawMaterialId(), fixture.unitId(), "10.000000",
+				InventoryQualityStatus.QUALIFIED);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
+		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("跨仓领料拒绝",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), otherWarehouseId,
+						"1.000000"))));
+
+		assertError(postMaterialIssue(admin, workOrderId, issueId), HttpStatus.CONFLICT,
+				"PRODUCTION_ISSUE_WAREHOUSE_MISMATCH");
+		assertDecimal(productionReservationRemaining(workOrderId), "6.000000");
+	}
+
+	@Test
+	void workOrderCancellationAndCompletionReleaseRemainingReservations() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture cancelFixture = fixture(admin);
+		createOpeningStock(admin, cancelFixture.issueWarehouseId(), cancelFixture.rawMaterialId(), "10.000000");
+		long cancelWorkOrderId = createAndReleaseWorkOrder(admin, cancelFixture, "2.000000");
+		assertDecimal(productionReservationRemaining(cancelWorkOrderId), "6.000000");
+		assertOk(cancelWorkOrder(admin, cancelWorkOrderId));
+		assertDecimal(productionReservationRemaining(cancelWorkOrderId), "0");
+
+		ProductionFixture completeFixture = fixture(admin);
+		createOpeningStock(admin, completeFixture.issueWarehouseId(), completeFixture.rawMaterialId(), "10.000000");
+		long completeWorkOrderId = createWorkOrder(admin, completeFixture.productMaterialId(), completeFixture.bomId(),
+				completeFixture.issueWarehouseId(), completeFixture.receiptWarehouseId(), "2.000000");
+		createOpeningStock(admin, completeFixture.issueWarehouseId(), completeFixture.auxiliaryMaterialId(),
+				"2.000000");
+		assertOk(releaseWorkOrder(admin, completeWorkOrderId));
+		assertDecimal(productionReservationRemaining(completeWorkOrderId), "6.000000");
+		this.jdbcTemplate.update("""
+				update mfg_work_order
+				set reported_quantity = planned_quantity,
+				    qualified_quantity = planned_quantity,
+				    received_quantity = planned_quantity,
+				    updated_at = now()
+				where id = ?
+				""", completeWorkOrderId);
+		assertOk(completeWorkOrder(admin, completeWorkOrderId));
+		assertDecimal(productionReservationRemaining(completeWorkOrderId), "0");
+	}
+
+	@Test
 	void materialIssueRejectsWhenOnlyNonQualifiedStockCanCoverRequestedQuantity() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
+		ensureReleaseStock(fixture, "2.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
 		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "1.000000",
 				InventoryQualityStatus.QUALIFIED);
 		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "3.000000",
 				InventoryQualityStatus.PENDING_INSPECTION);
-		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
 		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
 		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("合格库存不足领料",
 				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
@@ -155,9 +256,12 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	void workOrderMaterialsExposeQualifiedIssueCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
+		ensureReleaseStock(fixture, "2.000000");
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "0.000000",
+				InventoryQualityStatus.QUALIFIED);
 		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "4.000000",
 				InventoryQualityStatus.PENDING_INSPECTION);
-		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "2.000000");
 
 		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
 
@@ -202,6 +306,8 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		ProductionFixture stockFixture = fixture(admin);
 		createOpeningStock(admin, stockFixture.issueWarehouseId(), stockFixture.rawMaterialId(), "3.000000");
 		long stockWorkOrderId = createAndReleaseWorkOrder(admin, stockFixture, "5.000000");
+		seedStock(stockFixture.issueWarehouseId(), stockFixture.rawMaterialId(), stockFixture.unitId(), "3.000000",
+				InventoryQualityStatus.QUALIFIED);
 		JsonNode stockRawRequirement = workOrderMaterial(data(getWorkOrder(admin, stockWorkOrderId)),
 				stockFixture.rawMaterialId());
 		long stockIssueId = createMaterialIssueId(admin, stockWorkOrderId, materialIssuePayload("库存不足领料",
@@ -353,7 +459,15 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession secondAdminSession = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
 		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "5.000000");
-		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "5.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "5.000000");
+		assertError(releaseWorkOrder(admin, workOrderId), HttpStatus.CONFLICT, "INVENTORY_AVAILABLE_NOT_ENOUGH");
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "10.000000",
+				InventoryQualityStatus.QUALIFIED);
+		assertOk(releaseWorkOrder(admin, workOrderId));
+		seedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(), "5.000000",
+				InventoryQualityStatus.QUALIFIED);
 		JsonNode rawRequirement = workOrderMaterial(data(getWorkOrder(admin, workOrderId)), fixture.rawMaterialId());
 		long firstIssueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("并发领料一",
 				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
@@ -516,6 +630,28 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
 	}
 
+	private void ensureReleaseStock(ProductionFixture fixture, String plannedQuantity) {
+		BigDecimal planned = new BigDecimal(plannedQuantity);
+		ensureQualifiedStock(fixture.issueWarehouseId(), fixture.rawMaterialId(), fixture.unitId(),
+				planned.multiply(new BigDecimal("2.000000")));
+		ensureQualifiedStock(fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), fixture.unitId(), planned);
+	}
+
+	private void ensureQualifiedStock(long warehouseId, long materialId, long unitId, BigDecimal requiredQuantity) {
+		BigDecimal currentQuantity = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				""", BigDecimal.class, warehouseId, materialId);
+		if (currentQuantity != null && currentQuantity.compareTo(requiredQuantity) >= 0) {
+			return;
+		}
+		seedStock(warehouseId, materialId, unitId, requiredQuantity.setScale(6).toPlainString(),
+				InventoryQualityStatus.QUALIFIED);
+	}
+
 	private long createWorkOrder(AuthenticatedSession admin, long productId, long bomId, long issueWarehouseId,
 			long receiptWarehouseId, String plannedQuantity) throws Exception {
 		ResponseEntity<String> response = createWorkOrder(admin,
@@ -544,6 +680,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private long createAndReleaseWorkOrder(AuthenticatedSession admin, ProductionFixture fixture, String plannedQuantity)
 			throws Exception {
+		ensureReleaseStock(fixture, plannedQuantity);
 		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
 				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), plannedQuantity);
 		assertOk(releaseWorkOrder(admin, workOrderId));
@@ -729,6 +866,17 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				""", String.class, sourceType, sourceLineId);
 	}
 
+	private BigDecimal productionReservationRemaining(long workOrderId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+				from inv_stock_reservation
+				where reservation_type = 'RESERVATION'
+				and source_type = 'PRODUCTION_WORK_ORDER'
+				and source_id = ?
+				and status = 'ACTIVE'
+				""", BigDecimal.class, workOrderId);
+	}
+
 	private long qualityInspectionCount(String sourceType, long sourceId, long sourceLineId, String status) {
 		return this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -877,6 +1025,17 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode items = data(response).get("items");
 		assertThat(items.size()).isGreaterThan(0);
 		return items.get(0);
+	}
+
+	private JsonNode firstReservationForSourceLine(ResponseEntity<String> response, long sourceLineId) throws Exception {
+		JsonNode items = data(response).get("items");
+		for (int i = 0; i < items.size(); i++) {
+			JsonNode item = items.get(i);
+			if (item.get("sourceLineId").longValue() == sourceLineId) {
+				return item;
+			}
+		}
+		throw new AssertionError("未找到来源行预留：" + sourceLineId);
 	}
 
 	private String code(ResponseEntity<String> response) throws Exception {

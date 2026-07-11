@@ -154,6 +154,67 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void inventoryBalanceSubtractsActiveReservationsAndReservationLedgerIsQueryable() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "10.000000",
+				InventoryQualityStatus.QUALIFIED);
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "3.000000",
+				InventoryQualityStatus.PENDING_INSPECTION);
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				InventoryQualityStatus.FROZEN);
+		long reservationId = insertReservation(fixture, "RESERVATION", "SALES_ORDER", 91_000L, 91_001L,
+				"SO-018-001", "4.000000");
+		insertReservation(fixture, "OCCUPATION", "PRODUCTION_WORK_ORDER", 92_000L, 92_001L, "WO-018-001",
+				"1.000000");
+
+		ResponseEntity<String> balances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(balances);
+		JsonNode balance = firstItem(balances);
+		assertDecimal(balance, "bookQuantity", "15.000000");
+		assertDecimal(balance, "qualifiedQuantity", "10.000000");
+		assertDecimal(balance, "reservedQuantity", "4.000000");
+		assertDecimal(balance, "occupiedQuantity", "1.000000");
+		assertDecimal(balance, "lockedQuantity", "5.000000");
+		assertDecimal(balance, "availableQuantity", "5.000000");
+		assertDecimal(balance, "availableToPromiseQuantity", "5.000000");
+		assertDecimal(balance, "netRequirementShortageQuantity", "0.000000");
+		assertThat(balance.has("netRequirementQuantity")).isFalse();
+		assertDecimal(balance, "frozenQuantity", "2.000000");
+
+		ResponseEntity<String> allReservations = get("/api/admin/inventory/reservations?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(allReservations);
+		assertThat(items(allReservations)).hasSize(2);
+
+		ResponseEntity<String> reservations = get("/api/admin/inventory/reservations?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId()
+				+ "&reservationType=RESERVATION", admin);
+		assertOk(reservations);
+		assertThat(items(reservations)).hasSize(1);
+		JsonNode reservation = firstItem(reservations);
+		assertThat(reservation.get("id").longValue()).isEqualTo(reservationId);
+		assertThat(reservation.get("reservationType").asText()).isEqualTo("RESERVATION");
+		assertThat(reservation.get("sourceType").asText()).isEqualTo("SALES_ORDER");
+		assertThat(reservation.get("sourceTypeName").asText()).isEqualTo("销售订单");
+		assertDecimal(reservation, "remainingQuantity", "4.000000");
+
+		ResponseEntity<String> filteredBySourceLine = get("/api/admin/inventory/reservations?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId() + "&sourceLineId=91001"
+				+ "&businessDateFrom=" + LocalDate.now() + "&businessDateTo=" + LocalDate.now(), admin);
+		assertOk(filteredBySourceLine);
+		assertThat(items(filteredBySourceLine)).hasSize(1);
+
+		ResponseEntity<String> detail = get("/api/admin/inventory/reservations/" + reservationId, admin);
+		assertOk(detail);
+		assertDecimal(data(detail), "remainingQuantity", "4.000000");
+		assertThat(data(detail).get("sourceSummary").get("sourceType").asText()).isEqualTo("SALES_ORDER");
+		assertThat(data(detail).get("auditRecords").isArray()).isTrue();
+	}
+
+	@Test
 	void postingServiceRejectsNonQualifiedOrdinaryOutbound() {
 		InventoryFixture fixture = fixture();
 		long sourceId = 850_000L + SEQUENCE.incrementAndGet();
@@ -571,6 +632,7 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		assertUnauthorized(get("/api/admin/inventory/documents/" + postedDocumentId, null));
 
 		assertOk(get("/api/admin/inventory/balances", reader));
+		assertOk(get("/api/admin/inventory/reservations", reader));
 		assertOk(get("/api/admin/inventory/movements", reader));
 		assertOk(get("/api/admin/inventory/documents", reader));
 		assertOk(get("/api/admin/inventory/documents/" + postedDocumentId, reader));
@@ -587,6 +649,7 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				"/api/admin/inventory/documents/" + draftDocumentId + "/post", null, admin));
 
 		assertForbidden(get("/api/admin/inventory/balances", noInventoryUser));
+		assertForbidden(get("/api/admin/inventory/reservations", noInventoryUser));
 		assertForbidden(get("/api/admin/inventory/movements", noInventoryUser));
 		assertForbidden(get("/api/admin/inventory/documents", noInventoryUser));
 		assertForbidden(get("/api/admin/inventory/documents/" + postedDocumentId, noInventoryUser));
@@ -846,7 +909,8 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 	private AuthenticatedSession createReadOnlyUserAndLogin() {
 		return createInventoryUserAndLogin("inventory-reader-", "INV_READER_", "库存只读", List.of("inventory:balance:view",
-				"inventory:movement:view", "inventory:document:view"));
+				"inventory:availability:view", "inventory:reservation:view", "inventory:movement:view",
+				"inventory:document:view"));
 	}
 
 	private AuthenticatedSession createNoInventoryUserAndLogin() {
@@ -882,6 +946,22 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 					""", roleId, permissionCode);
 		}
 		return login(username, ADMIN_PASSWORD);
+	}
+
+	private long insertReservation(InventoryFixture fixture, String reservationType, String sourceType, long sourceId,
+			long sourceLineId, String sourceDocumentNo, String quantity) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, ?, ?, ?, ?, ?, ?, 'tester', now(), 'tester',
+					now())
+				returning id
+				""", Long.class, "RSV-TEST-" + SEQUENCE.incrementAndGet(), reservationType, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal(quantity), sourceType, sourceId,
+				sourceLineId, sourceDocumentNo, LocalDate.now(), "018 库存预留测试");
 	}
 
 	private MovementRow movementForDocument(long documentId) {

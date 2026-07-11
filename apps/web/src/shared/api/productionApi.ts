@@ -70,7 +70,10 @@ export interface ProductionWorkOrderMaterialRecord {
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   quantityOnHand?: string | number | null
+  reservedQuantity?: string | number | null
+  occupiedQuantity?: string | number | null
   availableQuantity?: string | number | null
+  availableToPromiseQuantity?: string | number | null
   selectable?: boolean | null
   disabledReasonCode?: string | null
   disabledReason?: string | null

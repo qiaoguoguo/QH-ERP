@@ -50,6 +50,8 @@ const draftOrder: SalesOrderDetailRecord = {
       quantity: '12.500000',
       shippedQuantity: 0,
       remainingQuantity: 12.5,
+      reservationWarehouseId: 30,
+      reservationWarehouseName: '成品仓',
       unitPrice: '88.100000',
       expectedShipDate: '2026-07-12',
       remark: '按周发货',
@@ -186,6 +188,8 @@ describe('销售订单详情页', () => {
     expect(wrapper.text()).toContain('未出库')
     expect(wrapper.text()).toContain('华东客户')
     expect(wrapper.text()).toContain('FG-001 标准成品')
+    expect(wrapper.text()).toContain('预留仓库')
+    expect(wrapper.text()).toContain('成品仓')
     expect(wrapper.text()).toContain('件')
     expect(wrapper.text()).toContain('出库记录')
     expect(wrapper.text()).toContain('SS-20260705-001')
@@ -239,6 +243,24 @@ describe('销售订单详情页', () => {
     await flushPromises()
     expect(salesApiMock.orders.close).toHaveBeenCalledWith(99)
     expect(salesApiMock.orders.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('确认前发现明细缺少预留仓库时显示业务提示并阻止调用确认接口', async () => {
+    const legacyDraftOrder: SalesOrderDetailRecord = {
+      ...draftOrder,
+      lines: draftOrder.lines.map((line) => ({
+        ...line,
+        reservationWarehouseId: null,
+        reservationWarehouseName: null,
+      })),
+    }
+    const { wrapper } = await mountDetail(legacyDraftOrder)
+
+    await wrapper.find('[data-test="confirm-sales-order-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('销售订单确认前每行必须选择预留仓库，确认只会按预留仓库现货库存预留，不使用采购在途')
+    expect(salesApiMock.orders.confirm).not.toHaveBeenCalled()
   })
 
   it('状态操作失败时显示错误并保留详情', async () => {

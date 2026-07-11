@@ -52,6 +52,9 @@ const draftOrder: PurchaseOrderSummaryRecord = {
   totalQuantity: 100,
   receivedQuantity: 0,
   remainingQuantity: 100,
+  inTransitQuantity: '0.000000',
+  inTransitStatus: 'NOT_COUNTED',
+  inTransitStatusName: '不计入在途',
   remark: '首批采购',
   createdByName: '采购员',
   createdAt: '2026-07-04T08:00:00+08:00',
@@ -66,6 +69,9 @@ const confirmedOrder: PurchaseOrderSummaryRecord = {
   totalQuantity: 50,
   receivedQuantity: 0,
   remainingQuantity: 50,
+  inTransitQuantity: '50.000000',
+  inTransitStatus: 'NORMAL',
+  inTransitStatusName: '正常在途',
 }
 
 const partialOrder: PurchaseOrderSummaryRecord = {
@@ -76,6 +82,9 @@ const partialOrder: PurchaseOrderSummaryRecord = {
   totalQuantity: 80,
   receivedQuantity: 30,
   remainingQuantity: 50,
+  inTransitQuantity: '50.000000',
+  inTransitStatus: 'DUE_SOON',
+  inTransitStatusName: '临近到货',
 }
 
 const receivedOrder: PurchaseOrderSummaryRecord = {
@@ -86,6 +95,9 @@ const receivedOrder: PurchaseOrderSummaryRecord = {
   totalQuantity: 40,
   receivedQuantity: 40,
   remainingQuantity: 0,
+  inTransitQuantity: '0.000000',
+  inTransitStatus: 'NOT_COUNTED',
+  inTransitStatusName: '不计入在途',
 }
 
 const orderPage: PageResult<PurchaseOrderSummaryRecord> = {
@@ -199,6 +211,9 @@ describe('采购订单列表页', () => {
     expect(wrapper.text()).toContain('PO-DRAFT-001')
     expect(wrapper.text()).toContain('华东五金')
     expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.text()).toContain('采购在途参考')
+    expect(wrapper.text()).toContain('在途状态')
+    expect(wrapper.text()).toContain('正常在途')
     expect(wrapper.text()).toContain('100')
     expect(wrapper.text()).toContain('采购员')
     expect(wrapper.find('[data-test="create-purchase-order"]').exists()).toBe(true)

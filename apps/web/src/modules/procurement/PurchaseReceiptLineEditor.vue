@@ -44,6 +44,9 @@ function updateSourceLine(index: number, value: ResourceId) {
     orderedQuantity: sourceLine?.orderedQuantity ?? 0,
     receivedQuantityBefore: sourceLine?.receivedQuantityBefore ?? 0,
     remainingQuantityBefore: sourceLine?.remainingQuantityBefore ?? 0,
+    inTransitQuantity: sourceLine?.inTransitQuantity ?? null,
+    inTransitStatus: sourceLine?.inTransitStatus ?? null,
+    inTransitStatusName: sourceLine?.inTransitStatusName ?? null,
   })
 }
 
@@ -88,7 +91,9 @@ function removeLine(index: number) {
               >
                 <span>{{ sourceLine.lineNo }} {{ sourceLine.materialCode }} {{ sourceLine.materialName }}</span>
                 <span class="line-option-meta">
-                  未入库 {{ formatProcurementQuantity(sourceLine.remainingQuantityBefore) }}
+                  未入库 {{ formatProcurementQuantity(sourceLine.remainingQuantityBefore) }} /
+                  采购在途参考 {{ formatProcurementQuantity(sourceLine.inTransitQuantity) }} /
+                  {{ sourceLine.inTransitStatusName || '-' }}
                 </span>
               </el-option>
             </el-select>
@@ -117,6 +122,16 @@ function removeLine(index: number) {
         <el-table-column label="未入库" width="110" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatProcurementQuantity(row.remainingQuantityBefore) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="采购在途参考" width="130" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatProcurementQuantity(row.inTransitQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="在途状态" width="120">
+          <template #default="{ row }">
+            {{ row.inTransitStatusName || '-' }}
           </template>
         </el-table-column>
         <el-table-column label="本次入库数量" width="150" align="right">
@@ -175,9 +190,17 @@ function removeLine(index: number) {
 
 .line-option-meta {
   color: var(--qherp-muted);
-  float: right;
   font-size: 12px;
   margin-left: 12px;
+  white-space: normal;
+  word-break: break-word;
+}
+
+@media (max-width: 760px) {
+  .line-option-meta {
+    display: block;
+    margin-left: 0;
+  }
 }
 
 .numeric-cell {

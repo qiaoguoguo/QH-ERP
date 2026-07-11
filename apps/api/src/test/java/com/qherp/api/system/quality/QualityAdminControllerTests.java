@@ -178,6 +178,21 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void freezeRejectsReservedQualifiedInventory() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		postInventory(fixture, "5.000000", InventoryQualityStatus.QUALIFIED, "QUALITY_FREEZE_RESERVED_TEST");
+		insertReservation(fixture, "RESERVATION", "SALES_ORDER", "4.000000");
+
+		ResponseEntity<String> frozen = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				qualityTransferPayload(fixture, "2.000000", LocalDate.of(2091, 9, 16), "冻结已预留库存"), admin);
+
+		assertError(frozen, HttpStatus.CONFLICT, "INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE");
+		assertDecimal(balanceQuantity(fixture, InventoryQualityStatus.QUALIFIED), "5.000000");
+		assertDecimal(balanceQuantity(fixture, InventoryQualityStatus.FROZEN), "0.000000");
+	}
+
+	@Test
 	void freezeAndUnfreezeUsePersistentSourceKeysOutsideLegacyJvmRange() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		QualityFixture fixture = fixture();
@@ -253,6 +268,23 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(data.hasNonNull("updatedAt")).isTrue();
 		assertThat(data.get("currentQualityStatus").asText()).isEqualTo("PENDING_INSPECTION");
 		assertThat(data.get("currentQualityStatusName").asText()).isEqualTo("待检");
+	}
+
+	@Test
+	void qualityInspectionListReturnsProductionCompletionReceiptNo() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		LocalDate businessDate = LocalDate.of(2091, 10, 15);
+		String receiptNo = "MCR-QI-" + SEQUENCE.incrementAndGet();
+		long inspectionId = productionCompletionInspection(fixture, receiptNo, "3.000000", businessDate);
+
+		ResponseEntity<String> list = get(
+				"/api/admin/quality/inspections?sourceType=PRODUCTION_COMPLETION&page=1&pageSize=20", admin);
+
+		assertOk(list);
+		JsonNode item = itemByInspectionId(data(list).get("items"), inspectionId);
+		assertThat(item.get("sourceType").asText()).isEqualTo("PRODUCTION_COMPLETION");
+		assertThat(item.get("sourceDocumentNo").asText()).isEqualTo(receiptNo);
 	}
 
 	@Test
@@ -373,6 +405,48 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				fixture.materialId(), fixture.unitId(), businessDate, new BigDecimal(quantity));
 	}
 
+	private long productionCompletionInspection(QualityFixture fixture, String receiptNo, String quantity,
+			LocalDate businessDate) {
+		long bomId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom (
+					bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status,
+					effective_from, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, 1.000000, ?, 'ENABLED', ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-BOM-" + SEQUENCE.incrementAndGet(), fixture.materialId(),
+				"V" + SEQUENCE.incrementAndGet(), "质量完工来源测试 BOM", fixture.unitId(), businessDate);
+		long workOrderId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_work_order (
+					work_order_no, product_material_id, bom_id, planned_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_start_date, planned_finish_date, status, created_by, created_at,
+					updated_by, updated_at
+				)
+				values (?, ?, ?, 3.000000, ?, ?, ?, ?, 'RELEASED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-WO-" + SEQUENCE.incrementAndGet(), fixture.materialId(), bomId,
+				fixture.warehouseId(), fixture.warehouseId(), businessDate.minusDays(1), businessDate.plusDays(1));
+		long receiptId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_completion_receipt (
+					receipt_no, work_order_id, status, business_date, receipt_warehouse_id, quantity, created_by,
+					created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, 'POSTED', ?, ?, ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, receiptNo, workOrderId, businessDate, fixture.warehouseId(), new BigDecimal(quantity));
+		postInventory(fixture, quantity, InventoryQualityStatus.PENDING_INSPECTION, "PRODUCTION_COMPLETION", receiptId,
+				receiptId, businessDate);
+		return this.jdbcTemplate.queryForObject("""
+				insert into qua_quality_inspection (
+					inspection_no, source_type, source_id, source_line_id, warehouse_id, material_id, unit_id,
+					business_date, inspection_quantity, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'PRODUCTION_COMPLETION', ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-TEST-" + SEQUENCE.incrementAndGet(), receiptId, receiptId, fixture.warehouseId(),
+				fixture.materialId(), fixture.unitId(), businessDate, new BigDecimal(quantity));
+	}
+
 	private void postInventory(QualityFixture fixture, String quantity, InventoryQualityStatus qualityStatus,
 			String sourceType) {
 		long sourceId = 1_720_000L + SEQUENCE.incrementAndGet();
@@ -386,6 +460,23 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				InventoryMovementType.ADJUSTMENT_INCREASE, InventoryDirection.IN, fixture.warehouseId(),
 				fixture.materialId(), fixture.unitId(), new BigDecimal(quantity), qualityStatus, sourceType, sourceId,
 				sourceLineId, businessDate, "质量状态测试入库", "质量状态测试入库", "tester"));
+	}
+
+	private long insertReservation(QualityFixture fixture, String reservationType, String sourceType, String quantity) {
+		long sourceId = 1_740_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 1_750_000L + SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, ?, ?, ?, ?, ?, ?, 'tester', now(), 'tester',
+					now())
+				returning id
+				""", Long.class, "QI-RSV-" + SEQUENCE.incrementAndGet(), reservationType, fixture.warehouseId(),
+				fixture.materialId(), fixture.unitId(), new BigDecimal(quantity), sourceType, sourceId, sourceLineId,
+				sourceType + "-" + sourceId, LocalDate.now(), "质量冻结预留约束测试");
 	}
 
 	private void seedLegacyQualityStatusTransferSourceLineCollisions(QualityFixture fixture) {

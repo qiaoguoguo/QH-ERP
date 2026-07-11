@@ -544,53 +544,17 @@ public class ReportingAdminService {
 
 	private List<ExceptionRow> inventoryShortageRows(ReportQuery query) {
 		StringBuilder sql = new StringBuilder("""
-				with enabled_warehouses as (
-					select id
-					from mst_warehouse
-					where status = 'ENABLED'
-				),
-				sales_materials as (
-					select distinct sol.material_id
-					from sal_sales_order so
-					join sal_sales_order_line sol on sol.order_id = so.id
-					where so.status in ('CONFIRMED', 'PARTIALLY_SHIPPED')
-					and (sol.quantity - sol.shipped_quantity) > 0
-					and coalesce(sol.expected_ship_date, so.expected_ship_date, so.order_date) between ? and ?
-				),
-				sales_candidate_warehouses as (
-					select sb.warehouse_id, sm.material_id
-					from sales_materials sm
-					join inv_stock_balance sb on sb.material_id = sm.material_id
-					join enabled_warehouses w on w.id = sb.warehouse_id
-					union all
-					select selected.warehouse_id, sm.material_id
-					from sales_materials sm
-					join lateral (
-						select w.id warehouse_id
-						from enabled_warehouses ew
-						join mst_warehouse w on w.id = ew.id
-						join mst_material m on m.id = sm.material_id
-						order by abs(extract(epoch from (w.created_at - m.created_at))), w.id
-						limit 1
-					) selected on true
-					where not exists (
-						select 1
-						from inv_stock_balance sb
-						join enabled_warehouses balance_warehouse on balance_warehouse.id = sb.warehouse_id
-						where sb.material_id = sm.material_id
-					)
-				),
-				sales_demand as (
-					select sc.warehouse_id, sol.material_id,
+				with sales_demand as (
+					select sol.reservation_warehouse_id warehouse_id, sol.material_id,
 						sum(sol.quantity - sol.shipped_quantity) demand_quantity,
 						count(distinct so.id) source_count
 					from sal_sales_order so
 					join sal_sales_order_line sol on sol.order_id = so.id
-					join sales_candidate_warehouses sc on sc.material_id = sol.material_id
 					where so.status in ('CONFIRMED', 'PARTIALLY_SHIPPED')
 					and (sol.quantity - sol.shipped_quantity) > 0
 					and coalesce(sol.expected_ship_date, so.expected_ship_date, so.order_date) between ? and ?
-					group by sc.warehouse_id, sol.material_id
+					and sol.reservation_warehouse_id is not null
+					group by sol.reservation_warehouse_id, sol.material_id
 				),
 				issue_totals as (
 					select mil.work_order_material_id, coalesce(sum(mil.quantity), 0) issued_quantity
@@ -623,20 +587,33 @@ public class ReportingAdminService {
 				)
 				select d.warehouse_id, w.code warehouse_code, w.name warehouse_name,
 					d.material_id, m.code material_code, m.name material_name,
-					coalesce(sb.quantity_on_hand, 0) quantity_on_hand,
+					greatest(coalesce(sb.quantity_on_hand, 0) - coalesce(r.locked_quantity, 0), 0) quantity_on_hand,
 					d.demand_quantity,
-					d.demand_quantity - coalesce(sb.quantity_on_hand, 0) shortage_quantity,
+					d.demand_quantity
+						- greatest(coalesce(sb.quantity_on_hand, 0) - coalesce(r.locked_quantity, 0), 0)
+						shortage_quantity,
 					d.source_count
 				from demand d
 				join mst_warehouse w on w.id = d.warehouse_id
 				join mst_material m on m.id = d.material_id
-				left join inv_stock_balance sb on sb.warehouse_id = d.warehouse_id and sb.material_id = d.material_id
+				left join inv_stock_balance sb on sb.warehouse_id = d.warehouse_id
+					and sb.material_id = d.material_id
+					and sb.quality_status = 'QUALIFIED'
+				left join (
+					select warehouse_id, material_id,
+					       sum(quantity - released_quantity - consumed_quantity) locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) r on r.warehouse_id = d.warehouse_id and r.material_id = d.material_id
 				where w.status = 'ENABLED'
 				and m.status = 'ENABLED'
-				and coalesce(sb.quantity_on_hand, 0) < d.demand_quantity
+				and greatest(coalesce(sb.quantity_on_hand, 0) - coalesce(r.locked_quantity, 0), 0)
+					< d.demand_quantity
 				""");
 		List<Object> args = new ArrayList<>(List.of(query.dateFrom(), query.dateTo(), query.dateFrom(),
-				query.dateTo(), query.dateFrom(), query.dateTo()));
+				query.dateTo()));
 		appendKeyword(sql, args, query.keyword(), "w.code", "w.name", "m.code", "m.name");
 		sql.append(" order by w.name, m.name");
 		LocalDate businessDate = reportCutoff(query);

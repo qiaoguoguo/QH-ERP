@@ -26,6 +26,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -100,11 +101,67 @@ public class InventoryAdminService {
 				       sum(case when b.quality_status = 'REJECTED' then b.locked_quantity else 0 end) as rejected_locked_quantity,
 				       sum(case when b.quality_status = 'FROZEN' then b.quantity_on_hand else 0 end) as frozen_quantity,
 				       sum(case when b.quality_status = 'FROZEN' then b.locked_quantity else 0 end) as frozen_locked_quantity,
+				       coalesce(max(r.reserved_quantity), 0) as reserved_quantity,
+				       coalesce(max(r.occupied_quantity), 0) as occupied_quantity,
+				       coalesce(max(ma.material_available_quantity), 0) as material_available_quantity,
+				       coalesce(max(pi.in_transit_quantity), 0) as in_transit_quantity,
+				       coalesce(max(sd.sales_demand_quantity), 0) as sales_demand_quantity,
+				       coalesce(max(pd.production_demand_quantity), 0) as production_demand_quantity,
 				       max(b.updated_at) as updated_at
 				from inv_stock_balance b
 				left join mst_warehouse w on w.id = b.warehouse_id
 				left join mst_material m on m.id = b.material_id
 				left join mst_unit u on u.id = b.unit_id
+				left join (
+					select warehouse_id, material_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
+				left join (
+					select q.material_id,
+					       coalesce(q.qualified_quantity, 0) - coalesce(l.locked_quantity, 0) as material_available_quantity
+					from (
+						select material_id, sum(quantity_on_hand) as qualified_quantity
+						from inv_stock_balance
+						where quality_status = 'QUALIFIED'
+						group by material_id
+					) q
+					left join (
+						select material_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+						from inv_stock_reservation
+						where status = 'ACTIVE'
+						and quality_status = 'QUALIFIED'
+						group by material_id
+					) l on l.material_id = q.material_id
+				) ma on ma.material_id = b.material_id
+				left join (
+					select pol.material_id, sum(pol.quantity - pol.received_quantity) as in_transit_quantity
+					from proc_purchase_order_line pol
+					join proc_purchase_order po on po.id = pol.order_id
+					where po.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+					group by pol.material_id
+				) pi on pi.material_id = b.material_id
+				left join (
+					select sol.material_id, sum(sol.quantity - sol.shipped_quantity) as sales_demand_quantity
+					from sal_sales_order_line sol
+					join sal_sales_order so on so.id = sol.order_id
+					where so.status in ('CONFIRMED', 'PARTIALLY_SHIPPED')
+					group by sol.material_id
+				) sd on sd.material_id = b.material_id
+				left join (
+					select wo.issue_warehouse_id as warehouse_id, wom.material_id,
+					       sum(wom.required_quantity - wom.issued_quantity) as production_demand_quantity
+					from mfg_work_order_material wom
+					join mfg_work_order wo on wo.id = wom.work_order_id
+					where wo.status in ('RELEASED', 'IN_PROGRESS')
+					group by wo.issue_warehouse_id, wom.material_id
+				) pd on pd.warehouse_id = b.warehouse_id and pd.material_id = b.material_id
 				%s
 				group by b.warehouse_id, w.code, w.name, b.material_id, m.code, m.name, m.specification,
 				         m.material_type, b.unit_id, u.name
@@ -147,6 +204,62 @@ public class InventoryAdminService {
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapMovement, args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<InventoryReservationResponse> reservations(String keyword, Long warehouseId, Long materialId,
+			String reservationType, String status, String sourceType, Long sourceId, Long sourceLineId,
+			LocalDate businessDateFrom, LocalDate businessDateTo, int page, int pageSize) {
+		QueryParts queryParts = reservationQueryParts(keyword, warehouseId, materialId, reservationType, status,
+				sourceType, sourceId, sourceLineId, businessDateFrom, businessDateTo);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_reservation r
+				join mst_warehouse w on w.id = r.warehouse_id
+				join mst_material m on m.id = r.material_id
+				join mst_unit u on u.id = r.unit_id
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> args = paginationArgs(queryParts, pageSize, page);
+		List<InventoryReservationResponse> items = this.jdbcTemplate.query("""
+				select r.id, r.reservation_no, r.reservation_type, r.status, r.warehouse_id,
+				       w.code as warehouse_code, w.name as warehouse_name, r.material_id,
+				       m.code as material_code, m.name as material_name, m.specification as material_spec,
+				       r.unit_id, u.name as unit_name, r.quality_status, r.quantity, r.released_quantity,
+				       r.consumed_quantity, r.source_type, r.source_id, r.source_line_id,
+				       r.source_document_no, r.business_date, r.reason, r.remark, r.created_by,
+				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at
+				from inv_stock_reservation r
+				join mst_warehouse w on w.id = r.warehouse_id
+				join mst_material m on m.id = r.material_id
+				join mst_unit u on u.id = r.unit_id
+				%s
+				order by r.updated_at desc, r.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapReservation(rs, rowNum, false),
+				args.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryReservationResponse reservation(Long id) {
+		return this.jdbcTemplate.query("""
+				select r.id, r.reservation_no, r.reservation_type, r.status, r.warehouse_id,
+				       w.code as warehouse_code, w.name as warehouse_name, r.material_id,
+				       m.code as material_code, m.name as material_name, m.specification as material_spec,
+				       r.unit_id, u.name as unit_name, r.quality_status, r.quantity, r.released_quantity,
+				       r.consumed_quantity, r.source_type, r.source_id, r.source_line_id,
+				       r.source_document_no, r.business_date, r.reason, r.remark, r.created_by,
+				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at
+				from inv_stock_reservation r
+				join mst_warehouse w on w.id = r.warehouse_id
+				join mst_material m on m.id = r.material_id
+				join mst_unit u on u.id = r.unit_id
+				where r.id = ?
+				""", (rs, rowNum) -> mapReservation(rs, rowNum, true), id)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_NOT_FOUND));
 	}
 
 	@Transactional(readOnly = true)
@@ -528,6 +641,58 @@ public class InventoryAdminService {
 		return where(conditions, args);
 	}
 
+	private QueryParts reservationQueryParts(String keyword, Long warehouseId, Long materialId, String reservationType,
+			String status, String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDateFrom,
+			LocalDate businessDateTo) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(r.reservation_no ilike ? or r.source_document_no ilike ? or m.code ilike ? or m.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (warehouseId != null) {
+			conditions.add("r.warehouse_id = ?");
+			args.add(warehouseId);
+		}
+		if (materialId != null) {
+			conditions.add("r.material_id = ?");
+			args.add(materialId);
+		}
+		if (hasText(reservationType)) {
+			conditions.add("r.reservation_type = ?");
+			args.add(parseReservationType(reservationType).name());
+		}
+		if (hasText(status)) {
+			conditions.add("r.status = ?");
+			args.add(parseReservationStatus(status).name());
+		}
+		if (hasText(sourceType)) {
+			conditions.add("r.source_type = ?");
+			args.add(sourceType);
+		}
+		if (sourceId != null) {
+			conditions.add("r.source_id = ?");
+			args.add(sourceId);
+		}
+		if (sourceLineId != null) {
+			conditions.add("r.source_line_id = ?");
+			args.add(sourceLineId);
+		}
+		if (businessDateFrom != null) {
+			conditions.add("r.business_date >= ?");
+			args.add(businessDateFrom);
+		}
+		if (businessDateTo != null) {
+			conditions.add("r.business_date <= ?");
+			args.add(businessDateTo);
+		}
+		return where(conditions, args);
+	}
+
 	private HavingParts balanceHavingParts(InventoryQualityStatus qualityStatus, boolean onlyPositive) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
@@ -642,20 +807,43 @@ public class InventoryAdminService {
 		BigDecimal rejectedLockedQuantity = rs.getBigDecimal("rejected_locked_quantity");
 		BigDecimal frozenQuantity = rs.getBigDecimal("frozen_quantity");
 		BigDecimal frozenLockedQuantity = rs.getBigDecimal("frozen_locked_quantity");
+		BigDecimal reservedQuantity = rs.getBigDecimal("reserved_quantity");
+		BigDecimal occupiedQuantity = rs.getBigDecimal("occupied_quantity");
+		BigDecimal activeLockedQuantity = reservedQuantity.add(occupiedQuantity);
+		BigDecimal inTransitQuantity = rs.getBigDecimal("in_transit_quantity");
+		BigDecimal demandQuantity = rs.getBigDecimal("sales_demand_quantity")
+			.add(rs.getBigDecimal("production_demand_quantity"));
 		BigDecimal quantityOnHand = selectedQuantity(qualityStatus, totalQuantity, pendingInspectionQuantity,
 				qualifiedQuantity, rejectedQuantity, frozenQuantity);
-		BigDecimal lockedQuantity = selectedQuantity(qualityStatus, totalLockedQuantity,
-				pendingInspectionLockedQuantity, qualifiedLockedQuantity, rejectedLockedQuantity, frozenLockedQuantity);
+		BigDecimal lockedQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? activeLockedQuantity : selectedQuantity(qualityStatus, totalLockedQuantity,
+						pendingInspectionLockedQuantity, qualifiedLockedQuantity, rejectedLockedQuantity,
+						frozenLockedQuantity);
+		BigDecimal visibleReservedQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? reservedQuantity : ZERO;
+		BigDecimal visibleOccupiedQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? occupiedQuantity : ZERO;
+		BigDecimal visibleInTransitQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? inTransitQuantity : ZERO;
 		BigDecimal availableQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
-				? qualifiedQuantity.subtract(qualifiedLockedQuantity) : ZERO;
+				? qualifiedQuantity.subtract(activeLockedQuantity) : ZERO;
+		BigDecimal availableToPromiseQuantity = availableQuantity;
+		BigDecimal materialAvailableQuantity = qualityStatus == null || qualityStatus == InventoryQualityStatus.QUALIFIED
+				? rs.getBigDecimal("material_available_quantity") : ZERO;
+		BigDecimal netRequirementShortageQuantity = qualityStatus == null
+				|| qualityStatus == InventoryQualityStatus.QUALIFIED
+						? demandQuantity.subtract(materialAvailableQuantity.add(visibleInTransitQuantity)).max(ZERO)
+						: ZERO;
 		return new InventoryBalanceResponse(rs.getLong("id"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_code"), rs.getString("warehouse_name"), rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
 				rs.getString("material_type"), rs.getLong("unit_id"), rs.getString("unit_name"),
 				qualityStatus == null ? null : qualityStatus.name(),
 				qualityStatus == null ? null : qualityStatus.displayName(), quantityOnHand, lockedQuantity,
-				availableQuantity, totalQuantity, pendingInspectionQuantity, qualifiedQuantity, rejectedQuantity,
-				frozenQuantity, rs.getObject("updated_at", OffsetDateTime.class));
+				availableQuantity, totalQuantity, visibleReservedQuantity, visibleOccupiedQuantity,
+				visibleInTransitQuantity, availableToPromiseQuantity, netRequirementShortageQuantity, totalQuantity,
+				pendingInspectionQuantity, qualifiedQuantity, rejectedQuantity, frozenQuantity,
+				rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum) throws SQLException {
@@ -669,6 +857,67 @@ public class InventoryAdminService {
 				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
 				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
 				qualityStatus.name(), qualityStatus.displayName());
+	}
+
+	private InventoryReservationResponse mapReservation(ResultSet rs, int rowNum, boolean includeDetail)
+			throws SQLException {
+		InventoryReservationType reservationType = InventoryReservationType.valueOf(rs.getString("reservation_type"));
+		InventoryReservationStatus status = InventoryReservationStatus.valueOf(rs.getString("status"));
+		InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
+		BigDecimal quantity = rs.getBigDecimal("quantity");
+		BigDecimal releasedQuantity = rs.getBigDecimal("released_quantity");
+		BigDecimal consumedQuantity = rs.getBigDecimal("consumed_quantity");
+		BigDecimal remainingQuantity = quantity.subtract(releasedQuantity).subtract(consumedQuantity);
+		String sourceType = rs.getString("source_type");
+		Long sourceId = rs.getLong("source_id");
+		Long sourceLineId = rs.getLong("source_line_id");
+		String sourceDocumentNo = rs.getString("source_document_no");
+		Map<String, Object> sourceSummary = includeDetail
+				? sourceSummary(sourceType, sourceId, sourceLineId, sourceDocumentNo) : null;
+		List<InventoryReservationAuditRecordResponse> auditRecords = includeDetail
+				? reservationAuditRecords(rs.getLong("id")) : null;
+		return new InventoryReservationResponse(rs.getLong("id"), rs.getString("reservation_no"),
+				reservationType.name(), reservationType.displayName(), status.name(), status.displayName(),
+				rs.getLong("warehouse_id"), rs.getString("warehouse_code"), rs.getString("warehouse_name"),
+				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+				rs.getString("material_spec"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				qualityStatus.name(), qualityStatus.displayName(), quantity, releasedQuantity, consumedQuantity,
+				remainingQuantity, sourceType, sourceTypeName(sourceType), sourceId, sourceLineId,
+				sourceDocumentNo, sourceSummary, rs.getObject("business_date", LocalDate.class),
+				rs.getString("reason"), rs.getString("remark"), auditRecords, rs.getString("created_by"),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getString("updated_by"),
+				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("released_by"),
+				rs.getObject("released_at", OffsetDateTime.class));
+	}
+
+	private Map<String, Object> sourceSummary(String sourceType, Long sourceId, Long sourceLineId,
+			String sourceDocumentNo) {
+		return Map.of("sourceType", sourceType, "sourceTypeName", sourceTypeName(sourceType), "sourceId", sourceId,
+				"sourceLineId", sourceLineId, "sourceDocumentNo", sourceDocumentNo);
+	}
+
+	private String sourceTypeName(String sourceType) {
+		return switch (sourceType) {
+			case "SALES_ORDER" -> "销售订单";
+			case "PRODUCTION_WORK_ORDER" -> "生产工单";
+			case "INVENTORY_DOCUMENT" -> "库存单据";
+			default -> sourceType;
+		};
+	}
+
+	private List<InventoryReservationAuditRecordResponse> reservationAuditRecords(Long reservationId) {
+		return this.jdbcTemplate.query("""
+				select id, operator_username, action, target_summary, request_method, request_path, result, error_code,
+				       created_at
+				from sys_audit_log
+				where target_type = 'INVENTORY_RESERVATION'
+				and target_id = ?
+				order by created_at asc, id asc
+				""", (rs, rowNum) -> new InventoryReservationAuditRecordResponse(rs.getLong("id"),
+				rs.getString("operator_username"), rs.getString("action"), rs.getString("target_summary"),
+				rs.getString("request_method"), rs.getString("request_path"), rs.getString("result"),
+				rs.getString("error_code"), rs.getObject("created_at", OffsetDateTime.class)),
+				reservationId == null ? null : reservationId.toString());
 	}
 
 	private InventoryDocumentSummaryResponse mapDocumentSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -760,6 +1009,24 @@ public class InventoryAdminService {
 		}
 		catch (RuntimeException exception) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_INVALID);
+		}
+	}
+
+	private InventoryReservationType parseReservationType(String value) {
+		try {
+			return InventoryReservationType.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private InventoryReservationStatus parseReservationStatus(String value) {
+		try {
+			return InventoryReservationStatus.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 	}
 
@@ -860,9 +1127,11 @@ public class InventoryAdminService {
 	public record InventoryBalanceResponse(Long id, Long warehouseId, String warehouseCode, String warehouseName,
 			Long materialId, String materialCode, String materialName, String materialSpec, String materialType,
 			Long unitId, String unitName, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
-			BigDecimal lockedQuantity, BigDecimal availableQuantity, BigDecimal totalQuantityOnHand,
-			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
-			BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
+			BigDecimal lockedQuantity, BigDecimal availableQuantity, BigDecimal bookQuantity,
+			BigDecimal reservedQuantity, BigDecimal occupiedQuantity, BigDecimal inTransitQuantity,
+			BigDecimal availableToPromiseQuantity, BigDecimal netRequirementShortageQuantity,
+			BigDecimal totalQuantityOnHand, BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity,
+			BigDecimal rejectedQuantity, BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
 	}
 
 	public record InventoryMovementResponse(Long id, String movementNo, String movementType, String direction,
@@ -870,6 +1139,23 @@ public class InventoryAdminService {
 			Long unitId, String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity,
 			String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName) {
+	}
+
+	public record InventoryReservationResponse(Long id, String reservationNo, String reservationType,
+			String reservationTypeName, String status, String statusName, Long warehouseId, String warehouseCode,
+			String warehouseName, Long materialId, String materialCode, String materialName, String materialSpec,
+			Long unitId, String unitName, String qualityStatus, String qualityStatusName, BigDecimal quantity,
+			BigDecimal releasedQuantity, BigDecimal consumedQuantity, BigDecimal remainingQuantity, String sourceType,
+			String sourceTypeName, Long sourceId, Long sourceLineId, String sourceDocumentNo,
+			Map<String, Object> sourceSummary, LocalDate businessDate, String reason, String remark,
+			List<InventoryReservationAuditRecordResponse> auditRecords, String createdByName,
+			OffsetDateTime createdAt, String updatedByName, OffsetDateTime updatedAt, String releasedByName,
+			OffsetDateTime releasedAt) {
+	}
+
+	public record InventoryReservationAuditRecordResponse(Long id, String operatorUsername, String action,
+			String targetSummary, String requestMethod, String requestPath, String result, String errorCode,
+			OffsetDateTime createdAt) {
 	}
 
 	public record InventoryDocumentSummaryResponse(Long id, String documentNo, String documentType, String status,

@@ -9,6 +9,7 @@ import {
   type ProductionMaterialIssueDetailRecord,
   type ProductionMaterialIssuePayload,
   type ProductionMaterialIssueSummaryRecord,
+  type ProductionWorkOrderMaterialRecord,
   type ProductionWorkOrderDetailRecord,
   type ProductionWorkOrderPayload,
   type ProductionWorkReportPayload,
@@ -123,6 +124,15 @@ describe('生产执行 API', () => {
     reportPayloadIncludesReporterName: true as AssertTrue<
       'reporterName' extends keyof ProductionWorkReportPayload ? true : false
     >,
+    workOrderMaterialHasAvailabilityFields: true as AssertTrue<
+      'reservedQuantity' extends keyof ProductionWorkOrderMaterialRecord
+        ? 'occupiedQuantity' extends keyof ProductionWorkOrderMaterialRecord
+          ? 'availableToPromiseQuantity' extends keyof ProductionWorkOrderMaterialRecord
+            ? true
+            : false
+          : false
+        : false
+    >,
   }
 
   it('声明生产详情和执行记录列表的类型契约', () => {
@@ -138,6 +148,7 @@ describe('生产执行 API', () => {
       reportPayloadIncludesReporterName: true,
       reportsIncludeAuditFields: true,
       reportsReturnPage: true,
+      workOrderMaterialHasAvailabilityFields: true,
       workOrderDetailUsesMaterialIssueSummary: true,
       workOrderIncludesWarehouseAndCancelFields: true,
     })
