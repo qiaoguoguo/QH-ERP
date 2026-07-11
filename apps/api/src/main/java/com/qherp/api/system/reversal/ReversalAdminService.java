@@ -1573,11 +1573,16 @@ public class ReversalAdminService {
 			BigDecimal shipped = rs.getBigDecimal("quantity");
 			BigDecimal returned = rs.getBigDecimal("returned_quantity");
 			BigDecimal returnable = shipped.subtract(returned);
+			Long shipmentLineId = rs.getLong("id");
+			Long materialId = rs.getLong("material_id");
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations =
+					this.inventoryTrackingService.sourceInheritedCandidateAllocationResponses(
+							SALES_SHIPMENT_SOURCE, shipmentId, shipmentLineId, materialId, returnable);
 			return new SalesReturnSourceLineResponse(rs.getLong("id"), rs.getLong("order_line_id"),
-					rs.getInt("line_no"), rs.getLong("material_id"), rs.getString("material_code"),
+					rs.getInt("line_no"), materialId, rs.getString("material_code"),
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					quantity(shipped), quantity(returned), quantity(returnable), quantity(rs.getBigDecimal("unit_price")),
-					amount(returnable.multiply(rs.getBigDecimal("unit_price"))));
+					amount(returnable.multiply(rs.getBigDecimal("unit_price"))), trackingAllocations);
 		}, shipmentId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
 			.toList();
 	}
@@ -1692,11 +1697,17 @@ public class ReversalAdminService {
 			BigDecimal returned = rs.getBigDecimal("returned_quantity");
 			BigDecimal returnable = issued.subtract(returned);
 			BigDecimal unitPrice = rs.getBigDecimal("unit_price");
+			Long issueLineId = rs.getLong("id");
+			Long materialId = rs.getLong("material_id");
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations =
+					this.inventoryTrackingService.sourceInheritedCandidateAllocationResponses(
+							PRODUCTION_MATERIAL_ISSUE_SOURCE, issueId, issueLineId, materialId, returnable);
 			return new ProductionMaterialReturnSourceLineResponse(rs.getLong("id"),
 					rs.getLong("work_order_material_id"), rs.getInt("line_no"), rs.getLong("warehouse_id"),
-					rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+					materialId, rs.getString("material_code"), rs.getString("material_name"),
 					rs.getLong("unit_id"), rs.getString("unit_name"), quantity(issued), quantity(returned),
-					quantity(returnable), quantity(unitPrice), amount(returnable.multiply(unitPrice)));
+					quantity(returnable), quantity(unitPrice), amount(returnable.multiply(unitPrice)),
+					trackingAllocations);
 		}, issueId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
 			.toList();
 	}
@@ -5412,7 +5423,7 @@ public class ReversalAdminService {
 	public record SalesReturnSourceLineResponse(Long shipmentLineId, Long salesOrderLineId, Integer lineNo,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			String shippedQuantity, String returnedQuantity, String returnableQuantity, String unitPrice,
-			String returnableAmount) {
+			String returnableAmount, List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	public record PurchaseReturnSourceLineResponse(Long receiptLineId, Long purchaseOrderLineId, Integer lineNo,
@@ -5426,7 +5437,8 @@ public class ReversalAdminService {
 	public record ProductionMaterialReturnSourceLineResponse(Long issueLineId, Long workOrderMaterialId,
 			Integer lineNo, Long warehouseId, Long materialId, String materialCode, String materialName, Long unitId,
 			String unitName, String issuedQuantity, String returnedQuantity, String returnableQuantity,
-			String unitPrice, String returnableAmount) {
+			String unitPrice, String returnableAmount,
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
 
 	public record ProductionMaterialSupplementSourceLineResponse(Long workOrderMaterialId, Integer lineNo,

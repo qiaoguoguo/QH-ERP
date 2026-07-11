@@ -310,6 +310,55 @@ public class InventoryTrackingService {
 				""", this::mapTrackingAllocationResponse, documentType, documentId, documentLineId);
 	}
 
+	public List<TrackingAllocationResponse> sourceInheritedCandidateAllocationResponses(String sourceType,
+			Long sourceId, Long sourceLineId, Long materialId, BigDecimal maxQuantity) {
+		if (trackingMethod(materialId) == InventoryTrackingMethod.NONE) {
+			return List.of();
+		}
+		List<SourceAllocationResponseRow> sourceAllocations = this.jdbcTemplate.query("""
+				select a.id, a.document_type, a.document_id, a.document_line_id,
+				       a.source_type, a.source_id, a.source_line_id, m.tracking_method,
+				       a.batch_id, b.batch_no, a.serial_id, s.serial_no, a.quantity, a.quality_status, a.movement_id
+				from inv_stock_tracking_allocation a
+				join mst_material m on m.id = a.material_id
+				left join inv_batch b on b.id = a.batch_id
+				left join inv_serial s on s.id = a.serial_id
+				where a.document_type = ?
+				and a.document_id = ?
+				and a.document_line_id = ?
+				and a.allocation_type = 'OUTBOUND'
+				order by a.id asc
+				""", this::mapSourceAllocationResponseRow, sourceType, sourceId, sourceLineId);
+		List<TrackingAllocationResponse> responses = new ArrayList<>();
+		BigDecimal remainingLineQuantity = maxQuantity;
+		for (SourceAllocationResponseRow allocation : sourceAllocations) {
+			if (remainingLineQuantity != null && remainingLineQuantity.compareTo(ZERO) <= 0) {
+				break;
+			}
+			BigDecimal inheritedQuantity = postedInheritedQuantity(sourceType, sourceId, sourceLineId,
+					allocation.batchId(), allocation.serialId());
+			BigDecimal remainingQuantity = allocation.quantity().subtract(inheritedQuantity);
+			if (remainingQuantity.compareTo(ZERO) <= 0) {
+				continue;
+			}
+			if (remainingLineQuantity != null && remainingQuantity.compareTo(remainingLineQuantity) > 0) {
+				remainingQuantity = remainingLineQuantity;
+			}
+			if (remainingLineQuantity != null) {
+				remainingLineQuantity = remainingLineQuantity.subtract(remainingQuantity);
+			}
+			responses.add(new TrackingAllocationResponse(null, allocation.id(), allocation.trackingMethod().name(),
+					allocation.trackingMethod().displayName(), allocation.batchId(), allocation.batchNo(),
+					allocation.serialId(), allocation.serialNo(), remainingQuantity, allocation.qualityStatus().name(),
+					allocation.qualityStatus().displayName(), allocation.movementId(), allocation.documentType(),
+					allocation.documentId(), allocation.documentLineId(), allocation.sourceType(),
+					allocation.sourceId(), allocation.sourceLineId(),
+					sourceDocumentNo(allocation.sourceType(), allocation.sourceId()),
+					sourceLineNo(allocation.sourceType(), allocation.sourceLineId())));
+		}
+		return responses;
+	}
+
 	public List<TrackingAllocationResponse> allocationResponses(String documentType, Long documentId) {
 		return this.jdbcTemplate.query("""
 				select a.id, a.allocation_type, a.document_type, a.document_id, a.document_line_id,
@@ -686,20 +735,62 @@ public class InventoryTrackingService {
 				InventoryQualityStatus.valueOf(rs.getString("quality_status")), nullableLong(rs, "id"));
 	}
 
+	private SourceAllocationResponseRow mapSourceAllocationResponseRow(ResultSet rs, int rowNum) throws SQLException {
+		String trackingMethodValue = rs.getString("tracking_method");
+		String qualityStatus = rs.getString("quality_status");
+		return new SourceAllocationResponseRow(rs.getLong("id"), rs.getString("document_type"),
+				nullableLong(rs, "document_id"), nullableLong(rs, "document_line_id"), rs.getString("source_type"),
+				nullableLong(rs, "source_id"), nullableLong(rs, "source_line_id"),
+				InventoryTrackingMethod.valueOf(trackingMethodValue), nullableLong(rs, "batch_id"),
+				rs.getString("batch_no"), nullableLong(rs, "serial_id"), rs.getString("serial_no"),
+				rs.getBigDecimal("quantity"), InventoryQualityStatus.valueOf(qualityStatus),
+				nullableLong(rs, "movement_id"));
+	}
+
 	private TrackingAllocationResponse mapTrackingAllocationResponse(ResultSet rs, int rowNum) throws SQLException {
 		String trackingMethodValue = rs.getString("tracking_method");
 		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(trackingMethodValue);
 		String qualityStatus = rs.getString("quality_status");
+		String allocationType = rs.getString("allocation_type");
+		Long allocationId = nullableLong(rs, "id");
 		String sourceType = rs.getString("source_type");
 		Long sourceId = nullableLong(rs, "source_id");
 		Long sourceLineId = nullableLong(rs, "source_line_id");
-		return new TrackingAllocationResponse(nullableLong(rs, "id"), trackingMethod.name(),
+		Long sourceAllocationId = sourceAllocationIdForResponse(allocationType, allocationId, sourceType, sourceId,
+				sourceLineId, nullableLong(rs, "batch_id"), nullableLong(rs, "serial_id"));
+		return new TrackingAllocationResponse(allocationId, sourceAllocationId, trackingMethod.name(),
 				trackingMethod.displayName(), nullableLong(rs, "batch_id"), rs.getString("batch_no"),
 				nullableLong(rs, "serial_id"), rs.getString("serial_no"), rs.getBigDecimal("quantity"),
 				qualityStatus, InventoryQualityStatus.valueOf(qualityStatus).displayName(),
 				nullableLong(rs, "movement_id"), rs.getString("document_type"), nullableLong(rs, "document_id"),
 				nullableLong(rs, "document_line_id"), sourceType, sourceId, sourceLineId,
 				sourceDocumentNo(sourceType, sourceId), sourceLineNo(sourceType, sourceLineId));
+	}
+
+	private Long sourceAllocationIdForResponse(String allocationType, Long allocationId, String sourceType,
+			Long sourceId, Long sourceLineId, Long batchId, Long serialId) {
+		if ("INBOUND".equals(allocationType) || "OUTBOUND".equals(allocationType)) {
+			return allocationId;
+		}
+		if (!"SOURCE_INHERIT".equals(allocationType) || sourceType == null || sourceId == null
+				|| sourceLineId == null) {
+			return null;
+		}
+		return this.jdbcTemplate.query("""
+				select id
+				from inv_stock_tracking_allocation
+				where allocation_type = 'OUTBOUND'
+				and document_type = ?
+				and document_id = ?
+				and document_line_id = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				order by id asc
+				limit 1
+				""", (rs, rowNum) -> rs.getLong("id"), sourceType, sourceId, sourceLineId, batchId, serialId)
+			.stream()
+			.findFirst()
+			.orElse(null);
 	}
 
 	private String sourceDocumentNo(String sourceType, Long sourceId) {
@@ -854,6 +945,11 @@ public class InventoryTrackingService {
 		return quantity == null ? ZERO : quantity;
 	}
 
+	private BigDecimal postedInheritedQuantity(String sourceType, Long sourceId, Long sourceLineId, Long batchId,
+			Long serialId) {
+		return postedInheritedQuantity(sourceType, sourceId, sourceLineId, batchId, serialId, "__NO_DOCUMENT__", -1L);
+	}
+
 	private BigDecimal sourceIdentityQuantityForUpdate(String sourceType, Long sourceId, Long sourceLineId,
 			Long batchId, Long serialId) {
 		return this.jdbcTemplate.query("""
@@ -983,10 +1079,11 @@ public class InventoryTrackingService {
 			BigDecimal quantity, InventoryQualityStatus qualityStatus, Long allocationId) {
 	}
 
-	public record TrackingAllocationResponse(Long allocationId, String trackingMethod, String trackingMethodName,
-			Long batchId, String batchNo, Long serialId, String serialNo, BigDecimal quantity, String qualityStatus,
-			String qualityStatusName, Long movementId, String documentType, Long documentId, Long documentLineId,
-			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, Integer sourceLineNo) {
+	public record TrackingAllocationResponse(Long allocationId, Long sourceAllocationId, String trackingMethod,
+			String trackingMethodName, Long batchId, String batchNo, Long serialId, String serialNo,
+			BigDecimal quantity, String qualityStatus, String qualityStatusName, Long movementId, String documentType,
+			Long documentId, Long documentLineId, String sourceType, Long sourceId, Long sourceLineId,
+			String sourceDocumentNo, Integer sourceLineNo) {
 	}
 
 	private record SerialState(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
@@ -995,6 +1092,12 @@ public class InventoryTrackingService {
 
 	private record SourceAllocation(Long id, Long batchId, String batchNo, Long serialId, String serialNo,
 			BigDecimal quantity) {
+	}
+
+	private record SourceAllocationResponseRow(Long id, String documentType, Long documentId, Long documentLineId,
+			String sourceType, Long sourceId, Long sourceLineId, InventoryTrackingMethod trackingMethod, Long batchId,
+			String batchNo, Long serialId, String serialNo, BigDecimal quantity,
+			InventoryQualityStatus qualityStatus, Long movementId) {
 	}
 
 }

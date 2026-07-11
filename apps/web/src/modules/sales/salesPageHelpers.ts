@@ -5,7 +5,7 @@ import type {
   SalesShipmentLineRecord,
   SalesShipmentStatus,
 } from '../../shared/api/salesApi'
-import type { InventoryQualityStatus } from '../../shared/api/inventoryApi'
+import type { InventoryQualityStatus, InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
 
 export interface SalesDecimalValidationResult {
   value: number | null
@@ -32,6 +32,8 @@ export interface SalesShipmentSourceLine {
   materialId: ResourceId
   materialCode: string
   materialName: string
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
   unitId: ResourceId
   unitName: string
   orderedQuantity: number
@@ -58,6 +60,8 @@ export interface SalesShipmentLineDraft {
   materialId: ResourceId | ''
   materialCode: string
   materialName: string
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
   unitId: ResourceId | ''
   unitName: string
   orderedQuantity: number
@@ -76,6 +80,7 @@ export interface SalesShipmentLineDraft {
   disabledReasonCode?: string | null
   disabledReason?: string | null
   maxSelectableQuantity?: string | number | null
+  trackingAllocations: InventoryTrackingAllocationPayload[]
   quantity: string
   remark: string
 }
@@ -257,6 +262,8 @@ export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
     materialId: '',
     materialCode: '',
     materialName: '',
+    trackingMethod: 'NONE',
+    trackingMethodName: '不追踪',
     unitId: '',
     unitName: '',
     orderedQuantity: 0,
@@ -275,6 +282,7 @@ export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
     disabledReasonCode: null,
     disabledReason: null,
     maxSelectableQuantity: null,
+    trackingAllocations: [],
     quantity: '',
     remark: '',
   }
@@ -302,6 +310,8 @@ export function salesShipmentSourceFromOrderLine(line: SalesOrderLineRecord): Sa
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: undefined,
+    trackingMethodName: undefined,
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.quantity) || 0,
@@ -330,6 +340,8 @@ export function salesShipmentSourceFromShipmentLine(line: SalesShipmentLineRecor
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: line.trackingMethod ?? 'NONE',
+    trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.orderedQuantity) || 0,

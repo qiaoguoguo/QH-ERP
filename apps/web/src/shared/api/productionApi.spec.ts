@@ -7,6 +7,7 @@ import {
   type ProductionCompletionReceiptRecord,
   type ProductionDocumentListParams,
   type ProductionMaterialIssueDetailRecord,
+  type ProductionMaterialIssueLineRecord,
   type ProductionMaterialIssueLinePayload,
   type ProductionMaterialIssuePayload,
   type ProductionMaterialIssueSummaryRecord,
@@ -140,8 +141,22 @@ describe('生产执行 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    materialIssueLineReturnsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialIssueLineRecord extends {
+        trackingMethod?: unknown
+        trackingMethodName?: unknown
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
     completionReceiptAcceptsTrackingAllocations: true as AssertTrue<
       ProductionCompletionReceiptPayload extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    completionReceiptReturnsTrackingAllocations: true as AssertTrue<
+      ProductionCompletionReceiptRecord extends {
+        trackingMethod?: unknown
+        trackingMethodName?: unknown
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
@@ -162,7 +177,9 @@ describe('生产执行 API', () => {
       reportsReturnPage: true,
       workOrderMaterialHasAvailabilityFields: true,
       materialIssueLineAcceptsTrackingAllocations: true,
+      materialIssueLineReturnsTrackingAllocations: true,
       completionReceiptAcceptsTrackingAllocations: true,
+      completionReceiptReturnsTrackingAllocations: true,
       workOrderDetailUsesMaterialIssueSummary: true,
       workOrderIncludesWarehouseAndCancelFields: true,
     })

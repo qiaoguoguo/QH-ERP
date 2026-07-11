@@ -3,10 +3,12 @@ import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createInventoryApi,
   type InventoryDocumentPayload,
+  type InventoryBatchSummaryRecord,
   type InventoryTrackingAllocationPayload,
   type InventoryBalanceRecord,
   type InventoryMovementRecord,
   type InventoryMovementType,
+  type InventorySerialSummaryRecord,
   type InventoryReservationStatus,
   type InventoryReservationType,
   type InventoryTrackingMethod,
@@ -57,6 +59,30 @@ describe('库存 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    batchCandidateHasConsumableFields: true as AssertTrue<
+      InventoryBatchSummaryRecord extends {
+        warehouseId?: unknown
+        warehouseName?: unknown
+        qualityStatus?: unknown
+        qualityStatusName?: unknown
+        stockStatus?: unknown
+        stockStatusName?: unknown
+        selectable?: unknown
+        disabledReasonCode?: unknown
+        disabledReason?: unknown
+      } ? true : false
+    >,
+    batchCandidateQualityStatusAllowsNull: true as AssertTrue<
+      null extends InventoryBatchSummaryRecord['qualityStatus'] ? true : false
+    >,
+    serialCandidateHasConsumableFields: true as AssertTrue<
+      InventorySerialSummaryRecord extends {
+        availableQuantity?: unknown
+        selectable?: unknown
+        disabledReasonCode?: unknown
+        disabledReason?: unknown
+      } ? true : false
+    >,
   }
 
   it('库存余额类型使用非负净需求缺口字段', () => {
@@ -65,6 +91,9 @@ describe('库存 API', () => {
       doesNotExposeLegacyNetRequirementQuantity: true,
       movementHasTargetDocumentNo: true,
       documentLineAcceptsTrackingAllocations: true,
+      batchCandidateHasConsumableFields: true,
+      batchCandidateQualityStatusAllowsNull: true,
+      serialCandidateHasConsumableFields: true,
     })
   })
 

@@ -330,6 +330,50 @@ describe('销售退货前端页面', () => {
     expect(router.currentRoute.value.name).toBe('sales-return-detail')
   })
 
+  it('销售退货新建页从来源行继承追踪身份并提交原 sourceAllocationId', async () => {
+    returnRefundReversalApiMock.salesReturnSources.list.mockResolvedValueOnce(page([
+      {
+        ...salesReturnSource,
+        lines: salesReturnSource.lines.map((line) => ({
+          ...line,
+          trackingAllocations: [
+            {
+              sourceAllocationId: 901,
+              batchId: 71,
+              batchNo: 'B-SH-001',
+              quantity: '2.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'SS202607050001',
+            },
+          ],
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(SalesReturnFormView, '/sales/returns/create', ['sales:return:create'])
+
+    expect(wrapper.text()).toContain('B-SH-001')
+    expect(wrapper.text()).toContain('来源继承，不可改选')
+
+    await wrapper.find('input[name="sales-return-business-date"]').setValue('2026-07-05')
+    await wrapper.find('input[name="sales-return-line-quantity-101"]').setValue('2.000000')
+    await wrapper.find('input[name="sales-return-line-reason-101"]').setValue('客户退回')
+    await wrapper.find('[data-test="submit-sales-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.salesReturns.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          sourceShipmentLineId: 101,
+          quantity: '2.000000',
+          trackingAllocations: [
+            { sourceAllocationId: 901, batchId: 71, quantity: '2.000000' },
+          ],
+          reason: '客户退回',
+        },
+      ],
+    }))
+  })
+
   it('编辑销售退货来源受限时可保存草稿行且不提交来源主键', async () => {
     returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
       ...salesReturnDetail,
@@ -370,6 +414,46 @@ describe('销售退货前端页面', () => {
     const payload = returnRefundReversalApiMock.salesReturns.update.mock.calls[0][1]
     expect(payload).not.toHaveProperty('sourceShipmentId')
     expect(payload.lines[0]).not.toHaveProperty('sourceShipmentLineId')
+  })
+
+  it('销售退货编辑页只读回显来源追踪身份并提交原 sourceAllocationId', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      lines: [
+        {
+          ...salesReturnDetail.lines[0],
+          trackingAllocations: [
+            {
+              sourceAllocationId: 901,
+              batchId: 71,
+              batchNo: 'B-SH-001',
+              quantity: '2.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'SS202607050001',
+            },
+          ],
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(SalesReturnFormView, '/sales/returns/1/edit', ['sales:return:update'])
+
+    expect(wrapper.text()).toContain('B-SH-001')
+    expect(wrapper.text()).toContain('SS202607050001')
+    expect(wrapper.find('[data-test="open-sales-return-tracking-0"]').exists()).toBe(false)
+
+    await wrapper.find('input[name="sales-return-line-quantity-101"]').setValue('2.000000')
+    await wrapper.find('input[name="sales-return-line-reason-101"]').setValue('客户退回')
+    await wrapper.find('[data-test="submit-sales-return"]').trigger('click')
+    await flushPromises()
+
+    const payload = returnRefundReversalApiMock.salesReturns.update.mock.calls[0][1]
+    expect(payload.lines[0].trackingAllocations).toEqual([
+      {
+        sourceAllocationId: 901,
+        batchId: 71,
+        quantity: '2.000000',
+      },
+    ])
   })
 
   it.each([
@@ -428,6 +512,32 @@ describe('销售退货前端页面', () => {
     await wrapper.find('[data-test="post-sales-return-detail"]').trigger('click')
     await flushPromises()
     expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1)
+  })
+
+  it('销售退货详情只读展示来源继承的批次或序列身份', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      lines: [
+        {
+          ...salesReturnDetail.lines[0],
+          trackingAllocations: [
+            {
+              sourceAllocationId: 901,
+              batchId: 71,
+              batchNo: 'B-SH-001',
+              quantity: '2.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'SS202607050001',
+            },
+          ],
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view', 'business:reversal:view'])
+
+    expect(wrapper.text()).toContain('批次/序列')
+    expect(wrapper.text()).toContain('B-SH-001')
+    expect(wrapper.text()).toContain('SS202607050001')
   })
 
   it('销售退货详情明确展示库存入库影响和应收冲减影响', async () => {

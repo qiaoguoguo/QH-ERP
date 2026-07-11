@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ResourceId } from '../../shared/api/procurementApi'
+import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import {
   formatProcurementQuantity,
   type PurchaseReceiptLineDraft,
@@ -22,6 +23,15 @@ const emit = defineEmits<{
   'update:lines': [lines: PurchaseReceiptLineDraft[]]
 }>()
 
+type TrackingAllocationEditorValue = Array<{
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
+  quantity?: string | number | null
+  qualityStatusName?: string | null
+}>
+
 function valueOrEmpty(value: ResourceId | '') {
   return value === null || value === undefined ? '' : value
 }
@@ -39,6 +49,8 @@ function updateSourceLine(index: number, value: ResourceId) {
     materialId: sourceLine?.materialId ?? '',
     materialCode: sourceLine?.materialCode ?? '',
     materialName: sourceLine?.materialName ?? '',
+    trackingMethod: sourceLine?.trackingMethod ?? 'NONE',
+    trackingMethodName: sourceLine?.trackingMethodName ?? '不追踪',
     unitId: sourceLine?.unitId ?? '',
     unitName: sourceLine?.unitName ?? '',
     orderedQuantity: sourceLine?.orderedQuantity ?? 0,
@@ -47,11 +59,25 @@ function updateSourceLine(index: number, value: ResourceId) {
     inTransitQuantity: sourceLine?.inTransitQuantity ?? null,
     inTransitStatus: sourceLine?.inTransitStatus ?? null,
     inTransitStatusName: sourceLine?.inTransitStatusName ?? null,
+    trackingAllocations: [],
   })
 }
 
 function updateText(index: number, key: 'quantity' | 'remark', value: string | number) {
   updateLine(index, { [key]: String(value) })
+}
+
+function updateTrackingAllocations(index: number, value: TrackingAllocationEditorValue) {
+  updateLine(index, {
+    trackingAllocations: value.map((allocation) => ({
+      ...(allocation.batchId !== null && allocation.batchId !== undefined ? { batchId: allocation.batchId } : {}),
+      ...(String(allocation.batchNo ?? '').trim() ? { batchNo: String(allocation.batchNo).trim() } : {}),
+      ...(allocation.serialId !== null && allocation.serialId !== undefined ? { serialId: allocation.serialId } : {}),
+      ...(String(allocation.serialNo ?? '').trim() ? { serialNo: String(allocation.serialNo).trim() } : {}),
+      quantity: String(allocation.quantity ?? '').trim(),
+      ...(allocation.qualityStatusName ? { qualityStatusName: allocation.qualityStatusName } : {}),
+    })),
+  })
 }
 
 function addLine() {
@@ -157,6 +183,19 @@ function removeLine(index: number) {
             />
           </template>
         </el-table-column>
+        <el-table-column label="追踪分配" min-width="420">
+          <template #default="{ row, $index }">
+            <TrackingAllocationEditor
+              v-if="row.trackingMethod && row.trackingMethod !== 'NONE'"
+              :model-value="row.trackingAllocations"
+              :tracking-method="row.trackingMethod"
+              :expected-quantity="row.quantity"
+              :disabled="readOnly"
+              @update:model-value="updateTrackingAllocations($index, $event)"
+            />
+            <span v-else class="tracking-empty-text">不追踪</span>
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ $index }">
             <el-button
@@ -208,5 +247,9 @@ function removeLine(index: number) {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
 }
 </style>

@@ -10,6 +10,8 @@ import {
 } from '../../shared/api/returnRefundReversalApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import { inferTrackingMethodFromAllocations } from '../inventory/tracking/trackingPayloadHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { formatSalesAmount } from '../sales/salesPageHelpers'
 import { formatProductionDateTime, formatProductionQuantity, productionErrorMessage } from '../production/productionPageHelpers'
@@ -306,6 +308,16 @@ onMounted(() => {
                 <span class="numeric-cell">{{ formatSalesAmount(row.amount) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="批次/序列" min-width="240">
+              <template #default="{ row }">
+                <TrackingAllocationReadonlyTable
+                  v-if="inferTrackingMethodFromAllocations(row.trackingAllocations) !== 'NONE'"
+                  :tracking-method="inferTrackingMethodFromAllocations(row.trackingAllocations)"
+                  :allocations="row.trackingAllocations ?? []"
+                />
+                <span v-else class="tracking-empty-text">不追踪</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
           </el-table>
         </div>
@@ -409,5 +421,10 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
+  font-size: 12px;
 }
 </style>

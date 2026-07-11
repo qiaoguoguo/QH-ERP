@@ -9,6 +9,8 @@ import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import { formatQuantity } from '../inventory/inventoryPageHelpers'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import { inferTrackingMethodFromAllocations } from '../inventory/tracking/trackingPayloadHelpers'
 import QualityStatusTag from './QualityStatusTag.vue'
 import QualityInspectionProcessDrawer from './QualityInspectionProcessDrawer.vue'
 
@@ -202,6 +204,16 @@ onMounted(loadRecords)
             <span class="numeric-cell">{{ formatQuantity(row.remainingQuantity) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="批次/序列" min-width="240">
+          <template #default="{ row }">
+            <TrackingAllocationReadonlyTable
+              v-if="inferTrackingMethodFromAllocations(row.trackingAllocations) !== 'NONE'"
+              :tracking-method="inferTrackingMethodFromAllocations(row.trackingAllocations)"
+              :allocations="row.trackingAllocations ?? []"
+            />
+            <span v-else class="tracking-empty-text">不追踪</span>
+          </template>
+        </el-table-column>
         <el-table-column label="合格/不合格/冻结" min-width="180" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">
@@ -271,5 +283,10 @@ onMounted(loadRecords)
   line-height: 1.4;
   max-width: 128px;
   white-space: normal;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
+  font-size: 12px;
 }
 </style>

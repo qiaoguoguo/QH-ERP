@@ -79,6 +79,13 @@ describe('销售 API', () => {
     shipmentPayloadLineAcceptsTrackingAllocations: true as AssertTrue<
       SalesShipmentLinePayload extends { trackingAllocations?: InventoryTrackingAllocationPayload[] } ? true : false
     >,
+    shipmentLineReturnsTrackingAllocations: true as AssertTrue<
+      SalesShipmentLineRecord extends {
+        trackingMethod?: unknown
+        trackingMethodName?: unknown
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('声明销售候选库存占用预留字段类型契约', () => {
@@ -89,6 +96,7 @@ describe('销售 API', () => {
       shipmentLineHasAvailabilityFields: true,
       shipmentLineHasReservationWarehouseFields: true,
       shipmentPayloadLineAcceptsTrackingAllocations: true,
+      shipmentLineReturnsTrackingAllocations: true,
     })
   })
 

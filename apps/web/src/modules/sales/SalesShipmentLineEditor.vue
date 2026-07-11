@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ResourceId } from '../../shared/api/salesApi'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import {
   formatSalesQuantity,
@@ -21,6 +22,7 @@ const props = withDefaults(defineProps<{
 
 const emit = defineEmits<{
   'update:lines': [lines: SalesShipmentLineDraft[]]
+  'open-tracking-picker': [index: number]
 }>()
 
 function valueOrEmpty(value: ResourceId | '') {
@@ -40,6 +42,8 @@ function updateSourceLine(index: number, value: ResourceId) {
     materialId: sourceLine?.materialId ?? '',
     materialCode: sourceLine?.materialCode ?? '',
     materialName: sourceLine?.materialName ?? '',
+    trackingMethod: sourceLine?.trackingMethod ?? 'NONE',
+    trackingMethodName: sourceLine?.trackingMethodName ?? '不追踪',
     unitId: sourceLine?.unitId ?? '',
     unitName: sourceLine?.unitName ?? '',
     orderedQuantity: sourceLine?.orderedQuantity ?? 0,
@@ -58,6 +62,7 @@ function updateSourceLine(index: number, value: ResourceId) {
     disabledReasonCode: sourceLine?.disabledReasonCode ?? null,
     disabledReason: sourceLine?.disabledReason ?? null,
     maxSelectableQuantity: sourceLine?.maxSelectableQuantity ?? null,
+    trackingAllocations: [],
   })
 }
 
@@ -110,6 +115,10 @@ function addLine() {
 
 function removeLine(index: number) {
   emit('update:lines', props.lines.filter((_, currentIndex) => currentIndex !== index))
+}
+
+function openTrackingPicker(index: number) {
+  emit('open-tracking-picker', index)
 }
 </script>
 
@@ -240,6 +249,26 @@ function removeLine(index: number) {
             />
           </template>
         </el-table-column>
+        <el-table-column label="批次/序列" min-width="260">
+          <template #default="{ row, $index }">
+            <template v-if="row.trackingMethod && row.trackingMethod !== 'NONE'">
+              <el-button
+                size="small"
+                :data-test="`open-sales-shipment-tracking-${$index}`"
+                :disabled="readOnly || isCandidateUnavailable(row)"
+                @click="openTrackingPicker($index)"
+              >
+                {{ row.trackingMethod === 'BATCH' ? '选择批次' : '选择序列号' }}
+              </el-button>
+              <TrackingAllocationReadonlyTable
+                class="line-tracking-readonly"
+                :tracking-method="row.trackingMethod"
+                :allocations="row.trackingAllocations"
+              />
+            </template>
+            <span v-else class="tracking-empty-text">不追踪</span>
+          </template>
+        </el-table-column>
         <el-table-column label="备注" min-width="150">
           <template #default="{ row, $index }">
             <el-input
@@ -303,6 +332,14 @@ function removeLine(index: number) {
   color: var(--el-color-danger);
   display: block;
   font-size: 12px;
+}
+
+.line-tracking-readonly {
+  margin-top: 8px;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
 }
 
 .numeric-cell {

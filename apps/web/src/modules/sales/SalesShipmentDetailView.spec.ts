@@ -74,6 +74,17 @@ const draftShipment: SalesShipmentDetailRecord = {
       quantity: '2.5',
       beforeQuantity: null,
       afterQuantity: null,
+      trackingMethod: 'BATCH',
+      trackingMethodName: '批次管理',
+      trackingAllocations: [
+        {
+          batchId: 320,
+          batchNo: 'B-FG-001',
+          quantity: '2.500000',
+          qualityStatusName: '合格',
+          sourceDocumentNo: 'PR-20260701-001',
+        },
+      ],
       remark: '按单出库',
     },
   ],
@@ -174,6 +185,9 @@ describe('销售出库详情页', () => {
     expect(wrapper.text()).toContain('华东客户')
     expect(wrapper.text()).toContain('FG-001 标准成品')
     expect(wrapper.text()).toContain('本次出库数量')
+    expect(wrapper.text()).toContain('批次/序列')
+    expect(wrapper.text()).toContain('B-FG-001')
+    expect(wrapper.text()).toContain('合格')
     expect(wrapper.text()).toContain('暂无库存流水')
     expect(wrapper.text()).not.toContain('DRAFT')
   })

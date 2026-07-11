@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { PurchaseOrderDetailRecord, PurchaseReceiptDetailRecord } from '../../shared/api/procurementApi'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import PurchaseReceiptFormView from './PurchaseReceiptFormView.vue'
 import PurchaseReceiptLineEditor from './PurchaseReceiptLineEditor.vue'
 
@@ -21,6 +22,9 @@ const procurementApiMock = vi.hoisted(() => ({
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
+  materials: {
+    get: vi.fn(),
+  },
   warehouses: {
     list: vi.fn(),
   },
@@ -205,6 +209,18 @@ describe('采购入库表单页', () => {
     procurementApiMock.receipts.get.mockResolvedValue(draftReceipt)
     procurementApiMock.receipts.create.mockResolvedValue(draftReceipt)
     procurementApiMock.receipts.update.mockResolvedValue(draftReceipt)
+    masterDataApiMock.materials.get.mockImplementation((id: number) => Promise.resolve({
+      id,
+      code: id === 10 ? 'RM-001' : 'RM-002',
+      name: id === 10 ? '冷轧钢板' : '紧固件',
+      status: 'ENABLED',
+      materialType: 'RAW_MATERIAL',
+      sourceType: 'PURCHASED',
+      trackingMethod: id === 10 ? 'BATCH' : 'NONE',
+      trackingMethodName: id === 10 ? '批次管理' : '不追踪',
+      categoryId: 1,
+      unitId: id === 10 ? 2 : 3,
+    }))
     masterDataApiMock.warehouses.list.mockResolvedValue({
       items: [warehouseA],
       page: 1,
@@ -275,6 +291,10 @@ describe('采购入库表单页', () => {
     const { wrapper, router } = await mountForm()
 
     await fillValidReceipt(wrapper)
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-PR-001', quantity: '2.500000' },
+    ])
+    await flushPromises()
     await wrapper.find('input[name="purchase-receipt-remark"]').setValue('首批入库')
     await wrapper.find('input[name="purchase-receipt-line-remark-0"]').setValue('按单入库')
     await wrapper.find('[data-test="save-purchase-receipt"]').trigger('click')
@@ -291,12 +311,61 @@ describe('采购入库表单页', () => {
           materialId: 10,
           unitId: 2,
           quantity: '2.500000',
+          trackingAllocations: [{ batchNo: 'B-PR-001', quantity: '2.500000' }],
           remark: '按单入库',
         },
       ],
     })
     expect(router.currentRoute.value.name).toBe('procurement-receipt-detail')
     expect(router.currentRoute.value.params.id).toBe('700')
+  })
+
+  it('批次管理采购入库行显示追踪分配并随保存提交', async () => {
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 0, 30)
+    await wrapper.find('input[name="purchase-receipt-business-date"]').setValue('2026-07-05')
+    await setSelectValue(wrapper, 1, 501)
+    await wrapper.find('input[name="purchase-receipt-line-quantity-0"]').setValue('2.500000')
+    await flushPromises()
+
+    expect(masterDataApiMock.materials.get).toHaveBeenCalledWith(10)
+    expect(wrapper.findComponent(TrackingAllocationEditor).exists()).toBe(true)
+    expect(wrapper.text()).toContain('批次分配')
+
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-PR-001', quantity: '2.500000' },
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="save-purchase-receipt"]').trigger('click')
+    await flushPromises()
+
+    expect(procurementApiMock.receipts.create).toHaveBeenCalledWith('99', expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          orderLineId: 501,
+          trackingAllocations: [{ batchNo: 'B-PR-001', quantity: '2.500000' }],
+        }),
+      ],
+    }))
+  })
+
+  it('批次管理采购入库追踪数量合计不一致时阻止保存', async () => {
+    const { wrapper } = await mountForm()
+
+    await fillValidReceipt(wrapper)
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-PR-001', quantity: '1.000000' },
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="save-purchase-receipt"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('追踪分配')
+    expect(wrapper.text()).toContain('与业务数量')
+    expect(procurementApiMock.receipts.create).not.toHaveBeenCalled()
   })
 
   it('编辑草稿时回填明细并提交更新', async () => {

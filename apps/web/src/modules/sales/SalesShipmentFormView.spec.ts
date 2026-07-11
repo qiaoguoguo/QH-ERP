@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { SalesOrderDetailRecord, SalesShipmentDetailRecord } from '../../shared/api/salesApi'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 import SalesShipmentFormView from './SalesShipmentFormView.vue'
 import SalesShipmentLineEditor from './SalesShipmentLineEditor.vue'
 
@@ -21,7 +22,19 @@ const salesApiMock = vi.hoisted(() => ({
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
+  materials: {
+    get: vi.fn(),
+  },
   warehouses: {
+    list: vi.fn(),
+  },
+}))
+
+const inventoryApiMock = vi.hoisted(() => ({
+  batches: {
+    list: vi.fn(),
+  },
+  serials: {
     list: vi.fn(),
   },
 }))
@@ -32,6 +45,11 @@ vi.mock('../../shared/api/salesApi', () => ({
 
 vi.mock('../../shared/api/masterDataApi', () => ({
   masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/inventoryApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/inventoryApi')>()),
+  inventoryApi: inventoryApiMock,
 }))
 
 const warehouseA: WarehouseRecord = {
@@ -234,6 +252,46 @@ describe('销售出库表单页', () => {
     salesApiMock.shipments.get.mockResolvedValue(draftShipment)
     salesApiMock.shipments.create.mockResolvedValue(draftShipment)
     salesApiMock.shipments.update.mockResolvedValue(draftShipment)
+    masterDataApiMock.materials.get.mockImplementation((id: number) => Promise.resolve({
+      id,
+      code: id === 10 ? 'FG-001' : 'SF-001',
+      name: id === 10 ? '标准成品' : '半成品组件',
+      status: 'ENABLED',
+      materialType: 'FINISHED_GOOD',
+      sourceType: 'SELF_MADE',
+      trackingMethod: id === 10 ? 'BATCH' : 'NONE',
+      trackingMethodName: id === 10 ? '批次管理' : '不追踪',
+      categoryId: 1,
+      unitId: id === 10 ? 2 : 3,
+    }))
+    inventoryApiMock.batches.list.mockResolvedValue({
+      items: [
+        {
+          id: 31,
+          batchNo: 'B-FG-001',
+          materialId: 10,
+          materialCode: 'FG-001',
+          materialName: '标准成品',
+          warehouseId: 30,
+          warehouseName: '成品仓',
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          stockStatus: 'IN_STOCK',
+          stockStatusName: '在库',
+          quantityOnHand: '6.000000',
+          availableQuantity: '6.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          updatedAt: '2026-07-05T09:00:00+08:00',
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    inventoryApiMock.serials.list.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
     masterDataApiMock.warehouses.list.mockResolvedValue({
       items: [warehouseA, warehouseB],
       page: 1,
@@ -400,6 +458,68 @@ describe('销售出库表单页', () => {
     })
     expect(router.currentRoute.value.name).toBe('sales-shipment-detail')
     expect(router.currentRoute.value.params.id).toBe('700')
+  })
+
+  it('批次管理销售出库行通过候选抽屉选择批次并随保存提交', async () => {
+    const { wrapper } = await mountForm()
+
+    await fillValidShipment(wrapper)
+    await wrapper.find('[data-test="open-sales-shipment-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.batches.list).toHaveBeenCalledWith(expect.objectContaining({
+      materialId: 10,
+      warehouseId: 30,
+      onlyAvailable: false,
+    }))
+    expect(wrapper.findComponent(TrackingPickerDrawer).exists()).toBe(true)
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('select', {
+      id: 31,
+      trackingNo: 'B-FG-001',
+      availableQuantity: '6.000000',
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.shipments.create).toHaveBeenCalledWith('99', expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          orderLineId: 501,
+          trackingAllocations: [{ batchId: 31, quantity: '2.500000' }],
+        }),
+      ],
+    }))
+  })
+
+  it('批次管理销售出库行可拆分多个批次并提交多条追踪分配', async () => {
+    const { wrapper } = await mountForm()
+
+    await fillValidShipment(wrapper)
+    await wrapper.find('[data-test="open-sales-shipment-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('confirm', [
+      { batchId: 31, batchNo: 'B-FG-001', quantity: '1.500000' },
+      { batchId: 32, batchNo: 'B-FG-002', quantity: '1.000000' },
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.shipments.create).toHaveBeenCalledWith('99', expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          orderLineId: 501,
+          trackingAllocations: [
+            { batchId: 31, quantity: '1.500000' },
+            { batchId: 32, quantity: '1.000000' },
+          ],
+        }),
+      ],
+    }))
   })
 
   it('编辑草稿时回填明细并提交更新', async () => {

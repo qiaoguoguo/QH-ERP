@@ -18,6 +18,7 @@ import {
   type SalesReturnDetail,
   type ProductionMaterialReturnCreatePayloadLine,
   type ProductionMaterialReturnUpdatePayload,
+  type ReversalDocumentLine,
   type SettlementAdjustmentDetail,
   type SettlementAdjustmentPayload,
 } from './returnRefundReversalApi'
@@ -349,6 +350,11 @@ describe('退货退款与反冲 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    reversalDetailLineReturnsTrackingAllocations: true as AssertTrue<
+      ReversalDocumentLine extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('退货反冲行载荷支持追踪分配', () => {
@@ -361,6 +367,7 @@ describe('退货退款与反冲 API', () => {
       productionReturnUpdateLineAcceptsTrackingAllocations: true,
       productionSupplementCreateLineAcceptsTrackingAllocations: true,
       productionSupplementUpdateLineAcceptsTrackingAllocations: true,
+      reversalDetailLineReturnsTrackingAllocations: true,
     })
   })
 

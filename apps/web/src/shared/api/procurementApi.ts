@@ -1,5 +1,10 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
-import type { InventoryDirection, InventoryMovementType, InventoryTrackingAllocationPayload } from './inventoryApi'
+import type {
+  InventoryDirection,
+  InventoryMovementType,
+  InventoryTrackingAllocationPayload,
+  InventoryTrackingMethod,
+} from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -114,6 +119,8 @@ export interface PurchaseReceiptLineRecord {
   materialId: ResourceId
   materialCode: string
   materialName: string
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
   unitId: ResourceId
   unitName: string
   orderedQuantity: number
@@ -125,6 +132,7 @@ export interface PurchaseReceiptLineRecord {
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   remark?: string | null
 }
 

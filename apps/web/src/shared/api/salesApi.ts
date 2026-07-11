@@ -4,6 +4,7 @@ import type {
   InventoryMovementType,
   InventoryQualityStatus,
   InventoryTrackingAllocationPayload,
+  InventoryTrackingMethod,
 } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
@@ -78,6 +79,9 @@ export interface SalesOrderLineRecord {
   reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   quantityOnHand?: string | number | null
   reservedQuantity?: string | number | null
   occupiedQuantity?: string | number | null
@@ -135,6 +139,9 @@ export interface SalesShipmentLineRecord {
   reservationWarehouseName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   quantityOnHand?: string | number | null
   reservedQuantity?: string | number | null
   occupiedQuantity?: string | number | null

@@ -389,11 +389,11 @@ public class QualityAdminService {
 			InventoryTrackingService.ResolvedTrackingAllocation allocation, InventoryQualityStatus qualityStatus,
 			Long movementId, Long allocationId, InventoryTrackingMethod trackingMethod, String documentType,
 			Long documentId, Long documentLineId) {
-		return new InventoryTrackingService.TrackingAllocationResponse(allocationId, trackingMethod.name(),
-				trackingMethod.displayName(), allocation.batchId(), allocation.batchNo(), allocation.serialId(),
-				allocation.serialNo(), allocation.quantity(), qualityStatus.name(), qualityStatus.displayName(),
-				movementId, documentType, documentId, documentLineId, documentType, documentId, documentLineId,
-				documentType + "-" + documentId, null);
+		return new InventoryTrackingService.TrackingAllocationResponse(allocationId, null, trackingMethod.name(),
+				trackingMethod.displayName(), allocation.batchId(), allocation.batchNo(),
+				allocation.serialId(), allocation.serialNo(), allocation.quantity(), qualityStatus.name(),
+				qualityStatus.displayName(), movementId, documentType, documentId, documentLineId, documentType,
+				documentId, documentLineId, documentType + "-" + documentId, null);
 	}
 
 	private long nextQualityStatusTransferSourceId() {
@@ -439,6 +439,8 @@ public class QualityAdminService {
 				? inspectionQuantity.subtract(processedQuantity) : ZERO;
 		Long sourceId = rs.getLong("source_id");
 		Long sourceLineId = rs.getLong("source_line_id");
+		List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations =
+				inspectionTrackingAllocations(status, sourceType, sourceId, sourceLineId, rs.getLong("id"));
 		return new QualityInspectionResponse(rs.getLong("id"), rs.getString("inspection_no"), sourceType,
 				parsedSourceType.displayName(), sourceId, sourceLineId, sourceDocumentNo(sourceType, sourceId),
 				rs.getLong("warehouse_id"), rs.getString("warehouse_code"), rs.getString("warehouse_name"),
@@ -454,7 +456,24 @@ public class QualityAdminService {
 				rs.getString("remark"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getString("updated_by"), rs.getObject("updated_at", OffsetDateTime.class),
 				rs.getString("completed_by"), rs.getObject("completed_at", OffsetDateTime.class), rs.getInt("version"),
-				this.inventoryTrackingService.allocationResponses(QUALITY_INSPECTION_SOURCE, rs.getLong("id")));
+				trackingAllocations);
+	}
+
+	private List<InventoryTrackingService.TrackingAllocationResponse> inspectionTrackingAllocations(
+			QualityInspectionStatus status, String sourceType, Long sourceId, Long sourceLineId, Long inspectionId) {
+		List<InventoryTrackingService.TrackingAllocationResponse> ownAllocations =
+				this.inventoryTrackingService.allocationResponses(QUALITY_INSPECTION_SOURCE, inspectionId);
+		if (!ownAllocations.isEmpty() || status != QualityInspectionStatus.PENDING) {
+			return ownAllocations;
+		}
+		String allocationDocumentType = switch (sourceType) {
+			case "PURCHASE_RECEIPT" -> "PURCHASE_RECEIPT";
+			case "PRODUCTION_COMPLETION" -> "PRODUCTION_COMPLETION_RECEIPT";
+			case "SALES_RETURN" -> "SALES_RETURN";
+			case "PRODUCTION_RETURN" -> "PRODUCTION_MATERIAL_RETURN";
+			default -> sourceType;
+		};
+		return this.inventoryTrackingService.allocationResponses(allocationDocumentType, sourceId, sourceLineId);
 	}
 
 	private String sourceDocumentNo(String sourceType, Long sourceId) {

@@ -8,6 +8,7 @@ import PurchaseReturnDetailView from './PurchaseReturnDetailView.vue'
 import PurchaseReturnFormView from './PurchaseReturnFormView.vue'
 import PurchaseReturnListView from './PurchaseReturnListView.vue'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 
 const returnRefundReversalApiMock = vi.hoisted(() => ({
   purchaseReturns: {
@@ -26,9 +27,33 @@ const returnRefundReversalApiMock = vi.hoisted(() => ({
   },
 }))
 
+const masterDataApiMock = vi.hoisted(() => ({
+  materials: {
+    get: vi.fn(),
+  },
+}))
+
+const inventoryApiMock = vi.hoisted(() => ({
+  batches: {
+    list: vi.fn(),
+  },
+  serials: {
+    list: vi.fn(),
+  },
+}))
+
 vi.mock('../../shared/api/returnRefundReversalApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/returnRefundReversalApi')>()),
   returnRefundReversalApi: returnRefundReversalApiMock,
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/inventoryApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/inventoryApi')>()),
+  inventoryApi: inventoryApiMock,
 }))
 
 const unrestrictedSource = {
@@ -260,6 +285,40 @@ describe('采购退货前端页面', () => {
     returnRefundReversalApiMock.purchaseReturns.cancel.mockResolvedValue({ ...purchaseReturnDetail, status: 'CANCELLED' })
     returnRefundReversalApiMock.purchaseReturnSources.list.mockResolvedValue(page([purchaseReturnSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(purchaseReturnDetail.traces)
+    masterDataApiMock.materials.get.mockResolvedValue({
+      id: 41,
+      code: 'RM-001',
+      name: '示例原料',
+      status: 'ENABLED',
+      materialType: 'RAW_MATERIAL',
+      sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
+      trackingMethodName: '批次管理',
+      categoryId: 1,
+      unitId: 1,
+    })
+    inventoryApiMock.batches.list.mockResolvedValue(page([
+      {
+        id: 910,
+        batchNo: 'B-PR-001',
+        materialId: 41,
+        materialCode: 'RM-001',
+        materialName: '示例原料',
+        warehouseId: 3,
+        warehouseName: '原料仓',
+        qualityStatus: 'QUALIFIED',
+        qualityStatusName: '合格',
+        stockStatus: 'IN_STOCK',
+        stockStatusName: '在库',
+        quantityOnHand: '8.000000',
+        availableQuantity: '8.000000',
+        selectable: true,
+        disabledReasonCode: null,
+        disabledReason: null,
+        updatedAt: '2026-07-05T11:00:00+08:00',
+      },
+    ], 20))
+    inventoryApiMock.serials.list.mockResolvedValue(page([], 20))
   })
 
   it('采购退货列表支持筛选、创建入口、状态展示和权限按钮', async () => {
@@ -330,6 +389,76 @@ describe('采购退货前端页面', () => {
       lines: [{ sourceReceiptLineId: 201, qualityStatus: 'QUALIFIED', quantity: '1.500000', reason: '来料退回' }],
     }))
     expect(router.currentRoute.value.name).toBe('procurement-return-detail')
+  })
+
+  it('批次管理采购退货通过候选抽屉选择批次并随保存提交', async () => {
+    const { wrapper } = await mountReversalView(PurchaseReturnFormView, '/procurement/returns/create', ['procurement:return:create'])
+
+    await wrapper.find('input[name="purchase-return-line-quantity-201"]').setValue('1.500000')
+    await wrapper.find('[data-test="open-purchase-return-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.batches.list).toHaveBeenCalledWith(expect.objectContaining({
+      materialId: 41,
+      warehouseId: 3,
+      onlyAvailable: false,
+    }))
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('select', {
+      id: 910,
+      trackingNo: 'B-PR-001',
+      availableQuantity: '8.000000',
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('B-PR-001')
+
+    await wrapper.find('input[name="purchase-return-line-reason-201"]').setValue('来料退回')
+    await wrapper.find('[data-test="submit-purchase-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.purchaseReturns.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          sourceReceiptLineId: 201,
+          qualityStatus: 'QUALIFIED',
+          quantity: '1.500000',
+          trackingAllocations: [{ batchId: 910, quantity: '1.500000' }],
+          reason: '来料退回',
+        },
+      ],
+    }))
+  })
+
+  it('批次管理采购退货可拆分多个批次并提交多条追踪分配', async () => {
+    const { wrapper } = await mountReversalView(PurchaseReturnFormView, '/procurement/returns/create', ['procurement:return:create'])
+
+    await wrapper.find('input[name="purchase-return-line-quantity-201"]').setValue('1.500000')
+    await wrapper.find('[data-test="open-purchase-return-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('confirm', [
+      { batchId: 910, batchNo: 'B-PR-001', quantity: '1.000000' },
+      { batchId: 911, batchNo: 'B-PR-002', quantity: '0.500000' },
+    ])
+    await flushPromises()
+
+    await wrapper.find('input[name="purchase-return-line-reason-201"]').setValue('来料退回')
+    await wrapper.find('[data-test="submit-purchase-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.purchaseReturns.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          sourceReceiptLineId: 201,
+          qualityStatus: 'QUALIFIED',
+          quantity: '1.500000',
+          trackingAllocations: [
+            { batchId: 910, quantity: '1.000000' },
+            { batchId: 911, quantity: '0.500000' },
+          ],
+          reason: '来料退回',
+        },
+      ],
+    }))
   })
 
   it('采购退货候选行展示质量状态、现存、合格可用、最大可选和禁用原因', async () => {

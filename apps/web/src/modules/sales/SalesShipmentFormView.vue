@@ -2,7 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
-import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { inventoryApi, type InventoryTrackingAllocationPayload } from '../../shared/api/inventoryApi'
 import {
   salesApi,
   type ResourceId,
@@ -13,6 +14,14 @@ import {
   type SalesShipmentPayload,
 } from '../../shared/api/salesApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
+import {
+  mapBatchCandidate,
+  mapSerialCandidate,
+  outboundTrackingAllocationsPayload,
+  validateOutboundTrackingAllocations,
+  type TrackingCandidateRecord,
+} from '../inventory/tracking/trackingPayloadHelpers'
 import { pageItems } from '../system/shared/pageHelpers'
 import SalesOrderStatusTag from './SalesOrderStatusTag.vue'
 import SalesShipmentLineEditor from './SalesShipmentLineEditor.vue'
@@ -42,6 +51,12 @@ const referenceError = ref('')
 const formError = ref('')
 const formSubmitting = ref(false)
 const lineErrors = ref<Record<number, string>>({})
+const materialTrackingCache = new Map<string, Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>()
+const trackingPickerVisible = ref(false)
+const trackingPickerLineIndex = ref<number | null>(null)
+const trackingCandidates = ref<TrackingCandidateRecord[]>([])
+const trackingCandidateLoading = ref(false)
+const trackingCandidateError = ref('')
 const form = reactive({
   warehouseId: '' as ResourceId | '',
   businessDate: '',
@@ -93,9 +108,9 @@ async function loadSourceOrder() {
   try {
     const detail = await salesApi.orders.get(route.params.orderId as ResourceId)
     sourceOrder.value = detail
-    sourceLines.value = detail.lines
+    sourceLines.value = await enrichSourceLineTracking(detail.lines
       .filter((line) => Number(line.remainingQuantity) > 0)
-      .map((line) => salesShipmentSourceFromOrderLine(line))
+      .map((line) => salesShipmentSourceFromOrderLine(line)))
     if (!allowedSourceStatuses.includes(detail.status)) {
       formError.value = '仅已确认或部分出库销售订单可创建销售出库'
     }
@@ -113,6 +128,8 @@ function draftFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentLine
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: line.trackingMethod ?? 'NONE',
+    trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.orderedQuantity) || 0,
@@ -131,6 +148,7 @@ function draftFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentLine
     disabledReasonCode: line.disabledReasonCode ?? null,
     disabledReason: line.disabledReason ?? null,
     maxSelectableQuantity: line.maxSelectableQuantity ?? null,
+    trackingAllocations: line.trackingAllocations ?? [],
     quantity: String(line.quantity),
     remark: line.remark ?? '',
   }
@@ -181,6 +199,8 @@ function refreshDraftLinesWithCurrentOrder(
       materialId: currentSourceLine.materialId,
       materialCode: currentSourceLine.materialCode,
       materialName: currentSourceLine.materialName,
+      trackingMethod: currentSourceLine.trackingMethod ?? line.trackingMethod ?? 'NONE',
+      trackingMethodName: currentSourceLine.trackingMethodName ?? line.trackingMethodName ?? '不追踪',
       unitId: currentSourceLine.unitId,
       unitName: currentSourceLine.unitName,
       orderedQuantity: currentSourceLine.orderedQuantity,
@@ -223,6 +243,35 @@ function syncWarehouseWithSelectedReservationLines() {
   }
 }
 
+async function materialTracking(materialId: ResourceId) {
+  const key = String(materialId)
+  const cached = materialTrackingCache.get(key)
+  if (cached) {
+    return cached
+  }
+  const material = await masterDataApi.materials.get(materialId)
+  const result = {
+    trackingMethod: material.trackingMethod,
+    trackingMethodName: material.trackingMethodName,
+  }
+  materialTrackingCache.set(key, result)
+  return result
+}
+
+async function enrichSourceLineTracking(sourceLines: SalesShipmentSourceLine[]): Promise<SalesShipmentSourceLine[]> {
+  return Promise.all(sourceLines.map(async (line) => {
+    if (line.trackingMethod) {
+      return line
+    }
+    const tracking = await materialTracking(line.materialId)
+    return {
+      ...line,
+      trackingMethod: tracking.trackingMethod,
+      trackingMethodName: tracking.trackingMethodName,
+    }
+  }))
+}
+
 function numericCandidateValue(line: SalesShipmentLineDraft, key: 'maxSelectableQuantity'): number | null {
   const value = line[key] ?? sourceLineForDraft(line)?.[key]
   if (value === null || value === undefined || value === '') {
@@ -246,6 +295,82 @@ function candidateUnavailable(line: SalesShipmentLineDraft): boolean {
     || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
 
+function trackingAllocationsPayload(line: SalesShipmentLineDraft) {
+  return outboundTrackingAllocationsPayload(line.trackingMethod ?? 'NONE', line.trackingAllocations, line.quantity)
+}
+
+function updateLine(index: number, patch: Partial<SalesShipmentLineDraft>) {
+  lines.value = lines.value.map((line, currentIndex) => (currentIndex === index ? { ...line, ...patch } : line))
+}
+
+async function openTrackingPicker(index: number) {
+  const line = lines.value[index]
+  if (!line || !line.trackingMethod || line.trackingMethod === 'NONE') {
+    return
+  }
+  const warehouseId = normalizeRequiredId(form.warehouseId)
+  const materialId = normalizeRequiredId(line.materialId)
+  if (warehouseId === null || materialId === null) {
+    formError.value = '请先选择出库仓库和来源订单行'
+    return
+  }
+  trackingPickerLineIndex.value = index
+  trackingPickerVisible.value = true
+  trackingCandidateLoading.value = true
+  trackingCandidateError.value = ''
+  try {
+    if (line.trackingMethod === 'BATCH') {
+      const page = await inventoryApi.batches.list({
+        materialId,
+        warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapBatchCandidate)
+    } else {
+      const page = await inventoryApi.serials.list({
+        materialId,
+        warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapSerialCandidate)
+    }
+  } catch (caught) {
+    trackingCandidates.value = []
+    trackingCandidateError.value = salesErrorMessage(caught)
+  } finally {
+    trackingCandidateLoading.value = false
+  }
+}
+
+function selectTrackingCandidate(candidate: { id: ResourceId; trackingNo: string; availableQuantity?: string | number | null }) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  const line = lines.value[index]
+  if (!line || !line.trackingMethod || line.trackingMethod === 'NONE') {
+    return
+  }
+  const allocation = line.trackingMethod === 'BATCH'
+    ? { batchId: candidate.id, batchNo: candidate.trackingNo, quantity: line.quantity || String(candidate.availableQuantity ?? '') }
+    : { serialId: candidate.id, serialNo: candidate.trackingNo, quantity: '1' }
+  updateLine(index, { trackingAllocations: [allocation] })
+  trackingPickerVisible.value = false
+}
+
+function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayload[]) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  updateLine(index, { trackingAllocations: allocations })
+  trackingPickerVisible.value = false
+}
+
 async function loadRecord() {
   if (!route.params.id) {
     return
@@ -267,7 +392,7 @@ async function loadRecord() {
     }
     const orderDetail = await salesApi.orders.get(detail.orderId)
     sourceOrder.value = orderDetail
-    sourceLines.value = mergeSourceLines(shipmentSourceLines, orderDetail)
+    sourceLines.value = await enrichSourceLineTracking(mergeSourceLines(shipmentSourceLines, orderDetail))
     lines.value = refreshDraftLinesWithCurrentOrder(lines.value, orderDetail)
   } catch (caught) {
     formError.value = salesErrorMessage(caught)
@@ -321,6 +446,17 @@ function validateForm(): SalesShipmentPayload | null {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行出库仓库必须与来源订单行预留仓库一致`
       continue
     }
+    if ((line.trackingAllocations ?? []).length > 0) {
+      const trackingMessages = validateOutboundTrackingAllocations(
+        line.trackingMethod ?? 'NONE',
+        line.trackingAllocations,
+        quantityResult.payloadValue,
+      )
+      if (trackingMessages.length > 0) {
+        nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${trackingMessages[0]}`
+        continue
+      }
+    }
     const duplicateKey = String(orderLineId)
     if (duplicateSourceLines.has(duplicateKey)) {
       formError.value = '同一销售出库内来源订单行不能重复'
@@ -336,6 +472,7 @@ function validateForm(): SalesShipmentPayload | null {
       ...(materialId !== null ? { materialId } : {}),
       ...(unitId !== null ? { unitId } : {}),
       quantity: quantityResult.payloadValue,
+      ...(trackingAllocationsPayload(line) ? { trackingAllocations: trackingAllocationsPayload(line) } : {}),
       ...(line.remark.trim() ? { remark: line.remark.trim() } : {}),
     })
   }
@@ -503,9 +640,22 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
           :source-lines="sourceLines"
           :errors="lineErrors"
           :read-only="!canEditForm"
+          @open-tracking-picker="openTrackingPicker"
         />
       </el-form-item>
     </el-form>
+
+    <TrackingPickerDrawer
+      v-model="trackingPickerVisible"
+      :tracking-method="trackingPickerLineIndex === null ? 'NONE' : (lines[trackingPickerLineIndex]?.trackingMethod ?? 'NONE')"
+      :candidates="trackingCandidates"
+      :selected-allocations="trackingPickerLineIndex === null ? [] : (lines[trackingPickerLineIndex]?.trackingAllocations ?? [])"
+      :expected-quantity="trackingPickerLineIndex === null ? null : lines[trackingPickerLineIndex]?.quantity"
+      :loading="trackingCandidateLoading"
+      :error="trackingCandidateError"
+      @select="selectTrackingCandidate"
+      @confirm="confirmTrackingAllocations"
+    />
 
     <div class="form-footer">
       <el-button @click="cancel">取消</el-button>

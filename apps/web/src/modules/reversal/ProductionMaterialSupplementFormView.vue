@@ -15,7 +15,18 @@ import {
   type ReversalSourceView,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
-import type { InventoryQualityStatus } from '../../shared/api/inventoryApi'
+import { inventoryApi, type InventoryQualityStatus, type InventoryTrackingAllocationPayload, type InventoryTrackingMethod } from '../../shared/api/inventoryApi'
+import { masterDataApi, type MaterialRecord } from '../../shared/api/masterDataApi'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
+import {
+  inferTrackingMethodFromAllocations,
+  mapBatchCandidate,
+  mapSerialCandidate,
+  outboundTrackingAllocationsPayload,
+  validateOutboundTrackingAllocations,
+  type TrackingCandidateRecord,
+} from '../inventory/tracking/trackingPayloadHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
@@ -31,6 +42,7 @@ interface MaterialSupplementLineDraft {
   id?: ResourceId
   workOrderMaterialId?: ResourceId
   lineNo: number
+  materialId: ResourceId
   materialCode: string
   materialName: string
   unitName: string
@@ -47,6 +59,9 @@ interface MaterialSupplementLineDraft {
   disabledReason?: string | null
   maxSelectableQuantity?: string | null
   unitPrice: string
+  trackingMethod: InventoryTrackingMethod
+  trackingMethodName: string
+  trackingAllocations: InventoryTrackingAllocationPayload[]
   quantity: string
   reason: string
 }
@@ -75,6 +90,12 @@ const submitting = ref(false)
 const error = ref('')
 const submitError = ref('')
 const nonEditableStatus = ref<ReversalStatus | null>(null)
+const materialTrackingCache = new Map<string, Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>()
+const trackingPickerVisible = ref(false)
+const trackingPickerLineIndex = ref<number | null>(null)
+const trackingCandidates = ref<TrackingCandidateRecord[]>([])
+const trackingCandidateLoading = ref(false)
+const trackingCandidateError = ref('')
 
 const selectedSource = computed(() => sources.value.find((source) =>
   String(source.workOrderId) === String(form.workOrderId)
@@ -104,10 +125,27 @@ function lineInputKey(line: MaterialSupplementLineDraft) {
   return line.workOrderMaterialId ?? line.id ?? line.lineNo
 }
 
-function lineDraftFromSource(line: ProductionMaterialSupplementSourceMaterial): MaterialSupplementLineDraft {
+async function materialTracking(materialId: ResourceId) {
+  const key = String(materialId)
+  const cached = materialTrackingCache.get(key)
+  if (cached) {
+    return cached
+  }
+  const material = await masterDataApi.materials.get(materialId)
+  const tracking = {
+    trackingMethod: material.trackingMethod,
+    trackingMethodName: material.trackingMethodName,
+  }
+  materialTrackingCache.set(key, tracking)
+  return tracking
+}
+
+async function lineDraftFromSource(line: ProductionMaterialSupplementSourceMaterial): Promise<MaterialSupplementLineDraft> {
+  const tracking = await materialTracking(line.materialId)
   return {
     workOrderMaterialId: line.workOrderMaterialId,
     lineNo: line.lineNo,
+    materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
@@ -124,6 +162,9 @@ function lineDraftFromSource(line: ProductionMaterialSupplementSourceMaterial): 
     disabledReason: line.disabledReason ?? null,
     maxSelectableQuantity: line.maxSelectableQuantity ?? null,
     unitPrice: line.unitPrice,
+    trackingMethod: tracking.trackingMethod,
+    trackingMethodName: tracking.trackingMethodName,
+    trackingAllocations: [],
     quantity: '',
     reason: '',
   }
@@ -135,6 +176,7 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialSupplementLine
     id: line.id,
     workOrderMaterialId: restricted ? undefined : line.sourceLineId,
     lineNo: line.lineNo,
+    materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
@@ -151,6 +193,9 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialSupplementLine
     disabledReason: null,
     maxSelectableQuantity: null,
     unitPrice: line.unitPrice ?? '',
+    trackingMethod: inferTrackingMethodFromAllocations(line.trackingAllocations),
+    trackingMethodName: inferTrackingMethodFromAllocations(line.trackingAllocations) === 'SERIAL' ? '序列号管理' : '批次管理',
+    trackingAllocations: line.trackingAllocations ?? [],
     quantity: line.quantity,
     reason: line.reason ?? '',
   }
@@ -182,7 +227,7 @@ async function loadSources() {
   })
   sources.value = pageItems(page)
   if (!isEdit.value && sources.value.length > 0 && form.workOrderId === '') {
-    chooseSource(sources.value[0])
+    await chooseSource(sources.value[0])
   }
 }
 
@@ -227,11 +272,11 @@ async function loadForm() {
   }
 }
 
-function chooseSource(source: ProductionMaterialSupplementSource) {
+async function chooseSource(source: ProductionMaterialSupplementSource) {
   form.workOrderId = source.workOrderId
   form.warehouseId = source.warehouseId
   form.businessDate = todayText()
-  lines.value = source.materials.map(lineDraftFromSource)
+  lines.value = await Promise.all(source.materials.map(lineDraftFromSource))
 }
 
 async function searchSources() {
@@ -247,6 +292,72 @@ async function searchSources() {
   } finally {
     loading.value = false
   }
+}
+
+function updateLine(index: number, patch: Partial<MaterialSupplementLineDraft>) {
+  lines.value = lines.value.map((line, currentIndex) => (currentIndex === index ? { ...line, ...patch } : line))
+}
+
+async function openTrackingPicker(index: number) {
+  const line = lines.value[index]
+  if (!line || line.trackingMethod === 'NONE' || !form.warehouseId) {
+    return
+  }
+  trackingPickerLineIndex.value = index
+  trackingPickerVisible.value = true
+  trackingCandidateLoading.value = true
+  trackingCandidateError.value = ''
+  try {
+    if (line.trackingMethod === 'BATCH') {
+      const page = await inventoryApi.batches.list({
+        materialId: line.materialId,
+        warehouseId: form.warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapBatchCandidate)
+    } else {
+      const page = await inventoryApi.serials.list({
+        materialId: line.materialId,
+        warehouseId: form.warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapSerialCandidate)
+    }
+  } catch (caught) {
+    trackingCandidates.value = []
+    trackingCandidateError.value = productionErrorMessage(caught)
+  } finally {
+    trackingCandidateLoading.value = false
+  }
+}
+
+function selectTrackingCandidate(candidate: TrackingCandidateRecord) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  const line = lines.value[index]
+  if (!line || line.trackingMethod === 'NONE') {
+    return
+  }
+  const allocation = line.trackingMethod === 'BATCH'
+    ? { batchId: candidate.id, batchNo: candidate.trackingNo, quantity: line.quantity || String(candidate.availableQuantity ?? '') }
+    : { serialId: candidate.id, serialNo: candidate.trackingNo, quantity: '1' }
+  updateLine(index, { trackingAllocations: [allocation] })
+  trackingPickerVisible.value = false
+}
+
+function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayload[]) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  updateLine(index, { trackingAllocations: allocations })
+  trackingPickerVisible.value = false
 }
 
 function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
@@ -278,9 +389,24 @@ function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
       submitError.value = `${line.materialName}：补料数量不能超过最大可选数量`
       return null
     }
+    if ((line.trackingAllocations ?? []).length > 0) {
+      const trackingMessages = validateOutboundTrackingAllocations(
+        line.trackingMethod,
+        line.trackingAllocations,
+        quantity.payloadValue,
+      )
+      if (trackingMessages.length > 0) {
+        submitError.value = `${line.materialName}：${trackingMessages[0]}`
+        return null
+      }
+    }
     const payloadLine: ProductionMaterialSupplementUpdatePayloadLine = {
       quantity: quantity.payloadValue,
       reason: line.reason,
+    }
+    const trackingPayload = outboundTrackingAllocationsPayload(line.trackingMethod, line.trackingAllocations, quantity.payloadValue)
+    if (trackingPayload) {
+      payloadLine.trackingAllocations = trackingPayload
     }
     if (isEdit.value && line.id !== undefined) {
       payloadLine.id = line.id
@@ -523,6 +649,27 @@ onMounted(() => {
                 <span class="numeric-cell">{{ formatSalesAmount(row.unitPrice) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="批次/序列" min-width="260">
+              <template #default="{ row, $index }">
+                <template v-if="row.trackingMethod !== 'NONE'">
+                  <el-button
+                    size="small"
+                    :data-test="`open-material-supplement-tracking-${$index}`"
+                    :disabled="lineUnavailable(row)"
+                    @click="openTrackingPicker($index)"
+                  >
+                    {{ row.trackingMethod === 'BATCH' ? '选择批次' : '选择序列号' }}
+                  </el-button>
+                  <TrackingAllocationReadonlyTable
+                    v-if="row.trackingAllocations.length > 0"
+                    class="line-tracking-readonly"
+                    :tracking-method="row.trackingMethod"
+                    :allocations="row.trackingAllocations"
+                  />
+                </template>
+                <span v-else class="tracking-empty-text">不追踪</span>
+              </template>
+            </el-table-column>
             <el-table-column label="补料数量" min-width="150">
               <template #default="{ row }">
                 <el-input
@@ -545,6 +692,18 @@ onMounted(() => {
           </el-table>
         </div>
       </el-card>
+
+      <TrackingPickerDrawer
+        v-model="trackingPickerVisible"
+        :tracking-method="trackingPickerLineIndex === null ? 'NONE' : lines[trackingPickerLineIndex]?.trackingMethod ?? 'NONE'"
+        :candidates="trackingCandidates"
+        :selected-allocations="trackingPickerLineIndex === null ? [] : (lines[trackingPickerLineIndex]?.trackingAllocations ?? [])"
+        :expected-quantity="trackingPickerLineIndex === null ? null : lines[trackingPickerLineIndex]?.quantity"
+        :loading="trackingCandidateLoading"
+        :error="trackingCandidateError"
+        @select="selectTrackingCandidate"
+        @confirm="confirmTrackingAllocations"
+      />
 
       <div class="form-actions">
         <el-button @click="backToList">取消</el-button>
@@ -589,6 +748,15 @@ onMounted(() => {
 
 .candidate-disabled-reason {
   color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.line-tracking-readonly {
+  margin-top: 8px;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
   font-size: 12px;
 }
 

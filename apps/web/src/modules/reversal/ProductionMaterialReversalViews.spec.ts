@@ -12,6 +12,7 @@ import ProductionMaterialSupplementFormView from './ProductionMaterialSupplement
 import ProductionMaterialSupplementListView from './ProductionMaterialSupplementListView.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 
 const returnRefundReversalApiMock = vi.hoisted(() => ({
   productionMaterialReturns: {
@@ -41,9 +42,33 @@ const returnRefundReversalApiMock = vi.hoisted(() => ({
   },
 }))
 
+const masterDataApiMock = vi.hoisted(() => ({
+  materials: {
+    get: vi.fn(),
+  },
+}))
+
+const inventoryApiMock = vi.hoisted(() => ({
+  batches: {
+    list: vi.fn(),
+  },
+  serials: {
+    list: vi.fn(),
+  },
+}))
+
 vi.mock('../../shared/api/returnRefundReversalApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/returnRefundReversalApi')>()),
   returnRefundReversalApi: returnRefundReversalApiMock,
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/inventoryApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/inventoryApi')>()),
+  inventoryApi: inventoryApiMock,
 }))
 
 const materialIssueSource = {
@@ -398,6 +423,40 @@ describe('生产退料补料前端页面', () => {
     returnRefundReversalApiMock.productionMaterialSupplements.cancel.mockResolvedValue({ ...materialSupplementDetail, status: 'CANCELLED' })
     returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValue(page([materialSupplementSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(materialReturnDetail.traces)
+    masterDataApiMock.materials.get.mockImplementation((id: number) => Promise.resolve({
+      id,
+      code: id === 52 ? 'RM-SUP-001' : 'RM-RET-001',
+      name: id === 52 ? '补料原料' : '退料原料',
+      status: 'ENABLED',
+      materialType: 'RAW_MATERIAL',
+      sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
+      trackingMethodName: '批次管理',
+      categoryId: 1,
+      unitId: 1,
+    }))
+    inventoryApiMock.batches.list.mockResolvedValue(page([
+      {
+        id: 920,
+        batchNo: 'B-MS-001',
+        materialId: 52,
+        materialCode: 'RM-SUP-001',
+        materialName: '补料原料',
+        warehouseId: 4,
+        warehouseName: '线边仓',
+        qualityStatus: 'QUALIFIED',
+        qualityStatusName: '合格',
+        stockStatus: 'IN_STOCK',
+        stockStatusName: '在库',
+        quantityOnHand: '9.000000',
+        availableQuantity: '9.000000',
+        selectable: true,
+        disabledReasonCode: null,
+        disabledReason: null,
+        updatedAt: '2026-07-05T13:00:00+08:00',
+      },
+    ], 20))
+    inventoryApiMock.serials.list.mockResolvedValue(page([], 20))
   })
 
   it('生产退料列表支持筛选、创建入口和权限按钮', async () => {
@@ -611,6 +670,187 @@ describe('生产退料补料前端页面', () => {
     expect(payload.lines[0]).not.toHaveProperty('sourceIssueLineId')
   })
 
+  it('生产退料新建页从来源行继承追踪身份并提交原 sourceAllocationId', async () => {
+    returnRefundReversalApiMock.productionMaterialReturnSources.list.mockResolvedValueOnce(page([
+      {
+        ...materialReturnSource,
+        lines: materialReturnSource.lines.map((line) => ({
+          ...line,
+          trackingAllocations: [
+            {
+              sourceAllocationId: 902,
+              batchId: 81,
+              batchNo: 'B-MI-001',
+              quantity: '3.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'MI202607050001',
+            },
+          ],
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnFormView, '/production/material-returns/create', ['production:material-return:create'])
+
+    expect(wrapper.text()).toContain('B-MI-001')
+    expect(wrapper.text()).toContain('来源继承，不可改选')
+
+    await wrapper.find('input[name="material-return-business-date"]').setValue('2026-07-05')
+    await wrapper.find('input[name="material-return-line-quantity-401"]').setValue('3.000000')
+    await wrapper.find('input[name="material-return-line-reason-401"]').setValue('余料退回')
+    await wrapper.find('[data-test="submit-material-return"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.productionMaterialReturns.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          sourceIssueLineId: 401,
+          quantity: '3.000000',
+          trackingAllocations: [
+            { sourceAllocationId: 902, batchId: 81, quantity: '3.000000' },
+          ],
+          reason: '余料退回',
+        },
+      ],
+    }))
+  })
+
+  it('批次管理生产补料通过候选抽屉选择批次并随保存提交', async () => {
+    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValueOnce(page([
+      {
+        ...materialSupplementSource,
+        materials: materialSupplementSource.materials.map((material) => ({
+          ...material,
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          availableQuantity: '9.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          maxSelectableQuantity: '9.000000',
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/create', ['production:material-supplement:create'])
+
+    await wrapper.find('input[name="material-supplement-line-quantity-501"]').setValue('2.000000')
+    await wrapper.find('[data-test="open-material-supplement-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.batches.list).toHaveBeenCalledWith(expect.objectContaining({
+      materialId: 52,
+      warehouseId: 4,
+      onlyAvailable: false,
+    }))
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('select', {
+      id: 920,
+      trackingNo: 'B-MS-001',
+      availableQuantity: '9.000000',
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('B-MS-001')
+
+    await wrapper.find('input[name="material-supplement-line-reason-501"]').setValue('损耗补料')
+    await wrapper.find('[data-test="submit-material-supplement"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          workOrderMaterialId: 501,
+          quantity: '2.000000',
+          trackingAllocations: [{ batchId: 920, quantity: '2.000000' }],
+          reason: '损耗补料',
+        },
+      ],
+    }))
+  })
+
+  it('批次管理生产补料可拆分多个批次并提交多条追踪分配', async () => {
+    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValueOnce(page([
+      {
+        ...materialSupplementSource,
+        materials: materialSupplementSource.materials.map((material) => ({
+          ...material,
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          availableQuantity: '9.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          maxSelectableQuantity: '9.000000',
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/create', ['production:material-supplement:create'])
+
+    await wrapper.find('input[name="material-supplement-line-quantity-501"]').setValue('2.000000')
+    await wrapper.find('[data-test="open-material-supplement-tracking-0"]').trigger('click')
+    await flushPromises()
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('confirm', [
+      { batchId: 920, batchNo: 'B-MS-001', quantity: '1.200000' },
+      { batchId: 921, batchNo: 'B-MS-002', quantity: '0.800000' },
+    ])
+    await flushPromises()
+
+    await wrapper.find('input[name="material-supplement-line-reason-501"]').setValue('损耗补料')
+    await wrapper.find('[data-test="submit-material-supplement"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        {
+          workOrderMaterialId: 501,
+          quantity: '2.000000',
+          trackingAllocations: [
+            { batchId: 920, quantity: '1.200000' },
+            { batchId: 921, quantity: '0.800000' },
+          ],
+          reason: '损耗补料',
+        },
+      ],
+    }))
+  })
+
+  it('生产退料编辑页只读回显来源追踪身份并提交原 sourceAllocationId', async () => {
+    returnRefundReversalApiMock.productionMaterialReturns.get.mockResolvedValueOnce({
+      ...materialReturnDetail,
+      lines: [
+        {
+          ...materialReturnDetail.lines[0],
+          trackingAllocations: [
+            {
+              sourceAllocationId: 902,
+              batchId: 81,
+              batchNo: 'B-MI-001',
+              quantity: '3.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'MI202607050001',
+            },
+          ],
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnFormView, '/production/material-returns/3/edit', ['production:material-return:update'])
+
+    expect(wrapper.text()).toContain('B-MI-001')
+    expect(wrapper.text()).toContain('MI202607050001')
+    expect(wrapper.find('[data-test="open-material-return-tracking-0"]').exists()).toBe(false)
+
+    await wrapper.find('input[name="material-return-line-quantity-401"]').setValue('3.000000')
+    await wrapper.find('input[name="material-return-line-reason-401"]').setValue('余料退回')
+    await wrapper.find('[data-test="submit-material-return"]').trigger('click')
+    await flushPromises()
+
+    const payload = returnRefundReversalApiMock.productionMaterialReturns.update.mock.calls[0][1]
+    expect(payload.lines[0].trackingAllocations).toEqual([
+      {
+        sourceAllocationId: 902,
+        batchId: 81,
+        quantity: '3.000000',
+      },
+    ])
+  })
+
   it('生产退料编辑页不把通用来源数量展示成已领数量', async () => {
     returnRefundReversalApiMock.productionMaterialReturns.get.mockResolvedValueOnce({
       ...materialReturnDetail,
@@ -787,6 +1027,35 @@ describe('生产退料补料前端页面', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('inventory-movements')
     expect(router.currentRoute.value.query.sourceId).toBe('3')
+  })
+
+  it('生产退料详情只读展示来源继承的批次或序列身份', async () => {
+    returnRefundReversalApiMock.productionMaterialReturns.get.mockResolvedValueOnce({
+      ...materialReturnDetail,
+      lines: [
+        {
+          ...materialReturnDetail.lines[0],
+          trackingAllocations: [
+            {
+              sourceAllocationId: 902,
+              batchId: 81,
+              batchNo: 'B-MI-001',
+              quantity: '3.000000',
+              qualityStatusName: '合格',
+              sourceDocumentNo: 'MI202607050001',
+            },
+          ],
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnDetailView, '/production/material-returns/3', [
+      'production:material-return:view',
+      'business:reversal:view',
+    ])
+
+    expect(wrapper.text()).toContain('批次/序列')
+    expect(wrapper.text()).toContain('B-MI-001')
+    expect(wrapper.text()).toContain('MI202607050001')
   })
 
   it('生产补料详情展示库存出库、成本影响且不沿用退料语义', async () => {

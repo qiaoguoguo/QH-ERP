@@ -5,6 +5,7 @@ import type {
   PurchaseReceiptLineRecord,
   PurchaseReceiptStatus,
 } from '../../shared/api/procurementApi'
+import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
 
 export interface ProcurementDecimalValidationResult {
   value: number | null
@@ -29,6 +30,8 @@ export interface PurchaseReceiptSourceLine {
   materialId: ResourceId
   materialCode: string
   materialName: string
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
   unitId: ResourceId
   unitName: string
   orderedQuantity: number
@@ -45,6 +48,8 @@ export interface PurchaseReceiptLineDraft {
   materialId: ResourceId | ''
   materialCode: string
   materialName: string
+  trackingMethod?: InventoryTrackingMethod | null
+  trackingMethodName?: string | null
   unitId: ResourceId | ''
   unitName: string
   orderedQuantity: number
@@ -54,6 +59,7 @@ export interface PurchaseReceiptLineDraft {
   inTransitStatus?: string | null
   inTransitStatusName?: string | null
   quantity: string
+  trackingAllocations: InventoryTrackingAllocationPayload[]
   remark: string
 }
 
@@ -209,6 +215,8 @@ export function newPurchaseReceiptLine(lineNo = 10): PurchaseReceiptLineDraft {
     materialId: '',
     materialCode: '',
     materialName: '',
+    trackingMethod: 'NONE',
+    trackingMethodName: '不追踪',
     unitId: '',
     unitName: '',
     orderedQuantity: 0,
@@ -218,6 +226,7 @@ export function newPurchaseReceiptLine(lineNo = 10): PurchaseReceiptLineDraft {
     inTransitStatus: null,
     inTransitStatusName: null,
     quantity: '',
+    trackingAllocations: [],
     remark: '',
   }
 }
@@ -229,6 +238,8 @@ export function purchaseReceiptSourceFromOrderLine(line: PurchaseOrderLineRecord
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: undefined,
+    trackingMethodName: undefined,
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.quantity) || 0,
@@ -247,6 +258,8 @@ export function purchaseReceiptSourceFromReceiptLine(line: PurchaseReceiptLineRe
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: line.trackingMethod ?? 'NONE',
+    trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.orderedQuantity) || 0,

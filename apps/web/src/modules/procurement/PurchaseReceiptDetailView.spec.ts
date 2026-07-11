@@ -71,6 +71,17 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
       quantity: 2.5,
       beforeQuantity: null,
       afterQuantity: null,
+      trackingMethod: 'BATCH',
+      trackingMethodName: '批次管理',
+      trackingAllocations: [
+        {
+          batchId: 310,
+          batchNo: 'B-RC-001',
+          quantity: '2.500000',
+          qualityStatusName: '待检',
+          sourceDocumentNo: 'PO-20260704-001',
+        },
+      ],
       remark: '按单入库',
     },
   ],
@@ -169,6 +180,9 @@ describe('采购入库详情页', () => {
     expect(wrapper.text()).toContain('华东五金')
     expect(wrapper.text()).toContain('RM-001 冷轧钢板')
     expect(wrapper.text()).toContain('本次入库数量')
+    expect(wrapper.text()).toContain('批次/序列')
+    expect(wrapper.text()).toContain('B-RC-001')
+    expect(wrapper.text()).toContain('待检')
     expect(wrapper.text()).toContain('暂无库存流水追溯')
     expect(wrapper.text()).not.toContain('DRAFT')
   })

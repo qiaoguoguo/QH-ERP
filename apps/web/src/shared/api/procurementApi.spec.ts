@@ -72,6 +72,13 @@ describe('采购 API', () => {
     receiptPayloadLineAcceptsTrackingAllocations: true as AssertTrue<
       PurchaseReceiptLinePayload extends { trackingAllocations?: InventoryTrackingAllocationPayload[] } ? true : false
     >,
+    receiptLineReturnsTrackingAllocations: true as AssertTrue<
+      PurchaseReceiptLineRecord extends {
+        trackingMethod?: unknown
+        trackingMethodName?: unknown
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('声明采购在途字段类型契约', () => {
@@ -80,6 +87,7 @@ describe('采购 API', () => {
       orderLineHasInTransitFields: true,
       receiptLineHasInTransitFields: true,
       receiptPayloadLineAcceptsTrackingAllocations: true,
+      receiptLineReturnsTrackingAllocations: true,
     })
   })
 

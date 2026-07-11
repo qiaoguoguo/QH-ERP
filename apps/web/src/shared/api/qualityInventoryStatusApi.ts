@@ -60,6 +60,7 @@ export interface QualityInspectionRecord {
   version: number
   canProcess: boolean
   disabledReason?: string | null
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
 }
 
 export interface QualityInspectionAuditRecord {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
+import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   productionApi,
   type ProductionCompletionReceiptPayload,
@@ -9,6 +10,8 @@ import {
   type ResourceId,
 } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
+import { validateInboundTrackingAllocations } from '../inventory/tracking/trackingPayloadHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
@@ -24,6 +27,11 @@ const router = useRouter()
 const authStore = useAuthStore()
 const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
 const warehouses = ref<WarehouseRecord[]>([])
+const productTracking = ref<Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>({
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
+})
+const trackingAllocations = ref<InventoryTrackingAllocationPayload[]>([])
 const loading = ref(true)
 const referenceLoading = ref(true)
 const error = ref('')
@@ -83,14 +91,39 @@ async function loadWorkOrder() {
   error.value = ''
   try {
     const detail = await productionApi.workOrders.get(route.params.id as ResourceId)
+    const material = await masterDataApi.materials.get(detail.productMaterialId)
     workOrder.value = detail
     form.receiptWarehouseId = detail.receiptWarehouseId
+    productTracking.value = {
+      trackingMethod: material.trackingMethod,
+      trackingMethodName: material.trackingMethodName,
+    }
+    trackingAllocations.value = []
   } catch (caught) {
     workOrder.value = null
+    productTracking.value = {
+      trackingMethod: 'NONE',
+      trackingMethodName: '不追踪',
+    }
+    trackingAllocations.value = []
     error.value = productionErrorMessage(caught)
   } finally {
     loading.value = false
   }
+}
+
+function trackingAllocationsPayload(trackingMethod: InventoryTrackingMethod) {
+  if (trackingMethod === 'NONE') {
+    return undefined
+  }
+  const allocations = trackingAllocations.value
+    .map((allocation) => ({
+      ...(trackingMethod === 'BATCH' && String(allocation.batchNo ?? '').trim() ? { batchNo: String(allocation.batchNo).trim() } : {}),
+      ...(trackingMethod === 'SERIAL' && String(allocation.serialNo ?? '').trim() ? { serialNo: String(allocation.serialNo).trim() } : {}),
+      quantity: String(allocation.quantity ?? (trackingMethod === 'SERIAL' ? '1' : '')).trim(),
+    }))
+    .filter((allocation) => (allocation.batchNo || allocation.serialNo) && allocation.quantity)
+  return allocations.length > 0 ? allocations : undefined
 }
 
 function validateForm(): ProductionCompletionReceiptPayload | null {
@@ -124,12 +157,25 @@ function validateForm(): ProductionCompletionReceiptPayload | null {
     formError.value = '入库数量不能超过累计合格报工减已入库数量'
     return null
   }
+  if (productTracking.value.trackingMethod !== 'NONE') {
+    const trackingMessages = validateInboundTrackingAllocations(
+      productTracking.value.trackingMethod,
+      trackingAllocations.value,
+      quantityResult.payloadValue,
+    )
+    if (trackingMessages.length > 0) {
+      formError.value = trackingMessages[0]
+      return null
+    }
+  }
 
   formError.value = ''
+  const trackingPayload = trackingAllocationsPayload(productTracking.value.trackingMethod)
   return {
     businessDate: form.businessDate.trim(),
     receiptWarehouseId,
     quantity: quantityResult.payloadValue,
+    ...(trackingPayload ? { trackingAllocations: trackingPayload } : {}),
     ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
   }
 }
@@ -213,6 +259,14 @@ onMounted(() => {
         </div>
         <el-form-item label="备注">
           <el-input v-model="form.remark" name="production-receipt-remark" type="textarea" :rows="3" placeholder="可选" :disabled="!canSubmitReceipt" />
+        </el-form-item>
+        <el-form-item v-if="productTracking.trackingMethod !== 'NONE'" :label="productTracking.trackingMethodName">
+          <TrackingAllocationEditor
+            v-model="trackingAllocations"
+            :tracking-method="productTracking.trackingMethod"
+            :expected-quantity="form.quantity"
+            :disabled="!canSubmitReceipt"
+          />
         </el-form-item>
       </el-form>
     </div>

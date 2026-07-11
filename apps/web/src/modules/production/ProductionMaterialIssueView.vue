@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { inventoryApi, type InventoryTrackingAllocationPayload, type InventoryTrackingMethod } from '../../shared/api/inventoryApi'
+import { masterDataApi, type MaterialRecord } from '../../shared/api/masterDataApi'
 import {
   productionApi,
   type ProductionMaterialIssuePayload,
@@ -9,8 +11,18 @@ import {
   type ResourceId,
 } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
+import {
+  mapBatchCandidate,
+  mapSerialCandidate,
+  outboundTrackingAllocationsPayload,
+  validateOutboundTrackingAllocations,
+  type TrackingCandidateRecord,
+} from '../inventory/tracking/trackingPayloadHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
+import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
@@ -23,6 +35,9 @@ interface IssueLineDraft {
   workOrderMaterialId: ResourceId
   lineNo: number
   warehouseId: ResourceId | ''
+  trackingMethod: InventoryTrackingMethod
+  trackingMethodName: string
+  trackingAllocations: InventoryTrackingAllocationPayload[]
   quantity: string
   remark: string
 }
@@ -37,6 +52,12 @@ const error = ref('')
 const formError = ref('')
 const formSubmitting = ref(false)
 const lineErrors = ref<Record<number, string>>({})
+const materialTrackingCache = new Map<string, Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>()
+const trackingPickerVisible = ref(false)
+const trackingPickerLineIndex = ref<number | null>(null)
+const trackingCandidates = ref<TrackingCandidateRecord[]>([])
+const trackingCandidateLoading = ref(false)
+const trackingCandidateError = ref('')
 const form = reactive({
   businessDate: todayText(),
   reason: '生产领料',
@@ -72,12 +93,18 @@ async function loadWorkOrder() {
   try {
     const detail = await productionApi.workOrders.get(route.params.id as ResourceId)
     workOrder.value = detail
-    lines.value = detail.materials.map((material) => ({
-      workOrderMaterialId: material.id,
-      lineNo: material.lineNo,
-      warehouseId: detail.issueWarehouseId,
-      quantity: '',
-      remark: '',
+    lines.value = await Promise.all(detail.materials.map(async (material) => {
+      const tracking = await materialTracking(material.materialId)
+      return {
+        workOrderMaterialId: material.id,
+        lineNo: material.lineNo,
+        warehouseId: detail.issueWarehouseId,
+        trackingMethod: tracking.trackingMethod,
+        trackingMethodName: tracking.trackingMethodName,
+        trackingAllocations: [],
+        quantity: '',
+        remark: '',
+      }
     }))
   } catch (caught) {
     workOrder.value = null
@@ -86,6 +113,21 @@ async function loadWorkOrder() {
   } finally {
     loading.value = false
   }
+}
+
+async function materialTracking(materialId: ResourceId) {
+  const key = String(materialId)
+  const cached = materialTrackingCache.get(key)
+  if (cached) {
+    return cached
+  }
+  const material = await masterDataApi.materials.get(materialId)
+  const result = {
+    trackingMethod: material.trackingMethod,
+    trackingMethodName: material.trackingMethodName,
+  }
+  materialTrackingCache.set(key, result)
+  return result
 }
 
 function materialForLine(line: IssueLineDraft): ProductionWorkOrderMaterialRecord | undefined {
@@ -108,6 +150,82 @@ function materialDisabledReason(material: ProductionWorkOrderMaterialRecord | un
 function materialUnavailable(material: ProductionWorkOrderMaterialRecord | undefined): boolean {
   const maxSelectableQuantity = numericMaterialValue(material, 'maxSelectableQuantity')
   return material?.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
+}
+
+function trackingAllocationsPayload(line: IssueLineDraft) {
+  return outboundTrackingAllocationsPayload(line.trackingMethod, line.trackingAllocations, line.quantity)
+}
+
+function updateLine(index: number, patch: Partial<IssueLineDraft>) {
+  lines.value = lines.value.map((line, currentIndex) => (currentIndex === index ? { ...line, ...patch } : line))
+}
+
+async function openTrackingPicker(index: number) {
+  const line = lines.value[index]
+  const material = materialForLine(line)
+  if (!line || line.trackingMethod === 'NONE' || !material) {
+    return
+  }
+  const warehouseId = normalizeRequiredId(line.warehouseId)
+  if (warehouseId === null) {
+    formError.value = '请选择领料仓库'
+    return
+  }
+  trackingPickerLineIndex.value = index
+  trackingPickerVisible.value = true
+  trackingCandidateLoading.value = true
+  trackingCandidateError.value = ''
+  try {
+    if (line.trackingMethod === 'BATCH') {
+      const page = await inventoryApi.batches.list({
+        materialId: material.materialId,
+        warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapBatchCandidate)
+    } else {
+      const page = await inventoryApi.serials.list({
+        materialId: material.materialId,
+        warehouseId,
+        onlyAvailable: false,
+        page: 1,
+        pageSize: 20,
+      })
+      trackingCandidates.value = pageItems(page).map(mapSerialCandidate)
+    }
+  } catch (caught) {
+    trackingCandidates.value = []
+    trackingCandidateError.value = productionErrorMessage(caught)
+  } finally {
+    trackingCandidateLoading.value = false
+  }
+}
+
+function selectTrackingCandidate(candidate: { id: ResourceId; trackingNo: string; availableQuantity?: string | number | null }) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  const line = lines.value[index]
+  if (!line || line.trackingMethod === 'NONE') {
+    return
+  }
+  const allocation = line.trackingMethod === 'BATCH'
+    ? { batchId: candidate.id, batchNo: candidate.trackingNo, quantity: line.quantity || String(candidate.availableQuantity ?? '') }
+    : { serialId: candidate.id, serialNo: candidate.trackingNo, quantity: '1' }
+  updateLine(index, { trackingAllocations: [allocation] })
+  trackingPickerVisible.value = false
+}
+
+function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayload[]) {
+  const index = trackingPickerLineIndex.value
+  if (index === null) {
+    return
+  }
+  updateLine(index, { trackingAllocations: allocations })
+  trackingPickerVisible.value = false
 }
 
 function validateForm(): ProductionMaterialIssuePayload | null {
@@ -166,11 +284,23 @@ function validateForm(): ProductionMaterialIssuePayload | null {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行领料仓库必须与工单领料仓库一致，按工单领料仓库消耗预留`
       continue
     }
+    if ((line.trackingAllocations ?? []).length > 0) {
+      const trackingMessages = validateOutboundTrackingAllocations(
+        line.trackingMethod,
+        line.trackingAllocations,
+        quantityResult.payloadValue,
+      )
+      if (trackingMessages.length > 0) {
+        nextLineErrors[line.lineNo] = trackingMessages[0]
+        continue
+      }
+    }
     payloadLines.push({
       workOrderMaterialId: line.workOrderMaterialId,
       lineNo: line.lineNo,
       warehouseId,
       quantity: quantityResult.payloadValue,
+      ...(trackingAllocationsPayload(line) ? { trackingAllocations: trackingAllocationsPayload(line) } : {}),
       ...(line.remark.trim() ? { remark: line.remark.trim() } : {}),
     })
   }
@@ -348,6 +478,27 @@ onMounted(() => {
               <div v-if="lineErrors[row.lineNo]" class="line-error">{{ lineErrors[row.lineNo] }}</div>
             </template>
           </el-table-column>
+          <el-table-column label="批次/序列" min-width="220">
+            <template #default="{ row, $index }">
+              <template v-if="row.trackingMethod !== 'NONE'">
+                <el-button
+                  size="small"
+                  :disabled="!canSubmitIssue || materialUnavailable(materialForLine(row))"
+                  :data-test="`open-production-issue-tracking-${$index}`"
+                  @click="openTrackingPicker($index)"
+                >
+                  {{ row.trackingMethod === 'SERIAL' ? '选择序列号' : '选择批次' }}
+                </el-button>
+                <TrackingAllocationReadonlyTable
+                  v-if="row.trackingAllocations.length > 0"
+                  class="line-tracking-readonly"
+                  :tracking-method="row.trackingMethod"
+                  :allocations="row.trackingAllocations"
+                />
+              </template>
+              <span v-else class="tracking-empty-text">不追踪</span>
+            </template>
+          </el-table-column>
           <el-table-column label="领料仓库" min-width="170">
             <template #default="{ row }">
               <el-select v-model="row.warehouseId" placeholder="工单领料仓库" style="width: 100%" disabled>
@@ -362,6 +513,19 @@ onMounted(() => {
           </el-table-column>
         </el-table>
       </div>
+
+      <TrackingPickerDrawer
+        v-model="trackingPickerVisible"
+        :tracking-method="trackingPickerLineIndex === null ? 'NONE' : lines[trackingPickerLineIndex]?.trackingMethod ?? 'NONE'"
+        :candidates="trackingCandidates"
+        :selected-allocations="trackingPickerLineIndex === null ? [] : (lines[trackingPickerLineIndex]?.trackingAllocations ?? [])"
+        :expected-quantity="trackingPickerLineIndex === null ? null : lines[trackingPickerLineIndex]?.quantity"
+        :loading="trackingCandidateLoading"
+        :error="trackingCandidateError"
+        title="选择批次/序列"
+        @select="selectTrackingCandidate"
+        @confirm="confirmTrackingAllocations"
+      />
     </div>
 
     <div class="form-footer">
@@ -431,6 +595,15 @@ onMounted(() => {
 
 .candidate-disabled-reason {
   color: var(--el-color-danger);
+  font-size: 12px;
+}
+
+.line-tracking-readonly {
+  margin-top: 8px;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
   font-size: 12px;
 }
 

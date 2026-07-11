@@ -216,9 +216,18 @@ export interface InventoryBatchSummaryRecord {
   sourceId?: ResourceId | null
   sourceLineId?: ResourceId | null
   sourceDocumentNo?: string | null
+  warehouseId?: ResourceId | null
+  warehouseName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  stockStatus?: InventoryStockStatus | null
+  stockStatusName?: string | null
   businessDate?: string | null
   quantityOnHand: number | string
   availableQuantity: number | string
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
   qualityStatusSummary?: InventoryTrackingQualityStatusSummary[]
   updatedAt: string
 }
@@ -243,6 +252,10 @@ export interface InventorySerialSummaryRecord {
   qualityStatusName?: string | null
   stockStatus?: InventoryStockStatus | null
   stockStatusName?: string | null
+  availableQuantity?: number | string | null
+  selectable?: boolean | null
+  disabledReasonCode?: string | null
+  disabledReason?: string | null
   sourceType?: string | null
   sourceId?: ResourceId | null
   sourceLineId?: ResourceId | null
@@ -257,12 +270,25 @@ export interface InventorySerialDetailRecord extends InventorySerialSummaryRecor
 }
 
 export interface InventoryTrackingAllocationPayload {
+  allocationId?: ResourceId
+  trackingMethod?: InventoryTrackingMethod
+  trackingMethodName?: string
   batchId?: ResourceId
   batchNo?: string
   serialId?: ResourceId
   serialNo?: string
   quantity: InventoryQuantityPayload
   qualityStatus?: InventoryQualityStatus
+  qualityStatusName?: string
+  movementId?: ResourceId
+  documentType?: string
+  documentId?: ResourceId
+  documentLineId?: ResourceId
+  sourceType?: string
+  sourceId?: ResourceId
+  sourceLineId?: ResourceId
+  sourceDocumentNo?: string
+  sourceLineNo?: number
   sourceAllocationId?: ResourceId
 }
 

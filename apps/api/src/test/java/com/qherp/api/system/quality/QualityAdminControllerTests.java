@@ -116,6 +116,55 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void pendingInspectionDetailReturnsSourceTrackingAllocationsAndProcessesMultipleBatchStatuses()
+			throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 7, 23);
+		long sourceId = 1_706_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 1_716_000L + SEQUENCE.incrementAndGet();
+		long firstBatchId = insertBatch(fixture, "QI-SRC-BATCH-A-" + SEQUENCE.incrementAndGet(), businessDate);
+		long secondBatchId = insertBatch(fixture, "QI-SRC-BATCH-B-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "2.000000", firstBatchId, null);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "3.000000", secondBatchId, null);
+		long firstSourceAllocationId = insertSourceTrackingAllocation(fixture, "PURCHASE_RECEIPT", sourceId,
+				sourceLineId, firstBatchId, null, "2.000000");
+		long secondSourceAllocationId = insertSourceTrackingAllocation(fixture, "PURCHASE_RECEIPT", sourceId,
+				sourceLineId, secondBatchId, null, "3.000000");
+		long inspectionId = insertPendingInspectionFromSource(fixture, sourceId, sourceLineId, "5.000000",
+				businessDate);
+
+		ResponseEntity<String> detail = get("/api/admin/quality/inspections/" + inspectionId, admin);
+		assertOk(detail);
+		JsonNode allocations = data(detail).get("trackingAllocations");
+		assertThat(allocations.size()).isEqualTo(2);
+		JsonNode firstAllocation = allocationByBatchId(allocations, firstBatchId);
+		JsonNode secondAllocation = allocationByBatchId(allocations, secondBatchId);
+		assertThat(firstAllocation.get("sourceAllocationId").longValue()).isEqualTo(firstSourceAllocationId);
+		assertThat(secondAllocation.get("sourceAllocationId").longValue()).isEqualTo(secondSourceAllocationId);
+		assertDecimal(firstAllocation, "quantity", "2.000000");
+		assertDecimal(secondAllocation, "quantity", "3.000000");
+
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("businessDate", businessDate.toString());
+		payload.put("qualifiedQuantity", "2.000000");
+		payload.put("rejectedQuantity", "3.000000");
+		payload.put("frozenQuantity", "0.000000");
+		payload.put("reason", "来源批次质量拆分");
+		payload.put("trackingAllocations",
+				List.of(trackingAllocation(firstBatchId, null, "2.000000", "QUALIFIED"),
+						trackingAllocation(secondBatchId, null, "3.000000", "REJECTED")));
+
+		assertOk(exchange(HttpMethod.POST, "/api/admin/quality/inspections/" + inspectionId + "/process", payload,
+				admin));
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED, firstBatchId, null),
+				"2.000000");
+		assertDecimal(trackingBalanceQuantity(fixture, InventoryQualityStatus.REJECTED, secondBatchId, null),
+				"3.000000");
+	}
+
+	@Test
 	void processInspectionMovesSerialsAsSingleQualityIdentities() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		QualityFixture fixture = fixture();
@@ -456,6 +505,32 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void pendingProductionCompletionInspectionDetailReturnsCompletionReceiptTrackingAllocations()
+			throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		LocalDate businessDate = LocalDate.of(2091, 10, 18);
+		String receiptNo = "MCR-QI-TRACK-" + SEQUENCE.incrementAndGet();
+		long inspectionId = productionCompletionInspection(fixture, receiptNo, "3.000000", businessDate);
+		long receiptId = inspectionSourceId(inspectionId);
+		long batchId = insertBatch(fixture, "QI-MCR-BATCH-" + SEQUENCE.incrementAndGet(), businessDate);
+		insertTrackedBalance(fixture, InventoryQualityStatus.PENDING_INSPECTION, "3.000000", batchId, null);
+		long sourceAllocationId = insertSourceTrackingAllocation(fixture, "PRODUCTION_COMPLETION_RECEIPT",
+				receiptId, receiptId, batchId, null, "3.000000");
+
+		ResponseEntity<String> detail = get("/api/admin/quality/inspections/" + inspectionId, admin);
+
+		assertOk(detail);
+		JsonNode allocations = data(detail).get("trackingAllocations");
+		assertThat(allocations.size()).isOne();
+		JsonNode allocation = allocations.get(0);
+		assertThat(allocation.get("sourceAllocationId").longValue()).isEqualTo(sourceAllocationId);
+		assertThat(allocation.get("batchId").longValue()).isEqualTo(batchId);
+		assertDecimal(allocation, "quantity", "3.000000");
+	}
+
+	@Test
 	void qualityInspectionListFiltersByWarehouseAndMaterial() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		QualityFixture matched = fixture();
@@ -602,6 +677,20 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				new BigDecimal(quantity));
 	}
 
+	private long insertPendingInspectionFromSource(QualityFixture fixture, long sourceId, long sourceLineId,
+			String quantity, LocalDate businessDate) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into qua_quality_inspection (
+					inspection_no, source_type, source_id, source_line_id, warehouse_id, material_id, unit_id,
+					business_date, inspection_quantity, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'PURCHASE_RECEIPT', ?, ?, ?, ?, ?, ?, ?, 'PENDING', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-SRC-TRACK-" + SEQUENCE.incrementAndGet(), sourceId, sourceLineId,
+				fixture.warehouseId(), fixture.materialId(), fixture.unitId(), businessDate,
+				new BigDecimal(quantity));
+	}
+
 	private long productionCompletionInspection(QualityFixture fixture, String receiptNo, String quantity,
 			LocalDate businessDate) {
 		long bomId = this.jdbcTemplate.queryForObject("""
@@ -696,6 +785,22 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				values (?, ?, ?, ?, 0, ?, ?, ?, now(), now())
 				""", fixture.warehouseId(), fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
 				qualityStatus.name(), batchId, serialId);
+	}
+
+	private long insertSourceTrackingAllocation(QualityFixture fixture, String documentType, long documentId,
+			long documentLineId, Long batchId, Long serialId, String quantity) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_tracking_allocation (
+					allocation_type, document_type, document_id, document_line_id, source_type, source_id,
+					source_line_id, warehouse_id, material_id, unit_id, quality_status, batch_id, serial_id,
+					quantity, created_by, created_at, updated_by, updated_at
+				)
+				values ('INBOUND', ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING_INSPECTION', ?, ?, ?, 'test', now(), 'test',
+					now())
+				returning id
+				""", Long.class, documentType, documentId, documentLineId, documentType, documentId, documentLineId,
+				fixture.warehouseId(), fixture.materialId(), fixture.unitId(), batchId, serialId,
+				new BigDecimal(quantity));
 	}
 
 	private long insertReservation(QualityFixture fixture, String reservationType, String sourceType, String quantity) {
@@ -1013,6 +1118,20 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		throw new AssertionError("质量确认记录未返回: " + inspectionId);
+	}
+
+	private long inspectionSourceId(long inspectionId) {
+		return this.jdbcTemplate.queryForObject(
+				"select source_id from qua_quality_inspection where id = ?", Long.class, inspectionId);
+	}
+
+	private JsonNode allocationByBatchId(JsonNode allocations, long batchId) {
+		for (JsonNode allocation : allocations) {
+			if (allocation.hasNonNull("batchId") && allocation.get("batchId").longValue() == batchId) {
+				return allocation;
+			}
+		}
+		throw new AssertionError("质量确认追踪分配缺少批次: " + batchId);
 	}
 
 	private String code(ResponseEntity<String> response) throws Exception {

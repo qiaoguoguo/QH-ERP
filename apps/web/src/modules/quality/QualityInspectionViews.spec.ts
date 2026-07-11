@@ -56,6 +56,15 @@ const pendingInspection = {
   version: 1,
   canProcess: true,
   disabledReason: null,
+  trackingAllocations: [
+    {
+      batchId: 610,
+      batchNo: 'B-QI-001',
+      quantity: '10.000000',
+      qualityStatusName: '待检',
+      sourceDocumentNo: 'RC202607100001',
+    },
+  ],
 }
 
 const completedInspection = {
@@ -149,6 +158,7 @@ describe('质量确认前端页面', () => {
     expect(wrapper.text()).toContain('RC202607100001')
     expect(wrapper.text()).toContain('冷轧钢板')
     expect(wrapper.text()).toContain('待检')
+    expect(wrapper.text()).toContain('B-QI-001')
     expect(wrapper.text()).toContain('已处理记录不可重复确认')
     expect(wrapper.find('[data-test="process-quality-inspection"]').exists()).toBe(true)
     const operationColumn = wrapper.findAllComponents({ name: 'ElTableColumn' })
@@ -255,10 +265,80 @@ describe('质量确认前端页面', () => {
       qualifiedQuantity: '8.000000',
       rejectedQuantity: '1.000000',
       frozenQuantity: '1.000000',
+      trackingAllocations: [
+        {
+          batchId: 610,
+          quantity: '8.000000',
+          qualityStatus: 'QUALIFIED',
+        },
+        {
+          batchId: 610,
+          quantity: '1.000000',
+          qualityStatus: 'REJECTED',
+        },
+        {
+          batchId: 610,
+          quantity: '1.000000',
+          qualityStatus: 'FROZEN',
+        },
+      ],
       reason: '检验完成',
     })
     expect(wrapper.text()).toContain('业务日期 2026-07-10 所属期间 2026-07 已锁定')
     expect(wrapper.text()).toContain('处理质量确认')
+  })
+
+  it('处理抽屉支持多条待检追踪身份分别提交不同质量状态', async () => {
+    qualityApiMock.inspections.get.mockResolvedValueOnce({
+      ...inspectionDetail,
+      remainingQuantity: '3.000000',
+      trackingAllocations: [
+        {
+          sourceAllocationId: 1001,
+          batchId: 610,
+          batchNo: 'B-QI-001',
+          quantity: '2.000000',
+          qualityStatusName: '待检',
+          sourceDocumentNo: 'RC202607100001',
+        },
+        {
+          sourceAllocationId: 1002,
+          batchId: 611,
+          batchNo: 'B-QI-002',
+          quantity: '1.000000',
+          qualityStatusName: '待检',
+          sourceDocumentNo: 'RC202607100001',
+        },
+      ],
+    })
+    const wrapper = await mountQuality()
+
+    await wrapper.find('[data-test="process-quality-inspection"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('B-QI-001')
+    expect(wrapper.text()).toContain('B-QI-002')
+    await wrapper.find('input[name="quality-process-allocation-qualified-0"]').setValue('1.000000')
+    await wrapper.find('input[name="quality-process-allocation-rejected-0"]').setValue('1.000000')
+    await wrapper.find('input[name="quality-process-allocation-frozen-0"]').setValue('0.000000')
+    await wrapper.find('input[name="quality-process-allocation-qualified-1"]').setValue('0.000000')
+    await wrapper.find('input[name="quality-process-allocation-rejected-1"]').setValue('0.000000')
+    await wrapper.find('input[name="quality-process-allocation-frozen-1"]').setValue('1.000000')
+    await wrapper.find('textarea[name="quality-process-reason"]').setValue('分批检验')
+    await wrapper.find('[data-test="submit-quality-process"]').trigger('click')
+    await flushPromises()
+
+    expect(qualityApiMock.inspections.process).toHaveBeenCalledWith(9, expect.objectContaining({
+      qualifiedQuantity: '1.000000',
+      rejectedQuantity: '1.000000',
+      frozenQuantity: '1.000000',
+      trackingAllocations: [
+        { sourceAllocationId: 1001, batchId: 610, quantity: '1.000000', qualityStatus: 'QUALIFIED' },
+        { sourceAllocationId: 1001, batchId: 610, quantity: '1.000000', qualityStatus: 'REJECTED' },
+        { sourceAllocationId: 1002, batchId: 611, quantity: '1.000000', qualityStatus: 'FROZEN' },
+      ],
+      reason: '分批检验',
+    }))
   })
 
   it('只读用户可查看列表但不能处理质量确认', async () => {

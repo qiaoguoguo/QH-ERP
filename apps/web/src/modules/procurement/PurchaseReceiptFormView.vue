@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
-import { masterDataApi, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   procurementApi,
   type PurchaseOrderDetailRecord,
@@ -13,6 +13,7 @@ import {
   type ResourceId,
 } from '../../shared/api/procurementApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import { validateInboundTrackingAllocations } from '../inventory/tracking/trackingPayloadHelpers'
 import { pageItems } from '../system/shared/pageHelpers'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import PurchaseReceiptLineEditor from './PurchaseReceiptLineEditor.vue'
@@ -48,6 +49,7 @@ const form = reactive({
   remark: '',
 })
 const lines = ref<PurchaseReceiptLineDraft[]>([newPurchaseReceiptLine()])
+const materialTrackingCache = new Map<string, Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>()
 
 const isEdit = computed(() => Boolean(route.params.id))
 const isPostedRecord = computed(() => editingRecord.value?.status === 'POSTED')
@@ -93,9 +95,9 @@ async function loadSourceOrder() {
   try {
     const detail = await procurementApi.orders.get(route.params.orderId as ResourceId)
     sourceOrder.value = detail
-    sourceLines.value = detail.lines
+    sourceLines.value = await enrichSourceLineTracking(detail.lines
       .filter((line) => Number(line.remainingQuantity) > 0)
-      .map((line) => purchaseReceiptSourceFromOrderLine(line))
+      .map((line) => purchaseReceiptSourceFromOrderLine(line)))
     if (!allowedSourceStatuses.includes(detail.status)) {
       formError.value = '仅已确认或部分入库采购订单可创建采购入库'
     }
@@ -113,6 +115,8 @@ function draftFromReceiptLine(line: PurchaseReceiptLineRecord): PurchaseReceiptL
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
+    trackingMethod: line.trackingMethod ?? 'NONE',
+    trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
     orderedQuantity: Number(line.orderedQuantity) || 0,
@@ -122,8 +126,38 @@ function draftFromReceiptLine(line: PurchaseReceiptLineRecord): PurchaseReceiptL
     inTransitStatus: line.inTransitStatus ?? null,
     inTransitStatusName: line.inTransitStatusName ?? null,
     quantity: String(line.quantity),
+    trackingAllocations: line.trackingAllocations ?? [],
     remark: line.remark ?? '',
   }
+}
+
+async function materialTracking(materialId: ResourceId) {
+  const key = String(materialId)
+  const cached = materialTrackingCache.get(key)
+  if (cached) {
+    return cached
+  }
+  const material = await masterDataApi.materials.get(materialId)
+  const result = {
+    trackingMethod: material.trackingMethod,
+    trackingMethodName: material.trackingMethodName,
+  }
+  materialTrackingCache.set(key, result)
+  return result
+}
+
+async function enrichSourceLineTracking(sourceLines: PurchaseReceiptSourceLine[]): Promise<PurchaseReceiptSourceLine[]> {
+  return Promise.all(sourceLines.map(async (line) => {
+    if (line.trackingMethod) {
+      return line
+    }
+    const tracking = await materialTracking(line.materialId)
+    return {
+      ...line,
+      trackingMethod: tracking.trackingMethod,
+      trackingMethodName: tracking.trackingMethodName,
+    }
+  }))
 }
 
 function mergeSourceLines(
@@ -171,6 +205,8 @@ function refreshDraftLinesWithCurrentOrder(
       materialId: currentSourceLine.materialId,
       materialCode: currentSourceLine.materialCode,
       materialName: currentSourceLine.materialName,
+      trackingMethod: currentSourceLine.trackingMethod ?? line.trackingMethod ?? 'NONE',
+      trackingMethodName: currentSourceLine.trackingMethodName ?? line.trackingMethodName ?? '不追踪',
       unitId: currentSourceLine.unitId,
       unitName: currentSourceLine.unitName,
       orderedQuantity: currentSourceLine.orderedQuantity,
@@ -204,7 +240,7 @@ async function loadRecord() {
     }
     const orderDetail = await procurementApi.orders.get(detail.orderId)
     sourceOrder.value = orderDetail
-    sourceLines.value = mergeSourceLines(receiptSourceLines, orderDetail)
+    sourceLines.value = await enrichSourceLineTracking(mergeSourceLines(receiptSourceLines, orderDetail))
     lines.value = refreshDraftLinesWithCurrentOrder(lines.value, orderDetail)
   } catch (caught) {
     formError.value = procurementErrorMessage(caught)
@@ -247,6 +283,17 @@ function validateForm(): PurchaseReceiptPayload | null {
       return null
     }
     duplicateSourceLines.add(duplicateKey)
+    if (line.trackingMethod && line.trackingMethod !== 'NONE') {
+      const trackingMessages = validateInboundTrackingAllocations(
+        line.trackingMethod,
+        line.trackingAllocations,
+        quantityResult.payloadValue,
+      )
+      if (trackingMessages.length > 0) {
+        nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${trackingMessages[0]}`
+        continue
+      }
+    }
     const materialId = normalizeRequiredId(line.materialId)
     const unitId = normalizeRequiredId(line.unitId)
     payloadLines.push({
@@ -255,6 +302,7 @@ function validateForm(): PurchaseReceiptPayload | null {
       ...(materialId !== null ? { materialId } : {}),
       ...(unitId !== null ? { unitId } : {}),
       quantity: quantityResult.payloadValue,
+      ...(trackingAllocationsPayload(line) ? { trackingAllocations: trackingAllocationsPayload(line) } : {}),
       ...(line.remark.trim() ? { remark: line.remark.trim() } : {}),
     })
   }
@@ -272,6 +320,20 @@ function validateForm(): PurchaseReceiptPayload | null {
     ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
     lines: payloadLines,
   }
+}
+
+function trackingAllocationsPayload(line: PurchaseReceiptLineDraft) {
+  if (!line.trackingMethod || line.trackingMethod === 'NONE') {
+    return undefined
+  }
+  const allocations = (line.trackingAllocations ?? [])
+    .map((allocation) => ({
+      ...(allocation.batchNo ? { batchNo: String(allocation.batchNo).trim() } : {}),
+      ...(allocation.serialNo ? { serialNo: String(allocation.serialNo).trim() } : {}),
+      quantity: String(allocation.quantity ?? (line.trackingMethod === 'SERIAL' ? '1' : '')).trim(),
+    }))
+    .filter((allocation) => (allocation.batchNo || allocation.serialNo) && allocation.quantity)
+  return allocations.length > 0 ? allocations : undefined
 }
 
 async function saveReceipt() {

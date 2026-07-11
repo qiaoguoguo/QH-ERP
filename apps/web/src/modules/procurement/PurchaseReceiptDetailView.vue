@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { procurementApi, type PurchaseReceiptDetailRecord, type ResourceId } from '../../shared/api/procurementApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import PurchaseReceiptStatusTag from './PurchaseReceiptStatusTag.vue'
@@ -246,6 +247,16 @@ onMounted(loadRecord)
                 <span class="numeric-cell">{{ formatProcurementQuantity(row.afterQuantity) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="批次/序列" min-width="240">
+              <template #default="{ row }">
+                <TrackingAllocationReadonlyTable
+                  v-if="row.trackingMethod && row.trackingMethod !== 'NONE'"
+                  :tracking-method="row.trackingMethod"
+                  :allocations="row.trackingAllocations ?? []"
+                />
+                <span v-else class="tracking-empty-text">不追踪</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
           </el-table>
         </div>
@@ -363,6 +374,11 @@ onMounted(loadRecord)
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
+  font-size: 12px;
 }
 
 @media (max-width: 900px) {

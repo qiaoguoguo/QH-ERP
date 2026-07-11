@@ -15,6 +15,13 @@ import {
   type ReversalSourceView,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import type { InventoryTrackingAllocationPayload } from '../../shared/api/inventoryApi'
+import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import {
+  inferTrackingMethodFromAllocations,
+  outboundTrackingAllocationsPayload,
+  validateOutboundTrackingAllocations,
+} from '../inventory/tracking/trackingPayloadHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import { formatSalesAmount } from '../sales/salesPageHelpers'
@@ -37,6 +44,7 @@ interface MaterialReturnLineDraft {
   returnableQuantity: string
   unitPrice: string
   returnableAmount: string
+  trackingAllocations: InventoryTrackingAllocationPayload[]
   quantity: string
   reason: string
 }
@@ -103,6 +111,7 @@ function lineDraftFromSource(line: ProductionMaterialReturnSourceLine): Material
     returnableQuantity: line.returnableQuantity,
     unitPrice: line.unitPrice,
     returnableAmount: line.returnableAmount,
+    trackingAllocations: line.trackingAllocations ?? [],
     quantity: '',
     reason: '',
   }
@@ -122,6 +131,7 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialReturnLineDraf
     returnableQuantity: line.returnableQuantityBefore ?? '',
     unitPrice: line.unitPrice ?? '',
     returnableAmount: line.amount ?? '',
+    trackingAllocations: line.trackingAllocations ?? [],
     quantity: line.quantity,
     reason: line.reason ?? '',
   }
@@ -218,6 +228,25 @@ function buildPayload(): ProductionMaterialReturnUpdatePayload | null {
     const payloadLine: ProductionMaterialReturnUpdatePayloadLine = {
       quantity: quantity.payloadValue,
       reason: line.reason,
+    }
+    if ((line.trackingAllocations ?? []).length > 0) {
+      const trackingMessages = validateOutboundTrackingAllocations(
+        inferTrackingMethodFromAllocations(line.trackingAllocations),
+        line.trackingAllocations,
+        quantity.payloadValue,
+      )
+      if (trackingMessages.length > 0) {
+        submitError.value = `${line.materialName}：${trackingMessages[0]}`
+        return null
+      }
+    }
+    const trackingPayload = outboundTrackingAllocationsPayload(
+      inferTrackingMethodFromAllocations(line.trackingAllocations),
+      line.trackingAllocations,
+      quantity.payloadValue,
+    )
+    if (trackingPayload) {
+      payloadLine.trackingAllocations = trackingPayload
     }
     if (isEdit.value && line.id !== undefined) {
       payloadLine.id = line.id
@@ -428,6 +457,22 @@ onMounted(() => {
                 <span class="numeric-cell">{{ formatSalesAmount(row.returnableAmount) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="批次/序列" min-width="240">
+              <template #default="{ row }">
+                <TrackingAllocationReadonlyTable
+                  v-if="inferTrackingMethodFromAllocations(row.trackingAllocations) !== 'NONE'"
+                  :tracking-method="inferTrackingMethodFromAllocations(row.trackingAllocations)"
+                  :allocations="row.trackingAllocations"
+                />
+                <div
+                  v-if="inferTrackingMethodFromAllocations(row.trackingAllocations) !== 'NONE'"
+                  class="tracking-inherited-note"
+                >
+                  来源继承，不可改选
+                </div>
+                <span v-else class="tracking-empty-text">不追踪</span>
+              </template>
+            </el-table-column>
             <el-table-column label="退料数量" min-width="150">
               <template #default="{ row }">
                 <el-input
@@ -489,6 +534,17 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.tracking-empty-text {
+  color: var(--qherp-muted);
+  font-size: 12px;
+}
+
+.tracking-inherited-note {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  margin-top: 6px;
 }
 
 .form-actions {

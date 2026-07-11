@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createQualityInventoryStatusApi,
+  type QualityInspectionDetail,
+  type QualityInspectionRecord,
   type QualityInspectionProcessPayload,
   type QualityStatusTransferPayload,
 } from './qualityInventoryStatusApi'
@@ -87,12 +89,24 @@ describe('质量库存状态 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    inspectionRecordReturnsTrackingAllocations: true as AssertTrue<
+      QualityInspectionRecord extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    inspectionDetailReturnsTrackingAllocations: true as AssertTrue<
+      QualityInspectionDetail extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('质量确认和冻结解冻载荷支持追踪分配', () => {
     expect(qualityTrackingTypeContract).toMatchObject({
       processAcceptsTrackingAllocations: true,
       transferAcceptsTrackingAllocations: true,
+      inspectionRecordReturnsTrackingAllocations: true,
+      inspectionDetailReturnsTrackingAllocations: true,
     })
   })
 

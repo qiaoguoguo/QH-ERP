@@ -69,6 +69,7 @@ export interface ReversalDocumentLine {
   reason?: string
   stockMovementId?: ResourceId
   costRecordId?: ResourceId
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   source: ReversalSourceView
 }
 
@@ -202,6 +203,7 @@ export interface SalesReturnSourceLine {
   shippedQuantity: ReversalDecimal
   returnedQuantity: ReversalDecimal
   returnableQuantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   unitPrice: ReversalMoney
   returnableAmount: ReversalMoney
 }
@@ -267,6 +269,7 @@ export interface ProductionMaterialReturnSourceLine {
   issuedQuantity: ReversalDecimal
   returnedQuantity: ReversalDecimal
   returnableQuantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   unitPrice: ReversalMoney
   returnableAmount: ReversalMoney
 }

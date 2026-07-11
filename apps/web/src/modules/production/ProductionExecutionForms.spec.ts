@@ -7,6 +7,8 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
 import { useAuthStore } from '../../stores/authStore'
+import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
+import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 import ProductionCompletionReceiptView from './ProductionCompletionReceiptView.vue'
 import ProductionMaterialIssueView from './ProductionMaterialIssueView.vue'
 import ProductionWorkReportView from './ProductionWorkReportView.vue'
@@ -28,7 +30,19 @@ const productionApiMock = vi.hoisted(() => ({
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
+  materials: {
+    get: vi.fn(),
+  },
   warehouses: {
+    list: vi.fn(),
+  },
+}))
+
+const inventoryApiMock = vi.hoisted(() => ({
+  batches: {
+    list: vi.fn(),
+  },
+  serials: {
     list: vi.fn(),
   },
 }))
@@ -39,6 +53,11 @@ vi.mock('../../shared/api/productionApi', () => ({
 
 vi.mock('../../shared/api/masterDataApi', () => ({
   masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/inventoryApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/inventoryApi')>()),
+  inventoryApi: inventoryApiMock,
 }))
 
 const warehouse: WarehouseRecord = {
@@ -202,6 +221,46 @@ describe('生产执行表单页', () => {
     productionApiMock.materialIssues.create.mockResolvedValue({ id: 1, issueNo: 'MI-001' })
     productionApiMock.reports.create.mockResolvedValue({ id: 2, reportNo: 'WR-001' })
     productionApiMock.completionReceipts.create.mockResolvedValue({ id: 3, receiptNo: 'CR-001' })
+    masterDataApiMock.materials.get.mockImplementation((id: number) => Promise.resolve({
+      id,
+      code: id === 10 ? 'FG-001' : 'RM-001',
+      name: id === 10 ? '成品 A' : '原材料 A',
+      status: 'ENABLED',
+      materialType: id === 10 ? 'FINISHED_GOOD' : 'RAW_MATERIAL',
+      sourceType: id === 10 ? 'SELF_MADE' : 'PURCHASED',
+      trackingMethod: 'BATCH',
+      trackingMethodName: '批次管理',
+      categoryId: 1,
+      unitId: id === 10 ? 2 : 3,
+    }))
+    inventoryApiMock.batches.list.mockResolvedValue({
+      items: [
+        {
+          id: 51,
+          batchNo: 'B-RM-001',
+          materialId: 11,
+          materialCode: 'RM-001',
+          materialName: '原材料 A',
+          warehouseId: 30,
+          warehouseName: '原料仓',
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          stockStatus: 'IN_STOCK',
+          stockStatusName: '在库',
+          quantityOnHand: '40.000000',
+          availableQuantity: '40.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          updatedAt: '2026-07-05T09:00:00+08:00',
+        },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    inventoryApiMock.serials.list.mockResolvedValue({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
     masterDataApiMock.warehouses.list.mockResolvedValue({
       items: [warehouse, spareWarehouse],
       page: 1,
@@ -340,6 +399,42 @@ describe('生产执行表单页', () => {
     expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
+  it('批次管理生产领料通过候选抽屉选择批次并提交', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    await wrapper.find('input[placeholder="0.000000"]').setValue('2.000000')
+    await wrapper.find('[data-test="open-production-issue-tracking-0"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.batches.list).toHaveBeenCalledWith(expect.objectContaining({
+      materialId: 11,
+      warehouseId: 30,
+      onlyAvailable: false,
+    }))
+    wrapper.findComponent(TrackingPickerDrawer).vm.$emit('select', {
+      id: 51,
+      trackingNo: 'B-RM-001',
+      availableQuantity: '40.000000',
+    })
+    await flushPromises()
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.materialIssues.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          workOrderMaterialId: 100,
+          trackingAllocations: [{ batchId: 51, quantity: '2.000000' }],
+        }),
+      ],
+    }))
+  })
+
   it('报工累计不能超过计划数量', async () => {
     const { wrapper } = await mountExecution(
       ProductionWorkReportView,
@@ -368,6 +463,48 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('入库数量不能超过累计合格报工减已入库数量')
+    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+  })
+
+  it('批次管理完工入库显示追踪分配并提交', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    await wrapper.find('input[name="production-receipt-quantity"]').setValue('5.000000')
+    expect(wrapper.findComponent(TrackingAllocationEditor).exists()).toBe(true)
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-FG-001', quantity: '5.000000' },
+    ])
+    await flushPromises()
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      quantity: '5.000000',
+      trackingAllocations: [{ batchNo: 'B-FG-001', quantity: '5.000000' }],
+    }))
+  })
+
+  it('批次管理完工入库追踪数量合计不一致时阻止保存', async () => {
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    await wrapper.find('input[name="production-receipt-quantity"]').setValue('5.000000')
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-FG-001', quantity: '3.000000' },
+    ])
+    await flushPromises()
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('追踪分配')
+    expect(wrapper.text()).toContain('与业务数量')
     expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
   })
 

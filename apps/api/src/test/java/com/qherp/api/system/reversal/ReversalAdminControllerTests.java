@@ -620,6 +620,45 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesReturnSourceIncludesRemainingTrackingAllocationsForSourceInheritance() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesReturnFixture fixture = salesReturnFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedSalesShipment shipment = createPostedShipmentWithReceivable(fixture, "5.000000", "10.000000",
+				"1.000000", "20.000000", "CONFIRMED", "70.00", "0.00", "70.00");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-SALES-SRC-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("SALES_SHIPMENT", shipment.shipmentId(),
+				shipment.firstShipmentLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				batch.batchId(), "5.000000", "SALES_SHIPMENT");
+
+		JsonNode source = firstItem(get("/api/admin/sales/return-sources?keyword=" + shipment.shipmentNo(), admin));
+		JsonNode sourceLine = source.get("lines").get(0);
+		assertThat(sourceLine.has("trackingAllocations")).isTrue();
+		JsonNode candidateAllocation = sourceLine.get("trackingAllocations").get(0);
+		assertThat(candidateAllocation.get("sourceAllocationId").longValue()).isEqualTo(sourceAllocationId);
+		assertThat(candidateAllocation.get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(candidateAllocation.get("quantity").decimalValue(), "5.000000");
+
+		ResponseEntity<String> created = post("/api/admin/sales/returns",
+				salesReturnPayload(shipment.shipmentId(), "sales-return-source-candidate-"
+						+ SEQUENCE.incrementAndGet(), List.of(returnLine(shipment.firstShipmentLineId(), "2.000000",
+								"批次销售退货", List.of(sourceInheritedBatchAllocation(
+										candidateAllocation.get("sourceAllocationId").longValue(),
+										candidateAllocation.get("batchId").longValue(), "2.000000"))))),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+		assertOk(put("/api/admin/sales/returns/" + returnId + "/post", Map.of(), admin));
+
+		JsonNode sourceAfterPartial = firstItem(get(
+				"/api/admin/sales/return-sources?keyword=" + shipment.shipmentNo(), admin));
+		JsonNode remainingAllocation = sourceAfterPartial.get("lines").get(0).get("trackingAllocations").get(0);
+		assertThat(remainingAllocation.get("sourceAllocationId").longValue()).isEqualTo(sourceAllocationId);
+		assertDecimal(remainingAllocation.get("quantity").decimalValue(), "3.000000");
+	}
+
+	@Test
 	void salesReturnRechecksSourceBatchRemainingAtPostWhenTwoDraftsUseSameSourceAllocation() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesReturnFixture fixture = salesReturnFixture();
@@ -707,6 +746,46 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				InventoryQualityStatus.PENDING_INSPECTION), "2.000000");
 		assertThat(trackingAllocationMovementCount("PRODUCTION_MATERIAL_RETURN", returnId, returnLineId)).isOne();
 		assertThat(trackedMovementCount("PRODUCTION_MATERIAL_RETURN", returnLineId, batch.batchId())).isOne();
+	}
+
+	@Test
+	void productionMaterialReturnSourceIncludesRemainingTrackingAllocationsForSourceInheritance()
+			throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionReversalFixture fixture = productionReversalFixture();
+		setTrackingMethod(fixture.materialId(), "BATCH");
+		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "5.000000", "10.000000");
+		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(),
+				"REV-MAT-SRC-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
+		long sourceAllocationId = insertTrackedOutboundSource("PRODUCTION_MATERIAL_ISSUE", issue.issueId(),
+				issue.issueLineId(), fixture.warehouseId(), fixture.materialId(), fixture.unitId(), batch.batchId(),
+				"5.000000", "PRODUCTION_ISSUE");
+
+		JsonNode source = firstItem(get("/api/admin/production/material-return-sources?keyword=" + issue.issueNo(),
+				admin));
+		JsonNode sourceLine = source.get("lines").get(0);
+		assertThat(sourceLine.has("trackingAllocations")).isTrue();
+		JsonNode candidateAllocation = sourceLine.get("trackingAllocations").get(0);
+		assertThat(candidateAllocation.get("sourceAllocationId").longValue()).isEqualTo(sourceAllocationId);
+		assertThat(candidateAllocation.get("batchId").longValue()).isEqualTo(batch.batchId());
+		assertDecimal(candidateAllocation.get("quantity").decimalValue(), "5.000000");
+
+		ResponseEntity<String> created = post("/api/admin/production/material-returns",
+				materialReturnPayload(issue.issueId(), "material-return-source-candidate-"
+						+ SEQUENCE.incrementAndGet(), List.of(materialReturnLine(issue.issueLineId(), "2.000000",
+								"批次生产退料", List.of(sourceInheritedBatchAllocation(
+										candidateAllocation.get("sourceAllocationId").longValue(),
+										candidateAllocation.get("batchId").longValue(), "2.000000"))))),
+				admin);
+		assertOk(created);
+		long returnId = data(created).get("id").longValue();
+		assertOk(put("/api/admin/production/material-returns/" + returnId + "/post", Map.of(), admin));
+
+		JsonNode sourceAfterPartial = firstItem(get(
+				"/api/admin/production/material-return-sources?keyword=" + issue.issueNo(), admin));
+		JsonNode remainingAllocation = sourceAfterPartial.get("lines").get(0).get("trackingAllocations").get(0);
+		assertThat(remainingAllocation.get("sourceAllocationId").longValue()).isEqualTo(sourceAllocationId);
+		assertDecimal(remainingAllocation.get("quantity").decimalValue(), "3.000000");
 	}
 
 	@Test
@@ -2921,6 +3000,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private JsonNode data(ResponseEntity<String> response) throws Exception {
 		return this.objectMapper.readTree(response.getBody()).get("data");
+	}
+
+	private JsonNode firstItem(ResponseEntity<String> response) throws Exception {
+		JsonNode items = data(response).get("items");
+		assertThat(items.size()).isGreaterThan(0);
+		return items.get(0);
 	}
 
 	private JsonNode purchaseReturnCandidate(JsonNode source, long receiptLineId, String qualityStatus) {
