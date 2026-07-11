@@ -215,6 +215,142 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void existingInventoryFactsRemainUntrackedAfterBatchSerialMigration() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "6.000000",
+				InventoryQualityStatus.QUALIFIED);
+		long reservationId = insertReservation(fixture, "RESERVATION", "SALES_ORDER", 93_000L, 93_001L,
+				"SO-019-001", "2.000000");
+
+		assertThat(this.jdbcTemplate.queryForObject("select tracking_method from mst_material where id = ?",
+				String.class, fixture.rawMaterialId())).isEqualTo("NONE");
+		assertTrackingColumnsAreNull("""
+				select batch_id, serial_id
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				""", fixture.rawWarehouseId(), fixture.rawMaterialId());
+		assertTrackingColumnsAreNull("""
+				select batch_id, serial_id
+				from inv_stock_movement
+				where warehouse_id = ?
+				and material_id = ?
+				order by id desc
+				limit 1
+				""", fixture.rawWarehouseId(), fixture.rawMaterialId());
+		assertTrackingColumnsAreNull("""
+				select batch_id, serial_id
+				from inv_stock_reservation
+				where id = ?
+				""", reservationId);
+
+		ResponseEntity<String> balances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(balances);
+		assertDecimal(firstItem(balances), "quantityOnHand", "6.000000");
+	}
+
+	@Test
+	void trackingFiltersReturnBatchSerialBalanceMovementAndTraceContracts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		TrackedInventoryFixture tracked = insertTrackedInventoryFacts(fixture);
+
+		ResponseEntity<String> defaultBalances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin);
+		assertOk(defaultBalances);
+		JsonNode defaultBalance = firstItem(defaultBalances);
+		assertThat(defaultBalance.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(defaultBalance.get("batchId").isNull()).isTrue();
+		assertThat(defaultBalance.get("serialId").isNull()).isTrue();
+		assertDecimal(defaultBalance, "quantityOnHand", "8.000000");
+
+		ResponseEntity<String> batchBalances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&trackingMethod=BATCH&batchNo=" + tracked.batchNo(), admin);
+		assertOk(batchBalances);
+		JsonNode batchBalance = firstItem(batchBalances);
+		assertThat(batchBalance.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(batchBalance.get("trackingMethodName").asText()).isEqualTo("批次管理");
+		assertThat(batchBalance.get("batchId").longValue()).isEqualTo(tracked.batchId());
+		assertThat(batchBalance.get("batchNo").asText()).isEqualTo(tracked.batchNo());
+		assertThat(batchBalance.get("serialId").isNull()).isTrue();
+		assertDecimal(batchBalance, "traceableQuantity", "8.000000");
+		assertDecimal(batchBalance, "availableQuantity", "8.000000");
+
+		ResponseEntity<String> serialBalances = get("/api/admin/inventory/balances?warehouseId="
+				+ fixture.rawWarehouseId() + "&trackingMethod=SERIAL&serialId=" + tracked.serialId(), admin);
+		assertOk(serialBalances);
+		JsonNode serialBalance = firstItem(serialBalances);
+		assertThat(serialBalance.get("trackingMethod").asText()).isEqualTo("SERIAL");
+		assertThat(serialBalance.get("serialId").longValue()).isEqualTo(tracked.serialId());
+		assertThat(serialBalance.get("serialNo").asText()).isEqualTo(tracked.serialNo());
+		assertDecimal(serialBalance, "traceableQuantity", "1.000000");
+
+		ResponseEntity<String> movements = get("/api/admin/inventory/movements?trackingMethod=BATCH&batchId="
+				+ tracked.batchId(), admin);
+		assertOk(movements);
+		JsonNode movement = firstItem(movements);
+		assertThat(movement.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(movement.get("batchId").longValue()).isEqualTo(tracked.batchId());
+		assertThat(movement.get("batchNo").asText()).isEqualTo(tracked.batchNo());
+		assertThat(movement.has("targetDocumentNo")).isTrue();
+	}
+
+	@Test
+	void batchSerialListsAndTraceEndpointsUseSeededPermissionsAndReturnFoundationalData() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		TrackedInventoryFixture tracked = insertTrackedInventoryFacts(fixture);
+
+		ResponseEntity<String> batches = get("/api/admin/inventory/batches?batchNo=" + tracked.batchNo(), admin);
+		assertOk(batches);
+		JsonNode batch = firstItem(batches);
+		assertThat(batch.get("id").longValue()).isEqualTo(tracked.batchId());
+		assertThat(batch.get("batchNo").asText()).isEqualTo(tracked.batchNo());
+		assertDecimal(batch, "quantityOnHand", "8.000000");
+		assertDecimal(batch, "availableQuantity", "8.000000");
+		assertThat(batch.get("qualityStatusSummary").isArray()).isTrue();
+
+		ResponseEntity<String> batchDetail = get("/api/admin/inventory/batches/" + tracked.batchId(), admin);
+		assertOk(batchDetail);
+		assertThat(data(batchDetail).get("batchNo").asText()).isEqualTo(tracked.batchNo());
+
+		ResponseEntity<String> serials = get("/api/admin/inventory/serials?serialNo=" + tracked.serialNo(), admin);
+		assertOk(serials);
+		JsonNode serial = firstItem(serials);
+		assertThat(serial.get("id").longValue()).isEqualTo(tracked.serialId());
+		assertThat(serial.get("serialNo").asText()).isEqualTo(tracked.serialNo());
+		assertThat(serial.get("stockStatus").asText()).isEqualTo("IN_STOCK");
+
+		ResponseEntity<String> serialDetail = get("/api/admin/inventory/serials/" + tracked.serialId(), admin);
+		assertOk(serialDetail);
+		assertThat(data(serialDetail).get("serialNo").asText()).isEqualTo(tracked.serialNo());
+
+		ResponseEntity<String> batchTrace = get("/api/admin/inventory/traces/batches/" + tracked.batchId(), admin);
+		assertOk(batchTrace);
+		JsonNode batchTraceData = data(batchTrace);
+		assertThat(batchTraceData.get("subject").get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(batchTraceData.get("subject").get("batchNo").asText()).isEqualTo(tracked.batchNo());
+		assertThat(batchTraceData.get("currentBalances").isArray()).isTrue();
+		assertThat(batchTraceData.get("movements").isArray()).isTrue();
+
+		ResponseEntity<String> serialTrace = get("/api/admin/inventory/traces/serials/" + tracked.serialId(), admin);
+		assertOk(serialTrace);
+		assertThat(data(serialTrace).get("subject").get("serialNo").asText()).isEqualTo(tracked.serialNo());
+
+		AuthenticatedSession noInventory = createNoInventoryUserAndLogin();
+		assertForbidden(get("/api/admin/inventory/batches?batchNo=" + tracked.batchNo(), noInventory));
+		assertForbidden(get("/api/admin/inventory/traces/batches/" + tracked.batchId(), noInventory));
+		assertError(get("/api/admin/inventory/traces/batches/999999999", admin), HttpStatus.NOT_FOUND,
+				"INVENTORY_TRACKING_NOT_FOUND");
+		assertError(get("/api/admin/inventory/traces/serials/999999999", admin), HttpStatus.NOT_FOUND,
+				"INVENTORY_TRACKING_NOT_FOUND");
+	}
+
+	@Test
 	void postingServiceRejectsNonQualifiedOrdinaryOutbound() {
 		InventoryFixture fixture = fixture();
 		long sourceId = 850_000L + SEQUENCE.incrementAndGet();
@@ -964,6 +1100,73 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				sourceLineId, sourceDocumentNo, LocalDate.now(), "018 库存预留测试");
 	}
 
+	private TrackedInventoryFixture insertTrackedInventoryFacts(InventoryFixture fixture) {
+		int suffix = SEQUENCE.incrementAndGet();
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",
+				fixture.rawMaterialId());
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'SERIAL' where id = ?",
+				fixture.semiMaterialId());
+		long batchId = this.jdbcTemplate.queryForObject("""
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date, remark,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'PURCHASE_RECEIPT', ?, ?, ?, '批次追踪测试', 'tester', now(), 'tester', now())
+				returning id
+				""", Long.class, fixture.rawMaterialId(), "B-TRACE-" + suffix, 2_000_000L + suffix,
+				2_100_000L + suffix, LocalDate.now());
+		long batchMovementId = insertTrackedMovement(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "8.000000", batchId, null, "TRACK_BATCH", 2_200_000L + suffix);
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					batch_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', ?, now(), now())
+				""", fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+				new BigDecimal("8.000000"), batchId);
+
+		long serialId = this.jdbcTemplate.queryForObject("""
+				insert into inv_serial (
+					material_id, serial_no, source_type, source_id, source_line_id, warehouse_id, quality_status,
+					stock_status, business_date, remark, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'PRODUCTION_COMPLETION', ?, ?, ?, 'QUALIFIED', 'IN_STOCK', ?, '序列追踪测试',
+					'tester', now(), 'tester', now())
+				returning id
+				""", Long.class, fixture.semiMaterialId(), "SN-TRACE-" + suffix, 2_300_000L + suffix,
+				2_400_000L + suffix, fixture.rawWarehouseId(), LocalDate.now());
+		long serialMovementId = insertTrackedMovement(fixture.rawWarehouseId(), fixture.semiMaterialId(),
+				fixture.eachUnitId(), "1.000000", null, serialId, "TRACK_SERIAL", 2_500_000L + suffix);
+		this.jdbcTemplate.update("update inv_serial set last_movement_id = ? where id = ?", serialMovementId,
+				serialId);
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					serial_id, created_at, updated_at
+				)
+				values (?, ?, ?, 1, 0, 'QUALIFIED', ?, now(), now())
+				""", fixture.rawWarehouseId(), fixture.semiMaterialId(), fixture.eachUnitId(), serialId);
+		return new TrackedInventoryFixture(batchId, "B-TRACE-" + suffix, batchMovementId, serialId,
+				"SN-TRACE-" + suffix, serialMovementId);
+	}
+
+	private long insertTrackedMovement(long warehouseId, long materialId, long unitId, String quantity, Long batchId,
+			Long serialId, String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date, reason,
+					remark, operator_name, occurred_at, quality_status, batch_id, serial_id
+				)
+				values (?, 'ADJUSTMENT_INCREASE', 'IN', ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, '追踪接口测试',
+					'追踪接口测试', 'tester', now(), 'QUALIFIED', ?, ?)
+				returning id
+				""", Long.class, "MV-TRACE-" + SEQUENCE.incrementAndGet(), warehouseId, materialId, unitId,
+				new BigDecimal(quantity), new BigDecimal(quantity), sourceType, sourceLineId, sourceLineId,
+				LocalDate.now(), batchId, serialId);
+	}
+
 	private MovementRow movementForDocument(long documentId) {
 		return this.jdbcTemplate.queryForObject("""
 				select movement_type, direction, source_line_id, quantity, before_quantity, after_quantity
@@ -1152,6 +1355,12 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(code(response)).isEqualTo(code);
 	}
 
+	private void assertTrackingColumnsAreNull(String sql, Object... args) {
+		Map<String, Object> row = this.jdbcTemplate.queryForMap(sql, args);
+		assertThat(row.get("batch_id")).isNull();
+		assertThat(row.get("serial_id")).isNull();
+	}
+
 	private void assertUnauthorized(ResponseEntity<String> response) throws Exception {
 		assertError(response, HttpStatus.UNAUTHORIZED, "AUTH_UNAUTHORIZED");
 	}
@@ -1191,6 +1400,10 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	private record InventoryFixture(long eachUnitId, long kgUnitId, long meterUnitId, long categoryId,
 			long rawWarehouseId, long finishedWarehouseId, long disabledWarehouseId, long finishedMaterialId,
 			long semiMaterialId, long rawMaterialId, long auxiliaryMaterialId, long disabledMaterialId) {
+	}
+
+	private record TrackedInventoryFixture(long batchId, String batchNo, long batchMovementId, long serialId,
+			String serialNo, long serialMovementId) {
 	}
 
 	private record MovementRow(String movementType, String direction, long sourceLineId, BigDecimal quantity,

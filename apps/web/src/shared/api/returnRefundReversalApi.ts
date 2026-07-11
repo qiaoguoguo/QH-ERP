@@ -1,5 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
-import type { InventoryQualityStatus } from './inventoryApi'
+import type { InventoryQualityStatus, InventoryTrackingAllocationPayload } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -446,6 +446,7 @@ export interface ReversalTraceListParams {
 export interface SalesReturnCreatePayloadLine {
   sourceShipmentLineId: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -453,6 +454,7 @@ export interface SalesReturnUpdatePayloadLine {
   id?: ResourceId
   sourceShipmentLineId?: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -479,6 +481,7 @@ export interface PurchaseReturnCreatePayloadLine {
   sourceReceiptLineId: ResourceId
   qualityStatus?: InventoryQualityStatus
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -487,6 +490,7 @@ export interface PurchaseReturnUpdatePayloadLine {
   sourceReceiptLineId?: ResourceId
   qualityStatus?: InventoryQualityStatus
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -512,6 +516,7 @@ export type PurchaseReturnPayload = PurchaseReturnCreatePayload
 export interface ProductionMaterialReturnCreatePayloadLine {
   sourceIssueLineId: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -519,6 +524,7 @@ export interface ProductionMaterialReturnUpdatePayloadLine {
   id?: ResourceId
   sourceIssueLineId?: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -543,6 +549,7 @@ export type ProductionMaterialReturnPayload = ProductionMaterialReturnCreatePayl
 export interface ProductionMaterialSupplementCreatePayloadLine {
   workOrderMaterialId: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 
@@ -550,6 +557,7 @@ export interface ProductionMaterialSupplementUpdatePayloadLine {
   id?: ResourceId
   workOrderMaterialId?: ResourceId
   quantity: ReversalDecimal
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason?: string
 }
 

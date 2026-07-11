@@ -5,6 +5,7 @@ export type ResourceId = string | number
 export type MasterDataStatus = 'ENABLED' | 'DISABLED'
 export type MaterialType = 'RAW_MATERIAL' | 'SEMI_FINISHED' | 'FINISHED_GOOD' | 'AUXILIARY'
 export type MaterialSourceType = 'PURCHASED' | 'SELF_MADE' | 'OUTSOURCED'
+export type MaterialTrackingMethod = 'NONE' | 'BATCH' | 'SERIAL'
 
 export interface MasterDataListQuery {
   keyword?: string
@@ -18,6 +19,7 @@ export type MaterialCategoryListQuery = MasterDataListQuery
 export interface MaterialListQuery extends MasterDataListQuery {
   materialType?: MaterialType
   sourceType?: MaterialSourceType
+  trackingMethod?: MaterialTrackingMethod
   categoryId?: ResourceId
 }
 
@@ -56,6 +58,9 @@ export interface MaterialRecord extends BaseMasterRecord {
   specification?: string | null
   materialType: MaterialType
   sourceType: MaterialSourceType
+  trackingMethod: MaterialTrackingMethod
+  trackingMethodName: string
+  trackingMethodImmutableReason?: string | null
   categoryId: ResourceId
   categoryName?: string | null
   unitId: ResourceId
@@ -105,6 +110,7 @@ export interface MaterialPayload {
   specification?: string
   materialType: MaterialType
   sourceType: MaterialSourceType
+  trackingMethod: MaterialTrackingMethod
   categoryId: ResourceId
   unitId: ResourceId
   status?: MasterDataStatus
@@ -145,6 +151,7 @@ export function createMasterDataApi(options: MasterDataApiOptions = {}): MasterD
     'pageSize',
     'materialType',
     'sourceType',
+    'trackingMethod',
     'categoryId',
   ] as const
 

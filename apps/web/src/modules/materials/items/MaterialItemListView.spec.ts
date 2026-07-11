@@ -50,6 +50,8 @@ const material: MaterialRecord = {
   specification: '1.5mm',
   materialType: 'RAW_MATERIAL',
   sourceType: 'PURCHASED',
+  trackingMethod: 'BATCH',
+  trackingMethodName: '批次管理',
   categoryId: 1,
   categoryName: '原材料',
   unitId: 1,
@@ -106,6 +108,7 @@ async function fillValidMaterialForm(wrapper: VueWrapper) {
   await wrapper.find('input[name="material-specification"]').setValue('1.5mm')
   await setSelectValue(wrapper, 'material-type', 'RAW_MATERIAL')
   await setSelectValue(wrapper, 'material-source-type', 'PURCHASED')
+  await setSelectValue(wrapper, 'material-tracking-method', 'BATCH')
   await setSelectValue(wrapper, 'material-category-id', '1')
   await setSelectValue(wrapper, 'material-unit-id', '1')
   await setSelectValue(wrapper, 'material-status', 'ENABLED')
@@ -138,6 +141,7 @@ describe('物料档案页', () => {
       name: '冷轧钢板',
       materialType: 'RAW_MATERIAL',
       sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
       categoryId: 1,
       unitId: 1,
       status: 'ENABLED',
@@ -182,6 +186,21 @@ describe('物料档案页', () => {
     expect(wrapper.text()).toContain('原材料')
     expect(wrapper.text()).toContain('千克')
     expect(wrapper.text()).toContain('外购')
+    expect(wrapper.text()).toContain('批次管理')
+  })
+
+  it('物料编辑弹窗和详情抽屉使用响应式宽度', async () => {
+    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountMaterials()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-material"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ElDialog' }).props('width')).toBe('min(640px, 96vw)')
+
+    await wrapper.find('[data-test="view-material"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('min(420px, 92vw)')
   })
 
   it('保存失败时保留弹窗并恢复按钮状态', async () => {
@@ -200,7 +219,7 @@ describe('物料档案页', () => {
     expect(wrapper.find('[data-test="submit-material"]').attributes('disabled')).toBeUndefined()
   })
 
-  it('按分类、物料类型和来源筛选时不发送 unitId 查询字段', async () => {
+  it('按分类、物料类型、来源和追踪方式筛选时不发送 unitId 查询字段', async () => {
     const wrapper = mountMaterials()
     await flushPromises()
 
@@ -208,6 +227,7 @@ describe('物料档案页', () => {
     await setSelectValue(wrapper, 'filter-material-category-id', '1')
     await setSelectValue(wrapper, 'filter-material-type', 'RAW_MATERIAL')
     await setSelectValue(wrapper, 'filter-source-type', 'PURCHASED')
+    await setSelectValue(wrapper, 'filter-tracking-method', 'BATCH')
     await wrapper.find('[data-test="search-material"]').trigger('click')
     await flushPromises()
 
@@ -221,6 +241,7 @@ describe('物料档案页', () => {
       categoryId: 1,
       materialType: 'RAW_MATERIAL',
       sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
     }))
     expect(lastQuery).not.toHaveProperty('unitId')
   })

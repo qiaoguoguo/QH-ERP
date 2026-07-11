@@ -5,6 +5,7 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.inventory.InventoryTrackingMethod;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.dao.DuplicateKeyException;
@@ -35,8 +36,8 @@ public class MaterialAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<MaterialResponse> list(String keyword, String status, Long categoryId, String materialType,
-			String sourceType, int page, int pageSize) {
-		QueryParts queryParts = queryParts(keyword, status, categoryId, materialType, sourceType);
+			String sourceType, String trackingMethod, int page, int pageSize) {
+		QueryParts queryParts = queryParts(keyword, status, categoryId, materialType, sourceType, trackingMethod);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from mst_material m " + queryParts.where(),
 				Long.class, queryParts.args().toArray());
 		List<Object> args = new ArrayList<>(queryParts.args());
@@ -44,7 +45,7 @@ public class MaterialAdminService {
 		args.add(offset(page, pageSize));
 		List<MaterialResponse> items = this.jdbcTemplate.query("""
 				select m.id, m.code, m.name, m.specification, m.material_type, m.source_type,
-				       m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
+				       m.tracking_method, m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
 				       m.status, m.remark, m.created_at, m.updated_at
 				from mst_material m
 				left join mst_material_category c on c.id = m.category_id
@@ -60,7 +61,7 @@ public class MaterialAdminService {
 	public MaterialResponse get(Long id) {
 		return this.jdbcTemplate.query("""
 				select m.id, m.code, m.name, m.specification, m.material_type, m.source_type,
-				       m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
+				       m.tracking_method, m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
 				       m.status, m.remark, m.created_at, m.updated_at
 				from mst_material m
 				left join mst_material_category c on c.id = m.category_id
@@ -73,20 +74,21 @@ public class MaterialAdminService {
 	public MaterialResponse create(MaterialRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
 		MaterialType materialType = parseMaterialType(request.materialType());
 		MaterialSourceType sourceType = parseSourceType(request.sourceType());
+		InventoryTrackingMethod trackingMethod = trackingMethodOrNone(request.trackingMethod());
 		validateEnabledReferences(request.categoryId(), request.unitId());
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			Long id = this.jdbcTemplate.queryForObject("""
 					insert into mst_material (
-						code, name, specification, material_type, source_type, category_id, unit_id, status,
+						code, name, specification, material_type, source_type, tracking_method, category_id, unit_id, status,
 						remark, created_by, created_at, updated_by, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					returning id
 					""", Long.class, request.code(), request.name(), blankToNull(request.specification()),
-					materialType.name(), sourceType.name(), request.categoryId(), request.unitId(),
-					statusOrEnabled(request.status()).name(), blankToNull(request.remark()), operator.username(), now,
-					operator.username(), now);
+					materialType.name(), sourceType.name(), trackingMethod.name(), request.categoryId(),
+					request.unitId(), statusOrEnabled(request.status()).name(), blankToNull(request.remark()),
+					operator.username(), now, operator.username(), now);
 			this.auditService.record(operator, "MATERIAL_CREATE", TARGET_TYPE, id, request.code(), servletRequest);
 			return get(id);
 		}
@@ -101,17 +103,20 @@ public class MaterialAdminService {
 		MaterialRow current = materialRow(id).orElseThrow(this::notFound);
 		MaterialType materialType = parseMaterialType(request.materialType());
 		MaterialSourceType sourceType = parseSourceType(request.sourceType());
+		InventoryTrackingMethod trackingMethod = trackingMethodOrCurrent(request.trackingMethod(),
+				current.trackingMethod());
+		validateTrackingMethodChangeAllowed(id, current.trackingMethod(), trackingMethod);
 		validateEnabledReferences(request.categoryId(), request.unitId());
 		MasterDataStatus status = statusOrCurrent(request.status(), current.status());
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update mst_material
-					set code = ?, name = ?, specification = ?, material_type = ?, source_type = ?,
+					set code = ?, name = ?, specification = ?, material_type = ?, source_type = ?, tracking_method = ?,
 						category_id = ?, unit_id = ?, status = ?, remark = ?,
 						updated_by = ?, updated_at = ?, version = version + 1
 					where id = ?
 					""", request.code(), request.name(), blankToNull(request.specification()), materialType.name(),
-					sourceType.name(), request.categoryId(), request.unitId(), status.name(),
+					sourceType.name(), trackingMethod.name(), request.categoryId(), request.unitId(), status.name(),
 					blankToNull(request.remark()), operator.username(), OffsetDateTime.now(), id);
 			if (updated == 0) {
 				throw notFound();
@@ -140,7 +145,7 @@ public class MaterialAdminService {
 	}
 
 	private QueryParts queryParts(String keyword, String status, Long categoryId, String materialType,
-			String sourceType) {
+			String sourceType, String trackingMethod) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -166,26 +171,33 @@ public class MaterialAdminService {
 			conditions.add("m.source_type = ?");
 			args.add(parseSourceType(sourceType).name());
 		}
+		if (hasText(trackingMethod)) {
+			conditions.add("m.tracking_method = ?");
+			args.add(parseTrackingMethod(trackingMethod).name());
+		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		return new QueryParts(where, args);
 	}
 
 	private MaterialResponse mapMaterial(ResultSet rs, int rowNum) throws SQLException {
+		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
 		return new MaterialResponse(rs.getLong("id"), rs.getString("code"), rs.getString("name"),
 				rs.getString("specification"), rs.getString("material_type"), rs.getString("source_type"),
-				rs.getLong("category_id"), rs.getString("category_name"), rs.getLong("unit_id"),
-				rs.getString("unit_name"), rs.getString("status"), rs.getString("remark"),
+				trackingMethod.name(), trackingMethod.displayName(), rs.getLong("category_id"),
+				rs.getString("category_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
+				rs.getString("status"), rs.getString("remark"), trackingMethodImmutableReason(rs.getLong("id")),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private Optional<MaterialRow> materialRow(Long id) {
 		return this.jdbcTemplate
 			.query("""
-					select id, code, category_id, unit_id, status
+					select id, code, category_id, unit_id, status, tracking_method
 					from mst_material
 					where id = ?
 					""", (rs, rowNum) -> new MaterialRow(rs.getLong("id"), rs.getString("code"),
-					rs.getLong("category_id"), rs.getLong("unit_id"), MasterDataStatus.valueOf(rs.getString("status"))),
+					rs.getLong("category_id"), rs.getLong("unit_id"), MasterDataStatus.valueOf(rs.getString("status")),
+					InventoryTrackingMethod.valueOf(rs.getString("tracking_method"))),
 					id)
 			.stream()
 			.findFirst();
@@ -210,6 +222,43 @@ public class MaterialAdminService {
 		if (categoryStatus != MasterDataStatus.ENABLED || unitStatus != MasterDataStatus.ENABLED) {
 			throw referenceInvalid();
 		}
+	}
+
+	private void validateTrackingMethodChangeAllowed(Long materialId, InventoryTrackingMethod current,
+			InventoryTrackingMethod requested) {
+		if (current == requested) {
+			return;
+		}
+		if (hasTrackingFacts(materialId)) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_METHOD_IMMUTABLE);
+		}
+	}
+
+	private String trackingMethodImmutableReason(Long materialId) {
+		return hasTrackingFacts(materialId) ? ApiErrorCode.INVENTORY_TRACKING_METHOD_IMMUTABLE.message() : null;
+	}
+
+	private boolean hasTrackingFacts(Long materialId) {
+		Boolean hasTrackingFacts = this.jdbcTemplate.queryForObject("""
+				select exists (
+					select 1
+					from inv_stock_balance
+					where material_id = ?
+					and quantity_on_hand > 0
+				)
+				or exists (
+					select 1
+					from inv_stock_movement
+					where material_id = ?
+				)
+				or exists (
+					select 1
+					from inv_stock_reservation
+					where material_id = ?
+					and status = 'ACTIVE'
+				)
+				""", Boolean.class, materialId, materialId, materialId);
+		return Boolean.TRUE.equals(hasTrackingFacts);
 	}
 
 	private void changeStatus(Long id, MasterDataStatus status, CurrentUser operator, HttpServletRequest servletRequest) {
@@ -241,6 +290,23 @@ public class MaterialAdminService {
 	private MaterialSourceType parseSourceType(String value) {
 		try {
 			return MaterialSourceType.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private InventoryTrackingMethod trackingMethodOrNone(String trackingMethod) {
+		return hasText(trackingMethod) ? parseTrackingMethod(trackingMethod) : InventoryTrackingMethod.NONE;
+	}
+
+	private InventoryTrackingMethod trackingMethodOrCurrent(String trackingMethod, InventoryTrackingMethod current) {
+		return hasText(trackingMethod) ? parseTrackingMethod(trackingMethod) : current;
+	}
+
+	private InventoryTrackingMethod parseTrackingMethod(String value) {
+		try {
+			return InventoryTrackingMethod.valueOf(value);
 		}
 		catch (RuntimeException exception) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
@@ -293,16 +359,18 @@ public class MaterialAdminService {
 	}
 
 	public record MaterialRequest(@NotBlank String code, @NotBlank String name, String specification,
-			@NotBlank String materialType, @NotBlank String sourceType, Long categoryId, Long unitId, String status,
-			String remark) {
+			@NotBlank String materialType, @NotBlank String sourceType, String trackingMethod, Long categoryId,
+			Long unitId, String status, String remark) {
 	}
 
 	public record MaterialResponse(Long id, String code, String name, String specification, String materialType,
-			String sourceType, Long categoryId, String categoryName, Long unitId, String unitName, String status,
-			String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String sourceType, String trackingMethod, String trackingMethodName, Long categoryId, String categoryName,
+			Long unitId, String unitName, String status, String remark, String trackingMethodImmutableReason,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
-	private record MaterialRow(Long id, String code, Long categoryId, Long unitId, MasterDataStatus status) {
+	private record MaterialRow(Long id, String code, Long categoryId, Long unitId, MasterDataStatus status,
+			InventoryTrackingMethod trackingMethod) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

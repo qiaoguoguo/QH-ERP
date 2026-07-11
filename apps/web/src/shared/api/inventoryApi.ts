@@ -18,6 +18,8 @@ export type InventoryQuantityPayload = string
 export type InventoryQualityStatus = 'PENDING_INSPECTION' | 'QUALIFIED' | 'REJECTED' | 'FROZEN'
 export type InventoryReservationType = 'RESERVATION' | 'OCCUPATION'
 export type InventoryReservationStatus = 'ACTIVE' | 'RELEASED' | 'CONSUMED' | 'CANCELLED'
+export type InventoryTrackingMethod = 'NONE' | 'BATCH' | 'SERIAL'
+export type InventoryStockStatus = 'IN_STOCK' | 'RESERVED' | 'OCCUPIED' | 'OUTBOUND' | 'CANCELLED'
 
 export interface InventoryBalanceListParams {
   keyword?: string
@@ -25,6 +27,11 @@ export interface InventoryBalanceListParams {
   materialId?: ResourceId
   materialType?: string
   qualityStatus?: InventoryQualityStatus
+  trackingMethod?: InventoryTrackingMethod
+  batchId?: ResourceId
+  batchNo?: string
+  serialId?: ResourceId
+  serialNo?: string
   includeZeroQualityStatuses?: boolean
   onlyPositive?: boolean
   page: number
@@ -38,6 +45,11 @@ export interface InventoryMovementListParams {
   movementType?: InventoryMovementType
   direction?: InventoryDirection
   qualityStatus?: InventoryQualityStatus
+  trackingMethod?: InventoryTrackingMethod
+  batchId?: ResourceId
+  batchNo?: string
+  serialId?: ResourceId
+  serialNo?: string
   sourceType?: string
   sourceId?: ResourceId
   sourceLineId?: ResourceId
@@ -72,6 +84,40 @@ export interface InventoryReservationListParams {
   pageSize: number
 }
 
+export interface InventoryBatchListParams {
+  keyword?: string
+  materialId?: ResourceId
+  warehouseId?: ResourceId
+  qualityStatus?: InventoryQualityStatus
+  batchNo?: string
+  sourceType?: string
+  sourceId?: ResourceId
+  onlyAvailable?: boolean
+  page: number
+  pageSize: number
+}
+
+export interface InventorySerialListParams {
+  keyword?: string
+  materialId?: ResourceId
+  warehouseId?: ResourceId
+  qualityStatus?: InventoryQualityStatus
+  serialNo?: string
+  batchId?: ResourceId
+  sourceType?: string
+  sourceId?: ResourceId
+  onlyAvailable?: boolean
+  page: number
+  pageSize: number
+}
+
+export interface InventoryTrackingQualityStatusSummary {
+  qualityStatus: InventoryQualityStatus
+  qualityStatusName: string
+  quantityOnHand: number | string
+  availableQuantity?: number | string
+}
+
 export interface InventoryBalanceRecord {
   id: ResourceId
   warehouseId: ResourceId
@@ -82,6 +128,13 @@ export interface InventoryBalanceRecord {
   materialName: string
   materialSpec?: string | null
   materialType: string
+  trackingMethod?: InventoryTrackingMethod
+  trackingMethodName?: string | null
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
+  traceableQuantity?: number | string | null
   unitId: ResourceId
   unitName: string
   qualityStatus?: InventoryQualityStatus
@@ -153,6 +206,119 @@ export interface InventoryReservationDetailRecord extends InventoryReservationSu
   auditRecords?: InventoryReservationAuditRecord[]
 }
 
+export interface InventoryBatchSummaryRecord {
+  id: ResourceId
+  batchNo: string
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  sourceType?: string | null
+  sourceId?: ResourceId | null
+  sourceLineId?: ResourceId | null
+  sourceDocumentNo?: string | null
+  businessDate?: string | null
+  quantityOnHand: number | string
+  availableQuantity: number | string
+  qualityStatusSummary?: InventoryTrackingQualityStatusSummary[]
+  updatedAt: string
+}
+
+export interface InventoryBatchDetailRecord extends InventoryBatchSummaryRecord {
+  remark?: string | null
+  createdByName?: string | null
+  createdAt?: string | null
+}
+
+export interface InventorySerialSummaryRecord {
+  id: ResourceId
+  serialNo: string
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  warehouseId?: ResourceId | null
+  warehouseName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  stockStatus?: InventoryStockStatus | null
+  stockStatusName?: string | null
+  sourceType?: string | null
+  sourceId?: ResourceId | null
+  sourceLineId?: ResourceId | null
+  sourceDocumentNo?: string | null
+  updatedAt: string
+}
+
+export interface InventorySerialDetailRecord extends InventorySerialSummaryRecord {
+  remark?: string | null
+  createdByName?: string | null
+  createdAt?: string | null
+}
+
+export interface InventoryTrackingAllocationPayload {
+  batchId?: ResourceId
+  batchNo?: string
+  serialId?: ResourceId
+  serialNo?: string
+  quantity: InventoryQuantityPayload
+  qualityStatus?: InventoryQualityStatus
+  sourceAllocationId?: ResourceId
+}
+
+export interface InventoryTraceSubjectRecord {
+  trackingMethod: InventoryTrackingMethod
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
+  materialId?: ResourceId | null
+  materialCode?: string | null
+  materialName?: string | null
+  sourceDocumentNo?: string | null
+}
+
+export interface InventoryTraceBalanceRecord {
+  warehouseId?: ResourceId | null
+  warehouseName: string
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  quantityOnHand: number | string
+  availableQuantity?: number | string | null
+  reservedQuantity?: number | string | null
+  occupiedQuantity?: number | string | null
+}
+
+export interface InventoryTraceNodeRecord {
+  nodeType?: string | null
+  nodeTypeName?: string | null
+  documentType?: string | null
+  documentId?: ResourceId | null
+  documentNo?: string | null
+  lineId?: ResourceId | null
+  businessDate?: string | null
+  direction?: InventoryDirection | string | null
+  quantity?: number | string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  warehouseName?: string | null
+  operatorName?: string | null
+  routeName?: string | null
+  permissionRestricted?: boolean
+}
+
+export interface InventoryTraceDetailRecord {
+  subject: InventoryTraceSubjectRecord
+  currentBalances: InventoryTraceBalanceRecord[]
+  activeReservations: InventoryTraceNodeRecord[]
+  sourceRecords: InventoryTraceNodeRecord[]
+  qualityEvents: InventoryTraceNodeRecord[]
+  outboundRecords: InventoryTraceNodeRecord[]
+  returnRecords: InventoryTraceNodeRecord[]
+  movements: InventoryTraceNodeRecord[]
+  restrictedSources: InventoryTraceNodeRecord[]
+}
+
 export interface InventoryMovementRecord {
   id: ResourceId
   movementNo: string
@@ -167,6 +333,12 @@ export interface InventoryMovementRecord {
   unitName: string
   qualityStatus?: InventoryQualityStatus
   qualityStatusName?: string
+  trackingMethod?: InventoryTrackingMethod
+  trackingMethodName?: string | null
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
   quantity: number | string
   beforeQuantity: number | string
   afterQuantity: number | string
@@ -174,6 +346,7 @@ export interface InventoryMovementRecord {
   sourceId: ResourceId
   sourceLineId?: ResourceId | null
   sourceDocumentNo?: string | null
+  targetDocumentNo?: string | null
   relatedMovementId?: ResourceId | null
   businessDate: string
   reason?: string | null
@@ -226,6 +399,7 @@ export interface InventoryDocumentLinePayload {
   unitId?: ResourceId
   quantity: InventoryQuantityPayload
   adjustmentDirection?: InventoryAdjustmentDirection
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   remark?: string
 }
 
@@ -241,9 +415,21 @@ export interface InventoryApi {
   balances: {
     list(params: InventoryBalanceListParams): Promise<PageResult<InventoryBalanceRecord>>
   }
+  batches: {
+    list(params: InventoryBatchListParams): Promise<PageResult<InventoryBatchSummaryRecord>>
+    get(id: ResourceId): Promise<InventoryBatchDetailRecord>
+  }
+  serials: {
+    list(params: InventorySerialListParams): Promise<PageResult<InventorySerialSummaryRecord>>
+    get(id: ResourceId): Promise<InventorySerialDetailRecord>
+  }
   reservations: {
     list(params: InventoryReservationListParams): Promise<PageResult<InventoryReservationSummaryRecord>>
     get(id: ResourceId): Promise<InventoryReservationDetailRecord>
+  }
+  traces: {
+    getBatchTrace(id: ResourceId): Promise<InventoryTraceDetailRecord>
+    getSerialTrace(id: ResourceId): Promise<InventoryTraceDetailRecord>
   }
   movements: {
     list(params: InventoryMovementListParams): Promise<PageResult<InventoryMovementRecord>>
@@ -271,6 +457,11 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'materialId',
     'materialType',
     'qualityStatus',
+    'trackingMethod',
+    'batchId',
+    'batchNo',
+    'serialId',
+    'serialNo',
     'includeZeroQualityStatuses',
     'onlyPositive',
     'page',
@@ -283,6 +474,11 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'movementType',
     'direction',
     'qualityStatus',
+    'trackingMethod',
+    'batchId',
+    'batchNo',
+    'serialId',
+    'serialNo',
     'sourceType',
     'sourceId',
     'sourceLineId',
@@ -303,6 +499,31 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'sourceLineId',
     'businessDateFrom',
     'businessDateTo',
+    'page',
+    'pageSize',
+  ] as const
+  const batchQueryKeys = [
+    'keyword',
+    'materialId',
+    'warehouseId',
+    'qualityStatus',
+    'batchNo',
+    'sourceType',
+    'sourceId',
+    'onlyAvailable',
+    'page',
+    'pageSize',
+  ] as const
+  const serialQueryKeys = [
+    'keyword',
+    'materialId',
+    'warehouseId',
+    'qualityStatus',
+    'serialNo',
+    'batchId',
+    'sourceType',
+    'sourceId',
+    'onlyAvailable',
     'page',
     'pageSize',
   ] as const
@@ -379,6 +600,22 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
           pickQuery(params, balanceQueryKeys),
         ),
     },
+    batches: {
+      list: (params) =>
+        get<PageResult<InventoryBatchSummaryRecord>>(
+          '/api/admin/inventory/batches',
+          pickQuery(params, batchQueryKeys),
+        ),
+      get: (id) => get<InventoryBatchDetailRecord>(`/api/admin/inventory/batches/${encodeURIComponent(String(id))}`),
+    },
+    serials: {
+      list: (params) =>
+        get<PageResult<InventorySerialSummaryRecord>>(
+          '/api/admin/inventory/serials',
+          pickQuery(params, serialQueryKeys),
+        ),
+      get: (id) => get<InventorySerialDetailRecord>(`/api/admin/inventory/serials/${encodeURIComponent(String(id))}`),
+    },
     reservations: {
       list: (params) =>
         get<PageResult<InventoryReservationSummaryRecord>>(
@@ -389,6 +626,12 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
         get<InventoryReservationDetailRecord>(
           `/api/admin/inventory/reservations/${encodeURIComponent(String(id))}`,
         ),
+    },
+    traces: {
+      getBatchTrace: (id) =>
+        get<InventoryTraceDetailRecord>(`/api/admin/inventory/traces/batches/${encodeURIComponent(String(id))}`),
+      getSerialTrace: (id) =>
+        get<InventoryTraceDetailRecord>(`/api/admin/inventory/traces/serials/${encodeURIComponent(String(id))}`),
     },
     movements: {
       list: (params) =>

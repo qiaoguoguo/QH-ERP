@@ -1,5 +1,10 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
-import type { InventoryDirection, InventoryMovementType, InventoryQualityStatus } from './inventoryApi'
+import type {
+  InventoryDirection,
+  InventoryMovementType,
+  InventoryQualityStatus,
+  InventoryTrackingAllocationPayload,
+} from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -192,6 +197,7 @@ export interface SalesShipmentLinePayload {
   materialId?: ResourceId
   unitId?: ResourceId
   quantity: SalesQuantityPayload
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   remark?: string
 }
 

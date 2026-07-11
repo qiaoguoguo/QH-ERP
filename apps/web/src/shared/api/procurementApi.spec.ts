@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createProcurementApi,
+  type PurchaseReceiptLinePayload,
   type PurchaseOrderLineRecord,
   type PurchaseOrderPayload,
   type PurchaseOrderSummaryRecord,
   type PurchaseReceiptLineRecord,
   type PurchaseReceiptPayload,
 } from './procurementApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
 
@@ -67,6 +69,9 @@ describe('采购 API', () => {
           : false
         : false
     >,
+    receiptPayloadLineAcceptsTrackingAllocations: true as AssertTrue<
+      PurchaseReceiptLinePayload extends { trackingAllocations?: InventoryTrackingAllocationPayload[] } ? true : false
+    >,
   }
 
   it('声明采购在途字段类型契约', () => {
@@ -74,6 +79,7 @@ describe('采购 API', () => {
       orderSummaryHasInTransitFields: true,
       orderLineHasInTransitFields: true,
       receiptLineHasInTransitFields: true,
+      receiptPayloadLineAcceptsTrackingAllocations: true,
     })
   })
 
@@ -189,7 +195,14 @@ describe('采购 API', () => {
       warehouseId: 4,
       businessDate: '2026-07-05',
       remark: '采购入库',
-      lines: [{ lineNo: 1, orderLineId: 5, materialId: 2, unitId: 3, quantity: '1.500000' }],
+      lines: [{
+        lineNo: 1,
+        orderLineId: 5,
+        materialId: 2,
+        unitId: 3,
+        quantity: '1.500000',
+        trackingAllocations: [{ batchNo: 'B-PR-001', quantity: '1.500000' }],
+      }],
     }
 
     await api.orders.create(orderPayload)
@@ -207,6 +220,7 @@ describe('采购 API', () => {
     })
     expect(JSON.parse(fetcher.mock.calls[11][1].body as string).lines[0]).toMatchObject({
       quantity: '1.500000',
+      trackingAllocations: [{ batchNo: 'B-PR-001', quantity: '1.500000' }],
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/procurement/orders', {

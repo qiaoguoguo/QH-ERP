@@ -4,10 +4,14 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
-import type { InventoryBalanceRecord } from '../../shared/api/inventoryApi'
+import type { InventoryBalanceRecord, InventoryTraceDetailRecord } from '../../shared/api/inventoryApi'
 import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
 import { useAuthStore } from '../../stores/authStore'
 import InventoryBalanceListView from './InventoryBalanceListView.vue'
+import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
+import TrackingAllocationEditor from './tracking/TrackingAllocationEditor.vue'
+import TrackingAllocationReadonlyTable from './tracking/TrackingAllocationReadonlyTable.vue'
+import TrackingPickerDrawer from './tracking/TrackingPickerDrawer.vue'
 
 const inventoryApiMock = vi.hoisted(() => ({
   balances: {
@@ -15,6 +19,10 @@ const inventoryApiMock = vi.hoisted(() => ({
   },
   reservations: {
     list: vi.fn(),
+  },
+  traces: {
+    getBatchTrace: vi.fn(),
+    getSerialTrace: vi.fn(),
   },
 }))
 
@@ -48,6 +56,8 @@ const material: MaterialRecord = {
   name: '冷轧钢板',
   materialType: 'RAW_MATERIAL',
   sourceType: 'PURCHASED',
+  trackingMethod: 'BATCH',
+  trackingMethodName: '批次管理',
   categoryId: 1,
   unitId: 3,
   unitName: '千克',
@@ -65,6 +75,13 @@ const balance: InventoryBalanceRecord = {
   materialName: '冷轧钢板',
   materialSpec: '1.2mm',
   materialType: 'RAW_MATERIAL',
+  trackingMethod: 'BATCH',
+  trackingMethodName: '批次管理',
+  batchId: 31,
+  batchNo: 'B-20260711-001',
+  serialId: null,
+  serialNo: null,
+  traceableQuantity: '120.500000',
   unitId: 3,
   unitName: '千克',
   qualityStatus: 'QUALIFIED',
@@ -85,6 +102,24 @@ const balance: InventoryBalanceRecord = {
   netRequirementShortageQuantity: '10.000000',
   unavailableReason: null,
   updatedAt: '2026-07-03T09:30:00+08:00',
+}
+
+const nonTrackingBalance: InventoryBalanceRecord = {
+  ...balance,
+  id: 11,
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
+  batchId: null,
+  batchNo: null,
+  serialId: null,
+  serialNo: null,
+}
+
+const missingTrackingIdentityBalance: InventoryBalanceRecord = {
+  ...balance,
+  id: 12,
+  batchId: null,
+  batchNo: null,
 }
 
 const reservationPage = {
@@ -125,6 +160,52 @@ const reservationPage = {
   totalPages: 1,
 }
 
+const traceDetail: InventoryTraceDetailRecord = {
+  subject: {
+    trackingMethod: 'BATCH',
+    batchId: 31,
+    batchNo: 'B-20260711-001',
+    materialCode: 'RM-STEEL',
+    materialName: '冷轧钢板',
+  },
+  currentBalances: [
+    {
+      warehouseName: '原料仓',
+      qualityStatus: 'QUALIFIED',
+      qualityStatusName: '合格',
+      quantityOnHand: '120.500000',
+      availableQuantity: '101.500000',
+    },
+  ],
+  activeReservations: [],
+  sourceRecords: [
+    {
+      nodeType: 'SOURCE',
+      nodeTypeName: '来源',
+      documentType: 'PURCHASE_RECEIPT',
+      documentNo: 'PR-20260711-001',
+      businessDate: '2026-07-11',
+      direction: 'IN',
+      quantity: '120.500000',
+      warehouseName: '原料仓',
+      permissionRestricted: false,
+    },
+  ],
+  qualityEvents: [],
+  outboundRecords: [],
+  returnRecords: [],
+  movements: [],
+  restrictedSources: [
+    {
+      nodeTypeName: '受限来源',
+      documentType: 'PRODUCTION_ORDER',
+      documentNo: 'MO-20260711-001',
+      businessDate: '2026-07-11',
+      permissionRestricted: true,
+    },
+  ],
+}
+
 const balancePage: PageResult<InventoryBalanceRecord> = {
   items: [balance],
   page: 1,
@@ -149,7 +230,12 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
 }
 
 async function mountBalances() {
-  return mountBalancesWithPermissions(['inventory:balance:view', 'inventory:reservation:view', 'inventory:movement:view'])
+  return mountBalancesWithPermissions([
+    'inventory:balance:view',
+    'inventory:reservation:view',
+    'inventory:movement:view',
+    'inventory:trace:view',
+  ])
 }
 
 async function mountBalancesWithPermissions(permissions: string[]) {
@@ -184,6 +270,8 @@ describe('库存余额页', () => {
     vi.clearAllMocks()
     inventoryApiMock.balances.list.mockResolvedValue(balancePage)
     inventoryApiMock.reservations.list.mockResolvedValue(reservationPage)
+    inventoryApiMock.traces.getBatchTrace.mockResolvedValue(traceDetail)
+    inventoryApiMock.traces.getSerialTrace.mockResolvedValue(traceDetail)
     masterDataApiMock.warehouses.list.mockResolvedValue({
       items: [warehouse],
       page: 1,
@@ -208,6 +296,8 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('原料仓')
     expect(wrapper.text()).toContain('RM-STEEL')
     expect(wrapper.text()).toContain('原材料')
+    expect(wrapper.text()).toContain('批次管理')
+    expect(wrapper.text()).toContain('B-20260711-001')
     expect(wrapper.text()).toContain('合格')
     expect(wrapper.text()).toContain('账面库存')
     expect(wrapper.text()).toContain('合格现存')
@@ -228,7 +318,7 @@ describe('库存余额页', () => {
     expect(wrapper.find('[data-test="book-quantity-cell"]').classes()).toContain('numeric-cell')
   })
 
-  it('按关键词、仓库、物料、物料类型、质量状态和正库存条件查询并支持重置', async () => {
+  it('按关键词、仓库、物料、物料类型、质量状态、追踪条件和正库存条件查询并支持重置', async () => {
     const { wrapper } = await mountBalances()
 
     await wrapper.find('input[name="inventory-balance-keyword"]').setValue('钢板')
@@ -236,6 +326,9 @@ describe('库存余额页', () => {
     await setSelectValue(wrapper, 'inventory-balance-material-id', 2)
     await setSelectValue(wrapper, 'inventory-balance-material-type', 'RAW_MATERIAL')
     await setSelectValue(wrapper, 'inventory-balance-quality-status', 'QUALIFIED')
+    await setSelectValue(wrapper, 'inventory-balance-tracking-method', 'BATCH')
+    await wrapper.find('input[name="inventory-balance-batch-no"]').setValue('B-20260711-001')
+    await wrapper.find('input[name="inventory-balance-serial-no"]').setValue('SN-20260711-001')
     await wrapper.find('input[name="inventory-balance-only-positive"]').setValue(true)
     await wrapper.find('input[name="inventory-balance-include-zero-quality-statuses"]').setValue(true)
     await wrapper.find('[data-test="search-inventory-balances"]').trigger('click')
@@ -247,6 +340,9 @@ describe('库存余额页', () => {
       materialId: 2,
       materialType: 'RAW_MATERIAL',
       qualityStatus: 'QUALIFIED',
+      trackingMethod: 'BATCH',
+      batchNo: 'B-20260711-001',
+      serialNo: 'SN-20260711-001',
       onlyPositive: true,
       includeZeroQualityStatuses: true,
       page: 1,
@@ -261,6 +357,9 @@ describe('库存余额页', () => {
       materialId: undefined,
       materialType: undefined,
       qualityStatus: undefined,
+      trackingMethod: undefined,
+      batchNo: '',
+      serialNo: '',
       onlyPositive: false,
       includeZeroQualityStatuses: false,
       page: 1,
@@ -272,6 +371,7 @@ describe('库存余额页', () => {
     inventoryApiMock.balances.list.mockResolvedValueOnce(emptyBalancePage)
     const { wrapper } = await mountBalances()
     expect(wrapper.text()).toContain('暂无库存余额')
+    expect(wrapper.text().match(/暂无库存余额/g)).toHaveLength(1)
 
     inventoryApiMock.balances.list.mockRejectedValueOnce(new Error('库存余额接口异常'))
     await wrapper.find('[data-test="search-inventory-balances"]').trigger('click')
@@ -286,7 +386,53 @@ describe('库存余额页', () => {
     await flushPromises()
 
     expect(router.currentRoute.value.path).toBe('/inventory/movements')
-    expect(router.currentRoute.value.query).toEqual({ warehouseId: '1', materialId: '2', qualityStatus: 'QUALIFIED' })
+    expect(router.currentRoute.value.query).toEqual({
+      warehouseId: '1',
+      materialId: '2',
+      qualityStatus: 'QUALIFIED',
+      trackingMethod: 'BATCH',
+      batchId: '31',
+      batchNo: 'B-20260711-001',
+    })
+  })
+
+  it('点击追溯入口会按批次加载追溯抽屉并展示受限摘要', async () => {
+    const { wrapper } = await mountBalances()
+
+    await wrapper.find('[data-test="view-inventory-trace"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.traces.getBatchTrace).toHaveBeenCalledWith(31)
+    expect(wrapper.text()).toContain('来源去向追溯')
+    expect(wrapper.text()).toContain('PR-20260711-001')
+    expect(wrapper.text()).toContain('MO-20260711-001')
+    expect(wrapper.text()).toContain('权限受限')
+  })
+
+  it('追溯入口按权限和追踪身份显示可读状态', async () => {
+    const balanceWithoutTracePermissionPage: PageResult<InventoryBalanceRecord> = {
+      items: [balance],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    }
+    inventoryApiMock.balances.list.mockResolvedValueOnce(balanceWithoutTracePermissionPage)
+    const noPermission = await mountBalancesWithPermissions(['inventory:balance:view', 'inventory:movement:view'])
+    expect(noPermission.wrapper.text()).toContain('无追溯权限')
+    expect(noPermission.wrapper.find('[data-test="view-inventory-trace"]').exists()).toBe(false)
+
+    const noTrackingIdentityPage: PageResult<InventoryBalanceRecord> = {
+      items: [nonTrackingBalance, missingTrackingIdentityBalance],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    }
+    inventoryApiMock.balances.list.mockResolvedValueOnce(noTrackingIdentityPage)
+    const withPermission = await mountBalances()
+    expect(withPermission.wrapper.text()).toContain('不追踪物料无追溯')
+    expect(withPermission.wrapper.text()).toContain('缺少批次或序列身份')
   })
 
   it('占用预留抽屉加载并展示真实来源字段，采购在途仅展示物料级参考摘要', async () => {
@@ -326,5 +472,80 @@ describe('库存余额页', () => {
     expect(wrapper.find('[data-test="view-inventory-reservations"]').exists()).toBe(false)
     expect(inventoryApiMock.reservations.list).not.toHaveBeenCalled()
     expect(wrapper.find('[data-test="view-inventory-movements"]').exists()).toBe(true)
+  })
+
+  it('通用追踪组件覆盖编辑校验、只读回显、候选禁用和追溯状态', async () => {
+    const editor = mount(TrackingAllocationEditor, {
+      props: {
+        trackingMethod: 'SERIAL',
+        expectedQuantity: '2',
+        disabled: true,
+        disabledReason: '期间已锁定，仅允许查看追踪分配',
+        modelValue: [
+          { serialNo: 'SN-001', quantity: '1' },
+          { serialNo: 'SN-001', quantity: '1' },
+          { serialNo: '', quantity: '1' },
+        ],
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    expect(editor.findAllComponents({ name: 'ElAlert' }).map((alert) => alert.props('title'))).toContain(
+      '追踪分配存在 3 项校验问题',
+    )
+    expect(editor.text()).toContain('序列号重复')
+    expect(editor.text()).toContain('第 3 行序列号不能为空')
+    expect(editor.text()).toContain('期间已锁定，仅允许查看追踪分配')
+    expect(editor.findAll('[data-test="tracking-allocation-error"]')).toHaveLength(3)
+
+    const readonly = mount(TrackingAllocationReadonlyTable, {
+      props: {
+        trackingMethod: 'BATCH',
+        allocations: [{ batchNo: 'B-20260711-001', quantity: '5.000000', qualityStatusName: '合格' }],
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(readonly.text()).toContain('B-20260711-001')
+    expect(readonly.text()).toContain('5')
+
+    const picker = mount(TrackingPickerDrawer, {
+      props: {
+        modelValue: true,
+        trackingMethod: 'BATCH',
+        candidates: [
+          {
+            id: 31,
+            trackingNo: 'B-20260711-001',
+            materialCode: 'RM-STEEL',
+            materialName: '冷轧钢板',
+            warehouseName: '原料仓',
+            qualityStatusName: '合格',
+            availableQuantity: '0.000000',
+            disabled: true,
+            disabledReason: '库存已冻结',
+          },
+        ],
+        error: '',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(picker.text()).toContain('库存已冻结')
+    expect(picker.find('[data-test="tracking-candidate-disabled-reason"]').text()).toContain('库存已冻结')
+    expect(picker.find('[data-test="tracking-candidate-disabled-reason"]').classes()).toContain('candidate-disabled-reason')
+
+    const traceDrawer = mount(InventoryTraceDrawer, {
+      props: {
+        modelValue: true,
+        detail: traceDetail,
+        loading: false,
+        error: '',
+      },
+      global: { plugins: [ElementPlus] },
+    })
+    await flushPromises()
+    expect(traceDrawer.text()).toContain('来源去向追溯')
+    expect(traceDrawer.text()).toContain('PR-20260711-001')
+    expect(traceDrawer.text()).toContain('权限受限')
   })
 })

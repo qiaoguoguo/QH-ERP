@@ -562,6 +562,20 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && "/api/admin/inventory/movements".equals(path)) {
 			return "inventory:movement:view";
 		}
+		String batchPath = "/api/admin/inventory/batches";
+		if ("GET".equals(method) && (batchPath.equals(path) || matchesIdPath(path, batchPath))) {
+			return "inventory:batch:view";
+		}
+		String serialPath = "/api/admin/inventory/serials";
+		if ("GET".equals(method) && (serialPath.equals(path) || matchesIdPath(path, serialPath))) {
+			return "inventory:serial:view";
+		}
+		String tracePath = "/api/admin/inventory/traces";
+		if ("GET".equals(method)
+				&& (path.matches(Pattern.quote(tracePath) + "/batches/\\d+")
+						|| path.matches(Pattern.quote(tracePath) + "/serials/\\d+"))) {
+			return "inventory:trace:view";
+		}
 		String documentPath = "/api/admin/inventory/documents";
 		if ("GET".equals(method) && (documentPath.equals(path) || matchesIdPath(path, documentPath))) {
 			return "inventory:document:view";

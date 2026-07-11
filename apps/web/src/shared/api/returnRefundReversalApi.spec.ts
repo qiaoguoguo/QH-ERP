@@ -6,13 +6,24 @@ import {
   type ProductionMaterialReturnPayload,
   type ProductionMaterialSupplementDetail,
   type ProductionMaterialSupplementPayload,
+  type ProductionMaterialSupplementUpdatePayload,
+  type ProductionMaterialSupplementCreatePayloadLine,
   type PurchaseReturnDetail,
   type PurchaseReturnPayload,
+  type PurchaseReturnUpdatePayload,
+  type PurchaseReturnCreatePayloadLine,
   type ReversalDocumentPayload,
+  type SalesReturnUpdatePayload,
+  type SalesReturnCreatePayloadLine,
   type SalesReturnDetail,
+  type ProductionMaterialReturnCreatePayloadLine,
+  type ProductionMaterialReturnUpdatePayload,
   type SettlementAdjustmentDetail,
   type SettlementAdjustmentPayload,
 } from './returnRefundReversalApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -297,6 +308,62 @@ const settlementAdjustmentDetail: SettlementAdjustmentDetail = {
 }
 
 describe('退货退款与反冲 API', () => {
+  const reversalTrackingTypeContract = {
+    salesReturnCreateLineAcceptsTrackingAllocations: true as AssertTrue<
+      SalesReturnCreatePayloadLine extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    salesReturnUpdateLineAcceptsTrackingAllocations: true as AssertTrue<
+      SalesReturnUpdatePayload['lines'][number] extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    purchaseReturnCreateLineAcceptsTrackingAllocations: true as AssertTrue<
+      PurchaseReturnCreatePayloadLine extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    purchaseReturnUpdateLineAcceptsTrackingAllocations: true as AssertTrue<
+      PurchaseReturnUpdatePayload['lines'][number] extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    productionReturnCreateLineAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialReturnCreatePayloadLine extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    productionReturnUpdateLineAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialReturnUpdatePayload['lines'][number] extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    productionSupplementCreateLineAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialSupplementCreatePayloadLine extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    productionSupplementUpdateLineAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialSupplementUpdatePayload['lines'][number] extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+  }
+
+  it('退货反冲行载荷支持追踪分配', () => {
+    expect(reversalTrackingTypeContract).toMatchObject({
+      salesReturnCreateLineAcceptsTrackingAllocations: true,
+      salesReturnUpdateLineAcceptsTrackingAllocations: true,
+      purchaseReturnCreateLineAcceptsTrackingAllocations: true,
+      purchaseReturnUpdateLineAcceptsTrackingAllocations: true,
+      productionReturnCreateLineAcceptsTrackingAllocations: true,
+      productionReturnUpdateLineAcceptsTrackingAllocations: true,
+      productionSupplementCreateLineAcceptsTrackingAllocations: true,
+      productionSupplementUpdateLineAcceptsTrackingAllocations: true,
+    })
+  })
+
   it('按查询条件获取销售退货、候选来源和追溯，并过滤空查询值', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
@@ -361,7 +428,12 @@ describe('退货退款与反冲 API', () => {
       businessDate: '2026-07-05',
       clientRequestId: 'sales-return-client-1',
       remark: '客户退货',
-      lines: [{ sourceShipmentLineId: 101, quantity: '2.000000', reason: '客户退回' }],
+      lines: [{
+        sourceShipmentLineId: 101,
+        quantity: '2.000000',
+        reason: '客户退回',
+        trackingAllocations: [{ sourceAllocationId: 9001, batchId: 31, quantity: '2.000000' }],
+      }],
     }
 
     await api.salesReturns.create(payload)
@@ -370,6 +442,9 @@ describe('退货退款与反冲 API', () => {
     await api.salesReturns.cancel(1)
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].quantity).toBe('2.000000')
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].trackingAllocations).toEqual([
+      { sourceAllocationId: 9001, batchId: 31, quantity: '2.000000' },
+    ])
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/sales/returns', expect.objectContaining({
       body: JSON.stringify(payload),
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-create' }),
@@ -449,7 +524,12 @@ describe('退货退款与反冲 API', () => {
       businessDate: '2026-07-05',
       clientRequestId: 'purchase-return-client-1',
       remark: '来料退回',
-      lines: [{ sourceReceiptLineId: 201, quantity: '1.500000', reason: '来料退回' }],
+      lines: [{
+        sourceReceiptLineId: 201,
+        quantity: '1.500000',
+        reason: '来料退回',
+        trackingAllocations: [{ batchId: 31, quantity: '1.500000' }],
+      }],
     }
 
     await api.purchaseReturns.create(payload)
@@ -600,7 +680,12 @@ describe('退货退款与反冲 API', () => {
       businessDate: '2026-07-05',
       clientRequestId: 'material-return-client-1',
       remark: '余料退回',
-      lines: [{ sourceIssueLineId: 401, quantity: '3.000000', reason: '余料退回' }],
+      lines: [{
+        sourceIssueLineId: 401,
+        quantity: '3.000000',
+        reason: '余料退回',
+        trackingAllocations: [{ sourceAllocationId: 9002, batchId: 31, quantity: '3.000000' }],
+      }],
     }
     const supplementPayload: ProductionMaterialSupplementPayload = {
       workOrderId: 30,
@@ -608,7 +693,12 @@ describe('退货退款与反冲 API', () => {
       businessDate: '2026-07-05',
       clientRequestId: 'material-supplement-client-1',
       remark: '损耗补料',
-      lines: [{ workOrderMaterialId: 501, quantity: '2.000000', reason: '损耗补料' }],
+      lines: [{
+        workOrderMaterialId: 501,
+        quantity: '2.000000',
+        reason: '损耗补料',
+        trackingAllocations: [{ batchId: 32, quantity: '2.000000' }],
+      }],
     }
 
     await api.productionMaterialReturns.create(returnPayload)

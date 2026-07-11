@@ -110,7 +110,8 @@ public class InventoryPostingService {
 						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name());
 			}
 			catch (DuplicateKeyException exception) {
-				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")) {
+				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")
+						&& !containsConstraint(exception, "uk_inv_stock_balance_untracked")) {
 					throw exception;
 				}
 			}
@@ -127,6 +128,8 @@ public class InventoryPostingService {
 					where warehouse_id = ?
 					and material_id = ?
 					and quality_status = ?
+					and batch_id is null
+					and serial_id is null
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
 					warehouseId, materialId, qualityStatus.name())
@@ -141,6 +144,8 @@ public class InventoryPostingService {
 				where warehouse_id = ?
 				and material_id = ?
 				and quality_status = 'QUALIFIED'
+				and batch_id is null
+				and serial_id is null
 				and status = 'ACTIVE'
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")

@@ -105,6 +105,12 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/inventory/reservations/**"),
 			new ExpectedActionPermission("inventory:movement:view", "inventory", "GET",
 					"/api/admin/inventory/movements"),
+			new ExpectedActionPermission("inventory:batch:view", "inventory", "GET",
+					"/api/admin/inventory/batches/**"),
+			new ExpectedActionPermission("inventory:serial:view", "inventory", "GET",
+					"/api/admin/inventory/serials/**"),
+			new ExpectedActionPermission("inventory:trace:view", "inventory", "GET",
+					"/api/admin/inventory/traces/**"),
 			new ExpectedActionPermission("inventory:document:view", "inventory", "GET",
 					"/api/admin/inventory/documents/**"),
 			new ExpectedActionPermission("inventory:document:create", "inventory", "POST",
@@ -434,7 +440,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				and tablename = 'mst_material'
 				""", String.class);
 		assertThat(materialIndexes).contains("idx_mst_material_category_unit", "idx_mst_material_status",
-				"idx_mst_material_unit_status");
+				"idx_mst_material_unit_status", "idx_mst_material_tracking_method");
+		assertThat(columns("mst_material")).contains("tracking_method");
 	}
 
 	@Test
@@ -443,9 +450,14 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		var documentColumns = columns("inv_inventory_document");
 		var documentLineColumns = columns("inv_inventory_document_line");
 		var movementColumns = columns("inv_stock_movement");
+		var reservationColumns = columns("inv_stock_reservation");
+		var batchColumns = columns("inv_batch");
+		var serialColumns = columns("inv_serial");
+		var allocationColumns = columns("inv_stock_tracking_allocation");
 
 		assertThat(balanceColumns).contains("id", "warehouse_id", "material_id", "unit_id", "quantity_on_hand",
-				"locked_quantity", "created_at", "updated_at", "version", "quality_status");
+				"locked_quantity", "created_at", "updated_at", "version", "quality_status", "batch_id",
+				"serial_id");
 		assertThat(documentColumns).contains("id", "document_no", "document_type", "status", "business_date",
 				"reason", "remark", "created_by", "created_at", "updated_by", "updated_at", "posted_by",
 				"posted_at", "version");
@@ -455,15 +467,45 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(movementColumns).contains("id", "movement_no", "movement_type", "direction", "warehouse_id",
 				"material_id", "unit_id", "quantity", "before_quantity", "after_quantity", "source_type",
 				"source_id", "source_line_id", "business_date", "reason", "remark", "operator_name",
-				"occurred_at", "quality_status");
+				"occurred_at", "quality_status", "batch_id", "serial_id");
+		assertThat(reservationColumns).contains("id", "reservation_no", "reservation_type", "status",
+				"warehouse_id", "material_id", "unit_id", "quality_status", "quantity", "released_quantity",
+				"consumed_quantity", "source_type", "source_id", "source_line_id", "source_document_no",
+				"business_date", "reason", "batch_id", "serial_id", "parent_reservation_id");
+		assertThat(batchColumns).contains("id", "material_id", "batch_no", "source_type", "source_id",
+				"source_line_id", "business_date", "remark", "created_by", "created_at", "updated_by",
+				"updated_at", "version");
+		assertThat(serialColumns).contains("id", "material_id", "serial_no", "batch_id", "source_type",
+				"source_id", "source_line_id", "warehouse_id", "quality_status", "stock_status",
+				"last_movement_id", "business_date", "remark", "created_by", "created_at", "updated_by",
+				"updated_at", "version");
+		assertThat(allocationColumns).contains("id", "allocation_type", "document_type", "document_id",
+				"document_line_id", "source_type", "source_id", "source_line_id", "warehouse_id", "material_id",
+				"unit_id", "quality_status", "batch_id", "serial_id", "quantity", "movement_id",
+				"reservation_id", "remark", "created_by", "created_at", "updated_by", "updated_at", "version");
 
-		assertThat(indexes("inv_stock_balance")).contains("uk_inv_stock_balance_warehouse_material_quality",
+		assertThat(indexes("inv_stock_balance")).contains("uk_inv_stock_balance_untracked",
+				"uk_inv_stock_balance_batch", "uk_inv_stock_balance_serial",
 				"idx_inv_stock_balance_warehouse", "idx_inv_stock_balance_material",
-				"idx_inv_stock_balance_quality_status");
+				"idx_inv_stock_balance_quality_status", "idx_inv_stock_balance_batch",
+				"idx_inv_stock_balance_serial");
 		assertThat(indexes("inv_stock_movement")).contains("uk_inv_stock_movement_no",
-				"uk_inv_stock_movement_source", "uk_inv_stock_movement_opening_once",
+				"uk_inv_stock_movement_source_untracked", "uk_inv_stock_movement_source_batch",
+				"uk_inv_stock_movement_source_serial", "uk_inv_stock_movement_opening_once",
 				"idx_inv_stock_movement_business_date", "idx_inv_stock_movement_warehouse_material",
-				"idx_inv_stock_movement_quality_status");
+				"idx_inv_stock_movement_quality_status", "idx_inv_stock_movement_batch",
+				"idx_inv_stock_movement_serial");
+		assertThat(indexes("inv_stock_reservation")).contains("uk_inv_stock_reservation_active_source_untracked",
+				"uk_inv_stock_reservation_active_source_batch",
+				"uk_inv_stock_reservation_active_source_serial", "idx_inv_stock_reservation_batch",
+				"idx_inv_stock_reservation_serial", "idx_inv_stock_reservation_parent");
+		assertThat(indexes("inv_batch")).contains("uk_inv_batch_material_no", "idx_inv_batch_material",
+				"idx_inv_batch_source");
+		assertThat(indexes("inv_serial")).contains("uk_inv_serial_material_no", "idx_inv_serial_material",
+				"idx_inv_serial_batch", "idx_inv_serial_stock_status", "idx_inv_serial_source");
+		assertThat(indexes("inv_stock_tracking_allocation")).contains("idx_inv_stock_tracking_allocation_document",
+				"idx_inv_stock_tracking_allocation_source", "idx_inv_stock_tracking_allocation_batch",
+				"idx_inv_stock_tracking_allocation_serial");
 		assertThat(indexes("inv_inventory_document")).contains("uk_inv_inventory_document_no",
 				"idx_inv_inventory_document_business_date");
 	}
@@ -745,6 +787,10 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(enumConstants("com.qherp.api.system.inventory.InventoryMovementType")).contains("SALES_RETURN_IN",
 				"PURCHASE_RETURN_OUT", "PRODUCTION_MATERIAL_RETURN_IN", "PRODUCTION_MATERIAL_SUPPLEMENT_OUT",
 				"BUSINESS_REVERSAL");
+		assertThat(enumConstants("com.qherp.api.system.inventory.InventoryTrackingMethod"))
+			.containsExactly("NONE", "BATCH", "SERIAL");
+		assertThat(enumConstants("com.qherp.api.system.inventory.InventoryTrackingAllocationType"))
+			.containsExactly("INBOUND", "OUTBOUND", "QUALITY_TRANSFER", "SOURCE_INHERIT");
 		assertThat(enumConstants("com.qherp.api.system.cost.CostSourceDocumentType"))
 			.contains("PRODUCTION_MATERIAL_RETURN", "PRODUCTION_MATERIAL_SUPPLEMENT");
 		assertThat(enumConstants("com.qherp.api.system.reversal.ReversalDocumentStatus")).containsExactly("DRAFT",
@@ -784,6 +830,14 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(ApiErrorCode.INVENTORY_OPENING_EXISTS.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.INVENTORY_DUPLICATE_POST.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 		assertThat(ApiErrorCode.INVENTORY_MOVEMENT_SOURCE_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_TRACKING_METHOD_IMMUTABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_BATCH_REQUIRED.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_SERIAL_REQUIRED.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_SERIAL_DUPLICATED.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_TRACKING_QUANTITY_MISMATCH.httpStatus()).isEqualTo(HttpStatus.BAD_REQUEST);
+		assertThat(ApiErrorCode.INVENTORY_TRACKING_STOCK_NOT_ENOUGH.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(ApiErrorCode.INVENTORY_TRACKING_SOURCE_MISMATCH.httpStatus()).isEqualTo(HttpStatus.CONFLICT);
 	}
 
 	@Test

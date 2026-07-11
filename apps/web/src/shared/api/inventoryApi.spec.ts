@@ -3,10 +3,13 @@ import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createInventoryApi,
   type InventoryDocumentPayload,
+  type InventoryTrackingAllocationPayload,
   type InventoryBalanceRecord,
+  type InventoryMovementRecord,
   type InventoryMovementType,
   type InventoryReservationStatus,
   type InventoryReservationType,
+  type InventoryTrackingMethod,
 } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
@@ -46,12 +49,22 @@ describe('库存 API', () => {
     doesNotExposeLegacyNetRequirementQuantity: true as AssertTrue<
       'netRequirementQuantity' extends keyof InventoryBalanceRecord ? false : true
     >,
+    movementHasTargetDocumentNo: true as AssertTrue<
+      'targetDocumentNo' extends keyof InventoryMovementRecord ? true : false
+    >,
+    documentLineAcceptsTrackingAllocations: true as AssertTrue<
+      InventoryDocumentPayload['lines'][number] extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('库存余额类型使用非负净需求缺口字段', () => {
     expect(inventoryBalanceTypeContract).toMatchObject({
       hasNetRequirementShortageQuantity: true,
       doesNotExposeLegacyNetRequirementQuantity: true,
+      movementHasTargetDocumentNo: true,
+      documentLineAcceptsTrackingAllocations: true,
     })
   })
 
@@ -64,13 +77,16 @@ describe('库存 API', () => {
       warehouseId: 1,
       materialId: 2,
       materialType: 'RAW_MATERIAL',
+      trackingMethod: 'BATCH',
+      batchNo: 'B-20260711-001',
+      serialNo: 'S-IGNORED',
       onlyPositive: true,
       page: 2,
       pageSize: 50,
     })
 
     expect(fetcher).toHaveBeenCalledWith(
-      '/api/admin/inventory/balances?keyword=%E5%8E%9F%E6%9D%90%E6%96%99&warehouseId=1&materialId=2&materialType=RAW_MATERIAL&onlyPositive=true&page=2&pageSize=50',
+      '/api/admin/inventory/balances?keyword=%E5%8E%9F%E6%9D%90%E6%96%99&warehouseId=1&materialId=2&materialType=RAW_MATERIAL&trackingMethod=BATCH&batchNo=B-20260711-001&serialNo=S-IGNORED&onlyPositive=true&page=2&pageSize=50',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -155,6 +171,11 @@ describe('库存 API', () => {
       materialId: 2,
       movementType: 'ADJUSTMENT_DECREASE',
       direction: 'OUT',
+      trackingMethod: 'SERIAL',
+      batchId: 31,
+      batchNo: 'B-20260711-001',
+      serialId: 41,
+      serialNo: 'SN-20260711-001',
       dateFrom: '2026-07-01',
       dateTo: '2026-07-03',
       page: 1,
@@ -172,7 +193,7 @@ describe('库存 API', () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(
       1,
-      '/api/admin/inventory/movements?keyword=MOV&warehouseId=1&materialId=2&movementType=ADJUSTMENT_DECREASE&direction=OUT&dateFrom=2026-07-01&dateTo=2026-07-03&page=1&pageSize=20',
+      '/api/admin/inventory/movements?keyword=MOV&warehouseId=1&materialId=2&movementType=ADJUSTMENT_DECREASE&direction=OUT&trackingMethod=SERIAL&batchId=31&batchNo=B-20260711-001&serialId=41&serialNo=SN-20260711-001&dateFrom=2026-07-01&dateTo=2026-07-03&page=1&pageSize=20',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -236,6 +257,81 @@ describe('库存 API', () => {
     )
   })
 
+  it('批次、序列号和追溯接口按契约路径读取', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ id: 31, batchNo: 'B-20260711-001' }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ id: 41, serialNo: 'SN-20260711-001' }))
+      .mockResolvedValueOnce(apiResponse({ subject: { trackingMethod: 'BATCH', batchId: 31, batchNo: 'B-20260711-001' } }))
+      .mockResolvedValueOnce(apiResponse({ subject: { trackingMethod: 'SERIAL', serialId: 41, serialNo: 'SN-20260711-001' } }))
+    const api = createInventoryApi({ fetcher })
+    const trackingMethod: InventoryTrackingMethod = 'BATCH'
+
+    await api.batches.list({
+      keyword: 'B-20260711',
+      materialId: 2,
+      warehouseId: 1,
+      qualityStatus: 'QUALIFIED',
+      batchNo: 'B-20260711-001',
+      sourceType: 'PURCHASE_RECEIPT',
+      sourceId: 9,
+      onlyAvailable: true,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.batches.get(31)
+    await api.serials.list({
+      keyword: 'SN-20260711',
+      materialId: 2,
+      warehouseId: 1,
+      qualityStatus: 'QUALIFIED',
+      batchId: 31,
+      serialNo: 'SN-20260711-001',
+      sourceType: 'PURCHASE_RECEIPT',
+      sourceId: 9,
+      onlyAvailable: true,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.serials.get(41)
+    await api.traces.getBatchTrace(31)
+    await api.traces.getSerialTrace(41)
+
+    expect(trackingMethod).toBe('BATCH')
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/inventory/batches?keyword=B-20260711&materialId=2&warehouseId=1&qualityStatus=QUALIFIED&batchNo=B-20260711-001&sourceType=PURCHASE_RECEIPT&sourceId=9&onlyAvailable=true&page=1&pageSize=20',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/inventory/batches/31',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      3,
+      '/api/admin/inventory/serials?keyword=SN-20260711&materialId=2&warehouseId=1&qualityStatus=QUALIFIED&serialNo=SN-20260711-001&batchId=31&sourceType=PURCHASE_RECEIPT&sourceId=9&onlyAvailable=true&page=1&pageSize=20',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      4,
+      '/api/admin/inventory/serials/41',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      5,
+      '/api/admin/inventory/traces/batches/31',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      6,
+      '/api/admin/inventory/traces/serials/41',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
   it('按单据标识获取库存单据详情', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ id: 9, documentNo: 'INV-20260703-001' }))
     const api = createInventoryApi({ fetcher })
@@ -268,7 +364,14 @@ describe('库存 API', () => {
       businessDate: '2026-07-03',
       reason: '期初库存',
       remark: '上线期初',
-      lines: [{ lineNo: 1, warehouseId: 1, materialId: 2, unitId: 3, quantity: '999999999999.999999' }],
+      lines: [{
+        lineNo: 1,
+        warehouseId: 1,
+        materialId: 2,
+        unitId: 3,
+        quantity: '999999999999.999999',
+        trackingAllocations: [{ batchNo: 'B-OPENING-001', quantity: '999999999999.999999' }],
+      }],
     }
 
     await api.documents.create(payload)
@@ -276,7 +379,10 @@ describe('库存 API', () => {
     await api.documents.post(1)
 
     expect(JSON.parse((fetcher.mock.calls[1][1].body as string))).toMatchObject({
-      lines: [{ quantity: '999999999999.999999' }],
+      lines: [{
+        quantity: '999999999999.999999',
+        trackingAllocations: [{ batchNo: 'B-OPENING-001', quantity: '999999999999.999999' }],
+      }],
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/auth/csrf', {

@@ -7,6 +7,7 @@ import {
   type ProductionCompletionReceiptRecord,
   type ProductionDocumentListParams,
   type ProductionMaterialIssueDetailRecord,
+  type ProductionMaterialIssueLinePayload,
   type ProductionMaterialIssuePayload,
   type ProductionMaterialIssueSummaryRecord,
   type ProductionWorkOrderMaterialRecord,
@@ -15,6 +16,7 @@ import {
   type ProductionWorkReportPayload,
   type ProductionWorkReportRecord,
 } from './productionApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
 
@@ -133,6 +135,16 @@ describe('生产执行 API', () => {
           : false
         : false
     >,
+    materialIssueLineAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionMaterialIssueLinePayload extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    completionReceiptAcceptsTrackingAllocations: true as AssertTrue<
+      ProductionCompletionReceiptPayload extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
   }
 
   it('声明生产详情和执行记录列表的类型契约', () => {
@@ -149,6 +161,8 @@ describe('生产执行 API', () => {
       reportsIncludeAuditFields: true,
       reportsReturnPage: true,
       workOrderMaterialHasAvailabilityFields: true,
+      materialIssueLineAcceptsTrackingAllocations: true,
+      completionReceiptAcceptsTrackingAllocations: true,
       workOrderDetailUsesMaterialIssueSummary: true,
       workOrderIncludesWarehouseAndCancelFields: true,
     })
@@ -440,7 +454,13 @@ describe('生产执行 API', () => {
     const issuePayload: ProductionMaterialIssuePayload = {
       businessDate: '2026-07-03',
       reason: '生产领料',
-      lines: [{ workOrderMaterialId: 101, lineNo: 1, warehouseId: 2, quantity: '12.500000' }],
+      lines: [{
+        workOrderMaterialId: 101,
+        lineNo: 1,
+        warehouseId: 2,
+        quantity: '12.500000',
+        trackingAllocations: [{ batchId: 31, quantity: '12.500000' }],
+      }],
     }
     const reportPayload: ProductionWorkReportPayload = {
       businessDate: '2026-07-03',
@@ -452,6 +472,7 @@ describe('生产执行 API', () => {
       businessDate: '2026-07-03',
       receiptWarehouseId: 3,
       quantity: '10.000000',
+      trackingAllocations: [{ batchNo: 'B-WO-001', quantity: '10.000000' }],
     }
 
     await api.materialIssues.create(9, issuePayload)

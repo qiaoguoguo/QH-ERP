@@ -118,6 +118,24 @@ public enum ApiErrorCode {
 
 	INVENTORY_IN_TRANSIT_NOT_AVAILABLE(HttpStatus.CONFLICT, "在途库存不可用于现货出库"),
 
+	INVENTORY_TRACKING_METHOD_IMMUTABLE(HttpStatus.CONFLICT, "已有库存、流水或活动预留的物料不允许切换追踪方式"),
+
+	INVENTORY_BATCH_REQUIRED(HttpStatus.BAD_REQUEST, "批次物料缺少批次分配"),
+
+	INVENTORY_SERIAL_REQUIRED(HttpStatus.BAD_REQUEST, "序列号物料缺少序列分配"),
+
+	INVENTORY_SERIAL_DUPLICATED(HttpStatus.CONFLICT, "同一物料下序列号重复"),
+
+	INVENTORY_TRACKING_QUANTITY_MISMATCH(HttpStatus.BAD_REQUEST, "追踪分配数量与业务行数量不一致"),
+
+	INVENTORY_TRACKING_STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "指定批次或序列库存不足"),
+
+	INVENTORY_TRACKING_NOT_AVAILABLE(HttpStatus.CONFLICT, "指定批次或序列不可用于当前业务"),
+
+	INVENTORY_TRACKING_SOURCE_MISMATCH(HttpStatus.CONFLICT, "追踪来源与当前业务来源不一致"),
+
+	INVENTORY_TRACKING_NOT_FOUND(HttpStatus.NOT_FOUND, "批次或序列号不存在"),
+
 	QUALITY_STATUS_TRANSITION_INVALID(HttpStatus.CONFLICT, "质量状态转换路径不允许"),
 
 	QUALITY_INSPECTION_NOT_FOUND(HttpStatus.NOT_FOUND, "质量确认记录不存在"),

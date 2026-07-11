@@ -6,15 +6,18 @@ import {
   type InventoryBalanceRecord,
   type InventoryReservationSummaryRecord,
   type InventoryQualityStatus,
+  type InventoryTraceDetailRecord,
+  type InventoryTrackingMethod,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type MaterialType, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { materialTypeLabel } from '../master/shared/masterPageHelpers'
+import { materialTypeLabel, trackingMethodLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import { formatQuantity } from './inventoryPageHelpers'
+import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -24,6 +27,9 @@ const filters = reactive<{
   materialId: ResourceId | ''
   materialType?: MaterialType
   qualityStatus?: InventoryQualityStatus
+  trackingMethod?: InventoryTrackingMethod
+  batchNo: string
+  serialNo: string
   onlyPositive: boolean
   includeZeroQualityStatuses: boolean
 }>({
@@ -32,6 +38,9 @@ const filters = reactive<{
   materialId: '',
   materialType: undefined,
   qualityStatus: undefined,
+  trackingMethod: undefined,
+  batchNo: '',
+  serialNo: '',
   onlyPositive: false,
   includeZeroQualityStatuses: false,
 })
@@ -53,8 +62,13 @@ const selectedBalance = ref<InventoryBalanceRecord | null>(null)
 const reservationRecords = ref<InventoryReservationSummaryRecord[]>([])
 const reservationLoading = ref(false)
 const reservationError = ref('')
+const traceDrawerVisible = ref(false)
+const traceDetail = ref<InventoryTraceDetailRecord | null>(null)
+const traceLoading = ref(false)
+const traceError = ref('')
 const availabilityDrawerSize = 'min(520px, 92vw)'
 const canViewReservations = computed(() => authStore.hasPermission('inventory:reservation:view'))
+const canViewTrace = computed(() => authStore.hasPermission('inventory:trace:view'))
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -100,6 +114,9 @@ async function loadRecords() {
       materialId: normalizeOptionalId(filters.materialId),
       materialType: filters.materialType,
       qualityStatus: filters.qualityStatus,
+      trackingMethod: filters.trackingMethod,
+      batchNo: filters.batchNo.trim(),
+      serialNo: filters.serialNo.trim(),
       onlyPositive: filters.onlyPositive,
       includeZeroQualityStatuses: filters.includeZeroQualityStatuses,
       page: pagination.page,
@@ -127,6 +144,9 @@ function resetSearch() {
   filters.materialId = ''
   filters.materialType = undefined
   filters.qualityStatus = undefined
+  filters.trackingMethod = undefined
+  filters.batchNo = ''
+  filters.serialNo = ''
   filters.onlyPositive = false
   filters.includeZeroQualityStatuses = false
   pagination.page = 1
@@ -151,8 +171,72 @@ function viewMovements(record: InventoryBalanceRecord) {
       warehouseId: String(record.warehouseId),
       materialId: String(record.materialId),
       ...(record.qualityStatus ? { qualityStatus: String(record.qualityStatus) } : {}),
+      ...(record.trackingMethod ? { trackingMethod: String(record.trackingMethod) } : {}),
+      ...(record.batchId ? { batchId: String(record.batchId) } : {}),
+      ...(record.batchNo ? { batchNo: String(record.batchNo) } : {}),
+      ...(record.serialId ? { serialId: String(record.serialId) } : {}),
+      ...(record.serialNo ? { serialNo: String(record.serialNo) } : {}),
     },
   })
+}
+
+function canTraceRecord(record: InventoryBalanceRecord) {
+  if (!canViewTrace.value) {
+    return false
+  }
+  if (record.trackingMethod === 'BATCH') {
+    return Boolean(record.batchId)
+  }
+  if (record.trackingMethod === 'SERIAL') {
+    return Boolean(record.serialId)
+  }
+  return false
+}
+
+function traceStatusText(record: InventoryBalanceRecord) {
+  if (!canViewTrace.value) {
+    return '无追溯权限'
+  }
+  if (record.trackingMethod === 'NONE') {
+    return '不追踪物料无追溯'
+  }
+  if (record.trackingMethod === 'BATCH' && !record.batchId) {
+    return '缺少批次或序列身份'
+  }
+  if (record.trackingMethod === 'SERIAL' && !record.serialId) {
+    return '缺少批次或序列身份'
+  }
+  return '暂无追溯入口'
+}
+
+async function loadTrace(record: InventoryBalanceRecord) {
+  traceLoading.value = true
+  traceError.value = ''
+  try {
+    if (record.trackingMethod === 'BATCH' && record.batchId) {
+      traceDetail.value = await inventoryApi.traces.getBatchTrace(record.batchId)
+      return
+    }
+    if (record.trackingMethod === 'SERIAL' && record.serialId) {
+      traceDetail.value = await inventoryApi.traces.getSerialTrace(record.serialId)
+      return
+    }
+    traceDetail.value = null
+  } catch (caught) {
+    traceDetail.value = null
+    traceError.value = errorMessage(caught)
+  } finally {
+    traceLoading.value = false
+  }
+}
+
+function viewTrace(record: InventoryBalanceRecord) {
+  if (!canTraceRecord(record)) {
+    return
+  }
+  traceDetail.value = null
+  traceDrawerVisible.value = true
+  void loadTrace(record)
 }
 
 async function loadReservations(record: InventoryBalanceRecord) {
@@ -273,6 +357,34 @@ onMounted(() => {
             <el-option label="冻结" value="FROZEN" />
           </el-select>
         </el-form-item>
+        <el-form-item label="追踪方式">
+          <el-select
+            v-model="filters.trackingMethod"
+            data-test="inventory-balance-tracking-method"
+            clearable
+            placeholder="全部方式"
+          >
+            <el-option label="不追踪" value="NONE" />
+            <el-option label="批次管理" value="BATCH" />
+            <el-option label="序列号管理" value="SERIAL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="批次号">
+          <el-input
+            v-model="filters.batchNo"
+            name="inventory-balance-batch-no"
+            clearable
+            placeholder="批次号"
+          />
+        </el-form-item>
+        <el-form-item label="序列号">
+          <el-input
+            v-model="filters.serialNo"
+            name="inventory-balance-serial-no"
+            clearable
+            placeholder="序列号"
+          />
+        </el-form-item>
         <el-form-item>
           <label class="checkbox-filter">
             <input v-model="filters.onlyPositive" name="inventory-balance-only-positive" type="checkbox" />
@@ -308,7 +420,6 @@ onMounted(() => {
       />
     </template>
 
-    <el-empty v-if="!loading && records.length === 0" description="暂无库存余额" />
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无库存余额'" stripe>
         <el-table-column prop="warehouseName" label="仓库" min-width="150" show-overflow-tooltip />
@@ -324,6 +435,21 @@ onMounted(() => {
         <el-table-column label="质量状态" min-width="100">
           <template #default="{ row }">
             <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
+          </template>
+        </el-table-column>
+        <el-table-column label="追踪方式" min-width="120">
+          <template #default="{ row }">
+            {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.batchNo || row.serialNo || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="追踪数量" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.traceableQuantity ?? row.quantityOnHand) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="账面库存" min-width="120" align="right">
@@ -394,6 +520,16 @@ onMounted(() => {
             <el-button size="small" text data-test="view-inventory-movements" @click="viewMovements(row)">
               查看流水
             </el-button>
+            <el-button
+              v-if="canTraceRecord(row)"
+              size="small"
+              text
+              data-test="view-inventory-trace"
+              @click="viewTrace(row)"
+            >
+              追溯
+            </el-button>
+            <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
             <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
               占用预留
             </el-button>
@@ -466,6 +602,13 @@ onMounted(() => {
         <dd>{{ formatQuantity(selectedBalance.availableToPromiseQuantity) }}</dd>
       </dl>
     </el-drawer>
+
+    <InventoryTraceDrawer
+      v-model="traceDrawerVisible"
+      :detail="traceDetail"
+      :loading="traceLoading"
+      :error="traceError"
+    />
   </MasterDataTableView>
 </template>
 
@@ -483,6 +626,14 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.operation-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  color: var(--qherp-muted);
+  font-size: 13px;
 }
 
 .availability-detail-list {

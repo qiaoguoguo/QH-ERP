@@ -16,6 +16,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -356,6 +357,94 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void materialTrackingMethodDefaultsCreatesUpdatesAndFilters() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_TRACK_UNIT", "追踪方式单位");
+		long categoryId = createCategory(admin, "T4_TRACK_CAT", "追踪方式分类", null, "ENABLED", 10);
+
+		ResponseEntity<String> defaultCreate = exchange(HttpMethod.POST, MATERIALS,
+				materialRequest("T4_TRACK_DEFAULT", "默认追踪物料", "S", "RAW_MATERIAL", "PURCHASED", categoryId,
+						unitId, "ENABLED", null),
+				admin);
+		assertThat(defaultCreate.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode defaultMaterial = data(defaultCreate);
+		assertThat(defaultMaterial.get("trackingMethod").asText()).isEqualTo("NONE");
+		assertThat(defaultMaterial.get("trackingMethodName").asText()).isEqualTo("不追踪");
+
+		Map<String, Object> batchRequest = materialRequest("T4_TRACK_BATCH", "批次追踪物料", "B", "RAW_MATERIAL",
+				"PURCHASED", categoryId, unitId, "ENABLED", null);
+		batchRequest.put("trackingMethod", "BATCH");
+		ResponseEntity<String> batchCreate = exchange(HttpMethod.POST, MATERIALS, batchRequest, admin);
+		assertThat(batchCreate.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode batchMaterial = data(batchCreate);
+		long batchMaterialId = batchMaterial.get("id").longValue();
+		assertThat(batchMaterial.get("trackingMethod").asText()).isEqualTo("BATCH");
+		assertThat(batchMaterial.get("trackingMethodName").asText()).isEqualTo("批次管理");
+
+		ResponseEntity<String> batchList = get(
+				MATERIALS + "?keyword=T4_TRACK_BATCH&trackingMethod=BATCH&page=1&pageSize=20", admin);
+		assertThat(batchList.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(batchList).get("total").longValue()).isEqualTo(1L);
+		assertThat(data(batchList).get("items").get(0).get("trackingMethod").asText()).isEqualTo("BATCH");
+
+		Map<String, Object> serialRequest = materialRequest("T4_TRACK_BATCH_UPD", "序列追踪物料", "S2",
+				"RAW_MATERIAL", "PURCHASED", categoryId, unitId, "ENABLED", null);
+		serialRequest.put("trackingMethod", "SERIAL");
+		ResponseEntity<String> serialUpdate = exchange(HttpMethod.PUT, MATERIALS + "/" + batchMaterialId,
+				serialRequest, admin);
+		assertThat(serialUpdate.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(serialUpdate).get("trackingMethod").asText()).isEqualTo("SERIAL");
+		assertThat(data(serialUpdate).get("trackingMethodName").asText()).isEqualTo("序列号管理");
+
+		ResponseEntity<String> detail = get(MATERIALS + "/" + batchMaterialId, admin);
+		assertThat(detail.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(detail).get("trackingMethod").asText()).isEqualTo("SERIAL");
+
+		ResponseEntity<String> serialList = get(
+				MATERIALS + "?keyword=T4_TRACK_BATCH_UPD&trackingMethod=SERIAL&page=1&pageSize=20", admin);
+		assertThat(serialList.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(data(serialList).get("total").longValue()).isEqualTo(1L);
+	}
+
+	@Test
+	void materialTrackingMethodCannotChangeWhenStockMovementOrActiveReservationExists() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		long unitId = createUnit(admin, "T4_TRACK_LOCK_UNIT", "追踪变更锁定单位");
+		long categoryId = createCategory(admin, "T4_TRACK_LOCK_CAT", "追踪变更锁定分类", null, "ENABLED", 10);
+		long warehouseId = insertWarehouse("T4_TRACK_LOCK_WH", "追踪变更锁定仓");
+
+		long stockMaterialId = createMaterial(admin, "T4_TRACK_STOCK", "正库存锁定物料", categoryId, unitId,
+				"ENABLED");
+		insertPositiveBalance(warehouseId, stockMaterialId, unitId);
+		JsonNode lockedMaterial = data(get(MATERIALS + "/" + stockMaterialId, admin));
+		assertThat(lockedMaterial.get("trackingMethodImmutableReason").asText())
+			.isEqualTo("已有库存、流水或活动预留的物料不允许切换追踪方式");
+		Map<String, Object> stockUpdate = materialRequest("T4_TRACK_STOCK", "正库存锁定物料", "S", "RAW_MATERIAL",
+				"PURCHASED", categoryId, unitId, "ENABLED", null);
+		stockUpdate.put("trackingMethod", "BATCH");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + stockMaterialId, stockUpdate, admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
+
+		long movementMaterialId = createMaterial(admin, "T4_TRACK_MOVE", "流水锁定物料", categoryId, unitId,
+				"ENABLED");
+		insertMovement(warehouseId, movementMaterialId, unitId);
+		Map<String, Object> movementUpdate = materialRequest("T4_TRACK_MOVE", "流水锁定物料", "S", "RAW_MATERIAL",
+				"PURCHASED", categoryId, unitId, "ENABLED", null);
+		movementUpdate.put("trackingMethod", "SERIAL");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + movementMaterialId, movementUpdate, admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
+
+		long reservationMaterialId = createMaterial(admin, "T4_TRACK_RESV", "活动预留锁定物料", categoryId, unitId,
+				"ENABLED");
+		insertActiveReservation(warehouseId, reservationMaterialId, unitId);
+		Map<String, Object> reservationUpdate = materialRequest("T4_TRACK_RESV", "活动预留锁定物料", "S",
+				"RAW_MATERIAL", "PURCHASED", categoryId, unitId, "ENABLED", null);
+		reservationUpdate.put("trackingMethod", "BATCH");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + reservationMaterialId, reservationUpdate, admin),
+				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
+	}
+
+	@Test
 	void categorySortOrderIsRequiredForCreateAndUpdate() throws Exception {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		Map<String, Object> missingCreateSortOrder = categoryRequest("T4_MISSING_SORT_CREATE", "缺失排序分类", null,
@@ -402,6 +491,11 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				materialRequest("T4_BAD_SOURCE_MAT", "非法来源物料", "S", "RAW_MATERIAL", "BAD_SOURCE", categoryId,
 						unitId, "ENABLED", null),
 				admin), HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+		Map<String, Object> invalidTracking = materialRequest("T4_BAD_TRACKING_MAT", "非法追踪物料", "S",
+				"RAW_MATERIAL", "PURCHASED", categoryId, unitId, "ENABLED", null);
+		invalidTracking.put("trackingMethod", "BAD_TRACKING");
+		assertError(exchange(HttpMethod.POST, MATERIALS, invalidTracking, admin), HttpStatus.BAD_REQUEST,
+				"VALIDATION_ERROR");
 	}
 
 	@Test
@@ -536,6 +630,49 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 	private long countByCode(String tableName, String code) {
 		return this.jdbcTemplate.queryForObject("select count(*) from " + tableName + " where code = ?", Long.class,
 				code);
+	}
+
+	private long insertWarehouse(String code, String name) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_warehouse (code, name, warehouse_type, status, created_by, created_at, updated_by,
+					updated_at)
+				values (?, ?, 'NORMAL', 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, name);
+	}
+
+	private void insertPositiveBalance(long warehouseId, long materialId, long unitId) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+					quality_status, created_at, updated_at)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal("1.000000"));
+	}
+
+	private void insertMovement(long warehouseId, long materialId, long unitId) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date, reason,
+					remark, operator_name, occurred_at, quality_status
+				)
+				values (?, 'ADJUSTMENT_INCREASE', 'IN', ?, ?, ?, ?, 0, ?, 'MATERIAL_TRACKING_TEST', ?, ?, current_date,
+					'追踪方式变更校验', null, 'tester', now(), 'QUALIFIED')
+				""", "MV-TRACK-" + materialId, warehouseId, materialId, unitId, new BigDecimal("1.000000"),
+				new BigDecimal("1.000000"), materialId, materialId);
+	}
+
+	private void insertActiveReservation(long warehouseId, long materialId, long unitId) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'RESERVATION', 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, 'MATERIAL_TRACKING_TEST', ?, ?,
+					?, current_date, '追踪方式变更校验', 'tester', now(), 'tester', now())
+				""", "RSV-TRACK-" + materialId, warehouseId, materialId, unitId, new BigDecimal("1.000000"),
+				materialId, materialId, "RSV-DOC-" + materialId);
 	}
 
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) {

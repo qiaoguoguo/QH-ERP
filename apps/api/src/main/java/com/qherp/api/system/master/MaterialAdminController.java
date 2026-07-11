@@ -29,10 +29,11 @@ public class MaterialAdminController {
 	public ApiResponse<PageResponse<MaterialAdminService.MaterialResponse>> list(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
 			@RequestParam(required = false) Long categoryId, @RequestParam(required = false) String materialType,
-			@RequestParam(required = false) String sourceType, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) String trackingMethod, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.materialAdminService.list(keyword, status, categoryId, materialType, sourceType, page,
-				pageSize));
+		return ApiResponse.ok(this.materialAdminService.list(keyword, status, categoryId, materialType, sourceType,
+				trackingMethod, page, pageSize));
 	}
 
 	@GetMapping("/{id}")

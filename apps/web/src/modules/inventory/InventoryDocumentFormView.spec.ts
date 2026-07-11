@@ -49,6 +49,8 @@ const material: MaterialRecord = {
   name: '冷轧钢板',
   materialType: 'RAW_MATERIAL',
   sourceType: 'PURCHASED',
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
   categoryId: 1,
   unitId: 3,
   unitName: '千克',

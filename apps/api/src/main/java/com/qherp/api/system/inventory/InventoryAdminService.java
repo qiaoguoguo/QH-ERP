@@ -64,25 +64,65 @@ public class InventoryAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryBalanceResponse> balances(String keyword, Long warehouseId, Long materialId,
-			String materialType, String qualityStatus, boolean onlyPositive, int page, int pageSize) {
+			String materialType, String qualityStatus, String trackingMethod, Long batchId, String batchNo,
+			Long serialId, String serialNo, boolean onlyPositive, int page, int pageSize) {
 		InventoryQualityStatus selectedQualityStatus = parseNullableQualityStatus(qualityStatus);
-		QueryParts queryParts = balanceQueryParts(keyword, warehouseId, materialId, materialType);
+		InventoryTrackingMethod selectedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
+		boolean trackingBreakdown = trackingBreakdown(selectedTrackingMethod, batchId, batchNo, serialId, serialNo);
+		QueryParts queryParts = balanceQueryParts(keyword, warehouseId, materialId, materialType,
+				selectedTrackingMethod, batchId, batchNo, serialId, serialNo);
 		HavingParts havingParts = balanceHavingParts(selectedQualityStatus, onlyPositive);
+		String trackingCountSelect = trackingBreakdown ? ", b.batch_id, b.serial_id" : "";
+		String trackingSelect = trackingBreakdown
+				? "m.tracking_method, b.batch_id, bt.batch_no, b.serial_id, sr.serial_no,"
+				: "m.tracking_method, null::bigint as batch_id, null::varchar as batch_no, null::bigint as serial_id, null::varchar as serial_no,";
+		String trackingGroupBy = trackingBreakdown ? ", m.tracking_method, b.batch_id, bt.batch_no, b.serial_id, sr.serial_no"
+				: ", m.tracking_method";
+		String reservationJoin = trackingBreakdown ? """
+				left join (
+					select warehouse_id, material_id, batch_id, serial_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id, batch_id, serial_id
+				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
+					and r.batch_id is not distinct from b.batch_id
+					and r.serial_id is not distinct from b.serial_id
+				""" : """
+				left join (
+					select warehouse_id, material_id,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by warehouse_id, material_id
+				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
+				""";
 		List<Object> countArgs = new ArrayList<>(queryParts.args());
 		countArgs.addAll(havingParts.args());
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from (
-					select b.warehouse_id, b.material_id, b.unit_id
+					select b.warehouse_id, b.material_id, b.unit_id%s
 					from inv_stock_balance b
 					left join mst_warehouse w on w.id = b.warehouse_id
 					left join mst_material m on m.id = b.material_id
 					left join mst_unit u on u.id = b.unit_id
+					left join inv_batch bt on bt.id = b.batch_id
+					left join inv_serial sr on sr.id = b.serial_id
 					%s
-					group by b.warehouse_id, b.material_id, b.unit_id
+					group by b.warehouse_id, b.material_id, b.unit_id%s
 					%s
 				) grouped
-				""".formatted(queryParts.where(), havingParts.having()), Long.class, countArgs.toArray());
+				""".formatted(trackingCountSelect, queryParts.where(), trackingCountSelect, havingParts.having()),
+				Long.class, countArgs.toArray());
 		List<Object> args = new ArrayList<>(queryParts.args());
 		args.addAll(havingParts.args());
 		args.add(limit(pageSize));
@@ -90,7 +130,8 @@ public class InventoryAdminService {
 		List<InventoryBalanceResponse> items = this.jdbcTemplate.query("""
 				select min(b.id) as id, b.warehouse_id, w.code as warehouse_code, w.name as warehouse_name,
 				       b.material_id, m.code as material_code, m.name as material_name,
-				       m.specification as material_spec, m.material_type, b.unit_id, u.name as unit_name,
+				       m.specification as material_spec, m.material_type, %s
+				       b.unit_id, u.name as unit_name,
 				       sum(b.quantity_on_hand) as total_quantity_on_hand,
 				       sum(b.locked_quantity) as total_locked_quantity,
 				       sum(case when b.quality_status = 'PENDING_INSPECTION' then b.quantity_on_hand else 0 end) as pending_inspection_quantity,
@@ -112,17 +153,9 @@ public class InventoryAdminService {
 				left join mst_warehouse w on w.id = b.warehouse_id
 				left join mst_material m on m.id = b.material_id
 				left join mst_unit u on u.id = b.unit_id
-				left join (
-					select warehouse_id, material_id,
-					       sum(case when reservation_type = 'RESERVATION'
-					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
-					       sum(case when reservation_type = 'OCCUPATION'
-					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
-					from inv_stock_reservation
-					where status = 'ACTIVE'
-					and quality_status = 'QUALIFIED'
-					group by warehouse_id, material_id
-				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
+				left join inv_batch bt on bt.id = b.batch_id
+				left join inv_serial sr on sr.id = b.serial_id
+				%s
 				left join (
 					select q.material_id,
 					       coalesce(q.qualified_quantity, 0) - coalesce(l.locked_quantity, 0) as material_available_quantity
@@ -164,11 +197,12 @@ public class InventoryAdminService {
 				) pd on pd.warehouse_id = b.warehouse_id and pd.material_id = b.material_id
 				%s
 				group by b.warehouse_id, w.code, w.name, b.material_id, m.code, m.name, m.specification,
-				         m.material_type, b.unit_id, u.name
+				         m.material_type%s, b.unit_id, u.name
 				%s
 				order by max(b.updated_at) desc, min(b.id) desc
 				limit ? offset ?
-				""".formatted(queryParts.where(), havingParts.having()),
+				""".formatted(trackingSelect, reservationJoin, queryParts.where(), trackingGroupBy,
+						havingParts.having()),
 				(rs, rowNum) -> mapBalance(rs, rowNum, selectedQualityStatus), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
@@ -177,15 +211,27 @@ public class InventoryAdminService {
 	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus, int page,
 			int pageSize) {
+		return movements(keyword, warehouseId, materialId, movementType, direction, dateFrom, dateTo, qualityStatus,
+				null, null, null, null, null, page, pageSize);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
+			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus,
+			String trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo, int page,
+			int pageSize) {
 		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
+		InventoryTrackingMethod parsedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
 		QueryParts queryParts = movementQueryParts(keyword, warehouseId, materialId, movementType, direction, dateFrom,
-				dateTo, parsedQualityStatus);
+				dateTo, parsedQualityStatus, parsedTrackingMethod, batchId, batchNo, serialId, serialNo);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from inv_stock_movement mv
 				join mst_warehouse w on w.id = mv.warehouse_id
 				join mst_material m on m.id = mv.material_id
 				join mst_unit u on u.id = mv.unit_id
+				left join inv_batch bt on bt.id = mv.batch_id
+				left join inv_serial sr on sr.id = mv.serial_id
 				%s
 				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
@@ -194,16 +240,179 @@ public class InventoryAdminService {
 				       w.name as warehouse_name, mv.material_id, m.code as material_code, m.name as material_name,
 				       mv.unit_id, u.name as unit_name, mv.quantity, mv.before_quantity, mv.after_quantity,
 				       mv.source_type, mv.source_id, mv.source_line_id, mv.business_date, mv.reason, mv.remark,
-				       mv.operator_name, mv.occurred_at, mv.quality_status
+				       mv.operator_name, mv.occurred_at, mv.quality_status, m.tracking_method, mv.batch_id,
+				       bt.batch_no, mv.serial_id, sr.serial_no, d.document_no as source_document_no,
+				       null::varchar as target_document_no
 				from inv_stock_movement mv
 				join mst_warehouse w on w.id = mv.warehouse_id
 				join mst_material m on m.id = mv.material_id
 				join mst_unit u on u.id = mv.unit_id
+				left join inv_batch bt on bt.id = mv.batch_id
+				left join inv_serial sr on sr.id = mv.serial_id
+				left join inv_inventory_document d on d.id = mv.source_id and mv.source_type = 'INVENTORY_DOCUMENT'
 				%s
 				order by mv.occurred_at desc, mv.id desc
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapMovement, args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<InventoryBatchSummaryResponse> batches(String keyword, Long materialId, Long warehouseId,
+			String qualityStatus, String batchNo, String sourceType, Long sourceId, boolean onlyAvailable, int page,
+			int pageSize) {
+		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
+		QueryParts queryParts = batchQueryParts(keyword, materialId, warehouseId, parsedQualityStatus, batchNo,
+				sourceType, sourceId);
+		HavingParts havingParts = trackingAvailableHaving(onlyAvailable, "sb", "l");
+		List<Object> countArgs = new ArrayList<>(queryParts.args());
+		countArgs.addAll(havingParts.args());
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from (
+					select b.id
+					from inv_batch b
+					join mst_material m on m.id = b.material_id
+					left join inv_stock_balance sb on sb.batch_id = b.id
+					left join (
+						select batch_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+						from inv_stock_reservation
+						where status = 'ACTIVE'
+						and quality_status = 'QUALIFIED'
+						group by batch_id
+					) l on l.batch_id = b.id
+					%s
+					group by b.id
+					%s
+				) grouped
+				""".formatted(queryParts.where(), havingParts.having()), Long.class, countArgs.toArray());
+		List<Object> args = new ArrayList<>(queryParts.args());
+		args.addAll(havingParts.args());
+		args.add(limit(pageSize));
+		args.add(offset(page, pageSize));
+		List<InventoryBatchSummaryResponse> items = this.jdbcTemplate.query("""
+				select b.id, b.batch_no, b.material_id, m.code as material_code, m.name as material_name,
+				       b.source_type, b.source_id, b.source_line_id, d.document_no as source_document_no,
+				       b.business_date, coalesce(sum(sb.quantity_on_hand), 0) as quantity_on_hand,
+				       greatest(coalesce(sum(case when sb.quality_status = 'QUALIFIED'
+				                              then sb.quantity_on_hand else 0 end), 0)
+				                - coalesce(max(l.locked_quantity), 0), 0) as available_quantity,
+				       b.updated_at
+				from inv_batch b
+				join mst_material m on m.id = b.material_id
+				left join inv_stock_balance sb on sb.batch_id = b.id
+				left join inv_inventory_document d on d.id = b.source_id and b.source_type = 'INVENTORY_DOCUMENT'
+				left join (
+					select batch_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by batch_id
+				) l on l.batch_id = b.id
+				%s
+				group by b.id, b.batch_no, b.material_id, m.code, m.name, b.source_type, b.source_id,
+				         b.source_line_id, d.document_no, b.business_date, b.updated_at
+				%s
+				order by b.updated_at desc, b.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where(), havingParts.having()), this::mapBatchSummary, args.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryBatchDetailResponse batch(Long id) {
+		return this.jdbcTemplate.query("""
+				select b.id, b.batch_no, b.material_id, m.code as material_code, m.name as material_name,
+				       b.source_type, b.source_id, b.source_line_id, d.document_no as source_document_no,
+				       b.business_date, coalesce(sum(sb.quantity_on_hand), 0) as quantity_on_hand,
+				       greatest(coalesce(sum(case when sb.quality_status = 'QUALIFIED'
+				                              then sb.quantity_on_hand else 0 end), 0)
+				                - coalesce(max(l.locked_quantity), 0), 0) as available_quantity,
+				       b.remark, b.created_by, b.created_at, b.updated_by, b.updated_at
+				from inv_batch b
+				join mst_material m on m.id = b.material_id
+				left join inv_stock_balance sb on sb.batch_id = b.id
+				left join inv_inventory_document d on d.id = b.source_id and b.source_type = 'INVENTORY_DOCUMENT'
+				left join (
+					select batch_id, sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					and quality_status = 'QUALIFIED'
+					group by batch_id
+				) l on l.batch_id = b.id
+				where b.id = ?
+				group by b.id, b.batch_no, b.material_id, m.code, m.name, b.source_type, b.source_id,
+				         b.source_line_id, d.document_no, b.business_date, b.remark, b.created_by, b.created_at,
+				         b.updated_by, b.updated_at
+				""", this::mapBatchDetail, id).stream().findFirst().orElseThrow(this::trackingNotFound);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<InventorySerialSummaryResponse> serials(String keyword, Long materialId, Long warehouseId,
+			String qualityStatus, String serialNo, Long batchId, String sourceType, Long sourceId,
+			boolean onlyAvailable, int page, int pageSize) {
+		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
+		QueryParts queryParts = serialQueryParts(keyword, materialId, warehouseId, parsedQualityStatus, serialNo,
+				batchId, sourceType, sourceId, onlyAvailable);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_serial s
+				join mst_material m on m.id = s.material_id
+				left join inv_batch b on b.id = s.batch_id
+				left join mst_warehouse w on w.id = s.warehouse_id
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> args = paginationArgs(queryParts, pageSize, page);
+		List<InventorySerialSummaryResponse> items = this.jdbcTemplate.query("""
+				select s.id, s.serial_no, s.material_id, m.code as material_code, m.name as material_name,
+				       s.batch_id, b.batch_no, s.warehouse_id, w.name as warehouse_name,
+				       s.quality_status, s.stock_status, s.source_type, s.source_id, s.source_line_id,
+				       d.document_no as source_document_no, s.updated_at
+				from inv_serial s
+				join mst_material m on m.id = s.material_id
+				left join inv_batch b on b.id = s.batch_id
+				left join mst_warehouse w on w.id = s.warehouse_id
+				left join inv_inventory_document d on d.id = s.source_id and s.source_type = 'INVENTORY_DOCUMENT'
+				%s
+				order by s.updated_at desc, s.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), this::mapSerialSummary, args.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	@Transactional(readOnly = true)
+	public InventorySerialDetailResponse serial(Long id) {
+		return this.jdbcTemplate.query("""
+				select s.id, s.serial_no, s.material_id, m.code as material_code, m.name as material_name,
+				       s.batch_id, b.batch_no, s.warehouse_id, w.name as warehouse_name,
+				       s.quality_status, s.stock_status, s.source_type, s.source_id, s.source_line_id,
+				       d.document_no as source_document_no, s.business_date, s.remark, s.created_by,
+				       s.created_at, s.updated_by, s.updated_at
+				from inv_serial s
+				join mst_material m on m.id = s.material_id
+				left join inv_batch b on b.id = s.batch_id
+				left join mst_warehouse w on w.id = s.warehouse_id
+				left join inv_inventory_document d on d.id = s.source_id and s.source_type = 'INVENTORY_DOCUMENT'
+				where s.id = ?
+				""", this::mapSerialDetail, id).stream().findFirst().orElseThrow(this::trackingNotFound);
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryTraceDetailResponse batchTrace(Long id) {
+		InventoryTraceSubjectResponse subject = batchTraceSubject(id);
+		List<InventoryTraceNodeResponse> movements = traceMovementNodes("batch_id", id);
+		return new InventoryTraceDetailResponse(subject, traceBalances("batch_id", id),
+				traceReservationNodes("batch_id", id), sourceRecord(subject), qualityEvents(movements),
+				outboundRecords(movements), returnRecords(movements), movements, List.of());
+	}
+
+	@Transactional(readOnly = true)
+	public InventoryTraceDetailResponse serialTrace(Long id) {
+		InventoryTraceSubjectResponse subject = serialTraceSubject(id);
+		List<InventoryTraceNodeResponse> movements = traceMovementNodes("serial_id", id);
+		return new InventoryTraceDetailResponse(subject, traceBalances("serial_id", id),
+				traceReservationNodes("serial_id", id), sourceRecord(subject), qualityEvents(movements),
+				outboundRecords(movements), returnRecords(movements), movements, List.of());
 	}
 
 	@Transactional(readOnly = true)
@@ -573,7 +782,8 @@ public class InventoryAdminService {
 		throw new BusinessException(ApiErrorCode.CONFLICT);
 	}
 
-	private QueryParts balanceQueryParts(String keyword, Long warehouseId, Long materialId, String materialType) {
+	private QueryParts balanceQueryParts(String keyword, Long warehouseId, Long materialId, String materialType,
+			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -595,11 +805,32 @@ public class InventoryAdminService {
 			conditions.add("m.material_type = ?");
 			args.add(materialType);
 		}
+		if (trackingMethod != null) {
+			conditions.add("m.tracking_method = ?");
+			args.add(trackingMethod.name());
+		}
+		if (batchId != null) {
+			conditions.add("b.batch_id = ?");
+			args.add(batchId);
+		}
+		if (hasText(batchNo)) {
+			conditions.add("bt.batch_no ilike ?");
+			args.add("%" + batchNo + "%");
+		}
+		if (serialId != null) {
+			conditions.add("b.serial_id = ?");
+			args.add(serialId);
+		}
+		if (hasText(serialNo)) {
+			conditions.add("sr.serial_no ilike ?");
+			args.add("%" + serialNo + "%");
+		}
 		return where(conditions, args);
 	}
 
 	private QueryParts movementQueryParts(String keyword, Long warehouseId, Long materialId, String movementType,
-			String direction, LocalDate dateFrom, LocalDate dateTo, InventoryQualityStatus qualityStatus) {
+			String direction, LocalDate dateFrom, LocalDate dateTo, InventoryQualityStatus qualityStatus,
+			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -638,7 +869,123 @@ public class InventoryAdminService {
 			conditions.add("mv.quality_status = ?");
 			args.add(qualityStatus.name());
 		}
+		if (trackingMethod != null) {
+			conditions.add("m.tracking_method = ?");
+			args.add(trackingMethod.name());
+		}
+		if (batchId != null) {
+			conditions.add("mv.batch_id = ?");
+			args.add(batchId);
+		}
+		if (hasText(batchNo)) {
+			conditions.add("bt.batch_no ilike ?");
+			args.add("%" + batchNo + "%");
+		}
+		if (serialId != null) {
+			conditions.add("mv.serial_id = ?");
+			args.add(serialId);
+		}
+		if (hasText(serialNo)) {
+			conditions.add("sr.serial_no ilike ?");
+			args.add("%" + serialNo + "%");
+		}
 		return where(conditions, args);
+	}
+
+	private QueryParts batchQueryParts(String keyword, Long materialId, Long warehouseId,
+			InventoryQualityStatus qualityStatus, String batchNo, String sourceType, Long sourceId) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(b.batch_no ilike ? or m.code ilike ? or m.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (materialId != null) {
+			conditions.add("b.material_id = ?");
+			args.add(materialId);
+		}
+		if (warehouseId != null) {
+			conditions.add("sb.warehouse_id = ?");
+			args.add(warehouseId);
+		}
+		if (qualityStatus != null) {
+			conditions.add("sb.quality_status = ?");
+			args.add(qualityStatus.name());
+		}
+		if (hasText(batchNo)) {
+			conditions.add("b.batch_no ilike ?");
+			args.add("%" + batchNo + "%");
+		}
+		if (hasText(sourceType)) {
+			conditions.add("b.source_type = ?");
+			args.add(sourceType);
+		}
+		if (sourceId != null) {
+			conditions.add("b.source_id = ?");
+			args.add(sourceId);
+		}
+		return where(conditions, args);
+	}
+
+	private QueryParts serialQueryParts(String keyword, Long materialId, Long warehouseId,
+			InventoryQualityStatus qualityStatus, String serialNo, Long batchId, String sourceType, Long sourceId,
+			boolean onlyAvailable) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(s.serial_no ilike ? or m.code ilike ? or m.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (materialId != null) {
+			conditions.add("s.material_id = ?");
+			args.add(materialId);
+		}
+		if (warehouseId != null) {
+			conditions.add("s.warehouse_id = ?");
+			args.add(warehouseId);
+		}
+		if (qualityStatus != null) {
+			conditions.add("s.quality_status = ?");
+			args.add(qualityStatus.name());
+		}
+		if (hasText(serialNo)) {
+			conditions.add("s.serial_no ilike ?");
+			args.add("%" + serialNo + "%");
+		}
+		if (batchId != null) {
+			conditions.add("s.batch_id = ?");
+			args.add(batchId);
+		}
+		if (hasText(sourceType)) {
+			conditions.add("s.source_type = ?");
+			args.add(sourceType);
+		}
+		if (sourceId != null) {
+			conditions.add("s.source_id = ?");
+			args.add(sourceId);
+		}
+		if (onlyAvailable) {
+			conditions.add("s.stock_status = 'IN_STOCK'");
+			conditions.add("s.quality_status = 'QUALIFIED'");
+		}
+		return where(conditions, args);
+	}
+
+	private HavingParts trackingAvailableHaving(boolean onlyAvailable, String balanceAlias, String lockAlias) {
+		if (!onlyAvailable) {
+			return new HavingParts("", List.of());
+		}
+		return new HavingParts("""
+				having greatest(coalesce(sum(case when %s.quality_status = 'QUALIFIED'
+				                                then %s.quantity_on_hand else 0 end), 0)
+				                 - coalesce(max(%s.locked_quantity), 0), 0) > 0
+				""".formatted(balanceAlias, balanceAlias, lockAlias), List.of());
 	}
 
 	private QueryParts reservationQueryParts(String keyword, Long warehouseId, Long materialId, String reservationType,
@@ -797,6 +1144,9 @@ public class InventoryAdminService {
 
 	private InventoryBalanceResponse mapBalance(ResultSet rs, int rowNum, InventoryQualityStatus qualityStatus)
 			throws SQLException {
+		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
+		Long batchId = nullableLong(rs, "batch_id");
+		Long serialId = nullableLong(rs, "serial_id");
 		BigDecimal totalQuantity = rs.getBigDecimal("total_quantity_on_hand");
 		BigDecimal totalLockedQuantity = rs.getBigDecimal("total_locked_quantity");
 		BigDecimal pendingInspectionQuantity = rs.getBigDecimal("pending_inspection_quantity");
@@ -834,11 +1184,13 @@ public class InventoryAdminService {
 				|| qualityStatus == InventoryQualityStatus.QUALIFIED
 						? demandQuantity.subtract(materialAvailableQuantity.add(visibleInTransitQuantity)).max(ZERO)
 						: ZERO;
+		BigDecimal traceableQuantity = batchId != null || serialId != null ? quantityOnHand : null;
 		return new InventoryBalanceResponse(rs.getLong("id"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_code"), rs.getString("warehouse_name"), rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
-				rs.getString("material_type"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				qualityStatus == null ? null : qualityStatus.name(),
+				rs.getString("material_type"), trackingMethod.name(), trackingMethod.displayName(), batchId,
+				rs.getString("batch_no"), serialId, rs.getString("serial_no"), traceableQuantity,
+				rs.getLong("unit_id"), rs.getString("unit_name"), qualityStatus == null ? null : qualityStatus.name(),
 				qualityStatus == null ? null : qualityStatus.displayName(), quantityOnHand, lockedQuantity,
 				availableQuantity, totalQuantity, visibleReservedQuantity, visibleOccupiedQuantity,
 				visibleInTransitQuantity, availableToPromiseQuantity, netRequirementShortageQuantity, totalQuantity,
@@ -848,6 +1200,7 @@ public class InventoryAdminService {
 
 	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum) throws SQLException {
 		InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
+		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
 		return new InventoryMovementResponse(rs.getLong("id"), rs.getString("movement_no"),
 				rs.getString("movement_type"), rs.getString("direction"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
@@ -856,7 +1209,220 @@ public class InventoryAdminService {
 				rs.getString("source_type"), rs.getLong("source_id"), rs.getLong("source_line_id"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
 				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
-				qualityStatus.name(), qualityStatus.displayName());
+				qualityStatus.name(), qualityStatus.displayName(), trackingMethod.name(), trackingMethod.displayName(),
+				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
+				rs.getString("serial_no"), rs.getString("source_document_no"), rs.getString("target_document_no"));
+	}
+
+	private InventoryBatchSummaryResponse mapBatchSummary(ResultSet rs, int rowNum) throws SQLException {
+		Long batchId = rs.getLong("id");
+		return new InventoryBatchSummaryResponse(batchId, rs.getString("batch_no"), rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getString("source_type"),
+				rs.getLong("source_id"), rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getObject("business_date", LocalDate.class), rs.getBigDecimal("quantity_on_hand"),
+				rs.getBigDecimal("available_quantity"), batchQualityStatusSummary(batchId),
+				rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private InventoryBatchDetailResponse mapBatchDetail(ResultSet rs, int rowNum) throws SQLException {
+		Long batchId = rs.getLong("id");
+		return new InventoryBatchDetailResponse(batchId, rs.getString("batch_no"), rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getString("source_type"),
+				rs.getLong("source_id"), rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getObject("business_date", LocalDate.class), rs.getBigDecimal("quantity_on_hand"),
+				rs.getBigDecimal("available_quantity"), batchQualityStatusSummary(batchId), rs.getString("remark"),
+				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
+				rs.getString("updated_by"), rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private InventorySerialSummaryResponse mapSerialSummary(ResultSet rs, int rowNum) throws SQLException {
+		String qualityStatus = rs.getString("quality_status");
+		String stockStatus = rs.getString("stock_status");
+		return new InventorySerialSummaryResponse(rs.getLong("id"), rs.getString("serial_no"),
+				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "warehouse_id"),
+				rs.getString("warehouse_name"), qualityStatus, qualityStatusName(qualityStatus), stockStatus,
+				stockStatusName(stockStatus), rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private InventorySerialDetailResponse mapSerialDetail(ResultSet rs, int rowNum) throws SQLException {
+		String qualityStatus = rs.getString("quality_status");
+		String stockStatus = rs.getString("stock_status");
+		return new InventorySerialDetailResponse(rs.getLong("id"), rs.getString("serial_no"),
+				rs.getLong("material_id"), rs.getString("material_code"), rs.getString("material_name"),
+				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "warehouse_id"),
+				rs.getString("warehouse_name"), qualityStatus, qualityStatusName(qualityStatus), stockStatus,
+				stockStatusName(stockStatus), rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getObject("business_date", LocalDate.class), rs.getString("remark"), rs.getString("created_by"),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getString("updated_by"),
+				rs.getObject("updated_at", OffsetDateTime.class));
+	}
+
+	private List<InventoryTrackingQualityStatusSummaryResponse> batchQualityStatusSummary(Long batchId) {
+		return this.jdbcTemplate.query("""
+				select sb.quality_status, sum(sb.quantity_on_hand) as quantity_on_hand,
+				       greatest(case when sb.quality_status = 'QUALIFIED' then sum(sb.quantity_on_hand) else 0 end
+				                - coalesce(max(l.locked_quantity), 0), 0) as available_quantity
+				from inv_stock_balance sb
+				left join (
+					select batch_id, quality_status,
+					       sum(quantity - released_quantity - consumed_quantity) as locked_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					group by batch_id, quality_status
+				) l on l.batch_id = sb.batch_id and l.quality_status = sb.quality_status
+				where sb.batch_id = ?
+				group by sb.quality_status
+				order by sb.quality_status asc
+				""", (rs, rowNum) -> new InventoryTrackingQualityStatusSummaryResponse(rs.getString("quality_status"),
+				qualityStatusName(rs.getString("quality_status")), rs.getBigDecimal("quantity_on_hand"),
+				rs.getBigDecimal("available_quantity")), batchId);
+	}
+
+	private InventoryTraceSubjectResponse batchTraceSubject(Long id) {
+		return this.jdbcTemplate.query("""
+				select b.id as batch_id, b.batch_no, null::bigint as serial_id, null::varchar as serial_no,
+				       b.material_id, m.code as material_code, m.name as material_name, b.source_type,
+				       b.source_id, b.source_line_id, d.document_no as source_document_no, b.business_date
+				from inv_batch b
+				join mst_material m on m.id = b.material_id
+				left join inv_inventory_document d on d.id = b.source_id and b.source_type = 'INVENTORY_DOCUMENT'
+				where b.id = ?
+				""", (rs, rowNum) -> mapTraceSubject(rs, InventoryTrackingMethod.BATCH), id)
+			.stream()
+			.findFirst()
+			.orElseThrow(this::trackingNotFound);
+	}
+
+	private InventoryTraceSubjectResponse serialTraceSubject(Long id) {
+		return this.jdbcTemplate.query("""
+				select s.batch_id, b.batch_no, s.id as serial_id, s.serial_no, s.material_id,
+				       m.code as material_code, m.name as material_name, s.source_type, s.source_id,
+				       s.source_line_id, d.document_no as source_document_no, s.business_date
+				from inv_serial s
+				join mst_material m on m.id = s.material_id
+				left join inv_batch b on b.id = s.batch_id
+				left join inv_inventory_document d on d.id = s.source_id and s.source_type = 'INVENTORY_DOCUMENT'
+				where s.id = ?
+				""", (rs, rowNum) -> mapTraceSubject(rs, InventoryTrackingMethod.SERIAL), id)
+			.stream()
+			.findFirst()
+			.orElseThrow(this::trackingNotFound);
+	}
+
+	private InventoryTraceSubjectResponse mapTraceSubject(ResultSet rs, InventoryTrackingMethod trackingMethod)
+			throws SQLException {
+		return new InventoryTraceSubjectResponse(trackingMethod.name(), trackingMethod.displayName(),
+				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
+				rs.getString("serial_no"), rs.getLong("material_id"), rs.getString("material_code"),
+				rs.getString("material_name"), rs.getString("source_type"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getString("source_document_no"),
+				rs.getObject("business_date", LocalDate.class));
+	}
+
+	private List<InventoryTraceBalanceResponse> traceBalances(String trackingColumn, Long trackingId) {
+		return this.jdbcTemplate.query("""
+				select sb.warehouse_id, w.name as warehouse_name, sb.quality_status,
+				       sum(sb.quantity_on_hand) as quantity_on_hand,
+				       greatest(case when sb.quality_status = 'QUALIFIED' then sum(sb.quantity_on_hand) else 0 end
+				                - coalesce(max(r.reserved_quantity), 0)
+				                - coalesce(max(r.occupied_quantity), 0), 0) as available_quantity,
+				       coalesce(max(r.reserved_quantity), 0) as reserved_quantity,
+				       coalesce(max(r.occupied_quantity), 0) as occupied_quantity
+				from inv_stock_balance sb
+				left join mst_warehouse w on w.id = sb.warehouse_id
+				left join (
+					select warehouse_id, quality_status, %s,
+					       sum(case when reservation_type = 'RESERVATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
+					       sum(case when reservation_type = 'OCCUPATION'
+					                then quantity - released_quantity - consumed_quantity else 0 end) as occupied_quantity
+					from inv_stock_reservation
+					where status = 'ACTIVE'
+					group by warehouse_id, quality_status, %s
+				) r on r.warehouse_id = sb.warehouse_id and r.quality_status = sb.quality_status
+					and r.%s = sb.%s
+				where sb.%s = ?
+				group by sb.warehouse_id, w.name, sb.quality_status
+				order by w.name asc, sb.quality_status asc
+				""".formatted(trackingColumn, trackingColumn, trackingColumn, trackingColumn, trackingColumn),
+				(rs, rowNum) -> new InventoryTraceBalanceResponse(nullableLong(rs, "warehouse_id"),
+						rs.getString("warehouse_name"), rs.getString("quality_status"),
+						qualityStatusName(rs.getString("quality_status")), rs.getBigDecimal("quantity_on_hand"),
+						rs.getBigDecimal("available_quantity"), rs.getBigDecimal("reserved_quantity"),
+						rs.getBigDecimal("occupied_quantity")),
+				trackingId);
+	}
+
+	private List<InventoryTraceNodeResponse> traceReservationNodes(String trackingColumn, Long trackingId) {
+		return this.jdbcTemplate.query("""
+				select r.reservation_type, r.source_type, r.source_id, r.source_line_id, r.source_document_no,
+				       r.business_date, r.quantity - r.released_quantity - r.consumed_quantity as quantity,
+				       r.quality_status, w.name as warehouse_name, r.created_by
+				from inv_stock_reservation r
+				left join mst_warehouse w on w.id = r.warehouse_id
+				where r.status = 'ACTIVE'
+				and r.%s = ?
+				order by r.created_at asc, r.id asc
+				""".formatted(trackingColumn), (rs, rowNum) -> {
+			InventoryReservationType reservationType = InventoryReservationType.valueOf(rs.getString("reservation_type"));
+			String qualityStatus = rs.getString("quality_status");
+			return new InventoryTraceNodeResponse("RESERVATION", reservationType.displayName(),
+					rs.getString("source_type"), rs.getLong("source_id"), rs.getString("source_document_no"),
+					rs.getLong("source_line_id"), rs.getObject("business_date", LocalDate.class), null,
+					rs.getBigDecimal("quantity"), qualityStatus, qualityStatusName(qualityStatus),
+					rs.getString("warehouse_name"), rs.getString("created_by"), reservationType.name(), false);
+		}, trackingId);
+	}
+
+	private List<InventoryTraceNodeResponse> traceMovementNodes(String trackingColumn, Long trackingId) {
+		return this.jdbcTemplate.query("""
+				select mv.movement_type, mv.direction, mv.source_type, mv.source_id, mv.source_line_id,
+				       d.document_no as source_document_no, mv.business_date, mv.quantity, mv.quality_status,
+				       w.name as warehouse_name, mv.operator_name, mv.reason
+				from inv_stock_movement mv
+				left join mst_warehouse w on w.id = mv.warehouse_id
+				left join inv_inventory_document d on d.id = mv.source_id and mv.source_type = 'INVENTORY_DOCUMENT'
+				where mv.%s = ?
+				order by mv.occurred_at asc, mv.id asc
+				""".formatted(trackingColumn), (rs, rowNum) -> {
+			String movementType = rs.getString("movement_type");
+			String qualityStatus = rs.getString("quality_status");
+			return new InventoryTraceNodeResponse("MOVEMENT", movementTypeName(movementType),
+					rs.getString("source_type"), rs.getLong("source_id"), rs.getString("source_document_no"),
+					rs.getLong("source_line_id"), rs.getObject("business_date", LocalDate.class),
+					rs.getString("direction"), rs.getBigDecimal("quantity"), qualityStatus,
+					qualityStatusName(qualityStatus), rs.getString("warehouse_name"), rs.getString("operator_name"),
+					rs.getString("reason"), false);
+		}, trackingId);
+	}
+
+	private List<InventoryTraceNodeResponse> sourceRecord(InventoryTraceSubjectResponse subject) {
+		return List.of(new InventoryTraceNodeResponse("SOURCE", "来源", subject.sourceType(), subject.sourceId(),
+				subject.sourceDocumentNo(), subject.sourceLineId(), subject.businessDate(), null, null, null, null,
+				null, null, "追踪主档", false));
+	}
+
+	private List<InventoryTraceNodeResponse> qualityEvents(List<InventoryTraceNodeResponse> movements) {
+		return movements.stream().filter((movement) -> "QUALITY_STATUS_TRANSFER".equals(movement.nodeTypeName()))
+			.toList();
+	}
+
+	private List<InventoryTraceNodeResponse> outboundRecords(List<InventoryTraceNodeResponse> movements) {
+		return movements.stream()
+			.filter((movement) -> "OUT".equals(movement.direction()) && !isReturnMovement(movement.nodeTypeName()))
+			.toList();
+	}
+
+	private List<InventoryTraceNodeResponse> returnRecords(List<InventoryTraceNodeResponse> movements) {
+		return movements.stream().filter((movement) -> isReturnMovement(movement.nodeTypeName())).toList();
+	}
+
+	private boolean isReturnMovement(String movementType) {
+		return movementType != null && movementType.contains("RETURN");
 	}
 
 	private InventoryReservationResponse mapReservation(ResultSet rs, int rowNum, boolean includeDetail)
@@ -1012,6 +1578,18 @@ public class InventoryAdminService {
 		}
 	}
 
+	private InventoryTrackingMethod parseNullableTrackingMethod(String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		try {
+			return InventoryTrackingMethod.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
 	private InventoryReservationType parseReservationType(String value) {
 		try {
 			return InventoryReservationType.valueOf(value);
@@ -1063,6 +1641,10 @@ public class InventoryAdminService {
 		return new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND);
 	}
 
+	private BusinessException trackingNotFound() {
+		return new BusinessException(ApiErrorCode.INVENTORY_TRACKING_NOT_FOUND);
+	}
+
 	private BusinessException materialInvalid() {
 		return new BusinessException(ApiErrorCode.INVENTORY_MATERIAL_INVALID);
 	}
@@ -1084,6 +1666,36 @@ public class InventoryAdminService {
 			case REJECTED -> rejectedQuantity;
 			case FROZEN -> frozenQuantity;
 		};
+	}
+
+	private boolean trackingBreakdown(InventoryTrackingMethod trackingMethod, Long batchId, String batchNo,
+			Long serialId, String serialNo) {
+		return trackingMethod == InventoryTrackingMethod.BATCH || trackingMethod == InventoryTrackingMethod.SERIAL
+				|| batchId != null || hasText(batchNo) || serialId != null || hasText(serialNo);
+	}
+
+	private Long nullableLong(ResultSet rs, String column) throws SQLException {
+		long value = rs.getLong(column);
+		return rs.wasNull() ? null : value;
+	}
+
+	private String qualityStatusName(String qualityStatus) {
+		return hasText(qualityStatus) ? InventoryQualityStatus.valueOf(qualityStatus).displayName() : null;
+	}
+
+	private String stockStatusName(String stockStatus) {
+		return switch (stockStatus) {
+			case "IN_STOCK" -> "在库";
+			case "RESERVED" -> "已预留";
+			case "OCCUPIED" -> "已占用";
+			case "OUTBOUND" -> "已出库";
+			case "CANCELLED" -> "已作废";
+			default -> stockStatus;
+		};
+	}
+
+	private String movementTypeName(String movementType) {
+		return movementType;
 	}
 
 	private List<Object> paginationArgs(QueryParts queryParts, int pageSize, int page) {
@@ -1126,19 +1738,77 @@ public class InventoryAdminService {
 
 	public record InventoryBalanceResponse(Long id, Long warehouseId, String warehouseCode, String warehouseName,
 			Long materialId, String materialCode, String materialName, String materialSpec, String materialType,
-			Long unitId, String unitName, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
-			BigDecimal lockedQuantity, BigDecimal availableQuantity, BigDecimal bookQuantity,
-			BigDecimal reservedQuantity, BigDecimal occupiedQuantity, BigDecimal inTransitQuantity,
-			BigDecimal availableToPromiseQuantity, BigDecimal netRequirementShortageQuantity,
-			BigDecimal totalQuantityOnHand, BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity,
-			BigDecimal rejectedQuantity, BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
+			String trackingMethod, String trackingMethodName, Long batchId, String batchNo, Long serialId,
+			String serialNo, BigDecimal traceableQuantity, Long unitId, String unitName, String qualityStatus,
+			String qualityStatusName, BigDecimal quantityOnHand, BigDecimal lockedQuantity,
+			BigDecimal availableQuantity, BigDecimal bookQuantity, BigDecimal reservedQuantity,
+			BigDecimal occupiedQuantity, BigDecimal inTransitQuantity, BigDecimal availableToPromiseQuantity,
+			BigDecimal netRequirementShortageQuantity, BigDecimal totalQuantityOnHand,
+			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
+			BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
 	}
 
 	public record InventoryMovementResponse(Long id, String movementNo, String movementType, String direction,
 			Long warehouseId, String warehouseName, Long materialId, String materialCode, String materialName,
 			Long unitId, String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity,
 			String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
-			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName) {
+			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName,
+			String trackingMethod, String trackingMethodName, Long batchId, String batchNo, Long serialId,
+			String serialNo, String sourceDocumentNo, String targetDocumentNo) {
+	}
+
+	public record InventoryTrackingQualityStatusSummaryResponse(String qualityStatus, String qualityStatusName,
+			BigDecimal quantityOnHand, BigDecimal availableQuantity) {
+	}
+
+	public record InventoryBatchSummaryResponse(Long id, String batchNo, Long materialId, String materialCode,
+			String materialName, String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo,
+			LocalDate businessDate, BigDecimal quantityOnHand, BigDecimal availableQuantity,
+			List<InventoryTrackingQualityStatusSummaryResponse> qualityStatusSummary, OffsetDateTime updatedAt) {
+	}
+
+	public record InventoryBatchDetailResponse(Long id, String batchNo, Long materialId, String materialCode,
+			String materialName, String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo,
+			LocalDate businessDate, BigDecimal quantityOnHand, BigDecimal availableQuantity,
+			List<InventoryTrackingQualityStatusSummaryResponse> qualityStatusSummary, String remark,
+			String createdByName, OffsetDateTime createdAt, String updatedByName, OffsetDateTime updatedAt) {
+	}
+
+	public record InventorySerialSummaryResponse(Long id, String serialNo, Long materialId, String materialCode,
+			String materialName, Long batchId, String batchNo, Long warehouseId, String warehouseName,
+			String qualityStatus, String qualityStatusName, String stockStatus, String stockStatusName,
+			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, OffsetDateTime updatedAt) {
+	}
+
+	public record InventorySerialDetailResponse(Long id, String serialNo, Long materialId, String materialCode,
+			String materialName, Long batchId, String batchNo, Long warehouseId, String warehouseName,
+			String qualityStatus, String qualityStatusName, String stockStatus, String stockStatusName,
+			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, LocalDate businessDate,
+			String remark, String createdByName, OffsetDateTime createdAt, String updatedByName,
+			OffsetDateTime updatedAt) {
+	}
+
+	public record InventoryTraceSubjectResponse(String trackingMethod, String trackingMethodName, Long batchId,
+			String batchNo, Long serialId, String serialNo, Long materialId, String materialCode, String materialName,
+			String sourceType, Long sourceId, Long sourceLineId, String sourceDocumentNo, LocalDate businessDate) {
+	}
+
+	public record InventoryTraceBalanceResponse(Long warehouseId, String warehouseName, String qualityStatus,
+			String qualityStatusName, BigDecimal quantityOnHand, BigDecimal availableQuantity,
+			BigDecimal reservedQuantity, BigDecimal occupiedQuantity) {
+	}
+
+	public record InventoryTraceNodeResponse(String nodeType, String nodeTypeName, String documentType,
+			Long documentId, String documentNo, Long lineId, LocalDate businessDate, String direction,
+			BigDecimal quantity, String qualityStatus, String qualityStatusName, String warehouseName,
+			String operatorName, String routeName, boolean permissionRestricted) {
+	}
+
+	public record InventoryTraceDetailResponse(InventoryTraceSubjectResponse subject,
+			List<InventoryTraceBalanceResponse> currentBalances, List<InventoryTraceNodeResponse> activeReservations,
+			List<InventoryTraceNodeResponse> sourceRecords, List<InventoryTraceNodeResponse> qualityEvents,
+			List<InventoryTraceNodeResponse> outboundRecords, List<InventoryTraceNodeResponse> returnRecords,
+			List<InventoryTraceNodeResponse> movements, List<InventoryTraceNodeResponse> restrictedSources) {
 	}
 
 	public record InventoryReservationResponse(Long id, String reservationNo, String reservationType,

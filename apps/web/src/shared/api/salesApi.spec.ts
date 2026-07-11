@@ -5,8 +5,10 @@ import {
   type SalesOrderLineRecord,
   type SalesOrderPayload,
   type SalesShipmentLineRecord,
+  type SalesShipmentLinePayload,
   type SalesShipmentPayload,
 } from './salesApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
 
@@ -74,6 +76,9 @@ describe('销售 API', () => {
           : false
         : false
     >,
+    shipmentPayloadLineAcceptsTrackingAllocations: true as AssertTrue<
+      SalesShipmentLinePayload extends { trackingAllocations?: InventoryTrackingAllocationPayload[] } ? true : false
+    >,
   }
 
   it('声明销售候选库存占用预留字段类型契约', () => {
@@ -83,6 +88,7 @@ describe('销售 API', () => {
       orderLineHasAvailabilityFields: true,
       shipmentLineHasAvailabilityFields: true,
       shipmentLineHasReservationWarehouseFields: true,
+      shipmentPayloadLineAcceptsTrackingAllocations: true,
     })
   })
 
@@ -199,7 +205,14 @@ describe('销售 API', () => {
       warehouseId: 4,
       businessDate: '2026-07-05',
       remark: '销售出库',
-      lines: [{ lineNo: 1, orderLineId: 5, materialId: 2, unitId: 3, quantity: '1.500000' }],
+      lines: [{
+        lineNo: 1,
+        orderLineId: 5,
+        materialId: 2,
+        unitId: 3,
+        quantity: '1.500000',
+        trackingAllocations: [{ batchId: 31, quantity: '1.500000' }],
+      }],
     }
 
     await api.orders.create(orderPayload)
@@ -218,6 +231,7 @@ describe('销售 API', () => {
     })
     expect(JSON.parse(fetcher.mock.calls[11][1].body as string).lines[0]).toMatchObject({
       quantity: '1.500000',
+      trackingAllocations: [{ batchId: 31, quantity: '1.500000' }],
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/sales/orders', {

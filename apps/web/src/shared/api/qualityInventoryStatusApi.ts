@@ -1,4 +1,5 @@
 import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
@@ -83,6 +84,7 @@ export interface QualityInspectionProcessPayload {
   qualifiedQuantity: string
   rejectedQuantity: string
   frozenQuantity: string
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason: string
   remark?: string
 }
@@ -93,6 +95,7 @@ export interface QualityStatusTransferPayload {
   materialId: ResourceId
   unitId: ResourceId
   quantity: string
+  trackingAllocations?: InventoryTrackingAllocationPayload[]
   reason: string
   remark?: string
 }

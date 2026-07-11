@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createQualityInventoryStatusApi, type QualityInspectionProcessPayload } from './qualityInventoryStatusApi'
+import {
+  createQualityInventoryStatusApi,
+  type QualityInspectionProcessPayload,
+  type QualityStatusTransferPayload,
+} from './qualityInventoryStatusApi'
+import type { InventoryTrackingAllocationPayload } from './inventoryApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -69,6 +76,26 @@ function inspectionRecord(patch: Record<string, unknown> = {}) {
 }
 
 describe('质量库存状态 API', () => {
+  const qualityTrackingTypeContract = {
+    processAcceptsTrackingAllocations: true as AssertTrue<
+      QualityInspectionProcessPayload extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+    transferAcceptsTrackingAllocations: true as AssertTrue<
+      QualityStatusTransferPayload extends {
+        trackingAllocations?: InventoryTrackingAllocationPayload[]
+      } ? true : false
+    >,
+  }
+
+  it('质量确认和冻结解冻载荷支持追踪分配', () => {
+    expect(qualityTrackingTypeContract).toMatchObject({
+      processAcceptsTrackingAllocations: true,
+      transferAcceptsTrackingAllocations: true,
+    })
+  })
+
   it('按质量确认筛选条件分页查询列表并获取详情', async () => {
     const fetcher = vi
       .fn()
@@ -129,6 +156,11 @@ describe('质量库存状态 API', () => {
       frozenQuantity: '1.000000',
       reason: '检验完成',
       remark: '外观轻微瑕疵',
+      trackingAllocations: [
+        { batchId: 31, quantity: '8.000000', qualityStatus: 'QUALIFIED' },
+        { batchId: 31, quantity: '1.000000', qualityStatus: 'REJECTED' },
+        { batchId: 31, quantity: '1.000000', qualityStatus: 'FROZEN' },
+      ],
     }
 
     await api.inspections.process(9, payload)
@@ -161,6 +193,7 @@ describe('质量库存状态 API', () => {
       unitId: 3,
       quantity: '2.000000',
       reason: '客户投诉隔离',
+      trackingAllocations: [{ batchId: 31, quantity: '2.000000' }],
     })
     await api.qualityTransfers.unfreeze({
       businessDate: '2026-07-11',
@@ -169,11 +202,15 @@ describe('质量库存状态 API', () => {
       unitId: 3,
       quantity: '1.000000',
       reason: '复核通过',
+      trackingAllocations: [{ batchId: 31, quantity: '1.000000' }],
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/quality-transfers/freeze', expect.objectContaining({
       body: expect.stringContaining('"quantity":"2.000000"'),
       method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/quality-transfers/freeze', expect.objectContaining({
+      body: expect.stringContaining('"trackingAllocations"'),
     }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/inventory/quality-transfers/unfreeze', expect.objectContaining({
       body: expect.stringContaining('"quantity":"1.000000"'),

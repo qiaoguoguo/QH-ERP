@@ -47,6 +47,8 @@ const materialA: MaterialRecord = {
   specification: '1.5mm',
   materialType: 'RAW_MATERIAL',
   sourceType: 'PURCHASED',
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
   categoryId: 1,
   unitId: 2,
   unitName: '千克',

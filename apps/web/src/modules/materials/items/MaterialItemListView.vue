@@ -7,6 +7,7 @@ import {
   type MaterialPayload,
   type MaterialRecord,
   type MaterialSourceType,
+  type MaterialTrackingMethod,
   type MaterialType,
   type ResourceId,
   type UnitRecord,
@@ -14,7 +15,12 @@ import {
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
-import { masterStatusLabel, materialTypeLabel, sourceTypeLabel } from '../../master/shared/masterPageHelpers'
+import {
+  masterStatusLabel,
+  materialTypeLabel,
+  sourceTypeLabel,
+  trackingMethodLabel,
+} from '../../master/shared/masterPageHelpers'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const materialTypeOptions: Array<{ label: string; value: MaterialType }> = [
@@ -28,6 +34,11 @@ const sourceTypeOptions: Array<{ label: string; value: MaterialSourceType }> = [
   { label: '自制', value: 'SELF_MADE' },
   { label: '委外', value: 'OUTSOURCED' },
 ]
+const trackingMethodOptions: Array<{ label: string; value: MaterialTrackingMethod }> = [
+  { label: '不追踪', value: 'NONE' },
+  { label: '批次管理', value: 'BATCH' },
+  { label: '序列号管理', value: 'SERIAL' },
+]
 
 const authStore = useAuthStore()
 const filters = reactive<{
@@ -36,12 +47,14 @@ const filters = reactive<{
   categoryId: ResourceId | ''
   materialType?: MaterialType
   sourceType?: MaterialSourceType
+  trackingMethod?: MaterialTrackingMethod
 }>({
   keyword: '',
   status: undefined,
   categoryId: '',
   materialType: undefined,
   sourceType: undefined,
+  trackingMethod: undefined,
 })
 const pagination = reactive({
   page: 1,
@@ -69,6 +82,7 @@ const form = reactive<{
   specification: string
   materialType: MaterialType | ''
   sourceType: MaterialSourceType | ''
+  trackingMethod: MaterialTrackingMethod
   categoryId: ResourceId | ''
   unitId: ResourceId | ''
   status: MasterDataStatus
@@ -79,6 +93,7 @@ const form = reactive<{
   specification: '',
   materialType: '',
   sourceType: '',
+  trackingMethod: 'NONE',
   categoryId: '',
   unitId: '',
   status: 'ENABLED',
@@ -139,6 +154,7 @@ async function loadRecords() {
       categoryId: normalizeOptionalId(filters.categoryId),
       materialType: filters.materialType,
       sourceType: filters.sourceType,
+      trackingMethod: filters.trackingMethod,
     })
     records.value = pageItems(page)
     pagination.total = Number(page.total)
@@ -162,6 +178,7 @@ function resetSearch() {
   filters.categoryId = ''
   filters.materialType = undefined
   filters.sourceType = undefined
+  filters.trackingMethod = undefined
   pagination.page = 1
   void loadRecords()
 }
@@ -184,6 +201,7 @@ function resetForm(record?: MaterialRecord) {
     specification: record?.specification ?? '',
     materialType: record?.materialType ?? '',
     sourceType: record?.sourceType ?? '',
+    trackingMethod: record?.trackingMethod ?? 'NONE',
     categoryId: record?.categoryId ?? '',
     unitId: record?.unitId ?? '',
     status: record?.status ?? 'ENABLED',
@@ -209,9 +227,14 @@ function openDetail(record: MaterialRecord) {
   detailVisible.value = true
 }
 
+function trackingMethodImmutableReason(record: MaterialRecord | null): string {
+  return record?.trackingMethodImmutableReason ?? ''
+}
+
 function validateMaterialForm(): {
   materialType: MaterialType
   sourceType: MaterialSourceType
+  trackingMethod: MaterialTrackingMethod
   categoryId: ResourceId
   unitId: ResourceId
 } | null {
@@ -235,6 +258,7 @@ function validateMaterialForm(): {
   return {
     materialType: form.materialType,
     sourceType: form.sourceType,
+    trackingMethod: form.trackingMethod,
     categoryId,
     unitId,
   }
@@ -254,6 +278,7 @@ async function saveRecord() {
     name: form.name.trim(),
     materialType: validatedForm.materialType,
     sourceType: validatedForm.sourceType,
+    trackingMethod: validatedForm.trackingMethod,
     categoryId: validatedForm.categoryId,
     unitId: validatedForm.unitId,
     status: form.status,
@@ -369,6 +394,21 @@ onMounted(() => {
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="追踪方式">
+          <el-select
+            v-model="filters.trackingMethod"
+            data-test="filter-tracking-method"
+            clearable
+            placeholder="全部方式"
+          >
+            <el-option
+              v-for="option in trackingMethodOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item>
           <el-button data-test="search-material" type="primary" @click="search">查询</el-button>
           <el-button data-test="reset-material" @click="resetSearch">重置</el-button>
@@ -404,6 +444,11 @@ onMounted(() => {
         <el-table-column label="来源属性" min-width="110">
           <template #default="{ row }">
             {{ sourceTypeLabel(row.sourceType) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="追踪方式" min-width="120">
+          <template #default="{ row }">
+            {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="90">
@@ -442,7 +487,7 @@ onMounted(() => {
       @current-change="changePage" @size-change="changePageSize"
     />
 
-    <el-dialog v-model="formVisible" :title="editingRecord ? '编辑物料' : '新增物料'" width="640px">
+    <el-dialog v-model="formVisible" :title="editingRecord ? '编辑物料' : '新增物料'" width="min(640px, 96vw)">
       <el-alert v-if="formError" class="form-alert" type="error" :title="formError" :closable="false" />
       <el-form label-position="top">
         <el-form-item label="物料编码">
@@ -473,6 +518,29 @@ onMounted(() => {
           >
             <el-option
               v-for="option in sourceTypeOptions"
+              :key="option.value"
+              :label="option.label"
+              :value="option.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="追踪方式">
+          <el-alert
+            v-if="trackingMethodImmutableReason(editingRecord)"
+            class="form-alert"
+            type="warning"
+            :title="trackingMethodImmutableReason(editingRecord)"
+            :closable="false"
+          />
+          <el-select
+            v-model="form.trackingMethod"
+            data-test="material-tracking-method"
+            :disabled="Boolean(trackingMethodImmutableReason(editingRecord))"
+            placeholder="请选择追踪方式"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="option in trackingMethodOptions"
               :key="option.value"
               :label="option.label"
               :value="option.value"
@@ -523,7 +591,7 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-drawer v-model="detailVisible" title="物料详情" size="420px">
+    <el-drawer v-model="detailVisible" title="物料详情" size="min(420px, 92vw)">
       <dl v-if="detailRecord" class="material-detail-list">
         <dt>编码</dt>
         <dd>{{ detailRecord.code }}</dd>
@@ -539,6 +607,8 @@ onMounted(() => {
         <dd>{{ materialTypeLabel(detailRecord.materialType) }}</dd>
         <dt>来源属性</dt>
         <dd>{{ sourceTypeLabel(detailRecord.sourceType) }}</dd>
+        <dt>追踪方式</dt>
+        <dd>{{ detailRecord.trackingMethodName || trackingMethodLabel(detailRecord.trackingMethod) }}</dd>
         <dt>状态</dt>
         <dd>{{ masterStatusLabel(detailRecord.status) }}</dd>
         <dt>备注</dt>

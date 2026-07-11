@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
-import { createMasterDataApi } from './masterDataApi'
+import {
+  createMasterDataApi,
+  type MaterialPayload,
+  type MaterialRecord,
+  type MaterialTrackingMethod,
+} from './masterDataApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -30,6 +37,22 @@ function apiFailure(status = 400) {
 }
 
 describe('基础资料与物料 API', () => {
+  const materialTrackingTypeContract = {
+    recordRequiresTrackingMethod: true as AssertTrue<
+      MaterialRecord extends { trackingMethod: MaterialTrackingMethod; trackingMethodName: string } ? true : false
+    >,
+    payloadRequiresTrackingMethod: true as AssertTrue<
+      MaterialPayload extends { trackingMethod: MaterialTrackingMethod } ? true : false
+    >,
+  }
+
+  it('物料响应和写入载荷按契约必带追踪方式', () => {
+    expect(materialTrackingTypeContract).toMatchObject({
+      recordRequiresTrackingMethod: true,
+      payloadRequiresTrackingMethod: true,
+    })
+  })
+
   it('创建单位前先请求 CSRF，再提交业务字段', async () => {
     const fetcher = vi
       .fn()
@@ -102,6 +125,7 @@ describe('基础资料与物料 API', () => {
       status: 'ENABLED',
       materialType: 'RAW_MATERIAL',
       sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
       categoryId: 3,
       unitId: 1,
       page: 1,
@@ -115,12 +139,12 @@ describe('基础资料与物料 API', () => {
     )
     expect(fetcher).toHaveBeenNthCalledWith(
       2,
-      '/api/admin/master/materials?keyword=%E6%9D%BF&status=ENABLED&page=1&pageSize=20&materialType=RAW_MATERIAL&sourceType=PURCHASED&categoryId=3',
+      '/api/admin/master/materials?keyword=%E6%9D%BF&status=ENABLED&page=1&pageSize=20&materialType=RAW_MATERIAL&sourceType=PURCHASED&trackingMethod=BATCH&categoryId=3',
       expect.any(Object),
     )
   })
 
-  it('更新物料时提交物料核心业务字段', async () => {
+  it('更新物料时提交物料核心业务字段和追踪方式', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(
@@ -134,6 +158,7 @@ describe('基础资料与物料 API', () => {
       name: '冷轧钢板',
       materialType: 'RAW_MATERIAL',
       sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
       categoryId: 3,
       unitId: 1,
       status: 'ENABLED',
@@ -145,6 +170,7 @@ describe('基础资料与物料 API', () => {
         name: '冷轧钢板',
         materialType: 'RAW_MATERIAL',
         sourceType: 'PURCHASED',
+        trackingMethod: 'BATCH',
         categoryId: 3,
         unitId: 1,
         status: 'ENABLED',

@@ -51,6 +51,8 @@ const finishedGood: MaterialRecord = {
   specification: 'A1',
   materialType: 'FINISHED_GOOD',
   sourceType: 'SELF_MADE',
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
   categoryId: 1,
   unitId: 2,
   unitName: '件',

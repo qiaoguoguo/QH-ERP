@@ -31,10 +31,14 @@ public class InventoryAdminController {
 	public ApiResponse<PageResponse<InventoryAdminService.InventoryBalanceResponse>> balances(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long warehouseId,
 			@RequestParam(required = false) Long materialId, @RequestParam(required = false) String materialType,
-			@RequestParam(required = false) String qualityStatus, @RequestParam(defaultValue = "false") boolean onlyPositive,
+			@RequestParam(required = false) String qualityStatus,
+			@RequestParam(required = false) String trackingMethod, @RequestParam(required = false) Long batchId,
+			@RequestParam(required = false) String batchNo, @RequestParam(required = false) Long serialId,
+			@RequestParam(required = false) String serialNo,
+			@RequestParam(defaultValue = "false") boolean onlyPositive,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.inventoryAdminService.balances(keyword, warehouseId, materialId, materialType,
-				qualityStatus, onlyPositive, page, pageSize));
+				qualityStatus, trackingMethod, batchId, batchNo, serialId, serialNo, onlyPositive, page, pageSize));
 	}
 
 	@GetMapping("/movements")
@@ -43,9 +47,57 @@ public class InventoryAdminController {
 			@RequestParam(required = false) Long materialId, @RequestParam(required = false) String movementType,
 			@RequestParam(required = false) String direction, @RequestParam(required = false) LocalDate dateFrom,
 			@RequestParam(required = false) LocalDate dateTo, @RequestParam(required = false) String qualityStatus,
+			@RequestParam(required = false) String trackingMethod, @RequestParam(required = false) Long batchId,
+			@RequestParam(required = false) String batchNo, @RequestParam(required = false) Long serialId,
+			@RequestParam(required = false) String serialNo,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.inventoryAdminService.movements(keyword, warehouseId, materialId, movementType,
-				direction, dateFrom, dateTo, qualityStatus, page, pageSize));
+				direction, dateFrom, dateTo, qualityStatus, trackingMethod, batchId, batchNo, serialId, serialNo, page,
+				pageSize));
+	}
+
+	@GetMapping("/batches")
+	public ApiResponse<PageResponse<InventoryAdminService.InventoryBatchSummaryResponse>> batches(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long materialId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String qualityStatus,
+			@RequestParam(required = false) String batchNo, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId,
+			@RequestParam(defaultValue = "false") boolean onlyAvailable, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.inventoryAdminService.batches(keyword, materialId, warehouseId, qualityStatus,
+				batchNo, sourceType, sourceId, onlyAvailable, page, pageSize));
+	}
+
+	@GetMapping("/batches/{id}")
+	public ApiResponse<InventoryAdminService.InventoryBatchDetailResponse> batch(@PathVariable Long id) {
+		return ApiResponse.ok(this.inventoryAdminService.batch(id));
+	}
+
+	@GetMapping("/serials")
+	public ApiResponse<PageResponse<InventoryAdminService.InventorySerialSummaryResponse>> serials(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long materialId,
+			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String qualityStatus,
+			@RequestParam(required = false) String serialNo, @RequestParam(required = false) Long batchId,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(defaultValue = "false") boolean onlyAvailable, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.inventoryAdminService.serials(keyword, materialId, warehouseId, qualityStatus,
+				serialNo, batchId, sourceType, sourceId, onlyAvailable, page, pageSize));
+	}
+
+	@GetMapping("/serials/{id}")
+	public ApiResponse<InventoryAdminService.InventorySerialDetailResponse> serial(@PathVariable Long id) {
+		return ApiResponse.ok(this.inventoryAdminService.serial(id));
+	}
+
+	@GetMapping("/traces/batches/{id}")
+	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> batchTrace(@PathVariable Long id) {
+		return ApiResponse.ok(this.inventoryAdminService.batchTrace(id));
+	}
+
+	@GetMapping("/traces/serials/{id}")
+	public ApiResponse<InventoryAdminService.InventoryTraceDetailResponse> serialTrace(@PathVariable Long id) {
+		return ApiResponse.ok(this.inventoryAdminService.serialTrace(id));
 	}
 
 	@GetMapping("/reservations")

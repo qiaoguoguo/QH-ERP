@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   inventoryApi,
   type InventoryDirection,
   type InventoryMovementRecord,
   type InventoryMovementType,
+  type InventoryQualityStatus,
+  type InventoryTraceDetailRecord,
+  type InventoryTrackingMethod,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import { trackingMethodLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import InventoryDirectionTag from './InventoryDirectionTag.vue'
 import { formatQuantity, movementTypeLabel } from './inventoryPageHelpers'
+import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,12 +33,20 @@ const routeMovementTypes = new Set<string>([
   'PURCHASE_RECEIPT',
   'SALES_SHIPMENT',
 ])
+const routeQualityStatuses = new Set<string>(['PENDING_INSPECTION', 'QUALIFIED', 'REJECTED', 'FROZEN'])
+const routeTrackingMethods = new Set<string>(['NONE', 'BATCH', 'SERIAL'])
 const filters = reactive<{
   keyword: string
   warehouseId: ResourceId | ''
   materialId: ResourceId | ''
   movementType?: InventoryMovementType
   direction?: InventoryDirection
+  qualityStatus?: InventoryQualityStatus
+  trackingMethod?: InventoryTrackingMethod
+  batchId: ResourceId | ''
+  batchNo: string
+  serialId: ResourceId | ''
+  serialNo: string
   dateFrom: string
   dateTo: string
 }>({
@@ -42,6 +55,12 @@ const filters = reactive<{
   materialId: normalizeRouteId(route.query.materialId),
   movementType: normalizeRouteMovementType(route.query.movementType),
   direction: undefined,
+  qualityStatus: normalizeRouteQualityStatus(route.query.qualityStatus),
+  trackingMethod: normalizeRouteTrackingMethod(route.query.trackingMethod),
+  batchId: normalizeRouteId(route.query.batchId),
+  batchNo: normalizeRouteText(route.query.batchNo),
+  serialId: normalizeRouteId(route.query.serialId),
+  serialNo: normalizeRouteText(route.query.serialNo),
   dateFrom: '',
   dateTo: '',
 })
@@ -57,6 +76,11 @@ const loading = ref(true)
 const referenceLoading = ref(true)
 const error = ref('')
 const referenceError = ref('')
+const traceDrawerVisible = ref(false)
+const traceDetail = ref<InventoryTraceDetailRecord | null>(null)
+const traceLoading = ref(false)
+const traceError = ref('')
+const canViewTrace = computed(() => authStore.hasPermission('inventory:trace:view'))
 
 function normalizeRouteId(value: unknown): ResourceId | '' {
   if (Array.isArray(value)) {
@@ -77,6 +101,33 @@ function normalizeRouteMovementType(value: unknown): InventoryMovementType | und
     return undefined
   }
   return routeMovementTypes.has(value) ? value as InventoryMovementType : undefined
+}
+
+function normalizeRouteQualityStatus(value: unknown): InventoryQualityStatus | undefined {
+  if (Array.isArray(value)) {
+    return normalizeRouteQualityStatus(value[0])
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  return routeQualityStatuses.has(value) ? value as InventoryQualityStatus : undefined
+}
+
+function normalizeRouteTrackingMethod(value: unknown): InventoryTrackingMethod | undefined {
+  if (Array.isArray(value)) {
+    return normalizeRouteTrackingMethod(value[0])
+  }
+  if (typeof value !== 'string') {
+    return undefined
+  }
+  return routeTrackingMethods.has(value) ? value as InventoryTrackingMethod : undefined
+}
+
+function normalizeRouteText(value: unknown): string {
+  if (Array.isArray(value)) {
+    return normalizeRouteText(value[0])
+  }
+  return typeof value === 'string' ? value : ''
 }
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
@@ -123,6 +174,12 @@ async function loadRecords() {
       materialId: normalizeOptionalId(filters.materialId),
       movementType: filters.movementType,
       direction: filters.direction,
+      qualityStatus: filters.qualityStatus,
+      trackingMethod: filters.trackingMethod,
+      batchId: normalizeOptionalId(filters.batchId),
+      batchNo: filters.batchNo.trim(),
+      serialId: normalizeOptionalId(filters.serialId),
+      serialNo: filters.serialNo.trim(),
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       page: pagination.page,
@@ -150,6 +207,12 @@ function resetSearch() {
   filters.materialId = ''
   filters.movementType = undefined
   filters.direction = undefined
+  filters.qualityStatus = undefined
+  filters.trackingMethod = undefined
+  filters.batchId = ''
+  filters.batchNo = ''
+  filters.serialId = ''
+  filters.serialNo = ''
   filters.dateFrom = ''
   filters.dateTo = ''
   pagination.page = 1
@@ -168,6 +231,9 @@ function changePageSize(pageSize: number) {
 }
 
 function canViewSourceDocument(record: InventoryMovementRecord) {
+  if (!record.sourceType || !record.sourceId) {
+    return false
+  }
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     return authStore.hasPermission('procurement:receipt:view')
   }
@@ -204,6 +270,75 @@ function viewSourceDocument(record: InventoryMovementRecord) {
       query: queryWithReturnTo({}, currentRouteReturnTo(route)),
     })
   }
+}
+
+function canTraceRecord(record: InventoryMovementRecord) {
+  if (!canViewTrace.value) {
+    return false
+  }
+  if (record.trackingMethod === 'BATCH') {
+    return Boolean(record.batchId)
+  }
+  if (record.trackingMethod === 'SERIAL') {
+    return Boolean(record.serialId)
+  }
+  return false
+}
+
+function traceStatusText(record: InventoryMovementRecord) {
+  if (!canViewTrace.value) {
+    return '无追溯权限'
+  }
+  if (record.trackingMethod === 'NONE') {
+    return '不追踪物料无追溯'
+  }
+  if (record.trackingMethod === 'BATCH' && !record.batchId) {
+    return '缺少批次或序列身份'
+  }
+  if (record.trackingMethod === 'SERIAL' && !record.serialId) {
+    return '缺少批次或序列身份'
+  }
+  return '暂无追溯入口'
+}
+
+function sourceDocumentStatusText(record: InventoryMovementRecord) {
+  if (!record.sourceType || !record.sourceId) {
+    return '无来源单据'
+  }
+  if (!canViewSourceDocument(record)) {
+    return '无来源单据权限'
+  }
+  return ''
+}
+
+async function loadTrace(record: InventoryMovementRecord) {
+  traceLoading.value = true
+  traceError.value = ''
+  try {
+    if (record.trackingMethod === 'BATCH' && record.batchId) {
+      traceDetail.value = await inventoryApi.traces.getBatchTrace(record.batchId)
+      return
+    }
+    if (record.trackingMethod === 'SERIAL' && record.serialId) {
+      traceDetail.value = await inventoryApi.traces.getSerialTrace(record.serialId)
+      return
+    }
+    traceDetail.value = null
+  } catch (caught) {
+    traceDetail.value = null
+    traceError.value = errorMessage(caught)
+  } finally {
+    traceLoading.value = false
+  }
+}
+
+function viewTrace(record: InventoryMovementRecord) {
+  if (!canTraceRecord(record)) {
+    return
+  }
+  traceDetail.value = null
+  traceDrawerVisible.value = true
+  void loadTrace(record)
 }
 
 function formatDateTime(value?: string | null) {
@@ -290,6 +425,47 @@ onMounted(() => {
             <el-option label="出库" value="OUT" />
           </el-select>
         </el-form-item>
+        <el-form-item label="质量状态">
+          <el-select
+            v-model="filters.qualityStatus"
+            data-test="inventory-movement-quality-status"
+            clearable
+            placeholder="全部状态"
+          >
+            <el-option label="待检" value="PENDING_INSPECTION" />
+            <el-option label="合格" value="QUALIFIED" />
+            <el-option label="不合格" value="REJECTED" />
+            <el-option label="冻结" value="FROZEN" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="追踪方式">
+          <el-select
+            v-model="filters.trackingMethod"
+            data-test="inventory-movement-tracking-method"
+            clearable
+            placeholder="全部方式"
+          >
+            <el-option label="不追踪" value="NONE" />
+            <el-option label="批次管理" value="BATCH" />
+            <el-option label="序列号管理" value="SERIAL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="批次号">
+          <el-input
+            v-model="filters.batchNo"
+            name="inventory-movement-batch-no"
+            clearable
+            placeholder="批次号"
+          />
+        </el-form-item>
+        <el-form-item label="序列号">
+          <el-input
+            v-model="filters.serialNo"
+            name="inventory-movement-serial-no"
+            clearable
+            placeholder="序列号"
+          />
+        </el-form-item>
         <el-form-item label="业务日期">
           <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
             v-model="filters.dateFrom"
@@ -323,7 +499,6 @@ onMounted(() => {
       />
     </template>
 
-    <el-empty v-if="!loading && records.length === 0" description="暂无库存变动流水" />
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无库存变动流水'" stripe>
         <el-table-column label="发生时间" min-width="150">
@@ -346,6 +521,16 @@ onMounted(() => {
         <el-table-column label="方向" min-width="90">
           <template #default="{ row }">
             <InventoryDirectionTag :direction="row.direction" />
+          </template>
+        </el-table-column>
+        <el-table-column label="追踪方式" min-width="120">
+          <template #default="{ row }">
+            {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.batchNo || row.serialNo || '-' }}
           </template>
         </el-table-column>
         <el-table-column label="变动前" min-width="110" align="right">
@@ -374,7 +559,26 @@ onMounted(() => {
             >
               查看单据
             </el-button>
-            <span v-else class="source-document-empty">-</span>
+            <span v-else class="operation-status">{{ sourceDocumentStatusText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="目标单号" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.targetDocumentNo || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="追溯" min-width="140">
+          <template #default="{ row }">
+            <el-button
+              v-if="canTraceRecord(row)"
+              size="small"
+              text
+              data-test="view-movement-trace"
+              @click="viewTrace(row)"
+            >
+              追溯
+            </el-button>
+            <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
@@ -389,6 +593,12 @@ onMounted(() => {
       :current-page="pagination.page"
       @current-change="changePage" @size-change="changePageSize"
     />
+    <InventoryTraceDrawer
+      v-model="traceDrawerVisible"
+      :detail="traceDetail"
+      :loading="traceLoading"
+      :error="traceError"
+    />
   </MasterDataTableView>
 </template>
 
@@ -400,7 +610,11 @@ onMounted(() => {
   font-variant-numeric: tabular-nums;
 }
 
-.source-document-empty {
+.operation-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
   color: var(--qherp-muted);
+  font-size: 13px;
 }
 </style>
