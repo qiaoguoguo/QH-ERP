@@ -32,6 +32,7 @@
 - [业务期间与历史数据保护基础任务记录](tasks/016-business-period-protection-foundation.md)
 - [质量检验与库存质量状态基础任务记录](tasks/017-quality-inventory-status-foundation.md)
 - [库存可用量、占用、冻结与预留基础任务记录](tasks/018-inventory-availability-reservation-foundation.md)
+- [批次、序列号与来源去向追溯基础任务记录](tasks/019-batch-serial-trace-foundation.md)
 
 ## 产品
 
@@ -64,6 +65,7 @@
 - [业务期间与历史数据保护接口契约](api/business-period-protection-api.md)
 - [质量检验与库存质量状态接口契约](api/quality-inventory-status-api.md)
 - [库存可用量、占用、冻结与预留接口契约](api/inventory-availability-reservation-api.md)
+- [批次、序列号与来源去向追溯接口契约](api/batch-serial-trace-api.md)
 - [前端工程基线](frontend/frontend-baseline.md)
 
 ## 设计
@@ -80,6 +82,7 @@
 - [业务期间与历史数据保护基础设计规格](superpowers/specs/2026-07-10-business-period-protection-design.md)
 - [质量检验与库存质量状态基础设计规格](superpowers/specs/2026-07-10-quality-inventory-status-design.md)
 - [库存可用量、占用、冻结与预留基础设计规格](superpowers/specs/2026-07-11-inventory-availability-reservation-design.md)
+- [批次、序列号与来源去向追溯基础设计规格](superpowers/specs/2026-07-11-batch-serial-trace-design.md)
 
 ## 实施计划
 
@@ -90,6 +93,7 @@
 - [退货退款与业务反冲基础模块实施计划](superpowers/plans/2026-07-05-return-refund-reversal-implementation-plan.md)
 - [业务期间与历史数据保护基础实施计划](superpowers/plans/2026-07-10-business-period-protection-implementation-plan.md)
 - [库存可用量、占用、冻结与预留基础实施计划](superpowers/plans/2026-07-11-inventory-availability-reservation-implementation-plan.md)
+- [批次、序列号与来源去向追溯基础实施计划](superpowers/plans/2026-07-11-batch-serial-trace-implementation-plan.md)
 
 ## 测试与验收
 
@@ -112,6 +116,7 @@
 - [业务期间与历史数据保护测试计划](testing/business-period-protection-test-plan.md)
 - [质量检验与库存质量状态测试计划](testing/quality-inventory-status-test-plan.md)
 - [库存可用量、占用、冻结与预留测试计划](testing/inventory-availability-reservation-test-plan.md)
+- [批次、序列号与来源去向追溯测试计划](testing/batch-serial-trace-test-plan.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
