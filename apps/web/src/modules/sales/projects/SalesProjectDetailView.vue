@@ -293,6 +293,7 @@ onMounted(loadRecord)
         :project-id="record.id"
         :can-view-details="canViewSalesOrders"
         :restricted="record.salesOrderSummaryRestricted"
+        :contract-summary-restricted="record.contractSummaryRestricted"
         :summary="record.salesOrderSummary"
       />
       <SalesProjectOperationsPanel :operations="record.operations" />

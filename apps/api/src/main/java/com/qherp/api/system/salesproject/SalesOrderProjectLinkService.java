@@ -145,6 +145,7 @@ public class SalesOrderProjectLinkService {
 		if (!currentUser.permissions().contains("sales:order:view")) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		}
+		boolean contractAllowed = currentUser.permissions().contains("sales:contract:view");
 		ensureProjectExists(projectId);
 		QueryParts queryParts = salesOrderQueryParts(projectId, keyword, contractId, status, dateFrom, dateTo);
 		long total = this.jdbcTemplate.queryForObject("""
@@ -174,7 +175,8 @@ public class SalesOrderProjectLinkService {
 				%s
 				order by o.updated_at desc, o.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), this::mapProjectSalesOrder, pageArgs.toArray());
+				""".formatted(queryParts.where()),
+				(rs, rowNum) -> mapProjectSalesOrder(rs, rowNum, contractAllowed), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -287,12 +289,15 @@ public class SalesOrderProjectLinkService {
 				rs.getString("external_contract_no"), rs.getString("contract_name"), rs.getString("contract_type"));
 	}
 
-	private ProjectSalesOrderResponse mapProjectSalesOrder(ResultSet rs, int rowNum) throws SQLException {
+	private ProjectSalesOrderResponse mapProjectSalesOrder(ResultSet rs, int rowNum, boolean contractAllowed)
+			throws SQLException {
 		return new ProjectSalesOrderResponse(rs.getLong("id"), rs.getString("order_no"), rs.getLong("customer_id"),
 				rs.getString("customer_name"), rs.getObject("order_date", LocalDate.class),
 				rs.getObject("expected_ship_date", LocalDate.class), rs.getString("status"),
 				nullableLong(rs, "project_id"), rs.getString("project_no"), rs.getString("project_name"),
-				nullableLong(rs, "contract_id"), rs.getString("contract_no"), rs.getString("external_contract_no"),
+				contractAllowed ? nullableLong(rs, "contract_id") : null,
+				contractAllowed ? rs.getString("contract_no") : null,
+				contractAllowed ? rs.getString("external_contract_no") : null,
 				rs.getInt("line_count"), rs.getBigDecimal("total_quantity"), rs.getBigDecimal("business_amount"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}

@@ -698,6 +698,8 @@
   - `dateFrom`、`dateTo`：订单日期范围。
 - 成功响应：`PageResponse<ProjectSalesOrderSummary>`。
 - 无 `sales:order:view` 返回：`AUTH_FORBIDDEN`，不得返回销售订单行、金额或订单号。
+- 有 `sales:order:view` 但无 `sales:contract:view` 时仍返回允许查看的订单字段，但行内
+  `contractId`、`contractNo`、`externalContractNo` 必须为 `null`，不得泄露真实合同标识或编号。
 
 ### 关联销售订单摘要字段
 
@@ -724,9 +726,9 @@
 | `projectId` | number | 项目标识 |
 | `projectNo` | string | 项目编号 |
 | `projectName` | string | 项目名称 |
-| `contractId` | number | 合同标识 |
-| `contractNo` | string | 内部合同编号 |
-| `externalContractNo` | string | 外部纸质合同号 |
+| `contractId` | number \| null | 合同标识；无 `sales:contract:view` 时为 `null` |
+| `contractNo` | string \| null | 内部合同编号；无 `sales:contract:view` 时为 `null` |
+| `externalContractNo` | string \| null | 外部纸质合同号；无 `sales:contract:view` 时为 `null` |
 | `customerId` | number | 客户标识 |
 | `customerName` | string | 客户名称 |
 | `orderDate` | string | 订单日期 |

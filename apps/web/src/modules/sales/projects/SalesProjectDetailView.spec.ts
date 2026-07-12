@@ -216,6 +216,36 @@ describe('销售项目详情页', () => {
     expect(router.currentRoute.value.params.id).toBe('99')
   })
 
+  it('合同摘要受限时关联销售订单隐藏合同信息但保留订单查看能力', async () => {
+    const contractRestricted: SalesProjectDetail = {
+      ...project,
+      contractSummaryRestricted: true,
+      mainContractId: null,
+      mainContractNo: null,
+      mainContractStatus: null,
+      effectiveContractAmount: null,
+      contractCount: null,
+      supplementContractCount: null,
+      contracts: [],
+      salesOrderSummaryRestricted: false,
+    }
+    const { wrapper, router } = await mountDetail(contractRestricted)
+
+    expect(salesProjectApiMock.projectSalesOrders).toHaveBeenCalled()
+    expect(wrapper.text()).toContain('合同摘要受限')
+    expect(wrapper.text()).toContain('合同信息受限')
+    expect(wrapper.text()).not.toContain('SC-001')
+    expect(wrapper.text()).not.toContain('EXT-001')
+    expect(wrapper.text()).toContain('SO-20260710-001')
+    expect(wrapper.text()).toContain('已确认')
+    expect(wrapper.text()).toContain('88000.00')
+
+    await wrapper.find('[data-test="view-project-sales-order"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('sales-order-detail')
+    expect(router.currentRoute.value.params.id).toBe('99')
+  })
+
   it('合同和订单受限时显示受限态，不把 null 展示为 0', async () => {
     const restricted: SalesProjectDetail = {
       ...project,

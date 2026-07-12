@@ -15,6 +15,7 @@ const props = defineProps<{
   projectId: ResourceId
   canViewDetails: boolean
   restricted: boolean
+  contractSummaryRestricted: boolean
   summary: ProjectSalesOrderAggregate | null
 }>()
 
@@ -82,45 +83,57 @@ watch(() => [props.projectId, props.restricted, props.canViewDetails, props.summ
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-else-if="loading" class="state-alert" type="info" title="关联销售订单加载中" :closable="false" />
       <el-empty v-else-if="!summary" description="暂无关联销售订单" />
-      <div v-else class="project-order-summary">
-        <span>订单数量：{{ summary.orderCount }}</span>
-        <span>业务金额：{{ formatProjectAmount(summary.businessAmount) }}</span>
-        <span>最近订单：{{ summary.latestOrderDate || '-' }}</span>
-      </div>
-      <div v-if="summary" class="project-order-status-grid">
-        <span>草稿：{{ summary.draftCount }}</span>
-        <span>已确认：{{ summary.confirmedCount }}</span>
-        <span>部分出库：{{ summary.partiallyShippedCount }}</span>
-        <span>全部出库：{{ summary.shippedCount }}</span>
-        <span>已关闭：{{ summary.closedCount }}</span>
-        <span>已取消：{{ summary.cancelledCount }}</span>
-      </div>
-      <div v-if="summary && orders.length > 0" class="table-scroll project-order-table-scroll">
-        <el-table :data="orders" empty-text="暂无关联销售订单" stripe>
-          <el-table-column prop="orderNo" label="订单编号" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="contractNo" label="合同编号" min-width="120" show-overflow-tooltip />
-          <el-table-column label="状态" min-width="100">
-            <template #default="{ row }">
-              <SalesOrderStatusTag :status="row.status" />
-            </template>
-          </el-table-column>
-          <el-table-column label="状态摘要" min-width="100">
-            <template #default="{ row }">{{ statusLabels[row.status as SalesOrderStatus] }}</template>
-          </el-table-column>
-          <el-table-column prop="orderDate" label="订单日期" min-width="110" />
-          <el-table-column label="数量" min-width="110" align="right">
-            <template #default="{ row }">{{ row.totalQuantity }}</template>
-          </el-table-column>
-          <el-table-column label="业务金额" min-width="120" align="right">
-            <template #default="{ row }">{{ formatProjectAmount(row.businessAmount) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" fixed="right" width="90">
-            <template #default="{ row }">
-              <el-button v-if="canViewDetails" data-test="view-project-sales-order" size="small" text @click="viewOrder(row)">详情</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
+      <template v-else>
+        <el-alert
+          v-if="contractSummaryRestricted"
+          class="state-alert"
+          type="warning"
+          title="合同信息受限"
+          :closable="false"
+        />
+        <div class="project-order-summary">
+          <span>订单数量：{{ summary.orderCount }}</span>
+          <span>业务金额：{{ formatProjectAmount(summary.businessAmount) }}</span>
+          <span>最近订单：{{ summary.latestOrderDate || '-' }}</span>
+        </div>
+        <div class="project-order-status-grid">
+          <span>草稿：{{ summary.draftCount }}</span>
+          <span>已确认：{{ summary.confirmedCount }}</span>
+          <span>部分出库：{{ summary.partiallyShippedCount }}</span>
+          <span>全部出库：{{ summary.shippedCount }}</span>
+          <span>已关闭：{{ summary.closedCount }}</span>
+          <span>已取消：{{ summary.cancelledCount }}</span>
+        </div>
+        <div v-if="orders.length > 0" class="table-scroll project-order-table-scroll">
+          <el-table :data="orders" empty-text="暂无关联销售订单" stripe>
+            <el-table-column prop="orderNo" label="订单编号" min-width="160" show-overflow-tooltip />
+            <el-table-column v-if="contractSummaryRestricted" label="合同信息" min-width="120">
+              <template #default>合同信息受限</template>
+            </el-table-column>
+            <el-table-column v-else prop="contractNo" label="合同编号" min-width="120" show-overflow-tooltip />
+            <el-table-column label="状态" min-width="100">
+              <template #default="{ row }">
+                <SalesOrderStatusTag :status="row.status" />
+              </template>
+            </el-table-column>
+            <el-table-column label="状态摘要" min-width="100">
+              <template #default="{ row }">{{ statusLabels[row.status as SalesOrderStatus] }}</template>
+            </el-table-column>
+            <el-table-column prop="orderDate" label="订单日期" min-width="110" />
+            <el-table-column label="数量" min-width="110" align="right">
+              <template #default="{ row }">{{ row.totalQuantity }}</template>
+            </el-table-column>
+            <el-table-column label="业务金额" min-width="120" align="right">
+              <template #default="{ row }">{{ formatProjectAmount(row.businessAmount) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" fixed="right" width="90">
+              <template #default="{ row }">
+                <el-button v-if="canViewDetails" data-test="view-project-sales-order" size="small" text @click="viewOrder(row)">详情</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+      </template>
     </template>
   </section>
 </template>

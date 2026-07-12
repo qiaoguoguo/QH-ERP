@@ -95,7 +95,7 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession projectOnly = createUserAndLogin("project-only-", "PROJECT_ONLY_",
 				List.of("sales:project:view"));
 		AuthenticatedSession orderViewer = createUserAndLogin("project-order-viewer-", "PROJECT_ORDER_VIEWER_",
-				List.of("sales:project:view", "sales:order:view"));
+				List.of("sales:project:view", "sales:order:view", "sales:contract:view"));
 
 		assertError(get("/api/admin/sales-projects/" + projectId + "/sales-orders", projectOnly),
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
@@ -119,6 +119,33 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 		assertThat(item.get("createdAt").asText()).isNotBlank();
 		assertThat(item.hasNonNull("updatedAt")).isTrue();
 		assertThat(item.get("updatedAt").asText()).isNotBlank();
+	}
+
+	@Test
+	void projectSalesOrderListRedactsContractIdentifiersWithoutContractView() throws Exception {
+		long customerId = insertCustomer("SPC_RESTRICTED_CUS_" + SEQUENCE.incrementAndGet(), "合同受限客户", "ENABLED");
+		long projectId = insertProject(customerId, "合同受限项目", "ACTIVE");
+		long contractId = insertContract(projectId, "MAIN", null, "合同受限主合同", "EFFECTIVE", "9000.00");
+		long orderId = insertSalesOrder(customerId, projectId, contractId, "DRAFT");
+		String contractNo = this.jdbcTemplate.queryForObject(
+				"select contract_no from sal_project_contract where id = ?", String.class, contractId);
+		String externalContractNo = this.jdbcTemplate.queryForObject(
+				"select external_contract_no from sal_project_contract where id = ?", String.class, contractId);
+		AuthenticatedSession restrictedViewer = createUserAndLogin("project-order-restricted-",
+				"PROJECT_ORDER_RESTRICTED_", List.of("sales:project:view", "sales:order:view"));
+
+		ResponseEntity<String> response = get(
+				"/api/admin/sales-projects/" + projectId + "/sales-orders", restrictedViewer);
+
+		assertOk(response);
+		JsonNode item = data(response).get("items").get(0);
+		assertThat(item.get("id").longValue()).isEqualTo(orderId);
+		assertThat(item.get("orderNo").asText()).startsWith("SPC-SO-");
+		assertThat(item.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(item.get("contractId").isNull()).isTrue();
+		assertThat(item.get("contractNo").isNull()).isTrue();
+		assertThat(item.get("externalContractNo").isNull()).isTrue();
+		assertThat(response.getBody()).doesNotContain(contractNo, externalContractNo);
 	}
 
 	private long insertCustomer(String code, String name, String status) {
