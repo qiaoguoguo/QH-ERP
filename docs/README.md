@@ -5,7 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接报告（2026-07-06，当前节点）](handoffs/2026-07-06-project-handoff-current.md)
+- [项目交接报告（2026-07-12，最新节点）](handoffs/2026-07-12-project-handoff-current.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)
 - [项目交接报告（2026-07-05，015 完成，后续方向待讨论）](handoffs/2026-07-05-project-handoff-015-complete-next-period-close.md)
 - [项目交接报告（2026-07-04，财务往来基础完成版）](handoffs/2026-07-04-project-handoff-financial-settlement-complete.md)
