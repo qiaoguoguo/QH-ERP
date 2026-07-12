@@ -119,6 +119,7 @@ API 异常证据：`api-negative-checks.json`
 | `desktop-24-finance-payables-list.png` | 1440x900 | 应付台账 | admin | 查询可信 |
 | `desktop-25-sales-report.png` | 1440x900 | 销售经营报表 | admin | 查询可信 |
 | `desktop-26-invalid-project-detail-error.png` | 1440x900 | 无效项目详情 | admin | 错误态可信 |
+| `desktop-27-operations-timeline-flow-1280x720.png` | 1280x720 | 项目操作记录时间线 | admin | 节点、连线、7 条记录分隔和文本层级可信 |
 | `mobile-01-project-list.png` | 390x844 | 移动项目列表 | admin | 旧证据，仅证明可访问 |
 | `mobile-01-project-list-data-row-9ce79b9.png` | 390x844 | 移动项目列表 | admin | 真实项目行和行操作可见 |
 | `mobile-01-project-list-data-row-actions-9ce79b9.png` | 390x844 | 移动项目列表 | admin | 替代移动列表证据，直接显示多条项目行和“详情/编辑”操作 |
@@ -126,6 +127,27 @@ API 异常证据：`api-negative-checks.json`
 | `mobile-03-contract-drawer.png` | 390x844 | 移动合同抽屉 | admin | 可滚动；底部按钮标签有歧义 |
 | `mobile-04-order-restricted-permission.png` | 390x844 | 移动订单受限 | 无订单账号 | 旧证据，目标区域不够直接 |
 | `mobile-04-order-restricted-permission-target-9ce79b9.png` | 390x844 | 移动订单受限 | 无订单账号 | 替代移动订单受限证据，直接显示“订单摘要受限” |
+| `mobile-05-operations-timeline-flow-390x844.png` | 390x844 | 移动项目操作记录时间线 | admin | 节点、连线、长文本换行和无横向溢出可信 |
+
+## 用户反馈修复复验
+
+复验缺陷：销售项目“项目操作记录没有流程样式”。
+
+复验命令：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm --prefix apps/web test -- SalesProjectOperationsPanel.spec.ts SalesProjectDetailView.spec.ts style.spec.ts` | PASS；Test Files 3 passed；Tests 24 passed；退出码 0；耗时 00:00:07.5181379 |
+| `npm --prefix apps/web run typecheck` | PASS；退出码 0；耗时 00:00:12.6332732 |
+
+浏览器复验：
+
+| 视口 | 页面 | 结论 |
+| --- | --- | --- |
+| 1280x720 | `http://127.0.0.1:5173/sales/projects/1` | `ElTimeline` 节点与连线生效；7 条记录逐条分隔；对象与动作中文化；摘要、时间、操作者层级清晰；技术码和内部 ID 不可见；合同生效摘要不重复；订单关联对象为销售订单；长文本换行；无横向溢出或遮挡；控制台无相关错误 |
+| 390x844 | `http://127.0.0.1:5173/sales/projects/1` | 移动视口节点与连线生效；7 条记录逐条分隔；长文本换行；无横向溢出或遮挡；控制台无相关错误 |
+
+空态和极长文本由 `SalesProjectOperationsPanel.spec.ts` 自动化覆盖，本次未篡改真实数据。
 
 ## 发现问题
 
@@ -144,6 +166,11 @@ API 异常证据：`api-negative-checks.json`
    - 证据：`mobile-04-order-restricted-permission-target-9ce79b9.png`
    - 结论：截图直接显示“订单摘要受限”。
 
+4. 销售项目操作记录缺少流程样式：已关闭。
+   - 自动化证据：`SalesProjectOperationsPanel.spec.ts`、`SalesProjectDetailView.spec.ts`、`style.spec.ts`
+   - 浏览器证据：`desktop-27-operations-timeline-flow-1280x720.png`、`mobile-05-operations-timeline-flow-390x844.png`
+   - 结论：项目详情操作记录以时间线展示，7 条记录有节点、连线和分隔；合同生效摘要不重复，订单关联对象显示为销售订单，未出现技术码或内部 ID。
+
 ### 阻断
 
 无。
@@ -154,16 +181,13 @@ API 异常证据：`api-negative-checks.json`
 
 ### 一般
 
-1. 操作记录多条记录在页面中连续拼接，缺少分隔或换行，扫描困难。
-   - 证据：`desktop-12-project-detail-with-order-operations.png`
-
-2. 390px 移动视口下侧边菜单仍占据首屏大量高度，项目详情内容被明显下推。
+1. 390px 移动视口下侧边菜单仍占据首屏大量高度，项目详情内容被明显下推。
    - 证据：`mobile-02-project-detail.png`
 
-3. 390px 合同抽屉底部同时出现合同状态动作“关闭”和抽屉“关闭”按钮，标签重复，存在误读风险。
+2. 390px 合同抽屉底部同时出现合同状态动作“关闭”和抽屉“关闭”按钮，标签重复，存在误读风险。
    - 证据：`mobile-03-contract-drawer.png`
 
-4. 部分空态表达重复，信息密度略高。
+3. 部分空态表达重复，信息密度略高。
    - 证据：`desktop-03-project-detail-empty-contract-orders.png`
 
 ## 视觉审计结论
@@ -172,4 +196,4 @@ API 异常证据：`api-negative-checks.json`
 
 移动 390x844 下，详情和抽屉可访问，控件未出现不可点击遮挡；但首屏空间被导航占用明显，合同抽屉底部按钮文案存在歧义，建议整改或纳入后续视觉优化。
 
-9ce79b9 最终复验后，原权限阻断已关闭；本目录内补充截图均为可信视口截图，未使用失真全页截图。当前仅保留一般后续项：操作记录可读性、移动侧栏首屏占用、移动抽屉按钮文案歧义、空态重复。
+9ce79b9 最终复验后，原权限阻断已关闭；用户反馈的操作记录流程样式缺陷已通过自动化与浏览器复验关闭；本目录内补充截图均为可信视口截图，未使用失真全页截图。当前仅保留一般后续项：移动侧栏首屏占用、移动抽屉按钮文案歧义、空态重复。

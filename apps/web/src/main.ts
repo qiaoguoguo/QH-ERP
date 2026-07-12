@@ -25,6 +25,8 @@ import {
   ElTable,
   ElTableColumn,
   ElTag,
+  ElTimeline,
+  ElTimelineItem,
   ElTooltip,
   ElTree,
 } from 'element-plus'
@@ -59,6 +61,8 @@ import 'element-plus/theme-chalk/el-sub-menu.css'
 import 'element-plus/theme-chalk/el-table.css'
 import 'element-plus/theme-chalk/el-table-column.css'
 import 'element-plus/theme-chalk/el-tag.css'
+import 'element-plus/theme-chalk/el-timeline.css'
+import 'element-plus/theme-chalk/el-timeline-item.css'
 import 'element-plus/theme-chalk/el-tooltip.css'
 import 'element-plus/theme-chalk/el-tree.css'
 import './style.css'
@@ -98,6 +102,8 @@ app
   .use(ElTable)
   .use(ElTableColumn)
   .use(ElTag)
+  .use(ElTimeline)
+  .use(ElTimelineItem)
   .use(ElTooltip)
   .use(ElTree)
   .mount('#app')

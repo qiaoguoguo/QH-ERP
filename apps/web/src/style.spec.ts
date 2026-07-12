@@ -51,6 +51,15 @@ describe('全局样式契约', () => {
     expect(mainSource).toContain("element-plus/theme-chalk/el-date-picker-panel.css")
   })
 
+  it('时间线组件同时注册组件和加载基础样式', () => {
+    expect(mainSource).toContain('ElTimeline')
+    expect(mainSource).toContain('ElTimelineItem')
+    expect(mainSource).toContain("element-plus/theme-chalk/el-timeline.css")
+    expect(mainSource).toContain("element-plus/theme-chalk/el-timeline-item.css")
+    expect(mainSource).toContain('.use(ElTimeline)')
+    expect(mainSource).toContain('.use(ElTimelineItem)')
+  })
+
   it('搜索栏使用统一的标签置顶布局并对齐日期控件', () => {
     expect(styleSource).toContain('.el-form--inline.query-form')
     expect(styleSource).toContain('.query-form > .el-form-item .el-form-item__label')
