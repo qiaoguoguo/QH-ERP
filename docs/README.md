@@ -97,6 +97,7 @@
 - [业务期间与历史数据保护基础实施计划](superpowers/plans/2026-07-10-business-period-protection-implementation-plan.md)
 - [库存可用量、占用、冻结与预留基础实施计划](superpowers/plans/2026-07-11-inventory-availability-reservation-implementation-plan.md)
 - [批次、序列号与来源去向追溯基础实施计划](superpowers/plans/2026-07-11-batch-serial-trace-implementation-plan.md)
+- [销售项目与合同管理基础实施计划](superpowers/plans/2026-07-12-sales-project-contract-implementation-plan.md)
 
 ## 测试与验收
 
