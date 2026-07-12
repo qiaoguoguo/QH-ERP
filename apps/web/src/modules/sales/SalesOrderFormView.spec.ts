@@ -29,12 +29,20 @@ const masterDataApiMock = vi.hoisted(() => ({
   },
 }))
 
+const salesProjectApiMock = vi.hoisted(() => ({
+  listOrderLinkCandidates: vi.fn(),
+}))
+
 vi.mock('../../shared/api/salesApi', () => ({
   salesApi: salesApiMock,
 }))
 
 vi.mock('../../shared/api/masterDataApi', () => ({
   masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/salesProjectApi', () => ({
+  salesProjectApi: salesProjectApiMock,
 }))
 
 const customerA: PartnerRecord = {
@@ -100,6 +108,12 @@ const draftOrder: SalesOrderDetailRecord = {
   customerName: '华东客户',
   orderDate: '2026-07-04',
   expectedShipDate: '2026-07-12',
+  projectId: 12,
+  projectNo: 'SP-202607-001',
+  projectName: '华东扩产项目',
+  contractId: 55,
+  contractNo: 'SC-001',
+  externalContractNo: 'EXT-001',
   status: 'DRAFT',
   lineCount: 1,
   totalQuantity: 12.5,
@@ -193,6 +207,24 @@ describe('销售订单表单页', () => {
     salesApiMock.orders.get.mockResolvedValue(draftOrder)
     salesApiMock.orders.create.mockResolvedValue(draftOrder)
     salesApiMock.orders.update.mockResolvedValue(draftOrder)
+    salesProjectApiMock.listOrderLinkCandidates.mockResolvedValue({
+      items: [{
+        projectId: 12,
+        projectNo: 'SP-202607-001',
+        projectName: '华东扩产项目',
+        customerId: 100,
+        customerName: '华东客户',
+        contractId: 55,
+        contractNo: 'SC-001',
+        externalContractNo: 'EXT-001',
+        contractName: '主合同',
+        contractType: 'MAIN',
+      }],
+      page: 1,
+      pageSize: 50,
+      total: 1,
+      totalPages: 1,
+    })
     masterDataApiMock.customers.list.mockResolvedValue({
       items: [customerA],
       page: 1,
@@ -332,6 +364,25 @@ describe('销售订单表单页', () => {
     expect(router.currentRoute.value.params.id).toBe('99')
   })
 
+  it('草稿销售订单选择项目合同时同选同清，并随保存 payload 提交成对字段', async () => {
+    const { wrapper } = await mountForm()
+
+    await fillValidOrder(wrapper)
+    await setSelectValue(wrapper, 3, '12:55')
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+
+    expect(salesProjectApiMock.listOrderLinkCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      customerId: 100,
+      page: 1,
+      pageSize: 50,
+    }))
+    expect(salesApiMock.orders.create).toHaveBeenCalledWith(expect.objectContaining({
+      projectId: 12,
+      contractId: 55,
+    }))
+  })
+
   it('编辑草稿时回填明细并提交更新', async () => {
     const { wrapper, router } = await mountForm('/sales/orders/99/edit')
 
@@ -356,6 +407,8 @@ describe('销售订单表单页', () => {
     const { wrapper } = await mountForm('/sales/orders/99/edit')
 
     expect(wrapper.text()).toContain('仅草稿销售订单可编辑')
+    expect(wrapper.text()).toContain('SP-202607-001')
+    expect(wrapper.text()).toContain('SC-001')
     expect(wrapper.find('[data-test="save-sales-order"]').attributes('disabled')).toBeDefined()
     await wrapper.find('[data-test="save-sales-order"]').trigger('click')
     await flushPromises()

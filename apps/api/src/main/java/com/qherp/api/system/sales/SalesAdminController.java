@@ -36,9 +36,11 @@ public class SalesAdminController {
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedDateFrom,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedDateTo,
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) Long contractId,
+			@RequestParam(required = false) Boolean projectLinked,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.salesAdminService.orders(keyword, customerId, status, dateFrom, dateTo,
-				expectedDateFrom, expectedDateTo, page, pageSize));
+				expectedDateFrom, expectedDateTo, projectId, contractId, projectLinked, page, pageSize));
 	}
 
 	@GetMapping("/orders/{id}")

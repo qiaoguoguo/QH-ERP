@@ -193,6 +193,9 @@ describe('销售订单列表页', () => {
       dateTo: '',
       expectedDateFrom: '',
       expectedDateTo: '',
+      projectId: undefined,
+      contractId: undefined,
+      projectLinked: undefined,
       page: 1,
       pageSize: 10,
     })
@@ -225,6 +228,9 @@ describe('销售订单列表页', () => {
       dateTo: '2026-07-31',
       expectedDateFrom: '2026-07-08',
       expectedDateTo: '2026-07-20',
+      projectId: undefined,
+      contractId: undefined,
+      projectLinked: undefined,
       page: 1,
       pageSize: 10,
     })
@@ -239,9 +245,35 @@ describe('销售订单列表页', () => {
       dateTo: '',
       expectedDateFrom: '',
       expectedDateTo: '',
+      projectId: undefined,
+      contractId: undefined,
+      projectLinked: undefined,
       page: 1,
       pageSize: 10,
     })
+  })
+
+  it('支持项目合同筛选，并阻止 projectLinked 与项目或合同组合提交', async () => {
+    const { wrapper } = await mountList()
+
+    await wrapper.find('input[name="sales-order-project-id"]').setValue('12')
+    await wrapper.find('input[name="sales-order-contract-id"]').setValue('55')
+    await wrapper.find('[data-test="search-sales-orders"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.orders.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      projectId: 12,
+      contractId: 55,
+      projectLinked: undefined,
+      page: 1,
+    }))
+
+    await setSelectValue(wrapper, 2, true)
+    await wrapper.find('[data-test="search-sales-orders"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('项目关联筛选不能与项目或合同同时使用')
+    expect(salesApiMock.orders.list).toHaveBeenCalledTimes(2)
   })
 
   it('无数据和加载失败时显示明确状态', async () => {

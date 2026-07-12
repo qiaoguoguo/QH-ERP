@@ -43,6 +43,9 @@ import PurchaseReturnListView from '../modules/reversal/PurchaseReturnListView.v
 import SalesOrderDetailView from '../modules/sales/SalesOrderDetailView.vue'
 import SalesOrderFormView from '../modules/sales/SalesOrderFormView.vue'
 import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
+import SalesProjectDetailView from '../modules/sales/projects/SalesProjectDetailView.vue'
+import SalesProjectFormView from '../modules/sales/projects/SalesProjectFormView.vue'
+import SalesProjectListView from '../modules/sales/projects/SalesProjectListView.vue'
 import SalesShipmentDetailView from '../modules/sales/SalesShipmentDetailView.vue'
 import SalesShipmentFormView from '../modules/sales/SalesShipmentFormView.vue'
 import SalesShipmentListView from '../modules/sales/SalesShipmentListView.vue'
@@ -371,9 +374,9 @@ describe('账号权限路由守卫', () => {
     }
 
     const rootRoute = router.getRoutes().find((item) => item.path === '/sales')
-    expect(rootRoute?.redirect).toBe('/sales/orders')
+    expect(rootRoute?.name).toBe('sales-root')
     expect(rootRoute?.meta.requiresAuth).toBe(true)
-    expect(rootRoute?.meta.requiredPermission).toBe('sales:order:view')
+    expect(rootRoute?.meta.requiredPermission).toBeUndefined()
   })
 
   it('财务往来路由加载基础占位页面并配置对应权限', async () => {
@@ -811,6 +814,36 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('sales-orders')
+  })
+
+  it('销售项目路由加载真实页面，销售根路径按项目、订单、出库、退货顺序进入首个可见页', async () => {
+    const router = createQhErpRouter()
+    const projectRoutes = [
+      ['sales-projects', '/sales/projects', 'sales:project:view', SalesProjectListView],
+      ['sales-project-create', '/sales/projects/create', 'sales:project:create', SalesProjectFormView],
+      ['sales-project-detail', '/sales/projects/:id', 'sales:project:view', SalesProjectDetailView],
+      ['sales-project-edit', '/sales/projects/:id/edit', 'sales:project:update', SalesProjectFormView],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of projectRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:project:view'] })
+    await router.push('/sales')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('sales-projects')
+
+    const orderOnlyRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:order:view'] })
+    await orderOnlyRouter.push('/sales')
+    await orderOnlyRouter.isReady()
+    expect(orderOnlyRouter.currentRoute.value.name).toBe('sales-orders')
   })
 
   it('已登录但缺少销售出库查看权限时跳转无权限页', async () => {

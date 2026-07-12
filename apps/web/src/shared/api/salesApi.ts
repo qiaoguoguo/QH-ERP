@@ -22,6 +22,9 @@ export interface SalesOrderListParams {
   dateTo?: string | null
   expectedDateFrom?: string | null
   expectedDateTo?: string | null
+  projectId?: ResourceId | null
+  contractId?: ResourceId | null
+  projectLinked?: boolean | null
   page: number
   pageSize: number
 }
@@ -46,6 +49,12 @@ export interface SalesOrderSummaryRecord {
   customerName: string
   orderDate: string
   expectedShipDate?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  contractId?: ResourceId | null
+  contractNo?: string | null
+  externalContractNo?: string | null
   status: SalesOrderStatus
   lineCount: number
   totalQuantity: number
@@ -192,6 +201,8 @@ export interface SalesOrderLinePayload {
 
 export interface SalesOrderPayload {
   customerId: ResourceId
+  projectId?: ResourceId | null
+  contractId?: ResourceId | null
   orderDate: string
   expectedShipDate?: string
   remark?: string
@@ -250,6 +261,9 @@ export function createSalesApi(options: SalesApiOptions = {}): SalesApi {
     'dateTo',
     'expectedDateFrom',
     'expectedDateTo',
+    'projectId',
+    'contractId',
+    'projectLinked',
     'page',
     'pageSize',
   ] as const

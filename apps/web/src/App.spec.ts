@@ -743,6 +743,31 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/sales')
   })
 
+  it('有销售项目查看权限时在销售菜单补齐销售项目入口并优先显示', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'sales_project_user', displayName: '项目用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['sales:project:view', 'sales:order:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('销售项目')
+    expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining(['/sales/projects', '/sales/orders']))
+  })
+
   it('有销售查看权限但后端菜单缺失时补齐销售管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

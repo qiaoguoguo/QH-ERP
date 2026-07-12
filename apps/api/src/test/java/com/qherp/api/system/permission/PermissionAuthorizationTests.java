@@ -212,6 +212,33 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesProjectAdminPathsMapToProjectContractAndCandidatePermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects", "sales:project:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1", "sales:project:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/sales-projects", "sales:project:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1", "sales:project:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1/activate", "sales:project:activate");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1/close", "sales:project:close");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1/cancel", "sales:project:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/owner-candidates",
+				"sales:project:create|sales:project:update");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/order-link-candidates",
+				"sales:order:create|sales:order:update");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/contracts", "sales:contract:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/sales-projects/1/contracts", "sales:contract:create");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/sales-orders", "sales:project:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-project-contracts/1", "sales:contract:view");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1", "sales:contract:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1/activate",
+				"sales:contract:activate");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1/close", "sales:contract:close");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1/terminate",
+				"sales:contract:terminate");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1/cancel",
+				"sales:contract:cancel");
+	}
+
+	@Test
 	void productionAdminPathsMapToProductionPermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders", "production:work-order:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/production/work-orders/1", "production:work-order:view");

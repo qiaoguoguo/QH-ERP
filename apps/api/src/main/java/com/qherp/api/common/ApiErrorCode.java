@@ -276,6 +276,52 @@ public enum ApiErrorCode {
 
 	SALES_MOVEMENT_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "销售来源明细已生成库存变动"),
 
+	PROJECT_NOT_FOUND(HttpStatus.NOT_FOUND, "销售项目不存在"),
+
+	PROJECT_STATUS_INVALID(HttpStatus.CONFLICT, "销售项目状态不允许当前操作"),
+
+	PROJECT_MAIN_CONTRACT_REQUIRED(HttpStatus.CONFLICT, "项目激活需要已生效主合同"),
+
+	PROJECT_HAS_EFFECTIVE_BUSINESS(HttpStatus.CONFLICT, "项目已有有效合同或销售订单，不能取消"),
+
+	PROJECT_HAS_OPEN_BUSINESS(HttpStatus.CONFLICT, "项目仍有关联合同或销售订单未终态，不能关闭"),
+
+	PROJECT_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "销售项目状态操作原因必填"),
+
+	PROJECT_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "销售项目并发更新冲突"),
+
+	CONTRACT_NOT_FOUND(HttpStatus.NOT_FOUND, "销售项目合同不存在"),
+
+	CONTRACT_STATUS_INVALID(HttpStatus.CONFLICT, "销售项目合同状态不允许当前操作"),
+
+	CONTRACT_PROJECT_NOT_ACTIVE(HttpStatus.CONFLICT, "补充合同要求项目已激活"),
+
+	CONTRACT_MAIN_REQUIRED(HttpStatus.BAD_REQUEST, "补充合同必须引用主合同"),
+
+	CONTRACT_MAIN_INVALID(HttpStatus.CONFLICT, "补充合同主合同不合法"),
+
+	CONTRACT_MAIN_NOT_EFFECTIVE(HttpStatus.CONFLICT, "补充合同要求主合同已生效"),
+
+	CONTRACT_AMOUNT_INVALID(HttpStatus.BAD_REQUEST, "合同金额不合法"),
+
+	CONTRACT_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "销售项目合同状态操作原因必填"),
+
+	CONTRACT_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "销售项目合同并发更新冲突"),
+
+	CONTRACT_REFERENCED_BY_ORDER(HttpStatus.CONFLICT, "合同已被销售订单引用，不允许取消"),
+
+	SALES_ORDER_PROJECT_PAIR_REQUIRED(HttpStatus.BAD_REQUEST, "销售订单项目与合同必须同时为空或同时有值"),
+
+	SALES_ORDER_PROJECT_INVALID(HttpStatus.CONFLICT, "销售订单关联项目不合法"),
+
+	SALES_ORDER_CONTRACT_INVALID(HttpStatus.CONFLICT, "销售订单关联合同不合法"),
+
+	SALES_ORDER_PROJECT_CUSTOMER_MISMATCH(HttpStatus.CONFLICT, "销售订单客户与项目客户不一致"),
+
+	SALES_ORDER_PROJECT_IMMUTABLE(HttpStatus.CONFLICT, "非草稿销售订单不可修改项目合同关联"),
+
+	SALES_ORDER_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "销售订单并发更新冲突"),
+
 	COST_RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "成本记录不存在"),
 
 	COST_WORK_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "成本关联工单不存在"),

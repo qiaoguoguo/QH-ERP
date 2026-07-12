@@ -4,6 +4,7 @@ import {
   createSalesApi,
   type SalesOrderLineRecord,
   type SalesOrderPayload,
+  type SalesOrderSummaryRecord,
   type SalesShipmentLineRecord,
   type SalesShipmentLinePayload,
   type SalesShipmentPayload,
@@ -86,6 +87,14 @@ describe('销售 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    orderPayloadAcceptsProjectContractPair: true as AssertTrue<
+      SalesOrderPayload extends { projectId?: unknown; contractId?: unknown } ? true : false
+    >,
+    orderSummaryReturnsProjectContractFields: true as AssertTrue<
+      SalesOrderSummaryRecord extends { projectId?: unknown; projectNo?: unknown; contractId?: unknown; contractNo?: unknown }
+        ? true
+        : false
+    >,
   }
 
   it('声明销售候选库存占用预留字段类型契约', () => {
@@ -97,6 +106,8 @@ describe('销售 API', () => {
       shipmentLineHasReservationWarehouseFields: true,
       shipmentPayloadLineAcceptsTrackingAllocations: true,
       shipmentLineReturnsTrackingAllocations: true,
+      orderPayloadAcceptsProjectContractPair: true,
+      orderSummaryReturnsProjectContractFields: true,
     })
   })
 
@@ -112,12 +123,15 @@ describe('销售 API', () => {
       dateTo: '',
       expectedDateFrom: undefined,
       expectedDateTo: '2026-07-10',
+      projectId: 12,
+      contractId: 55,
+      projectLinked: undefined,
       page: 2,
       pageSize: 50,
     })
 
     expect(fetcher).toHaveBeenCalledWith(
-      '/api/admin/sales/orders?keyword=%E5%AE%A2%E6%88%B7&customerId=8&status=CONFIRMED&dateFrom=2026-07-01&expectedDateTo=2026-07-10&page=2&pageSize=50',
+      '/api/admin/sales/orders?keyword=%E5%AE%A2%E6%88%B7&customerId=8&status=CONFIRMED&dateFrom=2026-07-01&expectedDateTo=2026-07-10&projectId=12&contractId=55&page=2&pageSize=50',
       {
         credentials: 'include',
         headers: { Accept: 'application/json' },
@@ -193,6 +207,8 @@ describe('销售 API', () => {
     const api = createSalesApi({ fetcher })
     const orderPayload: SalesOrderPayload = {
       customerId: 1,
+      projectId: 12,
+      contractId: 55,
       orderDate: '2026-07-04',
       expectedShipDate: '2026-07-10',
       remark: '销售订单',

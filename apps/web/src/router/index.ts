@@ -42,6 +42,13 @@ const reportPageComponent = (routeName: string) => {
   }
 }
 
+const salesRouteOrder = [
+  { name: 'sales-projects', permission: 'sales:project:view' },
+  { name: 'sales-orders', permission: 'sales:order:view' },
+  { name: 'sales-shipments', permission: 'sales:shipment:view' },
+  { name: 'sales-returns', permission: 'sales:return:view' },
+] as const
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -261,8 +268,33 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/sales',
-    redirect: '/sales/orders',
-    meta: { requiresAuth: true, requiredPermission: 'sales:order:view' },
+    name: 'sales-root',
+    meta: { requiresAuth: true },
+    component: placeholder('销售管理', '销售项目、销售订单、出库和退货入口。'),
+  },
+  {
+    path: '/sales/projects',
+    name: 'sales-projects',
+    meta: { requiresAuth: true, requiredPermission: 'sales:project:view' },
+    component: () => import('../modules/sales/projects/SalesProjectListView.vue'),
+  },
+  {
+    path: '/sales/projects/create',
+    name: 'sales-project-create',
+    meta: { requiresAuth: true, requiredPermission: 'sales:project:create' },
+    component: () => import('../modules/sales/projects/SalesProjectFormView.vue'),
+  },
+  {
+    path: '/sales/projects/:id',
+    name: 'sales-project-detail',
+    meta: { requiresAuth: true, requiredPermission: 'sales:project:view' },
+    component: () => import('../modules/sales/projects/SalesProjectDetailView.vue'),
+  },
+  {
+    path: '/sales/projects/:id/edit',
+    name: 'sales-project-edit',
+    meta: { requiresAuth: true, requiredPermission: 'sales:project:update' },
+    component: () => import('../modules/sales/projects/SalesProjectFormView.vue'),
   },
   {
     path: '/sales/orders',
@@ -652,6 +684,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return financeRoute
+    }
+
+    if (to.name === 'sales-root') {
+      const salesRoute = salesRouteOrder.find((item) => authStore.hasPermission(item.permission))
+      if (!salesRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return { name: salesRoute.name }
     }
 
     if (to.name === 'reports-root') {

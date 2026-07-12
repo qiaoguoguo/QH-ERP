@@ -218,6 +218,11 @@ onMounted(loadRecord)
         <dd>{{ record.orderNo }}</dd>
         <dt>客户</dt>
         <dd>{{ record.customerCode }} {{ record.customerName }}</dd>
+        <dt>项目合同</dt>
+        <dd v-if="record.projectId && record.contractId">
+          {{ record.projectNo }} {{ record.projectName }} / {{ record.contractNo }}
+        </dd>
+        <dd v-else>未关联项目</dd>
         <dt>预计交付</dt>
         <dd>{{ record.expectedShipDate || '-' }}</dd>
         <dt>明细行数</dt>

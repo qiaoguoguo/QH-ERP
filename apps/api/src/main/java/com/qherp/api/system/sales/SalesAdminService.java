@@ -15,6 +15,7 @@ import com.qherp.api.system.inventory.InventoryTrackingMethod;
 import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.salesproject.SalesOrderProjectLinkService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
@@ -74,23 +75,27 @@ public class SalesAdminService {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final SalesOrderProjectLinkService salesOrderProjectLinkService;
+
 	public SalesAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			InventoryPostingService inventoryPostingService, InventoryAvailabilityService inventoryAvailabilityService,
-			InventoryTrackingService inventoryTrackingService, BusinessPeriodGuard businessPeriodGuard) {
+			InventoryTrackingService inventoryTrackingService, BusinessPeriodGuard businessPeriodGuard,
+			SalesOrderProjectLinkService salesOrderProjectLinkService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.salesOrderProjectLinkService = salesOrderProjectLinkService;
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<SalesOrderSummaryResponse> orders(String keyword, Long customerId, String status,
-			LocalDate dateFrom, LocalDate dateTo, LocalDate expectedDateFrom, LocalDate expectedDateTo, int page,
-			int pageSize) {
+			LocalDate dateFrom, LocalDate dateTo, LocalDate expectedDateFrom, LocalDate expectedDateTo, Long projectId,
+			Long contractId, Boolean projectLinked, int page, int pageSize) {
 		QueryParts queryParts = orderQueryParts(keyword, customerId, status, dateFrom, dateTo, expectedDateFrom,
-				expectedDateTo);
+				expectedDateTo, projectId, contractId, projectLinked);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from sal_sales_order o
@@ -106,9 +111,13 @@ public class SalesAdminService {
 				       coalesce((select sum(l.shipped_quantity) from sal_sales_order_line l where l.order_id = o.id), 0) as shipped_quantity,
 				       coalesce((select sum(l.quantity - l.shipped_quantity) from sal_sales_order_line l where l.order_id = o.id), 0) as remaining_quantity,
 				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
-				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at
+				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at, o.version,
+				       o.project_id, o.contract_id, p.project_no, p.name as project_name,
+				       pc.contract_no, pc.external_contract_no
 				from sal_sales_order o
 				join mst_customer c on c.id = o.customer_id
+				left join sal_project p on p.id = o.project_id
+				left join sal_project_contract pc on pc.id = o.contract_id
 				%s
 				order by o.updated_at desc, o.id desc
 				limit ? offset ?
@@ -124,7 +133,9 @@ public class SalesAdminService {
 				summary.status(), summary.lineCount(), summary.totalQuantity(), summary.shippedQuantity(),
 				summary.remainingQuantity(), summary.remark(), summary.createdByName(), summary.createdAt(),
 				summary.updatedAt(), summary.confirmedByName(), summary.confirmedAt(), summary.cancelledByName(),
-				summary.cancelledAt(), summary.closedByName(), summary.closedAt(), orderLines(id), orderShipments(id));
+				summary.cancelledAt(), summary.closedByName(), summary.closedAt(), summary.version(),
+				summary.projectId(), summary.projectNo(), summary.projectName(), summary.contractId(),
+				summary.contractNo(), summary.externalContractNo(), orderLines(id), orderShipments(id));
 	}
 
 	@Transactional
@@ -138,6 +149,8 @@ public class SalesAdminService {
 			insertOrderLines(created.id(), order.lines(), now);
 			this.auditService.record(operator, "SALES_ORDER_CREATE", ORDER_TARGET, created.id(),
 					created.documentNo(), servletRequest);
+			this.salesOrderProjectLinkService.recordProjectLinkAudit(operator, created.documentNo(), null,
+					order.projectLink(), servletRequest);
 			return order(created.id());
 		}
 		catch (DuplicateKeyException exception) {
@@ -152,6 +165,11 @@ public class SalesAdminService {
 		if (current.status() != SalesOrderStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
 		}
+		if (request != null && request.version() != null && request.version() != current.version()) {
+			throw new BusinessException(ApiErrorCode.SALES_ORDER_CONCURRENT_MODIFICATION);
+		}
+		SalesOrderProjectLinkService.ProjectLink oldLink = this.salesOrderProjectLinkService
+			.findLink(current.projectId(), current.contractId());
 		ValidatedOrder order = validateOrderRequest(request);
 		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.UPDATE, "SALES_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
@@ -159,14 +177,17 @@ public class SalesAdminService {
 			this.jdbcTemplate.update("""
 					update sal_sales_order
 					set customer_id = ?, order_date = ?, expected_ship_date = ?, remark = ?,
-					    updated_by = ?, updated_at = ?, version = version + 1
+					    project_id = ?, contract_id = ?, updated_by = ?, updated_at = ?, version = version + 1
 					where id = ?
 					""", order.customer().id(), order.orderDate(), order.expectedShipDate(),
-					blankToNull(order.remark()), operator.username(), now, id);
+					blankToNull(order.remark()), order.projectLink() == null ? null : order.projectLink().projectId(),
+					order.projectLink() == null ? null : order.projectLink().contractId(), operator.username(), now, id);
 			this.jdbcTemplate.update("delete from sal_sales_order_line where order_id = ?", id);
 			insertOrderLines(id, order.lines(), now);
 			this.auditService.record(operator, "SALES_ORDER_UPDATE", ORDER_TARGET, id, current.orderNo(),
 					servletRequest);
+			this.salesOrderProjectLinkService.recordProjectLinkAudit(operator, current.orderNo(), oldLink,
+					order.projectLink(), servletRequest);
 			return order(id);
 		}
 		catch (DuplicateKeyException exception) {
@@ -182,6 +203,7 @@ public class SalesAdminService {
 		}
 		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.CONFIRM, "SALES_ORDER", id);
 		validateOrderForConfirmation(order);
+		this.salesOrderProjectLinkService.validateForConfirm(order.customerId(), order.projectId(), order.contractId());
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update sal_sales_order
@@ -430,6 +452,8 @@ public class SalesAdminService {
 		}
 		CustomerRef customer = validateEnabledCustomer(request.customerId());
 		String remark = validateOptionalText(request.remark(), 500);
+		SalesOrderProjectLinkService.ProjectLink projectLink = this.salesOrderProjectLinkService
+			.validateForDraftSave(customer.id(), request.projectId(), request.contractId());
 		if (request.lines() == null || request.lines().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_EMPTY_LINES);
 		}
@@ -453,7 +477,7 @@ public class SalesAdminService {
 			lines.add(new ValidatedOrderLine(line.lineNo(), material.id(), unitId, quantity, unitPrice,
 					line.reservationWarehouseId(), line.expectedShipDate(), validateOptionalText(line.remark(), 500)));
 		}
-		return new ValidatedOrder(customer, request.orderDate(), request.expectedShipDate(), remark, lines);
+		return new ValidatedOrder(customer, request.orderDate(), request.expectedShipDate(), remark, projectLink, lines);
 	}
 
 	private void validateOrderForConfirmation(OrderRow order) {
@@ -626,14 +650,16 @@ public class SalesAdminService {
 			try {
 				Long id = this.jdbcTemplate.queryForObject("""
 						insert into sal_sales_order (
-							order_no, customer_id, order_date, expected_ship_date, status, remark,
+							order_no, customer_id, order_date, expected_ship_date, status, remark, project_id, contract_id,
 							created_by, created_at, updated_by, updated_at
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						returning id
 						""", Long.class, orderNo, order.customer().id(), order.orderDate(), order.expectedShipDate(),
-						SalesOrderStatus.DRAFT.name(), blankToNull(order.remark()), operatorName, now, operatorName,
-						now);
+						SalesOrderStatus.DRAFT.name(), blankToNull(order.remark()),
+						order.projectLink() == null ? null : order.projectLink().projectId(),
+						order.projectLink() == null ? null : order.projectLink().contractId(), operatorName, now,
+						operatorName, now);
 				return new CreatedDocument(id, orderNo);
 			}
 			catch (DuplicateKeyException exception) {
@@ -716,7 +742,11 @@ public class SalesAdminService {
 	}
 
 	private QueryParts orderQueryParts(String keyword, Long customerId, String status, LocalDate dateFrom,
-			LocalDate dateTo, LocalDate expectedDateFrom, LocalDate expectedDateTo) {
+			LocalDate dateTo, LocalDate expectedDateFrom, LocalDate expectedDateTo, Long projectId, Long contractId,
+			Boolean projectLinked) {
+		if (projectLinked != null && (projectId != null || contractId != null)) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -761,6 +791,17 @@ public class SalesAdminService {
 		if (expectedDateTo != null) {
 			conditions.add("o.expected_ship_date <= ?");
 			args.add(expectedDateTo);
+		}
+		if (projectId != null) {
+			conditions.add("o.project_id = ?");
+			args.add(projectId);
+		}
+		if (contractId != null) {
+			conditions.add("o.contract_id = ?");
+			args.add(contractId);
+		}
+		if (projectLinked != null) {
+			conditions.add(projectLinked ? "o.project_id is not null" : "o.project_id is null");
 		}
 		return where(conditions, args);
 	}
@@ -825,9 +866,13 @@ public class SalesAdminService {
 				       coalesce((select sum(l.shipped_quantity) from sal_sales_order_line l where l.order_id = o.id), 0) as shipped_quantity,
 				       coalesce((select sum(l.quantity - l.shipped_quantity) from sal_sales_order_line l where l.order_id = o.id), 0) as remaining_quantity,
 				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
-				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at
+				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at, o.version,
+				       o.project_id, o.contract_id, p.project_no, p.name as project_name,
+				       pc.contract_no, pc.external_contract_no
 				from sal_sales_order o
 				join mst_customer c on c.id = o.customer_id
+				left join sal_project p on p.id = o.project_id
+				left join sal_project_contract pc on pc.id = o.contract_id
 				where o.id = ?
 				""", this::mapOrderSummary, id).stream().findFirst();
 	}
@@ -849,7 +894,8 @@ public class SalesAdminService {
 
 	private Optional<OrderRow> lockOrder(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, order_no, customer_id, order_date, expected_ship_date, status, remark
+				select id, order_no, customer_id, order_date, expected_ship_date, status, remark, version,
+				       project_id, contract_id
 				from sal_sales_order
 				where id = ?
 				for update
@@ -1149,7 +1195,10 @@ public class SalesAdminService {
 				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("confirmed_by"),
 				rs.getObject("confirmed_at", OffsetDateTime.class), rs.getString("cancelled_by"),
 				rs.getObject("cancelled_at", OffsetDateTime.class), rs.getString("closed_by"),
-				rs.getObject("closed_at", OffsetDateTime.class));
+				rs.getObject("closed_at", OffsetDateTime.class), rs.getLong("version"),
+				rs.getObject("project_id", Long.class), rs.getString("project_no"), rs.getString("project_name"),
+				rs.getObject("contract_id", Long.class), rs.getString("contract_no"),
+				rs.getString("external_contract_no"));
 	}
 
 	private SalesShipmentSummaryResponse mapShipmentSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -1165,7 +1214,8 @@ public class SalesAdminService {
 	private OrderRow mapOrderRow(ResultSet rs, int rowNum) throws SQLException {
 		return new OrderRow(rs.getLong("id"), rs.getString("order_no"), rs.getLong("customer_id"),
 				rs.getObject("order_date", LocalDate.class), rs.getObject("expected_ship_date", LocalDate.class),
-				SalesOrderStatus.valueOf(rs.getString("status")), rs.getString("remark"));
+				SalesOrderStatus.valueOf(rs.getString("status")), rs.getString("remark"), rs.getLong("version"),
+				rs.getObject("project_id", Long.class), rs.getObject("contract_id", Long.class));
 	}
 
 	private ShipmentRow mapShipmentRow(ResultSet rs, int rowNum) throws SQLException {
@@ -1286,7 +1336,8 @@ public class SalesAdminService {
 	}
 
 	public record SalesOrderRequest(@NotNull Long customerId, @NotNull LocalDate orderDate,
-			LocalDate expectedShipDate, String remark, @Valid List<SalesOrderLineRequest> lines) {
+			LocalDate expectedShipDate, String remark, Long projectId, Long contractId, Long version,
+			@Valid List<SalesOrderLineRequest> lines) {
 	}
 
 	public record SalesShipmentLineRequest(@NotNull Integer lineNo, @NotNull Long orderLineId, Long materialId,
@@ -1303,7 +1354,8 @@ public class SalesAdminService {
 			BigDecimal totalQuantity, BigDecimal shippedQuantity, BigDecimal remainingQuantity, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
 			OffsetDateTime confirmedAt, String cancelledByName, OffsetDateTime cancelledAt, String closedByName,
-			OffsetDateTime closedAt) {
+			OffsetDateTime closedAt, Long version, Long projectId, String projectNo, String projectName,
+			Long contractId, String contractNo, String externalContractNo) {
 	}
 
 	public record SalesOrderLineResponse(Long id, Integer lineNo, Long materialId, String materialCode,
@@ -1320,7 +1372,9 @@ public class SalesAdminService {
 			BigDecimal totalQuantity, BigDecimal shippedQuantity, BigDecimal remainingQuantity, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
 			OffsetDateTime confirmedAt, String cancelledByName, OffsetDateTime cancelledAt, String closedByName,
-			OffsetDateTime closedAt, List<SalesOrderLineResponse> lines, List<SalesShipmentSummaryResponse> shipments) {
+			OffsetDateTime closedAt, Long version, Long projectId, String projectNo, String projectName,
+			Long contractId, String contractNo, String externalContractNo, List<SalesOrderLineResponse> lines,
+			List<SalesShipmentSummaryResponse> shipments) {
 	}
 
 	public record SalesShipmentSummaryResponse(Long id, String shipmentNo, Long orderId, String orderNo,
@@ -1356,7 +1410,7 @@ public class SalesAdminService {
 	}
 
 	private record ValidatedOrder(CustomerRef customer, LocalDate orderDate, LocalDate expectedShipDate,
-			String remark, List<ValidatedOrderLine> lines) {
+			String remark, SalesOrderProjectLinkService.ProjectLink projectLink, List<ValidatedOrderLine> lines) {
 	}
 
 	private record ValidatedOrderLine(Integer lineNo, Long materialId, Long unitId, BigDecimal quantity,
@@ -1374,7 +1428,7 @@ public class SalesAdminService {
 	}
 
 	private record OrderRow(Long id, String orderNo, Long customerId, LocalDate orderDate, LocalDate expectedShipDate,
-			SalesOrderStatus status, String remark) {
+			SalesOrderStatus status, String remark, long version, Long projectId, Long contractId) {
 	}
 
 	private record OrderLineRow(Long id, Long orderId, Integer lineNo, Long materialId, Long unitId,

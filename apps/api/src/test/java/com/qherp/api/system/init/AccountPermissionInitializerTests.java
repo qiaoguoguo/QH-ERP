@@ -51,7 +51,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> PROCUREMENT_MENU_PERMISSIONS = List.of("procurement");
 
-	private static final List<String> SALES_MENU_PERMISSIONS = List.of("sales");
+	private static final List<String> SALES_MENU_PERMISSIONS = List.of("sales", "sales:project");
 
 	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
 
@@ -172,6 +172,32 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 					"/api/admin/sales/orders/{id}/cancel"),
 			new ExpectedActionPermission("sales:order:close", "sales", "PUT",
 					"/api/admin/sales/orders/{id}/close"),
+			new ExpectedActionPermission("sales:project:view", "sales:project", "GET",
+					"/api/admin/sales-projects/**"),
+			new ExpectedActionPermission("sales:project:create", "sales:project", "POST",
+					"/api/admin/sales-projects"),
+			new ExpectedActionPermission("sales:project:update", "sales:project", "PUT",
+					"/api/admin/sales-projects/{id}"),
+			new ExpectedActionPermission("sales:project:activate", "sales:project", "PUT",
+					"/api/admin/sales-projects/{id}/activate"),
+			new ExpectedActionPermission("sales:project:close", "sales:project", "PUT",
+					"/api/admin/sales-projects/{id}/close"),
+			new ExpectedActionPermission("sales:project:cancel", "sales:project", "PUT",
+					"/api/admin/sales-projects/{id}/cancel"),
+			new ExpectedActionPermission("sales:contract:view", "sales:project", "GET",
+					"/api/admin/sales-project-contracts/**"),
+			new ExpectedActionPermission("sales:contract:create", "sales:project", "POST",
+					"/api/admin/sales-projects/{id}/contracts"),
+			new ExpectedActionPermission("sales:contract:update", "sales:project", "PUT",
+					"/api/admin/sales-project-contracts/{id}"),
+			new ExpectedActionPermission("sales:contract:activate", "sales:project", "PUT",
+					"/api/admin/sales-project-contracts/{id}/activate"),
+			new ExpectedActionPermission("sales:contract:close", "sales:project", "PUT",
+					"/api/admin/sales-project-contracts/{id}/close"),
+			new ExpectedActionPermission("sales:contract:terminate", "sales:project", "PUT",
+					"/api/admin/sales-project-contracts/{id}/terminate"),
+			new ExpectedActionPermission("sales:contract:cancel", "sales:project", "PUT",
+					"/api/admin/sales-project-contracts/{id}/cancel"),
 			new ExpectedActionPermission("sales:shipment:view", "sales", "GET",
 					"/api/admin/sales/shipments/**"),
 			new ExpectedActionPermission("sales:shipment:create", "sales", "POST",

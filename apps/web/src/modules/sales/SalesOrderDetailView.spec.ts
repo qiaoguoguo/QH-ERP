@@ -28,6 +28,12 @@ const draftOrder: SalesOrderDetailRecord = {
   customerName: '华东客户',
   orderDate: '2026-07-04',
   expectedShipDate: '2026-07-12',
+  projectId: 12,
+  projectNo: 'SP-202607-001',
+  projectName: '华东扩产项目',
+  contractId: 55,
+  contractNo: 'SC-001',
+  externalContractNo: 'EXT-001',
   status: 'DRAFT',
   lineCount: 1,
   totalQuantity: 12.5,
@@ -187,6 +193,8 @@ describe('销售订单详情页', () => {
     expect(wrapper.text()).toContain('已出库')
     expect(wrapper.text()).toContain('未出库')
     expect(wrapper.text()).toContain('华东客户')
+    expect(wrapper.text()).toContain('项目合同')
+    expect(wrapper.text()).toContain('SP-202607-001 华东扩产项目 / SC-001')
     expect(wrapper.text()).toContain('FG-001 标准成品')
     expect(wrapper.text()).toContain('预留仓库')
     expect(wrapper.text()).toContain('成品仓')
@@ -199,6 +207,22 @@ describe('销售订单详情页', () => {
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).not.toContain('POSTED')
     expect(wrapper.text()).not.toContain('DRAFT')
+  })
+
+  it('历史未关联项目合同的销售订单显示明确空态', async () => {
+    const legacyOrder: SalesOrderDetailRecord = {
+      ...draftOrder,
+      projectId: null,
+      projectNo: null,
+      projectName: null,
+      contractId: null,
+      contractNo: null,
+      externalContractNo: null,
+    }
+    const { wrapper } = await mountDetail(legacyOrder)
+
+    expect(wrapper.text()).toContain('项目合同')
+    expect(wrapper.text()).toContain('未关联项目')
   })
 
   it('按权限和状态展示操作按钮并进入销售出库占位路由', async () => {

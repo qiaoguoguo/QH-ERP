@@ -681,6 +681,124 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void salesOrderProjectContractLinkIsPersistedFilteredAuditedAndHistoricalOrdersRemainNull() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long projectId = insertActiveProject(fixture.customerId(), "销售订单关联项目");
+		long contractId = insertEffectiveMainContract(projectId, "销售订单关联合同");
+
+		ResponseEntity<String> linked = createOrder(admin,
+				orderPayloadWithProject(fixture.customerId(), "销售订单关联项目合同", projectId, contractId,
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "2.000000",
+								"10.000000", null))));
+		assertOk(linked);
+		JsonNode linkedData = data(linked);
+		long linkedOrderId = linkedData.get("id").longValue();
+		assertThat(linkedData.get("projectId").longValue()).isEqualTo(projectId);
+		assertThat(linkedData.get("contractId").longValue()).isEqualTo(contractId);
+		assertThat(linkedData.get("projectNo").asText()).startsWith("SPC-SO-P-");
+		assertThat(linkedData.get("contractNo").asText()).startsWith("SPC-SO-C-");
+
+		assertItemsContain(get("/api/admin/sales/orders?projectLinked=true", admin), linkedOrderId);
+		assertItemsContain(get("/api/admin/sales/orders?projectId=" + projectId, admin), linkedOrderId);
+		assertError(get("/api/admin/sales/orders?projectLinked=true&projectId=" + projectId, admin),
+				HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+
+		long historicalOrderId = createOrderId(admin,
+				orderPayload(fixture.customerId(), "历史无项目订单",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"1.000000", null))));
+		JsonNode historical = data(getOrder(admin, historicalOrderId));
+		assertThat(historical.get("projectId").isNull()).isTrue();
+		assertThat(historical.get("contractId").isNull()).isTrue();
+		assertItemsContain(get("/api/admin/sales/orders?projectLinked=false", admin), historicalOrderId);
+
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "2.000000");
+		assertOk(confirmOrder(admin, linkedOrderId));
+		assertAuditLog("SALES_ORDER_PROJECT_LINK", "SALES_PROJECT", projectId);
+	}
+
+	@Test
+	void salesOrderProjectContractPairAndConfirmRevalidationRejectWithoutPartialWrites() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long projectId = insertActiveProject(fixture.customerId(), "确认再校验项目");
+		long contractId = insertEffectiveMainContract(projectId, "确认再校验合同");
+
+		assertError(createOrder(admin,
+				orderPayloadWithProject(fixture.customerId(), "只传项目", projectId, null,
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"1.000000", null)))),
+				HttpStatus.BAD_REQUEST, "SALES_ORDER_PROJECT_PAIR_REQUIRED");
+
+		long orderId = createOrderId(admin,
+				orderPayloadWithProject(fixture.customerId(), "确认前合同失效", projectId, contractId,
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"1.000000", null))));
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "1.000000");
+		this.jdbcTemplate.update("""
+				update sal_project_contract
+				set status = 'CLOSED', closed_by = 'test', closed_at = now(), close_reason = '并发关闭',
+					updated_at = now(), version = version + 1
+				where id = ?
+				""", contractId);
+
+		assertError(confirmOrder(admin, orderId), HttpStatus.CONFLICT, "SALES_ORDER_CONTRACT_INVALID");
+		assertThat(orderStatus(orderId)).isEqualTo("DRAFT");
+		assertThat(reservationCount(orderId)).isZero();
+		assertThat(auditCount("SALES_ORDER_CONFIRM", "SALES_ORDER", orderId)).isZero();
+	}
+
+	@Test
+	void concurrentDraftOrderProjectAssociationAllowsOnlyOneVersionedUpdateWithoutPartialWrites() throws Exception {
+		AuthenticatedSession firstAdmin = login("admin", ADMIN_PASSWORD);
+		AuthenticatedSession secondAdmin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long firstProjectId = insertActiveProject(fixture.customerId(), "并发关联项目一");
+		long firstContractId = insertEffectiveMainContract(firstProjectId, "并发关联合同一");
+		long secondProjectId = insertActiveProject(fixture.customerId(), "并发关联项目二");
+		long secondContractId = insertEffectiveMainContract(secondProjectId, "并发关联合同二");
+		long orderId = createOrderId(firstAdmin,
+				orderPayload(fixture.customerId(), "并发关联草稿订单",
+						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
+								"1.000000", null))));
+		long version = data(getOrder(firstAdmin, orderId)).get("version").longValue();
+
+		Map<String, Object> firstUpdate = orderPayloadWithProject(fixture.customerId(), "并发关联草稿订单一",
+				firstProjectId, firstContractId,
+				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "1.000000", null)));
+		firstUpdate.put("version", version);
+		Map<String, Object> secondUpdate = orderPayloadWithProject(fixture.customerId(), "并发关联草稿订单二",
+				secondProjectId, secondContractId,
+				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "1.000000", null)));
+		secondUpdate.put("version", version);
+
+		ExecutorService executorService = Executors.newFixedThreadPool(2);
+		try {
+			CountDownLatch start = new CountDownLatch(1);
+			Future<ResponseEntity<String>> first = executorService
+				.submit(() -> updateOrderAfterStart(firstAdmin, orderId, firstUpdate, start));
+			Future<ResponseEntity<String>> second = executorService
+				.submit(() -> updateOrderAfterStart(secondAdmin, orderId, secondUpdate, start));
+			start.countDown();
+
+			ResponseEntity<String> firstResponse = first.get(20, TimeUnit.SECONDS);
+			ResponseEntity<String> secondResponse = second.get(20, TimeUnit.SECONDS);
+			List<String> codes = List.of(code(firstResponse), code(secondResponse));
+			assertThat(codes).contains("OK");
+			assertThat(codes).contains("SALES_ORDER_CONCURRENT_MODIFICATION");
+		}
+		finally {
+			executorService.shutdownNow();
+		}
+
+		JsonNode latest = data(getOrder(firstAdmin, orderId));
+		assertThat(latest.get("projectId").longValue()).isIn(firstProjectId, secondProjectId);
+		assertThat(latest.get("contractId").longValue()).isIn(firstContractId, secondContractId);
+		assertThat(orderLineCount(orderId)).isOne();
+	}
+
+	@Test
 	void authenticationAuthorizationAndCsrfAreEnforced() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesFixture fixture = fixture();
@@ -825,6 +943,18 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		payload.put("expectedShipDate", LocalDate.now().plusDays(3).toString());
 		payload.put("remark", remark);
 		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> orderPayloadWithProject(long customerId, String remark, Long projectId,
+			Long contractId, List<Map<String, Object>> lines) {
+		Map<String, Object> payload = orderPayload(customerId, remark, lines);
+		if (projectId != null) {
+			payload.put("projectId", projectId);
+		}
+		if (contractId != null) {
+			payload.put("contractId", contractId);
+		}
 		return payload;
 	}
 
@@ -1246,6 +1376,74 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	private String customerCode(long customerId) {
 		return this.jdbcTemplate.queryForObject("select code from mst_customer where id = ?", String.class,
 				customerId);
+	}
+
+	private long insertActiveProject(long customerId, String name) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project (
+					project_no, name, customer_id, owner_user_id, planned_start_date, planned_finish_date, status,
+					target_revenue, target_cost, remark, created_by, created_at, updated_by, updated_at, activated_by,
+					activated_at
+				)
+				values (?, ?, ?, (select id from sys_user where username = 'admin'), ?, ?, 'ACTIVE',
+					0, 0, ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-SO-P-" + suffix, name, customerId, LocalDate.now(),
+				LocalDate.now().plusDays(30), name);
+	}
+
+	private long insertEffectiveMainContract(long projectId, String name) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project_contract (
+					contract_no, external_contract_no, project_id, contract_type, main_contract_id, name, signed_date,
+					effective_start_date, effective_end_date, amount, status, remark, created_by, created_at,
+					updated_by, updated_at, activated_by, activated_at
+				)
+				values (?, ?, ?, 'MAIN', null, ?, ?, ?, ?, 1000.00, 'EFFECTIVE', ?, 'test', now(),
+					'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-SO-C-" + suffix, "SPC-SO-EXT-" + suffix, projectId, name,
+				LocalDate.now(), LocalDate.now(), LocalDate.now().plusDays(30), name);
+	}
+
+	private String orderStatus(long orderId) {
+		return this.jdbcTemplate.queryForObject("select status from sal_sales_order where id = ?", String.class,
+				orderId);
+	}
+
+	private long reservationCount(long orderId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_reservation
+				where source_type = 'SALES_ORDER'
+				and source_id = ?
+				""", Long.class, orderId);
+	}
+
+	private long auditCount(String action, String targetType, long targetId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sys_audit_log
+				where action = ?
+				and target_type = ?
+				and target_id = ?
+				""", Long.class, action, targetType, Long.toString(targetId));
+	}
+
+	private int orderLineCount(long orderId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sal_sales_order_line
+				where order_id = ?
+				""", Integer.class, orderId);
+	}
+
+	private ResponseEntity<String> updateOrderAfterStart(AuthenticatedSession session, long orderId,
+			Map<String, Object> body, CountDownLatch start) throws Exception {
+		start.await(10, TimeUnit.SECONDS);
+		return updateOrder(session, orderId, body);
 	}
 
 	private void assertPostShipmentRejectedWithoutSideEffects(AuthenticatedSession admin, long shipmentId,

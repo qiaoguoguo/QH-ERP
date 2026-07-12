@@ -49,7 +49,7 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return;
 		}
 
-		if (!currentUser.permissions().contains(permissionCode)) {
+		if (!hasAnyPermission(currentUser, permissionCode)) {
 			this.accessDeniedHandler.handle(request, response, new AccessDeniedException("缺少权限：" + permissionCode));
 			return;
 		}
@@ -98,6 +98,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		String salesPermissionCode = salesPermissionCode(method, path);
 		if (salesPermissionCode != null) {
 			return salesPermissionCode;
+		}
+
+		String salesProjectPermissionCode = salesProjectPermissionCode(method, path);
+		if (salesProjectPermissionCode != null) {
+			return salesProjectPermissionCode;
 		}
 
 		String productionPermissionCode = productionPermissionCode(method, path);
@@ -483,6 +488,66 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		return null;
 	}
 
+	private String salesProjectPermissionCode(String method, String path) {
+		String projectPath = "/api/admin/sales-projects";
+		String contractPath = "/api/admin/sales-project-contracts";
+		if (!matchesBasePath(path, projectPath) && !matchesBasePath(path, contractPath)) {
+			return null;
+		}
+		if ("GET".equals(method) && "/api/admin/sales-projects/owner-candidates".equals(path)) {
+			return "sales:project:create|sales:project:update";
+		}
+		if ("GET".equals(method) && "/api/admin/sales-projects/order-link-candidates".equals(path)) {
+			return "sales:order:create|sales:order:update";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/contracts")) {
+			return "sales:contract:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/contracts")) {
+			return "sales:contract:create";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/sales-orders")) {
+			return "sales:project:view";
+		}
+		if ("GET".equals(method) && (projectPath.equals(path) || matchesIdPath(path, projectPath))) {
+			return "sales:project:view";
+		}
+		if ("POST".equals(method) && projectPath.equals(path)) {
+			return "sales:project:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, projectPath)) {
+			return "sales:project:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/activate")) {
+			return "sales:project:activate";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/close")) {
+			return "sales:project:close";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/cancel")) {
+			return "sales:project:cancel";
+		}
+		if ("GET".equals(method) && matchesIdPath(path, contractPath)) {
+			return "sales:contract:view";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, contractPath)) {
+			return "sales:contract:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(contractPath) + "/\\d+/activate")) {
+			return "sales:contract:activate";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(contractPath) + "/\\d+/close")) {
+			return "sales:contract:close";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(contractPath) + "/\\d+/terminate")) {
+			return "sales:contract:terminate";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(contractPath) + "/\\d+/cancel")) {
+			return "sales:contract:cancel";
+		}
+		return null;
+	}
+
 	private String documentPermissionCode(String method, String path, String basePath, String permissionPrefix) {
 		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath))) {
 			return permissionPrefix + ":view";
@@ -644,6 +709,15 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 
 	private boolean matchesStatusPath(String path, String basePath) {
 		return path.matches(Pattern.quote(basePath) + "/\\d+/(enable|disable)");
+	}
+
+	private boolean hasAnyPermission(CurrentUser currentUser, String permissionCode) {
+		for (String code : permissionCode.split("\\|")) {
+			if (currentUser.permissions().contains(code)) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private boolean isAdminPath(HttpServletRequest request) {

@@ -38,6 +38,7 @@ const inventoryDocumentPath = '/inventory/documents'
 const procurementOrderPath = '/procurement/orders'
 const procurementReceiptPath = '/procurement/receipts'
 const procurementReturnPath = '/procurement/returns'
+const salesProjectPath = '/sales/projects'
 const salesOrderPath = '/sales/orders'
 const salesShipmentPath = '/sales/shipments'
 const salesReturnPath = '/sales/returns'
@@ -71,6 +72,7 @@ const supportedMenuPaths = new Set([
   procurementOrderPath,
   procurementReceiptPath,
   procurementReturnPath,
+  salesProjectPath,
   salesOrderPath,
   salesShipmentPath,
   salesReturnPath,
@@ -138,6 +140,12 @@ const procurementChildren: MenuNode[] = [
 ]
 const procurementMenuPaths = new Set(procurementChildren.map((child) => child.routePath))
 const salesChildren: MenuNode[] = [
+  {
+    id: 'sales-projects',
+    code: 'sales:project:view',
+    name: '销售项目',
+    routePath: salesProjectPath,
+  },
   {
     id: 'sales-orders',
     code: 'sales:order:view',

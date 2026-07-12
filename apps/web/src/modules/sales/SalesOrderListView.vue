@@ -31,6 +31,9 @@ const filters = reactive<{
   dateTo: string
   expectedDateFrom: string
   expectedDateTo: string
+  projectId: string | number | ''
+  contractId: string | number | ''
+  projectLinked?: boolean
 }>({
   keyword: '',
   customerId: '',
@@ -39,6 +42,9 @@ const filters = reactive<{
   dateTo: '',
   expectedDateFrom: '',
   expectedDateTo: '',
+  projectId: '',
+  contractId: '',
+  projectLinked: undefined,
 })
 const pagination = reactive({
   page: 1,
@@ -92,6 +98,9 @@ async function loadRecords() {
       dateTo: filters.dateTo,
       expectedDateFrom: filters.expectedDateFrom,
       expectedDateTo: filters.expectedDateTo,
+      projectId: normalizeOptionalId(filters.projectId),
+      contractId: normalizeOptionalId(filters.contractId),
+      projectLinked: filters.projectLinked,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -107,6 +116,12 @@ async function loadRecords() {
 }
 
 function search() {
+  if (filters.projectLinked !== undefined && (
+    normalizeOptionalId(filters.projectId) !== undefined || normalizeOptionalId(filters.contractId) !== undefined
+  )) {
+    error.value = '项目关联筛选不能与项目或合同同时使用'
+    return
+  }
   pagination.page = 1
   void loadRecords()
 }
@@ -119,6 +134,9 @@ function resetSearch() {
   filters.dateTo = ''
   filters.expectedDateFrom = ''
   filters.expectedDateTo = ''
+  filters.projectId = ''
+  filters.contractId = ''
+  filters.projectLinked = undefined
   pagination.page = 1
   void loadRecords()
 }
@@ -260,6 +278,18 @@ onMounted(() => {
             name="sales-order-expected-date-to"
             placeholder="截止日期"
           />
+        </el-form-item>
+        <el-form-item label="项目 ID">
+          <el-input v-model="filters.projectId" name="sales-order-project-id" clearable placeholder="项目标识" />
+        </el-form-item>
+        <el-form-item label="合同 ID">
+          <el-input v-model="filters.contractId" name="sales-order-contract-id" clearable placeholder="合同标识" />
+        </el-form-item>
+        <el-form-item label="项目关联">
+          <el-select v-model="filters.projectLinked" clearable placeholder="全部">
+            <el-option label="已关联项目" :value="true" />
+            <el-option label="未关联项目" :value="false" />
+          </el-select>
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-sales-orders" type="primary" @click="search">查询</el-button>

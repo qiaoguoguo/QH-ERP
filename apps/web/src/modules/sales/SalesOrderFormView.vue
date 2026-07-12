@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { masterDataApi, type MaterialRecord, type PartnerRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -9,6 +9,10 @@ import {
   type SalesOrderDetailRecord,
   type SalesOrderPayload,
 } from '../../shared/api/salesApi'
+import {
+  salesProjectApi,
+  type SalesOrderProjectContractCandidate,
+} from '../../shared/api/salesProjectApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import SalesOrderLineEditor from './SalesOrderLineEditor.vue'
@@ -28,6 +32,7 @@ const router = useRouter()
 const customers = ref<PartnerRecord[]>([])
 const materials = ref<MaterialRecord[]>([])
 const warehouses = ref<WarehouseRecord[]>([])
+const orderLinkCandidates = ref<SalesOrderProjectContractCandidate[]>([])
 const editingRecord = ref<SalesOrderDetailRecord | null>(null)
 const referenceLoading = ref(true)
 const loading = ref(false)
@@ -42,6 +47,7 @@ const form = reactive({
   remark: '',
 })
 const lines = ref<SalesOrderLineDraft[]>([newSalesOrderLine()])
+const selectedProjectContractKey = ref('')
 
 const isEdit = computed(() => Boolean(route.params.id))
 const isDraftRecord = computed(() => !editingRecord.value || editingRecord.value.status === 'DRAFT')
@@ -50,6 +56,52 @@ const canSubmit = computed(() => !formSubmitting.value && canEditForm.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售订单' : '新建销售订单'))
 const sellableMaterials = computed(() => materials.value.filter((material) =>
   material.materialType === 'FINISHED_GOOD' || material.materialType === 'SEMI_FINISHED'))
+const selectedProjectContract = computed(() => orderLinkCandidates.value.find((candidate) =>
+  projectContractKey(candidate) === selectedProjectContractKey.value))
+
+function projectContractKey(candidate: SalesOrderProjectContractCandidate) {
+  return `${candidate.projectId}:${candidate.contractId}`
+}
+
+function projectContractLabel(candidate: SalesOrderProjectContractCandidate) {
+  return [
+    candidate.projectNo,
+    candidate.projectName,
+    '/',
+    candidate.contractNo,
+    candidate.contractName,
+  ].filter(Boolean).join(' ')
+}
+
+function normalizeOptionalId(value: ResourceId | '') {
+  if (value === '' || value === null || value === undefined) {
+    return null
+  }
+  return typeof value === 'string' && value.trim() === '' ? null : value
+}
+
+function addCurrentProjectContract(detail: SalesOrderDetailRecord) {
+  if (!detail.projectId || !detail.contractId) {
+    selectedProjectContractKey.value = ''
+    return
+  }
+  const candidate: SalesOrderProjectContractCandidate = {
+    projectId: detail.projectId,
+    projectNo: detail.projectNo ?? '',
+    projectName: detail.projectName ?? '',
+    customerId: detail.customerId,
+    customerName: detail.customerName,
+    contractId: detail.contractId,
+    contractNo: detail.contractNo ?? '',
+    externalContractNo: detail.externalContractNo ?? null,
+    contractName: detail.contractNo ?? '',
+    contractType: 'MAIN',
+  }
+  if (!orderLinkCandidates.value.some((item) => projectContractKey(item) === projectContractKey(candidate))) {
+    orderLinkCandidates.value = [candidate, ...orderLinkCandidates.value]
+  }
+  selectedProjectContractKey.value = projectContractKey(candidate)
+}
 
 async function loadReferences() {
   referenceLoading.value = true
@@ -92,10 +144,42 @@ async function loadRecord() {
     form.expectedShipDate = detail.expectedShipDate ?? ''
     form.remark = detail.remark ?? ''
     lines.value = detail.lines.map(salesOrderLineDraftFromRecord)
+    addCurrentProjectContract(detail)
   } catch (caught) {
     formError.value = salesErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadOrderLinkCandidates() {
+  const customerId = normalizeOptionalId(form.customerId)
+  if (customerId === null) {
+    orderLinkCandidates.value = []
+    selectedProjectContractKey.value = ''
+    return
+  }
+  try {
+    const page = await salesProjectApi.listOrderLinkCandidates({
+      customerId,
+      keyword: '',
+      page: 1,
+      pageSize: 50,
+    })
+    const candidates = pageItems(page)
+    const currentRecord = editingRecord.value
+    if (currentRecord?.projectId && currentRecord.contractId) {
+      orderLinkCandidates.value = candidates
+      addCurrentProjectContract(currentRecord)
+    } else {
+      orderLinkCandidates.value = candidates
+      if (!candidates.some((candidate) => projectContractKey(candidate) === selectedProjectContractKey.value)) {
+        selectedProjectContractKey.value = ''
+      }
+    }
+  } catch {
+    orderLinkCandidates.value = []
+    selectedProjectContractKey.value = ''
   }
 }
 
@@ -163,12 +247,17 @@ function validateForm(): SalesOrderPayload | null {
     return null
   }
 
+  const projectContract = selectedProjectContract.value
   formError.value = ''
   return {
     customerId,
     orderDate: form.orderDate.trim(),
     ...(form.expectedShipDate.trim() ? { expectedShipDate: form.expectedShipDate.trim() } : {}),
     ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
+    ...(projectContract ? {
+      projectId: projectContract.projectId,
+      contractId: projectContract.contractId,
+    } : {}),
     lines: payloadLines,
   }
 }
@@ -230,6 +319,14 @@ function cancel() {
 onMounted(async () => {
   await loadReferences()
   await loadRecord()
+  await loadOrderLinkCandidates()
+})
+
+watch(() => form.customerId, () => {
+  if (!canEditForm.value) {
+    return
+  }
+  void loadOrderLinkCandidates()
 })
 </script>
 
@@ -306,6 +403,29 @@ onMounted(async () => {
           :read-only="!canEditForm"
         />
       </el-form-item>
+      <el-form-item label="项目合同归属">
+        <el-select
+          v-if="canEditForm"
+          v-model="selectedProjectContractKey"
+          clearable
+          filterable
+          placeholder="可选，项目和合同同选同清"
+          style="width: 100%"
+        >
+          <el-option
+            v-for="candidate in orderLinkCandidates"
+            :key="projectContractKey(candidate)"
+            :label="projectContractLabel(candidate)"
+            :value="projectContractKey(candidate)"
+          />
+        </el-select>
+        <div v-else class="readonly-project-link">
+          <span v-if="editingRecord?.projectId && editingRecord.contractId">
+            {{ editingRecord.projectNo }} {{ editingRecord.projectName }} / {{ editingRecord.contractNo }}
+          </span>
+          <span v-else>未关联项目</span>
+        </div>
+      </el-form-item>
     </el-form>
 
     <div class="form-footer">
@@ -343,6 +463,12 @@ onMounted(async () => {
 
 .edit-status span {
   color: var(--qherp-muted);
+}
+
+.readonly-project-link {
+  min-height: 32px;
+  color: var(--qherp-text);
+  line-height: 32px;
 }
 
 .form-footer {
