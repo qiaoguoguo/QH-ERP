@@ -278,7 +278,7 @@ DRAFT -> CANCELLED
 - 迁移验证：空库 V1 至 V17 顺序应用通过；V1 至 V16 存量库升级 V17 后历史销售订单项目合同仍为空，采购和生产未新增项目字段，关键查询可执行。
 - 浏览器验收：管理员主路径、异常、权限、历史兼容、空态、错误态、桌面和 390px 路径通过。
 - 视觉分析：`docs/testing/020-sales-project-contract-visual-audit/notes.md` 最终结论为 `PASS`，并由 UI 固定角色复核通过。
-- 验收后视觉修正：项目操作记录已改为无卡片活动时间线；24 项定向测试、类型检查、1280x720 与 390x844 浏览器复验通过，证据为 `desktop-27-operations-timeline-flow-1280x720.png` 和 `mobile-05-operations-timeline-flow-390x844.png`。
+- 验收后视觉修正：项目操作记录已改为无卡片活动时间线，订单项目合同关联摘要已改为“原关联/新关联”结构并兼容历史记录；定向测试、类型检查、1280x720 与 390x844 浏览器复验通过，证据记录于 `docs/testing/020-sales-project-contract-visual-audit/notes.md`。
 - 当前运行：API `http://localhost:18080/api/health`，Web `http://127.0.0.1:5173/`；活动日志位于 `.superpowers/runtime/020/`。
 - 一般后续项：移动侧栏首屏占用、移动抽屉按钮文案歧义和空态重复，不阻断 020 交付。
 - 结论：020 满足完成条件，已合入主分支，可通知用户进行浏览器验收；021 尚未启动。

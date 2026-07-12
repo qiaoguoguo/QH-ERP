@@ -137,6 +137,52 @@ describe('销售项目操作记录面板', () => {
     expect(item.text()).not.toContain('#9988776655')
   })
 
+  it('格式化销售订单项目合同关联旧摘要，保留订单号、项目号和合同号', () => {
+    const wrapper = mountPanel([{
+      ...operations[2],
+      action: 'SALES_ORDER_PROJECT_LINK',
+      targetSummary: '订单 SO-202607-001 项目合同关联 未关联 -> SP-202607-001/SC-202607-001',
+    }, {
+      ...operations[2],
+      action: 'SALES_ORDER_PROJECT_LINK',
+      targetSummary: '订单 SO-202607-001 项目合同关联 SP-202607-001/SC-202607-001 -> SP-202607-002/SC-202607-002',
+      createdAt: '2026-07-12T12:10:00+08:00',
+    }, {
+      ...operations[2],
+      action: 'SALES_ORDER_PROJECT_UNLINK',
+      targetSummary: '订单 SO-202607-001 项目合同关联 SP-202607-002/SC-202607-002 -> 未关联',
+      createdAt: '2026-07-12T12:20:00+08:00',
+    }])
+    const summaries = wrapper.findAll('[data-test="project-operation-summary"]').map((item) => item.text())
+
+    expect(summaries[0]).toBe('订单 SO-202607-001：原关联：无；新关联：项目 SP-202607-001，合同 SC-202607-001')
+    expect(summaries[1]).toBe('订单 SO-202607-001：原关联：项目 SP-202607-001，合同 SC-202607-001；新关联：项目 SP-202607-002，合同 SC-202607-002')
+    expect(summaries[2]).toBe('订单 SO-202607-001：原关联：项目 SP-202607-002，合同 SC-202607-002；新关联：无')
+    expect(wrapper.text()).not.toContain('未关联 ->')
+    expect(wrapper.text()).not.toContain('SP-202607-001/SC-202607-001 -> SP-202607-002/SC-202607-002')
+    expect(wrapper.text()).not.toContain('-> 未关联')
+  })
+
+  it('销售订单项目合同关联摘要脱敏、空值或异常格式保持原文', () => {
+    const wrapper = mountPanel([{
+      ...operations[2],
+      targetSummary: '订单 SO-202607-001 项目合同关联已变更',
+    }, {
+      ...operations[2],
+      targetSummary: '',
+      createdAt: '2026-07-12T12:10:00+08:00',
+    }, {
+      ...operations[2],
+      targetSummary: '订单 SO-202607-001 项目合同关联 SP-202607-001 -> 未关联',
+      createdAt: '2026-07-12T12:20:00+08:00',
+    }])
+    const items = wrapper.findAll('[data-test="project-operation-item"]')
+
+    expect(items[0].find('[data-test="project-operation-summary"]').text()).toBe('订单 SO-202607-001 项目合同关联已变更')
+    expect(items[1].find('[data-test="project-operation-summary"]').exists()).toBe(false)
+    expect(items[2].find('[data-test="project-operation-summary"]').text()).toBe('订单 SO-202607-001 项目合同关联 SP-202607-001 -> 未关联')
+  })
+
   it('按动作类型设置时间线节点辅助色', () => {
     const wrapper = mountPanel(operations)
     const timelineItems = wrapper.findAllComponents({ name: 'ElTimelineItem' })

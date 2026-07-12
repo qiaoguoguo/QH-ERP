@@ -120,6 +120,7 @@ API 异常证据：`api-negative-checks.json`
 | `desktop-25-sales-report.png` | 1440x900 | 销售经营报表 | admin | 查询可信 |
 | `desktop-26-invalid-project-detail-error.png` | 1440x900 | 无效项目详情 | admin | 错误态可信 |
 | `desktop-27-operations-timeline-flow-1280x720.png` | 1280x720 | 项目操作记录时间线 | admin | 节点、连线、7 条记录分隔和文本层级可信 |
+| `desktop-28-operation-association-summary-1280x720.png` | 1280x720 | 项目操作记录关联摘要 | admin | 显示“原关联：无；新关联：项目 P，合同 C”，无旧箭头歧义 |
 | `mobile-01-project-list.png` | 390x844 | 移动项目列表 | admin | 旧证据，仅证明可访问 |
 | `mobile-01-project-list-data-row-9ce79b9.png` | 390x844 | 移动项目列表 | admin | 真实项目行和行操作可见 |
 | `mobile-01-project-list-data-row-actions-9ce79b9.png` | 390x844 | 移动项目列表 | admin | 替代移动列表证据，直接显示多条项目行和“详情/编辑”操作 |
@@ -128,6 +129,7 @@ API 异常证据：`api-negative-checks.json`
 | `mobile-04-order-restricted-permission.png` | 390x844 | 移动订单受限 | 无订单账号 | 旧证据，目标区域不够直接 |
 | `mobile-04-order-restricted-permission-target-9ce79b9.png` | 390x844 | 移动订单受限 | 无订单账号 | 替代移动订单受限证据，直接显示“订单摘要受限” |
 | `mobile-05-operations-timeline-flow-390x844.png` | 390x844 | 移动项目操作记录时间线 | admin | 节点、连线、长文本换行和无横向溢出可信 |
+| `mobile-06-operation-association-summary-390x844.png` | 390x844 | 移动项目操作记录关联摘要 | admin | 新关联摘要换行可读，无横向溢出或遮挡 |
 
 ## 用户反馈修复复验
 
@@ -148,6 +150,26 @@ API 异常证据：`api-negative-checks.json`
 | 390x844 | `http://127.0.0.1:5173/sales/projects/1` | 移动视口节点与连线生效；7 条记录逐条分隔；长文本换行；无横向溢出或遮挡；控制台无相关错误 |
 
 空态和极长文本由 `SalesProjectOperationsPanel.spec.ts` 自动化覆盖，本次未篡改真实数据。
+
+### 关联摘要可读性修正复验
+
+复验缺陷：销售项目操作记录关联摘要“未关联 -> P/C”表达有歧义。
+
+复验命令：
+
+| 命令 | 结果 |
+| --- | --- |
+| `npm --prefix apps/web test -- SalesProjectOperationsPanel.spec.ts SalesProjectDetailView.spec.ts` | PASS；Test Files 2 passed；Tests 17 passed；退出码 0；耗时 00:00:07.6784895 |
+| `npm --prefix apps/web run typecheck` | PASS；退出码 0；耗时 00:00:13.5627259 |
+
+浏览器复验：
+
+| 视口 | 页面 | 结论 |
+| --- | --- | --- |
+| 1280x720 | `http://127.0.0.1:5173/sales/projects/1` | 刷新后目标记录显示 `订单 SO-20260712143720316-001：原关联：无；新关联：项目 SP20260712143256646001，合同 SC20260712143336172001`；不再出现 `未关联 -> SP/SC`；技术码不泄露；时间线节点和连线未回归；无横向溢出或遮挡；控制台无相关错误 |
+| 390x844 | `http://127.0.0.1:5173/sales/projects/1` | 同一目标记录在移动视口换行可读；不出现旧箭头歧义形式；时间线样式未回归；无横向溢出或遮挡；控制台无相关错误 |
+
+空态、异常、脱敏与切换/解除分支由 `SalesProjectOperationsPanel.spec.ts` 自动化覆盖，本次未篡改真实数据。
 
 ## 发现问题
 
@@ -170,6 +192,11 @@ API 异常证据：`api-negative-checks.json`
    - 自动化证据：`SalesProjectOperationsPanel.spec.ts`、`SalesProjectDetailView.spec.ts`、`style.spec.ts`
    - 浏览器证据：`desktop-27-operations-timeline-flow-1280x720.png`、`mobile-05-operations-timeline-flow-390x844.png`
    - 结论：项目详情操作记录以时间线展示，7 条记录有节点、连线和分隔；合同生效摘要不重复，订单关联对象显示为销售订单，未出现技术码或内部 ID。
+
+5. 销售项目操作记录关联摘要可读性歧义：已关闭。
+   - 自动化证据：`SalesProjectOperationsPanel.spec.ts`、`SalesProjectDetailView.spec.ts`
+   - 浏览器证据：`desktop-28-operation-association-summary-1280x720.png`、`mobile-06-operation-association-summary-390x844.png`
+   - 结论：目标记录显示“原关联：无；新关联：项目 P，合同 C”，不再出现“未关联 -> P/C”歧义形式；桌面和移动视口均无横向溢出。
 
 ### 阻断
 
@@ -196,4 +223,4 @@ API 异常证据：`api-negative-checks.json`
 
 移动 390x844 下，详情和抽屉可访问，控件未出现不可点击遮挡；但首屏空间被导航占用明显，合同抽屉底部按钮文案存在歧义，建议整改或纳入后续视觉优化。
 
-9ce79b9 最终复验后，原权限阻断已关闭；用户反馈的操作记录流程样式缺陷已通过自动化与浏览器复验关闭；本目录内补充截图均为可信视口截图，未使用失真全页截图。当前仅保留一般后续项：移动侧栏首屏占用、移动抽屉按钮文案歧义、空态重复。
+9ce79b9 最终复验后，原权限阻断已关闭；用户反馈的操作记录流程样式缺陷和关联摘要可读性歧义已通过自动化与浏览器复验关闭；本目录内补充截图均为可信视口截图，未使用失真全页截图。当前仅保留一般后续项：移动侧栏首屏占用、移动抽屉按钮文案歧义、空态重复。

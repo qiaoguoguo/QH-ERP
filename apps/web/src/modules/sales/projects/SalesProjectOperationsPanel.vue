@@ -62,6 +62,34 @@ function shouldShowSummary(operation: SalesProjectOperation) {
 
   return Boolean(summary) && !duplicateSummaries.includes(normalizedSummary)
 }
+
+function parseProjectContractLink(value: string) {
+  if (value === '未关联') {
+    return '无'
+  }
+  const parts = value.split('/')
+  if (parts.length !== 2 || !parts[0]?.trim() || !parts[1]?.trim()) {
+    return null
+  }
+  return `项目 ${parts[0].trim()}，合同 ${parts[1].trim()}`
+}
+
+function formatOrderProjectLinkSummary(operation: SalesProjectOperation) {
+  if (operation.action !== 'SALES_ORDER_PROJECT_LINK' && operation.action !== 'SALES_ORDER_PROJECT_UNLINK') {
+    return operation.targetSummary
+  }
+  const matched = operation.targetSummary.match(/^订单\s+(.+?)\s+项目合同关联\s+(.+?)\s*->\s*(.+)$/)
+  if (!matched) {
+    return operation.targetSummary
+  }
+  const [, orderNo, oldLink, newLink] = matched
+  const oldText = parseProjectContractLink(oldLink.trim())
+  const newText = parseProjectContractLink(newLink.trim())
+  if (!oldText || !newText) {
+    return operation.targetSummary
+  }
+  return `订单 ${orderNo.trim()}：原关联：${oldText}；新关联：${newText}`
+}
 </script>
 
 <template>
@@ -86,7 +114,7 @@ function shouldShowSummary(operation: SalesProjectOperation) {
               {{ formatProjectDateTime(operation.createdAt) }} · {{ operation.operatorUsername }}
             </span>
           </div>
-          <p v-if="shouldShowSummary(operation)" class="project-operation-summary" data-test="project-operation-summary">{{ operation.targetSummary }}</p>
+          <p v-if="shouldShowSummary(operation)" class="project-operation-summary" data-test="project-operation-summary">{{ formatOrderProjectLinkSummary(operation) }}</p>
         </article>
       </el-timeline-item>
     </el-timeline>
