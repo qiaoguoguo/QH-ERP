@@ -52,6 +52,11 @@ const form = reactive({
   amount: '',
   remark: '',
 })
+const fieldErrors = reactive({
+  name: '',
+  signedDate: '',
+  amount: '',
+})
 const actionDialog = reactive<{
   visible: boolean
   action: 'activate' | 'close' | 'terminate' | 'cancel' | ''
@@ -77,16 +82,23 @@ const canEditFields = computed(() => !isView.value && (
   || (!isCreate.value && canUpdateContract.value && detail.value?.status === 'DRAFT')
 ))
 const canSave = computed(() => canEditFields.value)
-const canActivate = computed(() => !isView.value && detail.value?.status === 'DRAFT'
-  && authStore.hasPermission('sales:contract:activate'))
-const canCancel = computed(() => !isView.value && detail.value?.status === 'DRAFT'
-  && authStore.hasPermission('sales:contract:cancel'))
-const canClose = computed(() => !isView.value && detail.value?.status === 'EFFECTIVE'
-  && authStore.hasPermission('sales:contract:close'))
-const canTerminate = computed(() => !isView.value && detail.value?.status === 'EFFECTIVE'
-  && authStore.hasPermission('sales:contract:terminate'))
 const formDirty = computed(() => Boolean(detail.value) && detail.value?.status === 'DRAFT'
   && formSnapshot.value !== contractFormSnapshot())
+const contractActionStates = computed(() => ({
+  activate: resolveContractActionState('activate'),
+  close: resolveContractActionState('close'),
+  terminate: resolveContractActionState('terminate'),
+  cancel: resolveContractActionState('cancel'),
+}))
+const contractConfirmButtonType = computed(() => {
+  if (actionDialog.action === 'close') {
+    return 'warning'
+  }
+  if (actionDialog.action === 'terminate' || actionDialog.action === 'cancel') {
+    return 'danger'
+  }
+  return 'primary'
+})
 
 function contractFormSnapshot() {
   return JSON.stringify({
@@ -102,6 +114,56 @@ function contractFormSnapshot() {
   })
 }
 
+function resolveContractActionState(action: 'activate' | 'close' | 'terminate' | 'cancel') {
+  const contract = detail.value
+  if (!contract || isView.value) {
+    return { visible: false, disabled: false, reason: '' }
+  }
+  if (action === 'activate') {
+    const hasPermission = authStore.hasPermission('sales:contract:activate')
+    const visible = hasPermission && contract.status === 'DRAFT'
+    if (!visible) {
+      return { visible: false, disabled: false, reason: '' }
+    }
+    if (contract.contractType === 'SUPPLEMENT'
+      && (props.project.status !== 'ACTIVE' || props.project.mainContractStatus !== 'EFFECTIVE')) {
+      return {
+        visible: true,
+        disabled: true,
+        reason: '补充合同需项目执行中且主合同已生效后才能生效',
+      }
+    }
+    if (contract.contractType === 'MAIN'
+      && (props.project.status === 'CLOSED' || props.project.status === 'CANCELLED')) {
+      return {
+        visible: true,
+        disabled: true,
+        reason: '终态项目下主合同不能生效',
+      }
+    }
+    return { visible: true, disabled: false, reason: '' }
+  }
+  if (action === 'cancel') {
+    return {
+      visible: authStore.hasPermission('sales:contract:cancel') && contract.status === 'DRAFT',
+      disabled: false,
+      reason: '',
+    }
+  }
+  if (action === 'close') {
+    return {
+      visible: authStore.hasPermission('sales:contract:close') && contract.status === 'EFFECTIVE',
+      disabled: false,
+      reason: '',
+    }
+  }
+  return {
+    visible: authStore.hasPermission('sales:contract:terminate') && contract.status === 'EFFECTIVE',
+    disabled: false,
+    reason: '',
+  }
+}
+
 function resetForm() {
   detail.value = null
   form.contractType = props.defaultContractType
@@ -114,6 +176,7 @@ function resetForm() {
   form.amount = ''
   form.remark = ''
   error.value = ''
+  clearFieldErrors()
   formSnapshot.value = contractFormSnapshot()
 }
 
@@ -127,6 +190,7 @@ function fillForm(contract: SalesProjectContractDetail) {
   form.effectiveEndDate = contract.effectiveEndDate ?? ''
   form.amount = contract.amount
   form.remark = contract.remark ?? ''
+  clearFieldErrors()
   formSnapshot.value = contractFormSnapshot()
 }
 
@@ -147,25 +211,44 @@ async function loadContract() {
   }
 }
 
+function clearFieldErrors() {
+  fieldErrors.name = ''
+  fieldErrors.signedDate = ''
+  fieldErrors.amount = ''
+}
+
+function validateRequiredFields() {
+  if (!form.name.trim()) {
+    fieldErrors.name = '请填写合同名称'
+  }
+  if (!form.signedDate) {
+    fieldErrors.signedDate = '请选择签订日期'
+  }
+  if (!form.amount.trim()) {
+    fieldErrors.amount = '请填写合同金额'
+  }
+  return !fieldErrors.name && !fieldErrors.signedDate && !fieldErrors.amount
+}
+
 function validateForm() {
-  if (!form.name.trim() || !form.signedDate || !form.amount.trim()) {
-    error.value = '请完整填写合同名称、签订日期和金额'
+  clearFieldErrors()
+  error.value = ''
+  if (!validateRequiredFields()) {
     return false
   }
   const amount = Number(form.amount)
   if (!Number.isFinite(amount)) {
-    error.value = '合同金额必须是普通十进制数字'
+    fieldErrors.amount = '合同金额必须是普通十进制数字'
     return false
   }
   if (form.contractType === 'MAIN' && amount <= 0) {
-    error.value = '主合同金额必须大于 0'
+    fieldErrors.amount = '主合同金额必须大于 0'
     return false
   }
   if (form.contractType === 'SUPPLEMENT' && amount === 0) {
-    error.value = '补充合同金额不得为 0'
+    fieldErrors.amount = '补充合同金额不得为 0'
     return false
   }
-  error.value = ''
   return true
 }
 
@@ -206,6 +289,10 @@ async function saveContract() {
 }
 
 function openContractAction(action: 'activate' | 'close' | 'terminate' | 'cancel') {
+  const actionState = contractActionStates.value[action]
+  if (!actionState.visible || actionState.disabled) {
+    return
+  }
   if (action === 'activate' && formDirty.value) {
     error.value = '请先保存合同草稿后再生效'
     return
@@ -284,16 +371,16 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
           <el-form-item label="引用主合同">
             <el-input :model-value="form.contractType === 'SUPPLEMENT' ? (project.mainContractNo || '主合同') : '-'" disabled />
           </el-form-item>
-          <el-form-item label="合同名称">
+          <el-form-item label="合同名称" required :error="fieldErrors.name">
             <el-input v-model="form.name" name="contract-name" :disabled="!canEditFields" />
           </el-form-item>
           <el-form-item label="外部纸质合同号">
             <el-input v-model="form.externalContractNo" name="contract-external-no" :disabled="!canEditFields" />
           </el-form-item>
-          <el-form-item label="签订日期">
+          <el-form-item label="签订日期" required :error="fieldErrors.signedDate">
             <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="form.signedDate" name="contract-signed-date" :disabled="!canEditFields" />
           </el-form-item>
-          <el-form-item label="合同金额">
+          <el-form-item label="合同金额" required :error="fieldErrors.amount">
             <el-input v-model="form.amount" name="contract-amount" :disabled="!canEditFields" />
           </el-form-item>
           <el-form-item label="履约开始">
@@ -331,10 +418,50 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
     <template #footer>
       <div class="drawer-footer">
         <div class="drawer-actions">
-          <el-button v-if="canActivate" data-test="contract-action-activate" type="success" plain @click="openContractAction('activate')">生效</el-button>
-          <el-button v-if="canCancel" data-test="contract-action-cancel" type="danger" plain @click="openContractAction('cancel')">取消</el-button>
-          <el-button v-if="canClose" data-test="contract-action-close" type="warning" plain @click="openContractAction('close')">关闭</el-button>
-          <el-button v-if="canTerminate" data-test="contract-action-terminate" type="danger" plain @click="openContractAction('terminate')">终止</el-button>
+          <el-button
+            v-if="contractActionStates.activate.visible"
+            data-test="contract-action-activate"
+            type="success"
+            plain
+            :disabled="contractActionStates.activate.disabled"
+            :title="contractActionStates.activate.reason"
+            @click="openContractAction('activate')"
+          >
+            生效
+          </el-button>
+          <el-button
+            v-if="contractActionStates.cancel.visible"
+            data-test="contract-action-cancel"
+            type="danger"
+            plain
+            :disabled="contractActionStates.cancel.disabled"
+            :title="contractActionStates.cancel.reason"
+            @click="openContractAction('cancel')"
+          >
+            取消
+          </el-button>
+          <el-button
+            v-if="contractActionStates.close.visible"
+            data-test="contract-action-close"
+            type="warning"
+            plain
+            :disabled="contractActionStates.close.disabled"
+            :title="contractActionStates.close.reason"
+            @click="openContractAction('close')"
+          >
+            关闭
+          </el-button>
+          <el-button
+            v-if="contractActionStates.terminate.visible"
+            data-test="contract-action-terminate"
+            type="danger"
+            plain
+            :disabled="contractActionStates.terminate.disabled"
+            :title="contractActionStates.terminate.reason"
+            @click="openContractAction('terminate')"
+          >
+            终止
+          </el-button>
         </div>
         <div class="drawer-actions">
           <el-button @click="$emit('update:modelValue', false)">关闭</el-button>
@@ -358,7 +485,14 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
       <p v-else>确认{{ salesProjectContractTypeLabel(form.contractType) }}生效？</p>
       <template #footer>
         <el-button @click="actionDialog.visible = false">取消</el-button>
-        <el-button data-test="confirm-contract-action" type="primary" :loading="saving" @click="confirmContractAction">确认</el-button>
+        <el-button
+          data-test="confirm-contract-action"
+          :type="contractConfirmButtonType"
+          :loading="saving"
+          @click="confirmContractAction"
+        >
+          确认
+        </el-button>
       </template>
     </el-dialog>
   </el-drawer>

@@ -21,6 +21,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -698,11 +699,37 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(linkedData.get("contractId").longValue()).isEqualTo(contractId);
 		assertThat(linkedData.get("projectNo").asText()).startsWith("SPC-SO-P-");
 		assertThat(linkedData.get("contractNo").asText()).startsWith("SPC-SO-C-");
+		String orderNo = linkedData.get("orderNo").asText();
+		String firstLink = linkedData.get("projectNo").asText() + "/" + linkedData.get("contractNo").asText();
+		assertProjectLinkAudit("SALES_ORDER_PROJECT_LINK", projectId, orderNo, "未关联", firstLink);
 
 		assertItemsContain(get("/api/admin/sales/orders?projectLinked=true", admin), linkedOrderId);
 		assertItemsContain(get("/api/admin/sales/orders?projectId=" + projectId, admin), linkedOrderId);
 		assertError(get("/api/admin/sales/orders?projectLinked=true&projectId=" + projectId, admin),
 				HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+
+		long secondProjectId = insertActiveProject(fixture.customerId(), "销售订单切换项目");
+		long secondContractId = insertEffectiveMainContract(secondProjectId, "销售订单切换合同");
+		Map<String, Object> switchPayload = orderPayloadWithProject(fixture.customerId(), "销售订单切换项目合同",
+				secondProjectId, secondContractId,
+				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "2.000000", "10.000000",
+						null)));
+		switchPayload.put("version", linkedData.get("version").longValue());
+		JsonNode switchedData = data(updateOrder(admin, linkedOrderId, switchPayload));
+		String secondLink = switchedData.get("projectNo").asText() + "/" + switchedData.get("contractNo").asText();
+		assertThat(switchedData.get("projectId").longValue()).isEqualTo(secondProjectId);
+		assertThat(switchedData.get("contractId").longValue()).isEqualTo(secondContractId);
+		assertProjectLinkAudit("SALES_ORDER_PROJECT_UNLINK", projectId, orderNo, firstLink, secondLink);
+		assertProjectLinkAudit("SALES_ORDER_PROJECT_LINK", secondProjectId, orderNo, firstLink, secondLink);
+
+		Map<String, Object> unlinkPayload = orderPayload(fixture.customerId(), "销售订单解除项目合同",
+				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "2.000000", "10.000000",
+						null)));
+		unlinkPayload.put("version", switchedData.get("version").longValue());
+		JsonNode unlinkedData = data(updateOrder(admin, linkedOrderId, unlinkPayload));
+		assertThat(unlinkedData.get("projectId").isNull()).isTrue();
+		assertThat(unlinkedData.get("contractId").isNull()).isTrue();
+		assertProjectLinkAudit("SALES_ORDER_PROJECT_UNLINK", secondProjectId, orderNo, secondLink, "未关联");
 
 		long historicalOrderId = createOrderId(admin,
 				orderPayload(fixture.customerId(), "历史无项目订单",
@@ -1481,6 +1508,31 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 				""", Long.class, action, targetType, Long.toString(targetId))).as(action).isOne();
 	}
 
+	private void assertProjectLinkAudit(String action, long targetId, String orderNo, String oldLink, String newLink) {
+		AuditRow audit = latestAudit(action, "SALES_PROJECT", targetId);
+		assertThat(audit.operatorUsername()).isEqualTo("admin");
+		assertThat(audit.action()).isEqualTo(action);
+		assertThat(audit.targetType()).isEqualTo("SALES_PROJECT");
+		assertThat(audit.targetId()).isEqualTo(String.valueOf(targetId));
+		assertThat(audit.targetSummary()).contains("订单 " + orderNo);
+		assertThat(audit.targetSummary()).contains(oldLink + " -> " + newLink);
+		assertThat(audit.createdAt()).isNotNull();
+	}
+
+	private AuditRow latestAudit(String action, String targetType, long targetId) {
+		return this.jdbcTemplate.queryForObject("""
+				select operator_username, action, target_type, target_id, target_summary, created_at
+				from sys_audit_log
+				where action = ?
+				and target_type = ?
+				and target_id = ?
+				order by id desc
+				limit 1
+				""", (rs, rowNum) -> new AuditRow(rs.getString("operator_username"), rs.getString("action"),
+				rs.getString("target_type"), rs.getString("target_id"), rs.getString("target_summary"),
+				rs.getObject("created_at", OffsetDateTime.class)), action, targetType, String.valueOf(targetId));
+	}
+
 	private AuthenticatedSession createSalesUserAndLogin(String usernamePrefix, String rolePrefix,
 			List<String> permissionCodes) {
 		int suffix = SEQUENCE.incrementAndGet();
@@ -1717,6 +1769,10 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record AuthenticatedSession(String sessionCookie, CsrfSession csrfSession) {
+	}
+
+	private record AuditRow(String operatorUsername, String action, String targetType, String targetId,
+			String targetSummary, OffsetDateTime createdAt) {
 	}
 
 	private record SalesFixture(long unitId, long otherUnitId, long warehouseId, long disabledWarehouseId,

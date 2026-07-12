@@ -55,6 +55,10 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 		long contractId = insertContract(projectId, "MAIN", null, "候选主合同", "EFFECTIVE", "5000.00");
 		AuthenticatedSession orderCreator = createUserAndLogin("order-candidate-", "ORDER_CANDIDATE_",
 				List.of("sales:order:create"));
+		AuthenticatedSession orderUpdater = createUserAndLogin("order-candidate-update-", "ORDER_CANDIDATE_UPDATE_",
+				List.of("sales:order:update"));
+		AuthenticatedSession noOrderPermission = createUserAndLogin("order-candidate-none-", "ORDER_CANDIDATE_NONE_",
+				List.of());
 
 		ResponseEntity<String> response = get("/api/admin/sales-projects/order-link-candidates?customerId="
 				+ customerId + "&keyword=候选&page=1&pageSize=20", orderCreator);
@@ -73,6 +77,13 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 		assertThat(item.get("contractType").asText()).isEqualTo("MAIN");
 		assertThat(item.has("amount")).isFalse();
 		assertThat(item.has("status")).isFalse();
+
+		ResponseEntity<String> updateOnly = get("/api/admin/sales-projects/order-link-candidates?customerId="
+				+ customerId + "&keyword=候选&page=1&pageSize=20", orderUpdater);
+		assertOk(updateOnly);
+		assertThat(data(updateOnly).get("items").get(0).get("contractId").longValue()).isEqualTo(contractId);
+		assertError(get("/api/admin/sales-projects/order-link-candidates?customerId=" + customerId,
+				noOrderPermission), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 	}
 
 	@Test

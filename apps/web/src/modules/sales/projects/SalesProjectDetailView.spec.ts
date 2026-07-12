@@ -162,6 +162,17 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+function buttonByTest(wrapper: VueWrapper, testId: string): VueWrapper {
+  const button = wrapper.findAllComponents({ name: 'ElButton' })
+    .find((item) => item.attributes('data-test') === testId)
+  expect(button?.exists()).toBe(true)
+  return button as VueWrapper
+}
+
+function componentProp(wrapper: VueWrapper, key: string) {
+  return (wrapper.props() as Record<string, unknown>)[key]
+}
+
 describe('销售项目详情页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -178,6 +189,7 @@ describe('销售项目详情页', () => {
     expect(wrapper.text()).toContain('订单数量：2')
     expect(wrapper.text()).toContain('更新目标成本')
     expect(wrapper.find('.sales-project-contract-table-scroll').exists()).toBe(true)
+    expect(wrapper.find('.summary-strip').classes()).toContain('summary-strip-responsive')
   })
 
   it('展示关联销售订单状态分布、列表摘要和有权限详情入口', async () => {
@@ -254,11 +266,43 @@ describe('销售项目详情页', () => {
     expect(active.wrapper.findComponent({ name: 'SalesProjectContractDrawer' }).props('defaultContractType')).toBe('SUPPLEMENT')
   })
 
+  it('项目合同新增入口按项目状态和主合同状态矩阵显隐或禁用', async () => {
+    const draftWithMain: SalesProjectDetail = {
+      ...project,
+      status: 'DRAFT',
+      mainContractId: 55,
+      mainContractNo: 'SC-001',
+      mainContractStatus: 'DRAFT',
+      contracts: [{ ...project.contracts[0], status: 'DRAFT' }],
+    }
+    const activeWithoutEffectiveMain: SalesProjectDetail = {
+      ...project,
+      mainContractStatus: 'DRAFT',
+      contracts: [{ ...project.contracts[0], status: 'DRAFT' }],
+    }
+    const closedProject: SalesProjectDetail = {
+      ...project,
+      status: 'CLOSED',
+    }
+
+    const draft = await mountDetail(draftWithMain)
+    expect(buttonsByText(draft.wrapper, '新增合同')).toHaveLength(0)
+
+    const active = await mountDetail(activeWithoutEffectiveMain)
+    const createButton = buttonsByText(active.wrapper, '新增合同')[0]
+    expect(createButton.attributes('disabled')).toBeDefined()
+    expect(createButton.attributes('title')).toBe('项目主合同生效后才能新增补充合同')
+
+    const closed = await mountDetail(closedProject)
+    expect(buttonsByText(closed.wrapper, '新增合同')).toHaveLength(0)
+  })
+
   it('项目终态动作必须填写 1-200 字原因并携带 version 提交', async () => {
     const { wrapper } = await mountDetail()
 
     await buttonsByText(wrapper, '关闭项目')[0].trigger('click')
     await flushPromises()
+    expect(componentProp(buttonByTest(wrapper, 'confirm-project-action'), 'type')).toBe('warning')
     await wrapper.find('[data-test="confirm-project-action"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('请填写 1-200 字原因')
@@ -269,5 +313,23 @@ describe('销售项目详情页', () => {
     await flushPromises()
 
     expect(salesProjectApiMock.projects.close).toHaveBeenCalledWith(12, { version: 5, reason: '合同履约完成' })
+  })
+
+  it('项目取消确认按钮使用危险语义', async () => {
+    const draft: SalesProjectDetail = {
+      ...project,
+      status: 'DRAFT',
+      mainContractId: null,
+      mainContractNo: null,
+      mainContractStatus: null,
+      contracts: [],
+      salesOrderSummary: null,
+    }
+    const { wrapper } = await mountDetail(draft)
+
+    await buttonsByText(wrapper, '取消项目')[0].trigger('click')
+    await flushPromises()
+
+    expect(componentProp(buttonByTest(wrapper, 'confirm-project-action'), 'type')).toBe('danger')
   })
 })

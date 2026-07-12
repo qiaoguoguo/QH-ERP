@@ -198,4 +198,14 @@ describe('销售项目列表页', () => {
       page: 1,
     }))
   })
+
+  it('列表加载失败时只显示错误态，不同时显示空态或表格空文案', async () => {
+    salesProjectApiMock.projects.list.mockRejectedValueOnce(new Error('销售项目加载失败'))
+    const { wrapper } = await mountList()
+
+    expect(wrapper.text()).toContain('销售项目加载失败')
+    expect(wrapper.findComponent({ name: 'ElEmpty' }).exists()).toBe(false)
+    expect(wrapper.find('.sales-project-table-scroll').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('暂无销售项目')
+  })
 })

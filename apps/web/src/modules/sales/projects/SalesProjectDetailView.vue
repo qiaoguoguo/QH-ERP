@@ -52,8 +52,6 @@ const canEdit = computed(() => Boolean(record.value) && authStore.hasPermission(
 const canActivate = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:activate'))
 const canClose = computed(() => record.value?.status === 'ACTIVE' && authStore.hasPermission('sales:project:close'))
 const canCancel = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:cancel'))
-const canCreateContract = computed(() => Boolean(record.value) && authStore.hasPermission('sales:contract:create')
-  && record.value?.status !== 'CLOSED' && record.value?.status !== 'CANCELLED')
 const canViewSalesOrders = computed(() => authStore.hasPermission('sales:order:view'))
 const projectActivateDisabledReason = computed(() => {
   if (record.value?.status === 'DRAFT' && record.value.mainContractStatus !== 'EFFECTIVE') {
@@ -63,6 +61,37 @@ const projectActivateDisabledReason = computed(() => {
 })
 const defaultContractType = computed(() =>
   record.value?.status === 'ACTIVE' && record.value.mainContractStatus === 'EFFECTIVE' ? 'SUPPLEMENT' : 'MAIN')
+const contractCreateState = computed(() => resolveContractCreateState(record.value, authStore.hasPermission('sales:contract:create')))
+const projectConfirmButtonType = computed(() => {
+  if (actionDialog.action === 'close') {
+    return 'warning'
+  }
+  if (actionDialog.action === 'cancel') {
+    return 'danger'
+  }
+  return 'primary'
+})
+
+function resolveContractCreateState(project: SalesProjectDetail | null, hasCreatePermission: boolean) {
+  if (!project || !hasCreatePermission || project.status === 'CLOSED' || project.status === 'CANCELLED') {
+    return { visible: false, disabled: false, reason: '' }
+  }
+  if (project.status === 'DRAFT') {
+    return {
+      visible: project.mainContractId === null,
+      disabled: false,
+      reason: '',
+    }
+  }
+  if (project.status === 'ACTIVE') {
+    return {
+      visible: true,
+      disabled: project.mainContractStatus !== 'EFFECTIVE',
+      reason: project.mainContractStatus === 'EFFECTIVE' ? '' : '项目主合同生效后才能新增补充合同',
+    }
+  }
+  return { visible: false, disabled: false, reason: '' }
+}
 
 async function loadRecord() {
   loading.value = true
@@ -89,6 +118,9 @@ function editProject() {
 }
 
 function openCreateContract() {
+  if (!contractCreateState.value.visible || contractCreateState.value.disabled) {
+    return
+  }
   selectedContractId.value = undefined
   contractDrawerMode.value = 'create'
   contractDrawerOpen.value = true
@@ -178,7 +210,7 @@ onMounted(loadRecord)
     </template>
 
     <div v-if="record" class="sales-project-detail">
-      <section class="summary-strip">
+      <section class="summary-strip summary-strip-responsive">
         <div>
           <span>项目编号</span>
           <strong>{{ record.projectNo }}</strong>
@@ -219,7 +251,17 @@ onMounted(loadRecord)
       <section class="section-block">
         <div class="section-title">
           <span>项目合同</span>
-          <el-button v-if="canCreateContract" size="small" type="primary" plain @click="openCreateContract">新增合同</el-button>
+          <el-button
+            v-if="contractCreateState.visible"
+            size="small"
+            type="primary"
+            plain
+            :disabled="contractCreateState.disabled"
+            :title="contractCreateState.reason"
+            @click="openCreateContract"
+          >
+            新增合同
+          </el-button>
         </div>
         <el-alert v-if="contractRestricted(record)" type="warning" title="合同摘要受限" :closable="false" />
         <el-empty v-else-if="record.contracts.length === 0" description="暂无项目合同" />
@@ -279,7 +321,14 @@ onMounted(loadRecord)
         <p v-else>确认执行该状态动作？</p>
         <template #footer>
           <el-button @click="actionDialog.visible = false">取消</el-button>
-          <el-button data-test="confirm-project-action" type="primary" :loading="actionLoading" @click="confirmProjectAction">确认</el-button>
+          <el-button
+            data-test="confirm-project-action"
+            :type="projectConfirmButtonType"
+            :loading="actionLoading"
+            @click="confirmProjectAction"
+          >
+            确认
+          </el-button>
         </template>
       </el-dialog>
     </div>
@@ -301,6 +350,7 @@ onMounted(loadRecord)
 .summary-strip > div {
   border: 1px solid var(--qherp-border);
   border-radius: 6px;
+  min-width: 0;
   padding: 10px 12px;
 }
 
@@ -314,6 +364,7 @@ onMounted(loadRecord)
 .summary-strip strong {
   font-size: 18px;
   font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .sales-project-detail-list {
@@ -362,6 +413,12 @@ onMounted(loadRecord)
 @media (max-width: 760px) {
   .sales-project-detail-list {
     grid-template-columns: 88px minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 390px) {
+  .summary-strip-responsive {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

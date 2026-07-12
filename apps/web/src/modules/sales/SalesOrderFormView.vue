@@ -55,7 +55,9 @@ const selectedProjectContractKey = ref('')
 const isEdit = computed(() => Boolean(route.params.id))
 const isDraftRecord = computed(() => !editingRecord.value || editingRecord.value.status === 'DRAFT')
 const canEditForm = computed(() => isDraftRecord.value && (!isEdit.value || Boolean(editingRecord.value)))
-const canSubmit = computed(() => !formSubmitting.value && canEditForm.value && !orderLinkCandidateError.value)
+const projectContractDataError = computed(() => linkedProjectContractTypeError())
+const canSubmit = computed(() =>
+  !formSubmitting.value && canEditForm.value && !orderLinkCandidateError.value && !projectContractDataError.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售订单' : '新建销售订单'))
 const sellableMaterials = computed(() => materials.value.filter((material) =>
   material.materialType === 'FINISHED_GOOD' || material.materialType === 'SEMI_FINISHED'))
@@ -66,16 +68,42 @@ function projectContractKey(candidate: SalesOrderProjectContractCandidate) {
   return `${candidate.projectId}:${candidate.contractId}`
 }
 
+function isKnownContractType(contractType: unknown): contractType is 'MAIN' | 'SUPPLEMENT' {
+  return contractType === 'MAIN' || contractType === 'SUPPLEMENT'
+}
+
+function contractTypeLabel(contractType: unknown) {
+  if (contractType === 'MAIN') {
+    return '主合同'
+  }
+  if (contractType === 'SUPPLEMENT') {
+    return '补充合同'
+  }
+  return null
+}
+
 function projectContractLabel(candidate: SalesOrderProjectContractCandidate) {
-  const contractTypeLabel = candidate.contractType === 'SUPPLEMENT' ? '补充合同' : '主合同'
+  const typeLabel = contractTypeLabel(candidate.contractType)
   return [
     candidate.projectNo,
     candidate.projectName,
     '/',
     candidate.contractNo,
     candidate.contractName,
-    contractTypeLabel,
+    typeLabel ?? '合同类型异常',
   ].filter(Boolean).join(' ')
+}
+
+function linkedProjectContractTypeError() {
+  const selected = selectedProjectContract.value
+  if (selected && !contractTypeLabel(selected.contractType)) {
+    return '项目合同候选数据缺少合同类型，请刷新后重试'
+  }
+  const currentRecord = editingRecord.value
+  if (currentRecord?.projectId && currentRecord.contractId && !contractTypeLabel(currentRecord.contractType)) {
+    return '项目合同关联数据缺少合同类型，请联系管理员修复'
+  }
+  return ''
 }
 
 function normalizeOptionalId(value: ResourceId | '') {
@@ -90,6 +118,11 @@ function addCurrentProjectContract(detail: SalesOrderDetailRecord) {
     selectedProjectContractKey.value = ''
     return
   }
+  if (!isKnownContractType(detail.contractType)) {
+    orderLinkCandidateError.value = '项目合同关联数据缺少合同类型，请联系管理员修复'
+    selectedProjectContractKey.value = ''
+    return
+  }
   const candidate: SalesOrderProjectContractCandidate = {
     projectId: detail.projectId,
     projectNo: detail.projectNo ?? '',
@@ -100,7 +133,7 @@ function addCurrentProjectContract(detail: SalesOrderDetailRecord) {
     contractNo: detail.contractNo ?? '',
     externalContractNo: detail.externalContractNo ?? null,
     contractName: detail.contractName ?? detail.contractNo ?? '',
-    contractType: detail.contractType ?? 'MAIN',
+    contractType: detail.contractType,
   }
   if (!orderLinkCandidates.value.some((item) => projectContractKey(item) === projectContractKey(candidate))) {
     orderLinkCandidates.value = [candidate, ...orderLinkCandidates.value]
@@ -264,6 +297,11 @@ function validateForm(): SalesOrderCreatePayload | null {
   }
 
   const projectContract = selectedProjectContract.value
+  const linkTypeError = linkedProjectContractTypeError()
+  if (linkTypeError) {
+    formError.value = linkTypeError
+    return null
+  }
   formError.value = ''
   return {
     customerId,
@@ -279,7 +317,7 @@ function validateForm(): SalesOrderCreatePayload | null {
 }
 
 async function saveOrder() {
-  if (formSubmitting.value || orderLinkCandidateError.value) {
+  if (formSubmitting.value || orderLinkCandidateError.value || projectContractDataError.value) {
     return
   }
   const currentRecord = editingRecord.value
@@ -376,6 +414,13 @@ watch(() => form.customerId, () => {
         :title="orderLinkCandidateError"
         :closable="false"
       />
+      <el-alert
+        v-if="projectContractDataError && !orderLinkCandidateError"
+        class="state-alert"
+        type="error"
+        :title="projectContractDataError"
+        :closable="false"
+      />
     </template>
 
     <el-form label-position="top" class="sales-order-form">
@@ -453,7 +498,7 @@ watch(() => form.customerId, () => {
         <div v-else class="readonly-project-link">
           <span v-if="editingRecord?.projectId && editingRecord.contractId">
             {{ editingRecord.projectNo }} {{ editingRecord.projectName }} / {{ editingRecord.contractNo }}
-            {{ editingRecord.contractName }} {{ editingRecord.contractType === 'SUPPLEMENT' ? '补充合同' : '主合同' }}
+            {{ editingRecord.contractName }} {{ contractTypeLabel(editingRecord.contractType) ?? '合同类型异常' }}
           </span>
           <span v-else>未关联项目</span>
         </div>

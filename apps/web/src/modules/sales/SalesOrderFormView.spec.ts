@@ -399,6 +399,31 @@ describe('销售订单表单页', () => {
     expect(salesApiMock.orders.update).not.toHaveBeenCalled()
   })
 
+  it('既有关联缺少合同类型时显示数据错误并禁用保存，不能默认为主合同', async () => {
+    salesProjectApiMock.listOrderLinkCandidates.mockRejectedValue(new Error('项目合同候选加载失败'))
+    salesApiMock.orders.get.mockResolvedValueOnce({
+      ...draftOrder,
+      contractType: null,
+    })
+    const { wrapper } = await mountForm('/sales/orders/99/edit')
+
+    expect(wrapper.text()).toContain('项目合同关联数据缺少合同类型，请联系管理员修复')
+    expect(wrapper.text()).not.toContain('追加合同 主合同')
+    expect(wrapper.find('[data-test="save-sales-order"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+    expect(salesApiMock.orders.update).not.toHaveBeenCalled()
+  })
+
+  it('既有关联使用后端返回的补充合同类型，不回退为主合同', async () => {
+    salesProjectApiMock.listOrderLinkCandidates.mockRejectedValue(new Error('项目合同候选加载失败'))
+    const { wrapper } = await mountForm('/sales/orders/99/edit')
+
+    expect(wrapper.text()).toContain('SP-202607-001 华东扩产项目 / SC-001 追加合同 补充合同')
+    expect(wrapper.text()).not.toContain('追加合同 主合同')
+  })
+
   it('项目合同候选按客户和远程关键词分页加载，并展示主补合同类型', async () => {
     salesProjectApiMock.listOrderLinkCandidates.mockResolvedValue({
       items: [{

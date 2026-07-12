@@ -56,6 +56,16 @@ const contract: SalesProjectContractDetail = {
   createdAt: '2026-07-12T08:00:00+08:00',
 }
 
+const supplementContract: SalesProjectContractDetail = {
+  ...contract,
+  id: 56,
+  contractNo: 'SC-002',
+  contractType: 'SUPPLEMENT',
+  mainContractId: 55,
+  mainContractNo: 'SC-001',
+  name: '补充合同',
+}
+
 async function mountDrawer(
   props: Partial<InstanceType<typeof SalesProjectContractDrawer>['$props']> = {},
   permissions = [
@@ -89,6 +99,22 @@ async function mountDrawer(
   })
   await flushPromises()
   return wrapper
+}
+
+function buttonByTest(wrapper: Awaited<ReturnType<typeof mountDrawer>>, testId: string) {
+  const button = wrapper.findAllComponents({ name: 'ElButton' })
+    .find((item) => item.attributes('data-test') === testId)
+  expect(button?.exists()).toBe(true)
+  return button
+}
+
+function formItemByLabel(wrapper: Awaited<ReturnType<typeof mountDrawer>>, label: string) {
+  const item = wrapper.findAllComponents({ name: 'ElFormItem' })
+    .find((candidate) => candidate.props('label') === label)
+  if (!item) {
+    throw new Error(`未找到表单项：${label}`)
+  }
+  return item
 }
 
 describe('销售项目合同抽屉', () => {
@@ -125,7 +151,25 @@ describe('销售项目合同抽屉', () => {
     await supplement.find('input[name="contract-amount"]').setValue('0')
     await supplement.find('[data-test="save-sales-project-contract"]').trigger('click')
     await flushPromises()
-    expect(supplement.text()).toContain('补充合同金额不得为 0')
+    expect(formItemByLabel(supplement, '合同金额').props().error).toBe('补充合同金额不得为 0')
+    expect(supplement.find('.state-alert').exists()).toBe(false)
+  })
+
+  it('合同名称、签订日期和合同金额显示必填标记与字段级错误', async () => {
+    const wrapper = await mountDrawer()
+
+    expect(formItemByLabel(wrapper, '合同名称').props().required).toBe(true)
+    expect(formItemByLabel(wrapper, '签订日期').props().required).toBe(true)
+    expect(formItemByLabel(wrapper, '合同金额').props().required).toBe(true)
+
+    await wrapper.find('[data-test="save-sales-project-contract"]').trigger('click')
+    await flushPromises()
+
+    expect(formItemByLabel(wrapper, '合同名称').props().error).toBe('请填写合同名称')
+    expect(formItemByLabel(wrapper, '签订日期').props().error).toBe('请选择签订日期')
+    expect(formItemByLabel(wrapper, '合同金额').props().error).toBe('请填写合同金额')
+    expect(wrapper.find('.state-alert').exists()).toBe(false)
+    expect(salesProjectApiMock.contracts.create).not.toHaveBeenCalled()
   })
 
   it('编辑合同加载详情并提交带 version 的更新 payload', async () => {
@@ -147,6 +191,7 @@ describe('销售项目合同抽屉', () => {
 
     await wrapper.find('[data-test="contract-action-cancel"]').trigger('click')
     await flushPromises()
+    expect(buttonByTest(wrapper, 'confirm-contract-action')?.props().type).toBe('danger')
     await wrapper.find('[data-test="confirm-contract-action"]').trigger('click')
     await flushPromises()
 
@@ -158,6 +203,20 @@ describe('销售项目合同抽屉', () => {
     await flushPromises()
 
     expect(salesProjectApiMock.contracts.cancel).toHaveBeenCalledWith(55, { version: 2, reason: '合同草稿作废' })
+  })
+
+  it('合同关闭确认使用警告语义，终止确认使用危险语义', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({ ...contract, status: 'EFFECTIVE' })
+    const closeWrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+    await closeWrapper.find('[data-test="contract-action-close"]').trigger('click')
+    await flushPromises()
+    expect(buttonByTest(closeWrapper, 'confirm-contract-action')?.props().type).toBe('warning')
+
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({ ...contract, status: 'EFFECTIVE' })
+    const terminateWrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+    await terminateWrapper.find('[data-test="contract-action-terminate"]').trigger('click')
+    await flushPromises()
+    expect(buttonByTest(terminateWrapper, 'confirm-contract-action')?.props().type).toBe('danger')
   })
 
   it('视图模式强制只读并隐藏保存和状态动作', async () => {
@@ -177,6 +236,31 @@ describe('销售项目合同抽屉', () => {
 
     const draft = await mountDrawer({ mode: 'edit', contractId: 55 })
     expect(draft.find('[data-test="contract-action-activate"]').text()).toContain('生效')
+  })
+
+  it('补充合同生效按钮按项目和主合同状态矩阵禁用并给出原因', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce(supplementContract)
+    const inactiveProject = {
+      ...project,
+      status: 'DRAFT',
+      mainContractStatus: 'EFFECTIVE',
+    } as SalesProjectDetail
+    const inactive = await mountDrawer({ mode: 'edit', contractId: 56, project: inactiveProject })
+    const inactiveButton = inactive.find('[data-test="contract-action-activate"]')
+
+    expect(inactiveButton.attributes('disabled')).toBeDefined()
+    expect(inactiveButton.attributes('title')).toBe('补充合同需项目执行中且主合同已生效后才能生效')
+
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce(supplementContract)
+    const noEffectiveMainProject = {
+      ...project,
+      mainContractStatus: 'DRAFT',
+    } as SalesProjectDetail
+    const noEffectiveMain = await mountDrawer({ mode: 'edit', contractId: 56, project: noEffectiveMainProject })
+    const noEffectiveMainButton = noEffectiveMain.find('[data-test="contract-action-activate"]')
+
+    expect(noEffectiveMainButton.attributes('disabled')).toBeDefined()
+    expect(noEffectiveMainButton.attributes('title')).toBe('补充合同需项目执行中且主合同已生效后才能生效')
   })
 
   it('草稿合同存在未保存变更时不能直接生效，提示先保存草稿', async () => {
