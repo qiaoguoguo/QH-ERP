@@ -1,0 +1,13 @@
+
+> web@0.0.0 dev
+> vite --host 127.0.0.1 --port 5173 --strictPort
+
+14:23:23 [vite] (client) Re-optimizing dependencies because vite config has changed
+
+  VITE v7.3.6  ready in 808 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  press h + enter to show help
+14:52:26 [vite] (client) hmr update /src/modules/sales/projects/SalesProjectDetailView.vue
+14:52:36 [vite] (client) hmr update /src/modules/sales/projects/SalesProjectOrderSummaryPanel.vue
+14:53:22 [vite] (client) hmr update /src/modules/sales/projects/SalesProjectOrderSummaryPanel.vue

@@ -1,0 +1,9 @@
+
+> web@0.0.0 dev
+> vite --host 127.0.0.1 --port 5173 --strictPort
+
+
+  VITE v7.3.6  ready in 591 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+  ➜  press h + enter to show help

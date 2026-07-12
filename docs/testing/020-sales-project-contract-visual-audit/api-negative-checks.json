@@ -1,0 +1,55 @@
+{
+  "executedAt": "2026-07-12T14:39:25",
+  "base": "http://localhost:18080",
+  "results": [
+    {
+      "name": "no_effective_main_activate_rejected",
+      "httpStatus": 409,
+      "success": false,
+      "code": "PROJECT_MAIN_CONTRACT_REQUIRED",
+      "message": "项目激活需要已生效主合同"
+    },
+    {
+      "name": "supplement_contract_precondition_rejected",
+      "httpStatus": 409,
+      "success": false,
+      "code": "CONTRACT_PROJECT_NOT_ACTIVE",
+      "message": "补充合同要求项目已激活"
+    },
+    {
+      "name": "project_update_version_conflict",
+      "httpStatus": 409,
+      "success": false,
+      "code": "PROJECT_CONCURRENT_MODIFICATION",
+      "message": "销售项目并发更新冲突"
+    },
+    {
+      "name": "project_close_nonterminal_order_rejected",
+      "httpStatus": 409,
+      "success": false,
+      "code": "PROJECT_HAS_OPEN_BUSINESS",
+      "message": "项目仍有关联合同或销售订单未终态，不能关闭"
+    },
+    {
+      "name": "sales_order_customer_mismatch_rejected",
+      "httpStatus": 409,
+      "success": false,
+      "code": "SALES_ORDER_PROJECT_CUSTOMER_MISMATCH",
+      "message": "销售订单客户与项目客户不一致"
+    },
+    {
+      "name": "sales_order_filter_mutual_exclusion_rejected",
+      "httpStatus": 400,
+      "success": false,
+      "code": "VALIDATION_ERROR",
+      "message": "参数校验失败"
+    },
+    {
+      "name": "reason_length_201_rejected",
+      "httpStatus": 400,
+      "success": false,
+      "code": "PROJECT_REASON_REQUIRED",
+      "message": "销售项目状态操作原因必填"
+    }
+  ]
+}

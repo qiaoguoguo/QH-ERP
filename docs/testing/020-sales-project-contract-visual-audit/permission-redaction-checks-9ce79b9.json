@@ -1,0 +1,26 @@
+{
+  "executedAt": "2026-07-12T15:19:34",
+  "base": "http://localhost:18080",
+  "username": "t020cr0712143048",
+  "projectId": 1,
+  "endpoint": "/api/admin/sales-projects/1/sales-orders",
+  "httpStatus": 200,
+  "orderNoVisible": true,
+  "statusVisible": true,
+  "contractIdValues": [
+    null
+  ],
+  "contractNoValues": [
+    null
+  ],
+  "externalContractNoValues": [
+    null
+  ],
+  "allContractIdsNull": true,
+  "allContractNosNull": true,
+  "allExternalContractNosNull": true,
+  "leakedContractNo": false,
+  "leakedExternalContractNo": false,
+  "pass": true,
+  "responsePreview": "{\r\n  \"success\": true,\r\n  \"code\": \"OK\",\r\n  \"message\": \"成功\",\r\n  \"data\": {\r\n    \"items\": [\r\n      {\r\n        \"id\": 2,\r\n        \"orderNo\": \"SO-20260712143720316-001\",\r\n        \"customerId\": 1,\r\n        \"customerName\": \"020验收客户0712143048\",\r\n        \"orderDate\": \"2026-07-12\",\r\n        \"expectedShipDate\": \"2026-07-28\",\r\n        \"status\": \"DRAFT\",\r\n        \"projectId\": 1,\r\n        \"projectNo\": \"SP20260712143256646001\",\r\n        \"projectName\": \"020全量验收项目0712143048\",\r\n        \"contractId\": null,\r\n        \"contractNo\": null,\r\n        \"externalContractNo\": null,\r\n        \"lineCount\": 1,\r\n        \"totalQuantity\": 2.0,\r\n        \"businessAmount\": 2400.0,\r\n        \"createdAt\": \"2026-07-12T06:37:20.316191Z\",\r\n        \"updatedAt\": \"2026-07-12T06:37:20.316191Z\"\r\n      }\r\n    ],\r\n    \"page\": 1,\r\n    \"pageSize\": 20,\r\n    \"total\": 1,\r\n    \"totalPages\": 1\r\n  },\r\n  \"details\": [],\r\n  \"traceId\": \"a4449fb9-96b2-4de0-97e6-1c79824f7da5\",\r\n  \"timestamp\": \"2026-07-12T15:19:34.2754203+08:00\"\r\n}"
+}
