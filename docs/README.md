@@ -122,6 +122,7 @@
 - [库存可用量、占用、冻结与预留测试计划](testing/inventory-availability-reservation-test-plan.md)
 - [批次、序列号与来源去向追溯测试计划](testing/batch-serial-trace-test-plan.md)
 - [销售项目与合同管理基础测试计划](testing/sales-project-contract-test-plan.md)
+- [销售项目与合同管理基础视觉验收记录](testing/020-sales-project-contract-visual-audit/notes.md)
 - [测试数据基线](testing/test-data-baseline.md)
 - [缺陷流程](testing/defect-process.md)
 - [本地开发与验证说明](ops/local-development.md)
