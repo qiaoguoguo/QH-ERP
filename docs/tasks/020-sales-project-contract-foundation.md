@@ -270,7 +270,7 @@ DRAFT -> CANCELLED
 ## 执行记录
 
 - 阶段启动：2026-07-12。
-- 当前分支：`codex/020-sales-project-contract-foundation`。
+- 交付来源分支：`codex/020-sales-project-contract-foundation`；已通过纯快进方式合入 `main`。
 - 当前状态：020 功能、集中审查、阻断整改、差异复审和交付前全量验证均已完成。
 - 协作方式：固定五角色复用既有会话，阶段整包、并行工作包、集中审查、集中整改和差异复审。
 - 实现基线：`9ce79b9 修复020合同受限订单信息泄露`；验收证据提交为 `9f1cdef 归档020全量验收与视觉证据`。
@@ -280,4 +280,4 @@ DRAFT -> CANCELLED
 - 视觉分析：`docs/testing/020-sales-project-contract-visual-audit/notes.md` 最终结论为 `PASS`，并由 UI 固定角色复核通过。
 - 当前运行：API `http://localhost:18080/api/health`，Web `http://127.0.0.1:5173/`；活动日志位于 `.superpowers/runtime/020/`。
 - 一般后续项：操作记录可读性、移动侧栏首屏占用、移动抽屉按钮文案歧义和空态重复，不阻断 020 交付。
-- 结论：020 满足完成条件，可合入主分支并通知用户浏览器验收；021 尚未启动。
+- 结论：020 满足完成条件，已合入主分支，可通知用户进行浏览器验收；021 尚未启动。
