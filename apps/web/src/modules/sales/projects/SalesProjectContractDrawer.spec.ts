@@ -117,6 +117,18 @@ function formItemByLabel(wrapper: Awaited<ReturnType<typeof mountDrawer>>, label
   return item
 }
 
+async function fillRequiredContractFields(wrapper: Awaited<ReturnType<typeof mountDrawer>>, name = '项目合同') {
+  await wrapper.find('input[name="contract-name"]').setValue(name)
+  await wrapper.find('input[name="contract-signed-date"]').setValue('2026-07-02')
+  await wrapper.find('input[name="contract-amount"]').setValue('100000.00')
+}
+
+function contractTypeSelect(wrapper: Awaited<ReturnType<typeof mountDrawer>>) {
+  const select = wrapper.findComponent({ name: 'ElSelect' })
+  expect(select.exists()).toBe(true)
+  return select
+}
+
 describe('销售项目合同抽屉', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -132,9 +144,7 @@ describe('销售项目合同抽屉', () => {
   it('创建主合同时提交创建 payload，补充合同金额为 0 时阻止提交', async () => {
     const wrapper = await mountDrawer()
 
-    await wrapper.find('input[name="contract-name"]').setValue('主合同')
-    await wrapper.find('input[name="contract-signed-date"]').setValue('2026-07-02')
-    await wrapper.find('input[name="contract-amount"]').setValue('100000.00')
+    await fillRequiredContractFields(wrapper, '主合同')
     await wrapper.find('[data-test="save-sales-project-contract"]').trigger('click')
     await flushPromises()
 
@@ -153,6 +163,43 @@ describe('销售项目合同抽屉', () => {
     await flushPromises()
     expect(formItemByLabel(supplement, '合同金额').props().error).toBe('补充合同金额不得为 0')
     expect(supplement.find('.state-alert').exists()).toBe(false)
+  })
+
+  it('草稿项目主合同入口锁定为主合同，不能切到补充合同提交', async () => {
+    const draftProject = {
+      ...project,
+      status: 'DRAFT',
+      mainContractId: null,
+      mainContractNo: null,
+      mainContractStatus: null,
+    } as SalesProjectDetail
+    const wrapper = await mountDrawer({ project: draftProject, defaultContractType: 'MAIN' })
+
+    await contractTypeSelect(wrapper).vm.$emit('update:modelValue', 'SUPPLEMENT')
+    await fillRequiredContractFields(wrapper, '主合同')
+    await wrapper.find('[data-test="save-sales-project-contract"]').trigger('click')
+    await flushPromises()
+
+    expect(salesProjectApiMock.contracts.create).toHaveBeenCalledWith(12, expect.objectContaining({
+      contractType: 'MAIN',
+      mainContractId: null,
+    }))
+    expect(contractTypeSelect(wrapper).props().disabled).toBe(true)
+  })
+
+  it('执行中补充合同入口锁定为补充合同，不能切到主合同提交', async () => {
+    const wrapper = await mountDrawer({ mode: 'create', defaultContractType: 'SUPPLEMENT' })
+
+    await contractTypeSelect(wrapper).vm.$emit('update:modelValue', 'MAIN')
+    await fillRequiredContractFields(wrapper, '补充合同')
+    await wrapper.find('[data-test="save-sales-project-contract"]').trigger('click')
+    await flushPromises()
+
+    expect(salesProjectApiMock.contracts.create).toHaveBeenCalledWith(12, expect.objectContaining({
+      contractType: 'SUPPLEMENT',
+      mainContractId: 55,
+    }))
+    expect(contractTypeSelect(wrapper).props().disabled).toBe(true)
   })
 
   it('合同名称、签订日期和合同金额显示必填标记与字段级错误', async () => {

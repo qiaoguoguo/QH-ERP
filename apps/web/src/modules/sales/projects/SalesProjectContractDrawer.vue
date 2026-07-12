@@ -75,6 +75,7 @@ const isCreate = computed(() => props.mode === 'create')
 const isView = computed(() => props.mode === 'view')
 const drawerTitle = computed(() => (isCreate.value ? '新增项目合同' : '项目合同'))
 const drawerSize = 'min(720px, calc(100vw - 24px))'
+const effectiveContractType = computed(() => (isCreate.value ? props.defaultContractType : form.contractType))
 const canCreateContract = computed(() => authStore.hasPermission('sales:contract:create'))
 const canUpdateContract = computed(() => authStore.hasPermission('sales:contract:update'))
 const canEditFields = computed(() => !isView.value && (
@@ -102,7 +103,7 @@ const contractConfirmButtonType = computed(() => {
 
 function contractFormSnapshot() {
   return JSON.stringify({
-    contractType: form.contractType,
+    contractType: effectiveContractType.value,
     mainContractId: form.mainContractId,
     externalContractNo: form.externalContractNo,
     name: form.name,
@@ -241,11 +242,11 @@ function validateForm() {
     fieldErrors.amount = '合同金额必须是普通十进制数字'
     return false
   }
-  if (form.contractType === 'MAIN' && amount <= 0) {
+  if (effectiveContractType.value === 'MAIN' && amount <= 0) {
     fieldErrors.amount = '主合同金额必须大于 0'
     return false
   }
-  if (form.contractType === 'SUPPLEMENT' && amount === 0) {
+  if (effectiveContractType.value === 'SUPPLEMENT' && amount === 0) {
     fieldErrors.amount = '补充合同金额不得为 0'
     return false
   }
@@ -268,9 +269,10 @@ async function saveContract() {
       ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
     }
     if (isCreate.value) {
+      const contractType = effectiveContractType.value
       await salesProjectApi.contracts.create(props.project.id, {
-        contractType: form.contractType,
-        mainContractId: form.contractType === 'SUPPLEMENT' ? props.project.mainContractId ?? form.mainContractId : null,
+        contractType,
+        mainContractId: contractType === 'SUPPLEMENT' ? props.project.mainContractId ?? form.mainContractId : null,
         ...common,
       })
     } else if (detail.value) {
@@ -363,13 +365,13 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
       <el-form label-position="top" class="contract-form">
         <div class="contract-form-grid">
           <el-form-item label="合同类型">
-            <el-select v-model="form.contractType" :disabled="!isCreate || !canEditFields">
+            <el-select :model-value="effectiveContractType" disabled>
               <el-option label="主合同" value="MAIN" />
               <el-option label="补充合同" value="SUPPLEMENT" />
             </el-select>
           </el-form-item>
           <el-form-item label="引用主合同">
-            <el-input :model-value="form.contractType === 'SUPPLEMENT' ? (project.mainContractNo || '主合同') : '-'" disabled />
+            <el-input :model-value="effectiveContractType === 'SUPPLEMENT' ? (project.mainContractNo || '主合同') : '-'" disabled />
           </el-form-item>
           <el-form-item label="合同名称" required :error="fieldErrors.name">
             <el-input v-model="form.name" name="contract-name" :disabled="!canEditFields" />
@@ -482,7 +484,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
         show-word-limit
         placeholder="请输入 1-200 字原因"
       />
-      <p v-else>确认{{ salesProjectContractTypeLabel(form.contractType) }}生效？</p>
+      <p v-else>确认{{ salesProjectContractTypeLabel(effectiveContractType) }}生效？</p>
       <template #footer>
         <el-button @click="actionDialog.visible = false">取消</el-button>
         <el-button
