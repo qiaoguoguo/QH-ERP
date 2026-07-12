@@ -1,7 +1,9 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SalesProjectContractDetail, SalesProjectDetail } from '../../../shared/api/salesProjectApi'
+import { useAuthStore } from '../../../stores/authStore'
 import SalesProjectContractDrawer from './SalesProjectContractDrawer.vue'
 
 const salesProjectApiMock = vi.hoisted(() => ({
@@ -54,7 +56,25 @@ const contract: SalesProjectContractDetail = {
   createdAt: '2026-07-12T08:00:00+08:00',
 }
 
-async function mountDrawer(props: Partial<InstanceType<typeof SalesProjectContractDrawer>['$props']> = {}) {
+async function mountDrawer(
+  props: Partial<InstanceType<typeof SalesProjectContractDrawer>['$props']> = {},
+  permissions = [
+    'sales:contract:view',
+    'sales:contract:create',
+    'sales:contract:update',
+    'sales:contract:activate',
+    'sales:contract:close',
+    'sales:contract:terminate',
+    'sales:contract:cancel',
+  ],
+) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setSession({
+    user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+    menus: [],
+    permissions,
+  })
   const wrapper = mount(SalesProjectContractDrawer, {
     props: {
       modelValue: true,
@@ -64,7 +84,7 @@ async function mountDrawer(props: Partial<InstanceType<typeof SalesProjectContra
       ...props,
     },
     global: {
-      plugins: [ElementPlus],
+      plugins: [pinia, ElementPlus],
     },
   })
   await flushPromises()
@@ -138,5 +158,61 @@ describe('销售项目合同抽屉', () => {
     await flushPromises()
 
     expect(salesProjectApiMock.contracts.cancel).toHaveBeenCalledWith(55, { version: 2, reason: '合同草稿作废' })
+  })
+
+  it('视图模式强制只读并隐藏保存和状态动作', async () => {
+    const wrapper = await mountDrawer({ mode: 'view', contractId: 55 })
+
+    expect(wrapper.find('[data-test="save-sales-project-contract"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="contract-action-activate"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="contract-name"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('状态动作按权限和状态展示，草稿生效使用生效文案', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({ ...contract, status: 'EFFECTIVE' })
+    const noActionPermission = await mountDrawer({ mode: 'edit', contractId: 55 }, ['sales:contract:view', 'sales:contract:update'])
+
+    expect(noActionPermission.find('[data-test="contract-action-close"]').exists()).toBe(false)
+    expect(noActionPermission.find('[data-test="contract-action-terminate"]').exists()).toBe(false)
+
+    const draft = await mountDrawer({ mode: 'edit', contractId: 55 })
+    expect(draft.find('[data-test="contract-action-activate"]').text()).toContain('生效')
+  })
+
+  it('草稿合同存在未保存变更时不能直接生效，提示先保存草稿', async () => {
+    const wrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+
+    await wrapper.find('input[name="contract-name"]').setValue('主合同调整')
+    await wrapper.find('[data-test="contract-action-activate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请先保存合同草稿后再生效')
+    expect(salesProjectApiMock.contracts.activate).not.toHaveBeenCalled()
+  })
+
+  it('展示合同全生命周期人员、时间和原因，并使用响应式抽屉尺寸', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({
+      ...contract,
+      activatedByName: '销售主管',
+      activatedAt: '2026-07-12T10:00:00+08:00',
+      closedByName: '财务',
+      closedAt: '2026-07-20T10:00:00+08:00',
+      closedReason: '履约完成',
+      terminatedByName: '法务',
+      terminatedAt: '2026-07-21T10:00:00+08:00',
+      terminatedReason: '客户终止',
+      cancelledByName: '管理员',
+      cancelledAt: '2026-07-22T10:00:00+08:00',
+      cancelledReason: '录入错误',
+    })
+    const wrapper = await mountDrawer({ mode: 'view', contractId: 55 })
+
+    expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('min(720px, calc(100vw - 24px))')
+    expect(wrapper.text()).toContain('创建管理员 2026-07-12 08:00')
+    expect(wrapper.text()).toContain('生效销售主管 2026-07-12 10:00')
+    expect(wrapper.text()).toContain('关闭财务 2026-07-20 10:00 履约完成')
+    expect(wrapper.text()).toContain('终止法务 2026-07-21 10:00 客户终止')
+    expect(wrapper.text()).toContain('取消管理员 2026-07-22 10:00 录入错误')
+    expect(wrapper.find('.contract-drawer-body').exists()).toBe(true)
   })
 })

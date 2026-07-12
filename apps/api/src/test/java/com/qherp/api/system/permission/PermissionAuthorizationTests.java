@@ -221,7 +221,7 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1/close", "sales:project:close");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-projects/1/cancel", "sales:project:cancel");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/owner-candidates",
-				"sales:project:create|sales:project:update");
+				"sales:project:view|sales:project:create|sales:project:update");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/order-link-candidates",
 				"sales:order:create|sales:order:update");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/contracts", "sales:contract:view");

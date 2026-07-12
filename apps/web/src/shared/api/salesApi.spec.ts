@@ -3,8 +3,10 @@ import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createSalesApi,
   type SalesOrderLineRecord,
+  type SalesOrderCreatePayload,
   type SalesOrderPayload,
   type SalesOrderSummaryRecord,
+  type SalesOrderUpdatePayload,
   type SalesShipmentLineRecord,
   type SalesShipmentLinePayload,
   type SalesShipmentPayload,
@@ -90,10 +92,17 @@ describe('销售 API', () => {
     orderPayloadAcceptsProjectContractPair: true as AssertTrue<
       SalesOrderPayload extends { projectId?: unknown; contractId?: unknown } ? true : false
     >,
+    orderCreatePayloadHasNoVersion: true as AssertTrue<'version' extends keyof SalesOrderCreatePayload ? false : true>,
+    orderUpdatePayloadRequiresVersion: true as AssertTrue<
+      SalesOrderUpdatePayload extends { version: number } ? true : false
+    >,
     orderSummaryReturnsProjectContractFields: true as AssertTrue<
       SalesOrderSummaryRecord extends { projectId?: unknown; projectNo?: unknown; contractId?: unknown; contractNo?: unknown }
         ? true
         : false
+    >,
+    orderSummaryReturnsVersion: true as AssertTrue<
+      SalesOrderSummaryRecord extends { version: number } ? true : false
     >,
   }
 
@@ -107,7 +116,10 @@ describe('销售 API', () => {
       shipmentPayloadLineAcceptsTrackingAllocations: true,
       shipmentLineReturnsTrackingAllocations: true,
       orderPayloadAcceptsProjectContractPair: true,
+      orderCreatePayloadHasNoVersion: true,
+      orderUpdatePayloadRequiresVersion: true,
       orderSummaryReturnsProjectContractFields: true,
+      orderSummaryReturnsVersion: true,
     })
   })
 
@@ -205,7 +217,7 @@ describe('销售 API', () => {
       fetcher.mockResolvedValueOnce(apiResponse({ id: token }))
     })
     const api = createSalesApi({ fetcher })
-    const orderPayload: SalesOrderPayload = {
+    const orderPayload: SalesOrderCreatePayload = {
       customerId: 1,
       projectId: 12,
       contractId: 55,
@@ -225,6 +237,10 @@ describe('销售 API', () => {
         },
       ],
     }
+    const orderUpdatePayload: SalesOrderUpdatePayload = {
+      ...orderPayload,
+      version: 7,
+    }
     const shipmentPayload: SalesShipmentPayload = {
       warehouseId: 4,
       businessDate: '2026-07-05',
@@ -240,7 +256,7 @@ describe('销售 API', () => {
     }
 
     await api.orders.create(orderPayload)
-    await api.orders.update(11, orderPayload)
+    await api.orders.update(11, orderUpdatePayload)
     await api.orders.confirm(11)
     await api.orders.cancel(11)
     await api.orders.close(11)
@@ -269,7 +285,7 @@ describe('销售 API', () => {
       method: 'POST',
     })
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/sales/orders/11', {
-      body: JSON.stringify(orderPayload),
+      body: JSON.stringify(orderUpdatePayload),
       credentials: 'include',
       headers: {
         Accept: 'application/json',

@@ -43,6 +43,7 @@ const draftOrder: SalesOrderDetailRecord = {
   createdByName: '销售员',
   createdAt: '2026-07-04T08:00:00+08:00',
   updatedAt: '2026-07-04T09:00:00+08:00',
+  version: 4,
   lines: [
     {
       id: 501,

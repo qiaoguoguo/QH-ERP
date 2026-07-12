@@ -54,6 +54,15 @@ const canClose = computed(() => record.value?.status === 'ACTIVE' && authStore.h
 const canCancel = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:cancel'))
 const canCreateContract = computed(() => Boolean(record.value) && authStore.hasPermission('sales:contract:create')
   && record.value?.status !== 'CLOSED' && record.value?.status !== 'CANCELLED')
+const canViewSalesOrders = computed(() => authStore.hasPermission('sales:order:view'))
+const projectActivateDisabledReason = computed(() => {
+  if (record.value?.status === 'DRAFT' && record.value.mainContractStatus !== 'EFFECTIVE') {
+    return '项目需先存在已生效主合同后才能激活'
+  }
+  return ''
+})
+const defaultContractType = computed(() =>
+  record.value?.status === 'ACTIVE' && record.value.mainContractStatus === 'EFFECTIVE' ? 'SUPPLEMENT' : 'MAIN')
 
 async function loadRecord() {
   loading.value = true
@@ -148,7 +157,16 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="backToList">返回列表</el-button>
       <el-button v-if="canEdit" type="primary" @click="editProject">编辑项目</el-button>
-      <el-button v-if="canActivate" type="success" :loading="actionLoading" @click="openProjectAction('activate')">激活项目</el-button>
+      <el-button
+        v-if="canActivate"
+        type="success"
+        :loading="actionLoading"
+        :disabled="Boolean(projectActivateDisabledReason)"
+        :title="projectActivateDisabledReason"
+        @click="openProjectAction('activate')"
+      >
+        激活项目
+      </el-button>
       <el-button v-if="canClose" type="warning" :loading="actionLoading" @click="openProjectAction('close')">关闭项目</el-button>
       <el-button v-if="canCancel" type="danger" :loading="actionLoading" @click="openProjectAction('cancel')">取消项目</el-button>
     </template>
@@ -229,7 +247,12 @@ onMounted(loadRecord)
         </div>
       </section>
 
-      <SalesProjectOrderSummaryPanel :restricted="record.salesOrderSummaryRestricted" :summary="record.salesOrderSummary" />
+      <SalesProjectOrderSummaryPanel
+        :project-id="record.id"
+        :can-view-details="canViewSalesOrders"
+        :restricted="record.salesOrderSummaryRestricted"
+        :summary="record.salesOrderSummary"
+      />
       <SalesProjectOperationsPanel :operations="record.operations" />
 
       <SalesProjectContractDrawer
@@ -237,6 +260,7 @@ onMounted(loadRecord)
         :mode="contractDrawerMode"
         :project="record"
         :contract-id="selectedContractId"
+        :default-contract-type="defaultContractType"
         @saved="loadRecord"
       />
 

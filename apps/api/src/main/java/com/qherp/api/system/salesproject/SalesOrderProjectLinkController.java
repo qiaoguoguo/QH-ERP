@@ -3,11 +3,14 @@ package com.qherp.api.system.salesproject;
 import com.qherp.api.common.ApiResponse;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
 
 @RestController
 public class SalesOrderProjectLinkController {
@@ -29,10 +32,13 @@ public class SalesOrderProjectLinkController {
 	@GetMapping("/api/admin/sales-projects/{projectId}/sales-orders")
 	public ApiResponse<PageResponse<SalesOrderProjectLinkService.ProjectSalesOrderResponse>> projectSalesOrders(
 			@PathVariable Long projectId, @RequestParam(required = false) String keyword,
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) Long contractId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate dateTo,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.salesOrderProjectLinkService.listProjectSalesOrders(projectId, keyword, status,
-				page, pageSize, currentUser));
+		return ApiResponse.ok(this.salesOrderProjectLinkService.listProjectSalesOrders(projectId, keyword, contractId,
+				status, dateFrom, dateTo, page, pageSize, currentUser));
 	}
 
 }

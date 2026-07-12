@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../../shared/api/masterDataApi'
 import {
   salesProjectApi,
+  type ProjectOwnerCandidate,
   type SalesProjectStatus,
   type SalesProjectSummary,
 } from '../../../shared/api/salesProjectApi'
@@ -37,6 +38,7 @@ const filters = reactive<{
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<SalesProjectSummary[]>([])
 const customers = ref<PartnerRecord[]>([])
+const owners = ref<ProjectOwnerCandidate[]>([])
 const loading = ref(true)
 const referenceLoading = ref(true)
 const error = ref('')
@@ -45,14 +47,19 @@ const referenceError = ref('')
 const canCreate = computed(() => authStore.hasPermission('sales:project:create'))
 const canUpdate = computed(() => authStore.hasPermission('sales:project:update'))
 
-async function loadCustomers() {
+async function loadReferences() {
   referenceLoading.value = true
   referenceError.value = ''
   try {
-    const page = await masterDataApi.customers.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 })
-    customers.value = pageItems(page)
+    const [customerPage, ownerPage] = await Promise.all([
+      masterDataApi.customers.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+      salesProjectApi.ownerCandidates({ keyword: '', page: 1, pageSize: 200 }),
+    ])
+    customers.value = pageItems(customerPage)
+    owners.value = pageItems(ownerPage)
   } catch (caught) {
     customers.value = []
+    owners.value = []
     referenceError.value = projectApiErrorMessage(caught)
   } finally {
     referenceLoading.value = false
@@ -128,7 +135,7 @@ function editProject(record: SalesProjectSummary) {
 }
 
 onMounted(() => {
-  void loadCustomers()
+  void loadReferences()
   void loadRecords()
 })
 </script>
@@ -153,6 +160,16 @@ onMounted(() => {
               :key="customer.id"
               :label="`${customer.code} ${customer.name}`"
               :value="customer.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="负责人">
+          <el-select v-model="filters.ownerUserId" clearable filterable placeholder="全部负责人">
+            <el-option
+              v-for="owner in owners"
+              :key="owner.userId"
+              :label="`${owner.username} ${owner.displayName}`"
+              :value="owner.userId"
             />
           </el-select>
         </el-form-item>

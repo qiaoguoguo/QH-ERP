@@ -2,6 +2,7 @@ package com.qherp.api.system.salesproject;
 
 import com.qherp.api.common.ApiErrorCode;
 import com.qherp.api.common.BusinessException;
+import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -17,6 +18,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -43,17 +45,35 @@ public class SalesProjectContractService {
 
 	@Transactional(readOnly = true)
 	public List<ContractResponse> listByProject(Long projectId) {
+		return listByProject(projectId, null, null, null, null, null, 1, 100).items();
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<ContractResponse> listByProject(Long projectId, String keyword, String contractType,
+			String status, LocalDate signedDateFrom, LocalDate signedDateTo, int page, int pageSize) {
 		ensureProjectExists(projectId);
-		return this.jdbcTemplate.query("""
+		QueryParts queryParts = contractQueryParts(projectId, keyword, contractType, status, signedDateFrom,
+				signedDateTo);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sal_project_contract c
+				%s
+				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
+		List<Object> pageArgs = new ArrayList<>(queryParts.args());
+		pageArgs.add(limit(pageSize));
+		pageArgs.add(offset(page, pageSize));
+		List<ContractResponse> items = this.jdbcTemplate.query("""
 				select c.id, c.contract_no, c.external_contract_no, c.project_id, c.contract_type, c.main_contract_id,
 				       c.name, c.signed_date, c.effective_start_date, c.effective_end_date, c.amount, c.status,
 				       c.remark, c.created_by, c.created_at, c.updated_by, c.updated_at, c.activated_by,
 				       c.activated_at, c.closed_by, c.closed_at, c.close_reason, c.terminated_by, c.terminated_at,
 				       c.terminate_reason, c.cancelled_by, c.cancelled_at, c.cancel_reason, c.version
 				from sal_project_contract c
-				where c.project_id = ?
-				order by case when c.contract_type = 'MAIN' then 0 else 1 end, c.id asc
-				""", this::mapContract, projectId);
+				%s
+				order by case when c.contract_type = 'MAIN' then 0 else 1 end, c.created_at desc, c.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), this::mapContract, pageArgs.toArray());
+		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
 	@Transactional(readOnly = true)
@@ -93,6 +113,8 @@ public class SalesProjectContractService {
 	@Transactional
 	public ContractResponse update(Long id, ContractUpdateRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		ContractRow snapshot = contractRow(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
+		lockProject(snapshot.projectId()).orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
 		ContractRow current = lockContract(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
 		requireVersion(current.version(), request == null ? null : request.version());
 		if (current.status() != SalesProjectContractStatus.DRAFT) {
@@ -117,13 +139,14 @@ public class SalesProjectContractService {
 	@Transactional
 	public ContractResponse activate(Long id, VersionedActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		ContractRow snapshot = contractRow(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
+		ProjectState project = lockProject(snapshot.projectId())
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
 		ContractRow current = lockContract(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
 		requireVersion(current.version(), request == null ? null : request.version());
 		if (current.status() != SalesProjectContractStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.CONTRACT_STATUS_INVALID);
 		}
-		ProjectState project = lockProject(current.projectId())
-			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
 		if (current.contractType() == SalesProjectContractType.MAIN) {
 			if (project.status() == SalesProjectStatus.CLOSED || project.status() == SalesProjectStatus.CANCELLED) {
 				throw new BusinessException(ApiErrorCode.PROJECT_STATUS_INVALID);
@@ -164,6 +187,8 @@ public class SalesProjectContractService {
 	@Transactional
 	public ContractResponse cancel(Long id, VersionedActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		ContractRow snapshot = contractRow(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
+		lockProject(snapshot.projectId()).orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
 		ContractRow current = lockContract(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
 		requireVersion(current.version(), request == null ? null : request.version());
 		String reason = validateReason(request == null ? null : request.reason());
@@ -193,6 +218,8 @@ public class SalesProjectContractService {
 	private ContractResponse finishEffectiveContract(Long id, VersionedActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest, SalesProjectContractStatus targetStatus, String action,
 			String reasonColumn, String operatorColumn, String timeColumn) {
+		ContractRow snapshot = contractRow(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
+		lockProject(snapshot.projectId()).orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
 		ContractRow current = lockContract(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
 		requireVersion(current.version(), request == null ? null : request.version());
 		String reason = validateReason(request == null ? null : request.reason());
@@ -250,6 +277,9 @@ public class SalesProjectContractService {
 		if (!hasText(name) || name.length() > 120) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		if (signedDate == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
 		if (effectiveStartDate != null && effectiveEndDate != null && effectiveStartDate.isAfter(effectiveEndDate)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
@@ -301,6 +331,38 @@ public class SalesProjectContractService {
 		}
 	}
 
+	private QueryParts contractQueryParts(Long projectId, String keyword, String contractType, String status,
+			LocalDate signedDateFrom, LocalDate signedDateTo) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		conditions.add("c.project_id = ?");
+		args.add(projectId);
+		if (hasText(keyword)) {
+			conditions.add("(c.contract_no ilike ? or c.external_contract_no ilike ? or c.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (hasText(contractType)) {
+			conditions.add("c.contract_type = ?");
+			args.add(parseType(contractType).name());
+		}
+		if (hasText(status)) {
+			conditions.add("c.status = ?");
+			args.add(parseStatus(status).name());
+		}
+		if (signedDateFrom != null) {
+			conditions.add("c.signed_date >= ?");
+			args.add(signedDateFrom);
+		}
+		if (signedDateTo != null) {
+			conditions.add("c.signed_date <= ?");
+			args.add(signedDateTo);
+		}
+		return where(conditions, args);
+	}
+
 	private Optional<ContractResponse> contract(Long id) {
 		return this.jdbcTemplate.query("""
 				select c.id, c.contract_no, c.external_contract_no, c.project_id, c.contract_type, c.main_contract_id,
@@ -311,6 +373,21 @@ public class SalesProjectContractService {
 				from sal_project_contract c
 				where c.id = ?
 				""", this::mapContract, id).stream().findFirst();
+	}
+
+	private Optional<ContractRow> contractRow(Long id) {
+		if (id == null) {
+			return Optional.empty();
+		}
+		return this.jdbcTemplate.query("""
+				select id, project_id, contract_type, main_contract_id, status, version
+				from sal_project_contract
+				where id = ?
+				""", (rs, rowNum) -> new ContractRow(rs.getLong("id"), rs.getLong("project_id"),
+				SalesProjectContractType.valueOf(rs.getString("contract_type")), nullableLong(rs, "main_contract_id"),
+				SalesProjectContractStatus.valueOf(rs.getString("status")), rs.getLong("version")), id)
+			.stream()
+			.findFirst();
 	}
 
 	private Optional<ContractRow> lockContract(Long id) {
@@ -355,6 +432,15 @@ public class SalesProjectContractService {
 		}
 	}
 
+	private SalesProjectContractStatus parseStatus(String value) {
+		try {
+			return SalesProjectContractStatus.valueOf(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.CONTRACT_STATUS_INVALID);
+		}
+	}
+
 	private void requireVersion(long currentVersion, Long requestedVersion) {
 		if (requestedVersion == null || requestedVersion != currentVersion) {
 			throw new BusinessException(ApiErrorCode.CONTRACT_CONCURRENT_MODIFICATION);
@@ -392,12 +478,24 @@ public class SalesProjectContractService {
 		return rs.wasNull() ? null : value;
 	}
 
+	private static QueryParts where(List<String> conditions, List<Object> args) {
+		return new QueryParts(conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions), args);
+	}
+
+	private static int limit(int pageSize) {
+		return Math.max(1, Math.min(pageSize, 100));
+	}
+
+	private static int offset(int page, int pageSize) {
+		return (Math.max(page, 1) - 1) * limit(pageSize);
+	}
+
 	public record ContractCreateRequest(@NotNull String contractType, Long mainContractId, @NotNull String name,
-			LocalDate signedDate, LocalDate effectiveStartDate, LocalDate effectiveEndDate, @NotNull BigDecimal amount,
+			@NotNull LocalDate signedDate, LocalDate effectiveStartDate, LocalDate effectiveEndDate, @NotNull BigDecimal amount,
 			String externalContractNo, String remark) {
 	}
 
-	public record ContractUpdateRequest(@NotNull String name, LocalDate signedDate, LocalDate effectiveStartDate,
+	public record ContractUpdateRequest(@NotNull String name, @NotNull LocalDate signedDate, LocalDate effectiveStartDate,
 			LocalDate effectiveEndDate, @NotNull BigDecimal amount, String externalContractNo, String remark,
 			@NotNull Long version) {
 	}
@@ -424,6 +522,9 @@ public class SalesProjectContractService {
 	}
 
 	private record ProjectState(Long id, Long customerId, SalesProjectStatus status) {
+	}
+
+	private record QueryParts(String where, List<Object> args) {
 	}
 
 }

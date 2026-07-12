@@ -134,15 +134,15 @@ public class SalesProjectAdminService {
 		if (current.status() == SalesProjectStatus.CLOSED || current.status() == SalesProjectStatus.CANCELLED) {
 			throw new BusinessException(ApiErrorCode.PROJECT_STATUS_INVALID);
 		}
-		ValidatedProjectUpdate update = validateUpdate(request);
+		ValidatedProjectUpdate update = validateUpdate(request, current);
 		OffsetDateTime now = OffsetDateTime.now();
 		String changedFields = changedFields(current, update);
 		this.jdbcTemplate.update("""
 				update sal_project
-				set owner_user_id = ?, planned_start_date = ?, planned_finish_date = ?, target_revenue = ?,
+				set name = ?, owner_user_id = ?, planned_start_date = ?, planned_finish_date = ?, target_revenue = ?,
 				    target_cost = ?, remark = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
-				""", update.ownerUserId(), update.plannedStartDate(), update.plannedFinishDate(),
+				""", update.name(), update.ownerUserId(), update.plannedStartDate(), update.plannedFinishDate(),
 				update.targetRevenue(), update.targetCost(), blankToNull(update.remark()), operator.username(), now,
 				id);
 		this.auditService.record(operator, "SALES_PROJECT_UPDATE", PROJECT_TARGET, id,
@@ -228,7 +228,7 @@ public class SalesProjectAdminService {
 				select count(*)
 				from sal_project_contract
 				where project_id = ?
-				and status = 'EFFECTIVE'
+				and status in ('EFFECTIVE', 'CLOSED', 'TERMINATED')
 				""", Long.class, id);
 		Long linkedOrders = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -299,7 +299,7 @@ public class SalesProjectAdminService {
 				? this.orderProjectLinkService.salesOrderSummary(base.id()) : null;
 		List<SalesProjectContractService.ContractResponse> contracts = detail && contractAllowed
 				? this.contractService.listByProject(base.id()) : List.of();
-		List<OperationResponse> operations = detail ? operations(base.id(), contractAllowed) : List.of();
+		List<OperationResponse> operations = detail ? operations(base.id(), contractAllowed, orderAllowed) : List.of();
 		return new ProjectResponse(base.id(), base.projectNo(), base.name(), base.customerId(), base.customerCode(),
 				base.customerName(), base.ownerUserId(), base.ownerUsername(), base.ownerDisplayName(),
 				base.plannedStartDate(), base.plannedFinishDate(), base.status(), base.targetRevenue(),
@@ -334,7 +334,7 @@ public class SalesProjectAdminService {
 				projectId);
 	}
 
-	private List<OperationResponse> operations(Long projectId, boolean includeContracts) {
+	private List<OperationResponse> operations(Long projectId, boolean includeContracts, boolean includeOrders) {
 		List<Object> args = new ArrayList<>();
 		args.add(PROJECT_TARGET);
 		args.add(projectId.toString());
@@ -357,10 +357,30 @@ public class SalesProjectAdminService {
 				where ((target_type = ? and target_id = ?)%s)
 				order by created_at desc, id desc
 				limit 50
-				""".formatted(contractClause), (rs, rowNum) -> new OperationResponse(rs.getLong("id"),
-				rs.getString("operator_username"), rs.getString("action"), rs.getString("target_type"),
-				rs.getString("target_id"), rs.getString("target_summary"),
-				rs.getObject("created_at", OffsetDateTime.class)), args.toArray());
+				""".formatted(contractClause), (rs, rowNum) -> {
+			String action = rs.getString("action");
+			if (!includeOrders && action.startsWith("SALES_ORDER_PROJECT_")) {
+				return null;
+			}
+			String targetSummary = rs.getString("target_summary");
+			if (!includeContracts && action.startsWith("SALES_ORDER_PROJECT_")) {
+				targetSummary = sanitizeOrderProjectAuditSummary(targetSummary);
+			}
+			return new OperationResponse(rs.getLong("id"), rs.getString("operator_username"), action,
+					rs.getString("target_type"), rs.getString("target_id"), targetSummary,
+					rs.getObject("created_at", OffsetDateTime.class));
+		}, args.toArray()).stream().filter(Objects::nonNull).toList();
+	}
+
+	private String sanitizeOrderProjectAuditSummary(String targetSummary) {
+		if (!hasText(targetSummary)) {
+			return targetSummary;
+		}
+		int marker = targetSummary.indexOf(" 项目合同关联 ");
+		if (marker < 0) {
+			return "销售订单项目合同关联已变更";
+		}
+		return targetSummary.substring(0, marker) + " 项目合同关联已变更";
 	}
 
 	private QueryParts projectQueryParts(String keyword, Long customerId, String status, Long ownerUserId) {
@@ -407,16 +427,23 @@ public class SalesProjectAdminService {
 				request.plannedFinishDate(), revenue, cost, request.remark());
 	}
 
-	private ValidatedProjectUpdate validateUpdate(ProjectUpdateRequest request) {
+	private ValidatedProjectUpdate validateUpdate(ProjectUpdateRequest request, ProjectRow current) {
 		if (request == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		String name = current.name();
+		if (request.name() != null) {
+			if (current.status() != SalesProjectStatus.DRAFT) {
+				throw new BusinessException(ApiErrorCode.PROJECT_STATUS_INVALID);
+			}
+			name = validateName(request.name());
 		}
 		validateOwner(request.ownerUserId());
 		validatePlanRange(request.plannedStartDate(), request.plannedFinishDate());
 		BigDecimal revenue = validateTarget(request.targetRevenue());
 		BigDecimal cost = validateTarget(request.targetCost());
 		validateOptionalText(request.remark(), 500);
-		return new ValidatedProjectUpdate(request.ownerUserId(), request.plannedStartDate(),
+		return new ValidatedProjectUpdate(name, request.ownerUserId(), request.plannedStartDate(),
 				request.plannedFinishDate(), revenue, cost, request.remark());
 	}
 
@@ -437,7 +464,7 @@ public class SalesProjectAdminService {
 
 	private void validateOwner(Long ownerUserId) {
 		if (ownerUserId == null) {
-			return;
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		String status = this.jdbcTemplate.query("select status from sys_user where id = ?",
 				(rs, rowNum) -> rs.getString("status"), ownerUserId).stream().findFirst().orElse(null);
@@ -475,6 +502,9 @@ public class SalesProjectAdminService {
 
 	private String changedFields(ProjectRow current, ValidatedProjectUpdate update) {
 		List<String> fields = new ArrayList<>();
+		if (!Objects.equals(current.name(), update.name())) {
+			fields.add("name");
+		}
 		if (!Objects.equals(current.ownerUserId(), update.ownerUserId())) {
 			fields.add("ownerUserId");
 		}
@@ -507,13 +537,13 @@ public class SalesProjectAdminService {
 
 	private java.util.Optional<ProjectRow> lockProject(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, customer_id, owner_user_id, planned_start_date, planned_finish_date, status,
+				select id, name, customer_id, owner_user_id, planned_start_date, planned_finish_date, status,
 				       target_revenue, target_cost, remark, version
 				from sal_project
 				where id = ?
 				for update
-				""", (rs, rowNum) -> new ProjectRow(rs.getLong("id"), rs.getLong("customer_id"),
-				nullableLong(rs, "owner_user_id"), rs.getObject("planned_start_date", LocalDate.class),
+				""", (rs, rowNum) -> new ProjectRow(rs.getLong("id"), rs.getString("name"),
+				rs.getLong("customer_id"), nullableLong(rs, "owner_user_id"), rs.getObject("planned_start_date", LocalDate.class),
 				rs.getObject("planned_finish_date", LocalDate.class),
 				SalesProjectStatus.valueOf(rs.getString("status")), rs.getBigDecimal("target_revenue"),
 				rs.getBigDecimal("target_cost"), rs.getString("remark"), rs.getLong("version")), id)
@@ -557,12 +587,12 @@ public class SalesProjectAdminService {
 		return rs.wasNull() ? null : value;
 	}
 
-	public record ProjectCreateRequest(@NotNull String name, @NotNull Long customerId, Long ownerUserId,
+	public record ProjectCreateRequest(@NotNull String name, @NotNull Long customerId, @NotNull Long ownerUserId,
 			LocalDate plannedStartDate, LocalDate plannedFinishDate, BigDecimal targetRevenue, BigDecimal targetCost,
 			String remark) {
 	}
 
-	public record ProjectUpdateRequest(Long ownerUserId, LocalDate plannedStartDate, LocalDate plannedFinishDate,
+	public record ProjectUpdateRequest(String name, Long ownerUserId, LocalDate plannedStartDate, LocalDate plannedFinishDate,
 			BigDecimal targetRevenue, BigDecimal targetCost, String remark, @NotNull Long version) {
 	}
 
@@ -603,11 +633,11 @@ public class SalesProjectAdminService {
 			LocalDate plannedFinishDate, BigDecimal targetRevenue, BigDecimal targetCost, String remark) {
 	}
 
-	private record ValidatedProjectUpdate(Long ownerUserId, LocalDate plannedStartDate, LocalDate plannedFinishDate,
+	private record ValidatedProjectUpdate(String name, Long ownerUserId, LocalDate plannedStartDate, LocalDate plannedFinishDate,
 			BigDecimal targetRevenue, BigDecimal targetCost, String remark) {
 	}
 
-	private record ProjectRow(Long id, Long customerId, Long ownerUserId, LocalDate plannedStartDate,
+	private record ProjectRow(Long id, String name, Long customerId, Long ownerUserId, LocalDate plannedStartDate,
 			LocalDate plannedFinishDate, SalesProjectStatus status, BigDecimal targetRevenue, BigDecimal targetCost,
 			String remark, long version) {
 	}

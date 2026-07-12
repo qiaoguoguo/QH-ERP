@@ -23,6 +23,12 @@ const loading = ref(false)
 const referenceError = ref('')
 const formError = ref('')
 const formSubmitting = ref(false)
+const recordLoadFailed = ref(false)
+const fieldErrors = reactive({
+  name: '',
+  customerId: '',
+  ownerUserId: '',
+})
 const form = reactive({
   name: '',
   customerId: '' as ResourceId | '',
@@ -35,9 +41,15 @@ const form = reactive({
 })
 
 const isEdit = computed(() => Boolean(route.params.id))
-const canEditForm = computed(() => !editingRecord.value || (
-  editingRecord.value.status !== 'CLOSED' && editingRecord.value.status !== 'CANCELLED'
-))
+const canEditForm = computed(() => {
+  if (!isEdit.value) {
+    return !recordLoadFailed.value
+  }
+  return Boolean(editingRecord.value)
+    && editingRecord.value?.status !== 'CLOSED'
+    && editingRecord.value?.status !== 'CANCELLED'
+})
+const canSubmit = computed(() => !formSubmitting.value && canEditForm.value && !loading.value && !referenceLoading.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售项目' : '新建销售项目'))
 const nameEditable = computed(() => !editingRecord.value || editingRecord.value.status === 'DRAFT')
 
@@ -66,6 +78,7 @@ async function loadRecord() {
   }
   loading.value = true
   formError.value = ''
+  recordLoadFailed.value = false
   try {
     const detail = await salesProjectApi.projects.get(route.params.id as ResourceId)
     editingRecord.value = detail
@@ -78,6 +91,8 @@ async function loadRecord() {
     form.targetCost = detail.targetCost
     form.remark = detail.remark ?? ''
   } catch (caught) {
+    editingRecord.value = null
+    recordLoadFailed.value = true
     formError.value = projectApiErrorMessage(caught)
   } finally {
     loading.value = false
@@ -85,10 +100,22 @@ async function loadRecord() {
 }
 
 function validateBase() {
+  fieldErrors.name = ''
+  fieldErrors.customerId = ''
+  fieldErrors.ownerUserId = ''
   const customerId = normalizeProjectOptionalId(form.customerId)
   const ownerUserId = normalizeProjectOptionalId(form.ownerUserId)
-  if (!form.name.trim() || customerId === undefined || ownerUserId === undefined) {
-    formError.value = '请完整填写项目名称、客户和负责人'
+  if (!form.name.trim()) {
+    fieldErrors.name = '请填写项目名称'
+  }
+  if (customerId === undefined) {
+    fieldErrors.customerId = '请选择客户'
+  }
+  if (ownerUserId === undefined) {
+    fieldErrors.ownerUserId = '请选择负责人'
+  }
+  if (fieldErrors.name || fieldErrors.customerId || fieldErrors.ownerUserId) {
+    formError.value = ''
     return null
   }
   if (form.plannedStartDate && form.plannedFinishDate && form.plannedFinishDate < form.plannedStartDate) {
@@ -96,11 +123,15 @@ function validateBase() {
     return null
   }
   formError.value = ''
-  return { customerId, ownerUserId }
+  return { customerId: customerId as ResourceId, ownerUserId: ownerUserId as ResourceId }
 }
 
 async function saveProject() {
   if (formSubmitting.value || !canEditForm.value) {
+    return
+  }
+  if (isEdit.value && !editingRecord.value) {
+    formError.value = '销售项目加载失败，不能保存'
     return
   }
   const ids = validateBase()
@@ -145,6 +176,22 @@ function cancel() {
   void router.push({ name: 'sales-projects' })
 }
 
+function retryLoadRecord() {
+  void loadRecord()
+}
+
+function returnToDetail() {
+  if (route.params.id) {
+    void router.push({ name: 'sales-project-detail', params: { id: String(route.params.id) } })
+    return
+  }
+  void router.push({ name: 'sales-projects' })
+}
+
+function returnToList() {
+  void router.push({ name: 'sales-projects' })
+}
+
 onMounted(async () => {
   await loadReferences()
   await loadRecord()
@@ -156,6 +203,11 @@ onMounted(async () => {
     <template #alerts>
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
+      <div v-if="recordLoadFailed" class="load-error-actions">
+        <el-button data-test="retry-sales-project-load" size="small" @click="retryLoadRecord">重试</el-button>
+        <el-button data-test="return-sales-project-detail" size="small" @click="returnToDetail">返回详情</el-button>
+        <el-button data-test="return-sales-project-list" size="small" @click="returnToList">返回列表</el-button>
+      </div>
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="销售项目表单加载中" :closable="false" />
       <el-alert v-if="editingRecord && !canEditForm" class="state-alert" type="warning" title="终态项目不可编辑" :closable="false" />
     </template>
@@ -167,16 +219,16 @@ onMounted(async () => {
         <span>版本 {{ editingRecord.version }}</span>
       </div>
       <div class="sales-project-form-grid">
-        <el-form-item label="项目名称">
+        <el-form-item label="项目名称" required :error="fieldErrors.name">
           <el-input v-model="form.name" name="sales-project-name" placeholder="请输入项目名称" :disabled="!canEditForm || !nameEditable" />
         </el-form-item>
-        <el-form-item label="客户">
+        <el-form-item label="客户" required :error="fieldErrors.customerId">
           <el-select v-model="form.customerId" filterable placeholder="请选择启用客户" :disabled="isEdit || !canEditForm">
             <el-option v-for="customer in customers" :key="customer.id" :label="`${customer.code} ${customer.name}`" :value="customer.id" />
           </el-select>
           <small v-if="isEdit" class="field-hint">客户创建后不可修改</small>
         </el-form-item>
-        <el-form-item label="负责人">
+        <el-form-item label="负责人" required :error="fieldErrors.ownerUserId">
           <el-select v-model="form.ownerUserId" filterable placeholder="请选择负责人" :disabled="!canEditForm">
             <el-option v-for="owner in owners" :key="owner.userId" :label="`${owner.username} ${owner.displayName}`" :value="owner.userId" />
           </el-select>
@@ -201,7 +253,7 @@ onMounted(async () => {
 
     <div class="form-footer">
       <el-button @click="cancel">取消</el-button>
-      <el-button data-test="save-sales-project" type="primary" :loading="formSubmitting" :disabled="formSubmitting || !canEditForm" @click="saveProject">
+      <el-button data-test="save-sales-project" type="primary" :loading="formSubmitting" :disabled="!canSubmit" @click="saveProject">
         保存
       </el-button>
     </div>
@@ -230,6 +282,13 @@ onMounted(async () => {
   color: var(--qherp-muted);
   display: block;
   margin-top: 4px;
+}
+
+.load-error-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
 }
 
 .form-footer {

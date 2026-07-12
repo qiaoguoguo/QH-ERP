@@ -65,6 +65,12 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 		assertThat(item.get("contractId").longValue()).isEqualTo(contractId);
 		assertThat(item.get("projectNo").asText()).isNotBlank();
 		assertThat(item.get("contractNo").asText()).isNotBlank();
+		assertThat(item.hasNonNull("customerName")).isTrue();
+		assertThat(item.get("customerName").asText()).isEqualTo("候选客户");
+		assertThat(item.hasNonNull("contractName")).isTrue();
+		assertThat(item.get("contractName").asText()).isEqualTo("候选主合同");
+		assertThat(item.hasNonNull("contractType")).isTrue();
+		assertThat(item.get("contractType").asText()).isEqualTo("MAIN");
 		assertThat(item.has("amount")).isFalse();
 		assertThat(item.has("status")).isFalse();
 	}
@@ -82,14 +88,26 @@ class SalesProjectOrderLinkControllerTests extends PostgresIntegrationTest {
 
 		assertError(get("/api/admin/sales-projects/" + projectId + "/sales-orders", projectOnly),
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
-		ResponseEntity<String> allowed = get("/api/admin/sales-projects/" + projectId + "/sales-orders", orderViewer);
+		ResponseEntity<String> allowed = get("/api/admin/sales-projects/" + projectId
+				+ "/sales-orders?keyword=SPC-SO-&contractId=" + contractId + "&status=DRAFT&dateFrom="
+				+ LocalDate.now().minusDays(1) + "&dateTo=" + LocalDate.now().plusDays(1), orderViewer);
 
 		assertOk(allowed);
 		JsonNode item = data(allowed).get("items").get(0);
 		assertThat(item.get("id").longValue()).isEqualTo(orderId);
 		assertThat(item.get("projectId").longValue()).isEqualTo(projectId);
 		assertThat(item.get("contractId").longValue()).isEqualTo(contractId);
+		assertThat(item.hasNonNull("projectNo")).isTrue();
+		assertThat(item.get("projectNo").asText()).startsWith("SPC-P-");
+		assertThat(item.hasNonNull("projectName")).isTrue();
+		assertThat(item.get("projectName").asText()).isEqualTo("关联订单项目");
 		assertThat(item.get("orderNo").asText()).startsWith("SPC-SO-");
+		assertThat(item.hasNonNull("totalQuantity")).isTrue();
+		assertThat(item.get("totalQuantity").asText()).isEqualTo("0");
+		assertThat(item.hasNonNull("createdAt")).isTrue();
+		assertThat(item.get("createdAt").asText()).isNotBlank();
+		assertThat(item.hasNonNull("updatedAt")).isTrue();
+		assertThat(item.get("updatedAt").asText()).isNotBlank();
 	}
 
 	private long insertCustomer(String code, String name, String status) {

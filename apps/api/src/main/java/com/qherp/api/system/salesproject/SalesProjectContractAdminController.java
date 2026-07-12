@@ -1,18 +1,21 @@
 package com.qherp.api.system.salesproject;
 
 import com.qherp.api.common.ApiResponse;
+import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
+import java.time.LocalDate;
 
 @RestController
 public class SalesProjectContractAdminController {
@@ -24,8 +27,14 @@ public class SalesProjectContractAdminController {
 	}
 
 	@GetMapping("/api/admin/sales-projects/{projectId}/contracts")
-	public ApiResponse<List<SalesProjectContractService.ContractResponse>> contracts(@PathVariable Long projectId) {
-		return ApiResponse.ok(this.salesProjectContractService.listByProject(projectId));
+	public ApiResponse<PageResponse<SalesProjectContractService.ContractResponse>> contracts(@PathVariable Long projectId,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String contractType,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate signedDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate signedDateTo,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.salesProjectContractService.listByProject(projectId, keyword, contractType, status,
+				signedDateFrom, signedDateTo, page, pageSize));
 	}
 
 	@PostMapping("/api/admin/sales-projects/{projectId}/contracts")

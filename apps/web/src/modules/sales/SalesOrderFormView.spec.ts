@@ -108,12 +108,15 @@ const draftOrder: SalesOrderDetailRecord = {
   customerName: '华东客户',
   orderDate: '2026-07-04',
   expectedShipDate: '2026-07-12',
+  version: 4,
   projectId: 12,
   projectNo: 'SP-202607-001',
   projectName: '华东扩产项目',
   contractId: 55,
   contractNo: 'SC-001',
   externalContractNo: 'EXT-001',
+  contractName: '追加合同',
+  contractType: 'SUPPLEMENT',
   status: 'DRAFT',
   lineCount: 1,
   totalQuantity: 12.5,
@@ -375,12 +378,63 @@ describe('销售订单表单页', () => {
     expect(salesProjectApiMock.listOrderLinkCandidates).toHaveBeenCalledWith(expect.objectContaining({
       customerId: 100,
       page: 1,
-      pageSize: 50,
+      pageSize: 20,
     }))
     expect(salesApiMock.orders.create).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 12,
       contractId: 55,
     }))
+  })
+
+  it('候选加载失败时保留已有项目合同显示并禁用保存，避免误解除关联', async () => {
+    salesProjectApiMock.listOrderLinkCandidates.mockRejectedValue(new Error('项目合同候选加载失败'))
+    const { wrapper } = await mountForm('/sales/orders/99/edit')
+
+    expect(wrapper.text()).toContain('项目合同候选加载失败')
+    expect(wrapper.text()).toContain('SP-202607-001 华东扩产项目 / SC-001 追加合同 补充合同')
+    expect(wrapper.find('[data-test="save-sales-order"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+    expect(salesApiMock.orders.update).not.toHaveBeenCalled()
+  })
+
+  it('项目合同候选按客户和远程关键词分页加载，并展示主补合同类型', async () => {
+    salesProjectApiMock.listOrderLinkCandidates.mockResolvedValue({
+      items: [{
+        projectId: 12,
+        projectNo: 'SP-202607-001',
+        projectName: '华东扩产项目',
+        customerId: 100,
+        customerName: '华东客户',
+        contractId: 56,
+        contractNo: 'SC-002',
+        externalContractNo: 'EXT-002',
+        contractName: '追加合同',
+        contractType: 'SUPPLEMENT',
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountForm()
+
+    await setSelectValue(wrapper, 0, 100)
+    const projectContractSelect = wrapper.findAllComponents({ name: 'ElSelect' })[3] as VueWrapper
+    const remoteMethod = (projectContractSelect.props() as Record<string, unknown>).remoteMethod as
+      ((keyword: string) => Promise<void> | void)
+    await remoteMethod('追加')
+    await flushPromises()
+
+    expect(salesProjectApiMock.listOrderLinkCandidates).toHaveBeenLastCalledWith({
+      customerId: 100,
+      keyword: '追加',
+      page: 1,
+      pageSize: 20,
+    })
+    const optionLabels = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => String(option.props('label')))
+    expect(optionLabels.some((label) => label.includes('SC-002 追加合同 补充合同'))).toBe(true)
   })
 
   it('编辑草稿时回填明细并提交更新', async () => {
@@ -396,6 +450,7 @@ describe('销售订单表单页', () => {
     await flushPromises()
 
     expect(salesApiMock.orders.update).toHaveBeenCalledWith(99, expect.objectContaining({
+      version: 4,
       customerId: 100,
       lines: [expect.objectContaining({ reservationWarehouseId: 30, unitPrice: '99.200000' })],
     }))

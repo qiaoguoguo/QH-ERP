@@ -6,8 +6,9 @@ import { masterDataApi, type MaterialRecord, type PartnerRecord, type WarehouseR
 import {
   salesApi,
   type ResourceId,
+  type SalesOrderCreatePayload,
   type SalesOrderDetailRecord,
-  type SalesOrderPayload,
+  type SalesOrderUpdatePayload,
 } from '../../shared/api/salesApi'
 import {
   salesProjectApi,
@@ -33,6 +34,8 @@ const customers = ref<PartnerRecord[]>([])
 const materials = ref<MaterialRecord[]>([])
 const warehouses = ref<WarehouseRecord[]>([])
 const orderLinkCandidates = ref<SalesOrderProjectContractCandidate[]>([])
+const orderLinkCandidateLoading = ref(false)
+const orderLinkCandidateError = ref('')
 const editingRecord = ref<SalesOrderDetailRecord | null>(null)
 const referenceLoading = ref(true)
 const loading = ref(false)
@@ -52,7 +55,7 @@ const selectedProjectContractKey = ref('')
 const isEdit = computed(() => Boolean(route.params.id))
 const isDraftRecord = computed(() => !editingRecord.value || editingRecord.value.status === 'DRAFT')
 const canEditForm = computed(() => isDraftRecord.value && (!isEdit.value || Boolean(editingRecord.value)))
-const canSubmit = computed(() => !formSubmitting.value && canEditForm.value)
+const canSubmit = computed(() => !formSubmitting.value && canEditForm.value && !orderLinkCandidateError.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售订单' : '新建销售订单'))
 const sellableMaterials = computed(() => materials.value.filter((material) =>
   material.materialType === 'FINISHED_GOOD' || material.materialType === 'SEMI_FINISHED'))
@@ -64,12 +67,14 @@ function projectContractKey(candidate: SalesOrderProjectContractCandidate) {
 }
 
 function projectContractLabel(candidate: SalesOrderProjectContractCandidate) {
+  const contractTypeLabel = candidate.contractType === 'SUPPLEMENT' ? '补充合同' : '主合同'
   return [
     candidate.projectNo,
     candidate.projectName,
     '/',
     candidate.contractNo,
     candidate.contractName,
+    contractTypeLabel,
   ].filter(Boolean).join(' ')
 }
 
@@ -94,8 +99,8 @@ function addCurrentProjectContract(detail: SalesOrderDetailRecord) {
     contractId: detail.contractId,
     contractNo: detail.contractNo ?? '',
     externalContractNo: detail.externalContractNo ?? null,
-    contractName: detail.contractNo ?? '',
-    contractType: 'MAIN',
+    contractName: detail.contractName ?? detail.contractNo ?? '',
+    contractType: detail.contractType ?? 'MAIN',
   }
   if (!orderLinkCandidates.value.some((item) => projectContractKey(item) === projectContractKey(candidate))) {
     orderLinkCandidates.value = [candidate, ...orderLinkCandidates.value]
@@ -152,19 +157,22 @@ async function loadRecord() {
   }
 }
 
-async function loadOrderLinkCandidates() {
+async function loadOrderLinkCandidates(keyword = '') {
   const customerId = normalizeOptionalId(form.customerId)
   if (customerId === null) {
     orderLinkCandidates.value = []
     selectedProjectContractKey.value = ''
+    orderLinkCandidateError.value = ''
     return
   }
+  orderLinkCandidateLoading.value = true
+  orderLinkCandidateError.value = ''
   try {
     const page = await salesProjectApi.listOrderLinkCandidates({
       customerId,
-      keyword: '',
+      keyword,
       page: 1,
-      pageSize: 50,
+      pageSize: 20,
     })
     const candidates = pageItems(page)
     const currentRecord = editingRecord.value
@@ -173,17 +181,25 @@ async function loadOrderLinkCandidates() {
       addCurrentProjectContract(currentRecord)
     } else {
       orderLinkCandidates.value = candidates
-      if (!candidates.some((candidate) => projectContractKey(candidate) === selectedProjectContractKey.value)) {
-        selectedProjectContractKey.value = ''
-      }
     }
-  } catch {
-    orderLinkCandidates.value = []
-    selectedProjectContractKey.value = ''
+  } catch (caught) {
+    orderLinkCandidateError.value = salesErrorMessage(caught)
+    if (editingRecord.value?.projectId && editingRecord.value.contractId) {
+      addCurrentProjectContract(editingRecord.value)
+    } else {
+      orderLinkCandidates.value = []
+    }
+  } finally {
+    orderLinkCandidateLoading.value = false
   }
 }
 
-function validateForm(): SalesOrderPayload | null {
+function clearProjectContractSelection() {
+  selectedProjectContractKey.value = ''
+  orderLinkCandidateError.value = ''
+}
+
+function validateForm(): SalesOrderCreatePayload | null {
   const customerId = normalizeRequiredId(form.customerId)
   if (customerId === null || !form.orderDate.trim() || lines.value.length === 0) {
     formError.value = '请完整填写客户、订单日期和明细'
@@ -263,7 +279,7 @@ function validateForm(): SalesOrderPayload | null {
 }
 
 async function saveOrder() {
-  if (formSubmitting.value) {
+  if (formSubmitting.value || orderLinkCandidateError.value) {
     return
   }
   const currentRecord = editingRecord.value
@@ -288,7 +304,11 @@ async function saveOrder() {
         formError.value = '销售订单加载失败，不能保存'
         return
       }
-      result = await salesApi.orders.update(currentRecord.id, payload)
+      const updatePayload: SalesOrderUpdatePayload = {
+        ...payload,
+        version: currentRecord.version,
+      }
+      result = await salesApi.orders.update(currentRecord.id, updatePayload)
     } else {
       result = await salesApi.orders.create(payload)
     }
@@ -347,6 +367,13 @@ watch(() => form.customerId, () => {
         class="state-alert"
         type="info"
         title="销售订单表单加载中"
+        :closable="false"
+      />
+      <el-alert
+        v-if="orderLinkCandidateError"
+        class="state-alert"
+        type="error"
+        :title="orderLinkCandidateError"
         :closable="false"
       />
     </template>
@@ -409,8 +436,12 @@ watch(() => form.customerId, () => {
           v-model="selectedProjectContractKey"
           clearable
           filterable
+          remote
+          :remote-method="loadOrderLinkCandidates"
+          :loading="orderLinkCandidateLoading"
           placeholder="可选，项目和合同同选同清"
           style="width: 100%"
+          @clear="clearProjectContractSelection"
         >
           <el-option
             v-for="candidate in orderLinkCandidates"
@@ -422,6 +453,7 @@ watch(() => form.customerId, () => {
         <div v-else class="readonly-project-link">
           <span v-if="editingRecord?.projectId && editingRecord.contractId">
             {{ editingRecord.projectNo }} {{ editingRecord.projectName }} / {{ editingRecord.contractNo }}
+            {{ editingRecord.contractName }} {{ editingRecord.contractType === 'SUPPLEMENT' ? '补充合同' : '主合同' }}
           </span>
           <span v-else>未关联项目</span>
         </div>

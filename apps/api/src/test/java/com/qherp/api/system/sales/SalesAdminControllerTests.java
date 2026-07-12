@@ -712,8 +712,19 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(historical.get("projectId").isNull()).isTrue();
 		assertThat(historical.get("contractId").isNull()).isTrue();
 		assertItemsContain(get("/api/admin/sales/orders?projectLinked=false", admin), historicalOrderId);
+		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "3.000000");
+		assertOk(confirmOrder(admin, historicalOrderId));
+		long historicalOrderLineId = firstLine(data(getOrder(admin, historicalOrderId))).get("id").longValue();
+		long historicalShipmentId = createShipmentId(admin, historicalOrderId,
+				shipmentPayload(fixture.warehouseId(), "历史无项目订单出库",
+						List.of(shipmentLine(1, historicalOrderLineId, fixture.finishedMaterialId(), fixture.unitId(),
+								"1.000000", null))));
+		assertOk(postShipment(admin, historicalShipmentId));
+		JsonNode historicalShipment = data(getShipment(admin, historicalShipmentId));
+		assertThat(historicalShipment.get("orderSummary").get("projectId").isNull()).isTrue();
+		assertThat(historicalShipment.get("orderSummary").get("contractId").isNull()).isTrue();
+		assertItemsContain(get("/api/admin/sales/orders?projectLinked=false", admin), historicalOrderId);
 
-		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "2.000000");
 		assertOk(confirmOrder(admin, linkedOrderId));
 		assertAuditLog("SALES_ORDER_PROJECT_LINK", "SALES_PROJECT", projectId);
 	}

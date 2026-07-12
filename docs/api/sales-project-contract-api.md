@@ -444,7 +444,7 @@
 
 - 方法：`GET`
 - 路径：`/api/admin/sales-projects/owner-candidates`
-- 权限：`sales:project:create` 或 `sales:project:update`
+- 权限：`sales:project:view`、`sales:project:create` 或 `sales:project:update`
 - 查询参数：
   - `page`、`pageSize`。
   - `keyword`：用户名或显示名。
@@ -827,7 +827,7 @@
 - `PermissionAuthorizationManager` 必须增加 `/api/admin/sales-projects/**` 和 `/api/admin/sales-project-contracts/**` 的路径映射。
 - 项目列表和详情必须在服务层检查 `sales:contract:view`，无权限时不得返回合同编号、金额、状态或数量，并设置 `contractSummaryRestricted = true`。
 - 项目详情中的销售订单摘要必须在服务层检查 `sales:order:view`，无权限时 `salesOrderCount`、订单摘要和订单列表为空或 `null`，不得返回订单号、金额、行明细或状态分布，并设置 `salesOrderSummaryRestricted = true`。
-- 项目负责人候选接口只要求 `sales:project:create` 或 `sales:project:update`。
+- 项目负责人候选接口只要求 `sales:project:view`、`sales:project:create` 或 `sales:project:update` 任一权限。
 - 销售订单项目合同候选接口只要求对应销售订单创建或更新权限，不要求完整项目或合同查看权限。
 
 ## 审计动作

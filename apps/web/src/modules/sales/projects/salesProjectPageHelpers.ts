@@ -53,11 +53,41 @@ export function salesProjectContractTypeLabel(type: SalesProjectContractType): s
 }
 
 export function formatProjectAmount(value: unknown): string {
-  const numberValue = Number(value)
-  if (!Number.isFinite(numberValue)) {
+  if (value === null || value === undefined) {
     return '-'
   }
-  return numberValue.toFixed(2)
+  const rawValue = String(value).trim()
+  const match = rawValue.match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
+  if (!match) {
+    return '-'
+  }
+  const sign = match[1] === '-' ? '-' : ''
+  let integerPart = match[2].replace(/^0+(?=\d)/, '') || '0'
+  const fraction = match[3] ?? ''
+  const firstTwoDigits = fraction.slice(0, 2).padEnd(2, '0')
+  const roundDigit = Number(fraction.charAt(2) || '0')
+  let cents = Number(firstTwoDigits)
+  if (roundDigit >= 5) {
+    cents += 1
+  }
+  if (cents >= 100) {
+    integerPart = incrementIntegerString(integerPart)
+    cents = 0
+  }
+  const formatted = `${integerPart}.${String(cents).padStart(2, '0')}`
+  return formatted === '0.00' ? formatted : `${sign}${formatted}`
+}
+
+function incrementIntegerString(value: string): string {
+  const digits = value.split('')
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    if (digits[index] !== '9') {
+      digits[index] = String(Number(digits[index]) + 1)
+      return digits.join('')
+    }
+    digits[index] = '0'
+  }
+  return `1${digits.join('')}`
 }
 
 export function formatProjectDateTime(value?: string | null): string {

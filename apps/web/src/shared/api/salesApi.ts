@@ -11,6 +11,7 @@ export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
 export type SalesOrderStatus = 'DRAFT' | 'CONFIRMED' | 'PARTIALLY_SHIPPED' | 'SHIPPED' | 'CLOSED' | 'CANCELLED'
 export type SalesShipmentStatus = 'DRAFT' | 'POSTED'
+export type SalesOrderContractType = 'MAIN' | 'SUPPLEMENT'
 export type SalesQuantityPayload = string
 export type SalesUnitPricePayload = string
 
@@ -54,6 +55,8 @@ export interface SalesOrderSummaryRecord {
   projectName?: string | null
   contractId?: ResourceId | null
   contractNo?: string | null
+  contractName?: string | null
+  contractType?: SalesOrderContractType | null
   externalContractNo?: string | null
   status: SalesOrderStatus
   lineCount: number
@@ -70,6 +73,7 @@ export interface SalesOrderSummaryRecord {
   cancelledAt?: string | null
   closedByName?: string | null
   closedAt?: string | null
+  version: number
 }
 
 export interface SalesOrderLineRecord {
@@ -199,7 +203,7 @@ export interface SalesOrderLinePayload {
   remark?: string
 }
 
-export interface SalesOrderPayload {
+export interface SalesOrderBasePayload {
   customerId: ResourceId
   projectId?: ResourceId | null
   contractId?: ResourceId | null
@@ -208,6 +212,14 @@ export interface SalesOrderPayload {
   remark?: string
   lines: SalesOrderLinePayload[]
 }
+
+export interface SalesOrderCreatePayload extends SalesOrderBasePayload {}
+
+export interface SalesOrderUpdatePayload extends SalesOrderBasePayload {
+  version: number
+}
+
+export type SalesOrderPayload = SalesOrderCreatePayload
 
 export interface SalesShipmentLinePayload {
   lineNo: number
@@ -230,8 +242,8 @@ export interface SalesApi {
   orders: {
     list(params: SalesOrderListParams): Promise<PageResult<SalesOrderSummaryRecord>>
     get(id: ResourceId): Promise<SalesOrderDetailRecord>
-    create(payload: SalesOrderPayload): Promise<SalesOrderDetailRecord>
-    update(id: ResourceId, payload: SalesOrderPayload): Promise<SalesOrderDetailRecord>
+    create(payload: SalesOrderCreatePayload): Promise<SalesOrderDetailRecord>
+    update(id: ResourceId, payload: SalesOrderUpdatePayload): Promise<SalesOrderDetailRecord>
     confirm(id: ResourceId): Promise<SalesOrderDetailRecord>
     cancel(id: ResourceId): Promise<SalesOrderDetailRecord>
     close(id: ResourceId): Promise<SalesOrderDetailRecord>

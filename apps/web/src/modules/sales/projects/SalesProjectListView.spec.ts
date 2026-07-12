@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import type { PartnerRecord } from '../../../shared/api/masterDataApi'
-import type { SalesProjectSummary } from '../../../shared/api/salesProjectApi'
+import type { ProjectOwnerCandidate, SalesProjectSummary } from '../../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../../stores/authStore'
 import SalesProjectListView from './SalesProjectListView.vue'
 
@@ -13,6 +13,7 @@ const salesProjectApiMock = vi.hoisted(() => ({
   projects: {
     list: vi.fn(),
   },
+  ownerCandidates: vi.fn(),
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
@@ -31,6 +32,7 @@ vi.mock('../../../shared/api/masterDataApi', () => ({
 }))
 
 const customer: PartnerRecord = { id: 100, code: 'CUS-A', name: '华东客户', status: 'ENABLED' }
+const owner: ProjectOwnerCandidate = { userId: 7, username: 'owner', displayName: '负责人' }
 
 const project: SalesProjectSummary = {
   id: 12,
@@ -114,6 +116,13 @@ describe('销售项目列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     salesProjectApiMock.projects.list.mockResolvedValue(projectPage)
+    salesProjectApiMock.ownerCandidates.mockResolvedValue({
+      items: [owner],
+      page: 1,
+      pageSize: 200,
+      total: 1,
+      totalPages: 1,
+    })
     masterDataApiMock.customers.list.mockResolvedValue({
       items: [customer],
       page: 1,
@@ -151,7 +160,7 @@ describe('销售项目列表页', () => {
 
     await wrapper.find('input[name="sales-project-keyword"]').setValue('华东')
     await setSelectValue(wrapper, 0, 100)
-    await setSelectValue(wrapper, 1, 'ACTIVE')
+    await setSelectValue(wrapper, 2, 'ACTIVE')
     await wrapper.find('input[name="sales-project-planned-start-from"]').setValue('2026-07-01')
     await wrapper.find('[data-test="search-sales-projects"]').trigger('click')
     await flushPromises()
@@ -174,5 +183,19 @@ describe('销售项目列表页', () => {
     await wrapper.find('[data-test="create-sales-project"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('sales-project-create')
+  })
+
+  it('负责人筛选使用负责人候选接口并参与项目列表查询', async () => {
+    const { wrapper } = await mountList()
+
+    expect(salesProjectApiMock.ownerCandidates).toHaveBeenCalledWith({ keyword: '', page: 1, pageSize: 200 })
+    await setSelectValue(wrapper, 1, 7)
+    await wrapper.find('[data-test="search-sales-projects"]').trigger('click')
+    await flushPromises()
+
+    expect(salesProjectApiMock.projects.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      ownerUserId: 7,
+      page: 1,
+    }))
   })
 })

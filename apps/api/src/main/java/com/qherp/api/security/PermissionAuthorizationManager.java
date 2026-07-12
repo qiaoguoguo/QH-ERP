@@ -495,7 +495,7 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return null;
 		}
 		if ("GET".equals(method) && "/api/admin/sales-projects/owner-candidates".equals(path)) {
-			return "sales:project:create|sales:project:update";
+			return "sales:project:view|sales:project:create|sales:project:update";
 		}
 		if ("GET".equals(method) && "/api/admin/sales-projects/order-link-candidates".equals(path)) {
 			return "sales:order:create|sales:order:update";

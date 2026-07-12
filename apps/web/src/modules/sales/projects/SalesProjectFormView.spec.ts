@@ -159,4 +159,50 @@ describe('销售项目表单页', () => {
     expect(salesProjectApiMock.projects.update.mock.calls[0][1]).not.toHaveProperty('customerId')
     expect(salesProjectApiMock.projects.update.mock.calls[0][1]).not.toHaveProperty('projectNo')
   })
+
+  it('编辑项目加载失败时禁用表单和保存，提供重试与返回入口且不落到创建提交', async () => {
+    salesProjectApiMock.projects.get.mockRejectedValueOnce(new Error('项目不存在或无权限'))
+    const { wrapper, router } = await mountForm('/sales/projects/12/edit')
+
+    expect(wrapper.text()).toContain('项目不存在或无权限')
+    expect(wrapper.find('[data-test="save-sales-project"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="retry-sales-project-load"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="return-sales-project-detail"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="return-sales-project-list"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="save-sales-project"]').trigger('click')
+    await flushPromises()
+    expect(salesProjectApiMock.projects.create).not.toHaveBeenCalled()
+    expect(salesProjectApiMock.projects.update).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="return-sales-project-list"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('sales-projects')
+  })
+
+  it('必填字段使用必填标记和字段级错误，跨字段错误保留在顶部', async () => {
+    const { wrapper } = await mountForm()
+    const requiredLabels = wrapper.findAllComponents({ name: 'ElFormItem' })
+      .filter((item) => item.props('required'))
+      .map((item) => item.props('label'))
+
+    expect(requiredLabels).toEqual(expect.arrayContaining(['项目名称', '客户', '负责人']))
+
+    await wrapper.find('[data-test="save-sales-project"]').trigger('click')
+    await flushPromises()
+    const errorByLabel = (label: string) => wrapper.findAllComponents({ name: 'ElFormItem' })
+      .find((item) => item.props('label') === label)?.props('error')
+    expect(errorByLabel('项目名称')).toBe('请填写项目名称')
+    expect(errorByLabel('客户')).toBe('请选择客户')
+    expect(errorByLabel('负责人')).toBe('请选择负责人')
+
+    await wrapper.find('input[name="sales-project-name"]').setValue('华东扩产项目')
+    await setSelectValue(wrapper, 0, 100)
+    await setSelectValue(wrapper, 1, 7)
+    await wrapper.find('input[name="sales-project-planned-start-date"]').setValue('2026-08-31')
+    await wrapper.find('input[name="sales-project-planned-finish-date"]').setValue('2026-07-01')
+    await wrapper.find('[data-test="save-sales-project"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('计划结束日期不得早于计划开始日期')
+  })
 })

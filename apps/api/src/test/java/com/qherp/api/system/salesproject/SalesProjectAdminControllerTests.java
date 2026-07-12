@@ -141,9 +141,17 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode project = data(get("/api/admin/sales-projects/" + projectId, admin));
 		action(admin, "/api/admin/sales-projects/" + projectId + "/activate",
 				Map.of("version", project.get("version").longValue()));
+		String orderNo = "SO-RESTRICTED-" + SEQUENCE.incrementAndGet();
+		insertAudit("SALES_ORDER_PROJECT_LINK", "SALES_PROJECT", projectId,
+				"订单 " + orderNo + " 项目合同关联 未关联 -> " + project.get("projectNo").asText() + "/"
+						+ mainContract.get("contractNo").asText());
 
 		AuthenticatedSession viewer = createUserAndLogin("project-viewer-", "PROJECT_VIEWER_",
 				List.of("sales:project:view"));
+		AuthenticatedSession orderViewer = createUserAndLogin("project-order-viewer-", "PROJECT_ORDER_VIEWER_",
+				List.of("sales:project:view", "sales:order:view"));
+		AuthenticatedSession contractViewer = createUserAndLogin("project-contract-viewer-", "PROJECT_CONTRACT_VIEWER_",
+				List.of("sales:project:view", "sales:contract:view"));
 
 		ResponseEntity<String> detail = get("/api/admin/sales-projects/" + projectId, viewer);
 
@@ -160,6 +168,16 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(data.get("salesOrderSummary").isNull()).isTrue();
 		assertThat(data.get("contracts").size()).isZero();
 		assertThat(detail.getBody()).doesNotContain("HIDE-CONTRACT-NO");
+		assertThat(detail.getBody()).doesNotContain(orderNo);
+
+		ResponseEntity<String> orderAllowedDetail = get("/api/admin/sales-projects/" + projectId, orderViewer);
+		assertOk(orderAllowedDetail);
+		assertThat(orderAllowedDetail.getBody()).contains(orderNo);
+		assertThat(orderAllowedDetail.getBody()).doesNotContain(mainContract.get("contractNo").asText());
+
+		ResponseEntity<String> contractAllowedDetail = get("/api/admin/sales-projects/" + projectId, contractViewer);
+		assertOk(contractAllowedDetail);
+		assertThat(contractAllowedDetail.getBody()).doesNotContain(orderNo);
 	}
 
 	@Test
@@ -177,6 +195,141 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(columns("mfg_work_order")).doesNotContain("project_id", "contract_id");
 		assertThat(indexes("sal_project_contract")).contains("uk_sal_project_contract_main_active");
 		assertThat(constraint("sal_sales_order", "ck_sal_sales_order_project_pair")).contains("project_id");
+		assertThat(nullable("sal_project", "owner_user_id")).isFalse();
+		assertThat(nullable("sal_project_contract", "signed_date")).isFalse();
+	}
+
+	@Test
+	void projectCreateRequiresOwnerAndOwnerCandidatesAllowProjectViewPermission() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_REQUIRED_CUS_" + SEQUENCE.incrementAndGet(), "必填客户", "ENABLED");
+		Map<String, Object> missingOwner = projectPayload(customerId, userId("admin"), "缺少负责人");
+		missingOwner.remove("ownerUserId");
+		assertError(createProject(admin, missingOwner), HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+
+		AuthenticatedSession viewer = createUserAndLogin("owner-candidate-viewer-", "OWNER_CANDIDATE_VIEWER_",
+				List.of("sales:project:view"));
+		ResponseEntity<String> candidates = get("/api/admin/sales-projects/owner-candidates?keyword=admin", viewer);
+
+		assertOk(candidates);
+		assertThat(data(candidates).get("items").size()).isGreaterThan(0);
+	}
+
+	@Test
+	void contractCreateRequiresSignedDateAndContractListIsPagedFilteredAndOrdered() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_CONTRACT_LIST_CUS_" + SEQUENCE.incrementAndGet(), "合同列表客户",
+				"ENABLED");
+		long ownerUserId = userId("admin");
+		JsonNode project = data(createProject(admin, projectPayload(customerId, ownerUserId, "合同列表项目")));
+		long projectId = project.get("id").longValue();
+		Map<String, Object> missingSignedDate = contractPayload("MAIN", null, "缺少签订日期", "1000.00", null);
+		missingSignedDate.remove("signedDate");
+		assertError(createContract(admin, projectId, missingSignedDate), HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+
+		JsonNode mainContract = data(createContract(admin, projectId,
+				contractPayload("MAIN", null, "列表主合同", "1000.00", "LIST-MAIN")));
+		action(admin, "/api/admin/sales-project-contracts/" + mainContract.get("id").longValue() + "/activate",
+				Map.of("version", mainContract.get("version").longValue()));
+		JsonNode activeProject = data(action(admin, "/api/admin/sales-projects/" + projectId + "/activate",
+				Map.of("version", project.get("version").longValue())));
+		assertThat(activeProject.get("status").asText()).isEqualTo("ACTIVE");
+		createContract(admin, projectId,
+				contractPayload("SUPPLEMENT", mainContract.get("id").longValue(), "列表补充合同一", "100.00",
+						"LIST-SUP-1"));
+		createContract(admin, projectId,
+				contractPayload("SUPPLEMENT", mainContract.get("id").longValue(), "列表补充合同二", "-50.00",
+						"LIST-SUP-2"));
+
+		ResponseEntity<String> supplements = get("/api/admin/sales-projects/" + projectId
+				+ "/contracts?contractType=SUPPLEMENT&keyword=列表补充&page=1&pageSize=1", admin);
+		assertOk(supplements);
+		JsonNode page = data(supplements);
+		assertThat(page.get("total").longValue()).isEqualTo(2L);
+		assertThat(page.get("items").size()).isEqualTo(1);
+		assertThat(page.get("items").get(0).get("contractType").asText()).isEqualTo("SUPPLEMENT");
+		assertThat(page.get("items").get(0).get("version").isNumber()).isTrue();
+
+		ResponseEntity<String> allContracts = get("/api/admin/sales-projects/" + projectId + "/contracts?pageSize=20",
+				admin);
+		assertOk(allContracts);
+		assertThat(data(allContracts).get("items").get(0).get("contractType").asText()).isEqualTo("MAIN");
+	}
+
+	@Test
+	void draftProjectNameIsEditableButActiveProjectNameIsLockedAndAudited() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_RENAME_CUS_" + SEQUENCE.incrementAndGet(), "改名客户", "ENABLED");
+		long ownerUserId = userId("admin");
+		JsonNode project = data(createProject(admin, projectPayload(customerId, ownerUserId, "草稿改名项目")));
+		long projectId = project.get("id").longValue();
+		Map<String, Object> draftUpdate = updateProjectPayload(ownerUserId, "草稿改名备注",
+				project.get("version").longValue());
+		draftUpdate.put("name", "草稿项目新名称");
+
+		JsonNode renamed = data(updateProject(admin, projectId, draftUpdate));
+
+		assertThat(renamed.get("name").asText()).isEqualTo("草稿项目新名称");
+		assertAuditSummaryContains("SALES_PROJECT_UPDATE", "SALES_PROJECT", projectId, "name");
+
+		JsonNode mainContract = data(createContract(admin, projectId,
+				contractPayload("MAIN", null, "改名主合同", "1000.00", null)));
+		action(admin, "/api/admin/sales-project-contracts/" + mainContract.get("id").longValue() + "/activate",
+				Map.of("version", mainContract.get("version").longValue()));
+		JsonNode activeProject = data(action(admin, "/api/admin/sales-projects/" + projectId + "/activate",
+				Map.of("version", renamed.get("version").longValue())));
+		Map<String, Object> activeUpdate = updateProjectPayload(ownerUserId, "ACTIVE 改名备注",
+				activeProject.get("version").longValue());
+		activeUpdate.put("name", "ACTIVE 不允许改名");
+
+		assertError(updateProject(admin, projectId, activeUpdate), HttpStatus.CONFLICT, "PROJECT_STATUS_INVALID");
+	}
+
+	@Test
+	void projectCancelRejectsClosedOrTerminatedContractsAndAnyLinkedOrder() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_CANCEL_CUS_" + SEQUENCE.incrementAndGet(), "取消客户", "ENABLED");
+		long ownerUserId = userId("admin");
+		JsonNode project = data(createProject(admin, projectPayload(customerId, ownerUserId, "取消项目")));
+		long projectId = project.get("id").longValue();
+		JsonNode mainContract = data(createContract(admin, projectId,
+				contractPayload("MAIN", null, "取消主合同", "1000.00", null)));
+		JsonNode effectiveMain = data(action(admin,
+				"/api/admin/sales-project-contracts/" + mainContract.get("id").longValue() + "/activate",
+				Map.of("version", mainContract.get("version").longValue())));
+		action(admin, "/api/admin/sales-project-contracts/" + mainContract.get("id").longValue() + "/close",
+				Map.of("version", effectiveMain.get("version").longValue(), "reason", "已结束合同"));
+
+		assertError(action(admin, "/api/admin/sales-projects/" + projectId + "/cancel",
+				Map.of("version", project.get("version").longValue(), "reason", "存在历史合同")), HttpStatus.CONFLICT,
+				"PROJECT_HAS_EFFECTIVE_BUSINESS");
+	}
+
+	@Test
+	void projectDetailSalesOrderSummaryIncludesStatusBucketsAndLatestOrderDate() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_ORDER_SUM_CUS_" + SEQUENCE.incrementAndGet(), "订单摘要客户", "ENABLED");
+		long ownerUserId = userId("admin");
+		JsonNode project = data(createProject(admin, projectPayload(customerId, ownerUserId, "订单摘要项目")));
+		long projectId = project.get("id").longValue();
+		JsonNode mainContract = data(createContract(admin, projectId,
+				contractPayload("MAIN", null, "订单摘要主合同", "1000.00", null)));
+		action(admin, "/api/admin/sales-project-contracts/" + mainContract.get("id").longValue() + "/activate",
+				Map.of("version", mainContract.get("version").longValue()));
+		action(admin, "/api/admin/sales-projects/" + projectId + "/activate",
+				Map.of("version", project.get("version").longValue()));
+		insertSalesOrder(customerId, projectId, mainContract.get("id").longValue(), "DRAFT", LocalDate.now().minusDays(1));
+		insertSalesOrder(customerId, projectId, mainContract.get("id").longValue(), "CONFIRMED", LocalDate.now());
+
+		JsonNode summary = data(get("/api/admin/sales-projects/" + projectId, admin)).get("salesOrderSummary");
+
+		assertThat(summary.get("salesOrderCount").longValue()).isEqualTo(2L);
+		assertThat(summary.hasNonNull("draftCount")).isTrue();
+		assertThat(summary.get("draftCount").longValue()).isOne();
+		assertThat(summary.hasNonNull("confirmedCount")).isTrue();
+		assertThat(summary.get("confirmedCount").longValue()).isOne();
+		assertThat(summary.hasNonNull("latestOrderDate")).isTrue();
+		assertThat(summary.get("latestOrderDate").asText()).isEqualTo(LocalDate.now().toString());
 	}
 
 	private Map<String, Object> projectPayload(long customerId, long ownerUserId, String remark) {
@@ -231,6 +384,29 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 
 	private long userId(String username) {
 		return this.jdbcTemplate.queryForObject("select id from sys_user where username = ?", Long.class, username);
+	}
+
+	private long insertSalesOrder(long customerId, long projectId, long contractId, String status, LocalDate orderDate) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_order (
+					order_no, customer_id, order_date, expected_ship_date, status, remark, project_id, contract_id,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-PSO-" + suffix, customerId, orderDate, orderDate.plusDays(3), status,
+				"订单摘要", projectId, contractId);
+	}
+
+	private void insertAudit(String action, String targetType, long targetId, String targetSummary) {
+		this.jdbcTemplate.update("""
+				insert into sys_audit_log (
+					operator_username, action, target_type, target_id, target_summary, request_method, request_path,
+					ip_address, result, created_at
+				)
+				values ('admin', ?, ?, ?, ?, 'PUT', '/api/admin/sales/orders', '127.0.0.1', 'SUCCESS', now())
+				""", action, targetType, Long.toString(targetId), targetSummary);
 	}
 
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,
@@ -387,6 +563,16 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 				where t.relname = ?
 				and c.conname = ?
 				""", String.class, tableName, constraintName);
+	}
+
+	private boolean nullable(String tableName, String columnName) {
+		return "YES".equals(this.jdbcTemplate.queryForObject("""
+				select is_nullable
+				from information_schema.columns
+				where table_schema = 'public'
+				and table_name = ?
+				and column_name = ?
+				""", String.class, tableName, columnName));
 	}
 
 	private String sessionCookie(ResponseEntity<String> response) {

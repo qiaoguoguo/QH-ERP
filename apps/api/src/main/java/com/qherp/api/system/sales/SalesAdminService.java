@@ -161,6 +161,10 @@ public class SalesAdminService {
 	@Transactional
 	public SalesOrderDetailResponse updateOrder(Long id, SalesOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		OrderRow snapshot = orderRow(id).orElseThrow(this::orderNotFound);
+		this.salesOrderProjectLinkService.lockOrderLinkTargets(snapshot.projectId(), snapshot.contractId(),
+				request == null ? null : request.projectId(), request == null ? null : request.contractId());
+		ValidatedOrder order = validateOrderRequest(request);
 		OrderRow current = lockOrder(id).orElseThrow(this::orderNotFound);
 		if (current.status() != SalesOrderStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
@@ -170,7 +174,6 @@ public class SalesAdminService {
 		}
 		SalesOrderProjectLinkService.ProjectLink oldLink = this.salesOrderProjectLinkService
 			.findLink(current.projectId(), current.contractId());
-		ValidatedOrder order = validateOrderRequest(request);
 		this.businessPeriodGuard.assertWritable(order.orderDate(), BusinessPeriodOperation.UPDATE, "SALES_ORDER", id);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
@@ -197,6 +200,8 @@ public class SalesAdminService {
 
 	@Transactional
 	public SalesOrderDetailResponse confirmOrder(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+		OrderRow snapshot = orderRow(id).orElseThrow(this::orderNotFound);
+		this.salesOrderProjectLinkService.lockOrderLinkTargets(snapshot.projectId(), snapshot.contractId(), null, null);
 		OrderRow order = lockOrder(id).orElseThrow(this::orderNotFound);
 		if (order.status() != SalesOrderStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.SALES_ORDER_STATUS_INVALID);
@@ -899,6 +904,15 @@ public class SalesAdminService {
 				from sal_sales_order
 				where id = ?
 				for update
+				""", this::mapOrderRow, id).stream().findFirst();
+	}
+
+	private Optional<OrderRow> orderRow(Long id) {
+		return this.jdbcTemplate.query("""
+				select id, order_no, customer_id, order_date, expected_ship_date, status, remark, version,
+				       project_id, contract_id
+				from sal_sales_order
+				where id = ?
 				""", this::mapOrderRow, id).stream().findFirst();
 	}
 
