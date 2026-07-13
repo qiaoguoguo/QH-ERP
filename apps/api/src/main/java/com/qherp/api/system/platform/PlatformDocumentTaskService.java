@@ -91,7 +91,7 @@ public class PlatformDocumentTaskService {
 	public DocumentTaskRecord exportMaterials(MaterialExportRequest request, String idempotencyKey,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
-		String payloadJson = json(request == null ? new MaterialExportRequest(null, null, null, null, null) : request);
+		String payloadJson = json(request == null ? new MaterialExportRequest(null, null, null, null, null, null) : request);
 		List<ExistingTask> existing = this.jdbcTemplate.query("""
 				select id, request_payload::text as request_payload
 				from platform_document_task
@@ -143,7 +143,7 @@ public class PlatformDocumentTaskService {
 	public DocumentTaskRecord confirmImport(Long taskId, ConfirmImportRequest request, String idempotencyKey,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
-		DocumentTaskRecord task = task(taskId);
+		DocumentTaskState task = task(taskId);
 		requireTaskAccess(task, operator);
 		if (!task.taskType().endsWith("_IMPORT")) {
 			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
@@ -283,7 +283,8 @@ public class PlatformDocumentTaskService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<TaskErrorRecord> errors(Long taskId, int page, int pageSize, CurrentUser currentUser) {
-		DocumentTaskRecord task = get(taskId, currentUser);
+		DocumentTaskState task = task(taskId);
+		requireTaskAccess(task, currentUser);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from platform_document_task_error where task_id = ?",
 				Long.class, task.id());
 		List<TaskErrorRecord> items = this.jdbcTemplate.query("""
@@ -305,7 +306,7 @@ public class PlatformDocumentTaskService {
 		List<ExistingTask> existing = existingTask(operator.id(), taskType, idempotencyKey);
 		if (!existing.isEmpty()) {
 			ExistingTask existingTask = existing.getFirst();
-			if (!jsonEquivalent(payloadJson, existingTask.requestPayload())) {
+			if (!importPayloadEquivalent(payloadJson, existingTask.requestPayload())) {
 				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
 			}
 			return get(existingTask.id(), operator);
@@ -339,7 +340,7 @@ public class PlatformDocumentTaskService {
 		boolean viewAll = currentUser.permissions().contains("platform:document-task:view-all");
 		String where = viewAll ? "" : "where created_by_user_id = ?";
 		Object[] args = viewAll ? new Object[] {} : new Object[] { currentUser.id() };
-		List<DocumentTaskRecord> visible = this.jdbcTemplate.query("""
+		List<DocumentTaskState> visible = this.jdbcTemplate.query("""
 				select id, task_no, task_type, stage, status, idempotency_key, created_by_user_id,
 				       created_by_username, total_count, success_count, error_count, result_file_id,
 				       error_file_id, error_summary, attempt_count, max_attempts, created_at, started_at,
@@ -353,19 +354,20 @@ public class PlatformDocumentTaskService {
 			.toList();
 		int from = Math.min(offset(page, pageSize), visible.size());
 		int to = Math.min(from + limit(pageSize), visible.size());
-		return PageResponse.of(visible.subList(from, to), page, limit(pageSize), visible.size());
+		return PageResponse.of(visible.subList(from, to).stream().map(this::toDocumentTaskRecord).toList(), page,
+				limit(pageSize), visible.size());
 	}
 
 	@Transactional(readOnly = true)
 	public DocumentTaskRecord get(Long id, CurrentUser currentUser) {
-		DocumentTaskRecord task = task(id);
+		DocumentTaskState task = task(id);
 		requireTaskAccess(task, currentUser);
-		return task;
+		return toDocumentTaskRecord(task);
 	}
 
 	@Transactional(noRollbackFor = BusinessException.class)
 	public DownloadedFile download(Long id, CurrentUser currentUser) {
-		DocumentTaskRecord task = task(id);
+		DocumentTaskState task = task(id);
 		requireTaskAccess(task, currentUser);
 		if (!"SUCCEEDED".equals(task.status()) || task.resultFileId() == null) {
 			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
@@ -387,7 +389,7 @@ public class PlatformDocumentTaskService {
 		return new DownloadedFile(file.originalFilename(), file.contentType(), this.storageService.get(file.objectKey()));
 	}
 
-	private void markTaskExpired(DocumentTaskRecord task) {
+	private void markTaskExpired(DocumentTaskState task) {
 		int updated = this.jdbcTemplate.update("""
 				update platform_document_task
 				set status = 'EXPIRED', updated_at = now(), version = version + 1
@@ -623,7 +625,7 @@ public class PlatformDocumentTaskService {
 	@Transactional
 	public DocumentTaskRecord cancel(Long id, CancelTaskRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
-		DocumentTaskRecord task = task(id);
+		DocumentTaskState task = task(id);
 		requireTaskAccess(task, operator);
 		if (request == null || request.version() == null || !request.version().equals(task.version())) {
 			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_CONCURRENT_MODIFICATION);
@@ -669,6 +671,10 @@ public class PlatformDocumentTaskService {
 		if (request != null && hasText(request.sourceType())) {
 			conditions.add("m.source_type = ?");
 			args.add(request.sourceType());
+		}
+		if (request != null && hasText(request.trackingMethod())) {
+			conditions.add("m.tracking_method = ?");
+			args.add(request.trackingMethod());
 		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		List<MaterialExportRow> rows = this.jdbcTemplate.query("""
@@ -736,6 +742,7 @@ public class PlatformDocumentTaskService {
 					"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
 					"remark" });
 			validateVisibleColumns(sheet, 15);
+			validateVisibleRows(sheet, 1);
 			for (int i = 1; i <= sheet.getLastRowNum(); i++) {
 				Row row = sheet.getRow(i);
 				if (row == null || rowIsBlank(row)) {
@@ -792,6 +799,8 @@ public class PlatformDocumentTaskService {
 						"businessQuantity", "lossRate", "warehouse", "remark" });
 				validateVisibleColumns(bomSheet, 12);
 				validateVisibleColumns(itemsSheet, 7);
+				validateVisibleRows(bomSheet, 1);
+				validateVisibleRows(itemsSheet, 1);
 				if (itemsSheet.getLastRowNum() > 5000) {
 					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 				}
@@ -963,6 +972,10 @@ public class PlatformDocumentTaskService {
 					errors.add(new ImportError(item.lineNo(), "childMaterialCode",
 							ApiErrorCode.MASTER_DATA_REFERENCE_INVALID.name(), "子项物料不存在或未启用"));
 				}
+				if (hasText(item.warehouse())) {
+					errors.add(new ImportError(item.lineNo(), "warehouse",
+							ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "warehouse 必须留空，022 不支持 BOM 仓库导入"));
+				}
 			}
 		}
 	}
@@ -1097,10 +1110,11 @@ public class PlatformDocumentTaskService {
 	private void markValidationFailed(Long taskId, Long batchId, int totalCount, int errorCount) {
 		this.jdbcTemplate.update("""
 				update platform_document_task
-				set status = 'VALIDATION_FAILED', total_count = ?, error_count = ?, finished_at = now(),
-				    lease_owner = null, lease_until = null, updated_at = now(), version = version + 1
+				set status = 'VALIDATION_FAILED', total_count = ?, error_count = ?, error_summary = ?,
+				    finished_at = now(), lease_owner = null, lease_until = null, updated_at = now(),
+				    version = version + 1
 				where id = ?
-				""", totalCount, errorCount, taskId);
+				""", totalCount, errorCount, "导入校验失败：" + errorCount + " 条错误", taskId);
 		this.jdbcTemplate.update("""
 				update platform_import_batch
 				set status = 'VALIDATION_FAILED', updated_at = now(), version = version + 1
@@ -1271,7 +1285,7 @@ public class PlatformDocumentTaskService {
 		};
 	}
 
-	private DocumentTaskRecord task(Long id) {
+	private DocumentTaskState task(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, task_no, task_type, stage, status, idempotency_key, created_by_user_id,
 				       created_by_username, total_count, success_count, error_count, result_file_id,
@@ -1283,8 +1297,8 @@ public class PlatformDocumentTaskService {
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.DOCUMENT_TASK_NOT_FOUND));
 	}
 
-	private DocumentTaskRecord mapTask(ResultSet rs, int rowNum) throws SQLException {
-		return new DocumentTaskRecord(rs.getLong("id"), rs.getString("task_no"), rs.getString("task_type"),
+	private DocumentTaskState mapTask(ResultSet rs, int rowNum) throws SQLException {
+		return new DocumentTaskState(rs.getLong("id"), rs.getString("task_no"), rs.getString("task_type"),
 				rs.getString("stage"), rs.getString("status"), rs.getString("idempotency_key"),
 				rs.getLong("created_by_user_id"), rs.getString("created_by_username"), rs.getInt("total_count"),
 				rs.getInt("success_count"), rs.getInt("error_count"), nullableLong(rs, "result_file_id"),
@@ -1294,6 +1308,61 @@ public class PlatformDocumentTaskService {
 				rs.getObject("expires_at", OffsetDateTime.class), rs.getLong("version"),
 				documentTaskAvailableActions(rs.getString("status"), nullableLong(rs, "result_file_id"),
 						rs.getInt("error_count"), rs.getObject("expires_at", OffsetDateTime.class)));
+	}
+
+	private DocumentTaskRecord toDocumentTaskRecord(DocumentTaskState task) {
+		TaskObjectInfo objectInfo = taskObjectInfo(task);
+		return new DocumentTaskRecord(task.id(), task.taskNo(), task.taskType(), objectInfo.objectType(),
+				objectInfo.objectId(), objectInfo.objectNo(), objectInfo.objectName(), taskDirection(task.taskType()),
+				task.stage(), task.status(), progressPercent(task.status()), task.totalCount(), task.successCount(),
+				task.errorCount(), task.errorSummary(), task.createdByUsername(), task.createdAt(), task.finishedAt(),
+				task.expiresAt(), task.version(), task.availableActions());
+	}
+
+	private TaskObjectInfo taskObjectInfo(DocumentTaskState task) {
+		try {
+			if ("APPROVAL_PRINT".equals(task.taskType())) {
+				PrintTaskPayload payload = parsePrintTaskPayload(taskRequestPayload(task.id()));
+				ApprovalPrintSnapshot snapshot = approvalPrintSnapshot(payload.approvalInstanceId());
+				return new TaskObjectInfo(snapshot.businessObjectType(), snapshot.businessObjectId(),
+						snapshot.businessObjectNo(), snapshot.businessObjectSummary());
+			}
+			if ("BOM_DRAFT_EXPORT".equals(task.taskType())) {
+				BomDraftExportRequest payload = parseBomDraftExportRequest(taskRequestPayload(task.id()));
+				return new TaskObjectInfo("BOM", payload.bomId(), null, null);
+			}
+			if ("MATERIAL_EXPORT".equals(task.taskType()) || "MATERIAL_IMPORT".equals(task.taskType())) {
+				return new TaskObjectInfo("MATERIAL", null, null, null);
+			}
+			if ("BOM_DRAFT_IMPORT".equals(task.taskType())) {
+				return new TaskObjectInfo("BOM", null, null, null);
+			}
+		}
+		catch (RuntimeException exception) {
+			return new TaskObjectInfo(null, null, null, null);
+		}
+		return new TaskObjectInfo(null, null, null, null);
+	}
+
+	private static String taskDirection(String taskType) {
+		if (taskType.endsWith("_IMPORT")) {
+			return "IMPORT";
+		}
+		if (taskType.endsWith("_EXPORT")) {
+			return "EXPORT";
+		}
+		if ("APPROVAL_PRINT".equals(taskType)) {
+			return "PRINT";
+		}
+		return null;
+	}
+
+	private static Integer progressPercent(String status) {
+		return switch (status) {
+			case "QUEUED" -> 0;
+			case "RUNNING" -> 50;
+			default -> 100;
+		};
 	}
 
 	private List<String> documentTaskAvailableActions(String status, Long resultFileId, int errorCount,
@@ -1323,13 +1392,13 @@ public class PlatformDocumentTaskService {
 				rs.getLong("version"));
 	}
 
-	private void requireTaskAccess(DocumentTaskRecord task, CurrentUser currentUser) {
+	private void requireTaskAccess(DocumentTaskState task, CurrentUser currentUser) {
 		if (!canAccessTask(task, currentUser)) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		}
 	}
 
-	private boolean canAccessTask(DocumentTaskRecord task, CurrentUser currentUser) {
+	private boolean canAccessTask(DocumentTaskState task, CurrentUser currentUser) {
 		if (!task.createdByUserId().equals(currentUser.id())
 				&& !currentUser.permissions().contains("platform:document-task:view-all")) {
 			return false;
@@ -1350,7 +1419,7 @@ public class PlatformDocumentTaskService {
 		return true;
 	}
 
-	private boolean canViewApprovalPrintTask(DocumentTaskRecord task, CurrentUser currentUser) {
+	private boolean canViewApprovalPrintTask(DocumentTaskState task, CurrentUser currentUser) {
 		try {
 			PrintTaskPayload payload = parsePrintTaskPayload(taskRequestPayload(task.id()));
 			ApprovalPrintSnapshot snapshot = approvalPrintSnapshot(payload.approvalInstanceId());
@@ -1399,7 +1468,7 @@ public class PlatformDocumentTaskService {
 	public MaterialExportRequest parseMaterialExportRequest(String payload) {
 		try {
 			if (!hasText(payload)) {
-				return new MaterialExportRequest(null, null, null, null, null);
+				return new MaterialExportRequest(null, null, null, null, null, null);
 			}
 			return this.objectMapper.readValue(payload, MaterialExportRequest.class);
 		}
@@ -1411,6 +1480,18 @@ public class PlatformDocumentTaskService {
 	private boolean jsonEquivalent(String left, String right) {
 		try {
 			return this.objectMapper.readTree(left).equals(this.objectMapper.readTree(right));
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private boolean importPayloadEquivalent(String left, String right) {
+		try {
+			ImportTaskPayload leftPayload = parseImportTaskPayload(left);
+			ImportTaskPayload rightPayload = parseImportTaskPayload(right);
+			return nullToBlank(leftPayload.filename()).equals(nullToBlank(rightPayload.filename()))
+					&& nullToBlank(leftPayload.sha256()).equals(nullToBlank(rightPayload.sha256()));
 		}
 		catch (RuntimeException exception) {
 			return false;
@@ -1541,6 +1622,15 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private static void validateVisibleRows(Sheet sheet, int firstDataRow) {
+		for (int i = firstDataRow; i <= sheet.getLastRowNum(); i++) {
+			Row row = sheet.getRow(i);
+			if (row != null && row.getZeroHeight() && !rowIsBlank(row)) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+		}
+	}
+
 	private static String cellString(Row row, int index) {
 		if (row == null) {
 			return null;
@@ -1627,7 +1717,7 @@ public class PlatformDocumentTaskService {
 	}
 
 	public record MaterialExportRequest(String keyword, String status, Long categoryId, String materialType,
-			String sourceType) {
+			String sourceType, String trackingMethod) {
 	}
 
 	public record ConfirmImportRequest(Long version) {
@@ -1645,7 +1735,14 @@ public class PlatformDocumentTaskService {
 	public record CancelTaskRequest(Long version, String reason) {
 	}
 
-	public record DocumentTaskRecord(Long id, String taskNo, String taskType, String stage, String status,
+	public record DocumentTaskRecord(Long id, String taskNo, String taskType, String objectType, Long objectId,
+			String objectNo, String objectName, String direction, String stage, String status, Integer progressPercent,
+			int totalRows, int successRows, int failedRows, String errorMessage, String createdByName,
+			OffsetDateTime createdAt, OffsetDateTime completedAt, OffsetDateTime expiresAt, Long version,
+			List<String> availableActions) {
+	}
+
+	private record DocumentTaskState(Long id, String taskNo, String taskType, String stage, String status,
 			String idempotencyKey, Long createdByUserId, String createdByUsername, int totalCount, int successCount,
 			int errorCount, Long resultFileId, Long errorFileId, String errorSummary, int attemptCount,
 			int maxAttempts, OffsetDateTime createdAt, OffsetDateTime startedAt, OffsetDateTime finishedAt,
@@ -1666,6 +1763,9 @@ public class PlatformDocumentTaskService {
 	}
 
 	private record ExistingTask(Long id, String requestPayload) {
+	}
+
+	private record TaskObjectInfo(String objectType, Long objectId, String objectNo, String objectName) {
 	}
 
 	private record DocumentTaskFile(String objectKey, String originalFilename, String contentType) {

@@ -100,6 +100,25 @@ create table platform_approval_history (
 	constraint fk_platform_approval_history_instance foreign key (instance_id) references platform_approval_instance (id)
 );
 
+create table platform_approval_action_idempotency (
+	id bigserial primary key,
+	operator_user_id bigint not null,
+	action varchar(64) not null,
+	resource_type varchar(32) not null,
+	resource_id bigint not null,
+	resource_version bigint not null,
+	comment varchar(500),
+	idempotency_key varchar(120) not null,
+	request_fingerprint varchar(64) not null,
+	result_instance_id bigint not null,
+	created_at timestamptz not null default now(),
+	constraint fk_platform_approval_action_idempotency_instance foreign key (result_instance_id) references platform_approval_instance (id),
+	constraint ck_platform_approval_action_resource check (resource_type in ('TASK', 'INSTANCE'))
+);
+
+create unique index uk_platform_approval_action_idempotency
+	on platform_approval_action_idempotency (operator_user_id, action, resource_type, resource_id, idempotency_key);
+
 create table platform_message (
 	id bigserial primary key,
 	recipient_user_id bigint not null,

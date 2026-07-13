@@ -15,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
@@ -73,7 +74,9 @@ public class PlatformAttachmentService {
 				order by a.created_at desc, a.id desc
 				limit ? offset ?
 				""", this::mapRecord, objectType, objectId, limit(pageSize), offset(page, pageSize));
-		return PageResponse.of(items, page, limit(pageSize), total);
+		return PageResponse.of(items.stream()
+			.map((item) -> item.withAvailableActions(attachmentAvailableActions(item, currentUser)))
+			.toList(), page, limit(pageSize), total);
 	}
 
 	@Transactional
@@ -97,7 +100,8 @@ public class PlatformAttachmentService {
 				limit 1
 				""", this::mapRecord, upload.objectType(), upload.objectId(), sha256);
 		if (!duplicates.isEmpty()) {
-			return duplicates.getFirst();
+			AttachmentRecord duplicate = duplicates.getFirst();
+			return duplicate.withAvailableActions(attachmentAvailableActions(duplicate, operator));
 		}
 		Long activeCount = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -135,7 +139,7 @@ public class PlatformAttachmentService {
 					operator.id(), operator.username(), now);
 			this.auditService.record(operator, "ATTACHMENT_UPLOAD", upload.objectType(), upload.objectId(),
 					upload.originalFilename(), servletRequest);
-			return getRecord(attachmentId);
+			return getRecord(attachmentId, operator);
 		}
 		catch (RuntimeException exception) {
 			this.storageService.deleteQuietly(objectKey);
@@ -180,11 +184,11 @@ public class PlatformAttachmentService {
 				""", operator.username(), now, file.fileId());
 		this.auditService.record(operator, "ATTACHMENT_DELETE", file.objectType(), file.objectId(),
 				trimToNull(request.reason()), servletRequest);
-		return getRecord(attachmentId);
+		return getRecord(attachmentId, operator);
 	}
 
-	private AttachmentRecord getRecord(Long id) {
-		return this.jdbcTemplate.query("""
+	private AttachmentRecord getRecord(Long id, CurrentUser currentUser) {
+		AttachmentRecord record = this.jdbcTemplate.query("""
 				select a.id, a.object_type, a.object_id, f.original_filename, f.content_type, f.size_bytes,
 				       f.sha256, a.description, a.status, a.created_by_username, a.created_at, a.version
 				from platform_business_attachment a
@@ -192,6 +196,7 @@ public class PlatformAttachmentService {
 				where a.id = ?
 				""", this::mapRecord, id).stream().findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.ATTACHMENT_NOT_FOUND));
+		return record.withAvailableActions(attachmentAvailableActions(record, currentUser));
 	}
 
 	private AttachmentFile attachmentFile(Long id) {
@@ -216,7 +221,7 @@ public class PlatformAttachmentService {
 				rs.getString("original_filename"), rs.getString("content_type"), rs.getLong("size_bytes"),
 				rs.getString("sha256"), rs.getString("description"), rs.getString("status"),
 				rs.getString("created_by_username"), rs.getObject("created_at", OffsetDateTime.class),
-				rs.getLong("version"));
+				rs.getLong("version"), List.of());
 	}
 
 	private void validateUpload(AttachmentUpload upload) {
@@ -347,6 +352,33 @@ public class PlatformAttachmentService {
 		}
 	}
 
+	private boolean approvalOpen(String objectType, Long objectId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from platform_approval_instance
+				where business_object_type = ?
+				and business_object_id = ?
+				and status = 'SUBMITTED'
+				""", Long.class, objectType, objectId);
+		return count != null && count > 0;
+	}
+
+	private List<String> attachmentAvailableActions(AttachmentRecord record, CurrentUser currentUser) {
+		if (!"AVAILABLE".equals(record.status()) || !hasBusinessPermission(record.objectType(), record.objectId(),
+				currentUser)) {
+			return List.of();
+		}
+		List<String> actions = new ArrayList<>();
+		if (currentUser.permissions().contains("platform:attachment:download")) {
+			actions.add("DOWNLOAD");
+		}
+		if (currentUser.permissions().contains("platform:attachment:delete")
+				&& !approvalOpen(record.objectType(), record.objectId())) {
+			actions.add("DELETE");
+		}
+		return actions;
+	}
+
 	private void requireBusinessPermission(String objectType, Long objectId, CurrentUser currentUser) {
 		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
 			requirePermission(currentUser, "sales:contract:view");
@@ -361,6 +393,18 @@ public class PlatformAttachmentService {
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
+	private boolean hasBusinessPermission(String objectType, Long objectId, CurrentUser currentUser) {
+		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
+			return currentUser.permissions().contains("sales:contract:view")
+					&& exists("select count(*) from sal_project_contract where id = ?", objectId);
+		}
+		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
+			return currentUser.permissions().contains("material:bom-eco:view")
+					&& exists("select count(*) from mfg_bom_engineering_change where id = ?", objectId);
+		}
+		return false;
+	}
+
 	private void requirePermission(CurrentUser currentUser, String permissionCode) {
 		if (!currentUser.permissions().contains(permissionCode)) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
@@ -368,10 +412,14 @@ public class PlatformAttachmentService {
 	}
 
 	private void requireExists(String sql, Long objectId) {
-		Long count = this.jdbcTemplate.queryForObject(sql, Long.class, objectId);
-		if (count == null || count == 0) {
+		if (!exists(sql, objectId)) {
 			throw new BusinessException(ApiErrorCode.ATTACHMENT_NOT_FOUND);
 		}
+	}
+
+	private boolean exists(String sql, Long objectId) {
+		Long count = this.jdbcTemplate.queryForObject(sql, Long.class, objectId);
+		return count != null && count > 0;
 	}
 
 	private static String sha256(byte[] content) {
@@ -429,7 +477,14 @@ public class PlatformAttachmentService {
 
 	public record AttachmentRecord(Long id, String objectType, Long objectId, String fileName,
 			String contentType, Long fileSize, String sha256, String description, String status, String uploadedByName,
-			OffsetDateTime uploadedAt, Long version) {
+			OffsetDateTime uploadedAt, Long version, List<String> availableActions) {
+
+		AttachmentRecord withAvailableActions(List<String> nextAvailableActions) {
+			return new AttachmentRecord(this.id, this.objectType, this.objectId, this.fileName, this.contentType,
+					this.fileSize, this.sha256, this.description, this.status, this.uploadedByName, this.uploadedAt,
+					this.version, nextAvailableActions);
+		}
+
 	}
 
 	public record DownloadedFile(String originalFilename, String contentType, byte[] content) {

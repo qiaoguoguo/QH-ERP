@@ -112,8 +112,14 @@ public class PlatformApprovalService {
 	@Transactional
 	public ApprovalInstanceRecord approve(Long taskId, ApprovalActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		validateActionRequest(request, false);
 		ApprovalTaskState task = lockTask(taskId);
-		requireTaskVersion(task, request == null ? null : request.version());
+		ApprovalInstanceRecord idempotentResult = actionIdempotencyResult("APPROVE", "TASK", task.id(), request,
+				operator);
+		if (idempotentResult != null) {
+			return idempotentResult;
+		}
+		requireTaskVersion(task, request.version());
 		if (!"PENDING".equals(task.taskStatus()) || !"SUBMITTED".equals(task.instanceStatus())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
@@ -127,6 +133,7 @@ public class PlatformApprovalService {
 			throw new BusinessException(ApiErrorCode.APPROVAL_BUSINESS_OBJECT_CHANGED);
 		}
 		OffsetDateTime now = OffsetDateTime.now();
+		recordActionIdempotency("APPROVE", "TASK", task.id(), request, task.instanceId(), operator);
 		int taskUpdated = this.jdbcTemplate.update("""
 				update platform_approval_task
 				set status = 'APPROVED', handled_by_user_id = ?, handled_by_username = ?, handled_at = ?,
@@ -159,9 +166,14 @@ public class PlatformApprovalService {
 	@Transactional
 	public ApprovalInstanceRecord reject(Long taskId, ApprovalActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		validateActionRequest(request, true);
 		ApprovalTaskState task = lockTask(taskId);
-		requireTaskVersion(task, request == null ? null : request.version());
-		requireActionComment(request);
+		ApprovalInstanceRecord idempotentResult = actionIdempotencyResult("REJECT", "TASK", task.id(), request,
+				operator);
+		if (idempotentResult != null) {
+			return idempotentResult;
+		}
+		requireTaskVersion(task, request.version());
 		if (!"PENDING".equals(task.taskStatus()) || !"SUBMITTED".equals(task.instanceStatus())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
@@ -171,6 +183,7 @@ public class PlatformApprovalService {
 		requirePermission(operator, task.candidatePermissionCode());
 		requireBusinessViewPermission(operator, task.sceneCode());
 		OffsetDateTime now = OffsetDateTime.now();
+		recordActionIdempotency("REJECT", "TASK", task.id(), request, task.instanceId(), operator);
 		int taskUpdated = this.jdbcTemplate.update("""
 				update platform_approval_task
 				set status = 'REJECTED', handled_by_user_id = ?, handled_by_username = ?, handled_at = ?,
@@ -193,9 +206,14 @@ public class PlatformApprovalService {
 	@Transactional
 	public ApprovalInstanceRecord withdraw(Long instanceId, ApprovalActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		validateActionRequest(request, true);
 		ApprovalInstanceState instance = lockInstance(instanceId);
-		requireInstanceVersion(instance, request == null ? null : request.version());
-		requireActionComment(request);
+		ApprovalInstanceRecord idempotentResult = actionIdempotencyResult("WITHDRAW", "INSTANCE", instance.id(),
+				request, operator);
+		if (idempotentResult != null) {
+			return idempotentResult;
+		}
+		requireInstanceVersion(instance, request.version());
 		if (!"SUBMITTED".equals(instance.status())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
@@ -211,6 +229,7 @@ public class PlatformApprovalService {
 		if (handled != null && handled > 0) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
+		recordActionIdempotency("WITHDRAW", "INSTANCE", instance.id(), request, instance.id(), operator);
 		cancelPendingTasks(instance.id(), operator, request.comment());
 		updateInstanceTerminal(instance.id(), instance.version(), "WITHDRAWN", operator, request.comment());
 		recordHistory(instance.id(), "WITHDRAW", operator, request.comment());
@@ -224,13 +243,19 @@ public class PlatformApprovalService {
 	@Transactional
 	public ApprovalInstanceRecord cancel(Long instanceId, ApprovalActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		validateActionRequest(request, true);
 		ApprovalInstanceState instance = lockInstance(instanceId);
-		requireInstanceVersion(instance, request == null ? null : request.version());
-		requireActionComment(request);
+		ApprovalInstanceRecord idempotentResult = actionIdempotencyResult("CANCEL", "INSTANCE", instance.id(), request,
+				operator);
+		if (idempotentResult != null) {
+			return idempotentResult;
+		}
+		requireInstanceVersion(instance, request.version());
 		if (!"SUBMITTED".equals(instance.status())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
 		requirePermission(operator, "platform:approval:cancel");
+		recordActionIdempotency("CANCEL", "INSTANCE", instance.id(), request, instance.id(), operator);
 		cancelPendingTasks(instance.id(), operator, request.comment());
 		updateInstanceTerminal(instance.id(), instance.version(), "CANCELLED", operator, request.comment());
 		recordHistory(instance.id(), "CANCEL", operator, request.comment());
@@ -337,6 +362,52 @@ public class PlatformApprovalService {
 		return sha256(sceneCode + "|" + objectId + "|" + request.version() + "|" + request.reason().trim());
 	}
 
+	private ApprovalInstanceRecord actionIdempotencyResult(String action, String resourceType, Long resourceId,
+			ApprovalActionRequest request, CurrentUser operator) {
+		List<ExistingActionApproval> existing = this.jdbcTemplate.query("""
+				select result_instance_id, request_fingerprint
+				from platform_approval_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and resource_id = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new ExistingActionApproval(rs.getLong("result_instance_id"),
+				rs.getString("request_fingerprint")), operator.id(), action, resourceType, resourceId,
+				request.idempotencyKey().trim());
+		if (existing.isEmpty()) {
+			return null;
+		}
+		ExistingActionApproval approval = existing.getFirst();
+		if (!approval.requestFingerprint().equals(actionFingerprint(action, resourceType, resourceId, request))) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_IDEMPOTENCY_CONFLICT);
+		}
+		return toInstanceRecord(instanceBase(approval.resultInstanceId()), operator);
+	}
+
+	private void recordActionIdempotency(String action, String resourceType, Long resourceId,
+			ApprovalActionRequest request, Long resultInstanceId, CurrentUser operator) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into platform_approval_action_idempotency (
+						operator_user_id, action, resource_type, resource_id, resource_version, comment,
+						idempotency_key, request_fingerprint, result_instance_id
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), action, resourceType, resourceId, request.version(),
+					trimToNull(request.comment()), request.idempotencyKey().trim(),
+					actionFingerprint(action, resourceType, resourceId, request), resultInstanceId);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private String actionFingerprint(String action, String resourceType, Long resourceId, ApprovalActionRequest request) {
+		return sha256(action + "|" + resourceType + "|" + resourceId + "|" + request.version() + "|"
+				+ nullToBlank(trimToNull(request.comment())));
+	}
+
 	private ApprovalDefinition definition(String sceneCode) {
 		return this.jdbcTemplate.query("""
 				select d.id, d.scene_code, d.business_object_type, d.definition_version,
@@ -394,11 +465,14 @@ public class PlatformApprovalService {
 	}
 
 	private ApprovalInstanceRecord toInstanceRecord(ApprovalInstanceBase instance, CurrentUser currentUser) {
+		CurrentApprovalTask currentTask = currentApprovalTask(instance, currentUser);
 		return new ApprovalInstanceRecord(instance.id(), instance.sceneCode(), instance.businessObjectType(),
 				instance.businessObjectId(), instance.businessObjectNo(), instance.businessObjectSummary(),
 				instance.businessObjectVersion(), instance.status(), instance.submitReason(), instance.submittedByUserId(),
 				instance.submittedByUsername(), instance.submittedAt(), instance.completedByUsername(),
 				instance.completedAt(), instance.completedComment(), instance.version(),
+				currentTask == null ? null : currentTask.taskId(),
+				currentTask == null ? null : currentTask.version(),
 				instanceAvailableActions(instance, currentUser), steps(instance.id()), histories(instance.id()),
 				attachmentSnapshots(instance.id()));
 	}
@@ -568,6 +642,27 @@ public class PlatformApprovalService {
 		return "SUBMITTED".equals(instance.status()) && currentUser.permissions().contains("platform:approval:cancel");
 	}
 
+	private CurrentApprovalTask currentApprovalTask(ApprovalInstanceBase instance, CurrentUser currentUser) {
+		if (!"SUBMITTED".equals(instance.status()) || currentUser.id().equals(instance.submittedByUserId())
+				|| currentUser.permissions().isEmpty() || !hasBusinessViewPermission(currentUser, instance.sceneCode())) {
+			return null;
+		}
+		return this.jdbcTemplate.query("""
+				select id, version
+				from platform_approval_task
+				where instance_id = ?
+				and status = 'PENDING'
+				and candidate_permission_code in (%s)
+				order by step_no, id
+				limit 1
+				""".formatted(placeholders(currentUser.permissions().size())),
+				(rs, rowNum) -> new CurrentApprovalTask(rs.getLong("id"), rs.getLong("version")),
+				approvalTaskArgs(instance.id(), currentUser.permissions()).toArray())
+			.stream()
+			.findFirst()
+			.orElse(null);
+	}
+
 	private List<Object> approvalTaskArgs(Long instanceId, List<String> permissions) {
 		List<Object> args = new ArrayList<>();
 		args.add(instanceId);
@@ -577,14 +672,15 @@ public class PlatformApprovalService {
 
 	private List<ApprovalStepRecord> steps(Long instanceId) {
 		return this.jdbcTemplate.query("""
-				select id, step_no, candidate_permission_code, status, handled_by_username, handled_at, comment,
-				       version
-				from platform_approval_task
-				where instance_id = ?
-				order by step_no, id
-				""", (rs, rowNum) -> new ApprovalStepRecord(rs.getLong("id"), rs.getInt("step_no"),
-				rs.getString("candidate_permission_code"), rs.getString("status"), rs.getString("handled_by_username"),
-				rs.getObject("handled_at", OffsetDateTime.class), rs.getString("comment"), rs.getLong("version")),
+				select t.id, s.name as step_name, t.status, t.candidate_permission_code, t.handled_by_username,
+				       t.handled_at, t.version
+				from platform_approval_task t
+				join platform_approval_definition_step s on s.id = t.step_id
+				where t.instance_id = ?
+				order by t.step_no, t.id
+				""", (rs, rowNum) -> new ApprovalStepRecord(rs.getString("step_name"), rs.getString("status"),
+				rs.getLong("id"), rs.getLong("version"), rs.getString("candidate_permission_code"),
+				rs.getString("handled_by_username"), rs.getObject("handled_at", OffsetDateTime.class)),
 				instanceId);
 	}
 
@@ -595,8 +691,8 @@ public class PlatformApprovalService {
 				where instance_id = ?
 				order by created_at, id
 				""", (rs, rowNum) -> new ApprovalHistoryRecord(rs.getString("action"),
-				rs.getString("operator_username"), rs.getString("comment"),
-				rs.getObject("created_at", OffsetDateTime.class)), instanceId);
+				rs.getString("operator_username"), rs.getObject("created_at", OffsetDateTime.class),
+				rs.getString("comment"), resultStatus(rs.getString("action"))), instanceId);
 	}
 
 	private List<AttachmentSnapshotRecord> attachmentSnapshots(Long instanceId) {
@@ -620,6 +716,19 @@ public class PlatformApprovalService {
 		}
 	}
 
+	private void validateActionRequest(ApprovalActionRequest request, boolean commentRequired) {
+		if (request == null || request.version() == null || !hasText(request.idempotencyKey())
+				|| request.idempotencyKey().length() > 120) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (request.comment() != null && request.comment().length() > 500) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (commentRequired && !hasText(request.comment())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
 	private void requireTaskVersion(ApprovalTaskState task, Long version) {
 		if (version == null || !task.taskVersion().equals(version)) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_CONCURRENT_MODIFICATION);
@@ -629,12 +738,6 @@ public class PlatformApprovalService {
 	private void requireInstanceVersion(ApprovalInstanceState instance, Long version) {
 		if (version == null || !instance.version().equals(version)) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_CONCURRENT_MODIFICATION);
-		}
-	}
-
-	private void requireActionComment(ApprovalActionRequest request) {
-		if (request == null || !hasText(request.comment()) || request.comment().length() > 500) {
-			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 	}
 
@@ -732,6 +835,17 @@ public class PlatformApprovalService {
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
+	private static String resultStatus(String action) {
+		return switch (action) {
+			case "SUBMIT" -> "SUBMITTED";
+			case "APPROVE" -> "APPROVED";
+			case "REJECT" -> "REJECTED";
+			case "WITHDRAW" -> "WITHDRAWN";
+			case "CANCEL" -> "CANCELLED";
+			default -> null;
+		};
+	}
+
 	private void createMessage(Long recipientUserId, String title, String content, String messageType,
 			String relatedObjectType, Long relatedObjectId) {
 		this.jdbcTemplate.update("""
@@ -760,6 +874,10 @@ public class PlatformApprovalService {
 		return hasText(value) ? value.trim() : null;
 	}
 
+	private static String nullToBlank(String value) {
+		return value == null ? "" : value;
+	}
+
 	private static String sha256(String value) {
 		try {
 			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -783,14 +901,14 @@ public class PlatformApprovalService {
 			@NotNull String idempotencyKey) {
 	}
 
-	public record ApprovalActionRequest(@NotNull Long version, String comment) {
+	public record ApprovalActionRequest(@NotNull Long version, String comment, String idempotencyKey) {
 	}
 
 	public record ApprovalInstanceRecord(Long id, String sceneCode, String objectType, Long objectId,
 			String objectNo, String objectName, Long objectVersion, String status, String submitReason,
 			Long applicantId, String applicantName, OffsetDateTime submittedAt, String completedByUsername,
-			OffsetDateTime completedAt, String completedComment, Long version, List<String> availableActions,
-			List<ApprovalStepRecord> steps, List<ApprovalHistoryRecord> histories,
+			OffsetDateTime completedAt, String completedComment, Long version, Long taskId, Long taskVersion,
+			List<String> availableActions, List<ApprovalStepRecord> steps, List<ApprovalHistoryRecord> histories,
 			List<AttachmentSnapshotRecord> attachmentSnapshots) {
 	}
 
@@ -801,12 +919,12 @@ public class PlatformApprovalService {
 			OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version, List<String> availableActions) {
 	}
 
-	public record ApprovalStepRecord(Long taskId, int stepNo, String candidatePermissionCode, String status,
-			String handledByUsername, OffsetDateTime handledAt, String comment, Long version) {
+	public record ApprovalStepRecord(String stepName, String status, Long taskId, Long version,
+			String candidatePermission, String completedByName, OffsetDateTime completedAt) {
 	}
 
-	public record ApprovalHistoryRecord(String action, String operatorUsername, String comment,
-			OffsetDateTime createdAt) {
+	public record ApprovalHistoryRecord(String action, String operatorName, OffsetDateTime operatedAt, String comment,
+			String resultStatus) {
 	}
 
 	public record AttachmentSnapshotRecord(Long attachmentId, Long fileId, String fileName, String contentType,
@@ -832,6 +950,9 @@ public class PlatformApprovalService {
 			Long submittedByUserId, Long version) {
 	}
 
+	private record CurrentApprovalTask(Long taskId, Long version) {
+	}
+
 	private record ApprovalInstanceBase(Long id, String sceneCode, String businessObjectType, Long businessObjectId,
 			String businessObjectNo, String businessObjectSummary, Long businessObjectVersion, String status,
 			String submitReason, Long submittedByUserId, String submittedByUsername, OffsetDateTime submittedAt,
@@ -846,6 +967,9 @@ public class PlatformApprovalService {
 	}
 
 	private record ExistingApproval(Long id, String requestFingerprint) {
+	}
+
+	private record ExistingActionApproval(Long resultInstanceId, String requestFingerprint) {
 	}
 
 }
