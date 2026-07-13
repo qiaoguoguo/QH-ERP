@@ -14,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.OffsetDateTime;
@@ -233,29 +234,49 @@ public class MasterDataAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<PartnerResponse> listPartners(Resource resource, String keyword, String status, int page,
-			int pageSize) {
+			int pageSize, CurrentUser operator) {
 		requirePartnerResource(resource);
-		QueryParts queryParts = queryParts(resource, keyword, status);
-		long total = total(resource, queryParts);
+		QueryParts queryParts = queryParts(resource, keyword, status, "p");
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from %s p
+				%s
+				""".formatted(resource.table(), queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, page, pageSize);
 		List<PartnerResponse> items = this.jdbcTemplate.query("""
-				select id, code, name, contact_name, contact_phone, status, remark, created_at, updated_at
-				from %s
+				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark,
+				       p.created_at, p.updated_at, st.%s is not null as settlement_has_data,
+				       st.tax_no as settlement_tax_no, st.bank_account as settlement_bank_account,
+				       st.default_tax_rate as settlement_default_tax_rate, st.invoice_type as settlement_invoice_type,
+				       st.settlement_method as settlement_method, st.payment_term_days as settlement_payment_term_days
+				from %s p
+				left join %s st on st.%s = p.id
 				%s
-				order by id desc
+				order by p.id desc
 				limit ? offset ?
-				""".formatted(resource.table(), queryParts.where()), this::mapPartner, args.toArray());
+				""".formatted(settlementIdColumn(resource), resource.table(), settlementTable(resource),
+				settlementIdColumn(resource), queryParts.where()), (rs, rowNum) -> mapPartner(rs, rowNum, resource,
+						operator), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
 	@Transactional(readOnly = true)
-	public PartnerResponse getPartner(Resource resource, Long id) {
+	public PartnerResponse getPartner(Resource resource, Long id, CurrentUser operator) {
 		requirePartnerResource(resource);
 		return this.jdbcTemplate.query("""
-				select id, code, name, contact_name, contact_phone, status, remark, created_at, updated_at
-				from %s
-				where id = ?
-				""".formatted(resource.table()), this::mapPartner, id).stream().findFirst().orElseThrow(this::notFound);
+				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark,
+				       p.created_at, p.updated_at, st.%s is not null as settlement_has_data,
+				       st.tax_no as settlement_tax_no, st.bank_account as settlement_bank_account,
+				       st.default_tax_rate as settlement_default_tax_rate, st.invoice_type as settlement_invoice_type,
+				       st.settlement_method as settlement_method, st.payment_term_days as settlement_payment_term_days
+				from %s p
+				left join %s st on st.%s = p.id
+				where p.id = ?
+				""".formatted(settlementIdColumn(resource), resource.table(), settlementTable(resource),
+				settlementIdColumn(resource)), (rs, rowNum) -> mapPartner(rs, rowNum, resource, operator), id)
+			.stream()
+			.findFirst()
+			.orElseThrow(this::notFound);
 	}
 
 	@Transactional
@@ -277,7 +298,7 @@ public class MasterDataAdminService {
 					operator.username(), now);
 			this.auditService.record(operator, resource.createAction(), resource.targetType(), id, request.code(),
 					servletRequest);
-			return getPartner(resource, id);
+			return getPartner(resource, id, operator);
 		}
 		catch (DuplicateKeyException exception) {
 			throw codeExists();
@@ -303,7 +324,7 @@ public class MasterDataAdminService {
 			}
 			this.auditService.record(operator, resource.updateAction(), resource.targetType(), id, request.code(),
 					servletRequest);
-			return getPartner(resource, id);
+			return getPartner(resource, id, operator);
 		}
 		catch (DuplicateKeyException exception) {
 			throw codeExists();
@@ -315,7 +336,7 @@ public class MasterDataAdminService {
 			HttpServletRequest servletRequest) {
 		requirePartnerResource(resource);
 		changeStatus(resource, id, MasterDataStatus.ENABLED, operator, servletRequest);
-		return getPartner(resource, id);
+		return getPartner(resource, id, operator);
 	}
 
 	@Transactional
@@ -323,20 +344,25 @@ public class MasterDataAdminService {
 			HttpServletRequest servletRequest) {
 		requirePartnerResource(resource);
 		changeStatus(resource, id, MasterDataStatus.DISABLED, operator, servletRequest);
-		return getPartner(resource, id);
+		return getPartner(resource, id, operator);
 	}
 
 	private QueryParts queryParts(Resource resource, String keyword, String status) {
+		return queryParts(resource, keyword, status, null);
+	}
+
+	private QueryParts queryParts(Resource resource, String keyword, String status, String tableAlias) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
+		String prefix = hasText(tableAlias) ? tableAlias + "." : "";
 		if (hasText(keyword)) {
-			conditions.add("(code ilike ? or name ilike ?)");
+			conditions.add("(" + prefix + "code ilike ? or " + prefix + "name ilike ?)");
 			String like = "%" + keyword + "%";
 			args.add(like);
 			args.add(like);
 		}
 		if (hasText(status)) {
-			conditions.add("status = ?");
+			conditions.add(prefix + "status = ?");
 			args.add(parseStatus(status).name());
 		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
@@ -369,11 +395,52 @@ public class MasterDataAdminService {
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
-	private PartnerResponse mapPartner(ResultSet rs, int rowNum) throws SQLException {
+	private PartnerResponse mapPartner(ResultSet rs, int rowNum, Resource resource, CurrentUser operator)
+			throws SQLException {
 		return new PartnerResponse(rs.getLong("id"), rs.getString("code"), rs.getString("name"),
 				MasterDataStatus.valueOf(rs.getString("status")), rs.getString("remark"),
 				rs.getString("contact_name"), rs.getString("contact_phone"),
-				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
+				mapSettlementTaxSummary(rs, resource, operator));
+	}
+
+	private SettlementTaxSummary mapSettlementTaxSummary(ResultSet rs, Resource resource, CurrentUser operator)
+			throws SQLException {
+		boolean hasData = rs.getBoolean("settlement_has_data");
+		boolean restricted = hasData && !operatorCanViewSettlementTaxSensitive(resource, operator);
+		BigDecimal defaultTaxRate = rs.getBigDecimal("settlement_default_tax_rate");
+		return new SettlementTaxSummary(hasData, restricted, maskTail(rs.getString("settlement_tax_no"), 4),
+				maskTail(rs.getString("settlement_bank_account"), 4),
+				defaultTaxRate == null ? null : defaultTaxRate.setScale(6).toPlainString(),
+				rs.getString("settlement_invoice_type"), rs.getString("settlement_method"),
+				rs.getObject("settlement_payment_term_days", Integer.class));
+	}
+
+	private boolean operatorCanViewSettlementTaxSensitive(Resource resource, CurrentUser operator) {
+		if (operator == null) {
+			return false;
+		}
+		return switch (resource) {
+			case CUSTOMER -> operator.permissions().contains("master:customer-settlement:sensitive-view");
+			case SUPPLIER -> operator.permissions().contains("master:supplier-settlement:sensitive-view");
+			default -> false;
+		};
+	}
+
+	private String settlementTable(Resource resource) {
+		return switch (resource) {
+			case CUSTOMER -> "mst_customer_settlement_tax";
+			case SUPPLIER -> "mst_supplier_settlement_tax";
+			default -> throw new IllegalArgumentException("资源类型不匹配");
+		};
+	}
+
+	private String settlementIdColumn(Resource resource) {
+		return switch (resource) {
+			case CUSTOMER -> "customer_id";
+			case SUPPLIER -> "supplier_id";
+			default -> throw new IllegalArgumentException("资源类型不匹配");
+		};
 	}
 
 	private void changeStatus(Resource resource, Long id, MasterDataStatus status, CurrentUser operator,
@@ -472,6 +539,14 @@ public class MasterDataAdminService {
 		return hasText(value) ? value : null;
 	}
 
+	private static String maskTail(String value, int keep) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		int visible = Math.min(keep, value.length());
+		return "*".repeat(Math.max(0, value.length() - visible)) + value.substring(value.length() - visible);
+	}
+
 	private static boolean hasText(String value) {
 		return value != null && !value.isBlank();
 	}
@@ -543,7 +618,13 @@ public class MasterDataAdminService {
 	}
 
 	public record PartnerResponse(Long id, String code, String name, MasterDataStatus status, String remark,
-			String contactName, String contactPhone, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String contactName, String contactPhone, OffsetDateTime createdAt, OffsetDateTime updatedAt,
+			SettlementTaxSummary settlementTaxSummary) {
+	}
+
+	public record SettlementTaxSummary(boolean hasData, boolean sensitiveRestricted, String taxNoMasked,
+			String bankAccountMasked, String defaultTaxRate, String invoiceType, String settlementMethod,
+			Integer paymentTermDays) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

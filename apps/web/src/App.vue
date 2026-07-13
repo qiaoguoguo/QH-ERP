@@ -53,16 +53,24 @@ const financePayablePath = '/finance/payables'
 const financePaymentPath = '/finance/payments'
 const financeSettlementAdjustmentPath = '/finance/settlement-adjustments'
 const reportMenuPaths = new Set(reportRouteConfigs.map((item) => item.path))
+const masterUnitPath = '/master/units'
+const masterUnitConversionPath = '/master/unit-conversions'
+const masterCodingRulePath = '/master/coding-rules'
+const masterWarehousePath = '/master/warehouses'
+const masterSupplierPath = '/master/suppliers'
+const masterCustomerPath = '/master/customers'
 const supportedMenuPaths = new Set([
   '/accounts/users',
   '/system/users',
   '/accounts/roles',
   '/system/roles',
   businessPeriodPath,
-  '/master/units',
-  '/master/warehouses',
-  '/master/suppliers',
-  '/master/customers',
+  masterUnitPath,
+  masterUnitConversionPath,
+  masterCodingRulePath,
+  masterWarehousePath,
+  masterSupplierPath,
+  masterCustomerPath,
   '/materials/categories',
   '/materials/items',
   '/materials/boms',
@@ -88,6 +96,46 @@ const supportedMenuPaths = new Set([
   financeSettlementAdjustmentPath,
   ...reportMenuPaths,
 ])
+const masterChildren: MenuNode[] = [
+  {
+    id: 'master-units',
+    code: 'master:unit:view',
+    name: '计量单位',
+    routePath: masterUnitPath,
+  },
+  {
+    id: 'master-unit-conversions',
+    code: 'master:unit-conversion:view',
+    name: '物料单位换算',
+    routePath: masterUnitConversionPath,
+  },
+  {
+    id: 'master-coding-rules',
+    code: 'master:coding-rule:view',
+    name: '编码规则',
+    routePath: masterCodingRulePath,
+  },
+  {
+    id: 'master-warehouses',
+    code: 'master:warehouse:view',
+    name: '仓库',
+    routePath: masterWarehousePath,
+  },
+  {
+    id: 'master-suppliers',
+    code: 'master:supplier:view',
+    name: '供应商',
+    routePath: masterSupplierPath,
+  },
+  {
+    id: 'master-customers',
+    code: 'master:customer:view',
+    name: '客户',
+    routePath: masterCustomerPath,
+  },
+]
+const masterMenuPaths = new Set(masterChildren.map((child) => child.routePath))
+const masterMenuCodes = new Set(masterChildren.map((child) => String(child.code)))
 const systemChildren: MenuNode[] = [
   {
     id: 'system-business-periods',
@@ -245,7 +293,8 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
 ]
 const menuTree = computed<MenuNode[]>(() => {
   const supportedMenus = filterSupportedMenus(authStore.menus ?? [])
-  const systemMenus = ensureSystemMenu(supportedMenus)
+  const masterMenus = ensureMasterMenu(supportedMenus)
+  const systemMenus = ensureSystemMenu(masterMenus)
   const inventoryMenus = ensureInventoryMenu(systemMenus)
   const procurementMenus = ensureProcurementMenu(inventoryMenus)
   const salesMenus = ensureSalesMenu(procurementMenus)
@@ -275,6 +324,43 @@ async function hydrateCurrentUser() {
   } finally {
     sessionHydrating.value = false
   }
+}
+
+function ensureMasterMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = masterChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeMasterMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'master',
+      code: 'master',
+      name: '基础资料',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isMasterMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'master'
+    || masterMenuCodes.has(code)
+    || (menu.routePath ? masterMenuPaths.has(menu.routePath) : false)
+}
+
+function removeMasterMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeMasterMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isMasterMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 onMounted(() => {

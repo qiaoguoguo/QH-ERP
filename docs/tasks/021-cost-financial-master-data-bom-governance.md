@@ -15,10 +15,21 @@
 
 - 阶段编号：`021`
 - 阶段名称：`成本财务主数据与 BOM 治理`
-- 当前状态：阶段说明已形成，业务实现尚未完成。
+- 当前状态：业务实现与集中整改差异收口中，尚未进入交付前全量验证窗口。
 - 当前分支：`codex/021-cost-financial-bom-governance`
 - 权威输入：根目录 `AGENTS.md`、当前交接 `docs/handoffs/2026-07-12-project-handoff-current.md`、020 任务记录、020 实施计划、2026-07-13 固定五角色 021 讨论结论和用户最新指令。
 - 权威产物：本文件。后续固定角色实现、集中审查、定向复审和交付前全量验证均以本文件为唯一阶段输入。
+
+## 变更控制记录
+
+### 2026-07-13：集中整改差异复审后的接口口径收口
+
+- 变更原因：集中整改要求工程变更创建表单提供可见的 `BOM_ECO` 编码生成交互，但原接口章节又规定创建接口在保存时二次生成 `ecoNo`，造成用户确认编号与最终落库编号可能不一致；差异复审同时确认 BOM 详情尚缺少可消费的真实新旧版本关系字段。
+- 最终决策：工程变更编号仍只能由后端编码规则占号。前端“生成编码”按钮调用后端编码生成接口取得 `ecoNo`，创建请求必须提交该编号；创建服务只做必填、对象权限和唯一性校验并写入，不得再次生成另一个编号。编辑态编号只读。
+- 版本关系契约：`BomDetailRecord` 增加 `historyRelations`，返回当前 BOM 作为来源或目标关联到的工程变更关系，页面据此展示真实来源版本、目标版本、工程变更编号、状态和生效信息，不得以 BOM 自身发布状态替代历史关系。
+- 影响范围：`BomEngineeringChangePayload`、工程变更创建服务及测试、`BomDetailRecord`、BOM 详情页面及测试；不扩展审批、自动替代、库存计价或 022 以后范围。
+- 验收影响：创建前展示的工程变更编号必须与保存后记录一致且一次创建不重复占号；BOM 详情必须能追溯关联工程变更的新旧版本关系；相关权限、唯一冲突、版本并发和稳定错误语义继续由后端保证。
+- 决策依据：021 已确认的后端唯一编码原则、集中整改 `F-02`/`F-06`、产品与跨端差异复审证据，以及长期数据可追溯性与用户可预期性。
 
 ## 阶段目标
 
@@ -237,7 +248,7 @@
 ### 编码规则
 
 - 编码规则受控对象固定为 `MATERIAL`、`CUSTOMER`、`SUPPLIER`、`BOM`、`BOM_ECO`。021 只接入这些对象，不为采购、销售、生产、库存、发票、凭证或月结单据生成编码。
-- 编码生成必须在后端事务内完成，占号后不得被其他并发请求复用。
+- 编码生成必须在后端事务内完成，占号后不得被其他并发请求复用；页面展示的自动编码只能来自后端编码生成接口，不得由前端自行拼接。
 - 编码规则至少由对象类型、前缀、日期段、流水长度、重置周期、下一个流水号和状态组成。
 - 同一对象类型只能有一个启用的默认编码规则；停用规则后，不允许继续自动生成该对象编码。
 - 历史编码不改写；手工编码继续允许，但必须经过后端唯一性校验。
@@ -474,7 +485,7 @@ DRAFT -> CANCELLED
 
 `BomItemPayload` 字段：`lineNo: number`、`childMaterialId`、`businessUnitId`、`businessQuantity: decimal`、`lossRate?: decimal`、`remark?: string | null`。`baseUnitId` 和 `baseQuantity` 不由前端提交，由后端换算生成。
 
-`BomSummaryRecord` 必须包含 `version: number`，`baseQuantity` 为字符串。`BomItemRecord` 必须包含业务单位字段、基本单位字段、换算快照字段和 `quantityBasis`。
+`BomSummaryRecord` 必须包含 `version: number`，`baseQuantity` 为字符串。`BomItemRecord` 必须包含业务单位字段、基本单位字段、换算快照字段和 `quantityBasis`。`BomDetailRecord` 还必须包含 `historyRelations: BomHistoryRelationRecord[]`；每条关系至少包含 `ecoId`、`ecoNo`、`relationType: SOURCE | TARGET`、`sourceBomId`、`sourceBomCode`、`sourceVersionCode`、`targetBomId`、`targetBomCode`、`targetVersionCode`、`status`、`effectiveFrom`、`effectiveTo`、`appliedBy`、`appliedAt`。
 
 #### 工程变更接口
 
@@ -489,7 +500,7 @@ DRAFT -> CANCELLED
 | `GET` | `/api/admin/bom-engineering-changes/source-bom-candidates` | `keyword`、`parentMaterialId`、`selectedIds`、`page`、`pageSize` | 候选响应 |
 | `GET` | `/api/admin/bom-engineering-changes/target-bom-candidates` | `keyword`、`sourceBomId`、`selectedIds`、`page`、`pageSize` | 候选响应 |
 
-`BomEngineeringChangePayload` 字段：`sourceBomId`、`targetBomId`、`effectiveFrom: date`、`effectiveTo?: date | null`、`changeReason`、`impactScope`、`changeSummary`、`remark?: string | null`。`ecoNo` 由后端按 `BOM_ECO` 编码规则生成。
+`BomEngineeringChangePayload` 字段：创建时包含 `ecoNo`、`sourceBomId`、`targetBomId`、`effectiveFrom: date`、`effectiveTo?: date | null`、`changeReason`、`impactScope`、`changeSummary`、`remark?: string | null`；更新时编号只读，不允许改写。`ecoNo` 必须先由后端编码生成接口按 `BOM_ECO` 规则占号，前端不得自行拼接；创建服务校验必填、调用权限和唯一性后原值写入，不得在保存阶段二次生成。缺失编号返回 `VALIDATION_ERROR`，编号已占用或发生唯一冲突返回 `CODING_RULE_GENERATE_CONFLICT`。
 
 `BomEngineeringChangeRecord` 字段：`id`、`ecoNo`、`sourceBomId`、`sourceBomCode`、`sourceVersionCode`、`targetBomId`、`targetBomCode`、`targetVersionCode`、`parentMaterialId`、`parentMaterialCode`、`parentMaterialName`、`effectiveFrom`、`effectiveTo`、`changeReason`、`impactScope`、`changeSummary`、`status`、`appliedBy`、`appliedAt`、`cancelReason`、`createdAt`、`updatedAt`、`version`。
 

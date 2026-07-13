@@ -15,6 +15,8 @@ import QualityInspectionListView from '../modules/quality/QualityInspectionListV
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
 import SupplierListView from '../modules/master/suppliers/SupplierListView.vue'
 import UnitListView from '../modules/master/units/UnitListView.vue'
+import UnitConversionListView from '../modules/master/unitConversions/UnitConversionListView.vue'
+import CodingRuleListView from '../modules/master/codingRules/CodingRuleListView.vue'
 import WarehouseListView from '../modules/master/warehouses/WarehouseListView.vue'
 import ProductionCompletionReceiptView from '../modules/production/ProductionCompletionReceiptView.vue'
 import ProductionMaterialIssueView from '../modules/production/ProductionMaterialIssueView.vue'
@@ -148,6 +150,8 @@ describe('账号权限路由守卫', () => {
     const router = createQhErpRouter()
     const realMasterRoutes = [
       ['master-units', UnitListView],
+      ['master-unit-conversions', UnitConversionListView],
+      ['master-coding-rules', CodingRuleListView],
       ['master-warehouses', WarehouseListView],
       ['master-suppliers', SupplierListView],
       ['master-customers', CustomerListView],
@@ -164,6 +168,14 @@ describe('账号权限路由守卫', () => {
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
 
+    expect(router.getRoutes().find((item) => item.name === 'master-unit-conversions')?.path)
+      .toBe('/master/unit-conversions')
+    expect(router.getRoutes().find((item) => item.name === 'master-unit-conversions')?.meta.requiredPermission)
+      .toBe('master:unit-conversion:view')
+    expect(router.getRoutes().find((item) => item.name === 'master-coding-rules')?.path)
+      .toBe('/master/coding-rules')
+    expect(router.getRoutes().find((item) => item.name === 'master-coding-rules')?.meta.requiredPermission)
+      .toBe('master:coding-rule:view')
     expect(router.getRoutes().find((item) => item.name === 'material-categories')?.meta.requiredPermission)
       .toBe('master:material-category:view')
     expect(router.getRoutes().find((item) => item.name === 'material-items')?.meta.requiredPermission)

@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createMasterDataApi,
+  type CodingRulePayload,
+  type SettlementTaxRecord,
+  type UnitConversionPayload,
   type MaterialPayload,
   type MaterialRecord,
   type MaterialTrackingMethod,
@@ -175,6 +178,188 @@ describe('基础资料与物料 API', () => {
         unitId: 1,
         status: 'ENABLED',
       }),
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'PUT',
+    })
+  })
+
+  it('单位换算按冻结契约提交 decimal 字符串、候选分页和 version 状态动作', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], selectedItems: [], total: 0, page: 1, pageSize: 20, totalPages: 0 }))
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 12, version: 4 }))
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 12, status: 'DISABLED', version: 5 }))
+    const api = createMasterDataApi({ fetcher })
+    const payload: UnitConversionPayload = {
+      materialId: 3,
+      businessUnitId: 2,
+      conversionRate: '2.5000',
+      quantityScale: 4,
+      roundingMode: 'HALF_UP',
+      effectiveFrom: '2026-07-01',
+      effectiveTo: null,
+      remark: '采购箱换算',
+      version: 4,
+    }
+
+    await api.unitConversions.materialCandidates({ keyword: '钢', selectedIds: [3, '7'], page: 1, pageSize: 20 })
+    await api.unitConversions.update(12, payload)
+    await api.unitConversions.disable(12, { version: 5 })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/master/unit-conversions/material-candidates?keyword=%E9%92%A2&page=1&pageSize=20&selectedIds=3%2C7',
+      expect.any(Object),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/master/unit-conversions/12', {
+      body: JSON.stringify(payload),
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'PUT',
+    })
+    expect(fetcher).toHaveBeenNthCalledWith(5, '/api/admin/master/unit-conversions/12/disable', {
+      body: JSON.stringify({ version: 5 }),
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'PUT',
+    })
+  })
+
+  it('编码规则生成编码只调用后端 generate 接口并保留稳定错误码', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ objectType: 'MATERIAL', ruleId: 8, generatedCode: 'MAT-202607-0001', generatedAt: '2026-07-13T10:00:00+08:00' }))
+    const api = createMasterDataApi({ fetcher })
+    const payload: CodingRulePayload = {
+      ruleCode: 'MAT-RULE',
+      name: '物料编码',
+      objectType: 'MATERIAL',
+      prefix: 'MAT',
+      datePattern: 'YYYYMM',
+      serialLength: 4,
+      resetCycle: 'MONTH',
+      nextSerialNo: 1,
+      status: 'ENABLED',
+      remark: null,
+    }
+
+    await api.codingRules.generate({ objectType: payload.objectType, contextDate: '2026-07-13' })
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/coding-rules/generate', {
+      body: JSON.stringify({ objectType: 'MATERIAL', contextDate: '2026-07-13' }),
+      credentials: 'include',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': 'csrf-token',
+      },
+      method: 'POST',
+    })
+  })
+
+  it('物料更新和状态动作提交 version 与成本属性字段', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 9, version: 8 }))
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ id: 9, status: 'ENABLED', version: 9 }))
+    const api = createMasterDataApi({ fetcher })
+
+    await api.materials.update(9, {
+      code: 'MAT-001',
+      name: '冷轧钢板',
+      materialType: 'RAW_MATERIAL',
+      sourceType: 'PURCHASED',
+      trackingMethod: 'BATCH',
+      categoryId: 3,
+      unitId: 1,
+      costCategory: 'DIRECT_MATERIAL',
+      inventoryValuationCategory: 'VALUATED_MATERIAL',
+      inventoryValueEnabled: true,
+      projectCostEnabled: true,
+      costRemark: '项目材料',
+      status: 'ENABLED',
+      version: 7,
+    })
+    await api.materials.enable(9, { version: 8 })
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/master/materials/9', expect.objectContaining({
+      body: expect.stringContaining('"version":7'),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/master/materials/9/enable', expect.objectContaining({
+      body: JSON.stringify({ version: 8 }),
+      method: 'PUT',
+    }))
+  })
+
+  it('客户结算税务资料使用独立接口，受限响应完整敏感字段为 null', async () => {
+    const restrictedRecord: SettlementTaxRecord = {
+      ownerType: 'CUSTOMER',
+      ownerId: 1,
+      hasData: true,
+      sensitiveRestricted: true,
+      restrictedMessage: '无敏感查看权限',
+      invoiceTitle: '华南设备客户',
+      taxNo: null,
+      taxNoMasked: '9144********1234',
+      registeredAddress: null,
+      registeredPhone: null,
+      bankName: null,
+      bankAccount: null,
+      bankAccountMasked: '6222********8899',
+      defaultTaxRate: '0.1300',
+      invoiceType: 'SPECIAL_VAT',
+      settlementMethod: 'MONTHLY',
+      paymentTermDays: 30,
+      paymentTerms: '月结30天',
+      remark: null,
+      version: 6,
+    }
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse(restrictedRecord))
+      .mockResolvedValueOnce(
+        apiResponse({ token: 'csrf-token', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }),
+      )
+      .mockResolvedValueOnce(apiResponse({ ...restrictedRecord, paymentTermDays: 45, version: 7 }))
+    const api = createMasterDataApi({ fetcher })
+
+    const record = await api.customers.getSettlementTax(1)
+    await api.customers.updateSettlementTax(1, { paymentTermDays: 45, version: record.version })
+
+    expect(record.taxNo).toBeNull()
+    expect(record.bankAccount).toBeNull()
+    expect(record.taxNoMasked).toBe('9144********1234')
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/master/customers/1/settlement-tax', {
+      body: JSON.stringify({ paymentTermDays: 45, version: 6 }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',

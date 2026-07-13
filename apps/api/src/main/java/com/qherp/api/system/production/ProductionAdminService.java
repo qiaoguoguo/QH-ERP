@@ -201,20 +201,28 @@ public class ProductionAdminService {
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("delete from mfg_work_order_material where work_order_id = ?", id);
 		for (BomItemRef item : items) {
-			BigDecimal requiredQuantity = workOrder.plannedQuantity()
-				.divide(bom.baseQuantity(), 12, RoundingMode.HALF_UP)
-				.multiply(item.quantity())
+			BigDecimal factor = workOrder.plannedQuantity().divide(bom.baseQuantity(), 12, RoundingMode.HALF_UP);
+			BigDecimal businessQuantity = factor.multiply(item.businessQuantity())
 				.multiply(ONE.add(item.lossRate()))
 				.setScale(6, RoundingMode.HALF_UP);
-			validatePositiveProductionQuantity(requiredQuantity);
+			BigDecimal baseRequiredQuantity = factor.multiply(item.baseQuantity())
+				.multiply(ONE.add(item.lossRate()))
+				.setScale(6, RoundingMode.HALF_UP);
+			validatePositiveProductionQuantity(businessQuantity);
+			validatePositiveProductionQuantity(baseRequiredQuantity);
 			this.jdbcTemplate.update("""
 					insert into mfg_work_order_material (
 						work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity,
-						issued_quantity, loss_rate, remark, created_at, updated_at
+						issued_quantity, loss_rate, remark, created_at, updated_at, business_unit_id,
+						business_quantity, base_unit_id, base_required_quantity, conversion_id,
+						conversion_rate_snapshot, quantity_scale_snapshot, rounding_mode_snapshot, quantity_basis
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-					""", id, item.lineNo(), item.id(), item.material().id(), item.unitId(), requiredQuantity, ZERO,
-					item.lossRate(), blankToNull(item.remark()), now, now);
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", id, item.lineNo(), item.id(), item.material().id(), item.baseUnitId(), baseRequiredQuantity,
+					ZERO, item.lossRate(), blankToNull(item.remark()), now, now, item.businessUnitId(),
+					businessQuantity, item.baseUnitId(), baseRequiredQuantity, item.conversionId(),
+					item.conversionRateSnapshot(), item.quantityScaleSnapshot(), item.roundingModeSnapshot(),
+					item.quantityBasis());
 		}
 		this.jdbcTemplate.update("""
 				update mfg_work_order
@@ -860,8 +868,14 @@ public class ProductionAdminService {
 		}
 		for (BomItemRef item : items) {
 			validateEnabledMaterial(item.material().id());
-			validateEnabledUnit(item.unitId());
-			validatePositiveProductionQuantity(item.quantity());
+			if ("LEGACY_BUSINESS_UNIT".equals(item.quantityBasis()) || item.baseUnitId() == null
+					|| item.baseQuantity() == null) {
+				throw new BusinessException(ApiErrorCode.PRODUCTION_UNIT_CONVERSION_REQUIRED);
+			}
+			validateEnabledUnit(item.businessUnitId());
+			validateEnabledUnit(item.baseUnitId());
+			validatePositiveProductionQuantity(item.businessQuantity());
+			validatePositiveProductionQuantity(item.baseQuantity());
 		}
 		return items;
 	}
@@ -1138,11 +1152,17 @@ public class ProductionAdminService {
 				       wom.remark, coalesce(sb.quantity_on_hand, 0.000000) as qualified_quantity_on_hand,
 				       coalesce(locked.reserved_quantity, 0.000000) as reserved_quantity,
 				       coalesce(locked.occupied_quantity, 0.000000) as occupied_quantity,
-				       coalesce(own.own_quantity, 0.000000) as own_reserved_quantity
+				       coalesce(own.own_quantity, 0.000000) as own_reserved_quantity,
+				       wom.business_unit_id, bu.name as business_unit_name, wom.business_quantity,
+				       wom.base_unit_id, baseu.name as base_unit_name, wom.base_required_quantity,
+				       wom.conversion_id, wom.conversion_rate_snapshot, wom.quantity_scale_snapshot,
+				       wom.rounding_mode_snapshot, wom.quantity_basis
 				from mfg_work_order_material wom
 				join mfg_work_order wo on wo.id = wom.work_order_id
 				join mst_material m on m.id = wom.material_id
 				join mst_unit u on u.id = wom.unit_id
+				join mst_unit bu on bu.id = wom.business_unit_id
+				left join mst_unit baseu on baseu.id = wom.base_unit_id
 				left join (
 					select warehouse_id, material_id, quality_status,
 					       sum(quantity_on_hand) as quantity_on_hand,
@@ -1192,7 +1212,13 @@ public class ProductionAdminService {
 					InventoryQualityStatus.QUALIFIED.displayName(), quantityOnHand, reservedQuantity,
 					occupiedQuantity, availableQuantity, availableQuantity, selectable,
 					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH,
-					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity);
+					selectable ? null : QUALIFIED_BALANCE_NOT_ENOUGH_MESSAGE, maxSelectableQuantity,
+					rs.getLong("business_unit_id"), rs.getString("business_unit_name"),
+					decimalString(rs.getBigDecimal("business_quantity")), rs.getObject("base_unit_id", Long.class),
+					rs.getString("base_unit_name"), decimalString(rs.getBigDecimal("base_required_quantity")),
+					rs.getObject("conversion_id", Long.class), decimalString(rs.getBigDecimal("conversion_rate_snapshot")),
+					rs.getObject("quantity_scale_snapshot", Integer.class), rs.getString("rounding_mode_snapshot"),
+					rs.getString("quantity_basis"));
 		}, workOrderId);
 	}
 
@@ -1392,7 +1418,10 @@ public class ProductionAdminService {
 		return this.jdbcTemplate.query("""
 				select i.id, i.line_no, i.child_material_id, m.code as material_code, m.name as material_name,
 				       m.material_type, m.source_type, m.unit_id as material_unit_id, u.name as material_unit_name,
-				       m.status as material_status, i.unit_id, i.quantity, i.loss_rate, i.remark
+				       m.status as material_status, i.unit_id, i.quantity, i.loss_rate, i.remark,
+				       i.business_unit_id, i.business_quantity, i.base_unit_id, i.base_quantity, i.conversion_id,
+				       i.conversion_rate_snapshot, i.quantity_scale_snapshot, i.rounding_mode_snapshot,
+				       i.quantity_basis
 				from mfg_bom_item i
 				join mst_material m on m.id = i.child_material_id
 				join mst_unit u on u.id = m.unit_id
@@ -1403,7 +1432,11 @@ public class ProductionAdminService {
 						rs.getString("material_name"), rs.getString("material_type"), rs.getString("source_type"),
 						rs.getLong("material_unit_id"), rs.getString("material_unit_name"),
 						rs.getString("material_status")),
-				rs.getLong("unit_id"), rs.getBigDecimal("quantity"), rs.getBigDecimal("loss_rate"),
+				rs.getLong("unit_id"), rs.getBigDecimal("quantity"), rs.getObject("business_unit_id", Long.class),
+				rs.getBigDecimal("business_quantity"), rs.getObject("base_unit_id", Long.class),
+				rs.getBigDecimal("base_quantity"), rs.getObject("conversion_id", Long.class),
+				rs.getBigDecimal("conversion_rate_snapshot"), rs.getObject("quantity_scale_snapshot", Integer.class),
+				rs.getString("rounding_mode_snapshot"), rs.getString("quantity_basis"), rs.getBigDecimal("loss_rate"),
 				rs.getString("remark")), bomId);
 	}
 
@@ -1623,6 +1656,10 @@ public class ProductionAdminService {
 		return hasText(value) ? value : null;
 	}
 
+	private static String decimalString(BigDecimal value) {
+		return value == null ? null : value.setScale(6, RoundingMode.HALF_UP).toPlainString();
+	}
+
 	private Long nullableLong(ResultSet rs, String column) throws SQLException {
 		long value = rs.getLong(column);
 		return rs.wasNull() ? null : value;
@@ -1671,7 +1708,10 @@ public class ProductionAdminService {
 			String remark, String qualityStatus, String qualityStatusName, BigDecimal quantityOnHand,
 			BigDecimal reservedQuantity, BigDecimal occupiedQuantity, BigDecimal availableQuantity,
 			BigDecimal availableToPromiseQuantity, boolean selectable, String disabledReasonCode,
-			String disabledReason, BigDecimal maxSelectableQuantity) {
+			String disabledReason, BigDecimal maxSelectableQuantity, Long businessUnitId, String businessUnitName,
+			String businessQuantity, Long baseUnitId, String baseUnitName, String baseRequiredQuantity,
+			Long conversionId, String conversionRateSnapshot, Integer quantityScaleSnapshot,
+			String roundingModeSnapshot, String quantityBasis) {
 	}
 
 	public record WorkOrderDetailResponse(Long id, String workOrderNo, Long productMaterialId,
@@ -1780,7 +1820,9 @@ public class ProductionAdminService {
 	}
 
 	private record BomItemRef(Long id, Integer lineNo, MaterialRef material, Long unitId, BigDecimal quantity,
-			BigDecimal lossRate, String remark) {
+			Long businessUnitId, BigDecimal businessQuantity, Long baseUnitId, BigDecimal baseQuantity,
+			Long conversionId, BigDecimal conversionRateSnapshot, Integer quantityScaleSnapshot,
+			String roundingModeSnapshot, String quantityBasis, BigDecimal lossRate, String remark) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

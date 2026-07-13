@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
     update: vi.fn(),
     enable: vi.fn(),
     disable: vi.fn(),
+    getSettlementTax: vi.fn(),
+    updateSettlementTax: vi.fn(),
   },
 }))
 
@@ -27,10 +29,41 @@ const customer: PartnerRecord = {
   name: '华南设备客户',
   contactName: '王五',
   contactPhone: '13800000002',
+  settlementTaxSummary: {
+    hasData: true,
+    sensitiveRestricted: true,
+    taxNoMasked: '9144********1234',
+    defaultTaxRate: '0.1300',
+    settlementMethod: 'MONTHLY',
+    paymentTermDays: 30,
+  },
   status: 'ENABLED',
   remark: '设备整机客户',
 }
 const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
+
+const restrictedSettlementTax = {
+  ownerType: 'CUSTOMER',
+  ownerId: 1,
+  hasData: true,
+  sensitiveRestricted: true,
+  restrictedMessage: '无权限查看完整结算税务资料',
+  invoiceTitle: '华南设备客户',
+  taxNo: null,
+  taxNoMasked: '9144********1234',
+  registeredAddress: null,
+  registeredPhone: null,
+  bankName: null,
+  bankAccount: null,
+  bankAccountMasked: '6222********8899',
+  defaultTaxRate: '0.1300',
+  invoiceType: 'SPECIAL_VAT',
+  settlementMethod: 'MONTHLY',
+  paymentTermDays: 30,
+  paymentTerms: '月结30天',
+  remark: null,
+  version: 5,
+}
 
 function mountCustomers(permissions = ['master:customer:view', 'master:customer:create', 'master:customer:update']) {
   const pinia = createPinia()
@@ -55,6 +88,8 @@ describe('客户列表页', () => {
     apiMock.customers.update.mockResolvedValue(customer)
     apiMock.customers.enable.mockResolvedValue(customer)
     apiMock.customers.disable.mockResolvedValue(customer)
+    apiMock.customers.getSettlementTax.mockResolvedValue(restrictedSettlementTax)
+    apiMock.customers.updateSettlementTax.mockResolvedValue({ ...restrictedSettlementTax, paymentTermDays: 45, version: 6 })
   })
 
   it('新增客户时提交联系人和联系电话', async () => {
@@ -83,5 +118,47 @@ describe('客户列表页', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="create-record"]').exists()).toBe(false)
+  })
+
+  it('列表展示结算税务摘要、脱敏值和受限标签，不出现完整敏感值', async () => {
+    apiMock.customers.list.mockResolvedValue({ items: [customer], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountCustomers([
+      'master:customer:view',
+      'master:customer-settlement:view',
+      'master:customer-settlement:update',
+    ])
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('9144********1234')
+    expect(wrapper.text()).toContain('13%')
+    expect(wrapper.text()).toContain('月结')
+    expect(wrapper.text()).toContain('受限')
+    expect(wrapper.text()).not.toContain('914403001234567890')
+    expect(wrapper.text()).not.toContain('6222000011118899')
+  })
+
+  it('维护结算税务资料走独立接口并提交 version，不复用普通客户更新', async () => {
+    apiMock.customers.list.mockResolvedValue({ items: [customer], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountCustomers([
+      'master:customer:view',
+      'master:customer-update',
+      'master:customer-settlement:view',
+      'master:customer-settlement:update',
+      'master:customer-settlement:sensitive-update',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-customer-settlement-tax"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="settlement-payment-term-days"]').setValue('45')
+    await wrapper.find('[data-test="submit-settlement-tax"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.customers.getSettlementTax).toHaveBeenCalledWith(1)
+    expect(apiMock.customers.updateSettlementTax).toHaveBeenCalledWith(1, expect.objectContaining({
+      paymentTermDays: 45,
+      version: 5,
+    }))
+    expect(apiMock.customers.update).not.toHaveBeenCalled()
   })
 })

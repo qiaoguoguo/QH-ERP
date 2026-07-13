@@ -15,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
+
 @RestController
 @RequestMapping("/api/admin/boms")
 public class BomAdminController {
@@ -28,9 +30,29 @@ public class BomAdminController {
 	@GetMapping
 	public ApiResponse<PageResponse<BomAdminService.BomSummaryResponse>> list(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
-			@RequestParam(required = false) Long parentMaterialId, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) Long parentMaterialId,
+			@RequestParam(required = false) LocalDate effectiveDate,
+			@RequestParam(required = false) Boolean includeHistory, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.bomAdminService.list(keyword, status, parentMaterialId, page, pageSize));
+		return ApiResponse.ok(this.bomAdminService.list(keyword, status, parentMaterialId, effectiveDate,
+				includeHistory, page, pageSize));
+	}
+
+	@GetMapping("/material-candidates")
+	public ApiResponse<com.qherp.api.system.master.UnitConversionAdminService.CandidatePage> materialCandidates(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String selectedIds,
+			@RequestParam(required = false) String materialType, @RequestParam(required = false) String status,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.bomAdminService.materialCandidates(keyword, materialType, status, selectedIds,
+				page, pageSize));
+	}
+
+	@GetMapping("/unit-candidates")
+	public ApiResponse<com.qherp.api.system.master.UnitConversionAdminService.CandidatePage> unitCandidates(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String selectedIds,
+			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.bomAdminService.unitCandidates(keyword, status, selectedIds, page, pageSize));
 	}
 
 	@GetMapping("/{id}")
@@ -61,14 +83,16 @@ public class BomAdminController {
 
 	@PutMapping("/{id}/enable")
 	public ApiResponse<BomAdminService.BomDetailResponse> enable(@PathVariable Long id,
+			@RequestBody(required = false) BomAdminService.VersionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.bomAdminService.enable(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.bomAdminService.enable(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/{id}/disable")
 	public ApiResponse<BomAdminService.BomDetailResponse> disable(@PathVariable Long id,
+			@RequestBody(required = false) BomAdminService.VersionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.bomAdminService.disable(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.bomAdminService.disable(id, request, currentUser, servletRequest));
 	}
 
 }

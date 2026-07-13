@@ -70,6 +70,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return businessPeriodPermissionCode;
 		}
 
+		String stage021MasterPermissionCode = stage021MasterPermissionCode(method, path);
+		if (stage021MasterPermissionCode != null) {
+			return stage021MasterPermissionCode;
+		}
+
 		String masterDataPermissionCode = masterDataPermissionCode(method, path);
 		if (masterDataPermissionCode != null) {
 			return masterDataPermissionCode;
@@ -78,6 +83,16 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		String bomPermissionCode = bomPermissionCode(method, path);
 		if (bomPermissionCode != null) {
 			return bomPermissionCode;
+		}
+
+		String bomEngineeringChangePermissionCode = bomEngineeringChangePermissionCode(method, path);
+		if (bomEngineeringChangePermissionCode != null) {
+			return bomEngineeringChangePermissionCode;
+		}
+
+		String materialSubstitutePermissionCode = materialSubstitutePermissionCode(method, path);
+		if (materialSubstitutePermissionCode != null) {
+			return materialSubstitutePermissionCode;
 		}
 
 		String inventoryPermissionCode = inventoryPermissionCode(method, path);
@@ -591,7 +606,8 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
-		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath))) {
+		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath)
+				|| (basePath + "/material-candidates").equals(path) || (basePath + "/unit-candidates").equals(path))) {
 			return "material:bom:view";
 		}
 		if ("POST".equals(method) && basePath.equals(path)) {
@@ -608,6 +624,119 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/disable")) {
 			return "material:bom:disable";
+		}
+		return null;
+	}
+
+	private String stage021MasterPermissionCode(String method, String path) {
+		String unitConversionPath = "/api/admin/master/unit-conversions";
+		if (matchesBasePath(path, unitConversionPath)) {
+			if ("GET".equals(method) && (unitConversionPath.equals(path) || matchesIdPath(path, unitConversionPath)
+					|| (unitConversionPath + "/material-candidates").equals(path)
+					|| (unitConversionPath + "/unit-candidates").equals(path))) {
+				return "master:unit-conversion:view";
+			}
+			if ("POST".equals(method) && (unitConversionPath + "/convert").equals(path)) {
+				return "master:unit-conversion:view";
+			}
+			if ("POST".equals(method) && unitConversionPath.equals(path)) {
+				return "master:unit-conversion:create";
+			}
+			if ("PUT".equals(method) && matchesIdPath(path, unitConversionPath)) {
+				return "master:unit-conversion:update";
+			}
+			if ("PUT".equals(method) && path.matches(Pattern.quote(unitConversionPath) + "/\\d+/enable")) {
+				return "master:unit-conversion:enable";
+			}
+			if ("PUT".equals(method) && path.matches(Pattern.quote(unitConversionPath) + "/\\d+/disable")) {
+				return "master:unit-conversion:disable";
+			}
+			return null;
+		}
+
+		String codingRulePath = "/api/admin/coding-rules";
+		if (matchesBasePath(path, codingRulePath)) {
+			if ("GET".equals(method) && (codingRulePath.equals(path) || matchesIdPath(path, codingRulePath))) {
+				return "master:coding-rule:view";
+			}
+			if ("POST".equals(method) && codingRulePath.equals(path)) {
+				return "master:coding-rule:create";
+			}
+			if ("PUT".equals(method) && matchesIdPath(path, codingRulePath)) {
+				return "master:coding-rule:update";
+			}
+			if ("PUT".equals(method) && path.matches(Pattern.quote(codingRulePath) + "/\\d+/enable")) {
+				return "master:coding-rule:enable";
+			}
+			if ("PUT".equals(method) && path.matches(Pattern.quote(codingRulePath) + "/\\d+/disable")) {
+				return "master:coding-rule:disable";
+			}
+			if ("POST".equals(method) && (codingRulePath + "/generate").equals(path)) {
+				return "master:coding-rule:generate";
+			}
+			return null;
+		}
+
+		if ("GET".equals(method) && path.matches("/api/admin/master/customers/\\d+/settlement-tax")) {
+			return "master:customer-settlement:view";
+		}
+		if ("PUT".equals(method) && path.matches("/api/admin/master/customers/\\d+/settlement-tax")) {
+			return "master:customer-settlement:update";
+		}
+		if ("GET".equals(method) && path.matches("/api/admin/master/suppliers/\\d+/settlement-tax")) {
+			return "master:supplier-settlement:view";
+		}
+		if ("PUT".equals(method) && path.matches("/api/admin/master/suppliers/\\d+/settlement-tax")) {
+			return "master:supplier-settlement:update";
+		}
+		return null;
+	}
+
+	private String bomEngineeringChangePermissionCode(String method, String path) {
+		String basePath = "/api/admin/bom-engineering-changes";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath)
+				|| (basePath + "/source-bom-candidates").equals(path)
+				|| (basePath + "/target-bom-candidates").equals(path))) {
+			return "material:bom-eco:view";
+		}
+		if ("POST".equals(method) && basePath.equals(path)) {
+			return "material:bom-eco:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, basePath)) {
+			return "material:bom-eco:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/apply")) {
+			return "material:bom-eco:apply";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/cancel")) {
+			return "material:bom-eco:cancel";
+		}
+		return null;
+	}
+
+	private String materialSubstitutePermissionCode(String method, String path) {
+		String basePath = "/api/admin/material-substitutes";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method) && (basePath.equals(path) || matchesIdPath(path, basePath)
+				|| (basePath + "/material-candidates").equals(path) || (basePath + "/bom-candidates").equals(path))) {
+			return "material:substitute:view";
+		}
+		if ("POST".equals(method) && basePath.equals(path)) {
+			return "material:substitute:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, basePath)) {
+			return "material:substitute:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/enable")) {
+			return "material:substitute:enable";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/disable")) {
+			return "material:substitute:disable";
 		}
 		return null;
 	}

@@ -73,25 +73,27 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(data(detailResponse).get("items").size()).isEqualTo(3);
 
 		ResponseEntity<String> updateResponse = exchange(HttpMethod.PUT, BOMS + "/" + bomId,
-				bomRequest("T6_LIFE_BOM", materials.finishedGoodId(), "V1.0", "任务六生命周期 BOM 改",
+				withVersion(bomRequest("T6_LIFE_BOM", materials.finishedGoodId(), "V1.0", "任务六生命周期 BOM 改",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 2.75, 0.01),
 								bomItem(20, materials.auxiliaryId(), materials.unitEachId(), 4, 0))),
+						BOMS + "/" + bomId, admin),
 				admin);
 		assertThat(updateResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(updateResponse).get("items").size()).isEqualTo(2);
 		assertAuditLog("BOM_UPDATE", bomId, "T6_LIFE_BOM", "PUT", BOMS + "/" + bomId);
 
-		ResponseEntity<String> enableResponse = exchange(HttpMethod.PUT, BOMS + "/" + bomId + "/enable", Map.of(),
-				admin);
+		ResponseEntity<String> enableResponse = exchange(HttpMethod.PUT, BOMS + "/" + bomId + "/enable",
+				versionBody(BOMS + "/" + bomId, admin), admin);
 		assertThat(enableResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(enableResponse).get("status").asText()).isEqualTo("ENABLED");
 		assertAuditLog("BOM_ENABLE", bomId, "T6_LIFE_BOM", "PUT", BOMS + "/" + bomId + "/enable");
 
 		assertError(exchange(HttpMethod.PUT, BOMS + "/" + bomId,
-				bomRequest("T6_LIFE_BOM", materials.finishedGoodId(), "V1.0", "启用后不可编辑",
+				withVersion(bomRequest("T6_LIFE_BOM", materials.finishedGoodId(), "V1.0", "启用后不可编辑",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 2.8, 0))),
+						BOMS + "/" + bomId, admin),
 				admin), HttpStatus.CONFLICT, "BOM_STATUS_NOT_EDITABLE");
 
 		ResponseEntity<String> copyResponse = exchange(HttpMethod.POST, BOMS + "/" + bomId + "/copy",
@@ -104,8 +106,8 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(copied.get("items").size()).isEqualTo(2);
 		assertAuditLog("BOM_COPY", copiedBomId, "T6_LIFE_BOM_V11", "POST", BOMS + "/" + bomId + "/copy");
 
-		ResponseEntity<String> disableResponse = exchange(HttpMethod.PUT, BOMS + "/" + bomId + "/disable", Map.of(),
-				admin);
+		ResponseEntity<String> disableResponse = exchange(HttpMethod.PUT, BOMS + "/" + bomId + "/disable",
+				versionBody(BOMS + "/" + bomId, admin), admin);
 		assertThat(disableResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(disableResponse).get("status").asText()).isEqualTo("DISABLED");
 		assertAuditLog("BOM_DISABLE", bomId, "T6_LIFE_BOM", "PUT", BOMS + "/" + bomId + "/disable");
@@ -127,19 +129,20 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 						List.of(bomItem(10, materials.auxiliaryId(), materials.unitEachId(), 1, 0))),
 				admin), HttpStatus.CONFLICT, "BOM_VERSION_EXISTS");
 
-		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + firstBomId + "/enable", Map.of(), admin).getStatusCode())
-			.isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + firstBomId + "/enable",
+				versionBody(BOMS + "/" + firstBomId, admin), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
 		long secondBomId = createBom(admin,
 				bomRequest("T6_UNIQUE_BOM_V2", materials.finishedGoodId(), "V2.0", "任务六第二版本",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.auxiliaryId(), materials.unitEachId(), 1, 0))));
 
-		assertError(exchange(HttpMethod.PUT, BOMS + "/" + secondBomId + "/enable", Map.of(), admin),
-				HttpStatus.CONFLICT, "BOM_ENABLED_VERSION_EXISTS");
-		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + firstBomId + "/disable", Map.of(), admin).getStatusCode())
-			.isEqualTo(HttpStatus.OK);
-		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + secondBomId + "/enable", Map.of(), admin).getStatusCode())
-			.isEqualTo(HttpStatus.OK);
+		assertError(exchange(HttpMethod.PUT, BOMS + "/" + secondBomId + "/enable",
+				versionBody(BOMS + "/" + secondBomId, admin), admin),
+				HttpStatus.CONFLICT, "BOM_EFFECTIVE_DATE_OVERLAP");
+		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + firstBomId + "/disable",
+				versionBody(BOMS + "/" + firstBomId, admin), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + secondBomId + "/enable",
+				versionBody(BOMS + "/" + secondBomId, admin), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
 	}
 
 	@Test
@@ -155,25 +158,29 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.auxiliaryId(), materials.unitEachId(), 1, 0))),
 				admin), HttpStatus.BAD_REQUEST, "BOM_PARENT_MATERIAL_INVALID");
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.finishedGoodId() + "/disable", Map.of(),
-				admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.finishedGoodId() + "/disable",
+				versionBody(MATERIALS + "/" + materials.finishedGoodId(), admin), admin).getStatusCode())
+			.isEqualTo(HttpStatus.OK);
 		assertError(exchange(HttpMethod.POST, BOMS,
 				bomRequest("T6_VALID_DISABLED_PARENT", materials.finishedGoodId(), "V1.1", "停用父项",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.auxiliaryId(), materials.unitEachId(), 1, 0))),
 				admin), HttpStatus.BAD_REQUEST, "BOM_PARENT_MATERIAL_INVALID");
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.finishedGoodId() + "/enable", Map.of(),
-				admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.finishedGoodId() + "/enable",
+				versionBody(MATERIALS + "/" + materials.finishedGoodId(), admin), admin).getStatusCode())
+			.isEqualTo(HttpStatus.OK);
 
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.auxiliaryId() + "/disable", Map.of(), admin)
-			.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.auxiliaryId() + "/disable",
+				versionBody(MATERIALS + "/" + materials.auxiliaryId(), admin), admin).getStatusCode())
+			.isEqualTo(HttpStatus.OK);
 		assertError(exchange(HttpMethod.POST, BOMS,
 				bomRequest("T6_VALID_DISABLED_CHILD", materials.finishedGoodId(), "V1.2", "停用子项",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.auxiliaryId(), materials.unitEachId(), 1, 0))),
 				admin), HttpStatus.BAD_REQUEST, "BOM_CHILD_MATERIAL_INVALID");
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.auxiliaryId() + "/enable", Map.of(), admin)
-			.getStatusCode()).isEqualTo(HttpStatus.OK);
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materials.auxiliaryId() + "/enable",
+				versionBody(MATERIALS + "/" + materials.auxiliaryId(), admin), admin).getStatusCode())
+			.isEqualTo(HttpStatus.OK);
 
 		assertError(exchange(HttpMethod.POST, BOMS,
 				bomRequest("T6_VALID_BASE_UNIT", materials.finishedGoodId(), "V1.3", "停用基准单位", disabledUnitId,
@@ -211,6 +218,19 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void materialCandidatesHonorMaterialTypeAndKeepSelectedItems() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		TestMaterials materials = createTestMaterials(admin, "T6_CAND");
+
+		JsonNode candidates = data(get(BOMS + "/material-candidates?keyword=T6_CAND&materialType=FINISHED_GOOD"
+				+ "&selectedIds=" + materials.rawMaterialId() + "&page=1&pageSize=20", admin));
+
+		assertThat(candidates.get("items")).hasSize(1);
+		assertThat(candidates.get("items").get(0).get("id").longValue()).isEqualTo(materials.finishedGoodId());
+		assertThat(containsId(candidates.get("selectedItems"), materials.rawMaterialId())).isTrue();
+	}
+
+	@Test
 	void detectableBomCycleMustBeRejected() throws Exception {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		TestMaterials materials = createTestMaterials(admin, "T6_CYCLE");
@@ -224,9 +244,10 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 						List.of(bomItem(10, materials.semiFinishedId(), materials.unitEachId(), 1, 0))));
 
 		assertError(exchange(HttpMethod.PUT, BOMS + "/" + semiBomId,
-				bomRequest("T6_CYCLE_SEMI", materials.semiFinishedId(), "V1.0", "半成品 BOM 改",
+				withVersion(bomRequest("T6_CYCLE_SEMI", materials.semiFinishedId(), "V1.0", "半成品 BOM 改",
 						materials.unitEachId(),
 						List.of(bomItem(10, materials.finishedGoodId(), materials.unitEachId(), 1, 0))),
+						BOMS + "/" + semiBomId, admin),
 				admin), HttpStatus.CONFLICT, "BOM_CYCLE_DETECTED");
 		assertError(exchange(HttpMethod.POST, BOMS,
 				bomRequest("T6_CYCLE_FINISHED_BAD", materials.finishedGoodId(), "V1.1", "成品循环 BOM",
@@ -350,6 +371,20 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 		return item;
 	}
 
+	private Map<String, Object> withVersion(Map<String, Object> request, String path, AuthenticatedSession session)
+			throws Exception {
+		request.put("version", version(path, session));
+		return request;
+	}
+
+	private Map<String, Object> versionBody(String path, AuthenticatedSession session) throws Exception {
+		return Map.of("version", version(path, session));
+	}
+
+	private long version(String path, AuthenticatedSession session) throws Exception {
+		return data(get(path, session)).get("version").longValue();
+	}
+
 	private void createUser(String username, List<Long> roleIds, AuthenticatedSession session) {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/users",
 				Map.of("username", username, "displayName", username, "initialPassword", "Qherp@2026!", "status",
@@ -447,6 +482,15 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 
 	private JsonNode data(ResponseEntity<String> response) throws Exception {
 		return this.objectMapper.readTree(response.getBody()).get("data");
+	}
+
+	private boolean containsId(JsonNode items, long id) {
+		for (JsonNode item : items) {
+			if (item.get("id").longValue() == id) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private String sessionCookie(ResponseEntity<String> response) {

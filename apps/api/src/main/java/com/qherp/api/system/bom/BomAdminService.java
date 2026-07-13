@@ -5,14 +5,17 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.master.UnitConversionAdminService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -37,17 +40,23 @@ public class BomAdminService {
 
 	private final AuditService auditService;
 
-	public BomAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final UnitConversionAdminService unitConversionAdminService;
+
+	public BomAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			UnitConversionAdminService unitConversionAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.unitConversionAdminService = unitConversionAdminService;
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<BomSummaryResponse> list(String keyword, String status, Long parentMaterialId, int page,
-			int pageSize) {
-		QueryParts queryParts = queryParts(keyword, status, parentMaterialId);
-		long total = this.jdbcTemplate.queryForObject("select count(*) from mfg_bom b join mst_material p on p.id = b.parent_material_id "
-				+ queryParts.where(), Long.class, queryParts.args().toArray());
+	public PageResponse<BomSummaryResponse> list(String keyword, String status, Long parentMaterialId,
+			LocalDate effectiveDate, Boolean includeHistory, int page, int pageSize) {
+		QueryParts queryParts = queryParts(keyword, status, parentMaterialId, effectiveDate, includeHistory);
+		long total = this.jdbcTemplate.queryForObject(
+				"select count(*) from mfg_bom b join mst_material p on p.id = b.parent_material_id "
+						+ queryParts.where(),
+				Long.class, queryParts.args().toArray());
 		List<Object> args = new ArrayList<>(queryParts.args());
 		args.add(limit(pageSize));
 		args.add(offset(page, pageSize));
@@ -56,7 +65,8 @@ public class BomAdminService {
 				       p.name as parent_material_name, b.version_code, b.name, b.base_quantity,
 				       b.base_unit_id, u.name as base_unit_name, b.status,
 				       (select count(*) from mfg_bom_item bi where bi.bom_id = b.id) as item_count,
-				       b.effective_from, b.effective_to, b.remark, b.created_at, b.updated_at, b.enabled_at
+				       b.effective_from, b.effective_to, b.remark, b.created_at, b.updated_at, b.enabled_at,
+				       b.version
 				from mfg_bom b
 				join mst_material p on p.id = b.parent_material_id
 				join mst_unit u on u.id = b.base_unit_id
@@ -79,29 +89,28 @@ public class BomAdminService {
 	}
 
 	@Transactional
-	public BomDetailResponse update(Long id, BomRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+	public BomDetailResponse update(Long id, BomRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
 		BomRow current = bomRow(id).orElseThrow(this::notFound);
+		requireVersion(current.version(), request.version());
 		statusOrCurrentDraftForUpdate(request.status(), current.status());
-		MaterialRef parent = validateParentMaterial(request.parentMaterialId());
-		BigDecimal baseQuantity = validatePositive(request.baseQuantity());
-		Long baseUnitId = request.baseUnitId() == null ? parent.unitId() : request.baseUnitId();
-		List<ValidatedItem> items = validateItems(parent.id(), baseUnitId, request.items());
-		validateNoCycle(id, parent.id(), items);
+		ValidatedBom validated = validateBomRequest(request, current.id());
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update mfg_bom
 					set bom_code = ?, parent_material_id = ?, version_code = ?, name = ?, base_quantity = ?,
 					    base_unit_id = ?, status = ?, effective_from = ?, effective_to = ?, remark = ?,
 					    updated_by = ?, updated_at = ?, version = version + 1
-					where id = ?
-					""", request.bomCode(), parent.id(), request.versionCode(), request.name(), baseQuantity,
-					baseUnitId, BomStatus.DRAFT.name(), request.effectiveFrom(), request.effectiveTo(),
-					blankToNull(request.remark()), operator.username(), OffsetDateTime.now(), id);
+					where id = ? and version = ?
+					""", request.bomCode(), validated.parent().id(), request.versionCode(), request.name(),
+					validated.baseQuantity(), validated.baseUnitId(), BomStatus.DRAFT.name(),
+					validated.effectiveFrom(), validated.effectiveTo(), blankToNull(request.remark()),
+					operator.username(), OffsetDateTime.now(), id, current.version());
 			if (updated == 0) {
-				throw notFound();
+				throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 			}
 			this.jdbcTemplate.update("delete from mfg_bom_item where bom_id = ?", id);
-			insertItems(id, items, OffsetDateTime.now());
+			insertItems(id, validated.items(), OffsetDateTime.now());
 			this.auditService.record(operator, "BOM_UPDATE", TARGET_TYPE, id, request.bomCode(), servletRequest);
 			return get(id);
 		}
@@ -115,60 +124,94 @@ public class BomAdminService {
 			HttpServletRequest servletRequest) {
 		BomRow current = bomRow(id).orElseThrow(this::notFound);
 		List<BomItemRequest> copiedItems = itemRequests(id);
-		BomRequest copiedRequest = new BomRequest(request.bomCode(), current.parentMaterialId(), request.versionCode(),
-				hasText(request.name()) ? request.name() : current.name(), current.baseQuantity(), current.baseUnitId(),
-				BomStatus.DRAFT.name(), request.effectiveFrom(), request.effectiveTo(), request.remark(), copiedItems);
+		BomRequest copiedRequest = new BomRequest(request.bomCode(), current.parentMaterialId(),
+				request.versionCode(), hasText(request.name()) ? request.name() : current.name(),
+				current.baseQuantity(), current.baseUnitId(), BomStatus.DRAFT.name(), request.effectiveFrom(),
+				request.effectiveTo(), request.remark(), copiedItems, null);
 		return insertBom(copiedRequest, operator, servletRequest, "BOM_COPY");
 	}
 
 	@Transactional
-	public BomDetailResponse enable(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
-		BomRow current = bomRow(id).orElseThrow(this::notFound);
+	public BomDetailResponse enable(Long id, VersionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		BomRow current = lockBom(id).orElseThrow(this::notFound);
+		requireVersion(current.version(), request == null ? null : request.version());
 		MaterialRef parent = validateParentMaterial(current.parentMaterialId());
-		List<ValidatedItem> items = validateItems(parent.id(), current.baseUnitId(), itemRequests(id));
+		lockParentBomSet(parent.id());
+		List<ValidatedItem> items = validateItems(parent.id(), current.baseUnitId(), current.effectiveFrom(),
+				current.effectiveTo(), itemRequests(id));
 		validateNoCycle(id, parent.id(), items);
-		validateEnabledVersionUnique(id, parent.id());
-		try {
-			int updated = this.jdbcTemplate.update("""
-					update mfg_bom
-					set status = ?, enabled_by = ?, enabled_at = ?, updated_by = ?, updated_at = ?, version = version + 1
-					where id = ?
-					""", BomStatus.ENABLED.name(), operator.username(), OffsetDateTime.now(), operator.username(),
-					OffsetDateTime.now(), id);
-			if (updated == 0) {
-				throw notFound();
-			}
-			this.auditService.record(operator, "BOM_ENABLE", TARGET_TYPE, id, current.bomCode(), servletRequest);
-			return get(id);
+		validateItemsConvertible(id);
+		validateNoEnabledOverlap(id, parent.id(), current.effectiveFrom(), current.effectiveTo());
+		int updated = this.jdbcTemplate.update("""
+				update mfg_bom
+				set status = ?, enabled_by = ?, enabled_at = ?, updated_by = ?, updated_at = ?, version = version + 1
+				where id = ? and version = ?
+				""", BomStatus.ENABLED.name(), operator.username(), OffsetDateTime.now(), operator.username(),
+				OffsetDateTime.now(), id, current.version());
+		if (updated == 0) {
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 		}
-		catch (DuplicateKeyException exception) {
-			throw duplicateBomException(exception);
-		}
+		this.auditService.record(operator, "BOM_ENABLE", TARGET_TYPE, id, current.bomCode(), servletRequest);
+		return get(id);
 	}
 
 	@Transactional
-	public BomDetailResponse disable(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+	public BomDetailResponse disable(Long id, VersionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
 		BomRow current = bomRow(id).orElseThrow(this::notFound);
+		requireVersion(current.version(), request == null ? null : request.version());
 		int updated = this.jdbcTemplate.update("""
 				update mfg_bom
 				set status = ?, updated_by = ?, updated_at = ?, version = version + 1
-				where id = ?
-				""", BomStatus.DISABLED.name(), operator.username(), OffsetDateTime.now(), id);
+				where id = ? and version = ?
+				""", BomStatus.DISABLED.name(), operator.username(), OffsetDateTime.now(), id, current.version());
 		if (updated == 0) {
-			throw notFound();
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 		}
 		this.auditService.record(operator, "BOM_DISABLE", TARGET_TYPE, id, current.bomCode(), servletRequest);
 		return get(id);
 	}
 
+	@Transactional(readOnly = true)
+	public UnitConversionAdminService.CandidatePage materialCandidates(String keyword, String materialType,
+			String status, String selectedIds, int page, int pageSize) {
+		QueryParts queryParts = materialCandidateQueryParts(keyword, materialType, status);
+		long total = this.jdbcTemplate.queryForObject("select count(*) from mst_material m " + queryParts.where(),
+				Long.class, queryParts.args().toArray());
+		List<Object> args = new ArrayList<>(queryParts.args());
+		args.add(limit(pageSize));
+		args.add(offset(page, pageSize));
+		List<UnitConversionAdminService.CandidateItem> items = this.jdbcTemplate.query("""
+				select m.id, m.code, m.name, m.status, m.material_type, m.source_type
+				from mst_material m
+				%s
+				order by m.id desc
+				limit ? offset ?
+				""".formatted(queryParts.where()), this::mapMaterialCandidate, args.toArray());
+		List<Long> selected = parseIds(selectedIds);
+		List<UnitConversionAdminService.CandidateItem> selectedItems = selected.isEmpty() ? List.of()
+				: this.jdbcTemplate.query("""
+						select m.id, m.code, m.name, m.status, m.material_type, m.source_type
+						from mst_material m
+						where m.id in (%s)
+						order by m.id desc
+						""".formatted(placeholders(selected.size())), this::mapMaterialCandidate,
+						selected.toArray());
+		return new UnitConversionAdminService.CandidatePage(items, selectedItems, Math.max(page, 1), limit(pageSize),
+				total, totalPages(total, limit(pageSize)));
+	}
+
+	@Transactional(readOnly = true)
+	public UnitConversionAdminService.CandidatePage unitCandidates(String keyword, String status, String selectedIds,
+			int page, int pageSize) {
+		return this.unitConversionAdminService.unitCandidates(keyword, status, selectedIds, page, pageSize);
+	}
+
 	private BomDetailResponse insertBom(BomRequest request, CurrentUser operator, HttpServletRequest servletRequest,
 			String auditAction) {
 		BomStatus status = statusOrDraftForCreate(request.status());
-		MaterialRef parent = validateParentMaterial(request.parentMaterialId());
-		BigDecimal baseQuantity = validatePositive(request.baseQuantity());
-		Long baseUnitId = request.baseUnitId() == null ? parent.unitId() : request.baseUnitId();
-		List<ValidatedItem> items = validateItems(parent.id(), baseUnitId, request.items());
-		validateNoCycle(null, parent.id(), items);
+		ValidatedBom validated = validateBomRequest(request, null);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			Long id = this.jdbcTemplate.queryForObject("""
@@ -178,10 +221,11 @@ public class BomAdminService {
 					)
 					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					returning id
-					""", Long.class, request.bomCode(), parent.id(), request.versionCode(), request.name(),
-					baseQuantity, baseUnitId, status.name(), request.effectiveFrom(), request.effectiveTo(),
-					blankToNull(request.remark()), operator.username(), now, operator.username(), now);
-			insertItems(id, items, now);
+					""", Long.class, request.bomCode(), validated.parent().id(), request.versionCode(),
+					request.name(), validated.baseQuantity(), validated.baseUnitId(), status.name(),
+					validated.effectiveFrom(), validated.effectiveTo(), blankToNull(request.remark()),
+					operator.username(), now, operator.username(), now);
+			insertItems(id, validated.items(), now);
 			this.auditService.record(operator, auditAction, TARGET_TYPE, id, request.bomCode(), servletRequest);
 			return get(id);
 		}
@@ -190,19 +234,40 @@ public class BomAdminService {
 		}
 	}
 
+	private ValidatedBom validateBomRequest(BomRequest request, Long currentBomId) {
+		MaterialRef parent = validateParentMaterial(request.parentMaterialId());
+		BigDecimal baseQuantity = validatePositive(request.baseQuantity());
+		Long baseUnitId = request.baseUnitId() == null ? parent.unitId() : request.baseUnitId();
+		if (!parent.unitId().equals(baseUnitId)) {
+			throw new BusinessException(ApiErrorCode.BOM_UNIT_INVALID);
+		}
+		validateEffectiveRange(request.effectiveFrom(), request.effectiveTo());
+		List<ValidatedItem> items = validateItems(parent.id(), baseUnitId, request.effectiveFrom(),
+				request.effectiveTo(), request.items());
+		validateNoCycle(currentBomId, parent.id(), items);
+		return new ValidatedBom(parent, baseQuantity.setScale(6, RoundingMode.HALF_UP), baseUnitId,
+				request.effectiveFrom(), request.effectiveTo(), items);
+	}
+
 	private void insertItems(Long bomId, List<ValidatedItem> items, OffsetDateTime now) {
 		for (ValidatedItem item : items) {
 			this.jdbcTemplate.update("""
 					insert into mfg_bom_item (
-						bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark, created_at, updated_at
+						bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark, created_at, updated_at,
+						business_unit_id, business_quantity, base_unit_id, base_quantity, conversion_id,
+						conversion_rate_snapshot, quantity_scale_snapshot, rounding_mode_snapshot, quantity_basis
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?)
-					""", bomId, item.lineNo(), item.childMaterial().id(), item.unitId(), item.quantity(),
-					item.lossRate(), blankToNull(item.remark()), now, now);
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", bomId, item.lineNo(), item.childMaterial().id(), item.businessUnitId(),
+					item.businessQuantity(), item.lossRate(), blankToNull(item.remark()), now, now,
+					item.businessUnitId(), item.businessQuantity(), item.baseUnitId(), item.baseQuantity(),
+					item.conversionId(), item.conversionRateSnapshot(), item.quantityScaleSnapshot(),
+					item.roundingModeSnapshot(), item.quantityBasis());
 		}
 	}
 
-	private List<ValidatedItem> validateItems(Long parentMaterialId, Long baseUnitId, List<BomItemRequest> items) {
+	private List<ValidatedItem> validateItems(Long parentMaterialId, Long baseUnitId, LocalDate effectiveFrom,
+			LocalDate effectiveTo, List<BomItemRequest> items) {
 		validateEnabledUnit(baseUnitId);
 		if (items == null || items.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.BOM_EMPTY_ITEMS);
@@ -221,14 +286,26 @@ public class BomAdminService {
 			if (!childIds.add(childMaterial.id())) {
 				throw new BusinessException(ApiErrorCode.BOM_DUPLICATE_ITEM);
 			}
-			BigDecimal quantity = validatePositive(item.quantity());
+			BigDecimal businessQuantity = validatePositive(
+					item.businessQuantity() == null ? item.quantity() : item.businessQuantity());
 			BigDecimal lossRate = item.lossRate() == null ? ZERO : item.lossRate();
 			if (lossRate.compareTo(ZERO) < 0 || lossRate.compareTo(ONE) >= 0) {
 				throw new BusinessException(ApiErrorCode.BOM_QUANTITY_INVALID);
 			}
-			Long unitId = item.unitId() == null ? childMaterial.unitId() : item.unitId();
-			validateEnabledUnit(unitId);
-			result.add(new ValidatedItem(item.lineNo(), childMaterial, unitId, quantity, lossRate, item.remark()));
+			Long businessUnitId = item.businessUnitId() == null ? item.unitId() : item.businessUnitId();
+			if (businessUnitId == null) {
+				businessUnitId = childMaterial.unitId();
+			}
+			validateEnabledUnit(businessUnitId);
+			UnitConversionAdminService.ConversionSnapshot snapshot = this.unitConversionAdminService
+				.conversionSnapshot(childMaterial.id(), businessUnitId, businessQuantity,
+						effectiveFrom == null ? LocalDate.now() : effectiveFrom);
+			result.add(new ValidatedItem(item.lineNo(), childMaterial, businessUnitId,
+					businessQuantity.setScale(6, RoundingMode.HALF_UP), snapshot.baseUnitId(),
+					snapshot.baseQuantity().setScale(6, RoundingMode.HALF_UP), snapshot.conversionId(),
+					snapshot.conversionRateSnapshot().setScale(6, RoundingMode.HALF_UP),
+					snapshot.quantityScaleSnapshot(), snapshot.roundingModeSnapshot(), snapshot.quantityBasis(),
+					lossRate.setScale(6, RoundingMode.HALF_UP), item.remark()));
 		}
 		return result;
 	}
@@ -267,17 +344,45 @@ public class BomAdminService {
 		}
 	}
 
-	private void validateEnabledVersionUnique(Long bomId, Long parentMaterialId) {
-		long count = this.jdbcTemplate.queryForObject("""
+	private void validateNoEnabledOverlap(Long bomId, Long parentMaterialId, LocalDate effectiveFrom,
+			LocalDate effectiveTo) {
+		Long count = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from mfg_bom
 				where parent_material_id = ?
 				and status = 'ENABLED'
 				and id <> ?
-				""", Long.class, parentMaterialId, bomId);
-		if (count > 0) {
-			throw new BusinessException(ApiErrorCode.BOM_ENABLED_VERSION_EXISTS);
+				and coalesce(effective_from, date '0001-01-01') <= coalesce(cast(? as date), date '9999-12-31')
+				and coalesce(cast(? as date), date '0001-01-01') <= coalesce(effective_to, date '9999-12-31')
+				""", Long.class, parentMaterialId, bomId, effectiveTo, effectiveFrom);
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.BOM_EFFECTIVE_DATE_OVERLAP);
 		}
+	}
+
+	private void validateItemsConvertible(Long bomId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from mfg_bom_item
+				where bom_id = ?
+				and (quantity_basis = 'LEGACY_BUSINESS_UNIT' or base_unit_id is null or base_quantity is null)
+				""", Long.class, bomId);
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.BOM_LEGACY_UNIT_CONVERSION_REQUIRED);
+		}
+	}
+
+	private void validateEffectiveRange(LocalDate effectiveFrom, LocalDate effectiveTo) {
+		if (effectiveFrom != null && effectiveTo != null && effectiveFrom.isAfter(effectiveTo)) {
+			throw new BusinessException(ApiErrorCode.BOM_EFFECTIVE_DATE_RANGE_INVALID);
+		}
+	}
+
+	private void lockParentBomSet(Long parentMaterialId) {
+		this.jdbcTemplate.query("select id from mst_material where id = ? for update", (rs, rowNum) -> rs.getLong("id"),
+				parentMaterialId);
+		this.jdbcTemplate.query("select id from mfg_bom where parent_material_id = ? for update",
+				(rs, rowNum) -> rs.getLong("id"), parentMaterialId);
 	}
 
 	private MaterialRef validateParentMaterial(Long parentMaterialId) {
@@ -367,7 +472,8 @@ public class BomAdminService {
 		}
 	}
 
-	private QueryParts queryParts(String keyword, String status, Long parentMaterialId) {
+	private QueryParts queryParts(String keyword, String status, Long parentMaterialId, LocalDate effectiveDate,
+			Boolean includeHistory) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -387,8 +493,46 @@ public class BomAdminService {
 			conditions.add("b.parent_material_id = ?");
 			args.add(parentMaterialId);
 		}
+		if (effectiveDate != null) {
+			conditions.add("coalesce(b.effective_from, date '0001-01-01') <= ?");
+			conditions.add("? <= coalesce(b.effective_to, date '9999-12-31')");
+			args.add(effectiveDate);
+			args.add(effectiveDate);
+		}
+		if (Boolean.FALSE.equals(includeHistory)) {
+			conditions.add("b.status <> 'DISABLED'");
+		}
 		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		return new QueryParts(where, args);
+	}
+
+	private QueryParts materialCandidateQueryParts(String keyword, String materialType, String status) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(m.code ilike ? or m.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+		}
+		if (hasText(materialType)) {
+			conditions.add("m.material_type = ?");
+			args.add(materialType);
+		}
+		if (hasText(status)) {
+			conditions.add("m.status = ?");
+			args.add(parseStatus(status).name());
+		}
+		return new QueryParts(conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions), args);
+	}
+
+	private UnitConversionAdminService.CandidateItem mapMaterialCandidate(ResultSet rs, int rowNum)
+			throws SQLException {
+		String status = rs.getString("status");
+		boolean disabled = !"ENABLED".equals(status);
+		String summary = rs.getString("material_type") + "/" + rs.getString("source_type");
+		return new UnitConversionAdminService.CandidateItem(rs.getLong("id"), rs.getString("code"),
+				rs.getString("name"), status, disabled, disabled ? "状态不可用" : null, summary);
 	}
 
 	private Optional<BomSummaryResponse> summary(Long id) {
@@ -398,7 +542,8 @@ public class BomAdminService {
 					       p.name as parent_material_name, b.version_code, b.name, b.base_quantity,
 					       b.base_unit_id, u.name as base_unit_name, b.status,
 					       (select count(*) from mfg_bom_item bi where bi.bom_id = b.id) as item_count,
-					       b.effective_from, b.effective_to, b.remark, b.created_at, b.updated_at, b.enabled_at
+					       b.effective_from, b.effective_to, b.remark, b.created_at, b.updated_at, b.enabled_at,
+					       b.version
 					from mfg_bom b
 					join mst_material p on p.id = b.parent_material_id
 					join mst_unit u on u.id = b.base_unit_id
@@ -411,56 +556,86 @@ public class BomAdminService {
 	private BomSummaryResponse mapSummary(ResultSet rs, int rowNum) throws SQLException {
 		return new BomSummaryResponse(rs.getLong("id"), rs.getString("bom_code"), rs.getLong("parent_material_id"),
 				rs.getString("parent_material_code"), rs.getString("parent_material_name"),
-				rs.getString("version_code"), rs.getString("name"), rs.getBigDecimal("base_quantity"),
+				rs.getString("version_code"), rs.getString("name"), decimalString(rs.getBigDecimal("base_quantity")),
 				rs.getLong("base_unit_id"), rs.getString("base_unit_name"), rs.getString("status"),
 				rs.getInt("item_count"), rs.getObject("effective_from", LocalDate.class),
 				rs.getObject("effective_to", LocalDate.class), rs.getString("remark"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
-				rs.getObject("enabled_at", OffsetDateTime.class));
+				rs.getObject("enabled_at", OffsetDateTime.class), rs.getLong("version"));
 	}
 
 	private List<BomItemResponse> items(Long bomId) {
 		return this.jdbcTemplate.query("""
 				select i.id, i.line_no, i.child_material_id, m.code as child_material_code,
 				       m.name as child_material_name, m.material_type as child_material_type,
-				       i.unit_id, u.name as unit_name, i.quantity, i.loss_rate, i.remark
+				       i.unit_id, u.name as unit_name, i.quantity, i.loss_rate, i.remark,
+				       i.business_unit_id, bu.name as business_unit_name, i.business_quantity,
+				       i.base_unit_id, baseu.name as base_unit_name, i.base_quantity, i.conversion_id,
+				       i.conversion_rate_snapshot, i.quantity_scale_snapshot, i.rounding_mode_snapshot,
+				       i.quantity_basis
 				from mfg_bom_item i
 				join mst_material m on m.id = i.child_material_id
 				join mst_unit u on u.id = i.unit_id
+				join mst_unit bu on bu.id = i.business_unit_id
+				left join mst_unit baseu on baseu.id = i.base_unit_id
 				where i.bom_id = ?
 				order by i.line_no asc, i.id asc
 				""", (rs, rowNum) -> new BomItemResponse(rs.getLong("id"), rs.getInt("line_no"),
 				rs.getLong("child_material_id"), rs.getString("child_material_code"),
 				rs.getString("child_material_name"), rs.getString("child_material_type"), rs.getLong("unit_id"),
-				rs.getString("unit_name"), rs.getBigDecimal("quantity"), rs.getBigDecimal("loss_rate"),
-				rs.getString("remark")), bomId);
+				rs.getString("unit_name"), decimalString(rs.getBigDecimal("quantity")),
+				decimalString(rs.getBigDecimal("loss_rate")), rs.getString("remark"), rs.getLong("business_unit_id"),
+				rs.getString("business_unit_name"), decimalString(rs.getBigDecimal("business_quantity")),
+				rs.getObject("base_unit_id", Long.class), rs.getString("base_unit_name"),
+				decimalString(rs.getBigDecimal("base_quantity")), rs.getObject("conversion_id", Long.class),
+				decimalString(rs.getBigDecimal("conversion_rate_snapshot")),
+				rs.getObject("quantity_scale_snapshot", Integer.class), rs.getString("rounding_mode_snapshot"),
+				rs.getString("quantity_basis")), bomId);
 	}
 
 	private List<BomItemRequest> itemRequests(Long bomId) {
 		return this.jdbcTemplate.query("""
-				select line_no, child_material_id, unit_id, quantity, loss_rate, remark
+				select line_no, child_material_id, unit_id, quantity, business_unit_id, business_quantity,
+				       loss_rate, remark
 				from mfg_bom_item
 				where bom_id = ?
 				order by line_no asc, id asc
 				""", (rs, rowNum) -> new BomItemRequest(rs.getInt("line_no"), rs.getLong("child_material_id"),
-				rs.getLong("unit_id"), rs.getBigDecimal("quantity"), rs.getBigDecimal("loss_rate"),
-				rs.getString("remark")), bomId);
+				rs.getLong("unit_id"), rs.getBigDecimal("quantity"), rs.getLong("business_unit_id"),
+				rs.getBigDecimal("business_quantity"), rs.getBigDecimal("loss_rate"), rs.getString("remark")), bomId);
 	}
 
 	private Optional<BomRow> bomRow(Long id) {
 		return this.jdbcTemplate
 			.query("""
 					select id, bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id,
-					       status, effective_from, effective_to, remark
+					       status, effective_from, effective_to, remark, version
 					from mfg_bom
 					where id = ?
-					""", (rs, rowNum) -> new BomRow(rs.getLong("id"), rs.getString("bom_code"),
-					rs.getLong("parent_material_id"), rs.getString("version_code"), rs.getString("name"),
-					rs.getBigDecimal("base_quantity"), rs.getLong("base_unit_id"),
-					BomStatus.valueOf(rs.getString("status")), rs.getObject("effective_from", LocalDate.class),
-					rs.getObject("effective_to", LocalDate.class), rs.getString("remark")), id)
+					""", this::mapBomRow, id)
 			.stream()
 			.findFirst();
+	}
+
+	private Optional<BomRow> lockBom(Long id) {
+		return this.jdbcTemplate
+			.query("""
+					select id, bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id,
+					       status, effective_from, effective_to, remark, version
+					from mfg_bom
+					where id = ?
+					for update
+					""", this::mapBomRow, id)
+			.stream()
+			.findFirst();
+	}
+
+	private BomRow mapBomRow(ResultSet rs, int rowNum) throws SQLException {
+		return new BomRow(rs.getLong("id"), rs.getString("bom_code"), rs.getLong("parent_material_id"),
+				rs.getString("version_code"), rs.getString("name"), rs.getBigDecimal("base_quantity"),
+				rs.getLong("base_unit_id"), BomStatus.valueOf(rs.getString("status")),
+				rs.getObject("effective_from", LocalDate.class), rs.getObject("effective_to", LocalDate.class),
+				rs.getString("remark"), rs.getLong("version"));
 	}
 
 	private BomDetailResponse detail(BomSummaryResponse summary, List<BomItemResponse> items) {
@@ -468,7 +643,27 @@ public class BomAdminService {
 				summary.parentMaterialCode(), summary.parentMaterialName(), summary.versionCode(), summary.name(),
 				summary.baseQuantity(), summary.baseUnitId(), summary.baseUnitName(), summary.status(),
 				summary.effectiveFrom(), summary.effectiveTo(), summary.remark(), summary.createdAt(),
-				summary.updatedAt(), summary.enabledAt(), items);
+				summary.updatedAt(), summary.enabledAt(), summary.version(), items, historyRelations(summary.id()));
+	}
+
+	private List<BomHistoryRelationResponse> historyRelations(Long bomId) {
+		return this.jdbcTemplate.query("""
+				select e.id as eco_id, e.eco_no,
+				       case when e.source_bom_id = ? then 'SOURCE' else 'TARGET' end as relation_type,
+				       e.source_bom_id, sb.bom_code as source_bom_code, sb.version_code as source_version_code,
+				       e.target_bom_id, tb.bom_code as target_bom_code, tb.version_code as target_version_code,
+				       e.status, e.effective_from, e.effective_to, e.applied_by, e.applied_at
+				from mfg_bom_engineering_change e
+				join mfg_bom sb on sb.id = e.source_bom_id
+				join mfg_bom tb on tb.id = e.target_bom_id
+				where e.source_bom_id = ? or e.target_bom_id = ?
+				order by e.effective_from desc, e.id desc
+				""", (rs, rowNum) -> new BomHistoryRelationResponse(rs.getLong("eco_id"), rs.getString("eco_no"),
+				rs.getString("relation_type"), rs.getLong("source_bom_id"), rs.getString("source_bom_code"),
+				rs.getString("source_version_code"), rs.getLong("target_bom_id"), rs.getString("target_bom_code"),
+				rs.getString("target_version_code"), rs.getString("status"),
+				rs.getObject("effective_from", LocalDate.class), rs.getObject("effective_to", LocalDate.class),
+				rs.getString("applied_by"), rs.getObject("applied_at", OffsetDateTime.class)), bomId, bomId, bomId);
 	}
 
 	private BusinessException duplicateBomException(DuplicateKeyException exception) {
@@ -479,9 +674,6 @@ public class BomAdminService {
 		}
 		if (message != null && message.contains("uk_mfg_bom_parent_version")) {
 			return new BusinessException(ApiErrorCode.BOM_VERSION_EXISTS);
-		}
-		if (message != null && message.contains("uk_mfg_bom_enabled_parent")) {
-			return new BusinessException(ApiErrorCode.BOM_ENABLED_VERSION_EXISTS);
 		}
 		if (message != null && message.contains("uk_mfg_bom_item_material")) {
 			return new BusinessException(ApiErrorCode.BOM_DUPLICATE_ITEM);
@@ -501,12 +693,43 @@ public class BomAdminService {
 		return new BusinessException(ApiErrorCode.BOM_CHILD_MATERIAL_INVALID);
 	}
 
+	private void requireVersion(Long currentVersion, Long requestVersion) {
+		if (requestVersion == null || !currentVersion.equals(requestVersion)) {
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
+		}
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
 
 	private static int offset(int page, int pageSize) {
 		return (Math.max(page, 1) - 1) * limit(pageSize);
+	}
+
+	private static int totalPages(long total, int pageSize) {
+		return pageSize <= 0 ? 0 : (int) Math.ceil((double) total / pageSize);
+	}
+
+	private static List<Long> parseIds(String selectedIds) {
+		if (!hasText(selectedIds)) {
+			return List.of();
+		}
+		List<Long> ids = new ArrayList<>();
+		for (String value : selectedIds.split(",")) {
+			if (hasText(value)) {
+				ids.add(Long.valueOf(value.trim()));
+			}
+		}
+		return ids;
+	}
+
+	private static String placeholders(int size) {
+		return String.join(",", java.util.Collections.nCopies(size, "?"));
+	}
+
+	private static String decimalString(BigDecimal value) {
+		return value == null ? null : value.setScale(6, RoundingMode.HALF_UP).toPlainString();
 	}
 
 	private static String blankToNull(String value) {
@@ -518,46 +741,65 @@ public class BomAdminService {
 	}
 
 	public record BomItemRequest(Integer lineNo, Long childMaterialId, Long unitId, BigDecimal quantity,
-			BigDecimal lossRate, String remark) {
+			Long businessUnitId, BigDecimal businessQuantity, BigDecimal lossRate, String remark) {
 	}
 
 	public record BomRequest(@NotBlank String bomCode, Long parentMaterialId, @NotBlank String versionCode,
 			@NotBlank String name, BigDecimal baseQuantity, Long baseUnitId, String status, LocalDate effectiveFrom,
-			LocalDate effectiveTo, String remark, List<BomItemRequest> items) {
+			LocalDate effectiveTo, String remark, List<BomItemRequest> items, Long version) {
 	}
 
 	public record BomCopyRequest(@NotBlank String bomCode, @NotBlank String versionCode, String name,
 			LocalDate effectiveFrom, LocalDate effectiveTo, String remark) {
 	}
 
+	public record VersionRequest(Long version) {
+	}
+
 	public record BomSummaryResponse(Long id, String bomCode, Long parentMaterialId, String parentMaterialCode,
-			String parentMaterialName, String versionCode, String name, BigDecimal baseQuantity, Long baseUnitId,
+			String parentMaterialName, String versionCode, String name, String baseQuantity, Long baseUnitId,
 			String baseUnitName, String status, int itemCount, LocalDate effectiveFrom, LocalDate effectiveTo,
-			String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt, OffsetDateTime enabledAt) {
+			String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt, OffsetDateTime enabledAt, Long version) {
 	}
 
 	public record BomItemResponse(Long id, Integer lineNo, Long childMaterialId, String childMaterialCode,
-			String childMaterialName, String childMaterialType, Long unitId, String unitName, BigDecimal quantity,
-			BigDecimal lossRate, String remark) {
+			String childMaterialName, String childMaterialType, Long unitId, String unitName, String quantity,
+			String lossRate, String remark, Long businessUnitId, String businessUnitName,
+			String businessQuantity, Long baseUnitId, String baseUnitName, String baseQuantity,
+			Long conversionId, String conversionRateSnapshot, Integer quantityScaleSnapshot,
+			String roundingModeSnapshot, String quantityBasis) {
 	}
 
 	public record BomDetailResponse(Long id, String bomCode, Long parentMaterialId, String parentMaterialCode,
-			String parentMaterialName, String versionCode, String name, BigDecimal baseQuantity, Long baseUnitId,
+			String parentMaterialName, String versionCode, String name, String baseQuantity, Long baseUnitId,
 			String baseUnitName, String status, LocalDate effectiveFrom, LocalDate effectiveTo, String remark,
-			OffsetDateTime createdAt, OffsetDateTime updatedAt, OffsetDateTime enabledAt, List<BomItemResponse> items) {
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, OffsetDateTime enabledAt, Long version,
+			List<BomItemResponse> items, List<BomHistoryRelationResponse> historyRelations) {
+	}
+
+	public record BomHistoryRelationResponse(Long ecoId, String ecoNo, String relationType, Long sourceBomId,
+			String sourceBomCode, String sourceVersionCode, Long targetBomId, String targetBomCode,
+			String targetVersionCode, String status, LocalDate effectiveFrom, LocalDate effectiveTo, String appliedBy,
+			OffsetDateTime appliedAt) {
+	}
+
+	private record ValidatedBom(MaterialRef parent, BigDecimal baseQuantity, Long baseUnitId,
+			LocalDate effectiveFrom, LocalDate effectiveTo, List<ValidatedItem> items) {
 	}
 
 	private record BomRow(Long id, String bomCode, Long parentMaterialId, String versionCode, String name,
 			BigDecimal baseQuantity, Long baseUnitId, BomStatus status, LocalDate effectiveFrom, LocalDate effectiveTo,
-			String remark) {
+			String remark, Long version) {
 	}
 
 	private record MaterialRef(Long id, String code, String name, String materialType, String sourceType, Long unitId,
 			String unitName, String status) {
 	}
 
-	private record ValidatedItem(Integer lineNo, MaterialRef childMaterial, Long unitId, BigDecimal quantity,
-			BigDecimal lossRate, String remark) {
+	private record ValidatedItem(Integer lineNo, MaterialRef childMaterial, Long businessUnitId,
+			BigDecimal businessQuantity, Long baseUnitId, BigDecimal baseQuantity, Long conversionId,
+			BigDecimal conversionRateSnapshot, Integer quantityScaleSnapshot, String roundingModeSnapshot,
+			String quantityBasis, BigDecimal lossRate, String remark) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

@@ -16,6 +16,28 @@ const bomApiMock = vi.hoisted(() => ({
   copy: vi.fn(),
   enable: vi.fn(),
   disable: vi.fn(),
+  materialCandidates: vi.fn(),
+  unitCandidates: vi.fn(),
+  engineeringChanges: {
+    list: vi.fn(),
+    get: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    apply: vi.fn(),
+    cancel: vi.fn(),
+    sourceBomCandidates: vi.fn(),
+    targetBomCandidates: vi.fn(),
+  },
+  substitutes: {
+    list: vi.fn(),
+    get: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+    enable: vi.fn(),
+    disable: vi.fn(),
+    materialCandidates: vi.fn(),
+    bomCandidates: vi.fn(),
+  },
 }))
 
 const masterDataApiMock = vi.hoisted(() => ({
@@ -24,6 +46,9 @@ const masterDataApiMock = vi.hoisted(() => ({
   },
   units: {
     list: vi.fn(),
+  },
+  codingRules: {
+    generate: vi.fn(),
   },
 }))
 
@@ -85,12 +110,13 @@ const draftBom: BomSummaryRecord = {
   parentMaterialName: '成品A',
   versionCode: 'V1.0',
   name: '成品A标准 BOM',
-  baseQuantity: 1,
+  baseQuantity: '1.0000',
   baseUnitId: 1,
   baseUnitName: '件',
   status: 'DRAFT',
   itemCount: 1,
   updatedAt: '2026-07-03T05:00:00+08:00',
+  version: 3,
 }
 const enabledBom: BomSummaryRecord = {
   ...draftBom,
@@ -109,12 +135,70 @@ const draftDetail: BomDetailRecord = {
       childMaterialCode: 'RM-STEEL',
       childMaterialName: '冷轧钢板',
       childMaterialType: 'RAW_MATERIAL',
-      unitId: 2,
-      unitName: '千克',
-      quantity: 2.5,
-      lossRate: 0.02,
+      businessUnitId: 2,
+      businessUnitName: '千克',
+      businessQuantity: '2.5000',
+      baseUnitId: 2,
+      baseUnitName: '千克',
+      baseQuantity: '2.5000',
+      conversionRateSnapshot: '1.0000',
+      quantityScaleSnapshot: 4,
+      roundingModeSnapshot: 'HALF_UP',
+      quantityBasis: 'BASE_UNIT',
+      lossRate: '0.0200',
     },
   ],
+  historyRelations: [],
+}
+const enabledDetail: BomDetailRecord = {
+  ...draftDetail,
+  ...enabledBom,
+  items: draftDetail.items,
+}
+const ecoRecord = {
+  id: 100,
+  ecoNo: 'ECO-202607-0001',
+  sourceBomId: 2,
+  sourceBomCode: 'BOM-FG-A',
+  sourceVersionCode: 'V1.0',
+  targetBomId: 1,
+  targetBomCode: 'BOM-FG-A-V2',
+  targetVersionCode: 'V2.0',
+  parentMaterialId: 1,
+  parentMaterialCode: 'FG-A',
+  parentMaterialName: '成品A',
+  effectiveFrom: '2026-07-13',
+  effectiveTo: null,
+  changeReason: '材料优化',
+  impactScope: '后续生产',
+  changeSummary: '替换冷轧钢板规格',
+  status: 'DRAFT',
+  appliedBy: null,
+  appliedAt: null,
+  createdAt: '2026-07-13T09:00:00+08:00',
+  updatedAt: '2026-07-13T09:00:00+08:00',
+  version: 2,
+}
+const substituteRecord = {
+  id: 200,
+  mainMaterialId: 2,
+  mainMaterialCode: 'RM-STEEL',
+  mainMaterialName: '冷轧钢板',
+  substituteMaterialId: 3,
+  substituteMaterialCode: 'RM-STEEL-B',
+  substituteMaterialName: '镀锌钢板',
+  scopeType: 'BOM',
+  scopeId: 1,
+  scopeCode: 'BOM-FG-A',
+  scopeName: '成品A标准 BOM',
+  priority: 1,
+  substituteRate: '1.0000',
+  effectiveFrom: '2026-07-13',
+  effectiveTo: null,
+  status: 'ENABLED',
+  remark: '人工识别替代',
+  updatedAt: '2026-07-13T09:30:00+08:00',
+  version: 4,
 }
 const bomPage: PageResult<BomSummaryRecord> = {
   items: [draftBom, enabledBom],
@@ -139,6 +223,16 @@ function mountBoms(
     'material:bom:copy',
     'material:bom:enable',
     'material:bom:disable',
+    'material:bom-eco:view',
+    'material:bom-eco:create',
+    'material:bom-eco:update',
+    'material:bom-eco:apply',
+    'material:bom-eco:cancel',
+    'material:substitute:view',
+    'material:substitute:create',
+    'material:substitute:update',
+    'material:substitute:enable',
+    'material:substitute:disable',
   ],
 ) {
   const pinia = createPinia()
@@ -186,6 +280,91 @@ describe('BOM 管理页', () => {
     bomApiMock.copy.mockResolvedValue({ ...draftDetail, id: 3, bomCode: 'BOM-FG-A-V11', versionCode: 'V1.1' })
     bomApiMock.enable.mockResolvedValue({ ...draftDetail, status: 'ENABLED' })
     bomApiMock.disable.mockResolvedValue({ ...draftDetail, status: 'DISABLED' })
+    bomApiMock.materialCandidates.mockResolvedValue({
+      items: [
+        { id: 1, code: 'FG-A', name: '成品A', status: 'ENABLED', summary: '成品' },
+        { id: 2, code: 'RM-STEEL', name: '冷轧钢板', status: 'ENABLED', summary: '原材料' },
+      ],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+    bomApiMock.unitCandidates.mockResolvedValue({
+      items: [
+        { id: 1, code: 'PCS', name: '件', status: 'ENABLED' },
+        { id: 2, code: 'KG', name: '千克', status: 'ENABLED' },
+      ],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+    bomApiMock.engineeringChanges.list.mockResolvedValue({ items: [ecoRecord], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    bomApiMock.engineeringChanges.get.mockResolvedValue(ecoRecord)
+    bomApiMock.engineeringChanges.create.mockResolvedValue(ecoRecord)
+    bomApiMock.engineeringChanges.update.mockResolvedValue(ecoRecord)
+    bomApiMock.engineeringChanges.apply.mockResolvedValue({
+      ...ecoRecord,
+      status: 'APPLIED',
+      appliedAt: '2026-07-13T10:00:00+08:00',
+      appliedBy: 'admin',
+      sourceBomBefore: { bomCode: 'BOM-FG-A', versionCode: 'V1.0', status: 'ENABLED', effectiveFrom: '2026-07-01', effectiveTo: null },
+      sourceBomAfter: { bomCode: 'BOM-FG-A', versionCode: 'V1.0', status: 'DISABLED', effectiveFrom: '2026-07-01', effectiveTo: '2026-07-12' },
+      targetBomBefore: { bomCode: 'BOM-FG-A-V2', versionCode: 'V2.0', status: 'DRAFT', effectiveFrom: '2026-07-13', effectiveTo: null },
+      targetBomAfter: { bomCode: 'BOM-FG-A-V2', versionCode: 'V2.0', status: 'ENABLED', effectiveFrom: '2026-07-13', effectiveTo: null },
+      version: 3,
+    })
+    bomApiMock.engineeringChanges.cancel.mockResolvedValue({ ...ecoRecord, status: 'CANCELLED', version: 3 })
+    bomApiMock.engineeringChanges.sourceBomCandidates.mockResolvedValue({
+      items: [{ id: 2, code: 'BOM-FG-A', name: 'V1.0', status: 'ENABLED', summary: '成品A' }],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    bomApiMock.engineeringChanges.targetBomCandidates.mockResolvedValue({
+      items: [{ id: 1, code: 'BOM-FG-A-V2', name: 'V2.0', status: 'DRAFT', summary: '成品A' }],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    bomApiMock.substitutes.list.mockResolvedValue({ items: [substituteRecord], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    bomApiMock.substitutes.get.mockResolvedValue(substituteRecord)
+    bomApiMock.substitutes.create.mockResolvedValue(substituteRecord)
+    bomApiMock.substitutes.update.mockResolvedValue(substituteRecord)
+    bomApiMock.substitutes.enable.mockResolvedValue({ ...substituteRecord, status: 'ENABLED', version: 5 })
+    bomApiMock.substitutes.disable.mockResolvedValue({ ...substituteRecord, status: 'DISABLED', version: 5 })
+    bomApiMock.substitutes.materialCandidates.mockResolvedValue({
+      items: [
+        { id: 2, code: 'RM-STEEL', name: '冷轧钢板', status: 'ENABLED' },
+        { id: 3, code: 'RM-STEEL-B', name: '镀锌钢板', status: 'ENABLED' },
+      ],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+    bomApiMock.substitutes.bomCandidates.mockResolvedValue({
+      items: [{ id: 1, code: 'BOM-FG-A', name: 'V1.0', status: 'ENABLED', summary: '成品A' }],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+    masterDataApiMock.codingRules.generate.mockResolvedValue({
+      objectType: 'BOM_ECO',
+      ruleId: 3,
+      generatedCode: 'ECO-202607-0002',
+      generatedAt: '2026-07-13T10:30:00+08:00',
+    })
     masterDataApiMock.materials.list.mockResolvedValue({
       items: [finishedGood, rawMaterial],
       page: 1,
@@ -207,6 +386,9 @@ describe('BOM 管理页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('BOM-FG-A')
+    expect(wrapper.text()).toContain('BOM 版本')
+    expect(wrapper.text()).toContain('工程变更')
+    expect(wrapper.text()).toContain('替代料')
     expect(wrapper.text()).toContain('成品A')
     expect(wrapper.text()).toContain('V1.0')
     expect(wrapper.text()).toContain('草稿')
@@ -250,12 +432,54 @@ describe('BOM 管理页', () => {
     expect(readonlyWrapper.find('[data-test="create-bom"]').exists()).toBe(false)
   })
 
+  it('BOM 表单和筛选使用候选分页接口并保留禁用原因', async () => {
+    bomApiMock.materialCandidates.mockResolvedValue({
+      items: [{ id: 1, code: 'FG-A', name: '成品A', status: 'ENABLED', disabled: true, disabledReason: '已有启用版本' }],
+      selectedItems: [{ id: 2, code: 'FG-B', name: '成品B', status: 'ENABLED' }],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    expect(masterDataApiMock.materials.list).not.toHaveBeenCalled()
+    expect(masterDataApiMock.units.list).not.toHaveBeenCalled()
+    expect(bomApiMock.materialCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      selectedIds: [],
+    }))
+    expect(bomApiMock.unitCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 20,
+      selectedIds: [],
+    }))
+
+    await wrapper.find('[data-test="create-bom"]').trigger('click')
+    await flushPromises()
+    const disabledOption = wrapper.findAllComponents({ name: 'ElOption' }).find((option) => option.props('value') === 1)
+    expect(disabledOption?.props('disabled')).toBe(true)
+    const parentSelect = wrapper.findComponent('[data-test="bom-parent-material-id"]') as VueWrapper
+    const loadParentCandidates = (parentSelect.props() as Record<string, unknown>).remoteMethod as (keyword: string) => void
+    loadParentCandidates('成品')
+    await flushPromises()
+
+    expect(bomApiMock.materialCandidates).toHaveBeenLastCalledWith(expect.objectContaining({
+      keyword: '成品',
+      page: 1,
+      pageSize: 20,
+    }))
+  })
+
   it('草稿行显示编辑和启用按钮，启用行不显示编辑按钮', async () => {
     const wrapper = mountBoms()
     await flushPromises()
 
     expect(wrapper.findAll('[data-test="edit-bom"]')).toHaveLength(1)
-    expect(wrapper.find('[data-test="enable-bom"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="publish-bom"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('发布')
   })
 
   it('表单必填为空时展示错误并不提交', async () => {
@@ -357,12 +581,269 @@ describe('BOM 管理页', () => {
     const wrapper = mountBoms()
     await flushPromises()
 
-    await wrapper.find('[data-test="enable-bom"]').trigger('click')
+    await wrapper.find('[data-test="publish-bom"]').trigger('click')
     await flushPromises()
     await wrapper.find('[data-test="disable-bom"]').trigger('click')
     await flushPromises()
 
-    expect(bomApiMock.enable).toHaveBeenCalledWith(1)
-    expect(bomApiMock.disable).toHaveBeenCalled()
+    expect(bomApiMock.enable).toHaveBeenCalledWith(1, { version: 3 })
+    expect(bomApiMock.disable).toHaveBeenCalledWith(1, { version: 3 })
+  })
+
+  it('已发布 BOM 详情显示只读提示且普通编辑不可见', async () => {
+    bomApiMock.get.mockResolvedValueOnce(enabledDetail)
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.findAll('[data-test="view-bom"]')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已发布 BOM 不允许普通编辑')
+    expect(wrapper.text()).toContain('复制新版本')
+    expect(wrapper.findAll('[data-test="edit-bom"]')).toHaveLength(1)
+  })
+
+  it('BOM 详情按真实工程变更关系展示历史版本信息', async () => {
+    bomApiMock.get.mockResolvedValueOnce({
+      ...enabledDetail,
+      historyRelations: [
+        {
+          ecoId: 100,
+          ecoNo: 'ECO-202607-0001',
+          relationType: 'SOURCE',
+          sourceBomId: 2,
+          sourceBomCode: 'BOM-FG-A',
+          sourceVersionCode: 'V1.0',
+          targetBomId: 1,
+          targetBomCode: 'BOM-FG-A-V2',
+          targetVersionCode: 'V2.0',
+          status: 'APPLIED',
+          effectiveFrom: '2026-07-13',
+          effectiveTo: null,
+          appliedBy: 'admin',
+          appliedAt: '2026-07-13T10:00:00+08:00',
+        },
+      ],
+    })
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.findAll('[data-test="view-bom"]')[1].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ECO-202607-0001')
+    expect(wrapper.text()).toContain('作为来源')
+    expect(wrapper.text()).toContain('来源版本')
+    expect(wrapper.text()).toContain('BOM-FG-A / V1.0')
+    expect(wrapper.text()).toContain('目标版本')
+    expect(wrapper.text()).toContain('BOM-FG-A-V2 / V2.0')
+    expect(wrapper.text()).toContain('已应用')
+    expect(wrapper.text()).toContain('2026-07-13')
+    expect(wrapper.text()).toContain('admin')
+    expect(wrapper.text()).not.toContain('已发布版本')
+    expect(wrapper.text()).not.toContain('未发布版本')
+  })
+
+  it('工程变更页签展示来源目标 BOM 并应用后展示结果摘要', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-eco"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('ECO-202607-0001')
+    expect(wrapper.text()).toContain('替换冷轧钢板规格')
+
+    await wrapper.find('[data-test="apply-bom-eco"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.engineeringChanges.apply).toHaveBeenCalledWith(100, { version: 2 })
+    expect(wrapper.text()).toContain('应用结果')
+    expect(wrapper.text()).toContain('来源变更前')
+    expect(wrapper.text()).toContain('目标变更后')
+    expect(wrapper.text()).toContain('BOM-FG-A / V1.0')
+    expect(wrapper.text()).not.toContain('{"bomCode"')
+  })
+
+  it('创建工程变更时生成 ECO 编码并按候选上下文提交', async () => {
+    const wrapper = mountBoms([
+      'material:bom:view',
+      'material:bom-eco:view',
+      'material:bom-eco:create',
+      'master:coding-rule:generate',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-eco-from-bom"]').trigger('click')
+    await flushPromises()
+    expect(bomApiMock.engineeringChanges.sourceBomCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      parentMaterialId: 1,
+      selectedIds: [2],
+    }))
+    expect(bomApiMock.engineeringChanges.targetBomCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      sourceBomId: 2,
+    }))
+
+    const sourceSelect = wrapper.findComponent('[data-test="eco-source-bom-id"]') as VueWrapper
+    const searchSourceBoms = (sourceSelect.props() as Record<string, unknown>).remoteMethod as (keyword: string) => void
+    searchSourceBoms('BOM-FG')
+    await flushPromises()
+    expect(bomApiMock.engineeringChanges.sourceBomCandidates).toHaveBeenLastCalledWith(expect.objectContaining({
+      keyword: 'BOM-FG',
+      parentMaterialId: 1,
+      selectedIds: [2],
+    }))
+
+    await wrapper.find('[data-test="generate-eco-code"]').trigger('click')
+    await flushPromises()
+    expect(masterDataApiMock.codingRules.generate).toHaveBeenCalledWith({ objectType: 'BOM_ECO' })
+    expect((wrapper.find('input[name="eco-no"]').element as HTMLInputElement).value).toBe('ECO-202607-0002')
+
+    bomApiMock.engineeringChanges.create.mockResolvedValueOnce({ ...ecoRecord, ecoNo: 'ECO-202607-0002' })
+    await setSelectValue(wrapper, 'eco-target-bom-id', 1)
+    await wrapper.find('input[name="eco-effective-from"]').setValue('2026-07-13')
+    await wrapper.find('input[name="eco-change-reason"]').setValue('材料优化')
+    await wrapper.find('input[name="eco-impact-scope"]').setValue('后续生产')
+    await wrapper.find('textarea[name="eco-change-summary"]').setValue('替换冷轧钢板规格')
+    await wrapper.find('[data-test="submit-bom-eco"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.engineeringChanges.create).toHaveBeenCalledWith(expect.objectContaining({
+      ecoNo: 'ECO-202607-0002',
+      sourceBomId: 2,
+      targetBomId: 1,
+      effectiveFrom: '2026-07-13',
+      changeReason: '材料优化',
+    }))
+  })
+
+  it('ECO 保存返回编号与生成编号不一致时阻止静默关闭', async () => {
+    bomApiMock.engineeringChanges.create.mockResolvedValueOnce({ ...ecoRecord, ecoNo: 'ECO-202607-9999' })
+    const wrapper = mountBoms([
+      'material:bom:view',
+      'material:bom-eco:view',
+      'material:bom-eco:create',
+      'master:coding-rule:generate',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-eco-from-bom"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="generate-eco-code"]').trigger('click')
+    await flushPromises()
+    await setSelectValue(wrapper, 'eco-target-bom-id', 1)
+    await wrapper.find('input[name="eco-effective-from"]').setValue('2026-07-13')
+    await wrapper.find('input[name="eco-change-reason"]').setValue('材料优化')
+    await wrapper.find('input[name="eco-impact-scope"]').setValue('后续生产')
+    await wrapper.find('textarea[name="eco-change-summary"]').setValue('替换冷轧钢板规格')
+
+    await wrapper.find('[data-test="submit-bom-eco"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.engineeringChanges.create).toHaveBeenCalledWith(expect.objectContaining({
+      ecoNo: 'ECO-202607-0002',
+    }))
+    expect(wrapper.text()).toContain('保存返回的工程变更编号与已生成编号不一致')
+  })
+
+  it('草稿工程变更可编辑并以当前 version 更新，取消必须输入原因', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-eco"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="edit-bom-eco"]').trigger('click')
+    await flushPromises()
+    const sourceSelect = wrapper.findComponent('[data-test="eco-source-bom-id"]') as VueWrapper
+    const searchSourceBoms = (sourceSelect.props() as Record<string, unknown>).remoteMethod as (keyword: string) => void
+    searchSourceBoms('BOM-FG')
+    await flushPromises()
+    expect(bomApiMock.engineeringChanges.sourceBomCandidates).toHaveBeenLastCalledWith(expect.objectContaining({
+      keyword: 'BOM-FG',
+      parentMaterialId: 1,
+      selectedIds: [2],
+    }))
+
+    await wrapper.find('input[name="eco-impact-scope"]').setValue('后续订单')
+    await wrapper.find('[data-test="submit-bom-eco"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.engineeringChanges.update).toHaveBeenCalledWith(100, expect.objectContaining({
+      version: 2,
+      impactScope: '后续订单',
+    }))
+
+    await wrapper.find('[data-test="cancel-bom-eco"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="submit-cancel-bom-eco"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('取消原因必填')
+    expect(bomApiMock.engineeringChanges.cancel).not.toHaveBeenCalled()
+
+    await wrapper.find('textarea[name="eco-cancel-reason"]').setValue('目标版本作废')
+    await wrapper.find('[data-test="submit-cancel-bom-eco"]').trigger('click')
+    await flushPromises()
+    expect(bomApiMock.engineeringChanges.cancel).toHaveBeenCalledWith(100, {
+      version: 2,
+      reason: '目标版本作废',
+    })
+  })
+
+  it('替代料页签展示主物料、替代物料、范围和停用动作', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-substitutes"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('冷轧钢板')
+    expect(wrapper.text()).toContain('镀锌钢板')
+    expect(wrapper.text()).toContain('BOM 范围')
+    await wrapper.find('[data-test="disable-substitute"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.substitutes.disable).toHaveBeenCalledWith(200, { version: 4 })
+  })
+
+  it('替代料可按冻结字段筛选并支持编辑 version 更新', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-substitutes"]').trigger('click')
+    await flushPromises()
+    await setSelectValue(wrapper, 'filter-substitute-main-material-id', 2)
+    await setSelectValue(wrapper, 'filter-substitute-material-id', 3)
+    await setSelectValue(wrapper, 'filter-substitute-scope-type', 'BOM')
+    await setSelectValue(wrapper, 'filter-substitute-scope-id', 1)
+    await wrapper.find('input[name="substitute-effective-date"]').setValue('2026-07-13')
+    await wrapper.find('[data-test="search-substitute"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.substitutes.list).toHaveBeenLastCalledWith({
+      keyword: '',
+      mainMaterialId: 2,
+      substituteMaterialId: 3,
+      scopeType: 'BOM',
+      scopeId: 1,
+      status: undefined,
+      effectiveDate: '2026-07-13',
+      page: 1,
+      pageSize: 10,
+    })
+
+    await wrapper.find('[data-test="edit-substitute"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="substitute-rate"]').setValue('1.2500')
+    await wrapper.find('[data-test="submit-substitute"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.substitutes.update).toHaveBeenCalledWith(200, expect.objectContaining({
+      version: 4,
+      substituteRate: '1.2500',
+    }))
+    expect(bomApiMock.substitutes.bomCandidates).toHaveBeenCalledWith(expect.objectContaining({
+      parentMaterialId: 2,
+      selectedIds: [1],
+    }))
   })
 })

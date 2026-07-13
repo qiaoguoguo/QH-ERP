@@ -73,11 +73,12 @@ const bomSummary: BomSummaryRecord = {
   parentMaterialName: '成品 A',
   versionCode: 'V1',
   name: '成品 A 标准 BOM',
-  baseQuantity: 1,
+  baseQuantity: '1.0000',
   baseUnitId: 2,
   baseUnitName: '件',
   status: 'ENABLED',
   itemCount: 1,
+  version: 1,
 }
 
 const bomDetail: BomDetailRecord = {
@@ -90,13 +91,21 @@ const bomDetail: BomDetailRecord = {
       childMaterialCode: 'RM-001',
       childMaterialName: '原材料 A',
       childMaterialType: 'RAW_MATERIAL',
-      unitId: 3,
-      unitName: '千克',
-      quantity: 2.5,
-      lossRate: 0.05,
+      businessUnitId: 3,
+      businessUnitName: '千克',
+      businessQuantity: '2.5000',
+      baseUnitId: 3,
+      baseUnitName: '千克',
+      baseQuantity: '2.5000',
+      conversionRateSnapshot: '1.0000',
+      quantityScaleSnapshot: 4,
+      roundingModeSnapshot: 'HALF_UP',
+      quantityBasis: 'BASE_UNIT',
+      lossRate: '0.0500',
       remark: '标准用料',
     },
   ],
+  historyRelations: [],
 }
 
 const issueWarehouse: WarehouseRecord = {

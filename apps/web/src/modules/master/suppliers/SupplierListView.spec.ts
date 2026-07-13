@@ -14,6 +14,8 @@ const apiMock = vi.hoisted(() => ({
     update: vi.fn(),
     enable: vi.fn(),
     disable: vi.fn(),
+    getSettlementTax: vi.fn(),
+    updateSettlementTax: vi.fn(),
   },
 }))
 
@@ -27,10 +29,41 @@ const supplier: PartnerRecord = {
   name: '华东五金供应商',
   contactName: '李四',
   contactPhone: '13800000001',
+  settlementTaxSummary: {
+    hasData: true,
+    sensitiveRestricted: true,
+    taxNoMasked: '9131********5678',
+    defaultTaxRate: '0.1300',
+    settlementMethod: 'MONTHLY',
+    paymentTermDays: 60,
+  },
   status: 'ENABLED',
   remark: '标准件供应',
 }
 const emptyPage: PageResult<PartnerRecord> = { items: [], page: 1, pageSize: 10, total: 0, totalPages: 0 }
+
+const restrictedSettlementTax = {
+  ownerType: 'SUPPLIER',
+  ownerId: 1,
+  hasData: true,
+  sensitiveRestricted: true,
+  restrictedMessage: '无权限查看完整结算税务资料',
+  invoiceTitle: '华东五金供应商',
+  taxNo: null,
+  taxNoMasked: '9131********5678',
+  registeredAddress: null,
+  registeredPhone: null,
+  bankName: null,
+  bankAccount: null,
+  bankAccountMasked: '6228********7788',
+  defaultTaxRate: '0.1300',
+  invoiceType: 'SPECIAL_VAT',
+  settlementMethod: 'MONTHLY',
+  paymentTermDays: 60,
+  paymentTerms: '月结60天',
+  remark: null,
+  version: 4,
+}
 
 function mountSuppliers(permissions = ['master:supplier:view', 'master:supplier:create', 'master:supplier:update']) {
   const pinia = createPinia()
@@ -55,6 +88,8 @@ describe('供应商列表页', () => {
     apiMock.suppliers.update.mockResolvedValue(supplier)
     apiMock.suppliers.enable.mockResolvedValue(supplier)
     apiMock.suppliers.disable.mockResolvedValue(supplier)
+    apiMock.suppliers.getSettlementTax.mockResolvedValue(restrictedSettlementTax)
+    apiMock.suppliers.updateSettlementTax.mockResolvedValue({ ...restrictedSettlementTax, paymentTermDays: 45, version: 5 })
   })
 
   it('新增供应商时提交联系人和联系电话', async () => {
@@ -83,5 +118,46 @@ describe('供应商列表页', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="create-record"]').exists()).toBe(false)
+  })
+
+  it('列表展示供应商结算税务摘要和受限态，不泄露完整敏感值', async () => {
+    apiMock.suppliers.list.mockResolvedValue({ items: [supplier], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountSuppliers([
+      'master:supplier:view',
+      'master:supplier-settlement:view',
+      'master:supplier-settlement:update',
+    ])
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('9131********5678')
+    expect(wrapper.text()).toContain('13%')
+    expect(wrapper.text()).toContain('月结')
+    expect(wrapper.text()).toContain('受限')
+    expect(wrapper.text()).not.toContain('913100001234567890')
+    expect(wrapper.text()).not.toContain('6228000011117788')
+  })
+
+  it('维护供应商结算税务资料走独立接口并提交 version', async () => {
+    apiMock.suppliers.list.mockResolvedValue({ items: [supplier], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountSuppliers([
+      'master:supplier:view',
+      'master:supplier-settlement:view',
+      'master:supplier-settlement:update',
+      'master:supplier-settlement:sensitive-update',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-supplier-settlement-tax"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="settlement-payment-term-days"]').setValue('45')
+    await wrapper.find('[data-test="submit-settlement-tax"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.suppliers.getSettlementTax).toHaveBeenCalledWith(1)
+    expect(apiMock.suppliers.updateSettlementTax).toHaveBeenCalledWith(1, expect.objectContaining({
+      paymentTermDays: 45,
+      version: 4,
+    }))
+    expect(apiMock.suppliers.update).not.toHaveBeenCalled()
   })
 })

@@ -15,6 +15,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,6 +25,8 @@ import java.util.Optional;
 public class MaterialAdminService {
 
 	private static final String TARGET_TYPE = "MATERIAL";
+
+	private static final String MATERIAL_COST_UPDATE_PERMISSION = "master:material-cost:update";
 
 	private final JdbcTemplate jdbcTemplate;
 
@@ -46,7 +49,9 @@ public class MaterialAdminService {
 		List<MaterialResponse> items = this.jdbcTemplate.query("""
 				select m.id, m.code, m.name, m.specification, m.material_type, m.source_type,
 				       m.tracking_method, m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
-				       m.status, m.remark, m.created_at, m.updated_at
+				       m.status, m.remark, m.cost_category, m.inventory_valuation_category,
+				       m.inventory_value_enabled, m.project_cost_enabled, m.cost_remark,
+				       m.created_at, m.updated_at, m.version
 				from mst_material m
 				left join mst_material_category c on c.id = m.category_id
 				left join mst_unit u on u.id = m.unit_id
@@ -62,7 +67,9 @@ public class MaterialAdminService {
 		return this.jdbcTemplate.query("""
 				select m.id, m.code, m.name, m.specification, m.material_type, m.source_type,
 				       m.tracking_method, m.category_id, c.name as category_name, m.unit_id, u.name as unit_name,
-				       m.status, m.remark, m.created_at, m.updated_at
+				       m.status, m.remark, m.cost_category, m.inventory_valuation_category,
+				       m.inventory_value_enabled, m.project_cost_enabled, m.cost_remark,
+				       m.created_at, m.updated_at, m.version
 				from mst_material m
 				left join mst_material_category c on c.id = m.category_id
 				left join mst_unit u on u.id = m.unit_id
@@ -76,20 +83,33 @@ public class MaterialAdminService {
 		MaterialSourceType sourceType = parseSourceType(request.sourceType());
 		InventoryTrackingMethod trackingMethod = trackingMethodOrNone(request.trackingMethod());
 		validateEnabledReferences(request.categoryId(), request.unitId());
+		if (costFieldsTouched(request)) {
+			requireCostUpdatePermission(operator);
+		}
+		CostAttributes costAttributes = costAttributes(request, materialType);
+		MasterDataStatus status = statusOrEnabled(request.status());
+		validateCostAttributeCompleted(status, costAttributes);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
 			Long id = this.jdbcTemplate.queryForObject("""
 					insert into mst_material (
 						code, name, specification, material_type, source_type, tracking_method, category_id, unit_id, status,
-						remark, created_by, created_at, updated_by, updated_at
+						remark, cost_category, inventory_valuation_category, inventory_value_enabled,
+						project_cost_enabled, cost_remark, created_by, created_at, updated_by, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					returning id
 					""", Long.class, request.code(), request.name(), blankToNull(request.specification()),
 					materialType.name(), sourceType.name(), trackingMethod.name(), request.categoryId(),
 					request.unitId(), statusOrEnabled(request.status()).name(), blankToNull(request.remark()),
-					operator.username(), now, operator.username(), now);
+					costAttributes.costCategory(), costAttributes.inventoryValuationCategory(),
+					costAttributes.inventoryValueEnabled(), costAttributes.projectCostEnabled(),
+					blankToNull(request.costRemark()), operator.username(), now, operator.username(), now);
 			this.auditService.record(operator, "MATERIAL_CREATE", TARGET_TYPE, id, request.code(), servletRequest);
+			if (costFieldsTouched(request)) {
+				this.auditService.record(operator, "MATERIAL_COST_UPDATE", TARGET_TYPE, id, request.code(),
+						servletRequest);
+			}
 			return get(id);
 		}
 		catch (DuplicateKeyException exception) {
@@ -105,23 +125,40 @@ public class MaterialAdminService {
 		MaterialSourceType sourceType = parseSourceType(request.sourceType());
 		InventoryTrackingMethod trackingMethod = trackingMethodOrCurrent(request.trackingMethod(),
 				current.trackingMethod());
+		requireVersion(current.version(), request.version());
+		boolean costFieldsTouched = costFieldsTouched(request);
+		if (costFieldsTouched) {
+			requireCostUpdatePermission(operator);
+		}
 		validateTrackingMethodChangeAllowed(id, current.trackingMethod(), trackingMethod);
+		validateBaseUnitChangeAllowed(id, current.unitId(), request.unitId());
 		validateEnabledReferences(request.categoryId(), request.unitId());
 		MasterDataStatus status = statusOrCurrent(request.status(), current.status());
+		CostAttributes costAttributes = costAttributes(request, materialType, current);
+		validateCostAttributeCompleted(status, costAttributes);
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update mst_material
 					set code = ?, name = ?, specification = ?, material_type = ?, source_type = ?, tracking_method = ?,
-						category_id = ?, unit_id = ?, status = ?, remark = ?,
+						category_id = ?, unit_id = ?, status = ?, remark = ?, cost_category = ?,
+						inventory_valuation_category = ?, inventory_value_enabled = ?, project_cost_enabled = ?,
+						cost_remark = ?,
 						updated_by = ?, updated_at = ?, version = version + 1
-					where id = ?
+					where id = ? and version = ?
 					""", request.code(), request.name(), blankToNull(request.specification()), materialType.name(),
 					sourceType.name(), trackingMethod.name(), request.categoryId(), request.unitId(), status.name(),
-					blankToNull(request.remark()), operator.username(), OffsetDateTime.now(), id);
+					blankToNull(request.remark()), costAttributes.costCategory(),
+					costAttributes.inventoryValuationCategory(), costAttributes.inventoryValueEnabled(),
+					costAttributes.projectCostEnabled(), costRemark(request, current), operator.username(),
+					OffsetDateTime.now(), id, current.version());
 			if (updated == 0) {
-				throw notFound();
+				throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 			}
 			this.auditService.record(operator, "MATERIAL_UPDATE", TARGET_TYPE, id, request.code(), servletRequest);
+			if (costFieldsTouched) {
+				this.auditService.record(operator, "MATERIAL_COST_UPDATE", TARGET_TYPE, id, request.code(),
+						servletRequest);
+			}
 			return get(id);
 		}
 		catch (DuplicateKeyException exception) {
@@ -130,17 +167,22 @@ public class MaterialAdminService {
 	}
 
 	@Transactional
-	public MaterialResponse enable(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+	public MaterialResponse enable(Long id, VersionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
 		MaterialRow current = materialRow(id).orElseThrow(this::notFound);
+		requireVersion(current.version(), request == null ? null : request.version());
 		validateEnabledReferences(current.categoryId(), current.unitId());
-		changeStatus(id, MasterDataStatus.ENABLED, operator, servletRequest);
+		validateCostAttributeCompleted(id);
+		changeStatus(id, current.version(), MasterDataStatus.ENABLED, operator, servletRequest);
 		return get(id);
 	}
 
 	@Transactional
-	public MaterialResponse disable(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
-		materialRow(id).orElseThrow(this::notFound);
-		changeStatus(id, MasterDataStatus.DISABLED, operator, servletRequest);
+	public MaterialResponse disable(Long id, VersionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		MaterialRow current = materialRow(id).orElseThrow(this::notFound);
+		requireVersion(current.version(), request == null ? null : request.version());
+		changeStatus(id, current.version(), MasterDataStatus.DISABLED, operator, servletRequest);
 		return get(id);
 	}
 
@@ -186,18 +228,29 @@ public class MaterialAdminService {
 				trackingMethod.name(), trackingMethod.displayName(), rs.getLong("category_id"),
 				rs.getString("category_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 				rs.getString("status"), rs.getString("remark"), trackingMethodImmutableReason(rs.getLong("id")),
-				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+				baseUnitImmutableReason(rs.getLong("id")), rs.getString("cost_category"),
+				rs.getString("inventory_valuation_category"), rs.getBoolean("inventory_value_enabled"),
+				rs.getBoolean("project_cost_enabled"), rs.getString("cost_remark"),
+				costAttributeCompleted(rs.getString("cost_category"), rs.getString("inventory_valuation_category")),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
+				rs.getLong("version"));
 	}
 
 	private Optional<MaterialRow> materialRow(Long id) {
 		return this.jdbcTemplate
 			.query("""
-					select id, code, category_id, unit_id, status, tracking_method
+					select id, code, category_id, unit_id, status, tracking_method, cost_category,
+					       inventory_valuation_category, inventory_value_enabled, project_cost_enabled, cost_remark,
+					       version
 					from mst_material
 					where id = ?
 					""", (rs, rowNum) -> new MaterialRow(rs.getLong("id"), rs.getString("code"),
 					rs.getLong("category_id"), rs.getLong("unit_id"), MasterDataStatus.valueOf(rs.getString("status")),
-					InventoryTrackingMethod.valueOf(rs.getString("tracking_method"))),
+					InventoryTrackingMethod.valueOf(rs.getString("tracking_method")), rs.getString("cost_category"),
+					rs.getString("inventory_valuation_category"),
+					rs.getObject("inventory_value_enabled", Boolean.class),
+					rs.getObject("project_cost_enabled", Boolean.class), rs.getString("cost_remark"),
+					rs.getLong("version")),
 					id)
 			.stream()
 			.findFirst();
@@ -238,6 +291,19 @@ public class MaterialAdminService {
 		return hasTrackingFacts(materialId) ? ApiErrorCode.INVENTORY_TRACKING_METHOD_IMMUTABLE.message() : null;
 	}
 
+	private void validateBaseUnitChangeAllowed(Long materialId, Long currentUnitId, Long requestedUnitId) {
+		if (requestedUnitId == null || currentUnitId.equals(requestedUnitId)) {
+			return;
+		}
+		if (hasMaterialBusinessFacts(materialId)) {
+			throw new BusinessException(ApiErrorCode.MATERIAL_BASE_UNIT_IMMUTABLE);
+		}
+	}
+
+	private String baseUnitImmutableReason(Long materialId) {
+		return hasMaterialBusinessFacts(materialId) ? ApiErrorCode.MATERIAL_BASE_UNIT_IMMUTABLE.message() : null;
+	}
+
 	private boolean hasTrackingFacts(Long materialId) {
 		Boolean hasTrackingFacts = this.jdbcTemplate.queryForObject("""
 				select exists (
@@ -261,14 +327,114 @@ public class MaterialAdminService {
 		return Boolean.TRUE.equals(hasTrackingFacts);
 	}
 
-	private void changeStatus(Long id, MasterDataStatus status, CurrentUser operator, HttpServletRequest servletRequest) {
+	private boolean hasMaterialBusinessFacts(Long materialId) {
+		Boolean hasFacts = this.jdbcTemplate.queryForObject("""
+				select exists (select 1 from inv_stock_balance where material_id = ?)
+				or exists (select 1 from inv_stock_movement where material_id = ?)
+				or exists (select 1 from inv_stock_reservation where material_id = ?)
+				or exists (select 1 from inv_stock_tracking_allocation where material_id = ?)
+				or exists (select 1 from mfg_bom where parent_material_id = ?)
+				or exists (select 1 from mfg_bom_item where child_material_id = ?)
+				or exists (select 1 from mfg_work_order where product_material_id = ?)
+				or exists (select 1 from mfg_work_order_material where material_id = ?)
+				or exists (select 1 from mfg_cost_record where product_material_id = ? or material_id = ?)
+				or exists (select 1 from proc_purchase_order_line where material_id = ?)
+				or exists (select 1 from proc_purchase_receipt_line where material_id = ?)
+				or exists (select 1 from sal_sales_order_line where material_id = ?)
+				or exists (select 1 from sal_sales_shipment_line where material_id = ?)
+				""", Boolean.class, materialId, materialId, materialId, materialId, materialId, materialId,
+				materialId, materialId, materialId, materialId, materialId, materialId, materialId, materialId);
+		return Boolean.TRUE.equals(hasFacts);
+	}
+
+	private CostAttributes costAttributes(MaterialRequest request, MaterialType materialType) {
+		String costCategory = hasText(request.costCategory()) ? request.costCategory() : defaultCostCategory(materialType);
+		String inventoryValuationCategory = hasText(request.inventoryValuationCategory())
+				? request.inventoryValuationCategory() : "VALUATED_MATERIAL";
+		if (!validCostCategory(costCategory) || !validInventoryValuationCategory(inventoryValuationCategory)) {
+			throw new BusinessException(ApiErrorCode.MATERIAL_COST_ATTRIBUTE_INCOMPLETE);
+		}
+		boolean inventoryValueEnabled = request.inventoryValueEnabled() == null ? true : request.inventoryValueEnabled();
+		boolean projectCostEnabled = request.projectCostEnabled() == null ? true : request.projectCostEnabled();
+		return new CostAttributes(costCategory, inventoryValuationCategory, inventoryValueEnabled, projectCostEnabled);
+	}
+
+	private CostAttributes costAttributes(MaterialRequest request, MaterialType materialType, MaterialRow current) {
+		String costCategory = hasText(request.costCategory()) ? request.costCategory() : current.costCategory();
+		String inventoryValuationCategory = hasText(request.inventoryValuationCategory())
+				? request.inventoryValuationCategory() : current.inventoryValuationCategory();
+		if (!validCostCategory(costCategory) || !validInventoryValuationCategory(inventoryValuationCategory)) {
+			throw new BusinessException(ApiErrorCode.MATERIAL_COST_ATTRIBUTE_INCOMPLETE);
+		}
+		boolean inventoryValueEnabled = request.inventoryValueEnabled() == null ? current.inventoryValueEnabled()
+				: request.inventoryValueEnabled();
+		boolean projectCostEnabled = request.projectCostEnabled() == null ? current.projectCostEnabled()
+				: request.projectCostEnabled();
+		return new CostAttributes(costCategory, inventoryValuationCategory, inventoryValueEnabled, projectCostEnabled);
+	}
+
+	private String costRemark(MaterialRequest request, MaterialRow current) {
+		return request.costRemark() == null ? current.costRemark() : blankToNull(request.costRemark());
+	}
+
+	private String defaultCostCategory(MaterialType materialType) {
+		return switch (materialType) {
+			case FINISHED_GOOD -> "FINISHED_GOOD";
+			case SEMI_FINISHED -> "SEMI_FINISHED";
+			case AUXILIARY -> "AUXILIARY_MATERIAL";
+			default -> "DIRECT_MATERIAL";
+		};
+	}
+
+	private boolean validCostCategory(String value) {
+		return switch (value) {
+			case "DIRECT_MATERIAL", "AUXILIARY_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD", "OUTSOURCING",
+					"SERVICE", "UNCLASSIFIED" -> true;
+			default -> false;
+		};
+	}
+
+	private boolean validInventoryValuationCategory(String value) {
+		return switch (value) {
+			case "VALUATED_MATERIAL", "NON_VALUATED_CONSUMABLE", "SERVICE_NON_STOCK",
+					"UNCLASSIFIED" -> true;
+			default -> false;
+		};
+	}
+
+	private boolean costAttributeCompleted(String costCategory, String inventoryValuationCategory) {
+		return hasText(costCategory) && hasText(inventoryValuationCategory) && !"UNCLASSIFIED".equals(costCategory)
+				&& !"UNCLASSIFIED".equals(inventoryValuationCategory);
+	}
+
+	private void validateCostAttributeCompleted(Long materialId) {
+		Boolean completed = this.jdbcTemplate.query("""
+				select cost_category, inventory_valuation_category
+				from mst_material
+				where id = ?
+				""", (rs, rowNum) -> costAttributeCompleted(rs.getString("cost_category"),
+				rs.getString("inventory_valuation_category")), materialId).stream().findFirst().orElse(false);
+		if (!Boolean.TRUE.equals(completed)) {
+			throw new BusinessException(ApiErrorCode.MATERIAL_COST_ATTRIBUTE_INCOMPLETE);
+		}
+	}
+
+	private void validateCostAttributeCompleted(MasterDataStatus status, CostAttributes costAttributes) {
+		if (status == MasterDataStatus.ENABLED && !costAttributeCompleted(costAttributes.costCategory(),
+				costAttributes.inventoryValuationCategory())) {
+			throw new BusinessException(ApiErrorCode.MATERIAL_COST_ATTRIBUTE_INCOMPLETE);
+		}
+	}
+
+	private void changeStatus(Long id, Long version, MasterDataStatus status, CurrentUser operator,
+			HttpServletRequest servletRequest) {
 		int updated = this.jdbcTemplate.update("""
 				update mst_material
 				set status = ?, updated_by = ?, updated_at = ?, version = version + 1
-				where id = ?
-				""", status.name(), operator.username(), OffsetDateTime.now(), id);
+				where id = ? and version = ?
+				""", status.name(), operator.username(), OffsetDateTime.now(), id, version);
 		if (updated == 0) {
-			throw notFound();
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 		}
 		this.auditService.record(operator, status == MasterDataStatus.ENABLED ? "MATERIAL_ENABLE" : "MATERIAL_DISABLE",
 				TARGET_TYPE, id, code(id), servletRequest);
@@ -342,6 +508,24 @@ public class MaterialAdminService {
 		return new BusinessException(ApiErrorCode.MASTER_DATA_REFERENCE_INVALID);
 	}
 
+	private void requireVersion(Long currentVersion, Long requestVersion) {
+		if (requestVersion == null || !currentVersion.equals(requestVersion)) {
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
+		}
+	}
+
+	private void requireCostUpdatePermission(CurrentUser operator) {
+		if (operator == null || !operator.permissions().contains(MATERIAL_COST_UPDATE_PERMISSION)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private boolean costFieldsTouched(MaterialRequest request) {
+		return request.costCategory() != null || request.inventoryValuationCategory() != null
+				|| request.inventoryValueEnabled() != null || request.projectCostEnabled() != null
+				|| request.costRemark() != null;
+	}
+
 	private static int limit(int pageSize) {
 		return Math.max(1, Math.min(pageSize, 100));
 	}
@@ -360,17 +544,28 @@ public class MaterialAdminService {
 
 	public record MaterialRequest(@NotBlank String code, @NotBlank String name, String specification,
 			@NotBlank String materialType, @NotBlank String sourceType, String trackingMethod, Long categoryId,
-			Long unitId, String status, String remark) {
+			Long unitId, String status, String remark, String costCategory, String inventoryValuationCategory,
+			Boolean inventoryValueEnabled, Boolean projectCostEnabled, String costRemark, Long version) {
+	}
+
+	public record VersionRequest(Long version) {
 	}
 
 	public record MaterialResponse(Long id, String code, String name, String specification, String materialType,
 			String sourceType, String trackingMethod, String trackingMethodName, Long categoryId, String categoryName,
 			Long unitId, String unitName, String status, String remark, String trackingMethodImmutableReason,
-			OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String baseUnitImmutableReason, String costCategory, String inventoryValuationCategory,
+			Boolean inventoryValueEnabled, Boolean projectCostEnabled, String costRemark, Boolean costAttributeCompleted,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version) {
 	}
 
 	private record MaterialRow(Long id, String code, Long categoryId, Long unitId, MasterDataStatus status,
-			InventoryTrackingMethod trackingMethod) {
+			InventoryTrackingMethod trackingMethod, String costCategory, String inventoryValuationCategory,
+			Boolean inventoryValueEnabled, Boolean projectCostEnabled, String costRemark, Long version) {
+	}
+
+	private record CostAttributes(String costCategory, String inventoryValuationCategory, Boolean inventoryValueEnabled,
+			Boolean projectCostEnabled) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

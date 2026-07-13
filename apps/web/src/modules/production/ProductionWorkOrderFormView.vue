@@ -322,10 +322,14 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="用量" min-width="110" align="right">
             <template #default="{ row }">
-              <span class="numeric-cell">{{ formatProductionQuantity(row.quantity) }}</span>
+              <span class="numeric-cell">{{ formatProductionQuantity(row.businessQuantity ?? row.quantity) }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="unitName" label="单位" min-width="90" />
+          <el-table-column label="单位" min-width="90">
+            <template #default="{ row }">
+              {{ row.businessUnitName ?? row.unitName ?? '-' }}
+            </template>
+          </el-table-column>
           <el-table-column label="损耗率" min-width="100" align="right">
             <template #default="{ row }">
               <span class="numeric-cell">{{ formatProductionQuantity(row.lossRate) }}</span>

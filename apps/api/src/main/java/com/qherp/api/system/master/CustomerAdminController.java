@@ -23,20 +23,33 @@ public class CustomerAdminController {
 
 	private final MasterDataAdminService masterDataAdminService;
 
-	public CustomerAdminController(MasterDataAdminService masterDataAdminService) {
+	private final SettlementTaxAdminService settlementTaxAdminService;
+
+	public CustomerAdminController(MasterDataAdminService masterDataAdminService,
+			SettlementTaxAdminService settlementTaxAdminService) {
 		this.masterDataAdminService = masterDataAdminService;
+		this.settlementTaxAdminService = settlementTaxAdminService;
 	}
 
 	@GetMapping
 	public ApiResponse<PageResponse<MasterDataAdminService.PartnerResponse>> list(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
-			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.masterDataAdminService.listPartners(RESOURCE, keyword, status, page, pageSize));
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.masterDataAdminService.listPartners(RESOURCE, keyword, status, page, pageSize,
+				currentUser));
 	}
 
 	@GetMapping("/{id}")
-	public ApiResponse<MasterDataAdminService.PartnerResponse> get(@PathVariable Long id) {
-		return ApiResponse.ok(this.masterDataAdminService.getPartner(RESOURCE, id));
+	public ApiResponse<MasterDataAdminService.PartnerResponse> get(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.masterDataAdminService.getPartner(RESOURCE, id, currentUser));
+	}
+
+	@GetMapping("/{id}/settlement-tax")
+	public ApiResponse<SettlementTaxAdminService.SettlementTaxRecord> getSettlementTax(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.settlementTaxAdminService.get(RESOURCE, id, currentUser));
 	}
 
 	@PostMapping
@@ -51,6 +64,14 @@ public class CustomerAdminController {
 			@Valid @RequestBody MasterDataAdminService.PartnerRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
 		return ApiResponse.ok(this.masterDataAdminService.updatePartner(RESOURCE, id, request, currentUser,
+				servletRequest));
+	}
+
+	@PutMapping("/{id}/settlement-tax")
+	public ApiResponse<SettlementTaxAdminService.SettlementTaxRecord> updateSettlementTax(@PathVariable Long id,
+			@RequestBody java.util.Map<String, Object> request, @AuthenticationPrincipal CurrentUser currentUser,
+			HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.settlementTaxAdminService.update(RESOURCE, id, request, currentUser,
 				servletRequest));
 	}
 

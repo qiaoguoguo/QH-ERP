@@ -1228,6 +1228,94 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		});
 	}
 
+	@Test
+	void initializesStage021PermissionsAndAssignsThemToSystemAdmin() {
+		var systemAdmin = this.roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
+		List<String> menus = List.of("master:unit-conversion", "master:coding-rule");
+		List<ExpectedActionPermission> actions = List.of(
+				new ExpectedActionPermission("master:unit-conversion:view", "master:unit-conversion", "GET",
+						"/api/admin/master/unit-conversions/**"),
+				new ExpectedActionPermission("master:unit-conversion:create", "master:unit-conversion", "POST",
+						"/api/admin/master/unit-conversions"),
+				new ExpectedActionPermission("master:unit-conversion:update", "master:unit-conversion", "PUT",
+						"/api/admin/master/unit-conversions/{id}"),
+				new ExpectedActionPermission("master:unit-conversion:enable", "master:unit-conversion", "PUT",
+						"/api/admin/master/unit-conversions/{id}/enable"),
+				new ExpectedActionPermission("master:unit-conversion:disable", "master:unit-conversion", "PUT",
+						"/api/admin/master/unit-conversions/{id}/disable"),
+				new ExpectedActionPermission("master:coding-rule:view", "master:coding-rule", "GET",
+						"/api/admin/coding-rules/**"),
+				new ExpectedActionPermission("master:coding-rule:create", "master:coding-rule", "POST",
+						"/api/admin/coding-rules"),
+				new ExpectedActionPermission("master:coding-rule:update", "master:coding-rule", "PUT",
+						"/api/admin/coding-rules/{id}"),
+				new ExpectedActionPermission("master:coding-rule:enable", "master:coding-rule", "PUT",
+						"/api/admin/coding-rules/{id}/enable"),
+				new ExpectedActionPermission("master:coding-rule:disable", "master:coding-rule", "PUT",
+						"/api/admin/coding-rules/{id}/disable"),
+				new ExpectedActionPermission("master:coding-rule:generate", "master:coding-rule", "POST",
+						"/api/admin/coding-rules/generate"),
+				new ExpectedActionPermission("master:material-cost:view", "master:material", "GET",
+						"/api/admin/master/materials/**"),
+				new ExpectedActionPermission("master:material-cost:update", "master:material", "PUT",
+						"/api/admin/master/materials/{id}"),
+				new ExpectedActionPermission("master:customer-settlement:view", "master:customer", "GET",
+						"/api/admin/master/customers/{id}/settlement-tax"),
+				new ExpectedActionPermission("master:customer-settlement:update", "master:customer", "PUT",
+						"/api/admin/master/customers/{id}/settlement-tax"),
+				new ExpectedActionPermission("master:customer-settlement:sensitive-view", "master:customer", null,
+						null),
+				new ExpectedActionPermission("master:customer-settlement:sensitive-update", "master:customer", null,
+						null),
+				new ExpectedActionPermission("master:supplier-settlement:view", "master:supplier", "GET",
+						"/api/admin/master/suppliers/{id}/settlement-tax"),
+				new ExpectedActionPermission("master:supplier-settlement:update", "master:supplier", "PUT",
+						"/api/admin/master/suppliers/{id}/settlement-tax"),
+				new ExpectedActionPermission("master:supplier-settlement:sensitive-view", "master:supplier", null,
+						null),
+				new ExpectedActionPermission("master:supplier-settlement:sensitive-update", "master:supplier", null,
+						null),
+				new ExpectedActionPermission("material:bom-eco:view", "material:bom", "GET",
+						"/api/admin/bom-engineering-changes/**"),
+				new ExpectedActionPermission("material:bom-eco:create", "material:bom", "POST",
+						"/api/admin/bom-engineering-changes"),
+				new ExpectedActionPermission("material:bom-eco:update", "material:bom", "PUT",
+						"/api/admin/bom-engineering-changes/{id}"),
+				new ExpectedActionPermission("material:bom-eco:apply", "material:bom", "PUT",
+						"/api/admin/bom-engineering-changes/{id}/apply"),
+				new ExpectedActionPermission("material:bom-eco:cancel", "material:bom", "PUT",
+						"/api/admin/bom-engineering-changes/{id}/cancel"),
+				new ExpectedActionPermission("material:substitute:view", "material:bom", "GET",
+						"/api/admin/material-substitutes/**"),
+				new ExpectedActionPermission("material:substitute:create", "material:bom", "POST",
+						"/api/admin/material-substitutes"),
+				new ExpectedActionPermission("material:substitute:update", "material:bom", "PUT",
+						"/api/admin/material-substitutes/{id}"),
+				new ExpectedActionPermission("material:substitute:enable", "material:bom", "PUT",
+						"/api/admin/material-substitutes/{id}/enable"),
+				new ExpectedActionPermission("material:substitute:disable", "material:bom", "PUT",
+						"/api/admin/material-substitutes/{id}/disable"));
+
+		menus.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		actions.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+	}
+
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
 		var systemAdmin = roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
 

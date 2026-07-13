@@ -109,6 +109,18 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/master/units/UnitListView.vue'),
   },
   {
+    path: '/master/unit-conversions',
+    name: 'master-unit-conversions',
+    meta: { requiresAuth: true, requiredPermission: 'master:unit-conversion:view' },
+    component: () => import('../modules/master/unitConversions/UnitConversionListView.vue'),
+  },
+  {
+    path: '/master/coding-rules',
+    name: 'master-coding-rules',
+    meta: { requiresAuth: true, requiredPermission: 'master:coding-rule:view' },
+    component: () => import('../modules/master/codingRules/CodingRuleListView.vue'),
+  },
+  {
     path: '/master/warehouses',
     name: 'master-warehouses',
     meta: { requiresAuth: true, requiredPermission: 'master:warehouse:view' },

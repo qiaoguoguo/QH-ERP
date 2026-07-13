@@ -108,21 +108,24 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
 
 		ResponseEntity<String> materialUpdate = exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
-				materialRequest("T4_LIFE_MAT_UPD", "任务四生命周期物料改", "S-02", "SEMI_FINISHED", "SELF_MADE",
-						categoryId, unitId, "ENABLED", "更新物料"),
+				withVersion(materialRequest("T4_LIFE_MAT_UPD", "任务四生命周期物料改", "S-02", "SEMI_FINISHED",
+						"SELF_MADE", categoryId, unitId, "ENABLED", "更新物料"), MATERIALS + "/" + materialId,
+						admin),
 				admin);
 		assertThat(materialUpdate.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(materialUpdate).get("code").asText()).isEqualTo("T4_LIFE_MAT_UPD");
 		assertAuditLog("MATERIAL_UPDATE", "MATERIAL", materialId, "T4_LIFE_MAT_UPD", "PUT",
 				MATERIALS + "/" + materialId);
 
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/disable", Map.of(), admin)
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/disable",
+				versionBody(MATERIALS + "/" + materialId, admin), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(get(MATERIALS + "/" + materialId, admin)).get("status").asText()).isEqualTo("DISABLED");
 		assertAuditLog("MATERIAL_DISABLE", "MATERIAL", materialId, "T4_LIFE_MAT_UPD", "PUT",
 				MATERIALS + "/" + materialId + "/disable");
 
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/enable", Map.of(), admin)
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/enable",
+				versionBody(MATERIALS + "/" + materialId, admin), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(get(MATERIALS + "/" + materialId, admin)).get("status").asText()).isEqualTo("ENABLED");
 		assertAuditLog("MATERIAL_ENABLE", "MATERIAL", materialId, "T4_LIFE_MAT_UPD", "PUT",
@@ -159,16 +162,16 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		long materialId = createMaterial(admin, "T4_REF_UPDATE_MAT", "引用更新物料", activeCategoryId, activeUnitId,
 				"ENABLED");
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
-				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
-						disabledCategoryId, activeUnitId, "ENABLED", null),
+				withVersion(materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
+						disabledCategoryId, activeUnitId, "ENABLED", null), MATERIALS + "/" + materialId, admin),
 				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
-				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED", 999_999_903L,
-						activeUnitId, "ENABLED", null),
+				withVersion(materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
+						999_999_903L, activeUnitId, "ENABLED", null), MATERIALS + "/" + materialId, admin),
 				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
-				materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
-						activeCategoryId, 999_999_904L, "ENABLED", null),
+				withVersion(materialRequest("T4_REF_UPDATE_MAT", "引用更新物料", "S", "RAW_MATERIAL", "PURCHASED",
+						activeCategoryId, 999_999_904L, "ENABLED", null), MATERIALS + "/" + materialId, admin),
 				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
 	}
 
@@ -257,8 +260,9 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				categoryId, categoryUnitId, "DISABLED");
 		assertThat(exchange(HttpMethod.PUT, CATEGORIES + "/" + categoryId + "/disable", Map.of(), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
-		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialWithDisabledCategoryId + "/enable", Map.of(),
-				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialWithDisabledCategoryId + "/enable",
+				versionBody(MATERIALS + "/" + materialWithDisabledCategoryId, admin), admin), HttpStatus.BAD_REQUEST,
+				"MASTER_DATA_REFERENCE_INVALID");
 
 		long unitId = createUnit(admin, "T4_ENABLE_UNIT", "启用单位校验单位");
 		long activeCategoryId = createCategory(admin, "T4_ENABLE_UNIT_CAT", "启用单位校验分类", null, "ENABLED", 20);
@@ -266,8 +270,9 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				activeCategoryId, unitId, "DISABLED");
 		assertThat(exchange(HttpMethod.PUT, UNITS + "/" + unitId + "/disable", Map.of(), admin).getStatusCode())
 			.isEqualTo(HttpStatus.OK);
-		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialWithDisabledUnitId + "/enable", Map.of(),
-				admin), HttpStatus.BAD_REQUEST, "MASTER_DATA_REFERENCE_INVALID");
+		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + materialWithDisabledUnitId + "/enable",
+				versionBody(MATERIALS + "/" + materialWithDisabledUnitId, admin), admin), HttpStatus.BAD_REQUEST,
+				"MASTER_DATA_REFERENCE_INVALID");
 	}
 
 	@Test
@@ -345,11 +350,12 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		long materialId = created.get("id").longValue();
 		assertThat(created.get("status").asText()).isEqualTo("ENABLED");
 
-		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/disable", Map.of(), admin)
+		assertThat(exchange(HttpMethod.PUT, MATERIALS + "/" + materialId + "/disable",
+				versionBody(MATERIALS + "/" + materialId, admin), admin)
 			.getStatusCode()).isEqualTo(HttpStatus.OK);
 		ResponseEntity<String> updateWithoutStatus = exchange(HttpMethod.PUT, MATERIALS + "/" + materialId,
-				materialRequest("T4_STATUS_DEFAULT_MAT_UPD", "状态默认物料改", "S-2", "RAW_MATERIAL", "PURCHASED",
-						categoryId, unitId, null, null),
+				withVersion(materialRequest("T4_STATUS_DEFAULT_MAT_UPD", "状态默认物料改", "S-2", "RAW_MATERIAL",
+						"PURCHASED", categoryId, unitId, null, null), MATERIALS + "/" + materialId, admin),
 				admin);
 
 		assertThat(updateWithoutStatus.getStatusCode()).isEqualTo(HttpStatus.OK);
@@ -391,7 +397,7 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 				"RAW_MATERIAL", "PURCHASED", categoryId, unitId, "ENABLED", null);
 		serialRequest.put("trackingMethod", "SERIAL");
 		ResponseEntity<String> serialUpdate = exchange(HttpMethod.PUT, MATERIALS + "/" + batchMaterialId,
-				serialRequest, admin);
+				withVersion(serialRequest, MATERIALS + "/" + batchMaterialId, admin), admin);
 		assertThat(serialUpdate.getStatusCode()).isEqualTo(HttpStatus.OK);
 		assertThat(data(serialUpdate).get("trackingMethod").asText()).isEqualTo("SERIAL");
 		assertThat(data(serialUpdate).get("trackingMethodName").asText()).isEqualTo("序列号管理");
@@ -422,6 +428,7 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		Map<String, Object> stockUpdate = materialRequest("T4_TRACK_STOCK", "正库存锁定物料", "S", "RAW_MATERIAL",
 				"PURCHASED", categoryId, unitId, "ENABLED", null);
 		stockUpdate.put("trackingMethod", "BATCH");
+		stockUpdate.put("version", lockedMaterial.get("version").longValue());
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + stockMaterialId, stockUpdate, admin),
 				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
 
@@ -431,6 +438,7 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		Map<String, Object> movementUpdate = materialRequest("T4_TRACK_MOVE", "流水锁定物料", "S", "RAW_MATERIAL",
 				"PURCHASED", categoryId, unitId, "ENABLED", null);
 		movementUpdate.put("trackingMethod", "SERIAL");
+		movementUpdate.put("version", data(get(MATERIALS + "/" + movementMaterialId, admin)).get("version").longValue());
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + movementMaterialId, movementUpdate, admin),
 				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
 
@@ -440,6 +448,9 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 		Map<String, Object> reservationUpdate = materialRequest("T4_TRACK_RESV", "活动预留锁定物料", "S",
 				"RAW_MATERIAL", "PURCHASED", categoryId, unitId, "ENABLED", null);
 		reservationUpdate.put("trackingMethod", "BATCH");
+		reservationUpdate.put("version", data(get(MATERIALS + "/" + reservationMaterialId, admin))
+			.get("version")
+			.longValue());
 		assertError(exchange(HttpMethod.PUT, MATERIALS + "/" + reservationMaterialId, reservationUpdate, admin),
 				HttpStatus.CONFLICT, "INVENTORY_TRACKING_METHOD_IMMUTABLE");
 	}
@@ -600,6 +611,20 @@ class MaterialAdminControllerTests extends PostgresIntegrationTest {
 			request.put("remark", remark);
 		}
 		return request;
+	}
+
+	private Map<String, Object> withVersion(Map<String, Object> request, String path, AuthenticatedSession session)
+			throws Exception {
+		request.put("version", version(path, session));
+		return request;
+	}
+
+	private Map<String, Object> versionBody(String path, AuthenticatedSession session) throws Exception {
+		return Map.of("version", version(path, session));
+	}
+
+	private long version(String path, AuthenticatedSession session) throws Exception {
+		return data(get(path, session)).get("version").longValue();
 	}
 
 	private void createUser(String username, List<Long> roleIds, AuthenticatedSession session) {

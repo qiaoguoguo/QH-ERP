@@ -312,6 +312,82 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void stage021AdminPathsMapToDedicatedPermissionCodes() {
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/unit-conversions",
+				"master:unit-conversion:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/unit-conversions/1",
+				"master:unit-conversion:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/unit-conversions/material-candidates",
+				"master:unit-conversion:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/unit-conversions/unit-candidates",
+				"master:unit-conversion:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/master/unit-conversions/convert",
+				"master:unit-conversion:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/master/unit-conversions",
+				"master:unit-conversion:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/master/unit-conversions/1",
+				"master:unit-conversion:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/master/unit-conversions/1/enable",
+				"master:unit-conversion:enable");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/master/unit-conversions/1/disable",
+				"master:unit-conversion:disable");
+
+		assertPermissionCode(HttpMethod.GET, "/api/admin/coding-rules", "master:coding-rule:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/coding-rules/1", "master:coding-rule:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/coding-rules", "master:coding-rule:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/coding-rules/1", "master:coding-rule:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/coding-rules/1/enable",
+				"master:coding-rule:enable");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/coding-rules/1/disable",
+				"master:coding-rule:disable");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/coding-rules/generate",
+				"master:coding-rule:generate");
+
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/customers/1/settlement-tax",
+				"master:customer-settlement:view");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/master/customers/1/settlement-tax",
+				"master:customer-settlement:update");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/master/suppliers/1/settlement-tax",
+				"master:supplier-settlement:view");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/master/suppliers/1/settlement-tax",
+				"master:supplier-settlement:update");
+
+		assertPermissionCode(HttpMethod.GET, "/api/admin/boms/material-candidates", "material:bom:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/boms/unit-candidates", "material:bom:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/bom-engineering-changes",
+				"material:bom-eco:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/bom-engineering-changes/1",
+				"material:bom-eco:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/bom-engineering-changes/source-bom-candidates",
+				"material:bom-eco:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/bom-engineering-changes/target-bom-candidates",
+				"material:bom-eco:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/bom-engineering-changes",
+				"material:bom-eco:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/bom-engineering-changes/1",
+				"material:bom-eco:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/bom-engineering-changes/1/apply",
+				"material:bom-eco:apply");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/bom-engineering-changes/1/cancel",
+				"material:bom-eco:cancel");
+
+		assertPermissionCode(HttpMethod.GET, "/api/admin/material-substitutes", "material:substitute:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/material-substitutes/1", "material:substitute:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/material-substitutes/material-candidates",
+				"material:substitute:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/material-substitutes/bom-candidates",
+				"material:substitute:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/material-substitutes",
+				"material:substitute:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/material-substitutes/1",
+				"material:substitute:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/material-substitutes/1/enable",
+				"material:substitute:enable");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/material-substitutes/1/disable",
+				"material:substitute:disable");
+	}
+
+	@Test
 	void financeAdminPathsMapToFinancePermissionCodes() {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/finance/receivable-sources",
 				"finance:receivable:create");

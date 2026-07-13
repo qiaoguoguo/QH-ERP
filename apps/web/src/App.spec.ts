@@ -302,6 +302,31 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/system')
   })
 
+  it('有单位换算和编码规则权限但后端菜单缺失时补齐基础资料入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'master_user', displayName: '主数据用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['master:unit-conversion:view', 'master:coding-rule:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('基础资料')
+    expect(wrapper.text()).toContain('物料单位换算')
+    expect(wrapper.text()).toContain('编码规则')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining(['/master/unit-conversions', '/master/coding-rules']))
+  })
+
   it('有质量确认查看权限但后端菜单缺失时补齐质量管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

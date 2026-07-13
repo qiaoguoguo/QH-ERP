@@ -57,14 +57,16 @@ public class MaterialAdminController {
 
 	@PutMapping("/{id}/enable")
 	public ApiResponse<MaterialAdminService.MaterialResponse> enable(@PathVariable Long id,
+			@RequestBody(required = false) MaterialAdminService.VersionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.materialAdminService.enable(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.materialAdminService.enable(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/{id}/disable")
 	public ApiResponse<MaterialAdminService.MaterialResponse> disable(@PathVariable Long id,
+			@RequestBody(required = false) MaterialAdminService.VersionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.materialAdminService.disable(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.materialAdminService.disable(id, request, currentUser, servletRequest));
 	}
 
 }

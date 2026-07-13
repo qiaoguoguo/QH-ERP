@@ -15,6 +15,9 @@ const apiMock = vi.hoisted(() => ({
     enable: vi.fn(),
     disable: vi.fn(),
   },
+  codingRules: {
+    generate: vi.fn(),
+  },
   units: {
     list: vi.fn(),
   },
@@ -56,6 +59,15 @@ const material: MaterialRecord = {
   categoryName: '原材料',
   unitId: 1,
   unitName: '千克',
+  businessUnitSummary: '卷、箱',
+  baseUnitImmutableReason: '已有库存流水，基本单位不可修改',
+  costCategory: 'DIRECT_MATERIAL',
+  inventoryValuationCategory: 'VALUATED_MATERIAL',
+  inventoryValueEnabled: true,
+  projectCostEnabled: true,
+  costAttributeCompleted: true,
+  costRemark: '主材',
+  version: 3,
   status: 'ENABLED',
 }
 const emptyMaterialPage: PageResult<MaterialRecord> = {
@@ -80,7 +92,13 @@ const unitPage: PageResult<UnitRecord> = {
   totalPages: 1,
 }
 
-function mountMaterials(permissions = ['master:material:view', 'master:material:create', 'master:material:update']) {
+function mountMaterials(permissions = [
+  'master:material:view',
+  'master:material:create',
+  'master:material:update',
+  'master:material-cost:view',
+  'master:material-cost:update',
+]) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -111,6 +129,8 @@ async function fillValidMaterialForm(wrapper: VueWrapper) {
   await setSelectValue(wrapper, 'material-tracking-method', 'BATCH')
   await setSelectValue(wrapper, 'material-category-id', '1')
   await setSelectValue(wrapper, 'material-unit-id', '1')
+  await setSelectValue(wrapper, 'material-cost-category', 'DIRECT_MATERIAL')
+  await setSelectValue(wrapper, 'material-inventory-valuation-category', 'VALUATED_MATERIAL')
   await setSelectValue(wrapper, 'material-status', 'ENABLED')
 }
 
@@ -122,6 +142,12 @@ describe('物料档案页', () => {
     apiMock.materials.update.mockResolvedValue(material)
     apiMock.materials.enable.mockResolvedValue(material)
     apiMock.materials.disable.mockResolvedValue(material)
+    apiMock.codingRules.generate.mockResolvedValue({
+      objectType: 'MATERIAL',
+      ruleId: 1,
+      generatedCode: 'MAT-202607-0001',
+      generatedAt: '2026-07-13T10:00:00+08:00',
+    })
     apiMock.units.list.mockResolvedValue(unitPage)
     apiMock.categories.list.mockResolvedValue(categoryPage)
   })
@@ -144,8 +170,31 @@ describe('物料档案页', () => {
       trackingMethod: 'BATCH',
       categoryId: 1,
       unitId: 1,
+      costCategory: 'DIRECT_MATERIAL',
+      inventoryValuationCategory: 'VALUATED_MATERIAL',
+      inventoryValueEnabled: true,
+      projectCostEnabled: true,
       status: 'ENABLED',
     }))
+  })
+
+  it('创建物料时可调用后端生成编码并只填充编码字段', async () => {
+    const wrapper = mountMaterials([
+      'master:material:view',
+      'master:material:create',
+      'master:material:update',
+      'master:coding-rule:generate',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-material"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="generate-material-code"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.codingRules.generate).toHaveBeenCalledWith({ objectType: 'MATERIAL' })
+    expect((wrapper.find('input[name="material-code"]').element as HTMLInputElement).value).toBe('MAT-202607-0001')
+    expect(apiMock.materials.create).not.toHaveBeenCalled()
   })
 
   it('没有创建权限时隐藏新增按钮', async () => {
@@ -185,8 +234,26 @@ describe('物料档案页', () => {
     expect(wrapper.text()).toContain('1.5mm')
     expect(wrapper.text()).toContain('原材料')
     expect(wrapper.text()).toContain('千克')
+    expect(wrapper.text()).toContain('卷、箱')
+    expect(wrapper.text()).toContain('直接材料')
+    expect(wrapper.text()).toContain('计价物料')
+    expect(wrapper.text()).toContain('参与库存价值')
+    expect(wrapper.text()).toContain('允许进入项目成本')
     expect(wrapper.text()).toContain('外购')
     expect(wrapper.text()).toContain('批次管理')
+  })
+
+  it('编辑有业务事实的物料时基本单位字段禁用并显示锁定原因', async () => {
+    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountMaterials()
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-material"]').trigger('click')
+    await flushPromises()
+
+    const unitSelect = wrapper.findComponent('[data-test="material-unit-id"]') as VueWrapper
+    expect((unitSelect.props() as Record<string, unknown>).disabled).toBe(true)
+    expect(wrapper.text()).toContain('已有库存流水，基本单位不可修改')
   })
 
   it('物料编辑弹窗和详情抽屉使用响应式宽度', async () => {
@@ -217,6 +284,50 @@ describe('物料档案页', () => {
     expect(wrapper.text()).toContain('物料编码重复')
     expect(wrapper.findComponent({ name: 'ElDialog' }).props('modelValue')).toBe(true)
     expect(wrapper.find('[data-test="submit-material"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('没有成本维护权限时编辑物料不提交成本字段', async () => {
+    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountMaterials([
+      'master:material:view',
+      'master:material:update',
+    ])
+    await flushPromises()
+
+    await wrapper.find('[data-test="edit-material"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="material-name"]').setValue('冷轧钢板A')
+    await wrapper.find('[data-test="submit-material"]').trigger('click')
+    await flushPromises()
+
+    expect(apiMock.materials.update).toHaveBeenCalled()
+    const payload = apiMock.materials.update.mock.calls.at(-1)?.[1]
+    expect(payload).not.toHaveProperty('costCategory')
+    expect(payload).not.toHaveProperty('inventoryValuationCategory')
+    expect(payload).not.toHaveProperty('inventoryValueEnabled')
+    expect(payload).not.toHaveProperty('projectCostEnabled')
+    expect(payload).not.toHaveProperty('costRemark')
+  })
+
+  it('启用物料成本分类未完善时不提交并展示稳定提示', async () => {
+    const wrapper = mountMaterials()
+    await flushPromises()
+
+    await wrapper.find('[data-test="create-material"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="material-code"]').setValue('MAT-RAW-002')
+    await wrapper.find('input[name="material-name"]').setValue('热轧钢板')
+    await setSelectValue(wrapper, 'material-type', 'RAW_MATERIAL')
+    await setSelectValue(wrapper, 'material-source-type', 'PURCHASED')
+    await setSelectValue(wrapper, 'material-tracking-method', 'BATCH')
+    await setSelectValue(wrapper, 'material-category-id', '1')
+    await setSelectValue(wrapper, 'material-unit-id', '1')
+    await setSelectValue(wrapper, 'material-status', 'ENABLED')
+    await wrapper.find('[data-test="submit-material"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('启用物料必须维护完整成本分类和库存计价分类')
+    expect(apiMock.materials.create).not.toHaveBeenCalled()
   })
 
   it('按分类、物料类型、来源和追踪方式筛选时不发送 unitId 查询字段', async () => {

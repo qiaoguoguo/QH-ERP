@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import type { ResourceId } from '../../../shared/api/bomApi'
-import type { MaterialRecord, UnitRecord } from '../../../shared/api/masterDataApi'
-import { materialTypeLabel } from '../../master/shared/masterPageHelpers'
+import type { CandidateItem, ResourceId } from '../../../shared/api/bomApi'
 import { type BomLineDraft, newBomLine, nextLineNo } from './bomPageHelpers'
 
 const props = withDefaults(defineProps<{
   lines: BomLineDraft[]
-  materials: MaterialRecord[]
-  units: UnitRecord[]
+  materials: CandidateItem[]
+  units: CandidateItem[]
+  loadMaterialCandidates?: (keyword: string, selectedIds: ResourceId[]) => void
+  loadUnitCandidates?: (keyword: string, selectedIds: ResourceId[]) => void
   readOnly?: boolean
   errors?: Record<number, string>
 }>(), {
@@ -30,11 +30,11 @@ function updateChildMaterial(index: number, value: ResourceId) {
 }
 
 function updateUnit(index: number, value: ResourceId | '') {
-  updateLine(index, { unitId: value || '' })
+  updateLine(index, { businessUnitId: value || '' })
 }
 
 function updateQuantity(index: number, value: string | number) {
-  updateLine(index, { quantity: String(value) })
+  updateLine(index, { businessQuantity: String(value) })
 }
 
 function updateLossRate(index: number, value: string | number) {
@@ -56,6 +56,18 @@ function removeLine(index: number) {
 function valueOrEmpty(value: ResourceId | '') {
   return value === null || value === undefined ? '' : value
 }
+
+function selectedIds(value: ResourceId | ''): ResourceId[] {
+  return value === '' || value === null || value === undefined ? [] : [value]
+}
+
+function searchMaterials(keyword: string, currentValue: ResourceId | '') {
+  props.loadMaterialCandidates?.(keyword, selectedIds(currentValue))
+}
+
+function searchUnits(keyword: string, currentValue: ResourceId | '') {
+  props.loadUnitCandidates?.(keyword, selectedIds(currentValue))
+}
 </script>
 
 <template>
@@ -73,9 +85,12 @@ function valueOrEmpty(value: ResourceId | '') {
               :model-value="valueOrEmpty(row.childMaterialId)"
               :data-test="`bom-line-child-material-id-${$index}`"
               filterable
+              remote
               placeholder="选择子项物料"
               style="width: 100%"
               :disabled="readOnly"
+              :remote-method="(keyword: string) => searchMaterials(keyword, row.childMaterialId)"
+              @visible-change="(visible: boolean) => visible && searchMaterials('', row.childMaterialId)"
               @update:model-value="updateChildMaterial($index, $event)"
             >
               <el-option
@@ -83,35 +98,49 @@ function valueOrEmpty(value: ResourceId | '') {
                 :key="material.id"
                 :label="`${material.code} ${material.name}`"
                 :value="material.id"
+                :disabled="Boolean(material.disabled)"
               >
                 <span>{{ material.code }} {{ material.name }}</span>
-                <span class="line-option-meta">{{ materialTypeLabel(material.materialType) }}</span>
+                <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
               </el-option>
             </el-select>
           </template>
         </el-table-column>
-        <el-table-column label="用量" width="130">
+        <el-table-column label="业务数量" width="130">
           <template #default="{ row, $index }">
             <el-input
-              :model-value="row.quantity"
+              :model-value="row.businessQuantity"
               :name="`bom-line-quantity-${$index}`"
               :disabled="readOnly"
               @update:model-value="updateQuantity($index, $event)"
             />
           </template>
         </el-table-column>
-        <el-table-column label="单位" width="150">
+        <el-table-column label="业务单位" width="150">
           <template #default="{ row, $index }">
             <el-select
-              :model-value="valueOrEmpty(row.unitId)"
+              :model-value="valueOrEmpty(row.businessUnitId)"
               :data-test="`bom-line-unit-id-${$index}`"
               clearable
-              placeholder="默认单位"
+              filterable
+              remote
+              placeholder="选择业务单位"
               style="width: 100%"
               :disabled="readOnly"
+              :remote-method="(keyword: string) => searchUnits(keyword, row.businessUnitId)"
+              @visible-change="(visible: boolean) => visible && searchUnits('', row.businessUnitId)"
               @update:model-value="updateUnit($index, $event || '')"
             >
-              <el-option v-for="unit in units" :key="unit.id" :label="unit.name" :value="unit.id" />
+              <el-option
+                v-for="unit in units"
+                :key="unit.id"
+                :label="`${unit.code} ${unit.name}`"
+                :value="unit.id"
+                :disabled="Boolean(unit.disabled)"
+              >
+                <span>{{ unit.code }} {{ unit.name }}</span>
+                <span class="line-option-meta">{{ unit.disabledReason || unit.summary || unit.status }}</span>
+              </el-option>
             </el-select>
           </template>
         </el-table-column>
