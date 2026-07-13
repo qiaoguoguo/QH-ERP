@@ -121,6 +121,24 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/master/codingRules/CodingRuleListView.vue'),
   },
   {
+    path: '/platform/approvals',
+    name: 'platform-approvals',
+    meta: { requiresAuth: true, requiredPermission: 'platform:todo:view' },
+    component: () => import('../modules/platform/approvals/ApprovalCenterView.vue'),
+  },
+  {
+    path: '/platform/messages',
+    name: 'platform-messages',
+    meta: { requiresAuth: true, requiredPermission: 'platform:message:view' },
+    component: () => import('../modules/platform/messages/MessageCenterView.vue'),
+  },
+  {
+    path: '/platform/document-tasks',
+    name: 'platform-document-tasks',
+    meta: { requiresAuth: true, requiredPermission: 'platform:document-task:view' },
+    component: () => import('../modules/platform/documentTasks/DocumentTaskCenterView.vue'),
+  },
+  {
     path: '/master/warehouses',
     name: 'master-warehouses',
     meta: { requiresAuth: true, requiredPermission: 'master:warehouse:view' },

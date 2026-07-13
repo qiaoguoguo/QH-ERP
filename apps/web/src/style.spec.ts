@@ -80,6 +80,21 @@ describe('全局样式契约', () => {
     expect(elementPlusSource).toContain("element-plus/theme-chalk/el-tab-pane.css")
   })
 
+  it('022 文档平台组件同时注册组件和加载基础样式', () => {
+    for (const componentName of ['ElBadge', 'ElProgress', 'ElUpload', 'ElDivider', 'ElSwitch']) {
+      expectElementPlusComponentRegistered(componentName)
+    }
+    for (const stylePath of [
+      'element-plus/theme-chalk/el-badge.css',
+      'element-plus/theme-chalk/el-progress.css',
+      'element-plus/theme-chalk/el-upload.css',
+      'element-plus/theme-chalk/el-divider.css',
+      'element-plus/theme-chalk/el-switch.css',
+    ]) {
+      expect(elementPlusSource).toContain(stylePath)
+    }
+  })
+
   it('搜索栏使用统一的标签置顶布局并对齐日期控件', () => {
     expect(styleSource).toContain('.el-form--inline.query-form')
     expect(styleSource).toContain('.query-form > .el-form-item .el-form-item__label')

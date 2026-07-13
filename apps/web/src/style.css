@@ -574,6 +574,44 @@ samp {
   margin-top: 4px;
 }
 
+.platform-panel {
+  border-top: 1px solid var(--qherp-border);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.platform-panel h3 {
+  font-size: 15px;
+  line-height: 1.4;
+  margin: 0 0 10px;
+}
+
+.platform-panel-list {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.platform-panel-list dt {
+  color: var(--qherp-muted);
+}
+
+.platform-panel-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.attachment-upload-row,
+.print-template-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
 .table-scroll {
   position: relative;
   width: 100%;

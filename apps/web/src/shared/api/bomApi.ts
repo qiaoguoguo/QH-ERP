@@ -184,6 +184,9 @@ export interface BomEngineeringChangeRecord extends BomEngineeringChangePayload 
   appliedBy?: string | null
   appliedAt?: string | null
   cancelReason?: string | null
+  approvalInstanceId?: ResourceId | null
+  approvalStatus?: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED' | null
+  approvalSubmittedAt?: string | null
   createdAt?: string
   updatedAt?: string
   version: number

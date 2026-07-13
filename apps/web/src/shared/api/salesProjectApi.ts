@@ -140,6 +140,9 @@ export interface SalesProjectContractDetail extends SalesProjectContractSummary 
   projectNo: string
   projectName: string
   remark?: string | null
+  approvalInstanceId?: ResourceId | null
+  approvalStatus?: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED' | null
+  approvalSubmittedAt?: string | null
   createdByName: string
   createdAt: string
   activatedByName?: string | null

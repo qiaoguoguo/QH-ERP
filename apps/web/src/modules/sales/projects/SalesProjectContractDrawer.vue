@@ -6,8 +6,12 @@ import {
   type SalesProjectContractType,
   type SalesProjectDetail,
 } from '../../../shared/api/salesProjectApi'
+import { createIdempotencyKey, documentPlatformApi } from '../../../shared/api/documentPlatformApi'
 import type { ResourceId } from '../../../shared/api/salesApi'
 import { useAuthStore } from '../../../stores/authStore'
+import ApprovalStatusPanel from '../../platform/components/ApprovalStatusPanel.vue'
+import AttachmentPanel from '../../platform/components/AttachmentPanel.vue'
+import PrintAction from '../../platform/components/PrintAction.vue'
 import SalesProjectContractStatusTag from './SalesProjectContractStatusTag.vue'
 import {
   formatProjectDateTime,
@@ -300,7 +304,7 @@ function openContractAction(action: 'activate' | 'close' | 'terminate' | 'cancel
     return
   }
   const titles = {
-    activate: '合同生效',
+    activate: '提交生效审批',
     close: '关闭合同',
     terminate: '终止合同',
     cancel: '取消合同',
@@ -329,7 +333,11 @@ async function confirmContractAction() {
       ...(reasonRequired ? { reason: actionDialog.reason.trim() } : {}),
     }
     if (actionDialog.action === 'activate') {
-      await salesProjectApi.contracts.activate(detail.value.id, payload)
+      await documentPlatformApi.approvals.submitSalesProjectContractActivation(detail.value.id, {
+        objectVersion: detail.value.version,
+        reason: actionDialog.reason.trim(),
+        idempotencyKey: createIdempotencyKey('contract-approval'),
+      })
     } else if (actionDialog.action === 'close') {
       await salesProjectApi.contracts.close(detail.value.id, payload)
     } else if (actionDialog.action === 'terminate') {
@@ -416,6 +424,24 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
           <dd>{{ detail.cancelledByName || '-' }} {{ formatProjectDateTime(detail.cancelledAt) }} {{ detail.cancelledReason || '' }}</dd>
         </template>
       </dl>
+      <template v-if="detail">
+        <ApprovalStatusPanel
+          :approval-instance-id="detail.approvalInstanceId"
+          :approval-status="detail.approvalStatus"
+          :submitted-at="detail.approvalSubmittedAt"
+        />
+        <AttachmentPanel
+          title="合同附件"
+          object-type="SALES_PROJECT_CONTRACT"
+          :object-id="detail.id"
+          :readonly="detail.approvalStatus === 'SUBMITTED'"
+        />
+        <PrintAction
+          title="合同生效审批单"
+          object-type="SALES_PROJECT_CONTRACT_ACTIVATION"
+          :approval-instance-id="detail.approvalInstanceId"
+        />
+      </template>
     </div>
     <template #footer>
       <div class="drawer-footer">
@@ -429,7 +455,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
             :title="contractActionStates.activate.reason"
             @click="openContractAction('activate')"
           >
-            生效
+            提交生效审批
           </el-button>
           <el-button
             v-if="contractActionStates.cancel.visible"
@@ -484,7 +510,18 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
         show-word-limit
         placeholder="请输入 1-200 字原因"
       />
-      <p v-else>确认{{ salesProjectContractTypeLabel(effectiveContractType) }}生效？</p>
+      <div v-else>
+        <p>确认提交{{ salesProjectContractTypeLabel(effectiveContractType) }}生效审批？</p>
+        <el-input
+          v-model="actionDialog.reason"
+          data-test="approval-submit-reason"
+          type="textarea"
+          :rows="3"
+          maxlength="200"
+          show-word-limit
+          placeholder="可填写提交说明"
+        />
+      </div>
       <template #footer>
         <el-button @click="actionDialog.visible = false">取消</el-button>
         <el-button

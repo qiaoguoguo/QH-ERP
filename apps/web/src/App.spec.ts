@@ -327,6 +327,32 @@ describe('ERP 应用骨架', () => {
       .toEqual(expect.arrayContaining(['/master/unit-conversions', '/master/coding-rules']))
   })
 
+  it('有平台权限但后端菜单缺失时补齐平台工作台入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'platform_user', displayName: '平台用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['platform:todo:view', 'platform:message:view', 'platform:document-task:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('平台工作台')
+    expect(wrapper.text()).toContain('审批待办')
+    expect(wrapper.text()).toContain('消息中心')
+    expect(wrapper.text()).toContain('任务中心')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining(['/platform/approvals', '/platform/messages', '/platform/document-tasks']))
+  })
+
   it('有质量确认查看权限但后端菜单缺失时补齐质量管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

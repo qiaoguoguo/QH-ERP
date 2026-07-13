@@ -18,9 +18,35 @@ const salesProjectApiMock = vi.hoisted(() => ({
   },
 }))
 
+const documentPlatformApiMock = vi.hoisted(() => ({
+  approvals: {
+    submitSalesProjectContractActivation: vi.fn(),
+  },
+  attachments: {
+    list: vi.fn(),
+    upload: vi.fn(),
+    download: vi.fn(),
+    delete: vi.fn(),
+  },
+  printTemplates: {
+    list: vi.fn(),
+  },
+  printPreviews: {
+    get: vi.fn(),
+  },
+  printTasks: {
+    create: vi.fn(),
+  },
+}))
+
 vi.mock('../../../shared/api/salesProjectApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../shared/api/salesProjectApi')>()),
   salesProjectApi: salesProjectApiMock,
+}))
+
+vi.mock('../../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/documentPlatformApi')>()),
+  documentPlatformApi: documentPlatformApiMock,
 }))
 
 const project = {
@@ -139,6 +165,20 @@ describe('销售项目合同抽屉', () => {
     salesProjectApiMock.contracts.close.mockResolvedValue({ ...contract, status: 'CLOSED', version: 3 })
     salesProjectApiMock.contracts.terminate.mockResolvedValue({ ...contract, status: 'TERMINATED', version: 3 })
     salesProjectApiMock.contracts.cancel.mockResolvedValue({ ...contract, status: 'CANCELLED', version: 3 })
+    documentPlatformApiMock.approvals.submitSalesProjectContractActivation.mockResolvedValue({
+      id: 900,
+      status: 'SUBMITTED',
+      version: 1,
+    })
+    documentPlatformApiMock.attachments.list.mockResolvedValue([])
+    documentPlatformApiMock.printTemplates.list.mockResolvedValue([
+      {
+        templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1',
+        templateName: '合同生效审批单',
+        templateVersion: 1,
+        enabled: true,
+      },
+    ])
   })
 
   it('创建主合同时提交创建 payload，补充合同金额为 0 时阻止提交', async () => {
@@ -274,7 +314,7 @@ describe('销售项目合同抽屉', () => {
     expect(wrapper.find('input[name="contract-name"]').attributes('disabled')).toBeDefined()
   })
 
-  it('状态动作按权限和状态展示，草稿生效使用生效文案', async () => {
+  it('状态动作按权限和状态展示，草稿生效改为提交生效审批', async () => {
     salesProjectApiMock.contracts.get.mockResolvedValueOnce({ ...contract, status: 'EFFECTIVE' })
     const noActionPermission = await mountDrawer({ mode: 'edit', contractId: 55 }, ['sales:contract:view', 'sales:contract:update'])
 
@@ -282,7 +322,7 @@ describe('销售项目合同抽屉', () => {
     expect(noActionPermission.find('[data-test="contract-action-terminate"]').exists()).toBe(false)
 
     const draft = await mountDrawer({ mode: 'edit', contractId: 55 })
-    expect(draft.find('[data-test="contract-action-activate"]').text()).toContain('生效')
+    expect(draft.find('[data-test="contract-action-activate"]').text()).toContain('提交生效审批')
   })
 
   it('补充合同生效按钮按项目和主合同状态矩阵禁用并给出原因', async () => {
@@ -318,6 +358,27 @@ describe('销售项目合同抽屉', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('请先保存合同草稿后再生效')
+    expect(salesProjectApiMock.contracts.activate).not.toHaveBeenCalled()
+  })
+
+  it('草稿合同提交生效审批，不再调用合同直接生效接口，并展示审批附件打印入口', async () => {
+    const wrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+
+    expect(wrapper.text()).toContain('审批状态')
+    expect(wrapper.text()).toContain('合同附件')
+    expect(wrapper.text()).toContain('合同生效审批单')
+
+    await wrapper.find('[data-test="contract-action-activate"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="approval-submit-reason"]').setValue('合同草稿确认无误')
+    await wrapper.find('[data-test="confirm-contract-action"]').trigger('click')
+    await flushPromises()
+
+    expect(documentPlatformApiMock.approvals.submitSalesProjectContractActivation).toHaveBeenCalledWith(55, {
+      objectVersion: 2,
+      reason: '合同草稿确认无误',
+      idempotencyKey: expect.any(String),
+    })
     expect(salesProjectApiMock.contracts.activate).not.toHaveBeenCalled()
   })
 

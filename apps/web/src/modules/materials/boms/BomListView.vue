@@ -19,8 +19,13 @@ import {
   type MaterialSubstituteScopeType,
   type ResourceId,
 } from '../../../shared/api/bomApi'
+import { createIdempotencyKey, documentPlatformApi, type BomDraftImportMode, type DocumentTaskRecord } from '../../../shared/api/documentPlatformApi'
+import { downloadFile } from '../../../shared/file/download'
 import { masterDataApi } from '../../../shared/api/masterDataApi'
 import { useAuthStore } from '../../../stores/authStore'
+import ApprovalStatusPanel from '../../platform/components/ApprovalStatusPanel.vue'
+import AttachmentPanel from '../../platform/components/AttachmentPanel.vue'
+import PrintAction from '../../platform/components/PrintAction.vue'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../../system/shared/pageHelpers'
 import BomLineEditor from './BomLineEditor.vue'
@@ -120,6 +125,18 @@ const ecoCancelSubmitting = ref(false)
 const ecoCancelError = ref('')
 const ecoCancelTarget = ref<BomEngineeringChangeRecord | null>(null)
 const ecoCancelReason = ref('')
+const ecoApprovalVisible = ref(false)
+const ecoApprovalSubmitting = ref(false)
+const ecoApprovalError = ref('')
+const ecoApprovalTarget = ref<BomEngineeringChangeRecord | null>(null)
+const ecoApprovalReason = ref('')
+const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
+const bomDraftImportVisible = ref(false)
+const bomDraftImportMode = ref<BomDraftImportMode>('CREATE')
+const bomDraftImportTargetId = ref<ResourceId | ''>('')
+const bomDraftImportFile = ref<File | null>(null)
+const bomDraftImportSubmitting = ref(false)
+const bomDraftImportError = ref('')
 
 const substituteFilters = reactive<{
   keyword: string
@@ -172,6 +189,8 @@ const canEcoCreate = computed(() => authStore.hasPermission('material:bom-eco:cr
 const canEcoUpdate = computed(() => authStore.hasPermission('material:bom-eco:update'))
 const canEcoApply = computed(() => authStore.hasPermission('material:bom-eco:apply'))
 const canEcoCancel = computed(() => authStore.hasPermission('material:bom-eco:cancel'))
+const canBomImport = computed(() => authStore.hasPermission('material:bom:import'))
+const canBomExport = computed(() => authStore.hasPermission('material:bom:export'))
 const canSubstituteCreate = computed(() => authStore.hasPermission('material:substitute:create'))
 const canSubstituteUpdate = computed(() => authStore.hasPermission('material:substitute:update'))
 const canSubstituteEnable = computed(() => authStore.hasPermission('material:substitute:enable'))
@@ -750,6 +769,79 @@ async function disableRecord(record: BomSummaryRecord) {
   }
 }
 
+async function downloadBomDraftTemplate() {
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    downloadFile(await documentPlatformApi.importTemplates.downloadBomDrafts())
+  } catch (caught) {
+    actionError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openBomDraftImport() {
+  bomDraftImportVisible.value = true
+  bomDraftImportMode.value = 'CREATE'
+  bomDraftImportTargetId.value = ''
+  bomDraftImportFile.value = null
+  bomDraftImportError.value = ''
+}
+
+function selectBomDraftImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  bomDraftImportFile.value = input.files?.[0] ?? null
+}
+
+function selectedBomDraftImportTarget(): BomSummaryRecord | null {
+  if (bomDraftImportTargetId.value === '') {
+    return null
+  }
+  return records.value.find((record) => String(record.id) === String(bomDraftImportTargetId.value)) ?? null
+}
+
+async function submitBomDraftImport() {
+  if (!bomDraftImportFile.value || bomDraftImportSubmitting.value) {
+    bomDraftImportError.value = '请选择 .xlsx BOM 草稿文件'
+    return
+  }
+  const target = selectedBomDraftImportTarget()
+  if (bomDraftImportMode.value === 'UPDATE_DRAFT' && !target) {
+    bomDraftImportError.value = '请选择要更新的草稿 BOM'
+    return
+  }
+  bomDraftImportSubmitting.value = true
+  bomDraftImportError.value = ''
+  try {
+    latestDocumentTask.value = await documentPlatformApi.imports.uploadBomDraft({
+      mode: bomDraftImportMode.value,
+      ...(target ? { bomId: target.id, version: target.version } : {}),
+      file: bomDraftImportFile.value,
+      idempotencyKey: createIdempotencyKey('bom-draft-import'),
+    })
+    bomDraftImportVisible.value = false
+  } catch (caught) {
+    bomDraftImportError.value = errorMessage(caught)
+  } finally {
+    bomDraftImportSubmitting.value = false
+  }
+}
+
+async function exportBomDraft(record: BomSummaryRecord) {
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    latestDocumentTask.value = await documentPlatformApi.exports.createBomDraft(record.id, {
+      idempotencyKey: createIdempotencyKey('bom-draft-export'),
+    })
+  } catch (caught) {
+    actionError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 function resetEcoForm(record?: BomEngineeringChangeRecord) {
   Object.assign(ecoForm, {
     ecoNo: record?.ecoNo ?? '',
@@ -882,16 +974,35 @@ async function saveEco() {
 }
 
 async function applyEco(record: BomEngineeringChangeRecord) {
-  if (!(await confirmAction(`确认应用工程变更“${record.ecoNo}”？`))) {
+  ecoApprovalTarget.value = record
+  ecoApprovalReason.value = ''
+  ecoApprovalError.value = ''
+  ecoApprovalVisible.value = true
+}
+
+async function submitEcoApproval() {
+  if (!ecoApprovalTarget.value || ecoApprovalSubmitting.value) {
     return
   }
-  ecoActionError.value = ''
+  ecoApprovalSubmitting.value = true
+  ecoApprovalError.value = ''
   try {
-    ecoDetailRecord.value = await bomApi.engineeringChanges.apply(record.id, { version: record.version })
+    await documentPlatformApi.approvals.submitBomEcoApplication(ecoApprovalTarget.value.id, {
+      objectVersion: ecoApprovalTarget.value.version,
+      reason: ecoApprovalReason.value.trim(),
+      idempotencyKey: createIdempotencyKey('bom-eco-approval'),
+    })
+    ecoDetailRecord.value = {
+      ...ecoApprovalTarget.value,
+      approvalStatus: ecoApprovalTarget.value.approvalStatus ?? 'SUBMITTED',
+    }
     ecoDetailVisible.value = true
+    ecoApprovalVisible.value = false
     await loadEcoRecords()
   } catch (caught) {
-    ecoActionError.value = errorMessage(caught)
+    ecoApprovalError.value = errorMessage(caught)
+  } finally {
+    ecoApprovalSubmitting.value = false
   }
 }
 
@@ -1154,6 +1265,12 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="BOM 管理" description="维护 BOM 版本、工程变更和替代料治理关系。">
     <template #actions>
+      <el-button v-if="activeTab === 'versions' && canBomImport" data-test="download-bom-draft-template" @click="downloadBomDraftTemplate">
+        下载草稿模板
+      </el-button>
+      <el-button v-if="activeTab === 'versions' && canBomImport" data-test="open-bom-draft-import" @click="openBomDraftImport">
+        导入 BOM 草稿
+      </el-button>
       <el-button v-if="activeTab === 'versions' && canCreate" data-test="create-bom" type="primary" @click="openCreate">
         新增 BOM
       </el-button>
@@ -1349,6 +1466,13 @@ onMounted(() => {
       <el-alert v-if="ecoActionError" class="state-alert" type="error" :title="ecoActionError" :closable="false" />
       <el-alert v-if="substituteError" class="state-alert" type="error" :title="substituteError" :closable="false" />
       <el-alert v-if="substituteActionError" class="state-alert" type="error" :title="substituteActionError" :closable="false" />
+      <el-alert
+        v-if="latestDocumentTask"
+        class="state-alert"
+        type="success"
+        :title="`已创建文档任务 ${latestDocumentTask.taskNo}`"
+        :closable="false"
+      />
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="BOM 数据加载中" :closable="false" />
     </template>
 
@@ -1393,6 +1517,7 @@ onMounted(() => {
               <el-button v-if="canCopy" size="small" text data-test="copy-bom" @click="openCopy(row)">复制新版本</el-button>
               <el-button v-if="canEnable && row.status === 'DRAFT'" size="small" text type="success" data-test="publish-bom" :disabled="actionLoading" @click="publishRecord(row)">发布</el-button>
               <el-button v-if="canDisable && row.status !== 'DISABLED'" size="small" text type="danger" data-test="disable-bom" :disabled="actionLoading" @click="disableRecord(row)">停用</el-button>
+              <el-button v-if="row.status === 'DRAFT' && canBomExport" size="small" text data-test="export-bom-draft" :disabled="actionLoading" @click="exportBomDraft(row)">导出草稿</el-button>
               <el-button v-if="row.status === 'ENABLED' && canEcoCreate" size="small" text data-test="create-eco-from-bom" @click="openCreateEco(row)">创建工程变更</el-button>
             </template>
           </el-table-column>
@@ -1417,7 +1542,7 @@ onMounted(() => {
             <template #default="{ row }">
               <el-button size="small" text @click="openEcoDetail(row)">详情</el-button>
               <el-button v-if="canEcoUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom-eco" @click="openEditEco(row)">编辑</el-button>
-              <el-button v-if="canEcoApply && row.status === 'DRAFT'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">应用</el-button>
+              <el-button v-if="canEcoApply && row.status === 'DRAFT'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
               <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="danger" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
             </template>
           </el-table-column>
@@ -1542,6 +1667,49 @@ onMounted(() => {
         <el-form-item label="新名称"><el-input v-model="copyForm.name" name="copy-bom-name" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="copyVisible = false">取消</el-button><el-button data-test="submit-copy-bom" type="primary" :loading="copySubmitting" :disabled="copySubmitting" @click="submitCopy">保存</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="bomDraftImportVisible" title="导入 BOM 草稿" width="min(620px, 94vw)">
+      <el-alert v-if="bomDraftImportError" class="form-alert" type="error" :title="bomDraftImportError" :closable="false" />
+      <el-alert
+        class="form-alert"
+        type="info"
+        title="导入仅创建或更新草稿 BOM，不发布、不应用 ECO、不改写工单快照。"
+        :closable="false"
+      />
+      <el-form label-position="top">
+        <el-form-item label="导入模式">
+          <el-select v-model="bomDraftImportMode" data-test="bom-draft-import-mode" style="width: 100%">
+            <el-option label="创建草稿" value="CREATE" />
+            <el-option label="更新草稿" value="UPDATE_DRAFT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="bomDraftImportMode === 'UPDATE_DRAFT'" label="目标草稿">
+          <el-select v-model="bomDraftImportTargetId" data-test="bom-draft-import-target" style="width: 100%">
+            <el-option
+              v-for="record in records.filter((item) => item.status === 'DRAFT')"
+              :key="record.id"
+              :label="`${record.bomCode} / ${record.versionCode}`"
+              :value="record.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="XLSX 文件">
+          <input data-test="bom-draft-import-file" type="file" accept=".xlsx" @change="selectBomDraftImportFile">
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bomDraftImportVisible = false">取消</el-button>
+        <el-button
+          data-test="submit-bom-draft-import"
+          type="primary"
+          :loading="bomDraftImportSubmitting"
+          :disabled="bomDraftImportSubmitting"
+          @click="submitBomDraftImport"
+        >
+          上传并校验
+        </el-button>
+      </template>
     </el-dialog>
 
     <el-drawer v-model="detailVisible" title="BOM 详情" size="min(680px, 92vw)">
@@ -1696,10 +1864,54 @@ onMounted(() => {
           <dt>目标变更前</dt><dd>{{ formatBomSnapshot(ecoDetailRecord.targetBomBefore) }}</dd>
           <dt>目标变更后</dt><dd>{{ formatBomSnapshot(ecoDetailRecord.targetBomAfter) }}</dd>
           <dt>应用人</dt><dd>{{ ecoDetailRecord.appliedBy || '-' }}</dd>
-          <dt>应用时间</dt><dd>{{ formatDateTime(ecoDetailRecord.appliedAt) }}</dd>
-        </dl>
+        <dt>应用时间</dt><dd>{{ formatDateTime(ecoDetailRecord.appliedAt) }}</dd>
+      </dl>
       </section>
+      <template v-if="ecoDetailRecord">
+        <ApprovalStatusPanel
+          :approval-instance-id="ecoDetailRecord.approvalInstanceId"
+          :approval-status="ecoDetailRecord.approvalStatus"
+          :submitted-at="ecoDetailRecord.approvalSubmittedAt"
+        />
+        <AttachmentPanel
+          title="ECO 附件"
+          object-type="BOM_ENGINEERING_CHANGE"
+          :object-id="ecoDetailRecord.id"
+          :readonly="ecoDetailRecord.approvalStatus === 'SUBMITTED'"
+        />
+        <PrintAction
+          title="BOM ECO 应用审批单"
+          object-type="BOM_ECO_APPLICATION"
+          :approval-instance-id="ecoDetailRecord.approvalInstanceId"
+        />
+      </template>
     </el-drawer>
+
+    <el-dialog v-model="ecoApprovalVisible" title="提交应用审批" width="min(520px, 94vw)">
+      <el-alert v-if="ecoApprovalError" class="form-alert" type="error" :title="ecoApprovalError" :closable="false" />
+      <p v-if="ecoApprovalTarget">确认提交工程变更“{{ ecoApprovalTarget.ecoNo }}”应用审批？</p>
+      <el-input
+        v-model="ecoApprovalReason"
+        data-test="eco-approval-submit-reason"
+        type="textarea"
+        :rows="3"
+        maxlength="200"
+        show-word-limit
+        placeholder="可填写提交说明"
+      />
+      <template #footer>
+        <el-button @click="ecoApprovalVisible = false">取消</el-button>
+        <el-button
+          data-test="confirm-bom-eco-approval"
+          type="primary"
+          :loading="ecoApprovalSubmitting"
+          :disabled="ecoApprovalSubmitting"
+          @click="submitEcoApproval"
+        >
+          提交审批
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="ecoCancelVisible" title="取消工程变更" width="min(520px, 94vw)">
       <el-alert v-if="ecoCancelError" class="form-alert" type="error" :title="ecoCancelError" :closable="false" />

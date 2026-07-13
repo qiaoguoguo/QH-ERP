@@ -1,0 +1,547 @@
+import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageResult } from './accountPermissionApi'
+
+export type ResourceId = string | number
+export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
+
+export type ApprovalScope = 'TODO' | 'DONE' | 'STARTED'
+export type ApprovalInstanceStatus = 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED'
+export type ApprovalTaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
+export type ApprovalAction = 'APPROVE' | 'REJECT' | 'WITHDRAW' | 'CANCEL'
+export type MessageStatus = 'UNREAD' | 'READ'
+export type AttachmentObjectType = 'SALES_PROJECT_CONTRACT' | 'BOM_ENGINEERING_CHANGE'
+export type AttachmentStatus = 'AVAILABLE' | 'DELETED'
+export type DocumentTaskType =
+  | 'MATERIAL_IMPORT'
+  | 'MATERIAL_EXPORT'
+  | 'BOM_DRAFT_IMPORT'
+  | 'BOM_DRAFT_EXPORT'
+  | 'APPROVAL_PRINT'
+export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT'
+export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT'
+export type DocumentTaskStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'READY_TO_COMMIT'
+  | 'VALIDATION_FAILED'
+  | 'SUCCEEDED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+export type DocumentTaskAction =
+  | 'CONFIRM'
+  | 'CANCEL'
+  | 'DOWNLOAD_RESULT'
+  | 'DOWNLOAD_FAILURES'
+  | 'DOWNLOAD_SOURCE'
+export type BomDraftImportMode = 'CREATE' | 'UPDATE_DRAFT'
+
+export interface SubmitApprovalPayload {
+  objectVersion: number
+  reason?: string
+  idempotencyKey: string
+}
+
+export interface ApprovalActionPayload {
+  version: number
+  comment?: string
+}
+
+export interface ApprovalTaskRecord {
+  id: ResourceId
+  instanceId: ResourceId
+  taskNo?: string | null
+  scenarioCode: 'SALES_PROJECT_CONTRACT_ACTIVATION' | 'BOM_ECO_APPLICATION' | string
+  objectType: string
+  objectId: ResourceId
+  objectNo?: string | null
+  objectName?: string | null
+  status: ApprovalTaskStatus
+  currentStepName?: string | null
+  applicantName?: string | null
+  assignedAt?: string | null
+  completedAt?: string | null
+  availableActions: ApprovalAction[]
+  version: number
+}
+
+export interface ApprovalTaskListQuery {
+  scope: ApprovalScope
+  keyword?: string
+  status?: ApprovalTaskStatus | ApprovalInstanceStatus
+  page: number
+  pageSize: number
+}
+
+export interface ApprovalStepRecord {
+  stepName: string
+  status: ApprovalTaskStatus
+  candidatePermission?: string | null
+  completedByName?: string | null
+  completedAt?: string | null
+}
+
+export interface ApprovalHistoryRecord {
+  action: string
+  operatorName?: string | null
+  operatedAt?: string | null
+  comment?: string | null
+  resultStatus?: ApprovalInstanceStatus | null
+}
+
+export interface ApprovalAttachmentSnapshot {
+  attachmentId: ResourceId
+  fileName: string
+  fileSize?: number | null
+  sha256?: string | null
+}
+
+export interface ApprovalInstanceDetail {
+  id: ResourceId
+  scenarioCode: string
+  objectType: string
+  objectId: ResourceId
+  objectNo?: string | null
+  objectName?: string | null
+  status: ApprovalInstanceStatus
+  applicantName?: string | null
+  submittedAt?: string | null
+  finishedAt?: string | null
+  availableActions: ApprovalAction[]
+  version: number
+  steps: ApprovalStepRecord[]
+  histories: ApprovalHistoryRecord[]
+  attachmentSnapshots: ApprovalAttachmentSnapshot[]
+}
+
+export interface MessageRecord {
+  id: ResourceId
+  title: string
+  content?: string | null
+  status: MessageStatus
+  category?: string | null
+  businessRoute?: string | null
+  createdAt?: string | null
+}
+
+export interface MessagePageResult extends PageResult<MessageRecord> {
+  unreadCount?: number
+}
+
+export interface MessageListQuery {
+  unreadOnly?: boolean
+  keyword?: string
+  page: number
+  pageSize: number
+}
+
+export interface AttachmentRecord {
+  id: ResourceId
+  objectType: AttachmentObjectType
+  objectId: ResourceId
+  fileName: string
+  fileSize: number
+  contentType?: string | null
+  description?: string | null
+  status: AttachmentStatus
+  uploadedByName?: string | null
+  uploadedAt?: string | null
+  canDownload?: boolean
+  canDelete?: boolean
+  restricted?: boolean
+  restrictedMessage?: string | null
+  version: number
+}
+
+export interface AttachmentUploadPayload {
+  objectType: AttachmentObjectType
+  objectId: ResourceId
+  file: File
+  description?: string
+  idempotencyKey: string
+}
+
+export interface AttachmentDeletePayload {
+  version: number
+  reason: string
+}
+
+export interface DownloadedFile {
+  blob: Blob
+  fileName: string
+}
+
+export interface DocumentTaskRecord {
+  id: ResourceId
+  taskNo: string
+  taskType: DocumentTaskType
+  objectType?: string | null
+  objectId?: ResourceId | null
+  objectNo?: string | null
+  objectName?: string | null
+  direction: DocumentTaskDirection
+  stage: DocumentTaskStage
+  status: DocumentTaskStatus
+  progressPercent?: number | null
+  totalRows?: number | null
+  successRows?: number | null
+  failedRows?: number | null
+  errorMessage?: string | null
+  createdByName?: string | null
+  createdAt?: string | null
+  completedAt?: string | null
+  expiresAt?: string | null
+  availableActions?: DocumentTaskAction[]
+  version: number
+}
+
+export interface DocumentTaskListQuery {
+  keyword?: string
+  taskType?: DocumentTaskType
+  status?: DocumentTaskStatus
+  page: number
+  pageSize: number
+}
+
+export interface ImportFailureRecord {
+  rowNo: number
+  columnName?: string | null
+  field?: string | null
+  code: string
+  message: string
+  suggestion?: string | null
+  rawValue?: string | null
+}
+
+export interface BomDraftImportPayload {
+  mode: BomDraftImportMode
+  bomId?: ResourceId
+  version?: number
+  file: File
+  idempotencyKey: string
+}
+
+export interface ConfirmImportPayload {
+  version: number
+  idempotencyKey: string
+}
+
+export interface PrintTemplateRecord {
+  templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1' | 'BOM_ECO_APPLICATION_APPROVAL_V1' | string
+  templateName: string
+  templateVersion: number
+  objectType?: string | null
+  enabled: boolean
+}
+
+export interface PrintPreviewRecord {
+  approvalInstanceId: ResourceId
+  templateCode: string
+  templateVersion: number
+  sections: Array<{ title: string; fields: Array<{ label: string; value: string | null }> }>
+}
+
+export interface DocumentPlatformApiOptions {
+  baseUrl?: string
+  fetcher?: Fetcher
+}
+
+export interface DocumentPlatformApi {
+  approvals: {
+    submitSalesProjectContractActivation(contractId: ResourceId, payload: SubmitApprovalPayload): Promise<ApprovalInstanceDetail>
+    submitBomEcoApplication(ecoId: ResourceId, payload: SubmitApprovalPayload): Promise<ApprovalInstanceDetail>
+    get(id: ResourceId): Promise<ApprovalInstanceDetail>
+    withdraw(id: ResourceId, payload: ApprovalActionPayload): Promise<ApprovalInstanceDetail>
+    cancel(id: ResourceId, payload: ApprovalActionPayload): Promise<ApprovalInstanceDetail>
+  }
+  approvalTasks: {
+    list(query: ApprovalTaskListQuery): Promise<PageResult<ApprovalTaskRecord>>
+    approve(taskId: ResourceId, payload: ApprovalActionPayload): Promise<ApprovalInstanceDetail>
+    reject(taskId: ResourceId, payload: ApprovalActionPayload): Promise<ApprovalInstanceDetail>
+  }
+  messages: {
+    listMine(query: MessageListQuery): Promise<MessagePageResult>
+    markRead(id: ResourceId): Promise<MessageRecord>
+    markAllRead(): Promise<{ unreadCount: number }>
+  }
+  attachments: {
+    list(query: { objectType: AttachmentObjectType; objectId: ResourceId }): Promise<AttachmentRecord[]>
+    upload(payload: AttachmentUploadPayload): Promise<AttachmentRecord>
+    download(id: ResourceId): Promise<DownloadedFile>
+    delete(id: ResourceId, payload: AttachmentDeletePayload): Promise<AttachmentRecord>
+  }
+  importTemplates: {
+    downloadMaterials(): Promise<DownloadedFile>
+    downloadBomDrafts(): Promise<DownloadedFile>
+  }
+  imports: {
+    uploadMaterials(payload: { file: File; idempotencyKey: string }): Promise<DocumentTaskRecord>
+    uploadBomDraft(payload: BomDraftImportPayload): Promise<DocumentTaskRecord>
+    confirm(taskId: ResourceId, payload: ConfirmImportPayload): Promise<DocumentTaskRecord>
+  }
+  exports: {
+    createMaterials(payload: { filters: Record<string, unknown>; idempotencyKey: string }): Promise<DocumentTaskRecord>
+    createBomDraft(bomId: ResourceId, payload: { idempotencyKey: string }): Promise<DocumentTaskRecord>
+  }
+  printTemplates: {
+    list(query: { objectType: string }): Promise<PrintTemplateRecord[]>
+  }
+  printPreviews: {
+    get(approvalInstanceId: ResourceId): Promise<PrintPreviewRecord>
+  }
+  printTasks: {
+    create(payload: { approvalInstanceId: ResourceId; templateCode: string; idempotencyKey: string }): Promise<DocumentTaskRecord>
+  }
+  documentTasks: {
+    list(query: DocumentTaskListQuery): Promise<PageResult<DocumentTaskRecord>>
+    get(id: ResourceId): Promise<DocumentTaskRecord>
+    errors(id: ResourceId, query: { page: number; pageSize: number }): Promise<PageResult<ImportFailureRecord>>
+    cancel(id: ResourceId, payload: { version: number; reason?: string }): Promise<DocumentTaskRecord>
+    download(id: ResourceId): Promise<DownloadedFile>
+  }
+}
+
+export function createIdempotencyKey(prefix = 'web'): string {
+  const random = globalThis.crypto?.randomUUID?.()
+  return `${prefix}-${random ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`}`
+}
+
+export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = {}): DocumentPlatformApi {
+  const fetcher = options.fetcher ?? ((input: string, init: RequestInit) => fetch(input, init))
+  const baseUrl = (options.baseUrl ?? '').replace(/\/$/, '')
+
+  const buildUrl = (path: string, query?: object) => {
+    const search = new URLSearchParams()
+    Object.entries(query ?? {}).forEach(([key, value]) => {
+      if (value !== undefined && value !== null && value !== '') {
+        search.set(key, String(value))
+      }
+    })
+    const queryString = search.toString()
+    return `${baseUrl}${path}${queryString ? `?${queryString}` : ''}`
+  }
+
+  const request = async <T>(path: string, init: RequestInit, query?: object): Promise<T> => {
+    const response = await fetcher(buildUrl(path, query), {
+      credentials: 'include',
+      ...init,
+      headers: {
+        Accept: 'application/json',
+        ...(init.headers ?? {}),
+      },
+    })
+    const envelope = (await response.json()) as ApiEnvelope<T>
+    if (!response.ok || !envelope.success) {
+      throw new AccountPermissionApiError(
+        envelope.message || `请求失败：${response.status}`,
+        envelope.code || 'HTTP_ERROR',
+        response.status,
+        envelope.traceId,
+      )
+    }
+    return envelope.data
+  }
+
+  const getCsrf = () => request<CsrfToken>('/api/auth/csrf', { method: 'GET' })
+  const get = <T>(path: string, query?: object) => request<T>(path, { method: 'GET' }, query)
+
+  const writeJson = async <T>(
+    method: 'POST' | 'PUT',
+    path: string,
+    body?: object,
+    extraHeaders: Record<string, string> = {},
+  ) => {
+    const csrf = await getCsrf()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      [csrf.headerName]: csrf.token,
+      ...extraHeaders,
+    }
+    return request<T>(path, {
+      body: body === undefined ? undefined : JSON.stringify(body),
+      headers,
+      method,
+    })
+  }
+
+  const writeForm = async <T>(path: string, formData: FormData, idempotencyKey?: string) => {
+    const csrf = await getCsrf()
+    return request<T>(path, {
+      body: formData,
+      headers: {
+        [csrf.headerName]: csrf.token,
+        ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
+      },
+      method: 'POST',
+    })
+  }
+
+  const download = async (path: string, query?: object): Promise<DownloadedFile> => {
+    const response = await fetcher(buildUrl(path, query), {
+      credentials: 'include',
+      headers: { Accept: '*/*' },
+      method: 'GET',
+    })
+    if (!response.ok) {
+      await throwEnvelopeError(response)
+    }
+    const blob = await response.blob()
+    return {
+      blob,
+      fileName: fileNameFromContentDisposition(response.headers.get('content-disposition')) ?? '下载文件',
+    }
+  }
+
+  return {
+    approvals: {
+      submitSalesProjectContractActivation: (contractId, payload) =>
+        writeJson<ApprovalInstanceDetail>(
+          'POST',
+          `/api/admin/approvals/sales-project-contract-activation/${encodeURIComponent(String(contractId))}/submit`,
+          payload,
+        ),
+      submitBomEcoApplication: (ecoId, payload) =>
+        writeJson<ApprovalInstanceDetail>(
+          'POST',
+          `/api/admin/approvals/bom-eco-application/${encodeURIComponent(String(ecoId))}/submit`,
+          payload,
+        ),
+      get: (id) => get<ApprovalInstanceDetail>(`/api/admin/approvals/${encodeURIComponent(String(id))}`),
+      withdraw: (id, payload) =>
+        writeJson<ApprovalInstanceDetail>('POST', `/api/admin/approvals/${encodeURIComponent(String(id))}/withdraw`, payload),
+      cancel: (id, payload) =>
+        writeJson<ApprovalInstanceDetail>('POST', `/api/admin/approvals/${encodeURIComponent(String(id))}/cancel`, payload),
+    },
+    approvalTasks: {
+      list: (query) => get<PageResult<ApprovalTaskRecord>>('/api/admin/approval-tasks', query),
+      approve: (taskId, payload) =>
+        writeJson<ApprovalInstanceDetail>('POST', `/api/admin/approval-tasks/${encodeURIComponent(String(taskId))}/approve`, payload),
+      reject: (taskId, payload) =>
+        writeJson<ApprovalInstanceDetail>('POST', `/api/admin/approval-tasks/${encodeURIComponent(String(taskId))}/reject`, payload),
+    },
+    messages: {
+      listMine: (query) => get<MessagePageResult>('/api/admin/messages/my', query),
+      markRead: (id) => writeJson<MessageRecord>('PUT', `/api/admin/messages/${encodeURIComponent(String(id))}/read`),
+      markAllRead: () => writeJson<{ unreadCount: number }>('PUT', '/api/admin/messages/read-all'),
+    },
+    attachments: {
+      list: (query) => get<AttachmentRecord[]>('/api/admin/attachments', query),
+      upload: (payload) => {
+        const formData = new FormData()
+        formData.append('objectType', payload.objectType)
+        formData.append('objectId', String(payload.objectId))
+        formData.append('file', payload.file)
+        if (payload.description) {
+          formData.append('description', payload.description)
+        }
+        return writeForm<AttachmentRecord>('/api/admin/attachments', formData, payload.idempotencyKey)
+      },
+      download: (id) => download(`/api/admin/attachments/${encodeURIComponent(String(id))}/download`),
+      delete: (id, payload) =>
+        writeJson<AttachmentRecord>('PUT', `/api/admin/attachments/${encodeURIComponent(String(id))}/delete`, payload),
+    },
+    importTemplates: {
+      downloadMaterials: () => download('/api/admin/import-templates/materials'),
+      downloadBomDrafts: () => download('/api/admin/import-templates/bom-drafts'),
+    },
+    imports: {
+      uploadMaterials: (payload) => {
+        const formData = new FormData()
+        formData.append('file', payload.file)
+        return writeForm<DocumentTaskRecord>('/api/admin/imports/materials', formData, payload.idempotencyKey)
+      },
+      uploadBomDraft: (payload) => {
+        const formData = new FormData()
+        formData.append('mode', payload.mode)
+        if (payload.bomId !== undefined) {
+          formData.append('bomId', String(payload.bomId))
+        }
+        if (payload.version !== undefined) {
+          formData.append('version', String(payload.version))
+        }
+        formData.append('file', payload.file)
+        return writeForm<DocumentTaskRecord>('/api/admin/imports/bom-drafts', formData, payload.idempotencyKey)
+      },
+      confirm: (taskId, payload) =>
+        writeJson<DocumentTaskRecord>(
+          'POST',
+          `/api/admin/imports/${encodeURIComponent(String(taskId))}/confirm`,
+          { version: payload.version },
+          { 'Idempotency-Key': payload.idempotencyKey },
+        ),
+    },
+    exports: {
+      createMaterials: (payload) =>
+        writeJson<DocumentTaskRecord>(
+          'POST',
+          '/api/admin/exports/materials',
+          { filters: payload.filters },
+          { 'Idempotency-Key': payload.idempotencyKey },
+        ),
+      createBomDraft: (bomId, payload) =>
+        writeJson<DocumentTaskRecord>(
+          'POST',
+          `/api/admin/exports/bom-drafts/${encodeURIComponent(String(bomId))}`,
+          undefined,
+          { 'Idempotency-Key': payload.idempotencyKey },
+        ),
+    },
+    printTemplates: {
+      list: (query) => get<PrintTemplateRecord[]>('/api/admin/print-templates', query),
+    },
+    printPreviews: {
+      get: (approvalInstanceId) =>
+        get<PrintPreviewRecord>(`/api/admin/print-previews/${encodeURIComponent(String(approvalInstanceId))}`),
+    },
+    printTasks: {
+      create: (payload) =>
+        writeJson<DocumentTaskRecord>(
+          'POST',
+          '/api/admin/print-tasks',
+          { approvalInstanceId: payload.approvalInstanceId, templateCode: payload.templateCode },
+          { 'Idempotency-Key': payload.idempotencyKey },
+        ),
+    },
+    documentTasks: {
+      list: (query) => get<PageResult<DocumentTaskRecord>>('/api/admin/document-tasks', query),
+      get: (id) => get<DocumentTaskRecord>(`/api/admin/document-tasks/${encodeURIComponent(String(id))}`),
+      errors: (id, query) =>
+        get<PageResult<ImportFailureRecord>>(`/api/admin/document-tasks/${encodeURIComponent(String(id))}/errors`, query),
+      cancel: (id, payload) =>
+        writeJson<DocumentTaskRecord>('POST', `/api/admin/document-tasks/${encodeURIComponent(String(id))}/cancel`, payload),
+      download: (id) => download(`/api/admin/document-tasks/${encodeURIComponent(String(id))}/download`),
+    },
+  }
+}
+
+async function throwEnvelopeError(response: Response): Promise<never> {
+  try {
+    const envelope = (await response.json()) as ApiEnvelope<unknown>
+    throw new AccountPermissionApiError(
+      envelope.message || `请求失败：${response.status}`,
+      envelope.code || 'HTTP_ERROR',
+      response.status,
+      envelope.traceId,
+    )
+  } catch (error) {
+    if (error instanceof AccountPermissionApiError) {
+      throw error
+    }
+    throw new AccountPermissionApiError(`请求失败：${response.status}`, 'HTTP_ERROR', response.status)
+  }
+}
+
+function fileNameFromContentDisposition(contentDisposition: string | null): string | null {
+  if (!contentDisposition) {
+    return null
+  }
+  const encodedMatch = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition)
+  if (encodedMatch?.[1]) {
+    return decodeURIComponent(encodedMatch[1].trim().replace(/^"|"$/g, ''))
+  }
+  const plainMatch = /filename="?([^";]+)"?/i.exec(contentDisposition)
+  return plainMatch?.[1] ? plainMatch[1].trim() : null
+}
+
+export const documentPlatformApi = createDocumentPlatformApi({
+  baseUrl: import.meta.env.VITE_API_BASE_URL ?? '',
+})

@@ -26,8 +26,30 @@ const apiMock = vi.hoisted(() => ({
   },
 }))
 
+const documentPlatformApiMock = vi.hoisted(() => ({
+  importTemplates: {
+    downloadMaterials: vi.fn(),
+  },
+  imports: {
+    uploadMaterials: vi.fn(),
+  },
+  exports: {
+    createMaterials: vi.fn(),
+  },
+}))
+
 vi.mock('../../../shared/api/masterDataApi', () => ({
   masterDataApi: apiMock,
+}))
+
+vi.mock('../../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/documentPlatformApi')>()),
+  documentPlatformApi: documentPlatformApiMock,
+}))
+
+vi.mock('../../../shared/file/download', () => ({
+  downloadFile: vi.fn(),
+  triggerBrowserDownload: vi.fn(),
 }))
 
 const category: CategoryRecord = {
@@ -150,6 +172,24 @@ describe('物料档案页', () => {
     })
     apiMock.units.list.mockResolvedValue(unitPage)
     apiMock.categories.list.mockResolvedValue(categoryPage)
+    documentPlatformApiMock.importTemplates.downloadMaterials.mockResolvedValue({
+      blob: new Blob(['template']),
+      fileName: '物料新增模板.xlsx',
+    })
+    documentPlatformApiMock.imports.uploadMaterials.mockResolvedValue({
+      id: 91,
+      taskNo: 'TASK-001',
+      taskType: 'MATERIAL_IMPORT',
+      status: 'QUEUED',
+      version: 1,
+    })
+    documentPlatformApiMock.exports.createMaterials.mockResolvedValue({
+      id: 92,
+      taskNo: 'TASK-002',
+      taskType: 'MATERIAL_EXPORT',
+      status: 'QUEUED',
+      version: 1,
+    })
   })
 
   it('新增物料时提交分类和单位等核心字段', async () => {
@@ -355,5 +395,54 @@ describe('物料档案页', () => {
       trackingMethod: 'BATCH',
     }))
     expect(lastQuery).not.toHaveProperty('unitId')
+  })
+
+  it('物料页保留手工维护并增加模板下载、新增导入和当前筛选导出', async () => {
+    const wrapper = mountMaterials([
+      'master:material:view',
+      'master:material:create',
+      'master:material:update',
+      'master:material:import',
+      'master:material:export',
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="create-material"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="download-material-template"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="open-material-import"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="export-materials"]').exists()).toBe(true)
+
+    await (wrapper.vm as unknown as { downloadMaterialTemplate: () => Promise<void> }).downloadMaterialTemplate()
+    await flushPromises()
+    expect(documentPlatformApiMock.importTemplates.downloadMaterials).toHaveBeenCalled()
+
+    await wrapper.find('input[name="material-keyword"]').setValue('钢板')
+    await setSelectValue(wrapper, 'filter-material-status', 'ENABLED')
+    await setSelectValue(wrapper, 'filter-material-type', 'RAW_MATERIAL')
+    await (wrapper.vm as unknown as { exportMaterials: () => Promise<void> }).exportMaterials()
+    await flushPromises()
+    expect(documentPlatformApiMock.exports.createMaterials).toHaveBeenCalledWith({
+      filters: expect.objectContaining({
+        keyword: '钢板',
+        status: 'ENABLED',
+        materialType: 'RAW_MATERIAL',
+      }),
+      idempotencyKey: expect.any(String),
+    })
+
+    ;(wrapper.vm as unknown as { openImport: () => void }).openImport()
+    await flushPromises()
+    const file = new File(['xlsx'], 'materials.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const fileInput = wrapper.find('input[data-test="material-import-file"]').element as HTMLInputElement
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    await wrapper.find('input[data-test="material-import-file"]').trigger('change')
+    await (wrapper.vm as unknown as { submitMaterialImport: () => Promise<void> }).submitMaterialImport()
+    await flushPromises()
+
+    expect(documentPlatformApiMock.imports.uploadMaterials).toHaveBeenCalledWith({
+      file,
+      idempotencyKey: expect.any(String),
+    })
+    expect(wrapper.text()).toContain('TASK-001')
   })
 })

@@ -14,6 +14,8 @@ import {
   type ResourceId,
   type UnitRecord,
 } from '../../../shared/api/masterDataApi'
+import { createIdempotencyKey, documentPlatformApi, type DocumentTaskRecord } from '../../../shared/api/documentPlatformApi'
+import { downloadFile } from '../../../shared/file/download'
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
@@ -96,6 +98,11 @@ const formError = ref('')
 const editingRecord = ref<MaterialRecord | null>(null)
 const detailVisible = ref(false)
 const detailRecord = ref<MaterialRecord | null>(null)
+const importVisible = ref(false)
+const importFile = ref<File | null>(null)
+const importSubmitting = ref(false)
+const importError = ref('')
+const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
 const form = reactive<{
   code: string
   name: string
@@ -134,6 +141,8 @@ const canCreate = computed(() => authStore.hasPermission('master:material:create
 const canUpdate = computed(() => authStore.hasPermission('master:material:update'))
 const canUpdateCost = computed(() => authStore.hasPermission('master:material-cost:update'))
 const canGenerateCode = computed(() => canCreate.value && authStore.hasPermission('master:coding-rule:generate'))
+const canImportMaterials = computed(() => authStore.hasPermission('master:material:import'))
+const canExportMaterials = computed(() => authStore.hasPermission('master:material:export'))
 
 async function loadReferences() {
   referenceLoading.value = true
@@ -396,6 +405,75 @@ async function generateCode() {
   }
 }
 
+function currentMaterialExportFilters(): Record<string, unknown> {
+  return {
+    keyword: filters.keyword,
+    status: filters.status,
+    categoryId: normalizeOptionalId(filters.categoryId),
+    materialType: filters.materialType,
+    sourceType: filters.sourceType,
+    trackingMethod: filters.trackingMethod,
+  }
+}
+
+async function downloadMaterialTemplate() {
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    downloadFile(await documentPlatformApi.importTemplates.downloadMaterials())
+  } catch (caught) {
+    actionError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function exportMaterials() {
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    latestDocumentTask.value = await documentPlatformApi.exports.createMaterials({
+      filters: currentMaterialExportFilters(),
+      idempotencyKey: createIdempotencyKey('material-export'),
+    })
+  } catch (caught) {
+    actionError.value = errorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+function openImport() {
+  importVisible.value = true
+  importFile.value = null
+  importError.value = ''
+}
+
+function selectImportFile(event: Event) {
+  const input = event.target as HTMLInputElement
+  importFile.value = input.files?.[0] ?? null
+}
+
+async function submitMaterialImport() {
+  if (!importFile.value || importSubmitting.value) {
+    importError.value = '请选择 .xlsx 导入文件'
+    return
+  }
+  importSubmitting.value = true
+  importError.value = ''
+  try {
+    latestDocumentTask.value = await documentPlatformApi.imports.uploadMaterials({
+      file: importFile.value,
+      idempotencyKey: createIdempotencyKey('material-import'),
+    })
+    importVisible.value = false
+  } catch (caught) {
+    importError.value = errorMessage(caught)
+  } finally {
+    importSubmitting.value = false
+  }
+}
+
 async function changeStatus(record: MaterialRecord) {
   const nextAction = record.status === 'DISABLED' ? '启用' : '停用'
   if (!(await confirmAction(`确认${nextAction}物料“${record.name}”？`))) {
@@ -426,6 +504,15 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="物料档案" description="维护生产、采购、库存和 BOM 使用的物料主数据。">
     <template #actions>
+      <el-button v-if="canImportMaterials" data-test="download-material-template" @click="downloadMaterialTemplate">
+        下载模板
+      </el-button>
+      <el-button v-if="canImportMaterials" data-test="open-material-import" @click="openImport">
+        导入物料
+      </el-button>
+      <el-button v-if="canExportMaterials" data-test="export-materials" :loading="actionLoading" @click="exportMaterials">
+        导出当前筛选
+      </el-button>
       <el-button v-if="canCreate" data-test="create-material" type="primary" @click="openCreate">
         新增物料
       </el-button>
@@ -437,7 +524,7 @@ onMounted(() => {
           <el-input v-model="filters.keyword" name="material-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item label="状态">
-          <el-select v-model="filters.status" clearable placeholder="全部状态">
+          <el-select v-model="filters.status" data-test="filter-material-status" clearable placeholder="全部状态">
             <el-option label="启用" value="ENABLED" />
             <el-option label="停用" value="DISABLED" />
           </el-select>
@@ -508,6 +595,13 @@ onMounted(() => {
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
       <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
+      <el-alert
+        v-if="latestDocumentTask"
+        class="state-alert"
+        type="success"
+        :title="`已创建文档任务 ${latestDocumentTask.taskNo}`"
+        :closable="false"
+      />
       <el-alert
         v-if="loading || referenceLoading"
         class="state-alert"
@@ -829,6 +923,29 @@ onMounted(() => {
         <dd>{{ detailRecord.remark || '未填写' }}</dd>
       </dl>
     </el-drawer>
+
+    <el-dialog v-model="importVisible" title="导入物料" width="min(520px, 94vw)">
+      <el-alert v-if="importError" class="form-alert" type="error" :title="importError" :closable="false" />
+      <el-alert
+        class="form-alert"
+        type="info"
+        title="导入仅新增物料，校验无误后在任务中心确认提交；不会批量更新或启停既有物料。"
+        :closable="false"
+      />
+      <input data-test="material-import-file" type="file" accept=".xlsx" @change="selectImportFile">
+      <template #footer>
+        <el-button @click="importVisible = false">取消</el-button>
+        <el-button
+          data-test="submit-material-import"
+          type="primary"
+          :loading="importSubmitting"
+          :disabled="importSubmitting"
+          @click="submitMaterialImport"
+        >
+          上传并校验
+        </el-button>
+      </template>
+    </el-dialog>
   </MasterDataTableView>
 </template>
 

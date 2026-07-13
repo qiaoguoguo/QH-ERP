@@ -54,12 +54,52 @@ const masterDataApiMock = vi.hoisted(() => ({
   },
 }))
 
+const documentPlatformApiMock = vi.hoisted(() => ({
+  approvals: {
+    submitBomEcoApplication: vi.fn(),
+  },
+  attachments: {
+    list: vi.fn(),
+    upload: vi.fn(),
+    download: vi.fn(),
+    delete: vi.fn(),
+  },
+  importTemplates: {
+    downloadBomDrafts: vi.fn(),
+  },
+  imports: {
+    uploadBomDraft: vi.fn(),
+  },
+  exports: {
+    createBomDraft: vi.fn(),
+  },
+  printTemplates: {
+    list: vi.fn(),
+  },
+  printPreviews: {
+    get: vi.fn(),
+  },
+  printTasks: {
+    create: vi.fn(),
+  },
+}))
+
 vi.mock('../../../shared/api/bomApi', () => ({
   bomApi: bomApiMock,
 }))
 
 vi.mock('../../../shared/api/masterDataApi', () => ({
   masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/documentPlatformApi')>()),
+  documentPlatformApi: documentPlatformApiMock,
+}))
+
+vi.mock('../../../shared/file/download', () => ({
+  downloadFile: vi.fn(),
+  triggerBrowserDownload: vi.fn(),
 }))
 
 const finishedGood: MaterialRecord = {
@@ -392,6 +432,38 @@ describe('BOM 管理页', () => {
       generatedCode: 'ECO-202607-0002',
       generatedAt: '2026-07-13T10:30:00+08:00',
     })
+    documentPlatformApiMock.approvals.submitBomEcoApplication.mockResolvedValue({
+      id: 901,
+      status: 'SUBMITTED',
+      version: 1,
+    })
+    documentPlatformApiMock.attachments.list.mockResolvedValue([])
+    documentPlatformApiMock.importTemplates.downloadBomDrafts.mockResolvedValue({
+      blob: new Blob(['template']),
+      fileName: 'BOM草稿模板.xlsx',
+    })
+    documentPlatformApiMock.imports.uploadBomDraft.mockResolvedValue({
+      id: 93,
+      taskNo: 'TASK-BOM-IMPORT',
+      taskType: 'BOM_DRAFT_IMPORT',
+      status: 'QUEUED',
+      version: 1,
+    })
+    documentPlatformApiMock.exports.createBomDraft.mockResolvedValue({
+      id: 94,
+      taskNo: 'TASK-BOM-EXPORT',
+      taskType: 'BOM_DRAFT_EXPORT',
+      status: 'QUEUED',
+      version: 1,
+    })
+    documentPlatformApiMock.printTemplates.list.mockResolvedValue([
+      {
+        templateCode: 'BOM_ECO_APPLICATION_APPROVAL_V1',
+        templateName: 'BOM ECO 应用审批单',
+        templateVersion: 1,
+        enabled: true,
+      },
+    ])
     masterDataApiMock.materials.list.mockResolvedValue({
       items: [finishedGood, rawMaterial],
       page: 1,
@@ -802,7 +874,7 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).not.toContain('未发布版本')
   })
 
-  it('工程变更页签展示来源目标 BOM 并应用后展示结果摘要', async () => {
+  it('工程变更页签展示来源目标 BOM，草稿应用改为提交审批且不调用直通应用接口', async () => {
     const wrapper = mountBoms()
     await flushPromises()
 
@@ -814,13 +886,19 @@ describe('BOM 管理页', () => {
 
     await wrapper.find('[data-test="apply-bom-eco"]').trigger('click')
     await flushPromises()
+    await wrapper.find('[data-test="eco-approval-submit-reason"]').setValue('材料替代方案已确认')
+    await wrapper.find('[data-test="confirm-bom-eco-approval"]').trigger('click')
+    await flushPromises()
 
-    expect(bomApiMock.engineeringChanges.apply).toHaveBeenCalledWith(100, { version: 2 })
-    expect(wrapper.text()).toContain('应用结果')
-    expect(wrapper.text()).toContain('来源变更前')
-    expect(wrapper.text()).toContain('目标变更后')
-    expect(wrapper.text()).toContain('BOM-FG-A / V1.0')
-    expect(wrapper.text()).not.toContain('{"bomCode"')
+    expect(documentPlatformApiMock.approvals.submitBomEcoApplication).toHaveBeenCalledWith(100, {
+      objectVersion: 2,
+      reason: '材料替代方案已确认',
+      idempotencyKey: expect.any(String),
+    })
+    expect(bomApiMock.engineeringChanges.apply).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('审批状态')
+    expect(wrapper.text()).toContain('ECO 附件')
+    expect(wrapper.text()).toContain('BOM ECO 应用审批单')
   })
 
   it('创建工程变更时生成 ECO 编码并按候选上下文提交', async () => {
@@ -1003,5 +1081,48 @@ describe('BOM 管理页', () => {
       parentMaterialId: 2,
       selectedIds: [1],
     }))
+  })
+
+  it('BOM 版本页签增加草稿模板、CREATE/UPDATE_DRAFT 导入和草稿导出', async () => {
+    const wrapper = mountBoms([
+      'material:bom:view',
+      'material:bom:import',
+      'material:bom:export',
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="download-bom-draft-template"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="open-bom-draft-import"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="export-bom-draft"]').exists()).toBe(true)
+
+    await (wrapper.vm as unknown as { downloadBomDraftTemplate: () => Promise<void> }).downloadBomDraftTemplate()
+    await flushPromises()
+    expect(documentPlatformApiMock.importTemplates.downloadBomDrafts).toHaveBeenCalled()
+
+    await (wrapper.vm as unknown as { exportBomDraft: (record: BomSummaryRecord) => Promise<void> }).exportBomDraft(draftBom)
+    await flushPromises()
+    expect(documentPlatformApiMock.exports.createBomDraft).toHaveBeenCalledWith(1, {
+      idempotencyKey: expect.any(String),
+    })
+
+    ;(wrapper.vm as unknown as { openBomDraftImport: () => void }).openBomDraftImport()
+    await flushPromises()
+    const file = new File(['xlsx'], 'bom-draft.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const fileInput = wrapper.find('input[data-test="bom-draft-import-file"]').element as HTMLInputElement
+    Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })
+    await wrapper.find('input[data-test="bom-draft-import-file"]').trigger('change')
+    await setSelectValue(wrapper, 'bom-draft-import-mode', 'UPDATE_DRAFT')
+    await setSelectValue(wrapper, 'bom-draft-import-target', 1)
+    await (wrapper.vm as unknown as { submitBomDraftImport: () => Promise<void> }).submitBomDraftImport()
+    await flushPromises()
+
+    expect(documentPlatformApiMock.imports.uploadBomDraft).toHaveBeenCalledWith({
+      mode: 'UPDATE_DRAFT',
+      bomId: 1,
+      version: 3,
+      file,
+      idempotencyKey: expect.any(String),
+    })
+    expect(wrapper.text()).toContain('TASK-BOM-IMPORT')
   })
 })

@@ -53,6 +53,9 @@ const financePayablePath = '/finance/payables'
 const financePaymentPath = '/finance/payments'
 const financeSettlementAdjustmentPath = '/finance/settlement-adjustments'
 const reportMenuPaths = new Set(reportRouteConfigs.map((item) => item.path))
+const platformApprovalPath = '/platform/approvals'
+const platformMessagePath = '/platform/messages'
+const platformDocumentTaskPath = '/platform/document-tasks'
 const masterUnitPath = '/master/units'
 const masterUnitConversionPath = '/master/unit-conversions'
 const masterCodingRulePath = '/master/coding-rules'
@@ -64,6 +67,9 @@ const supportedMenuPaths = new Set([
   '/system/users',
   '/accounts/roles',
   '/system/roles',
+  platformApprovalPath,
+  platformMessagePath,
+  platformDocumentTaskPath,
   businessPeriodPath,
   masterUnitPath,
   masterUnitConversionPath,
@@ -136,6 +142,27 @@ const masterChildren: MenuNode[] = [
 ]
 const masterMenuPaths = new Set(masterChildren.map((child) => child.routePath))
 const masterMenuCodes = new Set(masterChildren.map((child) => String(child.code)))
+const platformChildren: MenuNode[] = [
+  {
+    id: 'platform-approvals',
+    code: 'platform:todo:view',
+    name: '审批待办',
+    routePath: platformApprovalPath,
+  },
+  {
+    id: 'platform-messages',
+    code: 'platform:message:view',
+    name: '消息中心',
+    routePath: platformMessagePath,
+  },
+  {
+    id: 'platform-document-tasks',
+    code: 'platform:document-task:view',
+    name: '任务中心',
+    routePath: platformDocumentTaskPath,
+  },
+]
+const platformMenuPaths = new Set(platformChildren.map((child) => child.routePath))
 const systemChildren: MenuNode[] = [
   {
     id: 'system-business-periods',
@@ -280,6 +307,7 @@ const financeMenuPaths = new Set(financeChildren.map((child) => child.routePath)
 const fallbackMainMenuIcon = Grid
 const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/system|系统/, Setting],
+  [/platform|平台|审批|消息|任务/, Grid],
   [/master|基础/, OfficeBuilding],
   [/material|物料|bom/i, Collection],
   [/inventory|库存/, Box],
@@ -293,7 +321,8 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
 ]
 const menuTree = computed<MenuNode[]>(() => {
   const supportedMenus = filterSupportedMenus(authStore.menus ?? [])
-  const masterMenus = ensureMasterMenu(supportedMenus)
+  const platformMenus = ensurePlatformMenu(supportedMenus)
+  const masterMenus = ensureMasterMenu(platformMenus)
   const systemMenus = ensureSystemMenu(masterMenus)
   const inventoryMenus = ensureInventoryMenu(systemMenus)
   const procurementMenus = ensureProcurementMenu(inventoryMenus)
@@ -343,6 +372,43 @@ function ensureMasterMenu(menus: MenuNode[]): MenuNode[] {
       children: allowedChildren,
     },
   ]
+}
+
+function ensurePlatformMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = platformChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removePlatformMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'platform',
+      code: 'platform',
+      name: '平台工作台',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isPlatformMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'platform'
+    || code.startsWith('platform:')
+    || (menu.routePath ? platformMenuPaths.has(menu.routePath) : false)
+}
+
+function removePlatformMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removePlatformMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isPlatformMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 function isMasterMenu(menu: MenuNode): boolean {

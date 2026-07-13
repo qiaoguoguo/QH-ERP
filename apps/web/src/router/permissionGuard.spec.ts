@@ -18,6 +18,9 @@ import UnitListView from '../modules/master/units/UnitListView.vue'
 import UnitConversionListView from '../modules/master/unitConversions/UnitConversionListView.vue'
 import CodingRuleListView from '../modules/master/codingRules/CodingRuleListView.vue'
 import WarehouseListView from '../modules/master/warehouses/WarehouseListView.vue'
+import ApprovalCenterView from '../modules/platform/approvals/ApprovalCenterView.vue'
+import MessageCenterView from '../modules/platform/messages/MessageCenterView.vue'
+import DocumentTaskCenterView from '../modules/platform/documentTasks/DocumentTaskCenterView.vue'
 import ProductionCompletionReceiptView from '../modules/production/ProductionCompletionReceiptView.vue'
 import ProductionMaterialIssueView from '../modules/production/ProductionMaterialIssueView.vue'
 import ProductionWorkOrderDetailView from '../modules/production/ProductionWorkOrderDetailView.vue'
@@ -182,6 +185,26 @@ describe('账号权限路由守卫', () => {
       .toBe('master:material:view')
     expect(router.getRoutes().find((item) => item.name === 'material-boms')?.meta.requiredPermission)
       .toBe('material:bom:view')
+  })
+
+  it('平台工作台路由加载真实页面并配置固定权限', async () => {
+    const router = createQhErpRouter()
+    const platformRoutes = [
+      ['platform-approvals', '/platform/approvals', 'platform:todo:view', ApprovalCenterView],
+      ['platform-messages', '/platform/messages', 'platform:message:view', MessageCenterView],
+      ['platform-document-tasks', '/platform/document-tasks', 'platform:document-task:view', DocumentTaskCenterView],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of platformRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
   })
 
   it('库存路由加载真实页面并配置对应权限', async () => {
