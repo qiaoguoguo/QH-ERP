@@ -567,7 +567,7 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 			new PermissionSeed("platform:message:view", "查看消息", SystemPermissionType.ACTION, "platform",
 					"/platform/messages", "GET", "/api/admin/messages/**", 920),
 			new PermissionSeed("platform:message:read", "标记消息已读", SystemPermissionType.ACTION, "platform",
-					"/platform/messages", "PUT", "/api/admin/messages/{id}/read", 921),
+					"/platform/messages", "PUT", "/api/admin/messages/**", 921),
 			new PermissionSeed("platform:attachment:view", "查看附件", SystemPermissionType.ACTION, "platform",
 					"/platform/attachments", "GET", "/api/admin/attachments/**", 930),
 			new PermissionSeed("platform:attachment:upload", "上传附件", SystemPermissionType.ACTION, "platform",
@@ -586,7 +586,7 @@ public class AccountPermissionInitializer implements ApplicationRunner {
 					"platform", "/platform/document-tasks", "GET", "/api/admin/document-tasks/{id}/download",
 					943),
 			new PermissionSeed("platform:print:generate", "生成固定打印单", SystemPermissionType.ACTION,
-					"platform", "/platform/prints", "POST", "/api/admin/prints/**", 950));
+					"platform", "/platform/prints", null, "/api/admin/print-**", 950));
 
 	private final SystemUserRepository userRepository;
 

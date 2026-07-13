@@ -60,7 +60,9 @@ public class PlatformDocumentTaskController {
 	public ResponseEntity<byte[]> bomDraftImportTemplate() {
 		return xlsx("bom-draft-import-template.xlsx",
 				List.of(List.of("mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode",
-						"name", "baseQuantity", "effectiveFrom", "effectiveTo", "remark")));
+						"name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark"),
+						List.of("items.lineNo", "items.childMaterialCode", "items.businessUnit",
+								"items.businessQuantity", "items.lossRate", "items.warehouse", "items.remark")));
 	}
 
 	@PostMapping("/imports/materials")
@@ -99,8 +101,8 @@ public class PlatformDocumentTaskController {
 
 	@GetMapping("/print-templates")
 	public ApiResponse<List<PlatformDocumentTaskService.PrintTemplateRecord>> printTemplates(
-			@RequestParam(required = false) String objectType) {
-		return ApiResponse.ok(this.documentTaskService.printTemplates(objectType));
+			@RequestParam(required = false) String sceneCode) {
+		return ApiResponse.ok(this.documentTaskService.printTemplates(sceneCode));
 	}
 
 	@GetMapping("/print-previews/{id}")

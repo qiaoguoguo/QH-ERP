@@ -520,6 +520,18 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.POST, "/api/admin/system/business-periods/1/unlock", "system:business-period:unlock");
 	}
 
+	@Test
+	void stage022PlatformEndpointsMapToDedicatedPermissions() {
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/messages/read-all", "platform:message:read");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/print-templates", "platform:print:generate");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/print-previews/1", "platform:print:generate");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/print-tasks", "platform:print:generate");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/imports/1/confirm", "platform:document-task:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/document-tasks/1/errors", "platform:document-task:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/document-tasks/1/download",
+				"platform:document-task:download");
+	}
+
 	private void assertPermissionCode(HttpMethod method, String path, String expectedPermissionCode) {
 		var authorizationManager = new PermissionAuthorizationManager(null);
 		var request = new MockHttpServletRequest(method.name(), path);

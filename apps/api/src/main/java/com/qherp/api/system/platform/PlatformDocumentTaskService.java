@@ -15,6 +15,7 @@ import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.openxml4j.util.ZipSecureFile;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -44,6 +45,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 @Service
 public class PlatformDocumentTaskService {
@@ -51,6 +54,12 @@ public class PlatformDocumentTaskService {
 	private static final AtomicInteger TASK_SEQUENCE = new AtomicInteger();
 
 	private static final DateTimeFormatter TASK_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+
+	static {
+		ZipSecureFile.setMinInflateRatio(0.01d);
+		ZipSecureFile.setMaxEntrySize(20L * 1024L * 1024L);
+		ZipSecureFile.setMaxTextSize(10L * 1024L * 1024L);
+	}
 
 	private final JdbcTemplate jdbcTemplate;
 
@@ -206,16 +215,17 @@ public class PlatformDocumentTaskService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<PrintTemplateRecord> printTemplates(String objectType) {
-		String where = hasText(objectType) ? "where object_type = ? and status = 'ENABLED'" : "where status = 'ENABLED'";
-		Object[] args = hasText(objectType) ? new Object[] { objectType } : new Object[] {};
+	public List<PrintTemplateRecord> printTemplates(String sceneCode) {
+		String where = hasText(sceneCode) ? "where scene_code = ? and status = 'ENABLED'" : "where status = 'ENABLED'";
+		Object[] args = hasText(sceneCode) ? new Object[] { sceneCode } : new Object[] {};
 		return this.jdbcTemplate.query("""
-				select template_code, name, object_type, template_version
+				select template_code, scene_code, name, object_type, template_version
 				from platform_print_template
 				%s
 				order by id
 				""".formatted(where), (rs, rowNum) -> new PrintTemplateRecord(rs.getString("template_code"),
-				rs.getString("name"), rs.getString("object_type"), rs.getInt("template_version")), args);
+				rs.getString("scene_code"), rs.getString("name"), rs.getString("object_type"),
+				rs.getInt("template_version")), args);
 	}
 
 	@Transactional(readOnly = true)
@@ -225,7 +235,16 @@ public class PlatformDocumentTaskService {
 		return new PrintPreviewRecord(printTemplateCode(snapshot.sceneCode()), 1, snapshot.sceneCode(),
 				snapshot.businessObjectType(), snapshot.businessObjectNo(), snapshot.businessObjectSummary(),
 				snapshot.status(), snapshot.submittedByUsername(), snapshot.submittedAt(),
-				snapshot.completedByUsername(), snapshot.completedAt());
+				snapshot.completedByUsername(), snapshot.completedAt(), List.of(
+						new PrintPreviewSection("审批信息", List.of(
+								new PrintPreviewField("审批场景", snapshot.sceneCode()),
+								new PrintPreviewField("审批状态", snapshot.status()),
+								new PrintPreviewField("提交人", snapshot.submittedByUsername()),
+								new PrintPreviewField("提交时间", snapshot.submittedAt().toString()))),
+						new PrintPreviewSection("业务对象", List.of(
+								new PrintPreviewField("对象类型", snapshot.businessObjectType()),
+								new PrintPreviewField("对象编号", snapshot.businessObjectNo()),
+								new PrintPreviewField("对象摘要", snapshot.businessObjectSummary())))));
 	}
 
 	@Transactional
@@ -281,7 +300,7 @@ public class PlatformDocumentTaskService {
 	private DocumentTaskRecord createImportTask(String taskType, String folder, MultipartFile file, String idempotencyKey,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
-		byte[] content = readXlsx(file);
+		byte[] content = readXlsx(file, taskType);
 		String payloadJson = json(new ImportTaskPayload(null, file.getOriginalFilename(), sha256(content)));
 		List<ExistingTask> existing = existingTask(operator.id(), taskType, idempotencyKey);
 		if (!existing.isEmpty()) {
@@ -320,12 +339,7 @@ public class PlatformDocumentTaskService {
 		boolean viewAll = currentUser.permissions().contains("platform:document-task:view-all");
 		String where = viewAll ? "" : "where created_by_user_id = ?";
 		Object[] args = viewAll ? new Object[] {} : new Object[] { currentUser.id() };
-		long total = this.jdbcTemplate.queryForObject("select count(*) from platform_document_task " + where,
-				Long.class, args);
-		List<Object> pageArgs = new ArrayList<>(List.of(args));
-		pageArgs.add(limit(pageSize));
-		pageArgs.add(offset(page, pageSize));
-		List<DocumentTaskRecord> items = this.jdbcTemplate.query("""
+		List<DocumentTaskRecord> visible = this.jdbcTemplate.query("""
 				select id, task_no, task_type, stage, status, idempotency_key, created_by_user_id,
 				       created_by_username, total_count, success_count, error_count, result_file_id,
 				       error_file_id, error_summary, attempt_count, max_attempts, created_at, started_at,
@@ -333,9 +347,13 @@ public class PlatformDocumentTaskService {
 				from platform_document_task
 				%s
 				order by created_at desc, id desc
-				limit ? offset ?
-				""".formatted(where), this::mapTask, pageArgs.toArray());
-		return PageResponse.of(items, page, limit(pageSize), total);
+				""".formatted(where), this::mapTask, args)
+			.stream()
+			.filter((task) -> canAccessTask(task, currentUser))
+			.toList();
+		int from = Math.min(offset(page, pageSize), visible.size());
+		int to = Math.min(from + limit(pageSize), visible.size());
+		return PageResponse.of(visible.subList(from, to), page, limit(pageSize), visible.size());
 	}
 
 	@Transactional(readOnly = true)
@@ -505,19 +523,20 @@ public class PlatformDocumentTaskService {
 		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
 			Sheet headerSheet = workbook.createSheet("bom");
 			String[] headerNames = { "mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode",
-					"name", "baseQuantity", "effectiveFrom", "effectiveTo", "remark" };
+					"name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark" };
 			writeRow(headerSheet.createRow(0), headerNames);
 			writeRow(headerSheet.createRow(1), new String[] { "UPDATE_DRAFT", bom.id().toString(),
 					bom.version().toString(), bom.bomCode(), bom.parentMaterialCode(), bom.versionCode(), bom.name(),
-					bom.baseQuantity(), stringDate(bom.effectiveFrom()), stringDate(bom.effectiveTo()),
+					bom.baseQuantity(), unitCode(bom.baseUnitId()), stringDate(bom.effectiveFrom()), stringDate(bom.effectiveTo()),
 					nullToBlank(bom.remark()) });
 			Sheet itemsSheet = workbook.createSheet("items");
-			writeRow(itemsSheet.createRow(0), new String[] { "lineNo", "childMaterialCode", "quantity", "lossRate",
-					"remark" });
+			writeRow(itemsSheet.createRow(0), new String[] { "lineNo", "childMaterialCode", "businessUnit",
+					"businessQuantity", "lossRate", "warehouse", "remark" });
 			for (int i = 0; i < bom.items().size(); i++) {
 				BomAdminService.BomItemResponse item = bom.items().get(i);
 				writeRow(itemsSheet.createRow(i + 1), new String[] { item.lineNo().toString(),
-						item.childMaterialCode(), item.businessQuantity(), item.lossRate(), nullToBlank(item.remark()) });
+						item.childMaterialCode(), unitCode(item.businessUnitId()), item.businessQuantity(), item.lossRate(), "",
+						nullToBlank(item.remark()) });
 			}
 			workbook.write(output);
 			return new ExportedFile("bom-draft-" + bom.bomCode() + ".xlsx",
@@ -629,12 +648,29 @@ public class PlatformDocumentTaskService {
 	public ExportedFile materialExportFile(MaterialExportRequest request) {
 		String keyword = request == null ? null : trimToNull(request.keyword());
 		List<Object> args = new ArrayList<>();
-		String where = "";
+		List<String> conditions = new ArrayList<>();
 		if (keyword != null) {
-			where = "where m.code ilike ? or m.name ilike ?";
+			conditions.add("(m.code ilike ? or m.name ilike ?)");
 			args.add("%" + keyword + "%");
 			args.add("%" + keyword + "%");
 		}
+		if (request != null && hasText(request.status())) {
+			conditions.add("m.status = ?");
+			args.add(request.status());
+		}
+		if (request != null && request.categoryId() != null) {
+			conditions.add("m.category_id = ?");
+			args.add(request.categoryId());
+		}
+		if (request != null && hasText(request.materialType())) {
+			conditions.add("m.material_type = ?");
+			args.add(request.materialType());
+		}
+		if (request != null && hasText(request.sourceType())) {
+			conditions.add("m.source_type = ?");
+			args.add(request.sourceType());
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		List<MaterialExportRow> rows = this.jdbcTemplate.query("""
 				select m.code, m.name, m.specification, m.material_type, m.source_type, m.tracking_method,
 				       c.name as category_name, u.name as unit_name, m.status, m.cost_category,
@@ -693,13 +729,22 @@ public class PlatformDocumentTaskService {
 		List<ImportError> errors = new ArrayList<>();
 		int rowCount = 0;
 		try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(content))) {
-			Sheet sheet = workbook.getSheetAt(0);
+			validateWorkbookSheets(workbook, List.of("materials"));
+			Sheet sheet = workbook.getSheet("materials");
+			validateHeader(sheet, new String[] { "code", "name", "specification", "materialType", "sourceType",
+					"trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
+					"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
+					"remark" });
+			validateVisibleColumns(sheet, 15);
 			for (int i = 1; i <= sheet.getLastRowNum(); i++) {
 				Row row = sheet.getRow(i);
 				if (row == null || rowIsBlank(row)) {
 					continue;
 				}
 				rowCount++;
+				if (rowCount > 10000) {
+					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+				}
 				MaterialImportRow importRow = new MaterialImportRow(cellString(row, 0), cellString(row, 1),
 						cellString(row, 2), cellString(row, 3), cellString(row, 4), cellString(row, 5),
 						cellString(row, 6), cellString(row, 7), cellString(row, 8), cellString(row, 9),
@@ -711,6 +756,12 @@ public class PlatformDocumentTaskService {
 		}
 		catch (IOException exception) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		catch (BusinessException exception) {
+			recordImportErrors(task.id(), batchId, List.of(new ImportError(null, "file",
+					exception.errorCode().name(), exception.getMessage())));
+			markValidationFailed(task.id(), batchId, rowCount, 1);
+			return;
 		}
 		if (!errors.isEmpty()) {
 			recordImportErrors(task.id(), batchId, errors);
@@ -727,17 +778,28 @@ public class PlatformDocumentTaskService {
 		clearImportRowsAndErrors(task.id(), batchId);
 		List<ImportError> errors = new ArrayList<>();
 		try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(content))) {
+			validateWorkbookSheets(workbook, List.of("bom", "items"));
 			Sheet bomSheet = workbook.getSheet("bom");
 			Sheet itemsSheet = workbook.getSheet("items");
 			if (bomSheet == null || itemsSheet == null) {
 				errors.add(new ImportError(1, "sheet", ApiErrorCode.IMPORT_FILE_INVALID.name(), "缺少 bom 或 items 工作表"));
 			}
 			else {
+				validateHeader(bomSheet, new String[] { "mode", "bomId", "version", "bomCode",
+						"parentMaterialCode", "versionCode", "name", "baseQuantity", "baseUnit", "effectiveFrom",
+						"effectiveTo", "remark" });
+				validateHeader(itemsSheet, new String[] { "lineNo", "childMaterialCode", "businessUnit",
+						"businessQuantity", "lossRate", "warehouse", "remark" });
+				validateVisibleColumns(bomSheet, 12);
+				validateVisibleColumns(itemsSheet, 7);
+				if (itemsSheet.getLastRowNum() > 5000) {
+					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+				}
 				Row header = bomSheet.getRow(1);
 				BomDraftImportPayload bomPayload = new BomDraftImportPayload(cellString(header, 0),
 						longCell(header, 1), longCell(header, 2), cellString(header, 3), cellString(header, 4),
-						cellString(header, 5), cellString(header, 6), decimalCell(header, 7),
-						dateCell(header, 8), dateCell(header, 9), cellString(header, 10), bomItems(itemsSheet, errors));
+						cellString(header, 5), cellString(header, 6), decimalCell(header, 7), cellString(header, 8),
+						dateCell(header, 9), dateCell(header, 10), cellString(header, 11), bomItems(itemsSheet, errors));
 				validateBomDraftPayload(bomPayload, errors);
 				insertImportRow(batchId, 2, bomPayload);
 				this.jdbcTemplate.update("""
@@ -749,6 +811,12 @@ public class PlatformDocumentTaskService {
 		}
 		catch (IOException exception) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		catch (BusinessException exception) {
+			recordImportErrors(task.id(), batchId, List.of(new ImportError(null, "file",
+					exception.errorCode().name(), exception.getMessage())));
+			markValidationFailed(task.id(), batchId, 0, 1);
+			return;
 		}
 		if (!errors.isEmpty()) {
 			recordImportErrors(task.id(), batchId, errors);
@@ -797,11 +865,11 @@ public class PlatformDocumentTaskService {
 			List<BomAdminService.BomItemRequest> items = payload.items()
 				.stream()
 				.map((item) -> new BomAdminService.BomItemRequest(item.lineNo(), materialId(item.childMaterialCode()),
-						null, nonNullPositive(item.quantity()), null, nonNullPositive(item.quantity()),
+						null, null, unitId(item.businessUnitCode()), nonNullPositive(item.businessQuantity()),
 						item.lossRate() == null ? BigDecimal.ZERO : item.lossRate(), item.remark()))
 				.toList();
 			BomAdminService.BomRequest request = new BomAdminService.BomRequest(payload.bomCode(), parentId,
-					payload.versionCode(), payload.name(), nonNullPositive(payload.baseQuantity()), null, "DRAFT",
+					payload.versionCode(), payload.name(), nonNullPositive(payload.baseQuantity()), unitId(payload.baseUnitCode()), "DRAFT",
 					payload.effectiveFrom(), payload.effectiveTo(), payload.remark(), items, payload.version());
 			BomAdminService.BomDetailResponse result;
 			if ("UPDATE_DRAFT".equals(payload.mode())) {
@@ -833,7 +901,7 @@ public class PlatformDocumentTaskService {
 			Row header = bomSheet.getRow(1);
 			return new BomDraftImportPayload(cellString(header, 0), longCell(header, 1), longCell(header, 2),
 					cellString(header, 3), cellString(header, 4), cellString(header, 5), cellString(header, 6),
-					decimalCell(header, 7), dateCell(header, 8), dateCell(header, 9), cellString(header, 10),
+					decimalCell(header, 7), cellString(header, 8), dateCell(header, 9), dateCell(header, 10), cellString(header, 11),
 					bomItems(itemsSheet, errors));
 		}
 		catch (IOException exception) {
@@ -875,13 +943,20 @@ public class PlatformDocumentTaskService {
 		if (payload.baseQuantity() == null || payload.baseQuantity().compareTo(BigDecimal.ZERO) <= 0) {
 			errors.add(new ImportError(2, "baseQuantity", ApiErrorCode.BOM_QUANTITY_INVALID.name(), "BOM 基准数量必须大于 0"));
 		}
+		if (unitId(payload.baseUnitCode()) == null) {
+			errors.add(new ImportError(2, "baseUnit", ApiErrorCode.BOM_UNIT_INVALID.name(), "BOM 基准单位不存在或未启用"));
+		}
 		if (payload.items() == null || payload.items().isEmpty()) {
 			errors.add(new ImportError(2, "items", ApiErrorCode.BOM_EMPTY_ITEMS.name(), "BOM 明细不能为空"));
 		}
 		else {
 			for (BomDraftImportItem item : payload.items()) {
-				if (item.quantity() == null || item.quantity().compareTo(BigDecimal.ZERO) <= 0) {
-					errors.add(new ImportError(item.lineNo(), "quantity", ApiErrorCode.BOM_QUANTITY_INVALID.name(),
+				if (unitId(item.businessUnitCode()) == null) {
+					errors.add(new ImportError(item.lineNo(), "businessUnit", ApiErrorCode.BOM_UNIT_INVALID.name(),
+							"BOM 明细业务单位不存在或未启用"));
+				}
+				if (item.businessQuantity() == null || item.businessQuantity().compareTo(BigDecimal.ZERO) <= 0) {
+					errors.add(new ImportError(item.lineNo(), "businessQuantity", ApiErrorCode.BOM_QUANTITY_INVALID.name(),
 							"BOM 明细数量必须大于 0"));
 				}
 				if (materialId(item.childMaterialCode()) == null) {
@@ -931,15 +1006,49 @@ public class PlatformDocumentTaskService {
 				userId, taskType, idempotencyKey);
 	}
 
-	private byte[] readXlsx(MultipartFile file) {
+	private byte[] readXlsx(MultipartFile file, String taskType) {
 		if (file == null || file.isEmpty() || file.getSize() > 10L * 1024L * 1024L
 				|| !safeFilename(file.getOriginalFilename()).toLowerCase().endsWith(".xlsx")) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 		}
 		try {
-			return file.getBytes();
+			byte[] content = file.getBytes();
+			validateXlsxPackage(content, taskType);
+			return content;
 		}
 		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+	}
+
+	private void validateXlsxPackage(byte[] content, String taskType) {
+		boolean hasContentTypes = false;
+		boolean hasWorkbook = false;
+		try (ZipInputStream zip = new ZipInputStream(new java.io.ByteArrayInputStream(content))) {
+			ZipEntry entry;
+			int entries = 0;
+			while ((entry = zip.getNextEntry()) != null) {
+				entries++;
+				if (entries > 200) {
+					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+				}
+				String name = entry.getName().toLowerCase();
+				if ("[content_types].xml".equals(name)) {
+					hasContentTypes = true;
+				}
+				if ("xl/workbook.xml".equals(name)) {
+					hasWorkbook = true;
+				}
+				if (name.endsWith("vbaproject.bin") || name.contains("externallinks/")
+						|| name.endsWith(".bin") && name.contains("vba")) {
+					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+				}
+			}
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		if (!hasContentTypes || !hasWorkbook) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 		}
 	}
@@ -1090,6 +1199,17 @@ public class PlatformDocumentTaskService {
 				""", (rs, rowNum) -> rs.getLong("id"), code).stream().findFirst().orElse(null);
 	}
 
+	private String unitCode(Long id) {
+		if (id == null) {
+			return "";
+		}
+		return this.jdbcTemplate.query("""
+				select code
+				from mst_unit
+				where id = ?
+				""", (rs, rowNum) -> rs.getString("code"), id).stream().findFirst().orElse("");
+	}
+
 	private Long materialId(String code) {
 		if (!hasText(code)) {
 			return null;
@@ -1171,7 +1291,29 @@ public class PlatformDocumentTaskService {
 				nullableLong(rs, "error_file_id"), rs.getString("error_summary"), rs.getInt("attempt_count"),
 				rs.getInt("max_attempts"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getObject("started_at", OffsetDateTime.class), rs.getObject("finished_at", OffsetDateTime.class),
-				rs.getObject("expires_at", OffsetDateTime.class), rs.getLong("version"));
+				rs.getObject("expires_at", OffsetDateTime.class), rs.getLong("version"),
+				documentTaskAvailableActions(rs.getString("status"), nullableLong(rs, "result_file_id"),
+						rs.getInt("error_count"), rs.getObject("expires_at", OffsetDateTime.class)));
+	}
+
+	private List<String> documentTaskAvailableActions(String status, Long resultFileId, int errorCount,
+			OffsetDateTime expiresAt) {
+		List<String> actions = new ArrayList<>();
+		if ("READY_TO_COMMIT".equals(status)) {
+			actions.add("CONFIRM");
+			actions.add("CANCEL");
+		}
+		if ("SUCCEEDED".equals(status) && resultFileId != null
+				&& (expiresAt == null || expiresAt.isAfter(OffsetDateTime.now()))) {
+			actions.add("DOWNLOAD");
+		}
+		if ("VALIDATION_FAILED".equals(status) && errorCount > 0) {
+			actions.add("ERRORS");
+		}
+		if ("QUEUED".equals(status) || "RUNNING".equals(status)) {
+			actions.add("CANCEL");
+		}
+		return actions;
 	}
 
 	private ClaimedTask mapClaimedTask(ResultSet rs, int rowNum) throws SQLException {
@@ -1182,14 +1324,61 @@ public class PlatformDocumentTaskService {
 	}
 
 	private void requireTaskAccess(DocumentTaskRecord task, CurrentUser currentUser) {
-		requireTaskAccess(task.createdByUserId(), currentUser);
-	}
-
-	private void requireTaskAccess(Long ownerUserId, CurrentUser currentUser) {
-		if (!ownerUserId.equals(currentUser.id())
-				&& !currentUser.permissions().contains("platform:document-task:view-all")) {
+		if (!canAccessTask(task, currentUser)) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		}
+	}
+
+	private boolean canAccessTask(DocumentTaskRecord task, CurrentUser currentUser) {
+		if (!task.createdByUserId().equals(currentUser.id())
+				&& !currentUser.permissions().contains("platform:document-task:view-all")) {
+			return false;
+		}
+		String permission;
+		try {
+			permission = taskDomainPermission(task.taskType());
+		}
+		catch (BusinessException exception) {
+			return false;
+		}
+		if (!currentUser.permissions().contains(permission)) {
+			return false;
+		}
+		if ("APPROVAL_PRINT".equals(task.taskType())) {
+			return canViewApprovalPrintTask(task, currentUser);
+		}
+		return true;
+	}
+
+	private boolean canViewApprovalPrintTask(DocumentTaskRecord task, CurrentUser currentUser) {
+		try {
+			PrintTaskPayload payload = parsePrintTaskPayload(taskRequestPayload(task.id()));
+			ApprovalPrintSnapshot snapshot = approvalPrintSnapshot(payload.approvalInstanceId());
+			requireApprovalBusinessView(snapshot.sceneCode(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private String taskRequestPayload(Long taskId) {
+		return this.jdbcTemplate.queryForObject("""
+				select request_payload::text
+				from platform_document_task
+				where id = ?
+				""", String.class, taskId);
+	}
+
+	private String taskDomainPermission(String taskType) {
+		return switch (taskType) {
+			case "MATERIAL_IMPORT" -> "master:material:import";
+			case "MATERIAL_EXPORT" -> "master:material:export";
+			case "BOM_DRAFT_IMPORT" -> "material:bom:import";
+			case "BOM_DRAFT_EXPORT" -> "material:bom:export";
+			case "APPROVAL_PRINT" -> "platform:print:generate";
+			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		};
 	}
 
 	private void validateIdempotencyKey(String idempotencyKey) {
@@ -1316,6 +1505,42 @@ public class PlatformDocumentTaskService {
 		return true;
 	}
 
+	private static void validateWorkbookSheets(Workbook workbook, List<String> expectedSheetNames) {
+		if (workbook.getNumberOfSheets() != expectedSheetNames.size()) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		for (int i = 0; i < expectedSheetNames.size(); i++) {
+			if (workbook.isSheetHidden(i) || workbook.isSheetVeryHidden(i)
+					|| workbook.getSheet(expectedSheetNames.get(i)) == null) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+		}
+	}
+
+	private static void validateHeader(Sheet sheet, String[] expectedHeaders) {
+		Row header = sheet.getRow(0);
+		if (header == null) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		for (int i = 0; i < expectedHeaders.length; i++) {
+			String actual = cellString(header, i);
+			if (!expectedHeaders[i].equals(actual)) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+		}
+		if (header.getLastCellNum() > expectedHeaders.length) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+	}
+
+	private static void validateVisibleColumns(Sheet sheet, int columnCount) {
+		for (int i = 0; i < columnCount; i++) {
+			if (sheet.isColumnHidden(i)) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+		}
+	}
+
 	private static String cellString(Row row, int index) {
 		if (row == null) {
 			return null;
@@ -1371,8 +1596,9 @@ public class PlatformDocumentTaskService {
 			}
 			try {
 				items.add(new BomDraftImportItem(Integer.valueOf(cellString(row, 0)), cellString(row, 1),
-						decimalCell(row, 2), decimalCell(row, 3) == null ? BigDecimal.ZERO : decimalCell(row, 3),
-						cellString(row, 4)));
+						cellString(row, 2), decimalCell(row, 3),
+						decimalCell(row, 4) == null ? BigDecimal.ZERO : decimalCell(row, 4), cellString(row, 5),
+						cellString(row, 6)));
 			}
 			catch (RuntimeException exception) {
 				errors.add(new ImportError(i + 1, "items", ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "BOM 明细格式错误"));
@@ -1423,7 +1649,7 @@ public class PlatformDocumentTaskService {
 			String idempotencyKey, Long createdByUserId, String createdByUsername, int totalCount, int successCount,
 			int errorCount, Long resultFileId, Long errorFileId, String errorSummary, int attemptCount,
 			int maxAttempts, OffsetDateTime createdAt, OffsetDateTime startedAt, OffsetDateTime finishedAt,
-			OffsetDateTime expiresAt, Long version) {
+			OffsetDateTime expiresAt, Long version, List<String> availableActions) {
 	}
 
 	public record DownloadedFile(String filename, String contentType, byte[] content) {
@@ -1448,13 +1674,20 @@ public class PlatformDocumentTaskService {
 	public record ExportedFile(String filename, String contentType, byte[] content, int totalCount) {
 	}
 
-	public record PrintTemplateRecord(String templateCode, String name, String objectType, int templateVersion) {
+	public record PrintTemplateRecord(String templateCode, String sceneCode, String name, String objectType,
+			int templateVersion) {
 	}
 
 	public record PrintPreviewRecord(String templateCode, int templateVersion, String sceneCode,
 			String businessObjectType, String businessObjectNo, String businessObjectSummary, String approvalStatus,
 			String submittedByUsername, OffsetDateTime submittedAt, String completedByUsername,
-			OffsetDateTime completedAt) {
+			OffsetDateTime completedAt, List<PrintPreviewSection> sections) {
+	}
+
+	public record PrintPreviewSection(String title, List<PrintPreviewField> fields) {
+	}
+
+	public record PrintPreviewField(String label, String value) {
 	}
 
 	public record TaskErrorRecord(Integer rowNo, String columnName, String errorCode, String message) {
@@ -1475,11 +1708,12 @@ public class PlatformDocumentTaskService {
 
 	private record BomDraftImportPayload(String mode, Long bomId, Long version, String bomCode,
 			String parentMaterialCode, String versionCode, String name, BigDecimal baseQuantity,
-			LocalDate effectiveFrom, LocalDate effectiveTo, String remark, List<BomDraftImportItem> items) {
+			String baseUnitCode, LocalDate effectiveFrom, LocalDate effectiveTo, String remark,
+			List<BomDraftImportItem> items) {
 	}
 
-	private record BomDraftImportItem(Integer lineNo, String childMaterialCode, BigDecimal quantity,
-			BigDecimal lossRate, String remark) {
+	private record BomDraftImportItem(Integer lineNo, String childMaterialCode, String businessUnitCode,
+			BigDecimal businessQuantity, BigDecimal lossRate, String warehouse, String remark) {
 	}
 
 	private record ImportError(Integer rowNo, String columnName, String errorCode, String message) {

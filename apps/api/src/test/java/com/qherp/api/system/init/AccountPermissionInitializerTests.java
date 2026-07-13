@@ -1316,6 +1316,56 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		});
 	}
 
+	@Test
+	void initializesStage022PlatformPermissionsAndAssignsThemToSystemAdmin() {
+		var systemAdmin = this.roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
+		List<String> menus = List.of("platform", "platform:approval");
+		List<ExpectedActionPermission> actions = List.of(
+				new ExpectedActionPermission("platform:approval:view", "platform:approval", "GET",
+						"/api/admin/approvals/**"),
+				new ExpectedActionPermission("platform:approval:cancel", "platform:approval", "POST",
+						"/api/admin/approvals/{id}/cancel"),
+				new ExpectedActionPermission("platform:todo:view", "platform:approval", "GET",
+						"/api/admin/approval-tasks/**"),
+				new ExpectedActionPermission("platform:message:view", "platform", "GET", "/api/admin/messages/**"),
+				new ExpectedActionPermission("platform:message:read", "platform", "PUT", "/api/admin/messages/**"),
+				new ExpectedActionPermission("platform:attachment:view", "platform", "GET",
+						"/api/admin/attachments/**"),
+				new ExpectedActionPermission("platform:attachment:upload", "platform", "POST",
+						"/api/admin/attachments"),
+				new ExpectedActionPermission("platform:attachment:download", "platform", "GET",
+						"/api/admin/attachments/{id}/download"),
+				new ExpectedActionPermission("platform:attachment:delete", "platform", "PUT",
+						"/api/admin/attachments/{id}/delete"),
+				new ExpectedActionPermission("platform:document-task:view", "platform", "GET",
+						"/api/admin/document-tasks/**"),
+				new ExpectedActionPermission("platform:document-task:view-all", "platform", null, null),
+				new ExpectedActionPermission("platform:document-task:cancel", "platform", "POST",
+						"/api/admin/document-tasks/{id}/cancel"),
+				new ExpectedActionPermission("platform:document-task:download", "platform", "GET",
+						"/api/admin/document-tasks/{id}/download"),
+				new ExpectedActionPermission("platform:print:generate", "platform", null, "/api/admin/print-**"));
+
+		menus.forEach(code -> {
+			var permission = this.permissionRepository.findByCode(code).orElseThrow();
+			assertThat(permission.getType()).as(code).isEqualTo(SystemPermissionType.MENU);
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.as(code)
+				.isTrue();
+		});
+		actions.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			var parent = this.permissionRepository.findByCode(expected.parentCode()).orElseThrow();
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.as(expected.code())
+				.isTrue();
+		});
+	}
+
 	private void assertDocumentedPermissionsInitializedAndAssigned() {
 		var systemAdmin = roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
 

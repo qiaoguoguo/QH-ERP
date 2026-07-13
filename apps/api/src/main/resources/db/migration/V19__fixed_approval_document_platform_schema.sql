@@ -41,6 +41,7 @@ create table platform_approval_instance (
 	status varchar(32) not null,
 	submit_reason varchar(500) not null,
 	idempotency_key varchar(120) not null,
+	request_fingerprint varchar(64) not null,
 	submitted_by_user_id bigint not null,
 	submitted_by_username varchar(64) not null,
 	submitted_at timestamptz not null,
@@ -166,6 +167,27 @@ create table platform_business_attachment (
 create index idx_platform_business_attachment_object
 	on platform_business_attachment (object_type, object_id, status, created_at desc);
 
+create table platform_approval_attachment_snapshot (
+	id bigserial primary key,
+	instance_id bigint not null,
+	attachment_id bigint not null,
+	file_id bigint not null,
+	file_name varchar(255) not null,
+	content_type varchar(120) not null,
+	file_size bigint not null,
+	sha256 varchar(64) not null,
+	uploaded_by_username varchar(64) not null,
+	uploaded_at timestamptz not null,
+	created_at timestamptz not null default now(),
+	constraint fk_platform_approval_attachment_snapshot_instance foreign key (instance_id) references platform_approval_instance (id),
+	constraint fk_platform_approval_attachment_snapshot_attachment foreign key (attachment_id) references platform_business_attachment (id),
+	constraint fk_platform_approval_attachment_snapshot_file foreign key (file_id) references platform_file_object (id),
+	constraint uk_platform_approval_attachment_snapshot unique (instance_id, attachment_id)
+);
+
+create index idx_platform_approval_attachment_snapshot_instance
+	on platform_approval_attachment_snapshot (instance_id, id);
+
 create table platform_document_task (
 	id bigserial primary key,
 	task_no varchar(64) not null,
@@ -281,6 +303,7 @@ create index idx_platform_document_task_error_task
 create table platform_print_template (
 	id bigserial primary key,
 	template_code varchar(80) not null,
+	scene_code varchar(80) not null,
 	name varchar(120) not null,
 	object_type varchar(64) not null,
 	template_version integer not null,
@@ -312,8 +335,8 @@ from platform_approval_definition
 where scene_code = 'BOM_ECO_APPLICATION';
 
 insert into platform_print_template (
-	template_code, name, object_type, template_version, status
+	template_code, scene_code, name, object_type, template_version, status
 )
 values
-	('CONTRACT_ACTIVATION_APPROVAL_V1', '合同生效审批单', 'APPROVAL_INSTANCE', 1, 'ENABLED'),
-	('BOM_ECO_APPLICATION_APPROVAL_V1', 'BOM ECO 应用审批单', 'APPROVAL_INSTANCE', 1, 'ENABLED');
+	('CONTRACT_ACTIVATION_APPROVAL_V1', 'SALES_PROJECT_CONTRACT_ACTIVATION', '合同生效审批单', 'APPROVAL_INSTANCE', 1, 'ENABLED'),
+	('BOM_ECO_APPLICATION_APPROVAL_V1', 'BOM_ECO_APPLICATION', 'BOM ECO 应用审批单', 'APPROVAL_INSTANCE', 1, 'ENABLED');

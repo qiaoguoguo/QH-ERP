@@ -106,6 +106,8 @@ public enum ApiErrorCode {
 
 	APPROVAL_DUPLICATE_ACTIVE(HttpStatus.CONFLICT, "当前对象已有未完成审批"),
 
+	APPROVAL_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "审批幂等键冲突"),
+
 	APPROVAL_STATUS_INVALID(HttpStatus.CONFLICT, "审批状态不允许当前操作"),
 
 	APPROVAL_SELF_ACTION_FORBIDDEN(HttpStatus.FORBIDDEN, "提交人不能审批自己的申请"),

@@ -441,7 +441,22 @@ public class SalesProjectContractService {
 				rs.getString("terminated_by"), rs.getObject("terminated_at", OffsetDateTime.class),
 				rs.getString("terminate_reason"), rs.getString("cancelled_by"),
 				rs.getObject("cancelled_at", OffsetDateTime.class), rs.getString("cancel_reason"),
-				rs.getLong("version"));
+				rs.getLong("version"), latestApprovalSummary("SALES_PROJECT_CONTRACT_ACTIVATION",
+						"SALES_PROJECT_CONTRACT", rs.getLong("id")));
+	}
+
+	private ApprovalSummary latestApprovalSummary(String sceneCode, String objectType, Long objectId) {
+		return this.jdbcTemplate.query("""
+				select id, scene_code, status, submitted_at, version
+				from platform_approval_instance
+				where scene_code = ?
+				and business_object_type = ?
+				and business_object_id = ?
+				order by submitted_at desc, id desc
+				limit 1
+				""", (rs, rowNum) -> new ApprovalSummary(rs.getLong("id"), rs.getString("scene_code"),
+				rs.getString("status"), rs.getObject("submitted_at", OffsetDateTime.class), rs.getLong("version")),
+				sceneCode, objectType, objectId).stream().findFirst().orElse(null);
 	}
 
 	private SalesProjectContractType parseType(String value) {
@@ -530,7 +545,11 @@ public class SalesProjectContractService {
 			OffsetDateTime createdAt, String updatedByName, OffsetDateTime updatedAt, String activatedByName,
 			OffsetDateTime activatedAt, String closedByName, OffsetDateTime closedAt, String closeReason,
 			String terminatedByName, OffsetDateTime terminatedAt, String terminateReason, String cancelledByName,
-			OffsetDateTime cancelledAt, String cancelReason, Long version) {
+			OffsetDateTime cancelledAt, String cancelReason, Long version, ApprovalSummary approvalSummary) {
+	}
+
+	public record ApprovalSummary(Long id, String sceneCode, String status, OffsetDateTime submittedAt,
+			Long version) {
 	}
 
 	private record ValidatedContract(SalesProjectContractType contractType, Long mainContractId, String name,

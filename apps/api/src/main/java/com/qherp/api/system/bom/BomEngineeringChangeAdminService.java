@@ -437,7 +437,22 @@ public class BomEngineeringChangeAdminService {
 				rs.getString("status"), rs.getString("applied_by"), rs.getObject("applied_at", OffsetDateTime.class),
 				rs.getString("cancel_reason"), rs.getString("remark"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
-				rs.getLong("version"), null, null, null, null);
+				rs.getLong("version"), latestApprovalSummary("BOM_ECO_APPLICATION", "BOM_ENGINEERING_CHANGE",
+						rs.getLong("id")), null, null, null, null);
+	}
+
+	private ApprovalSummary latestApprovalSummary(String sceneCode, String objectType, Long objectId) {
+		return this.jdbcTemplate.query("""
+				select id, scene_code, status, submitted_at, version
+				from platform_approval_instance
+				where scene_code = ?
+				and business_object_type = ?
+				and business_object_id = ?
+				order by submitted_at desc, id desc
+				limit 1
+				""", (rs, rowNum) -> new ApprovalSummary(rs.getLong("id"), rs.getString("scene_code"),
+				rs.getString("status"), rs.getObject("submitted_at", OffsetDateTime.class), rs.getLong("version")),
+				sceneCode, objectType, objectId).stream().findFirst().orElse(null);
 	}
 
 	private QueryParts queryParts(String keyword, String status, Long parentMaterialId, Long sourceBomId,
@@ -536,7 +551,7 @@ public class BomEngineeringChangeAdminService {
 			Long parentMaterialId, String parentMaterialCode, String parentMaterialName, LocalDate effectiveFrom,
 			LocalDate effectiveTo, String changeReason, String impactScope, String changeSummary, String status,
 			String appliedBy, OffsetDateTime appliedAt, String cancelReason, String remark, OffsetDateTime createdAt,
-			OffsetDateTime updatedAt, Long version,
+			OffsetDateTime updatedAt, Long version, ApprovalSummary approvalSummary,
 			BomState sourceBomBefore, BomState sourceBomAfter, BomState targetBomBefore, BomState targetBomAfter) {
 
 		EngineeringChangeRecord withStates(BomState sourceBefore, BomState sourceAfter, BomState targetBefore,
@@ -546,9 +561,13 @@ public class BomEngineeringChangeAdminService {
 					this.parentMaterialId, this.parentMaterialCode, this.parentMaterialName, this.effectiveFrom,
 					this.effectiveTo, this.changeReason, this.impactScope, this.changeSummary, this.status,
 					this.appliedBy, this.appliedAt, this.cancelReason, this.remark, this.createdAt, this.updatedAt,
-					this.version, sourceBefore, sourceAfter, targetBefore, targetAfter);
+					this.version, this.approvalSummary, sourceBefore, sourceAfter, targetBefore, targetAfter);
 		}
 
+	}
+
+	public record ApprovalSummary(Long id, String sceneCode, String status, OffsetDateTime submittedAt,
+			Long version) {
 	}
 
 	public record BomState(Long id, String bomCode, Long parentMaterialId, String versionCode, String status,

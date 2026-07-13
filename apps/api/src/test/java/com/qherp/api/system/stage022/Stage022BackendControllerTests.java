@@ -29,6 +29,7 @@ import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -120,20 +121,59 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 						"idempotencyKey", "contract-approval-" + contractId)));
 		assertThat(sameSubmit.get("id").longValue()).isEqualTo(approvalId);
 		assertError(post(admin, "/api/admin/approvals/sales-project-contract-activation/" + contractId + "/submit",
+				Map.of("version", contract.get("version").longValue(), "reason", "同键不同请求",
+						"idempotencyKey", "contract-approval-" + contractId)),
+				HttpStatus.CONFLICT, "APPROVAL_IDEMPOTENCY_CONFLICT");
+		assertError(post(admin, "/api/admin/approvals/sales-project-contract-activation/" + contractId + "/submit",
 				Map.of("version", contract.get("version").longValue(), "reason", "重复提交",
 						"idempotencyKey", "contract-approval-duplicate-" + contractId)),
 				HttpStatus.CONFLICT, "APPROVAL_DUPLICATE_ACTIVE");
 
-		JsonNode adminTask = firstTask(admin, "TODO");
-		assertError(post(admin, "/api/admin/approval-tasks/" + adminTask.get("id").longValue() + "/approve",
-				Map.of("version", adminTask.get("version").longValue(), "comment", "自批应拒绝")), HttpStatus.FORBIDDEN,
+		JsonNode adminTodo = data(get(admin, "/api/admin/approval-tasks?scope=TODO&page=1&pageSize=20"));
+		assertThat(adminTodo.get("total").longValue()).isZero();
+		assertThat(adminTodo.get("items")).isEmpty();
+		long pendingTaskId = pendingTaskId(approvalId);
+		long pendingTaskVersion = taskVersion(pendingTaskId);
+		assertError(post(admin, "/api/admin/approval-tasks/" + pendingTaskId + "/approve",
+				Map.of("version", pendingTaskVersion, "comment", "自批应拒绝")), HttpStatus.FORBIDDEN,
 				"APPROVAL_SELF_ACTION_FORBIDDEN");
+
+		JsonNode contractAfterSubmit = data(get(admin, "/api/admin/sales-project-contracts/" + contractId));
+		assertThat(contractAfterSubmit.get("approvalSummary").get("id").longValue()).isEqualTo(approvalId);
+		assertThat(contractAfterSubmit.get("approvalSummary").get("status").asText()).isEqualTo("SUBMITTED");
+		JsonNode submitterDetail = data(get(admin, "/api/admin/approvals/" + approvalId));
+		assertThat(submitterDetail.has("businessObjectNo")).isFalse();
+		assertThat(submitterDetail.get("objectType").asText()).isEqualTo("SALES_PROJECT_CONTRACT");
+		assertThat(submitterDetail.get("objectId").longValue()).isEqualTo(contractId);
+		assertThat(submitterDetail.get("objectNo").asText()).isNotBlank();
+		assertThat(submitterDetail.get("objectName").asText()).isEqualTo("022 合同生效审批");
+		assertThat(submitterDetail.get("applicantName").asText()).isEqualTo("admin");
+		assertThat(submitterDetail.get("steps")).isNotEmpty();
+		assertThat(submitterDetail.get("histories")).isNotEmpty();
+		assertThat(submitterDetail.get("attachmentSnapshots")).isNotNull();
+		assertThat(submitterDetail.get("availableActions").toString()).contains("WITHDRAW");
+
+		AuthenticatedSession candidateWithoutBusinessView = createUserAndLogin("stage022-contract-candidate-no-view",
+				"S22_APPROVER_NO_VIEW", List.of("platform:approval:view", "platform:todo:view",
+						"sales:contract:activate-approve"));
+		JsonNode hiddenTodo = data(get(candidateWithoutBusinessView,
+				"/api/admin/approval-tasks?scope=TODO&page=1&pageSize=20"));
+		assertThat(hiddenTodo.get("total").longValue()).isZero();
+		assertThat(hiddenTodo.get("items")).isEmpty();
+		assertError(get(candidateWithoutBusinessView, "/api/admin/approvals/" + approvalId), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
 
 		AuthenticatedSession approver = createUserAndLogin("stage022-contract-approver", "S22_APPROVER",
 				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
 						"sales:contract:view", "sales:project:view", "sales:contract:activate-approve"));
 		JsonNode approverTask = firstTask(approver, "TODO");
-		JsonNode approved = data(post(approver, "/api/admin/approval-tasks/" + approverTask.get("id").longValue()
+		assertThat(approverTask.get("id").longValue()).isEqualTo(approvalId);
+		assertThat(approverTask.get("taskId").longValue()).isEqualTo(pendingTaskId);
+		assertThat(approverTask.has("businessObjectNo")).isFalse();
+		assertThat(approverTask.get("objectType").asText()).isEqualTo("SALES_PROJECT_CONTRACT");
+		assertThat(approverTask.get("objectName").asText()).isEqualTo("022 合同生效审批");
+		assertThat(approverTask.get("availableActions").toString()).contains("APPROVE", "REJECT");
+		JsonNode approved = data(post(approver, "/api/admin/approval-tasks/" + taskActionId(approverTask)
 				+ "/approve", Map.of("version", approverTask.get("version").longValue(), "comment", "同意生效")));
 		assertThat(approved.get("status").asText()).isEqualTo("APPROVED");
 		assertThat(contractStatus(contractId)).isEqualTo("EFFECTIVE");
@@ -177,7 +217,7 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
 						"material:bom-eco:view", "material:bom-eco:apply-approve"));
 		JsonNode task = firstTask(approver, "TODO");
-		assertError(post(approver, "/api/admin/approval-tasks/" + task.get("id").longValue() + "/approve",
+		assertError(post(approver, "/api/admin/approval-tasks/" + taskActionId(task) + "/approve",
 				Map.of("version", task.get("version").longValue(), "comment", "业务对象已变化")),
 				HttpStatus.CONFLICT, "APPROVAL_BUSINESS_OBJECT_CHANGED");
 		assertThat(ecoStatus(ecoId)).isEqualTo("DRAFT");
@@ -203,11 +243,11 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 						"idempotencyKey", "reject-approval-" + rejectContractId)));
 		JsonNode rejectTask = firstTask(approver, "TODO");
 		JsonNode rejected = data(post(approver,
-				"/api/admin/approval-tasks/" + rejectTask.get("id").longValue() + "/reject",
+				"/api/admin/approval-tasks/" + taskActionId(rejectTask) + "/reject",
 				Map.of("version", rejectTask.get("version").longValue(), "comment", "资料不完整")));
 		assertThat(rejected.get("status").asText()).isEqualTo("REJECTED");
 		assertThat(contractStatus(rejectContractId)).isEqualTo("DRAFT");
-		assertThat(taskStatus(rejectTask.get("id").longValue())).isEqualTo("REJECTED");
+		assertThat(taskStatus(taskActionId(rejectTask))).isEqualTo("REJECTED");
 		assertAudit("APPROVAL_REJECT", "APPROVAL_INSTANCE", rejectApproval.get("id").longValue());
 		assertMessage(userId("admin"), "APPROVAL_DONE");
 
@@ -253,13 +293,32 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		JsonNode uploaded = data(uploadAttachment(admin, "SALES_PROJECT_CONTRACT", contractId, "合同附件.txt",
 				"text/plain", "合同附件正文".getBytes(), "contract-file-" + contractId));
 		long attachmentId = uploaded.get("id").longValue();
-		assertThat(uploaded.get("originalFilename").asText()).isEqualTo("合同附件.txt");
+		assertThat(uploaded.get("fileName").asText()).isEqualTo("合同附件.txt");
+		assertThat(uploaded.get("fileSize").longValue()).isEqualTo("合同附件正文".getBytes().length);
+		assertThat(uploaded.get("uploadedByName").asText()).isEqualTo("admin");
+		assertThat(uploaded.get("uploadedAt").asText()).isNotBlank();
 		assertThat(uploaded.has("objectKey")).isFalse();
 		assertThat(uploaded.get("sha256").asText()).hasSize(64);
+		String objectKey = this.jdbcTemplate.queryForObject("""
+				select f.object_key
+				from platform_business_attachment a
+				join platform_file_object f on f.id = a.file_id
+				where a.id = ?
+				""", String.class, attachmentId);
+		assertThat(objectKey).startsWith("attachments/");
+		assertThat(objectKey).doesNotContain("SALES_PROJECT_CONTRACT", "/" + contractId + "/", "合同附件");
 
 		JsonNode duplicate = data(uploadAttachment(admin, "SALES_PROJECT_CONTRACT", contractId, "合同附件.txt",
 				"text/plain", "合同附件正文".getBytes(), "contract-file-" + contractId + "-duplicate"));
 		assertThat(duplicate.get("id").longValue()).isEqualTo(attachmentId);
+		JsonNode attachmentPage = data(get(admin,
+				"/api/admin/attachments?objectType=SALES_PROJECT_CONTRACT&objectId=" + contractId));
+		assertThat(attachmentPage.get("total").longValue()).isOne();
+		assertThat(attachmentPage.get("items").get(0).get("fileName").asText()).isEqualTo("合同附件.txt");
+
+		assertError(uploadAttachment(admin, "SALES_PROJECT_CONTRACT", contractId, "伪装图片.png",
+				"image/png", "this is not a png".getBytes(), "spoof-png-" + contractId), HttpStatus.BAD_REQUEST,
+				"ATTACHMENT_FILE_TYPE_INVALID");
 
 		ResponseEntity<byte[]> downloaded = downloadBytes(admin, "/api/admin/attachments/" + attachmentId
 				+ "/download");
@@ -282,6 +341,43 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void approvalSubmissionSnapshotsAttachmentsAndLocksBusinessAttachmentChanges() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("S22_ATT_LOCK_CUS_" + SEQUENCE.incrementAndGet(), "二十二附件锁客户",
+				"ENABLED");
+		long ownerUserId = userId("admin");
+		long projectId = data(createProject(admin, projectPayload(customerId, ownerUserId))).get("id").longValue();
+		JsonNode contract = data(createContract(admin, projectId, contractPayload("附件快照合同")));
+		long contractId = contract.get("id").longValue();
+		JsonNode uploaded = data(uploadAttachment(admin, "SALES_PROJECT_CONTRACT", contractId, "审批前附件.txt",
+				"text/plain", "审批前正文".getBytes(), "snapshot-file-" + contractId));
+
+		JsonNode approval = data(post(admin,
+				"/api/admin/approvals/sales-project-contract-activation/" + contractId + "/submit",
+				Map.of("version", contract.get("version").longValue(), "reason", "锁定附件",
+						"idempotencyKey", "attachment-lock-approval-" + contractId)));
+		JsonNode detail = data(get(admin, "/api/admin/approvals/" + approval.get("id").longValue()));
+		assertThat(detail.get("attachmentSnapshots").size()).isEqualTo(1);
+		assertThat(detail.get("attachmentSnapshots").get(0).get("fileName").asText()).isEqualTo("审批前附件.txt");
+		assertThat(detail.get("attachmentSnapshots").get(0).get("sha256").asText()).hasSize(64);
+
+		assertError(uploadAttachment(admin, "SALES_PROJECT_CONTRACT", contractId, "审批中新增.txt",
+				"text/plain", "审批中禁止新增".getBytes(), "snapshot-file-add-" + contractId), HttpStatus.FORBIDDEN,
+				"ATTACHMENT_ACCESS_FORBIDDEN");
+		assertError(put(admin, "/api/admin/attachments/" + uploaded.get("id").longValue() + "/delete",
+				Map.of("version", uploaded.get("version").longValue(), "reason", "审批中禁止删除")), HttpStatus.FORBIDDEN,
+				"ATTACHMENT_ACCESS_FORBIDDEN");
+
+		JsonNode withdrawn = data(post(admin,
+				"/api/admin/approvals/" + approval.get("id").longValue() + "/withdraw",
+				Map.of("version", approval.get("version").longValue(), "comment", "撤回后修改附件")));
+		assertThat(withdrawn.get("status").asText()).isEqualTo("WITHDRAWN");
+		JsonNode deleted = data(put(admin, "/api/admin/attachments/" + uploaded.get("id").longValue() + "/delete",
+				Map.of("version", uploaded.get("version").longValue(), "reason", "撤回后删除")));
+		assertThat(deleted.get("status").asText()).isEqualTo("DELETED");
+	}
+
+	@Test
 	void materialExportTaskQueuesThenWorkerCreatesResultRequiresAuthorizationAndCannotCancelSucceededTask()
 			throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -295,6 +391,7 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		assertThat(task.get("taskType").asText()).isEqualTo("MATERIAL_EXPORT");
 		assertThat(task.get("status").asText()).isEqualTo("QUEUED");
 		assertThat(task.get("resultFileId").isNull()).isTrue();
+		assertThat(task.get("availableActions").toString()).contains("CANCEL");
 
 		JsonNode listed = data(get(admin, "/api/admin/document-tasks?page=1&pageSize=20"));
 		assertThat(containsId(listed.get("items"), taskId)).isTrue();
@@ -306,6 +403,7 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		JsonNode succeeded = data(get(admin, "/api/admin/document-tasks/" + taskId));
 		assertThat(succeeded.get("status").asText()).as(succeeded.toString()).isEqualTo("SUCCEEDED");
 		assertThat(succeeded.get("resultFileId").isNumber()).isTrue();
+		assertThat(succeeded.get("availableActions").toString()).contains("DOWNLOAD");
 
 		ResponseEntity<byte[]> downloaded = downloadBytes(admin, "/api/admin/document-tasks/" + taskId
 				+ "/download");
@@ -325,6 +423,47 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		assertError(getString(admin, "/api/admin/document-tasks/" + taskId + "/download"), HttpStatus.GONE,
 				"DOCUMENT_RESULT_EXPIRED");
 		assertThat(data(get(admin, "/api/admin/document-tasks/" + taskId)).get("status").asText()).isEqualTo("EXPIRED");
+	}
+
+	@Test
+	void documentTasksRecheckTaskTypePermissionAndMaterialExportConsumesFlatFilters() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long unitId = createUnit(admin, "S22_FLAT_EXP_UNIT_" + SEQUENCE.incrementAndGet(), "二十二扁平导出单位");
+		long categoryId = createCategory(admin, "S22_FLAT_EXP_CAT_" + SEQUENCE.incrementAndGet(), "二十二扁平导出分类");
+		long otherCategoryId = createCategory(admin, "S22_FLAT_EXP_OTHER_CAT_" + SEQUENCE.incrementAndGet(),
+				"二十二扁平导出其他分类");
+		String includedCode = "S22_FLAT_EXP_INCLUDED_" + SEQUENCE.incrementAndGet();
+		String excludedByTypeCode = "S22_FLAT_EXP_TYPE_EXCLUDED_" + SEQUENCE.incrementAndGet();
+		String excludedByCategoryCode = "S22_FLAT_EXP_CATEGORY_EXCLUDED_" + SEQUENCE.incrementAndGet();
+		createMaterial(admin, includedCode, "扁平筛选命中物料", categoryId, unitId, "RAW_MATERIAL", "PURCHASED");
+		createMaterial(admin, excludedByTypeCode, "扁平筛选类型排除", categoryId, unitId, "FINISHED_GOOD",
+				"SELF_MADE");
+		createMaterial(admin, excludedByCategoryCode, "扁平筛选分类排除", otherCategoryId, unitId, "RAW_MATERIAL",
+				"PURCHASED");
+
+		JsonNode task = data(postWithIdempotency(admin, "/api/admin/exports/materials",
+				Map.of("status", "ENABLED", "categoryId", categoryId, "materialType", "RAW_MATERIAL",
+						"sourceType", "PURCHASED"),
+				"material-export-flat-" + SEQUENCE.incrementAndGet()));
+		long taskId = task.get("id").longValue();
+		JsonNode succeeded = processTaskUntilStatus(admin, taskId, "SUCCEEDED", 8);
+		assertThat(succeeded.get("status").asText()).as(succeeded.toString()).isEqualTo("SUCCEEDED");
+		ResponseEntity<byte[]> downloaded = downloadBytes(admin, "/api/admin/document-tasks/" + taskId + "/download");
+		String exportedText = workbookText(downloaded.getBody());
+		assertThat(exportedText).contains(includedCode);
+		assertThat(exportedText).doesNotContain(excludedByTypeCode, excludedByCategoryCode);
+
+		AuthenticatedSession viewAllWithoutMaterialExport = createUserAndLogin("stage022-task-view-all-no-material",
+				"S22_TASK_VIEW_ALL_NO_MAT", List.of("platform:document-task:view",
+						"platform:document-task:view-all", "platform:document-task:download",
+						"platform:document-task:cancel"));
+		JsonNode hiddenPage = data(get(viewAllWithoutMaterialExport, "/api/admin/document-tasks?page=1&pageSize=20"));
+		assertThat(hiddenPage.get("total").longValue()).isZero();
+		assertThat(hiddenPage.get("items")).isEmpty();
+		assertError(get(viewAllWithoutMaterialExport, "/api/admin/document-tasks/" + taskId), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
+		assertError(getString(viewAllWithoutMaterialExport, "/api/admin/document-tasks/" + taskId + "/download"),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 	}
 
 	@Test
@@ -385,16 +524,22 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				messages.get("items").get(0).get("version").longValue())));
 		assertThat(readMessage.get("status").asText()).isEqualTo("READ");
 
-		JsonNode templates = data(get(admin, "/api/admin/print-templates?objectType=APPROVAL_INSTANCE"));
-		assertThat(templates).isNotEmpty();
+		JsonNode templates = data(get(admin,
+				"/api/admin/print-templates?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION"));
+		assertThat(templates.size()).isEqualTo(1);
+		assertThat(templates.get(0).get("sceneCode").asText()).isEqualTo("SALES_PROJECT_CONTRACT_ACTIVATION");
+		assertThat(templates.get(0).get("templateCode").asText()).isEqualTo("CONTRACT_ACTIVATION_APPROVAL_V1");
 		JsonNode preview = data(get(admin, "/api/admin/print-previews/" + approvalId));
 		assertThat(preview.get("templateCode").asText()).isEqualTo("CONTRACT_ACTIVATION_APPROVAL_V1");
+		assertThat(preview.get("sceneCode").asText()).isEqualTo("SALES_PROJECT_CONTRACT_ACTIVATION");
+		assertThat(preview.get("sections")).isNotEmpty();
 
 		JsonNode task = data(postWithIdempotency(admin, "/api/admin/print-tasks",
 				Map.of("approvalInstanceId", approvalId, "templateCode", "CONTRACT_ACTIVATION_APPROVAL_V1"),
 				"print-task-" + approvalId));
 		assertThat(task.get("taskType").asText()).isEqualTo("APPROVAL_PRINT");
 		assertThat(task.get("status").asText()).isEqualTo("QUEUED");
+		assertThat(task.get("availableActions").toString()).contains("CANCEL");
 
 		JsonNode succeeded = processTaskUntilStatus(admin, task.get("id").longValue(), "SUCCEEDED", 8);
 		assertThat(succeeded.get("status").asText()).as(succeeded.toString()).isEqualTo("SUCCEEDED");
@@ -551,7 +696,7 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		long deniedAuditBefore = permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath);
 
 		assertError(get(denied,
-				printTemplatesPath + "?objectType=APPROVAL_INSTANCE&token=secret-file.xlsx&credential=hidden"),
+				printTemplatesPath + "?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION&token=secret-file.xlsx&credential=hidden"),
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 		assertThat(permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath))
 			.isEqualTo(deniedAuditBefore + 1);
@@ -564,14 +709,14 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		assertThat((String) firstAudit.get("target_summary")).doesNotContain("APPROVAL_INSTANCE", "secret",
 				"credential", "xlsx");
 
-		assertError(get(denied, printTemplatesPath + "?objectType=APPROVAL_INSTANCE"), HttpStatus.FORBIDDEN,
+		assertError(get(denied, printTemplatesPath + "?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION"), HttpStatus.FORBIDDEN,
 				"AUTH_FORBIDDEN");
 		assertThat(permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath))
 			.isEqualTo(deniedAuditBefore + 2);
 
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long adminDeniedAuditBefore = permissionDeniedAuditCount("admin", "GET", printTemplatesPath);
-		assertThat(data(get(admin, printTemplatesPath + "?objectType=APPROVAL_INSTANCE"))).isNotEmpty();
+		assertThat(data(get(admin, printTemplatesPath + "?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION"))).isNotEmpty();
 		assertThat(permissionDeniedAuditCount("admin", "GET", printTemplatesPath)).isEqualTo(adminDeniedAuditBefore);
 	}
 
@@ -595,6 +740,14 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 
 		JsonNode ready = processTaskUntilStatus(admin, task.get("id").longValue(), "READY_TO_COMMIT", 8);
 		assertThat(ready.get("status").asText()).as(ready.toString()).isEqualTo("READY_TO_COMMIT");
+		assertThat(ready.get("availableActions").toString()).contains("CONFIRM", "CANCEL");
+		AuthenticatedSession confirmWithoutMaterialImport = createUserAndLogin("stage022-confirm-no-material",
+				"S22_CONFIRM_NO_MAT", List.of("platform:document-task:view",
+						"platform:document-task:view-all"));
+		assertError(postWithIdempotency(confirmWithoutMaterialImport,
+				"/api/admin/imports/" + task.get("id").longValue() + "/confirm",
+				Map.of("version", ready.get("version").longValue()), "material-import-forbidden-" + materialCode),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 		JsonNode commitQueued = data(postWithIdempotency(admin,
 				"/api/admin/imports/" + task.get("id").longValue() + "/confirm",
 				Map.of("version", ready.get("version").longValue()), "material-import-confirm-" + materialCode));
@@ -649,12 +802,32 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
 
 		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(failed.get("availableActions").toString()).contains("ERRORS");
 		assertThat(failed.get("errorCount").intValue()).isPositive();
 		assertThat(countMaterial(validMaterialCode)).isZero();
 		assertError(uploadImport(admin, "/api/admin/imports/materials", "atomic-materials-different.xlsx",
 				materialImportWorkbookRows(List.<String[]>of(new String[] { "S22_ATOMIC_OTHER_" + SEQUENCE.incrementAndGet(),
 						"原子导入另一文件", categoryCode, unitCode })), idempotencyKey), HttpStatus.CONFLICT,
 				"DOCUMENT_TASK_IDEMPOTENCY_CONFLICT");
+	}
+
+	@Test
+	void importsRejectUnsafeXlsxStructuresBeforeBusinessCommit() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long unitId = createUnit(admin, "S22_XLSX_SAFE_UNIT_" + SEQUENCE.incrementAndGet(), "二十二安全导入单位");
+		long categoryId = createCategory(admin, "S22_XLSX_SAFE_CAT_" + SEQUENCE.incrementAndGet(), "二十二安全导入分类");
+		byte[] formulaWorkbook = materialImportWorkbookWithFormula("S22_XLSX_FORMULA_" + SEQUENCE.incrementAndGet());
+
+		JsonNode task = data(uploadImport(admin, "/api/admin/imports/materials", "formula-materials.xlsx",
+				formulaWorkbook, "unsafe-xlsx-formula-" + SEQUENCE.incrementAndGet()));
+		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(failed.get("errorCount").intValue()).isPositive();
+		JsonNode errors = data(get(admin, "/api/admin/document-tasks/" + task.get("id").longValue()
+				+ "/errors?page=1&pageSize=20"));
+		assertThat(errors.get("items").toString()).contains("IMPORT_FILE_INVALID");
+		assertThat(unitId).isPositive();
+		assertThat(categoryId).isPositive();
 	}
 
 	@Test
@@ -667,6 +840,10 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		createMaterial(admin, parentCode, "BOM 父项", categoryId, unitId, "FINISHED_GOOD", "SELF_MADE");
 		createMaterial(admin, childCode, "BOM 子项", categoryId, unitId);
 		String bomCode = "S22_BOM_IMP_" + SEQUENCE.incrementAndGet();
+
+		ResponseEntity<byte[]> template = downloadBytes(admin, "/api/admin/import-templates/bom-drafts");
+		String templateText = workbookText(template.getBody());
+		assertThat(templateText).contains("businessUnit", "businessQuantity", "warehouse");
 
 		JsonNode importTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-draft.xlsx",
 				bomDraftImportWorkbook("CREATE", null, null, bomCode, parentCode, "V1", childCode),
@@ -687,8 +864,9 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		assertThat(exportTask.get("status").asText()).isEqualTo("QUEUED");
 		JsonNode succeeded = processTaskUntilStatus(admin, exportTask.get("id").longValue(), "SUCCEEDED", 8);
 		assertThat(succeeded.get("status").asText()).as(succeeded.toString()).isEqualTo("SUCCEEDED");
-		assertThat(downloadBytes(admin,
-				"/api/admin/document-tasks/" + exportTask.get("id").longValue() + "/download").getBody()).isNotEmpty();
+		String exportText = workbookText(downloadBytes(admin,
+				"/api/admin/document-tasks/" + exportTask.get("id").longValue() + "/download").getBody());
+		assertThat(exportText).contains("businessUnit", "businessQuantity", "warehouse");
 	}
 
 	private ResponseEntity<String> uploadAttachment(AuthenticatedSession session, String objectType, long objectId,
@@ -715,6 +893,26 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		JsonNode page = data(get(session, "/api/admin/approval-tasks?scope=" + scope + "&page=1&pageSize=20"));
 		assertThat(page.get("items")).isNotEmpty();
 		return page.get("items").get(0);
+	}
+
+	private long taskActionId(JsonNode task) {
+		return task.has("taskId") ? task.get("taskId").longValue() : task.get("id").longValue();
+	}
+
+	private long pendingTaskId(long approvalId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from platform_approval_task
+				where instance_id = ?
+				and status = 'PENDING'
+				order by id
+				limit 1
+				""", Long.class, approvalId);
+	}
+
+	private long taskVersion(long taskId) {
+		return this.jdbcTemplate.queryForObject("select version from platform_approval_task where id = ?", Long.class,
+				taskId);
 	}
 
 	private JsonNode processTaskUntilStatus(AuthenticatedSession session, long taskId, String status, int maxAttempts)
@@ -981,6 +1179,35 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		}
 	}
 
+	private byte[] materialImportWorkbookWithFormula(String code) throws Exception {
+		String categoryCode = this.jdbcTemplate.queryForObject(
+				"select code from mst_material_category where code like ? order by id desc limit 1", String.class,
+				"S22_XLSX_SAFE_CAT_%");
+		String unitCode = this.jdbcTemplate.queryForObject(
+				"select code from mst_unit where code like ? order by id desc limit 1", String.class,
+				"S22_XLSX_SAFE_UNIT_%");
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet("materials");
+			Row header = sheet.createRow(0);
+			String[] headers = { "code", "name", "specification", "materialType", "sourceType", "trackingMethod",
+					"categoryCode", "unitCode", "status", "costCategory", "inventoryValuationCategory",
+					"inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark" };
+			for (int i = 0; i < headers.length; i++) {
+				header.createCell(i).setCellValue(headers[i]);
+			}
+			Row row = sheet.createRow(1);
+			String[] values = { code, "公式导入物料", "S", "RAW_MATERIAL", "PURCHASED", "NONE",
+					categoryCode, unitCode, "ENABLED", "DIRECT_MATERIAL",
+					"VALUATED_MATERIAL", "true", "true", "导入成本", "导入备注" };
+			for (int i = 0; i < values.length; i++) {
+				row.createCell(i).setCellValue(values[i]);
+			}
+			row.getCell(1).setCellFormula("\"公式名称\"");
+			workbook.write(output);
+			return output.toByteArray();
+		}
+	}
+
 	private byte[] materialImportWorkbookRows(List<String[]> rows) throws Exception {
 		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
 			Sheet sheet = workbook.createSheet("materials");
@@ -1008,11 +1235,23 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 
 	private byte[] bomDraftImportWorkbook(String mode, Long bomId, Long bomVersion, String bomCode,
 			String parentMaterialCode, String versionCode, String childMaterialCode) throws Exception {
+		String parentUnitCode = this.jdbcTemplate.queryForObject("""
+				select u.code
+				from mst_material m
+				join mst_unit u on u.id = m.unit_id
+				where m.code = ?
+				""", String.class, parentMaterialCode);
+		String childUnitCode = this.jdbcTemplate.queryForObject("""
+				select u.code
+				from mst_material m
+				join mst_unit u on u.id = m.unit_id
+				where m.code = ?
+				""", String.class, childMaterialCode);
 		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
 			Sheet headerSheet = workbook.createSheet("bom");
 			Row header = headerSheet.createRow(0);
 			String[] headerNames = { "mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode",
-					"name", "baseQuantity", "effectiveFrom", "effectiveTo", "remark" };
+					"name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark" };
 			for (int i = 0; i < headerNames.length; i++) {
 				header.createCell(i).setCellValue(headerNames[i]);
 			}
@@ -1029,22 +1268,26 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 			row.createCell(5).setCellValue(versionCode);
 			row.createCell(6).setCellValue("导入 BOM");
 			row.createCell(7).setCellValue("1");
-			row.createCell(8).setCellValue(LocalDate.now().toString());
-			row.createCell(9).setCellValue(LocalDate.now().plusDays(30).toString());
-			row.createCell(10).setCellValue("BOM 导入");
+			row.createCell(8).setCellValue(parentUnitCode);
+			row.createCell(9).setCellValue(LocalDate.now().toString());
+			row.createCell(10).setCellValue(LocalDate.now().plusDays(30).toString());
+			row.createCell(11).setCellValue("BOM 导入");
 
 			Sheet itemsSheet = workbook.createSheet("items");
 			Row itemHeader = itemsSheet.createRow(0);
-			String[] itemHeaders = { "lineNo", "childMaterialCode", "quantity", "lossRate", "remark" };
+			String[] itemHeaders = { "lineNo", "childMaterialCode", "businessUnit", "businessQuantity", "lossRate",
+					"warehouse", "remark" };
 			for (int i = 0; i < itemHeaders.length; i++) {
 				itemHeader.createCell(i).setCellValue(itemHeaders[i]);
 			}
 			Row item = itemsSheet.createRow(1);
 			item.createCell(0).setCellValue("10");
 			item.createCell(1).setCellValue(childMaterialCode);
-			item.createCell(2).setCellValue(BigDecimal.ONE.toPlainString());
-			item.createCell(3).setCellValue("0");
-			item.createCell(4).setCellValue("导入明细");
+			item.createCell(2).setCellValue(childUnitCode);
+			item.createCell(3).setCellValue(BigDecimal.ONE.toPlainString());
+			item.createCell(4).setCellValue("0");
+			item.createCell(5).setCellValue("");
+			item.createCell(6).setCellValue("导入明细");
 			workbook.write(output);
 			return output.toByteArray();
 		}
@@ -1060,6 +1303,19 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				returning id
 				""", Long.class, "S22FAIL" + SEQUENCE.incrementAndGet(), "{}",
 				"failing-export-" + SEQUENCE.incrementAndGet(), userId);
+	}
+
+	private String workbookText(byte[] content) throws Exception {
+		StringBuilder text = new StringBuilder();
+		try (Workbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+			for (Sheet sheet : workbook) {
+				text.append(sheet.getSheetName()).append('\n');
+				for (Row row : sheet) {
+					row.forEach((cell) -> text.append(cell.toString()).append('\n'));
+				}
+			}
+		}
+		return text.toString();
 	}
 
 	private long insertDocumentTask(long userId, String taskType) {

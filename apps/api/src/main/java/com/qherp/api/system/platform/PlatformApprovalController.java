@@ -41,8 +41,9 @@ public class PlatformApprovalController {
 	}
 
 	@GetMapping("/approvals/{id}")
-	public ApiResponse<PlatformApprovalService.ApprovalInstanceRecord> get(@PathVariable Long id) {
-		return ApiResponse.ok(this.approvalService.get(id));
+	public ApiResponse<PlatformApprovalService.ApprovalInstanceRecord> get(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.approvalService.get(id, currentUser));
 	}
 
 	@GetMapping("/approval-tasks")
