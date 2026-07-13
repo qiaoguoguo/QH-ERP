@@ -21,6 +21,7 @@ const actionLoading = ref(false)
 const error = ref('')
 const latestTaskNo = ref('')
 const preview = ref<PrintPreviewRecord | null>(null)
+const previewTemplate = ref<PrintTemplateRecord | null>(null)
 const previewVisible = ref(false)
 const previewedTemplateCode = ref('')
 
@@ -28,6 +29,7 @@ async function loadTemplates() {
   loading.value = true
   error.value = ''
   preview.value = null
+  previewTemplate.value = null
   previewedTemplateCode.value = ''
   try {
     templates.value = await documentPlatformApi.printTemplates.list({ sceneCode: props.sceneCode })
@@ -47,6 +49,7 @@ async function previewPrint(template: PrintTemplateRecord) {
   error.value = ''
   try {
     preview.value = await documentPlatformApi.printPreviews.get(props.approvalInstanceId)
+    previewTemplate.value = template
     previewedTemplateCode.value = template.templateCode
     previewVisible.value = true
   } catch (caught) {
@@ -118,6 +121,16 @@ onMounted(() => {
     </div>
     <el-drawer v-model="previewVisible" title="审批单预览" size="min(640px, 92vw)" :teleported="false">
       <template v-if="preview">
+        <section class="print-preview-section">
+          <dl class="platform-panel-list">
+            <dt>模板：</dt>
+            <dd>{{ previewTemplate?.name || '-' }}</dd>
+            <dt>模板代码：</dt>
+            <dd>{{ previewTemplate?.sceneCode || sceneCode }}</dd>
+            <dt>模板版本：</dt>
+            <dd>V{{ previewTemplate?.templateVersion ?? preview.templateVersion }}</dd>
+          </dl>
+        </section>
         <section v-for="section in preview.sections" :key="section.title" class="print-preview-section">
           <h4>{{ section.title }}</h4>
           <dl class="platform-panel-list">

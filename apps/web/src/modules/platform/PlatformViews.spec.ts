@@ -626,6 +626,9 @@ describe('022 平台页面', () => {
 
     await clickButtonByTest(wrapper, 'preview-print')
     expect(documentPlatformApiMock.printPreviews.get).toHaveBeenCalledWith(3)
+    expect(wrapper.text()).toContain('模板：合同生效审批单')
+    expect(wrapper.text()).toContain('模板代码：SALES_PROJECT_CONTRACT_ACTIVATION')
+    expect(wrapper.text()).toContain('模板版本：V1')
     expect(wrapper.text()).toContain('合同编号')
     expect(wrapper.text()).toContain('SC-001')
 
