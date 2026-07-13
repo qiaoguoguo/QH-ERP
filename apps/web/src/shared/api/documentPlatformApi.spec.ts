@@ -65,18 +65,18 @@ describe('022 文档平台 API', () => {
     const api = createDocumentPlatformApi({ fetcher })
 
     await api.approvals.submitSalesProjectContractActivation(55, {
-      objectVersion: 3,
+      version: 3,
       reason: '合同草稿确认无误',
       idempotencyKey: 'contract-key',
     })
     await api.approvals.submitBomEcoApplication(100, {
-      objectVersion: 2,
+      version: 2,
       reason: '材料替代方案已确认',
       idempotencyKey: 'eco-key',
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/approvals/sales-project-contract-activation/55/submit', {
-      body: JSON.stringify({ objectVersion: 3, reason: '合同草稿确认无误', idempotencyKey: 'contract-key' }),
+      body: JSON.stringify({ version: 3, reason: '合同草稿确认无误', idempotencyKey: 'contract-key' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
@@ -86,7 +86,7 @@ describe('022 文档平台 API', () => {
       method: 'POST',
     })
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/approvals/bom-eco-application/100/submit', {
-      body: JSON.stringify({ objectVersion: 2, reason: '材料替代方案已确认', idempotencyKey: 'eco-key' }),
+      body: JSON.stringify({ version: 2, reason: '材料替代方案已确认', idempotencyKey: 'eco-key' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',

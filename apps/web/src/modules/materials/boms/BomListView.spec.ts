@@ -891,7 +891,7 @@ describe('BOM 管理页', () => {
     await flushPromises()
 
     expect(documentPlatformApiMock.approvals.submitBomEcoApplication).toHaveBeenCalledWith(100, {
-      objectVersion: 2,
+      version: 2,
       reason: '材料替代方案已确认',
       idempotencyKey: expect.any(String),
     })

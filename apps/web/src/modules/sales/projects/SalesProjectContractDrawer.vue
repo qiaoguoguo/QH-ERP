@@ -334,7 +334,7 @@ async function confirmContractAction() {
     }
     if (actionDialog.action === 'activate') {
       await documentPlatformApi.approvals.submitSalesProjectContractActivation(detail.value.id, {
-        objectVersion: detail.value.version,
+        version: detail.value.version,
         reason: actionDialog.reason.trim(),
         idempotencyKey: createIdempotencyKey('contract-approval'),
       })

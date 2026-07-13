@@ -988,7 +988,7 @@ async function submitEcoApproval() {
   ecoApprovalError.value = ''
   try {
     await documentPlatformApi.approvals.submitBomEcoApplication(ecoApprovalTarget.value.id, {
-      objectVersion: ecoApprovalTarget.value.version,
+      version: ecoApprovalTarget.value.version,
       reason: ecoApprovalReason.value.trim(),
       idempotencyKey: createIdempotencyKey('bom-eco-approval'),
     })

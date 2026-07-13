@@ -375,7 +375,7 @@ describe('销售项目合同抽屉', () => {
     await flushPromises()
 
     expect(documentPlatformApiMock.approvals.submitSalesProjectContractActivation).toHaveBeenCalledWith(55, {
-      objectVersion: 2,
+      version: 2,
       reason: '合同草稿确认无误',
       idempotencyKey: expect.any(String),
     })

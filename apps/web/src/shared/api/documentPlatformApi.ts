@@ -36,7 +36,7 @@ export type DocumentTaskAction =
 export type BomDraftImportMode = 'CREATE' | 'UPDATE_DRAFT'
 
 export interface SubmitApprovalPayload {
-  objectVersion: number
+  version: number
   reason?: string
   idempotencyKey: string
 }
