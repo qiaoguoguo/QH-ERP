@@ -5,6 +5,7 @@ import com.qherp.api.security.CurrentUser;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
@@ -34,6 +35,21 @@ public class AuditService {
 				""", operator.id(), operator.username(), action, targetType, targetId == null ? null : targetId.toString(),
 				targetSummary, request == null ? null : request.getMethod(), request == null ? null : request.getRequestURI(),
 				clientIp(request), "SUCCESS", null, OffsetDateTime.now());
+	}
+
+	@Transactional(propagation = Propagation.REQUIRES_NEW)
+	public void recordFailure(CurrentUser operator, String action, String targetType, Long targetId,
+			String targetSummary, String errorCode, HttpServletRequest request) {
+		this.jdbcTemplate.update("""
+				insert into sys_audit_log (
+					operator_user_id, operator_username, action, target_type, target_id, target_summary,
+					request_method, request_path, ip_address, result, error_code, created_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				""", operator.id(), operator.username(), action, targetType,
+				targetId == null ? null : targetId.toString(), targetSummary,
+				request == null ? null : request.getMethod(), requestPath(request), clientIp(request), "FAILURE",
+				errorCode, OffsetDateTime.now());
 	}
 
 	@Transactional(readOnly = true)
@@ -102,6 +118,18 @@ public class AuditService {
 			return forwardedFor.split(",", 2)[0].trim();
 		}
 		return request.getRemoteAddr();
+	}
+
+	private String requestPath(HttpServletRequest request) {
+		if (request == null) {
+			return null;
+		}
+		String uri = request.getRequestURI();
+		String contextPath = request.getContextPath();
+		if (hasText(contextPath) && uri.startsWith(contextPath)) {
+			return uri.substring(contextPath.length());
+		}
+		return uri;
 	}
 
 	private static int limit(int pageSize) {

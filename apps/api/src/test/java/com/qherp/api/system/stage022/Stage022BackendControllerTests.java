@@ -466,6 +466,39 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void permissionDeniedRequestsCreateSafeAuditRecords() throws Exception {
+		AuthenticatedSession denied = createUserAndLogin("stage022-denied-audit", "S22_DENIED_AUDIT",
+				List.of("platform:message:view"));
+		String deniedUsername = "stage022-denied-audit" + SEQUENCE.get();
+		String printTemplatesPath = "/api/admin/print-templates";
+		long deniedAuditBefore = permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath);
+
+		assertError(get(denied,
+				printTemplatesPath + "?objectType=APPROVAL_INSTANCE&token=secret-file.xlsx&credential=hidden"),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertThat(permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath))
+			.isEqualTo(deniedAuditBefore + 1);
+		Map<String, Object> firstAudit = latestPermissionDeniedAudit(deniedUsername, "GET", printTemplatesPath);
+		assertThat(firstAudit.get("action")).isEqualTo("PERMISSION_DENIED");
+		assertThat(firstAudit.get("target_type")).isEqualTo("API_PERMISSION");
+		assertThat(firstAudit.get("target_summary")).isEqualTo("GET /api/admin/print-templates");
+		assertThat(firstAudit.get("result")).isEqualTo("FAILURE");
+		assertThat(firstAudit.get("error_code")).isEqualTo("AUTH_FORBIDDEN");
+		assertThat((String) firstAudit.get("target_summary")).doesNotContain("APPROVAL_INSTANCE", "secret",
+				"credential", "xlsx");
+
+		assertError(get(denied, printTemplatesPath + "?objectType=APPROVAL_INSTANCE"), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
+		assertThat(permissionDeniedAuditCount(deniedUsername, "GET", printTemplatesPath))
+			.isEqualTo(deniedAuditBefore + 2);
+
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long adminDeniedAuditBefore = permissionDeniedAuditCount("admin", "GET", printTemplatesPath);
+		assertThat(data(get(admin, printTemplatesPath + "?objectType=APPROVAL_INSTANCE"))).isNotEmpty();
+		assertThat(permissionDeniedAuditCount("admin", "GET", printTemplatesPath)).isEqualTo(adminDeniedAuditBefore);
+	}
+
+	@Test
 	void materialImportConfirmUsesQueuedWorkerAndIdempotencyWithoutDuplicateCreate() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long unitId = createUnit(admin, "S22_IMP_UNIT_" + SEQUENCE.incrementAndGet(), "二十二导入单位");
@@ -954,6 +987,34 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				and target_type = ?
 				and target_id = ?
 				""", Long.class, action, targetType, Long.toString(targetId))).as(action).isOne();
+	}
+
+	private long permissionDeniedAuditCount(String username, String method, String path) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sys_audit_log
+				where operator_username = ?
+				and action = 'PERMISSION_DENIED'
+				and request_method = ?
+				and request_path = ?
+				and result = 'FAILURE'
+				and error_code = 'AUTH_FORBIDDEN'
+				""", Long.class, username, method, path);
+	}
+
+	private Map<String, Object> latestPermissionDeniedAudit(String username, String method, String path) {
+		return this.jdbcTemplate.queryForMap("""
+				select action, target_type, target_summary, request_method, request_path, result, error_code
+				from sys_audit_log
+				where operator_username = ?
+				and action = 'PERMISSION_DENIED'
+				and request_method = ?
+				and request_path = ?
+				and result = 'FAILURE'
+				and error_code = 'AUTH_FORBIDDEN'
+				order by id desc
+				limit 1
+				""", username, method, path);
 	}
 
 	private void assertMessage(long recipientUserId, String messageType) {

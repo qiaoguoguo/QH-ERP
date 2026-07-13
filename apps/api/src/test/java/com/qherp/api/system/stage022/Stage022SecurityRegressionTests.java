@@ -59,6 +59,17 @@ class Stage022SecurityRegressionTests extends PostgresIntegrationTest {
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 	}
 
+	@Test
+	void permissionDeniedRequestsAreAudited() throws Exception {
+		TestUser user = createUserAndLogin("stage022-denied-audit", "S22_DENIED_AUDIT",
+				List.of("platform:message:view"));
+
+		ResponseEntity<String> response = get(user.session(), "/api/admin/print-templates?objectType=APPROVAL_INSTANCE");
+
+		assertError(response, HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertThat(deniedAuditCount(user.username(), "GET", "/api/admin/print-templates", "AUTH_FORBIDDEN")).isOne();
+	}
+
 	private long insertContractMessage(long recipientUserId, String title, String content) {
 		return this.jdbcTemplate.queryForObject("""
 				insert into platform_message (
@@ -96,7 +107,19 @@ class Stage022SecurityRegressionTests extends PostgresIntegrationTest {
 					where code = ?
 					""", roleId, permissionCode);
 		}
-		return new TestUser(userId, login(username, ADMIN_PASSWORD));
+		return new TestUser(userId, username, login(username, ADMIN_PASSWORD));
+	}
+
+	private long deniedAuditCount(String username, String method, String path, String errorCode) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sys_audit_log
+				where operator_username = ?
+				and request_method = ?
+				and request_path = ?
+				and result = 'FAILURE'
+				and error_code = ?
+				""", Long.class, username, method, path, errorCode);
 	}
 
 	private AuthenticatedSession login(String username, String password) {
@@ -164,7 +187,7 @@ class Stage022SecurityRegressionTests extends PostgresIntegrationTest {
 			.orElseThrow();
 	}
 
-	private record TestUser(long userId, AuthenticatedSession session) {
+	private record TestUser(long userId, String username, AuthenticatedSession session) {
 	}
 
 	private record CsrfSession(String sessionCookie, String token, String headerName) {
