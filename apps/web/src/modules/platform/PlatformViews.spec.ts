@@ -285,6 +285,60 @@ describe('022 平台页面', () => {
     })
   })
 
+  it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {
+    const zeroVersionDetail = {
+      id: 3,
+      taskId: 701,
+      taskVersion: 0,
+      sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
+      objectType: 'SALES_PROJECT_CONTRACT',
+      objectId: 55,
+      objectNo: 'SC-001',
+      objectName: '主合同',
+      status: 'SUBMITTED',
+      applicantName: '销售',
+      submittedAt: '2026-07-13T10:00:00+08:00',
+      version: 6,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ taskId: 701, stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve', version: 0 }],
+      histories: [],
+      attachmentSnapshots: [],
+    }
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce(zeroVersionDetail).mockResolvedValueOnce(zeroVersionDetail)
+
+    const approveWrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    await approveWrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(approveWrapper.find('[data-test="approve-task"]').exists()).toBe(true)
+    expect(approveWrapper.find('[data-test="reject-task"]').exists()).toBe(true)
+    await approveWrapper.find('[data-test="approval-comment"]').setValue('同意生效')
+    await approveWrapper.find('[data-test="approve-task"]').trigger('click')
+    await flushPromises()
+    expect(documentPlatformApiMock.approvalTasks.approve).toHaveBeenCalledWith(701, {
+      version: 0,
+      comment: '同意生效',
+      idempotencyKey: expect.any(String),
+    })
+
+    const rejectWrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    await rejectWrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(rejectWrapper.find('[data-test="approve-task"]').exists()).toBe(true)
+    expect(rejectWrapper.find('[data-test="reject-task"]').exists()).toBe(true)
+    await rejectWrapper.find('[data-test="approval-comment"]').setValue('合同金额需调整')
+    await rejectWrapper.find('[data-test="reject-task"]').trigger('click')
+    await flushPromises()
+    expect(documentPlatformApiMock.approvalTasks.reject).toHaveBeenCalledWith(701, {
+      version: 0,
+      comment: '合同金额需调整',
+      idempotencyKey: expect.any(String),
+    })
+  })
+
   it('审批详情支持驳回、撤回和治理取消的原因、版本与幂等键', async () => {
     const rejectWrapper = mountWithAuth(ApprovalCenterView)
     await flushPromises()

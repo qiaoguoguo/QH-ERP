@@ -51,8 +51,11 @@ const hasPendingTaskActionWithoutTaskId = computed(() => {
   return (!currentTask.value || currentTask.value.version === null || currentTask.value.version === undefined)
     && (actions.includes('APPROVE') || actions.includes('REJECT'))
 })
-const canApprove = computed(() => Boolean(currentTask.value?.version) && (detail.value?.availableActions?.includes('APPROVE') ?? false))
-const canReject = computed(() => Boolean(currentTask.value?.version) && (detail.value?.availableActions?.includes('REJECT') ?? false))
+const hasCurrentTaskVersion = computed(() =>
+  currentTask.value?.version !== null && currentTask.value?.version !== undefined,
+)
+const canApprove = computed(() => hasCurrentTaskVersion.value && (detail.value?.availableActions?.includes('APPROVE') ?? false))
+const canReject = computed(() => hasCurrentTaskVersion.value && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
 
