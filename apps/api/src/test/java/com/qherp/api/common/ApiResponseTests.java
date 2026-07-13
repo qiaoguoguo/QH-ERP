@@ -2,6 +2,7 @@ package com.qherp.api.common;
 
 import com.qherp.api.security.ApiAccessDeniedHandler;
 import com.qherp.api.security.ApiAuthenticationEntryPoint;
+import com.qherp.api.system.audit.AuditService;
 import org.junit.jupiter.api.Test;
 import org.springframework.core.MethodParameter;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,6 +18,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -47,6 +49,9 @@ class ApiResponseTests {
 
 	@Autowired
 	private ObjectMapper objectMapper;
+
+	@MockitoBean
+	private AuditService auditService;
 
 	@Test
 	void successResponseContainsStableEnvelopeFields() {
