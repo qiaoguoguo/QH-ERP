@@ -25,7 +25,16 @@ import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../../system/shared/pageHelpers'
 import BomLineEditor from './BomLineEditor.vue'
 import BomStatusTag from './BomStatusTag.vue'
-import { type BomLineDraft, lossRateDecimalString, newBomLine, positiveDecimalString } from './bomPageHelpers'
+import {
+  bomEffectiveState,
+  bomEffectiveStateLabel,
+  bomEffectiveStateTagType,
+  type BomLineDraft,
+  lossRateDecimalString,
+  newBomLine,
+  positiveDecimalString,
+  todayText,
+} from './bomPageHelpers'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 
 const authStore = useAuthStore()
@@ -167,6 +176,7 @@ const canSubstituteCreate = computed(() => authStore.hasPermission('material:sub
 const canSubstituteUpdate = computed(() => authStore.hasPermission('material:substitute:update'))
 const canSubstituteEnable = computed(() => authStore.hasPermission('material:substitute:enable'))
 const canSubstituteDisable = computed(() => authStore.hasPermission('material:substitute:disable'))
+const effectiveReferenceDate = computed(() => filters.effectiveDate || todayText())
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -1098,6 +1108,18 @@ function formatDateTime(value?: string | null) {
   return value ? value.replace('T', ' ').slice(0, 16) : '-'
 }
 
+function effectiveState(record: Pick<BomSummaryRecord, 'status' | 'effectiveFrom' | 'effectiveTo'>) {
+  return bomEffectiveState(record.status, record.effectiveFrom, record.effectiveTo, effectiveReferenceDate.value)
+}
+
+function effectiveStateLabel(record: Pick<BomSummaryRecord, 'status' | 'effectiveFrom' | 'effectiveTo'>) {
+  return bomEffectiveStateLabel(effectiveState(record))
+}
+
+function effectiveStateTagType(record: Pick<BomSummaryRecord, 'status' | 'effectiveFrom' | 'effectiveTo'>) {
+  return bomEffectiveStateTagType(effectiveState(record))
+}
+
 function formatBomSnapshot(snapshot?: BomStateSnapshot | null) {
   if (!snapshot) {
     return '-'
@@ -1180,6 +1202,23 @@ onMounted(() => {
               <span>{{ material.code }} {{ material.name }}</span>
               <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
             </el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="有效日期">
+          <el-date-picker
+            v-model="filters.effectiveDate"
+            name="bom-effective-date"
+            value-on-clear=""
+            type="date"
+            format="YYYY-MM-DD"
+            value-format="YYYY-MM-DD"
+            placeholder="选择日期"
+          />
+        </el-form-item>
+        <el-form-item label="历史版本">
+          <el-select v-model="filters.includeHistory" data-test="filter-bom-include-history" placeholder="不含停用">
+            <el-option label="不含停用" :value="false" />
+            <el-option label="包含历史" :value="true" />
           </el-select>
         </el-form-item>
         <el-form-item>
@@ -1341,6 +1380,11 @@ onMounted(() => {
           </el-table-column>
           <el-table-column prop="itemCount" label="明细数" min-width="90" />
           <el-table-column label="状态" min-width="90"><template #default="{ row }"><BomStatusTag :status="row.status" /></template></el-table-column>
+          <el-table-column label="时效状态" min-width="110">
+            <template #default="{ row }">
+              <el-tag :type="effectiveStateTagType(row)" size="small">{{ effectiveStateLabel(row) }}</el-tag>
+            </template>
+          </el-table-column>
           <el-table-column label="更新时间" min-width="150"><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></el-table-column>
           <el-table-column label="操作" fixed="right" min-width="360">
             <template #default="{ row }">
@@ -1506,7 +1550,11 @@ onMounted(() => {
         <dt>BOM 编码</dt><dd>{{ detailRecord.bomCode }}</dd>
         <dt>父项物料</dt><dd>{{ detailRecord.parentMaterialCode }} {{ detailRecord.parentMaterialName }}</dd>
         <dt>版本</dt><dd>{{ detailRecord.versionCode }}</dd>
-        <dt>状态</dt><dd><BomStatusTag :status="detailRecord.status" /></dd>
+        <dt>发布状态</dt><dd><BomStatusTag :status="detailRecord.status" /></dd>
+        <dt>时效状态</dt>
+        <dd>
+          <el-tag :type="effectiveStateTagType(detailRecord)" size="small">{{ effectiveStateLabel(detailRecord) }}</el-tag>
+        </dd>
         <dt>基准数量</dt><dd>{{ detailRecord.baseQuantity }} {{ detailRecord.baseUnitName }}</dd>
         <dt>有效期</dt><dd>{{ formatDate(detailRecord.effectiveFrom) }} 至 {{ formatDate(detailRecord.effectiveTo) }}</dd>
         <dt>历史关系</dt>

@@ -1,5 +1,7 @@
 import type { BomStatus, ResourceId } from '../../../shared/api/bomApi'
 
+export type BomEffectiveState = 'CURRENT' | 'FUTURE' | 'EXPIRED' | 'UNPUBLISHED' | 'DISABLED'
+
 export interface BomLineDraft {
   lineNo: number
   childMaterialId: ResourceId | ''
@@ -21,12 +23,70 @@ const bomStatusTagTypes: Record<BomStatus, 'info' | 'success' | 'warning'> = {
   DISABLED: 'warning',
 }
 
+const bomEffectiveStateLabels: Record<BomEffectiveState, string> = {
+  CURRENT: '当前有效',
+  FUTURE: '未来生效',
+  EXPIRED: '历史失效',
+  UNPUBLISHED: '草稿未发布',
+  DISABLED: '已停用',
+}
+
+const bomEffectiveStateTagTypes: Record<BomEffectiveState, 'info' | 'success' | 'warning' | 'danger'> = {
+  CURRENT: 'success',
+  FUTURE: 'warning',
+  EXPIRED: 'info',
+  UNPUBLISHED: 'info',
+  DISABLED: 'danger',
+}
+
 export function bomStatusLabel(status: BomStatus): string {
   return bomStatusLabels[status]
 }
 
 export function bomStatusTagType(status: BomStatus): 'info' | 'success' | 'warning' {
   return bomStatusTagTypes[status]
+}
+
+export function todayText(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, '0')
+  const day = String(today.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+export function bomEffectiveState(
+  status: BomStatus,
+  effectiveFrom?: string | null,
+  effectiveTo?: string | null,
+  referenceDate = todayText(),
+): BomEffectiveState {
+  if (status === 'DRAFT') {
+    return 'UNPUBLISHED'
+  }
+  if (status === 'DISABLED') {
+    return 'DISABLED'
+  }
+
+  const date = referenceDate.slice(0, 10)
+  const from = effectiveFrom?.slice(0, 10)
+  const to = effectiveTo?.slice(0, 10)
+
+  if (from && date < from) {
+    return 'FUTURE'
+  }
+  if (to && date > to) {
+    return 'EXPIRED'
+  }
+  return 'CURRENT'
+}
+
+export function bomEffectiveStateLabel(state: BomEffectiveState): string {
+  return bomEffectiveStateLabels[state]
+}
+
+export function bomEffectiveStateTagType(state: BomEffectiveState): 'info' | 'success' | 'warning' | 'danger' {
+  return bomEffectiveStateTagTypes[state]
 }
 
 export function positiveNumber(value: unknown): number | null {

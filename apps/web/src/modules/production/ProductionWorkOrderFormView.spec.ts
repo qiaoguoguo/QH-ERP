@@ -77,6 +77,8 @@ const bomSummary: BomSummaryRecord = {
   baseUnitId: 2,
   baseUnitName: '件',
   status: 'ENABLED',
+  effectiveFrom: '2026-07-01',
+  effectiveTo: '2026-07-31',
   itemCount: 1,
   version: 1,
 }
@@ -161,6 +163,16 @@ async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown
   await flushPromises()
 }
 
+function findSelectByTest(wrapper: VueWrapper, dataTest: string) {
+  const select = wrapper.findComponent(`[data-test="${dataTest}"]`) as VueWrapper
+  expect(select.exists()).toBe(true)
+  return select
+}
+
+function selectProps(wrapper: VueWrapper, dataTest: string) {
+  return findSelectByTest(wrapper, dataTest).props() as Record<string, unknown>
+}
+
 async function mountForm(path = '/production/work-orders/create') {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -195,10 +207,11 @@ async function mountForm(path = '/production/work-orders/create') {
 
 async function fillRequiredForm(wrapper: VueWrapper, quantity = '100') {
   await setSelectValue(wrapper, 0, 10)
-  await setSelectValue(wrapper, 1, 20)
   await wrapper.find('input[name="production-planned-quantity"]').setValue(quantity)
   await wrapper.find('input[name="production-planned-start-date"]').setValue('2026-07-03')
   await wrapper.find('input[name="production-planned-finish-date"]').setValue('2026-07-10')
+  await flushPromises()
+  await setSelectValue(wrapper, 1, 20)
   await setSelectValue(wrapper, 2, 30)
   await setSelectValue(wrapper, 3, 31)
 }
@@ -212,7 +225,7 @@ describe('生产工单表单页', () => {
     bomApiMock.list.mockResolvedValue({
       items: [bomSummary],
       page: 1,
-      pageSize: 200,
+      pageSize: 20,
       total: 1,
       totalPages: 1,
     })
@@ -266,10 +279,75 @@ describe('生产工单表单页', () => {
     expect(productionApiMock.workOrders.create).not.toHaveBeenCalled()
   })
 
+  it('未选择产品物料或计划开工日期时不能选择 BOM', async () => {
+    const { wrapper } = await mountForm()
+
+    expect(bomApiMock.list).not.toHaveBeenCalled()
+    expect(selectProps(wrapper, 'production-bom-id').disabled).toBe(true)
+    expect(wrapper.text()).toContain('请先选择产品物料和计划开工日期')
+
+    await setSelectValue(wrapper, 0, 10)
+    await flushPromises()
+    expect(bomApiMock.list).not.toHaveBeenCalled()
+    expect(selectProps(wrapper, 'production-bom-id').disabled).toBe(true)
+
+    await wrapper.find('input[name="production-planned-start-date"]').setValue('2026-07-03')
+    await flushPromises()
+    expect(bomApiMock.list).toHaveBeenCalledWith({
+      keyword: '',
+      status: 'ENABLED',
+      parentMaterialId: 10,
+      effectiveDate: '2026-07-03',
+      page: 1,
+      pageSize: 20,
+    })
+    expect(selectProps(wrapper, 'production-bom-id').disabled).toBe(false)
+  })
+
+  it('产品物料或计划开工日期变化时清空旧 BOM 并重新查询有效版本', async () => {
+    bomApiMock.list
+      .mockResolvedValueOnce({ items: [bomSummary], page: 1, pageSize: 20, total: 1, totalPages: 1 })
+      .mockResolvedValueOnce({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
+    const { wrapper } = await mountForm()
+
+    await fillRequiredForm(wrapper)
+    await flushPromises()
+    expect(bomApiMock.get).toHaveBeenCalledWith(20)
+    expect(wrapper.text()).toContain('RM-001 原材料 A')
+
+    await wrapper.find('input[name="production-planned-start-date"]').setValue('2026-08-01')
+    await flushPromises()
+
+    expect(selectProps(wrapper, 'production-bom-id').modelValue).toBe('')
+    expect(wrapper.text()).toContain('该产品在所选计划开工日期无有效 BOM')
+    expect(wrapper.text()).not.toContain('RM-001 原材料 A')
+  })
+
+  it('编辑草稿时原 BOM 对计划开工日期不再有效会阻止保存', async () => {
+    bomApiMock.list.mockResolvedValueOnce({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
+    const { wrapper } = await mountForm('/production/work-orders/99/edit')
+
+    expect(bomApiMock.list).toHaveBeenCalledWith({
+      keyword: '',
+      status: 'ENABLED',
+      parentMaterialId: 10,
+      effectiveDate: '2026-07-03',
+      page: 1,
+      pageSize: 20,
+    })
+    expect(wrapper.text()).toContain('所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期')
+
+    await wrapper.find('[data-test="save-production-work-order"]').trigger('click')
+    await flushPromises()
+    expect(productionApiMock.workOrders.update).not.toHaveBeenCalled()
+  })
+
   it('选择 BOM 后展示 BOM 明细预览', async () => {
     const { wrapper } = await mountForm()
 
     await setSelectValue(wrapper, 0, 10)
+    await wrapper.find('input[name="production-planned-start-date"]').setValue('2026-07-03')
+    await flushPromises()
     await setSelectValue(wrapper, 1, 20)
     await flushPromises()
 
@@ -292,6 +370,18 @@ describe('生产工单表单页', () => {
     expect(wrapper.text()).toContain('BOM 已停用，不能创建生产工单')
     expect((wrapper.find('input[name="production-planned-quantity"]').element as HTMLInputElement).value).toBe('12.500000')
     expect((wrapper.find('input[name="production-work-order-remark"]').element as HTMLInputElement).value).toBe('首批试产')
+    expect(wrapper.find('[data-test="save-production-work-order"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('后端返回 BOM 时效 409 时在表单错误区域展示稳定文案', async () => {
+    productionApiMock.workOrders.create.mockRejectedValueOnce(new Error('所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期'))
+    const { wrapper } = await mountForm()
+
+    await fillRequiredForm(wrapper, '12')
+    await wrapper.find('[data-test="save-production-work-order"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期')
     expect(wrapper.find('[data-test="save-production-work-order"]').attributes('disabled')).toBeUndefined()
   })
 })

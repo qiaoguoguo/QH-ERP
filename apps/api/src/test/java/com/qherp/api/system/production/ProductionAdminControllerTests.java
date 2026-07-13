@@ -456,6 +456,97 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void createWorkOrderRejectsFutureAndHistoricalBomEffectiveDates() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+
+		ProductionFixture futureFixture = fixture(admin);
+		LocalDate plannedStart = LocalDate.now();
+		setBomEffectiveRange(futureFixture.bomId(), plannedStart.plusDays(1), null);
+		assertError(createWorkOrder(admin,
+				workOrderPayload(futureFixture.productMaterialId(), futureFixture.bomId(),
+						futureFixture.issueWarehouseId(), futureFixture.receiptWarehouseId(), "1.000000",
+						plannedStart, plannedStart.plusDays(1))),
+				HttpStatus.CONFLICT, "PRODUCTION_BOM_EFFECTIVE_DATE_INVALID");
+
+		ProductionFixture historicalFixture = fixture(admin);
+		setBomEffectiveRange(historicalFixture.bomId(), plannedStart.minusDays(10), plannedStart.minusDays(1));
+		assertError(createWorkOrder(admin,
+				workOrderPayload(historicalFixture.productMaterialId(), historicalFixture.bomId(),
+						historicalFixture.issueWarehouseId(), historicalFixture.receiptWarehouseId(), "1.000000",
+						plannedStart, plannedStart.plusDays(1))),
+				HttpStatus.CONFLICT, "PRODUCTION_BOM_EFFECTIVE_DATE_INVALID");
+	}
+
+	@Test
+	void createWorkOrderAllowsBomEffectiveDateBoundariesAndOpenRanges() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate plannedStart = LocalDate.of(2094, 7, 13);
+
+		ProductionFixture startBoundaryFixture = fixture(admin);
+		setBomEffectiveRange(startBoundaryFixture.bomId(), plannedStart, plannedStart.plusDays(10));
+		assertOk(createWorkOrder(admin,
+				workOrderPayload(startBoundaryFixture.productMaterialId(), startBoundaryFixture.bomId(),
+						startBoundaryFixture.issueWarehouseId(), startBoundaryFixture.receiptWarehouseId(),
+						"1.000000", plannedStart, plannedStart.plusDays(1))));
+
+		ProductionFixture endBoundaryFixture = fixture(admin);
+		setBomEffectiveRange(endBoundaryFixture.bomId(), plannedStart.minusDays(10), plannedStart);
+		assertOk(createWorkOrder(admin,
+				workOrderPayload(endBoundaryFixture.productMaterialId(), endBoundaryFixture.bomId(),
+						endBoundaryFixture.issueWarehouseId(), endBoundaryFixture.receiptWarehouseId(), "1.000000",
+						plannedStart, plannedStart.plusDays(1))));
+
+		ProductionFixture openStartFixture = fixture(admin);
+		setBomEffectiveRange(openStartFixture.bomId(), null, plannedStart);
+		assertOk(createWorkOrder(admin,
+				workOrderPayload(openStartFixture.productMaterialId(), openStartFixture.bomId(),
+						openStartFixture.issueWarehouseId(), openStartFixture.receiptWarehouseId(), "1.000000",
+						plannedStart, plannedStart.plusDays(1))));
+
+		ProductionFixture openEndFixture = fixture(admin);
+		setBomEffectiveRange(openEndFixture.bomId(), plannedStart, null);
+		assertOk(createWorkOrder(admin,
+				workOrderPayload(openEndFixture.productMaterialId(), openEndFixture.bomId(),
+						openEndFixture.issueWarehouseId(), openEndFixture.receiptWarehouseId(), "1.000000",
+						plannedStart, plannedStart.plusDays(1))));
+	}
+
+	@Test
+	void updateDraftWorkOrderRejectsBomOutsideChangedPlannedStartDate() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		LocalDate firstStart = LocalDate.of(2095, 1, 10);
+		setBomEffectiveRange(fixture.bomId(), firstStart.minusDays(1), firstStart.plusDays(1));
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000", firstStart,
+				firstStart.plusDays(1));
+
+		LocalDate changedStart = firstStart.plusDays(5);
+		assertError(updateWorkOrder(admin, workOrderId,
+				workOrderPayload(fixture.productMaterialId(), fixture.bomId(), fixture.issueWarehouseId(),
+						fixture.receiptWarehouseId(), "1.000000", changedStart, changedStart.plusDays(1))),
+				HttpStatus.CONFLICT, "PRODUCTION_BOM_EFFECTIVE_DATE_INVALID");
+	}
+
+	@Test
+	void releaseWorkOrderRevalidatesBomEffectiveDateBeforeMaterialSnapshot() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		LocalDate plannedStart = LocalDate.of(2096, 3, 12);
+		setBomEffectiveRange(fixture.bomId(), plannedStart.minusDays(1), plannedStart.plusDays(1));
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000", plannedStart,
+				plannedStart.plusDays(1));
+		ensureReleaseStock(fixture, "1.000000");
+
+		setBomEffectiveRange(fixture.bomId(), plannedStart.minusDays(10), plannedStart.minusDays(1));
+
+		assertError(releaseWorkOrder(admin, workOrderId), HttpStatus.CONFLICT,
+				"PRODUCTION_BOM_EFFECTIVE_DATE_INVALID");
+		assertThat(workOrderMaterialCount(workOrderId)).isZero();
+	}
+
+	@Test
 	void businessRulesReturnControlledProductionErrors() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
@@ -756,6 +847,14 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		return data(exchange(HttpMethod.GET, "/api/admin/boms/" + bomId, null, admin)).get("version").longValue();
 	}
 
+	private void setBomEffectiveRange(long bomId, LocalDate effectiveFrom, LocalDate effectiveTo) {
+		this.jdbcTemplate.update("""
+				update mfg_bom
+				set effective_from = ?, effective_to = ?, updated_at = now(), version = version + 1
+				where id = ?
+				""", effectiveFrom, effectiveTo, bomId);
+	}
+
 	private Map<String, Object> bomItem(int lineNo, long materialId, long unitId, String quantity) {
 		Map<String, Object> item = new LinkedHashMap<>();
 		item.put("lineNo", lineNo);
@@ -838,20 +937,42 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		return data(response).get("id").longValue();
 	}
 
+	private long createWorkOrder(AuthenticatedSession admin, long productId, long bomId, long issueWarehouseId,
+			long receiptWarehouseId, String plannedQuantity, LocalDate plannedStartDate, LocalDate plannedFinishDate)
+			throws Exception {
+		ResponseEntity<String> response = createWorkOrder(admin,
+				workOrderPayload(productId, bomId, issueWarehouseId, receiptWarehouseId, plannedQuantity,
+						plannedStartDate, plannedFinishDate));
+		assertOk(response);
+		return data(response).get("id").longValue();
+	}
+
 	private ResponseEntity<String> createWorkOrder(AuthenticatedSession session, Map<String, Object> body) {
 		return exchange(HttpMethod.POST, "/api/admin/production/work-orders", body, session);
 	}
 
+	private ResponseEntity<String> updateWorkOrder(AuthenticatedSession session, long workOrderId,
+			Map<String, Object> body) {
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId, body, session);
+	}
+
 	private Map<String, Object> workOrderPayload(long productId, long bomId, long issueWarehouseId,
 			long receiptWarehouseId, String plannedQuantity) {
+		return workOrderPayload(productId, bomId, issueWarehouseId, receiptWarehouseId, plannedQuantity,
+				LocalDate.now(), LocalDate.now().plusDays(1));
+	}
+
+	private Map<String, Object> workOrderPayload(long productId, long bomId, long issueWarehouseId,
+			long receiptWarehouseId, String plannedQuantity, LocalDate plannedStartDate,
+			LocalDate plannedFinishDate) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("productMaterialId", productId);
 		body.put("bomId", bomId);
 		body.put("plannedQuantity", plannedQuantity);
 		body.put("issueWarehouseId", issueWarehouseId);
 		body.put("receiptWarehouseId", receiptWarehouseId);
-		body.put("plannedStartDate", LocalDate.now().toString());
-		body.put("plannedFinishDate", LocalDate.now().plusDays(1).toString());
+		body.put("plannedStartDate", plannedStartDate.toString());
+		body.put("plannedFinishDate", plannedFinishDate.toString());
 		body.put("remark", "生产执行测试工单");
 		return body;
 	}
@@ -1034,6 +1155,12 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		throw new AssertionError("未找到工单用料：" + materialId);
+	}
+
+	private long workOrderMaterialCount(long workOrderId) {
+		Long count = this.jdbcTemplate.queryForObject(
+				"select count(*) from mfg_work_order_material where work_order_id = ?", Long.class, workOrderId);
+		return count == null ? 0L : count;
 	}
 
 	private JsonNode materialIssueLine(JsonNode issue, long materialId) {

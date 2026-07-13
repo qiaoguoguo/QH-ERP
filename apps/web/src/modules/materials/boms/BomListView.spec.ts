@@ -116,6 +116,8 @@ const draftBom: BomSummaryRecord = {
   baseUnitId: 1,
   baseUnitName: '件',
   status: 'DRAFT',
+  effectiveFrom: '2026-07-01',
+  effectiveTo: null,
   itemCount: 1,
   updatedAt: '2026-07-03T05:00:00+08:00',
   version: 3,
@@ -156,6 +158,22 @@ const enabledDetail: BomDetailRecord = {
   ...draftDetail,
   ...enabledBom,
   items: draftDetail.items,
+}
+const futureBom: BomSummaryRecord = {
+  ...enabledBom,
+  id: 3,
+  bomCode: 'BOM-FG-A-V3',
+  versionCode: 'V3.0',
+  effectiveFrom: '9999-01-01',
+  effectiveTo: null,
+}
+const expiredBom: BomSummaryRecord = {
+  ...enabledBom,
+  id: 4,
+  bomCode: 'BOM-FG-A-V0',
+  versionCode: 'V0.9',
+  effectiveFrom: null,
+  effectiveTo: '0001-01-01',
 }
 const ecoRecord = {
   id: 100,
@@ -395,6 +413,50 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('成品A')
     expect(wrapper.text()).toContain('V1.0')
     expect(wrapper.text()).toContain('草稿')
+  })
+
+  it('BOM 列表和详情同时展示发布状态与时效状态，并支持有效日期筛选', async () => {
+    bomApiMock.list.mockResolvedValueOnce({
+      items: [enabledBom, futureBom, expiredBom],
+      page: 1,
+      pageSize: 10,
+      total: 3,
+      totalPages: 1,
+    })
+    bomApiMock.get.mockResolvedValueOnce({
+      ...enabledDetail,
+      effectiveFrom: null,
+      effectiveTo: null,
+    })
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已发布')
+    expect(wrapper.text()).toContain('当前有效')
+    expect(wrapper.text()).toContain('未来生效')
+    expect(wrapper.text()).toContain('历史失效')
+
+    await wrapper.find('input[name="bom-effective-date"]').setValue('2026-07-13')
+    await setSelectValue(wrapper, 'filter-bom-include-history', true)
+    await wrapper.find('[data-test="search-bom"]').trigger('click')
+    await flushPromises()
+
+    expect(bomApiMock.list).toHaveBeenLastCalledWith({
+      keyword: '',
+      status: undefined,
+      parentMaterialId: undefined,
+      effectiveDate: '2026-07-13',
+      includeHistory: true,
+      page: 1,
+      pageSize: 10,
+    })
+
+    await wrapper.findAll('[data-test="view-bom"]')[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('发布状态')
+    expect(wrapper.text()).toContain('时效状态')
+    expect(wrapper.text()).toContain('当前有效')
   })
 
   it('生产入口组件注册下有查看权限时渲染并切换 BOM 版本、工程变更和替代料页签', async () => {

@@ -194,7 +194,7 @@ public class ProductionAdminService {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_WORK_ORDER_STATUS_INVALID);
 		}
 		MaterialRef product = validateProductMaterial(workOrder.productMaterialId());
-		BomRef bom = validateBom(workOrder.bomId(), product.id());
+		BomRef bom = validateBom(workOrder.bomId(), product.id(), workOrder.plannedStartDate());
 		validateEnabledWarehouse(workOrder.issueWarehouseId());
 		validateEnabledWarehouse(workOrder.receiptWarehouseId());
 		List<BomItemRef> items = validateBomItems(bom.id());
@@ -725,13 +725,13 @@ public class ProductionAdminService {
 		if (request == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
-		MaterialRef product = validateProductMaterial(request.productMaterialId());
-		BomRef bom = validateBom(request.bomId(), product.id());
-		BigDecimal plannedQuantity = validatePositiveProductionQuantity(request.plannedQuantity());
 		if (request.plannedStartDate() == null || request.plannedFinishDate() == null
 				|| request.plannedFinishDate().isBefore(request.plannedStartDate())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		MaterialRef product = validateProductMaterial(request.productMaterialId());
+		BomRef bom = validateBom(request.bomId(), product.id(), request.plannedStartDate());
+		BigDecimal plannedQuantity = validatePositiveProductionQuantity(request.plannedQuantity());
 		validateEnabledWarehouse(request.issueWarehouseId());
 		validateEnabledWarehouse(request.receiptWarehouseId());
 		return new ValidatedWorkOrder(product, bom, plannedQuantity, request.issueWarehouseId(),
@@ -848,7 +848,7 @@ public class ProductionAdminService {
 		return material;
 	}
 
-	private BomRef validateBom(Long bomId, Long productMaterialId) {
+	private BomRef validateBom(Long bomId, Long productMaterialId, LocalDate businessDate) {
 		if (bomId == null) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_BOM_INVALID);
 		}
@@ -857,8 +857,16 @@ public class ProductionAdminService {
 				|| bom.baseQuantity().compareTo(ZERO) <= 0) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_BOM_INVALID);
 		}
+		if (!isBomEffectiveOn(bom, businessDate)) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_BOM_EFFECTIVE_DATE_INVALID);
+		}
 		validateEnabledUnit(bom.baseUnitId());
 		return bom;
+	}
+
+	private boolean isBomEffectiveOn(BomRef bom, LocalDate businessDate) {
+		return businessDate != null && (bom.effectiveFrom() == null || !businessDate.isBefore(bom.effectiveFrom()))
+				&& (bom.effectiveTo() == null || !businessDate.isAfter(bom.effectiveTo()));
 	}
 
 	private List<BomItemRef> validateBomItems(Long bomId) {
@@ -1404,12 +1412,15 @@ public class ProductionAdminService {
 
 	private Optional<BomRef> bomRef(Long bomId) {
 		return this.jdbcTemplate.query("""
-				select id, bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status
+				select id, bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status,
+				       effective_from, effective_to
 				from mfg_bom
 				where id = ?
 				""", (rs, rowNum) -> new BomRef(rs.getLong("id"), rs.getString("bom_code"),
 				rs.getLong("parent_material_id"), rs.getString("version_code"), rs.getString("name"),
-				rs.getBigDecimal("base_quantity"), rs.getLong("base_unit_id"), rs.getString("status")), bomId)
+				rs.getBigDecimal("base_quantity"), rs.getLong("base_unit_id"), rs.getString("status"),
+				rs.getObject("effective_from", LocalDate.class), rs.getObject("effective_to", LocalDate.class)),
+				bomId)
 			.stream()
 			.findFirst();
 	}
@@ -1816,7 +1827,7 @@ public class ProductionAdminService {
 	}
 
 	private record BomRef(Long id, String bomCode, Long parentMaterialId, String versionCode, String name,
-			BigDecimal baseQuantity, Long baseUnitId, String status) {
+			BigDecimal baseQuantity, Long baseUnitId, String status, LocalDate effectiveFrom, LocalDate effectiveTo) {
 	}
 
 	private record BomItemRef(Long id, Integer lineNo, MaterialRef material, Long unitId, BigDecimal quantity,

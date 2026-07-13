@@ -218,6 +218,8 @@ public enum ApiErrorCode {
 
 	PRODUCTION_BOM_INVALID(HttpStatus.BAD_REQUEST, "生产 BOM 不存在、未启用或父项物料不匹配"),
 
+	PRODUCTION_BOM_EFFECTIVE_DATE_INVALID(HttpStatus.CONFLICT, "所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期"),
+
 	PRODUCTION_BOM_EMPTY_ITEMS(HttpStatus.BAD_REQUEST, "生产 BOM 明细不能为空"),
 
 	PRODUCTION_WAREHOUSE_INVALID(HttpStatus.BAD_REQUEST, "生产仓库不存在或已停用"),
