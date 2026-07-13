@@ -278,6 +278,12 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
   await flushPromises()
 }
 
+function getBomVersionTableColumnProps(wrapper: VueWrapper) {
+  const tables = wrapper.findAllComponents({ name: 'ElTable' })
+  expect(tables.length).toBeGreaterThan(0)
+  return tables[0].findAllComponents({ name: 'ElTableColumn' }).map((column) => column.props() as Record<string, unknown>)
+}
+
 async function fillValidBomForm(wrapper: VueWrapper) {
   await wrapper.find('input[name="bom-code"]').setValue('BOM-FG-A')
   await wrapper.find('input[name="bom-version-code"]').setValue('V1.0')
@@ -413,6 +419,51 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('成品A')
     expect(wrapper.text()).toContain('V1.0')
     expect(wrapper.text()).toContain('草稿')
+  })
+
+  it('BOM 版本表格优先展示双状态并锁定桌面列结构', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    const columns = getBomVersionTableColumnProps(wrapper)
+
+    expect(columns.map((column) => column.label)).toEqual([
+      'BOM 编码',
+      '状态',
+      '时效状态',
+      '有效期',
+      '版本',
+      '父项物料',
+      '名称',
+      '基准数量',
+      '单位',
+      '明细数',
+      '更新时间',
+      '操作',
+    ])
+    expect(columns.slice(0, 4).map((column) => column.label)).toEqual(['BOM 编码', '状态', '时效状态', '有效期'])
+    expect(columns.some((column) => column.fixed === 'left')).toBe(false)
+
+    expect(Number(columns[0].width)).toBe(170)
+    expect(Number(columns[1].width)).toBe(90)
+    expect(Number(columns[2].width)).toBe(110)
+    expect(Number(columns[3].width)).toBe(160)
+    expect(Number(columns[4].width)).toBe(90)
+    expect(Number(columns[5].width)).toBe(190)
+    expect(Number(columns[6].width)).toBe(180)
+    expect(Number(columns[7].width)).toBe(100)
+    expect(Number(columns[8].width)).toBe(120)
+    expect(Number(columns[9].width)).toBe(80)
+    expect(Number(columns[10].width)).toBe(150)
+    expect(columns[11].fixed).toBe('right')
+    expect(Number(columns[11].minWidth)).toBeGreaterThanOrEqual(320)
+    expect(Number(columns[11].minWidth)).toBeLessThanOrEqual(360)
+
+    for (const index of [0, 4, 5, 6, 8]) {
+      expect(columns[index].showOverflowTooltip).toBe(true)
+    }
+    expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.text()).toContain('当前有效')
   })
 
   it('BOM 列表和详情同时展示发布状态与时效状态，并支持有效日期筛选', async () => {

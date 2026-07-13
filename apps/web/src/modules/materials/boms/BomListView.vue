@@ -1367,26 +1367,26 @@ onMounted(() => {
     <template v-if="activeTab === 'versions'">
       <div class="table-scroll">
         <el-table :data="records" :empty-text="loading ? '加载中' : '暂无 BOM 数据'" stripe>
-          <el-table-column prop="bomCode" label="BOM 编码" min-width="150" show-overflow-tooltip />
-          <el-table-column label="父项物料" min-width="190" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.parentMaterialCode }} {{ row.parentMaterialName }}</template>
-          </el-table-column>
-          <el-table-column prop="versionCode" label="版本" min-width="100" show-overflow-tooltip />
-          <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
-          <el-table-column prop="baseQuantity" label="基准数量" min-width="100" />
-          <el-table-column prop="baseUnitName" label="单位" min-width="90" />
-          <el-table-column label="有效期" min-width="180">
-            <template #default="{ row }">{{ formatDate(row.effectiveFrom) }} 至 {{ formatDate(row.effectiveTo) }}</template>
-          </el-table-column>
-          <el-table-column prop="itemCount" label="明细数" min-width="90" />
-          <el-table-column label="状态" min-width="90"><template #default="{ row }"><BomStatusTag :status="row.status" /></template></el-table-column>
-          <el-table-column label="时效状态" min-width="110">
+          <el-table-column prop="bomCode" label="BOM 编码" width="170" show-overflow-tooltip />
+          <el-table-column label="状态" width="90"><template #default="{ row }"><BomStatusTag :status="row.status" /></template></el-table-column>
+          <el-table-column label="时效状态" width="110">
             <template #default="{ row }">
               <el-tag :type="effectiveStateTagType(row)" size="small">{{ effectiveStateLabel(row) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="更新时间" min-width="150"><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></el-table-column>
-          <el-table-column label="操作" fixed="right" min-width="360">
+          <el-table-column label="有效期" width="160">
+            <template #default="{ row }">{{ formatDate(row.effectiveFrom) }} 至 {{ formatDate(row.effectiveTo) }}</template>
+          </el-table-column>
+          <el-table-column prop="versionCode" label="版本" width="90" show-overflow-tooltip />
+          <el-table-column label="父项物料" width="190" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.parentMaterialCode }} {{ row.parentMaterialName }}</template>
+          </el-table-column>
+          <el-table-column prop="name" label="名称" width="180" show-overflow-tooltip />
+          <el-table-column prop="baseQuantity" label="基准数量" width="100" />
+          <el-table-column prop="baseUnitName" label="单位" width="120" show-overflow-tooltip />
+          <el-table-column prop="itemCount" label="明细数" width="80" />
+          <el-table-column label="更新时间" width="150"><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></el-table-column>
+          <el-table-column label="操作" fixed="right" min-width="340">
             <template #default="{ row }">
               <el-button size="small" text data-test="view-bom" @click="openDetail(row)">详情</el-button>
               <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom" @click="openEdit(row)">编辑</el-button>
