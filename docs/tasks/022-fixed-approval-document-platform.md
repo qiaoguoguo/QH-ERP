@@ -406,7 +406,7 @@
 
 本轮冻结整改决策：
 
-- 审批列表和详情统一输出 `id`、`sceneCode`、`objectType`、`objectId`、`objectNo`、`objectName`、`status`、`applicantName`、`submittedAt`、`version`、`availableActions`；详情另输出 `steps`、`histories`、`attachmentSnapshots`。动作只能消费详情最新 `availableActions`，不保留含义冲突的双契约。
+- 审批列表和详情统一输出 `id`、`sceneCode`、`objectType`、`objectId`、`objectNo`、`objectName`、`status`、`applicantName`、`submittedAt`、`version`、`availableActions`；其中 `id` 始终是审批实例标识，当前用户存在可处理任务时另输出可空 `taskId`，通过或驳回使用 `taskId`，撤回或取消使用实例 `id`，不得让一个标识同时表示两类资源。详情另输出 `steps`、`histories`、`attachmentSnapshots`。动作只能消费详情最新 `availableActions`，不保留含义冲突的双契约。
 - `TODO` 只返回本人真实候选且仍待处理的实例，`DONE` 只返回本人实际处理过的实例，`STARTED` 只返回本人发起的实例；列表、数量和详情同时校验平台权限、业务对象权限及本人关系。合同使用 `sales:contract:view`，工程变更使用 `material:bom-eco:view`。
 - 审批幂等键绑定用户、场景、对象、对象版本和请求指纹；同键不同请求稳定冲突。提交时固化附件快照，开放审批期间由后端禁止上传和删除，撤回后才恢复。
 - 文档任务按 `taskType` 继承对应业务域权限，并由后端返回 `CONFIRM`、`DOWNLOAD`、`ERRORS`、`CANCEL` 等 `availableActions`。确认动作必须携带最新版本和独立幂等键。
