@@ -9,6 +9,15 @@ import { describe, expect, it } from 'vitest'
 const currentDir = dirname(fileURLToPath(import.meta.url))
 const styleSource = readFileSync(resolve(currentDir, 'style.css'), 'utf8')
 const mainSource = readFileSync(resolve(currentDir, 'main.ts'), 'utf8')
+const elementPlusSource = readFileSync(resolve(currentDir, 'elementPlus.ts'), 'utf8')
+const componentListStart = elementPlusSource.indexOf('const elementPlusComponents = [')
+const componentListEnd = elementPlusSource.indexOf('] as Plugin[]', componentListStart)
+const elementPlusComponentList = elementPlusSource.slice(componentListStart, componentListEnd)
+
+function expectElementPlusComponentRegistered(componentName: string) {
+  expect(elementPlusSource).toContain(componentName)
+  expect(elementPlusComponentList).toMatch(new RegExp(`\\b${componentName}\\b`))
+}
 
 describe('全局样式契约', () => {
   it('左侧菜单栏使用深色文档侧栏配色', () => {
@@ -46,18 +55,29 @@ describe('全局样式契约', () => {
     expect(styleSource).toContain('--qherp-date-hover-bg')
   })
 
+  it('应用入口挂载共享 Element Plus 生产注册入口', () => {
+    expect(mainSource).toContain("import { installElementPlus } from './elementPlus'")
+    expect(mainSource).toContain('installElementPlus(app).mount')
+  })
+
   it('日期组件同时加载输入框和日历面板基础样式', () => {
-    expect(mainSource).toContain("element-plus/theme-chalk/el-date-picker.css")
-    expect(mainSource).toContain("element-plus/theme-chalk/el-date-picker-panel.css")
+    expectElementPlusComponentRegistered('ElDatePicker')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-date-picker.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-date-picker-panel.css")
   })
 
   it('时间线组件同时注册组件和加载基础样式', () => {
-    expect(mainSource).toContain('ElTimeline')
-    expect(mainSource).toContain('ElTimelineItem')
-    expect(mainSource).toContain("element-plus/theme-chalk/el-timeline.css")
-    expect(mainSource).toContain("element-plus/theme-chalk/el-timeline-item.css")
-    expect(mainSource).toContain('.use(ElTimeline)')
-    expect(mainSource).toContain('.use(ElTimelineItem)')
+    expectElementPlusComponentRegistered('ElTimeline')
+    expectElementPlusComponentRegistered('ElTimelineItem')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-timeline.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-timeline-item.css")
+  })
+
+  it('页签组件同时注册组件和加载基础样式', () => {
+    expectElementPlusComponentRegistered('ElTabs')
+    expectElementPlusComponentRegistered('ElTabPane')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-tabs.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-tab-pane.css")
   })
 
   it('搜索栏使用统一的标签置顶布局并对齐日期控件', () => {

@@ -2,9 +2,11 @@ import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Plugin } from 'vue'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import type { BomDetailRecord, BomSummaryRecord } from '../../../shared/api/bomApi'
 import type { MaterialRecord, UnitRecord } from '../../../shared/api/masterDataApi'
+import { installElementPlus } from '../../../elementPlus'
 import { useAuthStore } from '../../../stores/authStore'
 import BomListView from './BomListView.vue'
 
@@ -234,6 +236,7 @@ function mountBoms(
     'material:substitute:enable',
     'material:substitute:disable',
   ],
+  elementPlusPlugin: Plugin = ElementPlus,
 ) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -245,7 +248,7 @@ function mountBoms(
 
   return mount(BomListView, {
     global: {
-      plugins: [pinia, ElementPlus],
+      plugins: [pinia, elementPlusPlugin],
     },
   })
 }
@@ -392,6 +395,38 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('成品A')
     expect(wrapper.text()).toContain('V1.0')
     expect(wrapper.text()).toContain('草稿')
+  })
+
+  it('生产入口组件注册下有查看权限时渲染并切换 BOM 版本、工程变更和替代料页签', async () => {
+    const wrapper = mountBoms([
+      'material:bom:view',
+      'material:bom-eco:view',
+      'material:substitute:view',
+    ], installElementPlus)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="bom-tab-versions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="bom-tab-eco"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="bom-tab-substitutes"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('BOM-FG-A')
+
+    await wrapper.find('[data-test="bom-tab-eco"]').trigger('click')
+    await flushPromises()
+    expect(bomApiMock.engineeringChanges.list).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 10,
+    }))
+    expect(wrapper.text()).toContain('ECO-202607-0001')
+    expect(wrapper.text()).toContain('替换冷轧钢板规格')
+
+    await wrapper.find('[data-test="bom-tab-substitutes"]').trigger('click')
+    await flushPromises()
+    expect(bomApiMock.substitutes.list).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 10,
+    }))
+    expect(wrapper.text()).toContain('冷轧钢板')
+    expect(wrapper.text()).toContain('镀锌钢板')
   })
 
   it('点击查询会按关键词、状态和父项物料调用列表接口', async () => {
