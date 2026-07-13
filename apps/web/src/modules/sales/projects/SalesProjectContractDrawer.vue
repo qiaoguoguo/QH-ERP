@@ -320,7 +320,7 @@ async function confirmContractAction() {
   if (!detail.value || !actionDialog.action || saving.value) {
     return
   }
-  const reasonRequired = actionDialog.action !== 'activate'
+  const reasonRequired = true
   const reasonError = reasonRequired ? validateProjectReason(actionDialog.reason) : ''
   if (reasonError) {
     actionDialog.error = reasonError
@@ -438,7 +438,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
         />
         <PrintAction
           title="合同生效审批单"
-          object-type="SALES_PROJECT_CONTRACT_ACTIVATION"
+          scene-code="SALES_PROJECT_CONTRACT_ACTIVATION"
           :approval-instance-id="detail.approvalInstanceId"
         />
       </template>
@@ -520,6 +520,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
           maxlength="200"
           show-word-limit
           placeholder="可填写提交说明"
+          aria-label="审批提交原因"
         />
       </div>
       <template #footer>

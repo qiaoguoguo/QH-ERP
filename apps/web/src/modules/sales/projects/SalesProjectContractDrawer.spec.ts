@@ -370,6 +370,11 @@ describe('销售项目合同抽屉', () => {
 
     await wrapper.find('[data-test="contract-action-activate"]').trigger('click')
     await flushPromises()
+    await wrapper.find('[data-test="confirm-contract-action"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('请填写 1-200 字原因')
+    expect(documentPlatformApiMock.approvals.submitSalesProjectContractActivation).not.toHaveBeenCalled()
+
     await wrapper.find('[data-test="approval-submit-reason"]').setValue('合同草稿确认无误')
     await wrapper.find('[data-test="confirm-contract-action"]').trigger('click')
     await flushPromises()
@@ -380,6 +385,25 @@ describe('销售项目合同抽屉', () => {
       idempotencyKey: expect.any(String),
     })
     expect(salesProjectApiMock.contracts.activate).not.toHaveBeenCalled()
+  })
+
+  it('重新打开审批中的草稿合同时识别最新审批摘要并锁定附件区', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({
+      ...contract,
+      status: 'DRAFT',
+      approvalInstanceId: 900,
+      approvalStatus: 'SUBMITTED',
+      approvalSubmittedAt: '2026-07-13T10:00:00+08:00',
+    })
+    const wrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+
+    expect(wrapper.text()).toContain('审批中')
+    expect(wrapper.text()).toContain('审批实例')
+    expect(wrapper.text()).toContain('900')
+    expect(wrapper.find('input[data-test="attachment-file"]').exists()).toBe(false)
+    expect(documentPlatformApiMock.printTemplates.list).toHaveBeenCalledWith({
+      sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
+    })
   })
 
   it('展示合同全生命周期人员、时间和原因，并使用响应式抽屉尺寸', async () => {

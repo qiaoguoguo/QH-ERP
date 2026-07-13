@@ -984,17 +984,23 @@ async function submitEcoApproval() {
   if (!ecoApprovalTarget.value || ecoApprovalSubmitting.value) {
     return
   }
+  if (!ecoApprovalReason.value.trim()) {
+    ecoApprovalError.value = '审批提交原因必填'
+    return
+  }
   ecoApprovalSubmitting.value = true
   ecoApprovalError.value = ''
   try {
-    await documentPlatformApi.approvals.submitBomEcoApplication(ecoApprovalTarget.value.id, {
+    const approval = await documentPlatformApi.approvals.submitBomEcoApplication(ecoApprovalTarget.value.id, {
       version: ecoApprovalTarget.value.version,
       reason: ecoApprovalReason.value.trim(),
       idempotencyKey: createIdempotencyKey('bom-eco-approval'),
     })
     ecoDetailRecord.value = {
       ...ecoApprovalTarget.value,
-      approvalStatus: ecoApprovalTarget.value.approvalStatus ?? 'SUBMITTED',
+      approvalInstanceId: approval.id,
+      approvalStatus: approval.status,
+      approvalSubmittedAt: approval.submittedAt,
     }
     ecoDetailVisible.value = true
     ecoApprovalVisible.value = false
@@ -1674,7 +1680,7 @@ onMounted(() => {
       <el-alert
         class="form-alert"
         type="info"
-        title="导入仅创建或更新草稿 BOM，不发布、不应用 ECO、不改写工单快照。"
+        title="导入仅创建或更新草稿 BOM，不发布、不应用 ECO、不改写工单快照；行字段覆盖子项物料、业务单位、业务数量、损耗率、仓库和备注。"
         :closable="false"
       />
       <el-form label-position="top">
@@ -1881,7 +1887,7 @@ onMounted(() => {
         />
         <PrintAction
           title="BOM ECO 应用审批单"
-          object-type="BOM_ECO_APPLICATION"
+          scene-code="BOM_ECO_APPLICATION"
           :approval-instance-id="ecoDetailRecord.approvalInstanceId"
         />
       </template>

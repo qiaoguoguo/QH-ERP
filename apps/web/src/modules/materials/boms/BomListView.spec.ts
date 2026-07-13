@@ -886,6 +886,11 @@ describe('BOM 管理页', () => {
 
     await wrapper.find('[data-test="apply-bom-eco"]').trigger('click')
     await flushPromises()
+    await wrapper.find('[data-test="confirm-bom-eco-approval"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('审批提交原因必填')
+    expect(documentPlatformApiMock.approvals.submitBomEcoApplication).not.toHaveBeenCalled()
+
     await wrapper.find('[data-test="eco-approval-submit-reason"]').setValue('材料替代方案已确认')
     await wrapper.find('[data-test="confirm-bom-eco-approval"]').trigger('click')
     await flushPromises()
@@ -899,6 +904,9 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('审批状态')
     expect(wrapper.text()).toContain('ECO 附件')
     expect(wrapper.text()).toContain('BOM ECO 应用审批单')
+    expect(documentPlatformApiMock.printTemplates.list).toHaveBeenCalledWith({
+      sceneCode: 'BOM_ECO_APPLICATION',
+    })
   })
 
   it('创建工程变更时生成 ECO 编码并按候选上下文提交', async () => {
@@ -1107,6 +1115,9 @@ describe('BOM 管理页', () => {
 
     ;(wrapper.vm as unknown as { openBomDraftImport: () => void }).openBomDraftImport()
     await flushPromises()
+    expect(wrapper.text()).toContain('业务单位')
+    expect(wrapper.text()).toContain('业务数量')
+    expect(wrapper.text()).toContain('仓库')
     const file = new File(['xlsx'], 'bom-draft.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const fileInput = wrapper.find('input[data-test="bom-draft-import-file"]').element as HTMLInputElement
     Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })

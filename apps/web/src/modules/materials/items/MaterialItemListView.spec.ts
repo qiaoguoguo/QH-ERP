@@ -422,11 +422,12 @@ describe('物料档案页', () => {
     await (wrapper.vm as unknown as { exportMaterials: () => Promise<void> }).exportMaterials()
     await flushPromises()
     expect(documentPlatformApiMock.exports.createMaterials).toHaveBeenCalledWith({
-      filters: expect.objectContaining({
-        keyword: '钢板',
-        status: 'ENABLED',
-        materialType: 'RAW_MATERIAL',
-      }),
+      keyword: '钢板',
+      status: 'ENABLED',
+      categoryId: undefined,
+      materialType: 'RAW_MATERIAL',
+      sourceType: undefined,
+      trackingMethod: undefined,
       idempotencyKey: expect.any(String),
     })
 

@@ -54,6 +54,23 @@ const task: DocumentTaskRecord = {
   availableActions: ['CANCEL'],
 }
 
+const approvalDetail = {
+  id: 3,
+  sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
+  objectType: 'SALES_PROJECT_CONTRACT',
+  objectId: 55,
+  objectNo: 'SC-001',
+  objectName: '主合同',
+  status: 'SUBMITTED',
+  applicantName: '销售',
+  submittedAt: '2026-07-13T10:00:00+08:00',
+  version: 6,
+  availableActions: ['APPROVE', 'REJECT', 'WITHDRAW', 'CANCEL'],
+  steps: [],
+  histories: [],
+  attachmentSnapshots: [],
+}
+
 describe('022 文档平台 API', () => {
   it('提交合同与 ECO 审批使用冻结路径、对象版本和幂等键', async () => {
     const fetcher = vi
@@ -97,25 +114,43 @@ describe('022 文档平台 API', () => {
     })
   })
 
-  it('审批任务动作携带任务版本并按后端 availableActions 消费', async () => {
+  it('审批详情和动作使用冻结 sceneCode 字段、最新版本和独立幂等键', async () => {
     const fetcher = vi
       .fn()
+      .mockResolvedValueOnce(apiResponse(approvalDetail))
       .mockResolvedValueOnce(csrfResponse())
       .mockResolvedValueOnce(apiResponse({ id: 7, status: 'APPROVED' }))
       .mockResolvedValueOnce(csrfResponse())
       .mockResolvedValueOnce(apiResponse({ id: 8, status: 'REJECTED' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ id: 3, status: 'WITHDRAWN' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ id: 3, status: 'CANCELLED' }))
     const api = createDocumentPlatformApi({ fetcher })
 
-    await api.approvalTasks.approve(7, { version: 4, comment: '同意' })
-    await api.approvalTasks.reject(8, { version: 5, comment: '合同金额需调整' })
+    const detail = await api.approvals.get(3)
+    await api.approvalTasks.approve(7, { version: 4, comment: '同意', idempotencyKey: 'approve-key' })
+    await api.approvalTasks.reject(8, { version: 5, reason: '合同金额需调整', idempotencyKey: 'reject-key' })
+    await api.approvals.withdraw(3, { version: 6, reason: '补充附件', idempotencyKey: 'withdraw-key' })
+    await api.approvals.cancel(3, { version: 6, reason: '治理取消', idempotencyKey: 'cancel-key' })
 
-    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/approval-tasks/7/approve', expect.objectContaining({
+    expect(detail.sceneCode).toBe('SALES_PROJECT_CONTRACT_ACTIVATION')
+    expect(JSON.stringify(detail)).not.toContain('businessObjectNo')
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/approval-tasks/7/approve', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ version: 4, comment: '同意' }),
+      body: JSON.stringify({ version: 4, comment: '同意', idempotencyKey: 'approve-key' }),
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/approval-tasks/8/reject', expect.objectContaining({
+    expect(fetcher).toHaveBeenNthCalledWith(5, '/api/admin/approval-tasks/8/reject', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ version: 5, comment: '合同金额需调整' }),
+      body: JSON.stringify({ version: 5, reason: '合同金额需调整', idempotencyKey: 'reject-key' }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(7, '/api/admin/approvals/3/withdraw', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ version: 6, reason: '补充附件', idempotencyKey: 'withdraw-key' }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(9, '/api/admin/approvals/3/cancel', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ version: 6, reason: '治理取消', idempotencyKey: 'cancel-key' }),
     }))
   })
 
@@ -141,6 +176,41 @@ describe('022 文档平台 API', () => {
       'X-CSRF-TOKEN': 'csrf-token',
       'Idempotency-Key': 'attachment-key',
     })
+  })
+
+  it('附件列表消费 PageResult 并保留真实文件字段和可用动作', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({
+      items: [{
+        id: 5,
+        objectType: 'SALES_PROJECT_CONTRACT',
+        objectId: 55,
+        fileName: '合同附件.pdf',
+        fileSize: 1024,
+        contentType: 'application/pdf',
+        uploadedByName: '管理员',
+        uploadedAt: '2026-07-13T10:00:00+08:00',
+        status: 'AVAILABLE',
+        availableActions: ['DOWNLOAD', 'DELETE'],
+        version: 2,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    }))
+    const api = createDocumentPlatformApi({ fetcher })
+
+    const page = await api.attachments.list({ objectType: 'SALES_PROJECT_CONTRACT', objectId: 55, page: 1, pageSize: 10 })
+
+    expect(fetcher).toHaveBeenCalledWith('/api/admin/attachments?objectType=SALES_PROJECT_CONTRACT&objectId=55&page=1&pageSize=10', expect.objectContaining({
+      method: 'GET',
+    }))
+    expect(page.items[0]).toEqual(expect.objectContaining({
+      fileName: '合同附件.pdf',
+      fileSize: 1024,
+      contentType: 'application/pdf',
+      uploadedByName: '管理员',
+      version: 2,
+    }))
   })
 
   it('模板、任务结果和附件下载成功返回 Blob 文件名，失败时解析 JSON envelope', async () => {
@@ -171,7 +241,7 @@ describe('022 文档平台 API', () => {
     await expect(failedDownload).rejects.toBeInstanceOf(AccountPermissionApiError)
   })
 
-  it('物料导出、BOM 草稿导入和确认任务使用冻结路径与 Idempotency-Key', async () => {
+  it('物料导出、BOM 草稿导入和确认任务使用冻结路径、扁平筛选与 Idempotency-Key', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(csrfResponse())
@@ -183,7 +253,7 @@ describe('022 文档平台 API', () => {
     const api = createDocumentPlatformApi({ fetcher })
     const file = new File(['bom'], 'BOM草稿.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
 
-    await api.exports.createMaterials({ filters: { keyword: '钢板', status: 'ENABLED' }, idempotencyKey: 'export-key' })
+    await api.exports.createMaterials({ keyword: '钢板', status: 'ENABLED', materialType: 'RAW_MATERIAL', idempotencyKey: 'export-key' })
     await api.imports.uploadBomDraft({
       mode: 'UPDATE_DRAFT',
       bomId: 1,
@@ -195,7 +265,7 @@ describe('022 文档平台 API', () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/exports/materials', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ filters: { keyword: '钢板', status: 'ENABLED' } }),
+      body: JSON.stringify({ keyword: '钢板', status: 'ENABLED', materialType: 'RAW_MATERIAL' }),
       headers: expect.objectContaining({ 'Idempotency-Key': 'export-key' }),
     }))
     expect(fetcher.mock.calls[3][0]).toBe('/api/admin/imports/bom-drafts')
@@ -207,6 +277,31 @@ describe('022 文档平台 API', () => {
       method: 'POST',
       body: JSON.stringify({ version: 1 }),
       headers: expect.objectContaining({ 'Idempotency-Key': 'confirm-key' }),
+    }))
+  })
+
+  it('消息已读携带当前 version，打印模板按 sceneCode 查询并先请求预览', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ id: 11, status: 'READ', version: 3 }))
+      .mockResolvedValueOnce(apiResponse([{ templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1', templateVersion: 1, enabled: true }]))
+      .mockResolvedValueOnce(apiResponse({ approvalInstanceId: 3, templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1', templateVersion: 1, sections: [] }))
+    const api = createDocumentPlatformApi({ fetcher })
+
+    await api.messages.markRead(11, { version: 2 })
+    await api.printTemplates.list({ sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION' })
+    await api.printPreviews.get(3)
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/messages/11/read', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify({ version: 2 }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/print-templates?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION', expect.objectContaining({
+      method: 'GET',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/print-previews/3', expect.objectContaining({
+      method: 'GET',
     }))
   })
 })

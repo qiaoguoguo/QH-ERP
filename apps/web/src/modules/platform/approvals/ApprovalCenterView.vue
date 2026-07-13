@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { documentPlatformApi, type ApprovalScope, type ApprovalTaskRecord, type ApprovalInstanceDetail } from '../../../shared/api/documentPlatformApi'
+import {
+  createIdempotencyKey,
+  documentPlatformApi,
+  type ApprovalInstanceDetail,
+  type ApprovalScope,
+  type ApprovalTaskRecord,
+} from '../../../shared/api/documentPlatformApi'
 import { pageItems } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import {
@@ -26,9 +32,10 @@ const detail = ref<ApprovalInstanceDetail | null>(null)
 const selectedTask = ref<ApprovalTaskRecord | null>(null)
 const actionComment = ref('')
 
-const canApprove = computed(() => selectedTask.value?.availableActions?.includes('APPROVE') ?? false)
-const canReject = computed(() => selectedTask.value?.availableActions?.includes('REJECT') ?? false)
+const canApprove = computed(() => detail.value?.availableActions?.includes('APPROVE') ?? false)
+const canReject = computed(() => detail.value?.availableActions?.includes('REJECT') ?? false)
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
+const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
 
 async function loadRecords() {
   loading.value = true
@@ -69,7 +76,7 @@ async function openDetail(record: ApprovalTaskRecord) {
   actionError.value = ''
   actionComment.value = ''
   try {
-    detail.value = await documentPlatformApi.approvals.get(record.instanceId)
+    detail.value = await documentPlatformApi.approvals.get(record.id)
   } catch (caught) {
     actionError.value = platformErrorMessage(caught)
   } finally {
@@ -78,7 +85,7 @@ async function openDetail(record: ApprovalTaskRecord) {
 }
 
 async function submitTaskAction(action: 'approve' | 'reject') {
-  if (!selectedTask.value || actionLoading.value) {
+  if (!selectedTask.value || !detail.value || actionLoading.value) {
     return
   }
   if (action === 'reject' && !actionComment.value.trim()) {
@@ -88,11 +95,19 @@ async function submitTaskAction(action: 'approve' | 'reject') {
   actionLoading.value = true
   actionError.value = ''
   try {
-    const payload = { version: selectedTask.value.version, comment: actionComment.value.trim() }
+    const comment = actionComment.value.trim()
     if (action === 'approve') {
-      detail.value = await documentPlatformApi.approvalTasks.approve(selectedTask.value.id, payload)
+      detail.value = await documentPlatformApi.approvalTasks.approve(selectedTask.value.id, {
+        version: detail.value.version,
+        ...(comment ? { comment } : {}),
+        idempotencyKey: createIdempotencyKey('approval-approve'),
+      })
     } else {
-      detail.value = await documentPlatformApi.approvalTasks.reject(selectedTask.value.id, payload)
+      detail.value = await documentPlatformApi.approvalTasks.reject(selectedTask.value.id, {
+        version: detail.value.version,
+        reason: comment,
+        idempotencyKey: createIdempotencyKey('approval-reject'),
+      })
     }
     await loadRecords()
   } catch (caught) {
@@ -115,7 +130,32 @@ async function withdrawApproval() {
   try {
     detail.value = await documentPlatformApi.approvals.withdraw(detail.value.id, {
       version: detail.value.version,
-      comment: actionComment.value.trim(),
+      reason: actionComment.value.trim(),
+      idempotencyKey: createIdempotencyKey('approval-withdraw'),
+    })
+    await loadRecords()
+  } catch (caught) {
+    actionError.value = platformErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function cancelApproval() {
+  if (!detail.value || actionLoading.value) {
+    return
+  }
+  if (!actionComment.value.trim()) {
+    actionError.value = '取消原因必填'
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    detail.value = await documentPlatformApi.approvals.cancel(detail.value.id, {
+      version: detail.value.version,
+      reason: actionComment.value.trim(),
+      idempotencyKey: createIdempotencyKey('approval-cancel'),
     })
     await loadRecords()
   } catch (caught) {
@@ -225,6 +265,12 @@ onMounted(() => {
           {{ history.operatorName || '-' }} {{ history.comment || history.action }}
         </el-timeline-item>
       </el-timeline>
+      <h3>附件快照</h3>
+      <el-table :data="detail?.attachmentSnapshots ?? []" empty-text="暂无附件快照" stripe>
+        <el-table-column prop="fileName" label="文件名" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="fileSize" label="大小" width="100" />
+        <el-table-column prop="sha256" label="SHA-256" min-width="180" show-overflow-tooltip />
+      </el-table>
       <el-form label-position="top">
         <el-form-item label="处理意见">
           <el-input data-test="approval-comment" v-model="actionComment" type="textarea" :rows="3" maxlength="200" show-word-limit />
@@ -232,6 +278,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="detailVisible = false">关闭</el-button>
+        <el-button v-if="canCancel" data-test="approval-cancel" type="warning" plain :loading="actionLoading" @click="cancelApproval">治理取消</el-button>
         <el-button v-if="canWithdraw" data-test="withdraw-approval" :loading="actionLoading" @click="withdrawApproval">撤回</el-button>
         <el-button v-if="canReject" data-test="reject-task" type="danger" plain :loading="actionLoading" @click="submitTaskAction('reject')">驳回</el-button>
         <el-button v-if="canApprove" data-test="approve-task" type="primary" :loading="actionLoading" @click="submitTaskAction('approve')">通过</el-button>

@@ -7,9 +7,11 @@ export type ApprovalScope = 'TODO' | 'DONE' | 'STARTED'
 export type ApprovalInstanceStatus = 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED'
 export type ApprovalTaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
 export type ApprovalAction = 'APPROVE' | 'REJECT' | 'WITHDRAW' | 'CANCEL'
+export type ApprovalSceneCode = 'SALES_PROJECT_CONTRACT_ACTIVATION' | 'BOM_ECO_APPLICATION'
 export type MessageStatus = 'UNREAD' | 'READ'
 export type AttachmentObjectType = 'SALES_PROJECT_CONTRACT' | 'BOM_ENGINEERING_CHANGE'
 export type AttachmentStatus = 'AVAILABLE' | 'DELETED'
+export type AttachmentAction = 'DOWNLOAD' | 'DELETE'
 export type DocumentTaskType =
   | 'MATERIAL_IMPORT'
   | 'MATERIAL_EXPORT'
@@ -30,9 +32,8 @@ export type DocumentTaskStatus =
 export type DocumentTaskAction =
   | 'CONFIRM'
   | 'CANCEL'
-  | 'DOWNLOAD_RESULT'
-  | 'DOWNLOAD_FAILURES'
-  | 'DOWNLOAD_SOURCE'
+  | 'DOWNLOAD'
+  | 'ERRORS'
 export type BomDraftImportMode = 'CREATE' | 'UPDATE_DRAFT'
 
 export interface SubmitApprovalPayload {
@@ -44,13 +45,14 @@ export interface SubmitApprovalPayload {
 export interface ApprovalActionPayload {
   version: number
   comment?: string
+  reason?: string
+  idempotencyKey: string
 }
 
 export interface ApprovalTaskRecord {
   id: ResourceId
-  instanceId: ResourceId
   taskNo?: string | null
-  scenarioCode: 'SALES_PROJECT_CONTRACT_ACTIVATION' | 'BOM_ECO_APPLICATION' | string
+  sceneCode: ApprovalSceneCode | string
   objectType: string
   objectId: ResourceId
   objectNo?: string | null
@@ -75,6 +77,7 @@ export interface ApprovalTaskListQuery {
 export interface ApprovalStepRecord {
   stepName: string
   status: ApprovalTaskStatus
+  taskId?: ResourceId | null
   candidatePermission?: string | null
   completedByName?: string | null
   completedAt?: string | null
@@ -97,7 +100,7 @@ export interface ApprovalAttachmentSnapshot {
 
 export interface ApprovalInstanceDetail {
   id: ResourceId
-  scenarioCode: string
+  sceneCode: ApprovalSceneCode | string
   objectType: string
   objectId: ResourceId
   objectNo?: string | null
@@ -119,8 +122,13 @@ export interface MessageRecord {
   content?: string | null
   status: MessageStatus
   category?: string | null
+  messageType?: string | null
+  relatedObjectType?: string | null
+  relatedObjectId?: ResourceId | null
   businessRoute?: string | null
   createdAt?: string | null
+  readAt?: string | null
+  version: number
 }
 
 export interface MessagePageResult extends PageResult<MessageRecord> {
@@ -145,8 +153,7 @@ export interface AttachmentRecord {
   status: AttachmentStatus
   uploadedByName?: string | null
   uploadedAt?: string | null
-  canDownload?: boolean
-  canDelete?: boolean
+  availableActions?: AttachmentAction[]
   restricted?: boolean
   restrictedMessage?: string | null
   version: number
@@ -202,6 +209,27 @@ export interface DocumentTaskListQuery {
   pageSize: number
 }
 
+export interface AttachmentListQuery {
+  objectType: AttachmentObjectType
+  objectId: ResourceId
+  page: number
+  pageSize: number
+}
+
+export interface MessageReadPayload {
+  version: number
+}
+
+export interface MaterialExportPayload {
+  keyword?: string
+  status?: string
+  categoryId?: ResourceId
+  materialType?: string
+  sourceType?: string
+  trackingMethod?: string
+  idempotencyKey: string
+}
+
 export interface ImportFailureRecord {
   rowNo: number
   columnName?: string | null
@@ -229,7 +257,7 @@ export interface PrintTemplateRecord {
   templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1' | 'BOM_ECO_APPLICATION_APPROVAL_V1' | string
   templateName: string
   templateVersion: number
-  objectType?: string | null
+  sceneCode?: string | null
   enabled: boolean
 }
 
@@ -260,11 +288,11 @@ export interface DocumentPlatformApi {
   }
   messages: {
     listMine(query: MessageListQuery): Promise<MessagePageResult>
-    markRead(id: ResourceId): Promise<MessageRecord>
+    markRead(id: ResourceId, payload: MessageReadPayload): Promise<MessageRecord>
     markAllRead(): Promise<{ unreadCount: number }>
   }
   attachments: {
-    list(query: { objectType: AttachmentObjectType; objectId: ResourceId }): Promise<AttachmentRecord[]>
+    list(query: AttachmentListQuery): Promise<PageResult<AttachmentRecord>>
     upload(payload: AttachmentUploadPayload): Promise<AttachmentRecord>
     download(id: ResourceId): Promise<DownloadedFile>
     delete(id: ResourceId, payload: AttachmentDeletePayload): Promise<AttachmentRecord>
@@ -279,11 +307,11 @@ export interface DocumentPlatformApi {
     confirm(taskId: ResourceId, payload: ConfirmImportPayload): Promise<DocumentTaskRecord>
   }
   exports: {
-    createMaterials(payload: { filters: Record<string, unknown>; idempotencyKey: string }): Promise<DocumentTaskRecord>
+    createMaterials(payload: MaterialExportPayload): Promise<DocumentTaskRecord>
     createBomDraft(bomId: ResourceId, payload: { idempotencyKey: string }): Promise<DocumentTaskRecord>
   }
   printTemplates: {
-    list(query: { objectType: string }): Promise<PrintTemplateRecord[]>
+    list(query: { sceneCode: string }): Promise<PrintTemplateRecord[]>
   }
   printPreviews: {
     get(approvalInstanceId: ResourceId): Promise<PrintPreviewRecord>
@@ -420,11 +448,12 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
     },
     messages: {
       listMine: (query) => get<MessagePageResult>('/api/admin/messages/my', query),
-      markRead: (id) => writeJson<MessageRecord>('PUT', `/api/admin/messages/${encodeURIComponent(String(id))}/read`),
+      markRead: (id, payload) =>
+        writeJson<MessageRecord>('PUT', `/api/admin/messages/${encodeURIComponent(String(id))}/read`, payload),
       markAllRead: () => writeJson<{ unreadCount: number }>('PUT', '/api/admin/messages/read-all'),
     },
     attachments: {
-      list: (query) => get<AttachmentRecord[]>('/api/admin/attachments', query),
+      list: (query) => get<PageResult<AttachmentRecord>>('/api/admin/attachments', query),
       upload: (payload) => {
         const formData = new FormData()
         formData.append('objectType', payload.objectType)
@@ -470,13 +499,15 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
         ),
     },
     exports: {
-      createMaterials: (payload) =>
-        writeJson<DocumentTaskRecord>(
+      createMaterials: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return writeJson<DocumentTaskRecord>(
           'POST',
           '/api/admin/exports/materials',
-          { filters: payload.filters },
-          { 'Idempotency-Key': payload.idempotencyKey },
-        ),
+          filters,
+          { 'Idempotency-Key': idempotencyKey },
+        )
+      },
       createBomDraft: (bomId, payload) =>
         writeJson<DocumentTaskRecord>(
           'POST',

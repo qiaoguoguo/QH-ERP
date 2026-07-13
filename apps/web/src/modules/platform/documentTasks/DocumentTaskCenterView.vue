@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { documentPlatformApi, type DocumentTaskRecord, type DocumentTaskType, type ImportFailureRecord, type ResourceId } from '../../../shared/api/documentPlatformApi'
+import {
+  createIdempotencyKey,
+  documentPlatformApi,
+  type DocumentTaskRecord,
+  type DocumentTaskType,
+  type ImportFailureRecord,
+} from '../../../shared/api/documentPlatformApi'
 import { pageItems } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { downloadFile } from '../../../shared/file/download'
@@ -25,17 +31,32 @@ const errorDrawerVisible = ref(false)
 const selectedTask = ref<DocumentTaskRecord | null>(null)
 const failureRows = ref<ImportFailureRecord[]>([])
 const failurePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const pollingTaskId = ref<ResourceId | null>(null)
-
-const polling = useDocumentTaskPolling(pollingTaskId, (id) => documentPlatformApi.documentTasks.get(id), { intervalMs: 2500 })
+const pollingTaskIds = computed(() => records.value
+  .filter((item) => !isDocumentTaskTerminalStatus(item.status))
+  .map((item) => item.id))
+const polling = useDocumentTaskPolling(pollingTaskIds, (id) => documentPlatformApi.documentTasks.get(id), { intervalMs: 2500 })
 const hasRunningTask = computed(() => records.value.some((item) => !isDocumentTaskTerminalStatus(item.status)))
 
-watch(() => polling.latestTask.value, (task) => {
-  if (!task) {
+watch(() => polling.latestTasks.value, (tasks) => {
+  if (!tasks.length) {
     return
   }
-  records.value = records.value.map((record) => record.id === task.id ? task : record)
+  const taskMap = new Map(tasks.map((task) => [String(task.id), task]))
+  records.value = records.value.map((record) => taskMap.get(String(record.id)) ?? record)
+  syncPolling()
 })
+
+watch(pollingTaskIds, () => {
+  syncPolling()
+})
+
+function syncPolling() {
+  if (pollingTaskIds.value.length) {
+    polling.start()
+  } else {
+    polling.stop()
+  }
+}
 
 async function loadRecords() {
   loading.value = true
@@ -50,13 +71,7 @@ async function loadRecords() {
     })
     records.value = pageItems(page)
     pagination.total = Number(page.total)
-    const runningTask = records.value.find((item) => !isDocumentTaskTerminalStatus(item.status))
-    pollingTaskId.value = runningTask?.id ?? null
-    if (runningTask) {
-      polling.start()
-    } else {
-      polling.stop()
-    }
+    syncPolling()
   } catch (caught) {
     records.value = []
     pagination.total = 0
@@ -102,6 +117,22 @@ async function downloadTask(record: DocumentTaskRecord) {
   actionError.value = ''
   try {
     downloadFile(await documentPlatformApi.documentTasks.download(record.id))
+  } catch (caught) {
+    actionError.value = platformErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function confirmTask(record: DocumentTaskRecord) {
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await documentPlatformApi.imports.confirm(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('document-task-confirm'),
+    })
+    await loadRecords()
   } catch (caught) {
     actionError.value = platformErrorMessage(caught)
   } finally {
@@ -194,11 +225,28 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="230">
           <template #default="{ row }">
-            <el-button v-if="Number(row.failedRows ?? 0) > 0" data-test="view-task-errors" size="small" text @click="openErrors(row)">
+            <el-button
+              v-if="(row.availableActions ?? []).includes('CONFIRM')"
+              data-test="confirm-document-task"
+              size="small"
+              text
+              type="primary"
+              :disabled="actionLoading"
+              @click="confirmTask(row)"
+            >
+              确认入库
+            </el-button>
+            <el-button
+              v-if="(row.availableActions ?? []).includes('ERRORS') || Number(row.failedRows ?? 0) > 0"
+              data-test="view-task-errors"
+              size="small"
+              text
+              @click="openErrors(row)"
+            >
               错误明细
             </el-button>
             <el-button
-              v-if="row.status !== 'EXPIRED' && (row.availableActions ?? []).some((action: string) => action.startsWith('DOWNLOAD'))"
+              v-if="row.status !== 'EXPIRED' && (row.availableActions ?? []).includes('DOWNLOAD')"
               data-test="download-task-result"
               size="small"
               text

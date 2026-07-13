@@ -3,13 +3,14 @@ import { onMounted, ref, watch } from 'vue'
 import {
   createIdempotencyKey,
   documentPlatformApi,
+  type PrintPreviewRecord,
   type PrintTemplateRecord,
   type ResourceId,
 } from '../../../shared/api/documentPlatformApi'
 import { platformErrorMessage } from '../platformPageHelpers'
 
 const props = defineProps<{
-  objectType: string
+  sceneCode: string
   approvalInstanceId?: ResourceId | null
   title: string
 }>()
@@ -19,12 +20,17 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const latestTaskNo = ref('')
+const preview = ref<PrintPreviewRecord | null>(null)
+const previewVisible = ref(false)
+const previewedTemplateCode = ref('')
 
 async function loadTemplates() {
   loading.value = true
   error.value = ''
+  preview.value = null
+  previewedTemplateCode.value = ''
   try {
-    templates.value = await documentPlatformApi.printTemplates.list({ objectType: props.objectType })
+    templates.value = await documentPlatformApi.printTemplates.list({ sceneCode: props.sceneCode })
   } catch (caught) {
     templates.value = []
     error.value = platformErrorMessage(caught)
@@ -33,8 +39,29 @@ async function loadTemplates() {
   }
 }
 
+async function previewPrint(template: PrintTemplateRecord) {
+  if (!props.approvalInstanceId || actionLoading.value) {
+    return
+  }
+  actionLoading.value = true
+  error.value = ''
+  try {
+    preview.value = await documentPlatformApi.printPreviews.get(props.approvalInstanceId)
+    previewedTemplateCode.value = template.templateCode
+    previewVisible.value = true
+  } catch (caught) {
+    error.value = platformErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 async function createPrintTask(template: PrintTemplateRecord) {
   if (!props.approvalInstanceId || actionLoading.value) {
+    return
+  }
+  if (previewedTemplateCode.value !== template.templateCode) {
+    error.value = '请先预览审批单，再生成 PDF 任务'
     return
   }
   actionLoading.value = true
@@ -53,7 +80,7 @@ async function createPrintTask(template: PrintTemplateRecord) {
   }
 }
 
-watch(() => props.objectType, () => {
+watch(() => [props.sceneCode, props.approvalInstanceId], () => {
   void loadTemplates()
 })
 
@@ -68,17 +95,39 @@ onMounted(() => {
     <el-alert v-if="error" class="form-alert" type="error" :title="error" :closable="false" />
     <el-alert v-if="latestTaskNo" class="form-alert" type="success" :title="`已创建打印任务 ${latestTaskNo}`" :closable="false" />
     <div class="print-template-actions">
-      <el-button
-        v-for="template in templates"
-        :key="template.templateCode"
-        data-test="create-print-task"
-        :loading="actionLoading"
-        :disabled="!approvalInstanceId || actionLoading || !template.enabled"
-        @click="createPrintTask(template)"
-      >
-        {{ template.templateName }}
-      </el-button>
+      <template v-for="template in templates" :key="template.templateCode">
+        <el-button
+          data-test="preview-print"
+          :loading="actionLoading"
+          :disabled="!approvalInstanceId || actionLoading || !template.enabled"
+          @click="previewPrint(template)"
+        >
+          预览 {{ template.templateName }}
+        </el-button>
+        <el-button
+          data-test="create-print-task"
+          type="primary"
+          :loading="actionLoading"
+          :disabled="!approvalInstanceId || actionLoading || !template.enabled || previewedTemplateCode !== template.templateCode"
+          @click="createPrintTask(template)"
+        >
+          生成 PDF
+        </el-button>
+      </template>
       <span v-if="!templates.length && !loading">暂无固定模板</span>
     </div>
+    <el-drawer v-model="previewVisible" title="审批单预览" size="min(640px, 92vw)" :teleported="false">
+      <template v-if="preview">
+        <section v-for="section in preview.sections" :key="section.title" class="print-preview-section">
+          <h4>{{ section.title }}</h4>
+          <dl class="platform-panel-list">
+            <template v-for="field in section.fields" :key="`${section.title}-${field.label}`">
+              <dt>{{ field.label }}</dt>
+              <dd>{{ field.value || '-' }}</dd>
+            </template>
+          </dl>
+        </section>
+      </template>
+    </el-drawer>
   </section>
 </template>

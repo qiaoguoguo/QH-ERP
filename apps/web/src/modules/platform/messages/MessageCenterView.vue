@@ -47,13 +47,30 @@ async function markRead(record: MessageRecord) {
   actionLoading.value = true
   actionError.value = ''
   try {
-    await documentPlatformApi.messages.markRead(record.id)
+    await documentPlatformApi.messages.markRead(record.id, { version: record.version })
     await loadRecords()
   } catch (caught) {
     actionError.value = platformErrorMessage(caught)
   } finally {
     actionLoading.value = false
   }
+}
+
+function whitelistedBusinessRoute(record: MessageRecord): string | null {
+  if (!record.relatedObjectType || record.relatedObjectId === null || record.relatedObjectId === undefined) {
+    return null
+  }
+  const objectId = encodeURIComponent(String(record.relatedObjectId))
+  if (record.relatedObjectType === 'SALES_PROJECT_CONTRACT') {
+    return `/sales/projects?contractId=${objectId}`
+  }
+  if (record.relatedObjectType === 'BOM_ENGINEERING_CHANGE') {
+    return `/materials/boms?ecoId=${objectId}`
+  }
+  if (record.relatedObjectType === 'DOCUMENT_TASK') {
+    return `/platform/document-tasks?taskId=${objectId}`
+  }
+  return null
 }
 
 async function markAllRead() {
@@ -136,7 +153,7 @@ onMounted(() => {
             >
               标记已读
             </el-button>
-            <RouterLink v-if="row.businessRoute" :to="row.businessRoute">查看业务</RouterLink>
+            <RouterLink v-if="whitelistedBusinessRoute(row)" :to="whitelistedBusinessRoute(row) || ''">查看业务</RouterLink>
             <span v-else>业务受限</span>
           </template>
         </el-table-column>

@@ -12,8 +12,10 @@ export function isDocumentTaskTerminalStatus(status: string | null | undefined):
   return Boolean(status && terminalStatuses.has(status))
 }
 
+type PollingTaskIds = ResourceId | ResourceId[] | null | undefined
+
 export function useDocumentTaskPolling<TTask extends { status?: string | null }>(
-  taskId: Ref<ResourceId | null | undefined>,
+  taskId: Ref<PollingTaskIds>,
   loader: (taskId: ResourceId) => Promise<TTask>,
   options: DocumentTaskPollingOptions = {},
 ) {
@@ -23,6 +25,7 @@ export function useDocumentTaskPolling<TTask extends { status?: string | null }>
   const loading = ref(false)
   const error = ref('')
   const latestTask = ref<TTask | null>(null)
+  const latestTasks = ref<TTask[]>([])
   const authKey = computed(() => String(authStore.currentUser?.id ?? 'anonymous'))
   let timer: ReturnType<typeof setTimeout> | null = null
   let requestId = 0
@@ -40,9 +43,17 @@ export function useDocumentTaskPolling<TTask extends { status?: string | null }>
     requestId += 1
   }
 
+  function currentTaskIds(): ResourceId[] {
+    const value = taskId.value
+    if (Array.isArray(value)) {
+      return value.filter((item) => item !== null && item !== undefined)
+    }
+    return value === null || value === undefined ? [] : [value]
+  }
+
   function schedule() {
     clearTimer()
-    if (!running.value || taskId.value === null || taskId.value === undefined) {
+    if (!running.value || currentTaskIds().length === 0) {
       return
     }
     timer = setTimeout(() => {
@@ -51,20 +62,21 @@ export function useDocumentTaskPolling<TTask extends { status?: string | null }>
   }
 
   async function poll() {
-    const currentTaskId = taskId.value
-    if (!running.value || currentTaskId === null || currentTaskId === undefined) {
+    const currentTaskIdsSnapshot = currentTaskIds()
+    if (!running.value || currentTaskIdsSnapshot.length === 0) {
       return
     }
     const currentRequestId = ++requestId
     loading.value = true
     error.value = ''
     try {
-      const task = await loader(currentTaskId)
+      const tasks = await Promise.all(currentTaskIdsSnapshot.map((id) => loader(id)))
       if (currentRequestId !== requestId) {
         return
       }
-      latestTask.value = task
-      if (isDocumentTaskTerminalStatus(task.status)) {
+      latestTasks.value = tasks
+      latestTask.value = tasks.at(-1) ?? null
+      if (tasks.every((task) => isDocumentTaskTerminalStatus(task.status))) {
         stop()
         return
       }
@@ -83,7 +95,7 @@ export function useDocumentTaskPolling<TTask extends { status?: string | null }>
   }
 
   function start() {
-    if (taskId.value === null || taskId.value === undefined) {
+    if (currentTaskIds().length === 0) {
       return
     }
     running.value = true
@@ -107,6 +119,7 @@ export function useDocumentTaskPolling<TTask extends { status?: string | null }>
     loading,
     error,
     latestTask,
+    latestTasks,
     start,
     stop,
     poll,

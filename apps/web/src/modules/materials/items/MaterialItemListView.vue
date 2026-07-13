@@ -433,7 +433,7 @@ async function exportMaterials() {
   actionLoading.value = true
   try {
     latestDocumentTask.value = await documentPlatformApi.exports.createMaterials({
-      filters: currentMaterialExportFilters(),
+      ...currentMaterialExportFilters(),
       idempotencyKey: createIdempotencyKey('material-export'),
     })
   } catch (caught) {
