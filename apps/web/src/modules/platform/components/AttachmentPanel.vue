@@ -106,11 +106,11 @@ function formatFileSize(size: number | null | undefined): string {
 }
 
 function canDownload(record: AttachmentRecord): boolean {
-  return record.availableActions?.includes('DOWNLOAD') ?? true
+  return record.availableActions?.includes('DOWNLOAD') ?? false
 }
 
 function canDelete(record: AttachmentRecord): boolean {
-  return record.availableActions?.includes('DELETE') ?? true
+  return record.availableActions?.includes('DELETE') ?? false
 }
 
 async function downloadAttachment(record: AttachmentRecord) {

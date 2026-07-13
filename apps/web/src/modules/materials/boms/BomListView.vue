@@ -998,9 +998,13 @@ async function submitEcoApproval() {
     })
     ecoDetailRecord.value = {
       ...ecoApprovalTarget.value,
-      approvalInstanceId: approval.id,
-      approvalStatus: approval.status,
-      approvalSubmittedAt: approval.submittedAt,
+      approvalSummary: {
+        id: approval.id,
+        sceneCode: approval.sceneCode,
+        status: approval.status,
+        submittedAt: approval.submittedAt,
+        version: approval.version,
+      },
     }
     ecoDetailVisible.value = true
     ecoApprovalVisible.value = false
@@ -1548,7 +1552,7 @@ onMounted(() => {
             <template #default="{ row }">
               <el-button size="small" text @click="openEcoDetail(row)">详情</el-button>
               <el-button v-if="canEcoUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom-eco" @click="openEditEco(row)">编辑</el-button>
-              <el-button v-if="canEcoApply && row.status === 'DRAFT'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
+              <el-button v-if="canEcoApply && row.status === 'DRAFT' && row.approvalSummary?.status !== 'SUBMITTED'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
               <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="danger" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
             </template>
           </el-table-column>
@@ -1680,7 +1684,7 @@ onMounted(() => {
       <el-alert
         class="form-alert"
         type="info"
-        title="导入仅创建或更新草稿 BOM，不发布、不应用 ECO、不改写工单快照；行字段覆盖子项物料、业务单位、业务数量、损耗率、仓库和备注。"
+        title="导入仅创建或更新草稿 BOM，不发布、不应用 ECO、不改写工单快照；行字段覆盖子项物料、业务单位、业务数量、损耗率和备注。仓库为保留列，当前阶段必须留空；非空将校验失败。"
         :closable="false"
       />
       <el-form label-position="top">
@@ -1875,20 +1879,20 @@ onMounted(() => {
       </section>
       <template v-if="ecoDetailRecord">
         <ApprovalStatusPanel
-          :approval-instance-id="ecoDetailRecord.approvalInstanceId"
-          :approval-status="ecoDetailRecord.approvalStatus"
-          :submitted-at="ecoDetailRecord.approvalSubmittedAt"
+          :approval-instance-id="ecoDetailRecord.approvalSummary?.id"
+          :approval-status="ecoDetailRecord.approvalSummary?.status"
+          :submitted-at="ecoDetailRecord.approvalSummary?.submittedAt"
         />
         <AttachmentPanel
           title="ECO 附件"
           object-type="BOM_ENGINEERING_CHANGE"
           :object-id="ecoDetailRecord.id"
-          :readonly="ecoDetailRecord.approvalStatus === 'SUBMITTED'"
+          :readonly="ecoDetailRecord.approvalSummary?.status === 'SUBMITTED'"
         />
         <PrintAction
           title="BOM ECO 应用审批单"
           scene-code="BOM_ECO_APPLICATION"
-          :approval-instance-id="ecoDetailRecord.approvalInstanceId"
+          :approval-instance-id="ecoDetailRecord.approvalSummary?.id"
         />
       </template>
     </el-drawer>
@@ -1903,7 +1907,7 @@ onMounted(() => {
         :rows="3"
         maxlength="200"
         show-word-limit
-        placeholder="可填写提交说明"
+        placeholder="请填写审批提交原因（必填）"
       />
       <template #footer>
         <el-button @click="ecoApprovalVisible = false">取消</el-button>

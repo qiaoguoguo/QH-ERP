@@ -32,17 +32,46 @@ const detail = ref<ApprovalInstanceDetail | null>(null)
 const selectedTask = ref<ApprovalTaskRecord | null>(null)
 const actionComment = ref('')
 
-const currentTaskId = computed(() => detail.value?.taskId
-  ?? (detail.value?.steps ?? []).find((step) => step.status === 'PENDING' && step.taskId !== null && step.taskId !== undefined)?.taskId
-  ?? null)
+const currentTask = computed(() => {
+  const approval = detail.value
+  if (!approval) {
+    return null
+  }
+  const matchedStep = (approval.steps ?? []).find((step) =>
+    step.taskId !== null
+    && step.taskId !== undefined
+    && (approval.taskId === null || approval.taskId === undefined || String(step.taskId) === String(approval.taskId)),
+  )
+  const taskId = approval.taskId ?? matchedStep?.taskId ?? null
+  const taskVersion = approval.taskVersion ?? matchedStep?.version ?? null
+  return taskId === null || taskId === undefined ? null : { id: taskId, version: taskVersion }
+})
 const hasPendingTaskActionWithoutTaskId = computed(() => {
   const actions = detail.value?.availableActions ?? []
-  return !currentTaskId.value && (actions.includes('APPROVE') || actions.includes('REJECT'))
+  return (!currentTask.value || currentTask.value.version === null || currentTask.value.version === undefined)
+    && (actions.includes('APPROVE') || actions.includes('REJECT'))
 })
-const canApprove = computed(() => Boolean(currentTaskId.value) && (detail.value?.availableActions?.includes('APPROVE') ?? false))
-const canReject = computed(() => Boolean(currentTaskId.value) && (detail.value?.availableActions?.includes('REJECT') ?? false))
+const canApprove = computed(() => Boolean(currentTask.value?.version) && (detail.value?.availableActions?.includes('APPROVE') ?? false))
+const canReject = computed(() => Boolean(currentTask.value?.version) && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
+
+function isStaleActionError(caught: unknown): boolean {
+  const message = caught instanceof Error ? caught.message : String(caught)
+  return /过期|并发|状态|CONCURRENT|VERSION|STATUS/.test(message)
+}
+
+function freezeStaleActions(caught: unknown) {
+  if (!isStaleActionError(caught) || !detail.value) {
+    return false
+  }
+  detail.value = {
+    ...detail.value,
+    availableActions: [],
+  }
+  actionError.value = '审批动作已过期需刷新'
+  return true
+}
 
 async function loadRecords() {
   loading.value = true
@@ -95,8 +124,8 @@ async function submitTaskAction(action: 'approve' | 'reject') {
   if (!detail.value || actionLoading.value) {
     return
   }
-  const taskId = currentTaskId.value
-  if (taskId === null || taskId === undefined) {
+  const task = currentTask.value
+  if (!task || task.version === null || task.version === undefined) {
     actionError.value = '当前审批任务不可处理，请刷新审批详情'
     return
   }
@@ -109,21 +138,23 @@ async function submitTaskAction(action: 'approve' | 'reject') {
   try {
     const comment = actionComment.value.trim()
     if (action === 'approve') {
-      detail.value = await documentPlatformApi.approvalTasks.approve(taskId, {
-        version: detail.value.version,
+      detail.value = await documentPlatformApi.approvalTasks.approve(task.id, {
+        version: task.version,
         ...(comment ? { comment } : {}),
         idempotencyKey: createIdempotencyKey('approval-approve'),
       })
     } else {
-      detail.value = await documentPlatformApi.approvalTasks.reject(taskId, {
-        version: detail.value.version,
-        reason: comment,
+      detail.value = await documentPlatformApi.approvalTasks.reject(task.id, {
+        version: task.version,
+        comment,
         idempotencyKey: createIdempotencyKey('approval-reject'),
       })
     }
     await loadRecords()
   } catch (caught) {
-    actionError.value = platformErrorMessage(caught)
+    if (!freezeStaleActions(caught)) {
+      actionError.value = platformErrorMessage(caught)
+    }
   } finally {
     actionLoading.value = false
   }
@@ -142,12 +173,14 @@ async function withdrawApproval() {
   try {
     detail.value = await documentPlatformApi.approvals.withdraw(detail.value.id, {
       version: detail.value.version,
-      reason: actionComment.value.trim(),
+      comment: actionComment.value.trim(),
       idempotencyKey: createIdempotencyKey('approval-withdraw'),
     })
     await loadRecords()
   } catch (caught) {
-    actionError.value = platformErrorMessage(caught)
+    if (!freezeStaleActions(caught)) {
+      actionError.value = platformErrorMessage(caught)
+    }
   } finally {
     actionLoading.value = false
   }
@@ -166,12 +199,14 @@ async function cancelApproval() {
   try {
     detail.value = await documentPlatformApi.approvals.cancel(detail.value.id, {
       version: detail.value.version,
-      reason: actionComment.value.trim(),
+      comment: actionComment.value.trim(),
       idempotencyKey: createIdempotencyKey('approval-cancel'),
     })
     await loadRecords()
   } catch (caught) {
-    actionError.value = platformErrorMessage(caught)
+    if (!freezeStaleActions(caught)) {
+      actionError.value = platformErrorMessage(caught)
+    }
   } finally {
     actionLoading.value = false
   }
@@ -292,7 +327,7 @@ onMounted(() => {
       </el-table>
       <el-form label-position="top">
         <el-form-item label="处理意见">
-          <el-input data-test="approval-comment" v-model="actionComment" type="textarea" :rows="3" maxlength="200" show-word-limit />
+          <el-input data-test="approval-comment" v-model="actionComment" type="textarea" :rows="3" maxlength="200" show-word-limit placeholder="驳回、撤回、取消时必填；通过可填写意见" />
         </el-form-item>
       </el-form>
       <template #footer>

@@ -174,9 +174,9 @@ describe('销售项目合同抽屉', () => {
     documentPlatformApiMock.printTemplates.list.mockResolvedValue([
       {
         templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1',
-        templateName: '合同生效审批单',
+        name: '合同生效审批单',
+        sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
         templateVersion: 1,
-        enabled: true,
       },
     ])
   })
@@ -385,15 +385,20 @@ describe('销售项目合同抽屉', () => {
       idempotencyKey: expect.any(String),
     })
     expect(salesProjectApiMock.contracts.activate).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('审批实例')
+    expect(wrapper.text()).toContain('900')
+    expect(wrapper.find('input[data-test="attachment-file"]').exists()).toBe(false)
   })
 
   it('重新打开审批中的草稿合同时识别最新审批摘要并锁定附件区', async () => {
     salesProjectApiMock.contracts.get.mockResolvedValueOnce({
       ...contract,
       status: 'DRAFT',
-      approvalInstanceId: 900,
-      approvalStatus: 'SUBMITTED',
-      approvalSubmittedAt: '2026-07-13T10:00:00+08:00',
+      approvalSummary: {
+        id: 900,
+        status: 'SUBMITTED',
+        submittedAt: '2026-07-13T10:00:00+08:00',
+      },
     })
     const wrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
 

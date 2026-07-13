@@ -164,6 +164,10 @@ function changePageSize(pageSize: number) {
   void loadRecords()
 }
 
+function confirmActionLabel(record: DocumentTaskRecord): string {
+  return record.taskType.endsWith('_IMPORT') ? '确认导入' : '确认提交'
+}
+
 onMounted(() => {
   void loadRecords()
 })
@@ -234,10 +238,10 @@ onMounted(() => {
               :disabled="actionLoading"
               @click="confirmTask(row)"
             >
-              确认入库
+              {{ confirmActionLabel(row) }}
             </el-button>
             <el-button
-              v-if="(row.availableActions ?? []).includes('ERRORS') || Number(row.failedRows ?? 0) > 0"
+              v-if="(row.availableActions ?? []).includes('ERRORS')"
               data-test="view-task-errors"
               size="small"
               text

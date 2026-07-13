@@ -459,9 +459,9 @@ describe('BOM 管理页', () => {
     documentPlatformApiMock.printTemplates.list.mockResolvedValue([
       {
         templateCode: 'BOM_ECO_APPLICATION_APPROVAL_V1',
-        templateName: 'BOM ECO 应用审批单',
+        name: 'BOM ECO 应用审批单',
+        sceneCode: 'BOM_ECO_APPLICATION',
         templateVersion: 1,
-        enabled: true,
       },
     ])
     masterDataApiMock.materials.list.mockResolvedValue({
@@ -902,6 +902,9 @@ describe('BOM 管理页', () => {
     })
     expect(bomApiMock.engineeringChanges.apply).not.toHaveBeenCalled()
     expect(wrapper.text()).toContain('审批状态')
+    expect(wrapper.text()).toContain('审批实例')
+    expect(wrapper.text()).toContain('901')
+    expect(wrapper.find('input[data-test="attachment-file"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('ECO 附件')
     expect(wrapper.text()).toContain('BOM ECO 应用审批单')
     expect(documentPlatformApiMock.printTemplates.list).toHaveBeenCalledWith({
@@ -1117,7 +1120,7 @@ describe('BOM 管理页', () => {
     await flushPromises()
     expect(wrapper.text()).toContain('业务单位')
     expect(wrapper.text()).toContain('业务数量')
-    expect(wrapper.text()).toContain('仓库')
+    expect(wrapper.text()).toContain('保留列，当前阶段必须留空；非空将校验失败')
     const file = new File(['xlsx'], 'bom-draft.xlsx', { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const fileInput = wrapper.find('input[data-test="bom-draft-import-file"]').element as HTMLInputElement
     Object.defineProperty(fileInput, 'files', { value: [file], configurable: true })

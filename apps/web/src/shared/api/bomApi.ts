@@ -170,6 +170,14 @@ export interface BomEngineeringChangePayload {
   version?: number
 }
 
+export interface ApprovalSummary {
+  id: ResourceId
+  sceneCode?: string | null
+  status: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED'
+  submittedAt?: string | null
+  version?: number | null
+}
+
 export interface BomEngineeringChangeRecord extends BomEngineeringChangePayload {
   id: ResourceId
   ecoNo: string
@@ -184,9 +192,7 @@ export interface BomEngineeringChangeRecord extends BomEngineeringChangePayload 
   appliedBy?: string | null
   appliedAt?: string | null
   cancelReason?: string | null
-  approvalInstanceId?: ResourceId | null
-  approvalStatus?: 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED' | null
-  approvalSubmittedAt?: string | null
+  approvalSummary?: ApprovalSummary | null
   createdAt?: string
   updatedAt?: string
   version: number

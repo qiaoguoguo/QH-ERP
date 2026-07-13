@@ -57,6 +57,7 @@ const task: DocumentTaskRecord = {
 const approvalDetail = {
   id: 3,
   taskId: 701,
+  taskVersion: 16,
   sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
   objectType: 'SALES_PROJECT_CONTRACT',
   objectId: 55,
@@ -67,7 +68,7 @@ const approvalDetail = {
   submittedAt: '2026-07-13T10:00:00+08:00',
   version: 6,
   availableActions: ['APPROVE', 'REJECT', 'WITHDRAW', 'CANCEL'],
-  steps: [],
+  steps: [{ taskId: 701, stepName: '固定审批', status: 'PENDING', version: 16 }],
   histories: [],
   attachmentSnapshots: [],
 }
@@ -131,9 +132,9 @@ describe('022 文档平台 API', () => {
 
     const detail = await api.approvals.get(3)
     await api.approvalTasks.approve(7, { version: 4, comment: '同意', idempotencyKey: 'approve-key' })
-    await api.approvalTasks.reject(8, { version: 5, reason: '合同金额需调整', idempotencyKey: 'reject-key' })
-    await api.approvals.withdraw(3, { version: 6, reason: '补充附件', idempotencyKey: 'withdraw-key' })
-    await api.approvals.cancel(3, { version: 6, reason: '治理取消', idempotencyKey: 'cancel-key' })
+    await api.approvalTasks.reject(8, { version: 5, comment: '合同金额需调整', idempotencyKey: 'reject-key' })
+    await api.approvals.withdraw(3, { version: 6, comment: '补充附件', idempotencyKey: 'withdraw-key' })
+    await api.approvals.cancel(3, { version: 6, comment: '治理取消', idempotencyKey: 'cancel-key' })
 
     expect(detail.sceneCode).toBe('SALES_PROJECT_CONTRACT_ACTIVATION')
     expect(JSON.stringify(detail)).not.toContain('businessObjectNo')
@@ -143,15 +144,15 @@ describe('022 文档平台 API', () => {
     }))
     expect(fetcher).toHaveBeenNthCalledWith(5, '/api/admin/approval-tasks/8/reject', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ version: 5, reason: '合同金额需调整', idempotencyKey: 'reject-key' }),
+      body: JSON.stringify({ version: 5, comment: '合同金额需调整', idempotencyKey: 'reject-key' }),
     }))
     expect(fetcher).toHaveBeenNthCalledWith(7, '/api/admin/approvals/3/withdraw', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ version: 6, reason: '补充附件', idempotencyKey: 'withdraw-key' }),
+      body: JSON.stringify({ version: 6, comment: '补充附件', idempotencyKey: 'withdraw-key' }),
     }))
     expect(fetcher).toHaveBeenNthCalledWith(9, '/api/admin/approvals/3/cancel', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify({ version: 6, reason: '治理取消', idempotencyKey: 'cancel-key' }),
+      body: JSON.stringify({ version: 6, comment: '治理取消', idempotencyKey: 'cancel-key' }),
     }))
   })
 
@@ -281,16 +282,19 @@ describe('022 文档平台 API', () => {
     }))
   })
 
-  it('消息已读携带当前 version，打印模板按 sceneCode 查询并先请求预览', async () => {
+  it('消息已读携带当前 version，全部已读返回 updatedCount，打印模板按 sceneCode 查询并先请求预览', async () => {
     const fetcher = vi
       .fn()
       .mockResolvedValueOnce(csrfResponse())
       .mockResolvedValueOnce(apiResponse({ id: 11, status: 'READ', version: 3 }))
-      .mockResolvedValueOnce(apiResponse([{ templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1', templateVersion: 1, enabled: true }]))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ updatedCount: 3 }))
+      .mockResolvedValueOnce(apiResponse([{ templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1', name: '合同生效审批单', sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION', templateVersion: 1 }]))
       .mockResolvedValueOnce(apiResponse({ approvalInstanceId: 3, templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1', templateVersion: 1, sections: [] }))
     const api = createDocumentPlatformApi({ fetcher })
 
     await api.messages.markRead(11, { version: 2 })
+    const readAllResult = await api.messages.markAllRead()
     await api.printTemplates.list({ sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION' })
     await api.printPreviews.get(3)
 
@@ -298,10 +302,14 @@ describe('022 文档平台 API', () => {
       method: 'PUT',
       body: JSON.stringify({ version: 2 }),
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/print-templates?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION', expect.objectContaining({
+    expect(readAllResult).toEqual({ updatedCount: 3 })
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/messages/read-all', expect.objectContaining({
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(5, '/api/admin/print-templates?sceneCode=SALES_PROJECT_CONTRACT_ACTIVATION', expect.objectContaining({
       method: 'GET',
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/print-previews/3', expect.objectContaining({
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/print-previews/3', expect.objectContaining({
       method: 'GET',
     }))
   })

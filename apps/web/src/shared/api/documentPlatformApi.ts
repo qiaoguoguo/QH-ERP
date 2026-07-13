@@ -45,7 +45,6 @@ export interface SubmitApprovalPayload {
 export interface ApprovalActionPayload {
   version: number
   comment?: string
-  reason?: string
   idempotencyKey: string
 }
 
@@ -79,6 +78,7 @@ export interface ApprovalStepRecord {
   stepName: string
   status: ApprovalTaskStatus
   taskId?: ResourceId | null
+  version?: number | null
   candidatePermission?: string | null
   completedByName?: string | null
   completedAt?: string | null
@@ -102,6 +102,7 @@ export interface ApprovalAttachmentSnapshot {
 export interface ApprovalInstanceDetail {
   id: ResourceId
   taskId?: ResourceId | null
+  taskVersion?: number | null
   sceneCode: ApprovalSceneCode | string
   objectType: string
   objectId: ResourceId
@@ -257,10 +258,9 @@ export interface ConfirmImportPayload {
 
 export interface PrintTemplateRecord {
   templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1' | 'BOM_ECO_APPLICATION_APPROVAL_V1' | string
-  templateName: string
+  name: string
   templateVersion: number
   sceneCode?: string | null
-  enabled: boolean
 }
 
 export interface PrintPreviewRecord {
@@ -291,7 +291,7 @@ export interface DocumentPlatformApi {
   messages: {
     listMine(query: MessageListQuery): Promise<MessagePageResult>
     markRead(id: ResourceId, payload: MessageReadPayload): Promise<MessageRecord>
-    markAllRead(): Promise<{ unreadCount: number }>
+    markAllRead(): Promise<{ updatedCount: number }>
   }
   attachments: {
     list(query: AttachmentListQuery): Promise<PageResult<AttachmentRecord>>
@@ -452,7 +452,7 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
       listMine: (query) => get<MessagePageResult>('/api/admin/messages/my', query),
       markRead: (id, payload) =>
         writeJson<MessageRecord>('PUT', `/api/admin/messages/${encodeURIComponent(String(id))}/read`, payload),
-      markAllRead: () => writeJson<{ unreadCount: number }>('PUT', '/api/admin/messages/read-all'),
+      markAllRead: () => writeJson<{ updatedCount: number }>('PUT', '/api/admin/messages/read-all'),
     },
     attachments: {
       list: (query) => get<PageResult<AttachmentRecord>>('/api/admin/attachments', query),

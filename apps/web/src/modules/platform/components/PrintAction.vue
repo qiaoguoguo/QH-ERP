@@ -99,16 +99,16 @@ onMounted(() => {
         <el-button
           data-test="preview-print"
           :loading="actionLoading"
-          :disabled="!approvalInstanceId || actionLoading || !template.enabled"
+          :disabled="!approvalInstanceId || actionLoading"
           @click="previewPrint(template)"
         >
-          预览 {{ template.templateName }}
+          预览 {{ template.name }}
         </el-button>
         <el-button
           data-test="create-print-task"
           type="primary"
           :loading="actionLoading"
-          :disabled="!approvalInstanceId || actionLoading || !template.enabled || previewedTemplateCode !== template.templateCode"
+          :disabled="!approvalInstanceId || actionLoading || previewedTemplateCode !== template.templateCode"
           @click="createPrintTask(template)"
         >
           生成 PDF

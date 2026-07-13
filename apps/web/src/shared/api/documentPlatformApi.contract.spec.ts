@@ -52,4 +52,37 @@ describe('022 文档平台前后端契约', () => {
       idempotencyKey: 'eco-key',
     })
   })
+
+  it('审批动作请求体必须使用 comment，不再发送 reason', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ id: 1, status: 'REJECTED' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ id: 1, status: 'WITHDRAWN' }))
+    const api = createDocumentPlatformApi({ fetcher })
+
+    await api.approvalTasks.reject(701, {
+      version: 16,
+      comment: '合同金额需调整',
+      idempotencyKey: 'reject-key',
+    })
+    await api.approvals.withdraw(3, {
+      version: 6,
+      comment: '补充附件',
+      idempotencyKey: 'withdraw-key',
+    })
+
+    expect(JSON.parse(String(fetcher.mock.calls[1][1].body))).toEqual({
+      version: 16,
+      comment: '合同金额需调整',
+      idempotencyKey: 'reject-key',
+    })
+    expect(JSON.stringify(JSON.parse(String(fetcher.mock.calls[1][1].body)))).not.toContain('reason')
+    expect(JSON.parse(String(fetcher.mock.calls[3][1].body))).toEqual({
+      version: 6,
+      comment: '补充附件',
+      idempotencyKey: 'withdraw-key',
+    })
+  })
 })

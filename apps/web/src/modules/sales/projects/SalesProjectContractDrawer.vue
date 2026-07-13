@@ -146,6 +146,13 @@ function resolveContractActionState(action: 'activate' | 'close' | 'terminate' |
         reason: '终态项目下主合同不能生效',
       }
     }
+    if (contract.approvalSummary?.status === 'SUBMITTED') {
+      return {
+        visible: true,
+        disabled: true,
+        reason: '合同生效审批处理中',
+      }
+    }
     return { visible: true, disabled: false, reason: '' }
   }
   if (action === 'cancel') {
@@ -333,11 +340,24 @@ async function confirmContractAction() {
       ...(reasonRequired ? { reason: actionDialog.reason.trim() } : {}),
     }
     if (actionDialog.action === 'activate') {
-      await documentPlatformApi.approvals.submitSalesProjectContractActivation(detail.value.id, {
+      const approval = await documentPlatformApi.approvals.submitSalesProjectContractActivation(detail.value.id, {
         version: detail.value.version,
         reason: actionDialog.reason.trim(),
         idempotencyKey: createIdempotencyKey('contract-approval'),
       })
+      detail.value = {
+        ...detail.value,
+        approvalSummary: {
+          id: approval.id,
+          sceneCode: approval.sceneCode,
+          status: approval.status,
+          submittedAt: approval.submittedAt,
+          version: approval.version,
+        },
+      }
+      actionDialog.visible = false
+      emit('saved')
+      return
     } else if (actionDialog.action === 'close') {
       await salesProjectApi.contracts.close(detail.value.id, payload)
     } else if (actionDialog.action === 'terminate') {
@@ -426,20 +446,20 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
       </dl>
       <template v-if="detail">
         <ApprovalStatusPanel
-          :approval-instance-id="detail.approvalInstanceId"
-          :approval-status="detail.approvalStatus"
-          :submitted-at="detail.approvalSubmittedAt"
+          :approval-instance-id="detail.approvalSummary?.id"
+          :approval-status="detail.approvalSummary?.status"
+          :submitted-at="detail.approvalSummary?.submittedAt"
         />
         <AttachmentPanel
           title="合同附件"
           object-type="SALES_PROJECT_CONTRACT"
           :object-id="detail.id"
-          :readonly="detail.approvalStatus === 'SUBMITTED'"
+          :readonly="detail.approvalSummary?.status === 'SUBMITTED'"
         />
         <PrintAction
           title="合同生效审批单"
           scene-code="SALES_PROJECT_CONTRACT_ACTIVATION"
-          :approval-instance-id="detail.approvalInstanceId"
+          :approval-instance-id="detail.approvalSummary?.id"
         />
       </template>
     </div>
@@ -519,7 +539,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
           :rows="3"
           maxlength="200"
           show-word-limit
-          placeholder="可填写提交说明"
+          placeholder="请填写审批提交原因（必填）"
           aria-label="审批提交原因"
         />
       </div>

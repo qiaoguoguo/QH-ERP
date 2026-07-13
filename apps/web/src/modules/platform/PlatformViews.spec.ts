@@ -138,6 +138,7 @@ describe('022 平台页面', () => {
     documentPlatformApiMock.approvals.get.mockResolvedValue({
       id: 3,
       taskId: 701,
+      taskVersion: 16,
       sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
       objectType: 'SALES_PROJECT_CONTRACT',
       objectId: 55,
@@ -148,7 +149,7 @@ describe('022 平台页面', () => {
       submittedAt: '2026-07-13T10:00:00+08:00',
       version: 6,
       availableActions: ['APPROVE', 'REJECT', 'WITHDRAW', 'CANCEL'],
-      steps: [{ taskId: 701, stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve' }],
+      steps: [{ taskId: 701, stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve', version: 16 }],
       histories: [{ action: 'SUBMIT', operatorName: '销售', operatedAt: '2026-07-13T10:00:00+08:00', comment: '提交' }],
       attachmentSnapshots: [],
     })
@@ -175,7 +176,7 @@ describe('022 平台页面', () => {
       unreadCount: 1,
     })
     documentPlatformApiMock.messages.markRead.mockResolvedValue({ id: 11, status: 'READ' })
-    documentPlatformApiMock.messages.markAllRead.mockResolvedValue({ unreadCount: 0 })
+    documentPlatformApiMock.messages.markAllRead.mockResolvedValue({ updatedCount: 1 })
     documentPlatformApiMock.documentTasks.list.mockResolvedValue({
       items: [{
         id: 91,
@@ -233,10 +234,9 @@ describe('022 平台页面', () => {
     documentPlatformApiMock.printTemplates.list.mockResolvedValue([
       {
         templateCode: 'CONTRACT_ACTIVATION_APPROVAL_V1',
-        templateName: '合同生效审批单',
+        name: '合同生效审批单',
         templateVersion: 1,
         sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
-        enabled: true,
       },
     ])
     documentPlatformApiMock.printPreviews.get.mockResolvedValue({
@@ -279,7 +279,7 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="approve-task"]').trigger('click')
     await flushPromises()
     expect(documentPlatformApiMock.approvalTasks.approve).toHaveBeenCalledWith(701, {
-      version: 6,
+      version: 16,
       comment: '同意生效',
       idempotencyKey: expect.any(String),
     })
@@ -294,8 +294,8 @@ describe('022 平台页面', () => {
     await rejectWrapper.find('[data-test="reject-task"]').trigger('click')
     await flushPromises()
     expect(documentPlatformApiMock.approvalTasks.reject).toHaveBeenCalledWith(701, {
-      version: 6,
-      reason: '合同金额需调整',
+      version: 16,
+      comment: '合同金额需调整',
       idempotencyKey: expect.any(String),
     })
 
@@ -308,7 +308,7 @@ describe('022 平台页面', () => {
     await flushPromises()
     expect(documentPlatformApiMock.approvals.withdraw).toHaveBeenCalledWith(3, {
       version: 6,
-      reason: '补充附件',
+      comment: '补充附件',
       idempotencyKey: expect.any(String),
     })
 
@@ -321,9 +321,25 @@ describe('022 平台页面', () => {
     await flushPromises()
     expect(documentPlatformApiMock.approvals.cancel).toHaveBeenCalledWith(3, {
       version: 6,
-      reason: '对象已失效',
+      comment: '对象已失效',
       idempotencyKey: expect.any(String),
     })
+  })
+
+  it('审批任务动作并发过期后清除旧动作并提示刷新', async () => {
+    documentPlatformApiMock.approvalTasks.approve.mockRejectedValueOnce(new Error('审批已过期需刷新'))
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="approval-comment"]').setValue('同意生效')
+    await wrapper.find('[data-test="approve-task"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('已过期需刷新')
+    expect(wrapper.find('[data-test="approve-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="reject-task"]').exists()).toBe(false)
   })
 
   it('审批详情缺少 taskId 时隐藏通过和驳回，且不退回使用实例 id', async () => {
@@ -381,7 +397,7 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.messages.markAllRead).toHaveBeenCalled()
   })
 
-  it('任务中心展示任务阶段、进度、失败分页、确认入库和下载动作', async () => {
+  it('任务中心展示任务阶段、进度、失败分页、确认导入和下载动作', async () => {
     documentPlatformApiMock.documentTasks.list.mockResolvedValueOnce({
       items: [{
         id: 91,
@@ -412,6 +428,8 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.documentTasks.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 10 }))
     expect(wrapper.text()).toContain('物料导入')
     expect(wrapper.text()).toContain('待确认')
+    expect(wrapper.text()).toContain('确认导入')
+    expect(wrapper.text()).not.toContain('确认入库')
     expect(wrapper.text()).not.toContain('部分成功')
 
     await clickButtonByTest(wrapper, 'confirm-document-task')
@@ -434,6 +452,30 @@ describe('022 平台页面', () => {
     )
     await flushPromises()
     expect(documentPlatformApiMock.documentTasks.download).toHaveBeenCalledWith(91)
+  })
+
+  it('任务中心错误明细只由 ERRORS 动作控制，不能用错误数兜底显示', async () => {
+    documentPlatformApiMock.documentTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 94,
+        taskNo: 'TASK-004',
+        taskType: 'MATERIAL_IMPORT',
+        direction: 'IMPORT',
+        stage: 'VALIDATE',
+        status: 'VALIDATION_FAILED',
+        totalRows: 2,
+        failedRows: 2,
+        availableActions: [],
+        version: 3,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    const wrapper = mountWithAuth(DocumentTaskCenterView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="view-task-errors"]').exists()).toBe(false)
   })
 
   it('任务中心会轮询所有当前可见的非终态任务', async () => {
@@ -484,6 +526,36 @@ describe('022 平台页面', () => {
     expect(wrapper.find('[data-test="delete-attachment"]').exists()).toBe(true)
   })
 
+  it('附件面板缺少 availableActions 时默认不展示下载或删除动作', async () => {
+    documentPlatformApiMock.attachments.list.mockResolvedValueOnce({
+      items: [{
+        id: 6,
+        objectType: 'SALES_PROJECT_CONTRACT',
+        objectId: 55,
+        fileName: '受限附件.pdf',
+        fileSize: 1024,
+        contentType: 'application/pdf',
+        uploadedByName: '管理员',
+        uploadedAt: '2026-07-13T10:00:00+08:00',
+        status: 'AVAILABLE',
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 20,
+    })
+    const wrapper = mountWithAuth(AttachmentPanel, [
+      'platform:attachment:view',
+      'platform:attachment:download',
+      'platform:attachment:delete',
+    ], { objectType: 'SALES_PROJECT_CONTRACT', objectId: 55, title: '合同附件' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('受限附件.pdf')
+    expect(wrapper.find('[data-test="download-attachment"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="delete-attachment"]').exists()).toBe(false)
+  })
+
   it('打印入口按 sceneCode 查询模板，必须先预览再创建 PDF 任务', async () => {
     const wrapper = mountWithAuth(PrintAction, undefined, {
       sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
@@ -495,6 +567,8 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.printTemplates.list).toHaveBeenCalledWith({
       sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
     })
+    expect(buttonByTest(wrapper, 'preview-print').props().disabled).toBe(false)
+    expect(wrapper.text()).toContain('预览 合同生效审批单')
 
     await clickButtonByTest(wrapper, 'preview-print')
     expect(documentPlatformApiMock.printPreviews.get).toHaveBeenCalledWith(3)
