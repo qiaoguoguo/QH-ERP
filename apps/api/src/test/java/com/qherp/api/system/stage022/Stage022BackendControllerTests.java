@@ -371,6 +371,101 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void messagesRequireRelatedBusinessObjectPermissionForListReadAndReadAll() throws Exception {
+		AuthenticatedSession contractDenied = createUserAndLogin("stage022-msg-contract-denied", "S22_MSG_CON_DENIED",
+				List.of("platform:message:view", "platform:message:read"));
+		long contractDeniedUserId = userId("stage022-msg-contract-denied" + SEQUENCE.get());
+		long contractMessageId = insertMessage(contractDeniedUserId, "合同审批结果", "敏感合同 C-022",
+				"APPROVAL_DONE", "SALES_PROJECT_CONTRACT", 920001L);
+		JsonNode deniedContractPage = data(get(contractDenied,
+				"/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(deniedContractPage.get("total").longValue()).isZero();
+		assertThat(deniedContractPage.get("items")).isEmpty();
+		assertError(put(contractDenied, "/api/admin/messages/" + contractMessageId + "/read", Map.of("version", 0)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		JsonNode contractReadAll = data(put(contractDenied, "/api/admin/messages/read-all", Map.of()));
+		assertThat(contractReadAll.get("updatedCount").intValue()).isZero();
+		assertThat(messageStatus(contractMessageId)).isEqualTo("UNREAD");
+
+		AuthenticatedSession projectOnly = createUserAndLogin("stage022-msg-contract-project-only",
+				"S22_MSG_CON_PROJECT_ONLY", List.of("platform:message:view", "platform:message:read",
+						"sales:project:view"));
+		long projectOnlyUserId = userId("stage022-msg-contract-project-only" + SEQUENCE.get());
+		long projectOnlyContractMessageId = insertMessage(projectOnlyUserId, "合同审批项目可见但合同不可见", "合同摘要",
+				"APPROVAL_DONE", "SALES_PROJECT_CONTRACT", 920002L);
+		JsonNode projectOnlyPage = data(get(projectOnly,
+				"/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(projectOnlyPage.get("total").longValue()).isZero();
+		assertThat(projectOnlyPage.get("items")).isEmpty();
+		assertError(put(projectOnly, "/api/admin/messages/" + projectOnlyContractMessageId + "/read",
+				Map.of("version", 0)), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		JsonNode projectOnlyReadAll = data(put(projectOnly, "/api/admin/messages/read-all", Map.of()));
+		assertThat(projectOnlyReadAll.get("updatedCount").intValue()).isZero();
+		assertThat(messageStatus(projectOnlyContractMessageId)).isEqualTo("UNREAD");
+
+		AuthenticatedSession contractAllowed = createUserAndLogin("stage022-msg-contract-allowed",
+				"S22_MSG_CON_ALLOW", List.of("platform:message:view", "platform:message:read",
+						"sales:contract:view"));
+		long contractAllowedUserId = userId("stage022-msg-contract-allowed" + SEQUENCE.get());
+		long allowedContractMessageId = insertMessage(contractAllowedUserId, "合同审批可见", "合同摘要",
+				"APPROVAL_DONE", "SALES_PROJECT_CONTRACT", 920003L);
+		JsonNode allowedContractPage = data(get(contractAllowed,
+				"/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(allowedContractPage.get("total").longValue()).isOne();
+		assertThat(allowedContractPage.get("items").get(0).get("id").longValue())
+			.isEqualTo(allowedContractMessageId);
+		assertThat(data(put(contractAllowed, "/api/admin/messages/" + allowedContractMessageId + "/read",
+				Map.of("version", 0))).get("status").asText()).isEqualTo("READ");
+
+		AuthenticatedSession ecoDenied = createUserAndLogin("stage022-msg-eco-denied", "S22_MSG_ECO_DENIED",
+				List.of("platform:message:view", "platform:message:read"));
+		long ecoDeniedUserId = userId("stage022-msg-eco-denied" + SEQUENCE.get());
+		insertMessage(ecoDeniedUserId, "ECO 审批结果", "敏感 ECO", "APPROVAL_DONE",
+				"BOM_ENGINEERING_CHANGE", 930001L);
+		JsonNode deniedEcoPage = data(get(ecoDenied, "/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(deniedEcoPage.get("total").longValue()).isZero();
+
+		AuthenticatedSession ecoAllowed = createUserAndLogin("stage022-msg-eco-allowed", "S22_MSG_ECO_ALLOW",
+				List.of("platform:message:view", "platform:message:read", "material:bom-eco:view"));
+		long ecoAllowedUserId = userId("stage022-msg-eco-allowed" + SEQUENCE.get());
+		long ecoMessageId = insertMessage(ecoAllowedUserId, "ECO 审批可见", "ECO 摘要", "APPROVAL_DONE",
+				"BOM_ENGINEERING_CHANGE", 930002L);
+		JsonNode allowedEcoPage = data(get(ecoAllowed, "/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(allowedEcoPage.get("total").longValue()).isOne();
+		assertThat(allowedEcoPage.get("items").get(0).get("id").longValue()).isEqualTo(ecoMessageId);
+
+		AuthenticatedSession documentDenied = createUserAndLogin("stage022-msg-doc-denied", "S22_MSG_DOC_DENIED",
+				List.of("platform:message:view", "platform:message:read", "platform:document-task:view"));
+		long documentDeniedUserId = userId("stage022-msg-doc-denied" + SEQUENCE.get());
+		long materialTaskId = insertDocumentTask(documentDeniedUserId, "MATERIAL_EXPORT");
+		insertMessage(documentDeniedUserId, "导出完成", "物料导出结果", "DOCUMENT_TASK_SUCCEEDED",
+				"DOCUMENT_TASK", materialTaskId);
+		JsonNode deniedDocumentPage = data(get(documentDenied,
+				"/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(deniedDocumentPage.get("total").longValue()).isZero();
+
+		AuthenticatedSession documentAllowed = createUserAndLogin("stage022-msg-doc-allowed", "S22_MSG_DOC_ALLOW",
+				List.of("platform:message:view", "platform:message:read", "platform:document-task:view",
+						"master:material:export"));
+		long documentAllowedUserId = userId("stage022-msg-doc-allowed" + SEQUENCE.get());
+		long allowedMaterialTaskId = insertDocumentTask(documentAllowedUserId, "MATERIAL_EXPORT");
+		long documentMessageId = insertMessage(documentAllowedUserId, "导出可见", "物料导出结果",
+				"DOCUMENT_TASK_SUCCEEDED", "DOCUMENT_TASK", allowedMaterialTaskId);
+		JsonNode allowedDocumentPage = data(get(documentAllowed,
+				"/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(allowedDocumentPage.get("total").longValue()).isOne();
+		assertThat(allowedDocumentPage.get("items").get(0).get("id").longValue()).isEqualTo(documentMessageId);
+
+		AuthenticatedSession unknownTarget = createUserAndLogin("stage022-msg-unknown", "S22_MSG_UNKNOWN",
+				List.of("platform:message:view", "platform:message:read", "sales:project:view",
+						"material:bom-eco:view", "platform:document-task:view", "master:material:export"));
+		long unknownTargetUserId = userId("stage022-msg-unknown" + SEQUENCE.get());
+		insertMessage(unknownTargetUserId, "未知目标", "不应泄露", "SYSTEM", "UNKNOWN_TARGET", 940001L);
+		JsonNode unknownPage = data(get(unknownTarget, "/api/admin/messages/my?unreadOnly=false&page=1&pageSize=20"));
+		assertThat(unknownPage.get("total").longValue()).isZero();
+	}
+
+	@Test
 	void materialImportConfirmUsesQueuedWorkerAndIdempotencyWithoutDuplicateCreate() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long unitId = createUnit(admin, "S22_IMP_UNIT_" + SEQUENCE.incrementAndGet(), "二十二导入单位");
@@ -751,6 +846,30 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				"failing-export-" + SEQUENCE.incrementAndGet(), userId);
 	}
 
+	private long insertDocumentTask(long userId, String taskType) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into platform_document_task (
+					task_no, task_type, stage, status, request_payload, idempotency_key, created_by_user_id,
+					created_by_username, next_run_at, created_at
+				)
+				values (?, ?, 'EXPORT', 'SUCCEEDED', cast(? as jsonb), ?, ?, 'message-owner', now(), now())
+				returning id
+				""", Long.class, "S22MSG" + SEQUENCE.incrementAndGet(), taskType, "{}",
+				"message-task-" + SEQUENCE.incrementAndGet(), userId);
+	}
+
+	private long insertMessage(long recipientUserId, String title, String content, String messageType,
+			String relatedObjectType, Long relatedObjectId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into platform_message (
+					recipient_user_id, title, content, message_type, status, related_object_type,
+					related_object_id, created_at
+				)
+				values (?, ?, ?, ?, 'UNREAD', ?, ?, now())
+				returning id
+				""", Long.class, recipientUserId, title, content, messageType, relatedObjectType, relatedObjectId);
+	}
+
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,
 			List<String> permissionCodes) {
 		int suffix = SEQUENCE.incrementAndGet();
@@ -844,6 +963,11 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 				where recipient_user_id = ?
 				and message_type = ?
 				""", Long.class, recipientUserId, messageType)).as(messageType).isPositive();
+	}
+
+	private String messageStatus(long messageId) {
+		return this.jdbcTemplate.queryForObject("select status from platform_message where id = ?", String.class,
+				messageId);
 	}
 
 	private boolean containsId(JsonNode items, long id) {

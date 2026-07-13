@@ -276,7 +276,7 @@ public class PlatformApprovalService {
 			recordHistory(id, "SUBMIT", operator, request.reason());
 			this.auditService.record(operator, "APPROVAL_SUBMIT", APPROVAL_TARGET, id,
 					sceneCode + ":" + object.businessObjectNo(), servletRequest);
-			notifyCandidateUsers(definition.candidatePermissionCode(), object);
+			notifyCandidateUsers(definition.candidatePermissionCode(), definition.businessObjectType(), object);
 			return instance(id);
 		}
 		catch (DuplicateKeyException exception) {
@@ -492,7 +492,7 @@ public class PlatformApprovalService {
 				""", instanceId, action, operator.id(), operator.username(), trimToNull(comment), OffsetDateTime.now());
 	}
 
-	private void notifyCandidateUsers(String permissionCode, BusinessObjectSnapshot object) {
+	private void notifyCandidateUsers(String permissionCode, String businessObjectType, BusinessObjectSnapshot object) {
 		List<Long> userIds = this.jdbcTemplate.query("""
 				select distinct u.id
 				from sys_user u
@@ -504,7 +504,7 @@ public class PlatformApprovalService {
 				and p.code = ?
 				""", (rs, rowNum) -> rs.getLong("id"), permissionCode);
 		for (Long userId : userIds) {
-			createMessage(userId, "新的审批待办", object.summary(), "APPROVAL_TODO", null, object.id());
+			createMessage(userId, "新的审批待办", object.summary(), "APPROVAL_TODO", businessObjectType, object.id());
 		}
 	}
 
