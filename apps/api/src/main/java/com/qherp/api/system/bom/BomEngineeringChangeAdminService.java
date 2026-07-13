@@ -6,8 +6,10 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.master.UnitConversionAdminService;
+import com.qherp.api.system.platform.ApprovalExecutionContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -31,9 +33,17 @@ public class BomEngineeringChangeAdminService {
 
 	private final AuditService auditService;
 
-	public BomEngineeringChangeAdminService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final ApprovalExecutionContext approvalExecutionContext;
+
+	private final boolean enforceApprovalDirectActions;
+
+	public BomEngineeringChangeAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			ApprovalExecutionContext approvalExecutionContext,
+			@Value("${qherp.platform.approval.enforce-direct-actions:true}") boolean enforceApprovalDirectActions) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.approvalExecutionContext = approvalExecutionContext;
+		this.enforceApprovalDirectActions = enforceApprovalDirectActions;
 	}
 
 	@Transactional(readOnly = true)
@@ -129,6 +139,10 @@ public class BomEngineeringChangeAdminService {
 	@Transactional
 	public EngineeringChangeRecord apply(Long id, VersionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		if (this.enforceApprovalDirectActions
+				&& !this.approvalExecutionContext.allows("BOM_ECO_APPLICATION", id)) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_REQUIRED);
+		}
 		EngineeringChangeRow eco = lockRow(id).orElseThrow(this::notFound);
 		requireVersion(eco.version(), request == null ? null : request.version());
 		if (!"DRAFT".equals(eco.status())) {
@@ -163,6 +177,13 @@ public class BomEngineeringChangeAdminService {
 		EngineeringChangeRecord applied = get(id);
 		return applied.withStates(sourceBefore, bomState(eco.sourceBomId()).orElseThrow(), targetBefore,
 				bomState(eco.targetBomId()).orElseThrow());
+	}
+
+	@Transactional
+	public EngineeringChangeRecord applyFromApproval(Long id, VersionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		return this.approvalExecutionContext.run("BOM_ECO_APPLICATION", id,
+				() -> apply(id, request, operator, servletRequest));
 	}
 
 	@Transactional

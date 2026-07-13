@@ -24,7 +24,10 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-		properties = "qherp.test.context=stage021-backend")
+		properties = {
+				"qherp.test.context=stage021-backend",
+				"qherp.platform.approval.enforce-direct-actions=false"
+		})
 @AutoConfigureTestRestTemplate
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class Stage021BackendControllerTests extends PostgresIntegrationTest {

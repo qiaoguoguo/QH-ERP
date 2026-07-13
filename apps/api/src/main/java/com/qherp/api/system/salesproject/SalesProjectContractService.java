@@ -5,8 +5,10 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
+import com.qherp.api.system.platform.ApprovalExecutionContext;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -38,9 +40,17 @@ public class SalesProjectContractService {
 
 	private final AuditService auditService;
 
-	public SalesProjectContractService(JdbcTemplate jdbcTemplate, AuditService auditService) {
+	private final ApprovalExecutionContext approvalExecutionContext;
+
+	private final boolean enforceApprovalDirectActions;
+
+	public SalesProjectContractService(JdbcTemplate jdbcTemplate, AuditService auditService,
+			ApprovalExecutionContext approvalExecutionContext,
+			@Value("${qherp.platform.approval.enforce-direct-actions:true}") boolean enforceApprovalDirectActions) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
+		this.approvalExecutionContext = approvalExecutionContext;
+		this.enforceApprovalDirectActions = enforceApprovalDirectActions;
 	}
 
 	@Transactional(readOnly = true)
@@ -139,6 +149,10 @@ public class SalesProjectContractService {
 	@Transactional
 	public ContractResponse activate(Long id, VersionedActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		if (this.enforceApprovalDirectActions
+				&& !this.approvalExecutionContext.allows("SALES_PROJECT_CONTRACT_ACTIVATION", id)) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_REQUIRED);
+		}
 		ContractRow snapshot = contractRow(id).orElseThrow(() -> new BusinessException(ApiErrorCode.CONTRACT_NOT_FOUND));
 		ProjectState project = lockProject(snapshot.projectId())
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
@@ -168,6 +182,13 @@ public class SalesProjectContractService {
 		this.auditService.record(operator, "SALES_PROJECT_CONTRACT_ACTIVATE", CONTRACT_TARGET, id,
 				"合同生效", servletRequest);
 		return get(id);
+	}
+
+	@Transactional
+	public ContractResponse activateFromApproval(Long id, VersionedActionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		return this.approvalExecutionContext.run("SALES_PROJECT_CONTRACT_ACTIVATION", id,
+				() -> activate(id, request, operator, servletRequest));
 	}
 
 	@Transactional

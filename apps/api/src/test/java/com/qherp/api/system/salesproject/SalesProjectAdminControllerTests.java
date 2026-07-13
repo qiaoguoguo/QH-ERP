@@ -32,7 +32,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-		properties = "qherp.test.context=sales-project-admin")
+		properties = {
+				"qherp.test.context=sales-project-admin",
+				"qherp.platform.approval.enforce-direct-actions=false"
+		})
 @AutoConfigureTestRestTemplate
 @DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class SalesProjectAdminControllerTests extends PostgresIntegrationTest {

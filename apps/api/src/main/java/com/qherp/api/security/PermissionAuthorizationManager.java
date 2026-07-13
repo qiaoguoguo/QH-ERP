@@ -65,6 +65,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "business:reversal:view";
 		}
 
+		String platformPermissionCode = platformPermissionCode(method, path);
+		if (platformPermissionCode != null) {
+			return platformPermissionCode;
+		}
+
 		String businessPeriodPermissionCode = businessPeriodPermissionCode(method, path);
 		if (businessPeriodPermissionCode != null) {
 			return businessPeriodPermissionCode;
@@ -175,6 +180,98 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "system:audit:view";
 		}
 
+		return null;
+	}
+
+	private String platformPermissionCode(String method, String path) {
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/approvals/sales-project-contract-activation") + "/\\d+/submit")) {
+			return "sales:contract:activate";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/approvals/bom-eco-application") + "/\\d+/submit")) {
+			return "material:bom-eco:apply";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/approvals")) {
+			return "platform:approval:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/approvals") + "/\\d+/cancel")) {
+			return "platform:approval:cancel";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/approvals") + "/\\d+/withdraw")) {
+			return "platform:approval:view";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/approval-tasks")) {
+			return "platform:todo:view";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/approval-tasks") + "/\\d+/(approve|reject)")) {
+			return "platform:todo:view";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/messages")) {
+			return "platform:message:view";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote("/api/admin/messages") + "/\\d+/read")) {
+			return "platform:message:read";
+		}
+		if ("PUT".equals(method) && "/api/admin/messages/read-all".equals(path)) {
+			return "platform:message:read";
+		}
+		if (matchesBasePath(path, "/api/admin/attachments")) {
+			if ("POST".equals(method) && "/api/admin/attachments".equals(path)) {
+				return "platform:attachment:upload";
+			}
+			if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/attachments") + "/\\d+/download")) {
+				return "platform:attachment:download";
+			}
+			if ("PUT".equals(method) && path.matches(Pattern.quote("/api/admin/attachments") + "/\\d+/delete")) {
+				return "platform:attachment:delete";
+			}
+			if ("GET".equals(method)) {
+				return "platform:attachment:view";
+			}
+		}
+		if ("POST".equals(method) && matchesBasePath(path, "/api/admin/imports/materials")) {
+			return "master:material:import";
+		}
+		if ("POST".equals(method) && matchesBasePath(path, "/api/admin/imports/bom-drafts")) {
+			return "material:bom:import";
+		}
+		if ("GET".equals(method) && "/api/admin/import-templates/materials".equals(path)) {
+			return "master:material:import";
+		}
+		if ("GET".equals(method) && "/api/admin/import-templates/bom-drafts".equals(path)) {
+			return "material:bom:import";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/imports") + "/\\d+/confirm")) {
+			return "platform:document-task:view";
+		}
+		if ("POST".equals(method) && "/api/admin/exports/materials".equals(path)) {
+			return "master:material:export";
+		}
+		if ("POST".equals(method) && matchesBasePath(path, "/api/admin/exports/bom-drafts")) {
+			return "material:bom:export";
+		}
+		if (matchesBasePath(path, "/api/admin/document-tasks")) {
+			if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/document-tasks") + "/\\d+/download")) {
+				return "platform:document-task:download";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/document-tasks") + "/\\d+/cancel")) {
+				return "platform:document-task:cancel";
+			}
+			if ("GET".equals(method)) {
+				return "platform:document-task:view";
+			}
+		}
+		if ("GET".equals(method) && "/api/admin/print-templates".equals(path)) {
+			return "platform:print:generate";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/print-previews") + "/\\d+")) {
+			return "platform:print:generate";
+		}
+		if ("POST".equals(method) && "/api/admin/print-tasks".equals(path)) {
+			return "platform:print:generate";
+		}
 		return null;
 	}
 
