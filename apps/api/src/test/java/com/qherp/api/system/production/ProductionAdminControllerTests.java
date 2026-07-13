@@ -512,6 +512,26 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void createAndReleaseWorkOrderAllowsBomWithOpenStartAndOpenEnd() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		LocalDate plannedStart = LocalDate.of(2098, 7, 13);
+		setBomEffectiveRange(fixture.bomId(), null, null);
+		ensureReleaseStock(fixture, "1.000000");
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000", plannedStart,
+				plannedStart.plusDays(1));
+
+		ResponseEntity<String> released = releaseWorkOrder(admin, workOrderId);
+
+		assertOk(released);
+		JsonNode releasedData = data(released);
+		assertThat(releasedData.get("status").asText()).isEqualTo("RELEASED");
+		assertThat(releasedData.get("materials")).hasSize(2);
+		assertThat(workOrderMaterialCount(workOrderId)).isEqualTo(2);
+	}
+
+	@Test
 	void updateDraftWorkOrderRejectsBomOutsideChangedPlannedStartDate() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
@@ -544,6 +564,60 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		assertError(releaseWorkOrder(admin, workOrderId), HttpStatus.CONFLICT,
 				"PRODUCTION_BOM_EFFECTIVE_DATE_INVALID");
 		assertThat(workOrderMaterialCount(workOrderId)).isZero();
+	}
+
+	@Test
+	void releasedWorkOrderMaterialSnapshotSurvivesBomEffectiveRangeAndItemChanges() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		LocalDate plannedStart = LocalDate.of(2099, 2, 18);
+		setBomEffectiveRange(fixture.bomId(), plannedStart.minusDays(1), plannedStart.plusDays(1));
+		ensureReleaseStock(fixture, "1.000000");
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000", plannedStart,
+				plannedStart.plusDays(1));
+		JsonNode releasedData = data(releaseWorkOrder(admin, workOrderId));
+		JsonNode releasedRawRequirement = workOrderMaterial(releasedData, fixture.rawMaterialId());
+		JsonNode releasedAuxiliaryRequirement = workOrderMaterial(releasedData, fixture.auxiliaryMaterialId());
+		assertDecimal(releasedRawRequirement, "requiredQuantity", "2.000000");
+		assertDecimal(releasedAuxiliaryRequirement, "requiredQuantity", "1.000000");
+		List<WorkOrderMaterialSnapshot> beforeSnapshots = workOrderMaterialSnapshots(workOrderId);
+
+		setBomEffectiveRange(fixture.bomId(), plannedStart.minusDays(30), plannedStart.minusDays(1));
+		setBomItemQuantity(fixture.bomId(), fixture.rawMaterialId(), "9.000000");
+
+		JsonNode workOrder = data(getWorkOrder(admin, workOrderId));
+		assertThat(workOrder.get("status").asText()).isEqualTo("RELEASED");
+		assertThat(workOrder.get("materials")).hasSize(2);
+		JsonNode rawRequirement = workOrderMaterial(workOrder, fixture.rawMaterialId());
+		JsonNode auxiliaryRequirement = workOrderMaterial(workOrder, fixture.auxiliaryMaterialId());
+		assertDecimal(rawRequirement, "requiredQuantity", "2.000000");
+		assertDecimal(auxiliaryRequirement, "requiredQuantity", "1.000000");
+		assertThat(workOrderMaterialSnapshots(workOrderId)).isEqualTo(beforeSnapshots);
+	}
+
+	@Test
+	void wrongParentBomKeepsInvalidErrorSemanticsAcrossWorkOrderEntrypoints() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		ProductionFixture wrongParentFixture = fixture(admin);
+
+		assertError(createWorkOrder(admin,
+				workOrderPayload(fixture.productMaterialId(), wrongParentFixture.bomId(), fixture.issueWarehouseId(),
+						fixture.receiptWarehouseId(), "1.000000")),
+				HttpStatus.BAD_REQUEST, "PRODUCTION_BOM_INVALID");
+
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		assertError(updateWorkOrder(admin, workOrderId,
+				workOrderPayload(fixture.productMaterialId(), wrongParentFixture.bomId(), fixture.issueWarehouseId(),
+						fixture.receiptWarehouseId(), "1.000000")),
+				HttpStatus.BAD_REQUEST, "PRODUCTION_BOM_INVALID");
+
+		long releaseWorkOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		setWorkOrderBom(releaseWorkOrderId, wrongParentFixture.bomId());
+		assertError(releaseWorkOrder(admin, releaseWorkOrderId), HttpStatus.BAD_REQUEST, "PRODUCTION_BOM_INVALID");
 	}
 
 	@Test
@@ -855,6 +929,24 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				""", effectiveFrom, effectiveTo, bomId);
 	}
 
+	private void setBomItemQuantity(long bomId, long materialId, String quantity) {
+		BigDecimal value = new BigDecimal(quantity);
+		this.jdbcTemplate.update("""
+				update mfg_bom_item
+				set quantity = ?, business_quantity = ?, base_quantity = ?, updated_at = now()
+				where bom_id = ?
+				and child_material_id = ?
+				""", value, value, value, bomId, materialId);
+	}
+
+	private void setWorkOrderBom(long workOrderId, long bomId) {
+		this.jdbcTemplate.update("""
+				update mfg_work_order
+				set bom_id = ?, updated_at = now(), version = version + 1
+				where id = ?
+				""", bomId, workOrderId);
+	}
+
 	private Map<String, Object> bomItem(int lineNo, long materialId, long unitId, String quantity) {
 		Map<String, Object> item = new LinkedHashMap<>();
 		item.put("lineNo", lineNo);
@@ -1161,6 +1253,19 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		Long count = this.jdbcTemplate.queryForObject(
 				"select count(*) from mfg_work_order_material where work_order_id = ?", Long.class, workOrderId);
 		return count == null ? 0L : count;
+	}
+
+	private List<WorkOrderMaterialSnapshot> workOrderMaterialSnapshots(long workOrderId) {
+		return this.jdbcTemplate.query("""
+				select material_id, required_quantity, business_quantity, base_required_quantity
+				from mfg_work_order_material
+				where work_order_id = ?
+				order by line_no
+				""",
+				(rs, rowNum) -> new WorkOrderMaterialSnapshot(rs.getLong("material_id"),
+						rs.getBigDecimal("required_quantity"), rs.getBigDecimal("business_quantity"),
+						rs.getBigDecimal("base_required_quantity")),
+				workOrderId);
 	}
 
 	private JsonNode materialIssueLine(JsonNode issue, long materialId) {
@@ -1555,6 +1660,10 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private record ProductionFixture(long unitId, long issueWarehouseId, long receiptWarehouseId, long categoryId,
 			long productMaterialId, long rawMaterialId, long auxiliaryMaterialId, long bomId) {
+	}
+
+	private record WorkOrderMaterialSnapshot(long materialId, BigDecimal requiredQuantity, BigDecimal businessQuantity,
+			BigDecimal baseRequiredQuantity) {
 	}
 
 	private record TrackedBatch(long batchId, String batchNo) {

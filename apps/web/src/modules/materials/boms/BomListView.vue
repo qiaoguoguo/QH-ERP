@@ -374,7 +374,7 @@ async function loadRecords() {
       status: filters.status,
       parentMaterialId: normalizeOptionalId(filters.parentMaterialId),
       ...(filters.effectiveDate ? { effectiveDate: filters.effectiveDate } : {}),
-      ...(filters.includeHistory ? { includeHistory: true } : {}),
+      includeHistory: filters.includeHistory,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })

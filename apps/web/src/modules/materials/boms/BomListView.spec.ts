@@ -495,6 +495,15 @@ describe('BOM 管理页', () => {
     const wrapper = mountBoms()
     await flushPromises()
 
+    expect(bomApiMock.list).toHaveBeenLastCalledWith({
+      keyword: '',
+      status: undefined,
+      parentMaterialId: undefined,
+      includeHistory: false,
+      page: 1,
+      pageSize: 10,
+    })
+
     await wrapper.find('input[name="bom-keyword"]').setValue('成品A')
     await setSelectValue(wrapper, 'filter-bom-status', 'DRAFT')
     await setSelectValue(wrapper, 'filter-bom-parent-material-id', 1)
@@ -506,6 +515,7 @@ describe('BOM 管理页', () => {
       keyword: '成品A',
       status: 'DRAFT',
       parentMaterialId: 1,
+      includeHistory: false,
       page: 1,
       pageSize: 10,
     })

@@ -36,6 +36,13 @@ const formSubmitting = ref(false)
 const bomLoading = ref(false)
 const bomOptionsLoading = ref(false)
 const bomSelectionWarning = ref('')
+const bomOptionsError = ref('')
+
+const BOM_EFFECTIVE_DATE_INVALID_MESSAGE = '所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期'
+const BOM_CANDIDATE_ERROR_PREFIX = 'BOM 候选加载失败：'
+
+let bomOptionsRequestId = 0
+let bomDetailRequestId = 0
 
 const form = reactive({
   productMaterialId: '' as ResourceId | '',
@@ -58,9 +65,13 @@ const availableBoms = computed(() => bomOptions.value)
 const hasBomContext = computed(() => Boolean(form.productMaterialId && form.plannedStartDate.trim()))
 const bomSelectDisabled = computed(() => !isDraftRecord.value || !hasBomContext.value)
 const bomSelectPlaceholder = computed(() => (hasBomContext.value ? '请选择有效 BOM' : '请先选择产品物料和计划开工日期'))
+const saveDisabled = computed(() => formSubmitting.value || !isDraftRecord.value || bomOptionsLoading.value || bomLoading.value)
 const bomSelectionHint = computed(() => {
   if (!isDraftRecord.value) {
     return ''
+  }
+  if (bomOptionsError.value) {
+    return bomOptionsError.value
   }
   if (bomSelectionWarning.value) {
     return bomSelectionWarning.value
@@ -91,6 +102,65 @@ function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
 
 function normalizeRequiredId(value: ResourceId | ''): ResourceId | null {
   return normalizeOptionalId(value) ?? null
+}
+
+function isBomScopedFormError() {
+  return formError.value === BOM_EFFECTIVE_DATE_INVALID_MESSAGE
+    || formError.value.startsWith(BOM_CANDIDATE_ERROR_PREFIX)
+}
+
+function clearBomScopedErrors() {
+  bomSelectionWarning.value = ''
+  bomOptionsError.value = ''
+  if (isBomScopedFormError()) {
+    formError.value = ''
+  }
+}
+
+function setBomSelectionInvalid() {
+  bomSelectionWarning.value = BOM_EFFECTIVE_DATE_INVALID_MESSAGE
+  bomOptionsError.value = ''
+  if (!formError.value || isBomScopedFormError()) {
+    formError.value = BOM_EFFECTIVE_DATE_INVALID_MESSAGE
+  }
+}
+
+function setBomOptionsError(caught: unknown) {
+  bomOptionsError.value = `${BOM_CANDIDATE_ERROR_PREFIX}${productionErrorMessage(caught)}`
+  bomSelectionWarning.value = ''
+  if (!formError.value || isBomScopedFormError()) {
+    formError.value = bomOptionsError.value
+  }
+}
+
+function isLatestBomOptionsRequest(requestId: number, productMaterialId: ResourceId, effectiveDate: string) {
+  return requestId === bomOptionsRequestId
+    && String(normalizeOptionalId(form.productMaterialId)) === String(productMaterialId)
+    && form.plannedStartDate.trim() === effectiveDate
+}
+
+function isLatestBomDetailRequest(requestId: number, bomId: ResourceId) {
+  return requestId === bomDetailRequestId && String(normalizeOptionalId(form.bomId)) === String(bomId)
+}
+
+function workOrderBomOption(detail: ProductionWorkOrderDetailRecord): BomSummaryRecord {
+  return {
+    id: detail.bomId,
+    bomCode: detail.bomCode,
+    parentMaterialId: detail.productMaterialId,
+    parentMaterialCode: detail.productMaterialCode,
+    parentMaterialName: detail.productMaterialName,
+    versionCode: detail.bomVersionCode,
+    name: detail.bomCode,
+    baseQuantity: '',
+    baseUnitId: '',
+    baseUnitName: '',
+    status: 'ENABLED',
+    effectiveFrom: null,
+    effectiveTo: null,
+    itemCount: detail.materials.length,
+    version: 0,
+  }
 }
 
 async function loadReferences() {
@@ -130,7 +200,11 @@ async function loadRecord() {
     form.issueWarehouseId = detail.issueWarehouseId
     form.receiptWarehouseId = detail.receiptWarehouseId
     form.remark = detail.remark ?? ''
-    await loadEffectiveBoms()
+    if (!isDraftRecord.value) {
+      bomOptions.value = [workOrderBomOption(detail)]
+    } else {
+      await loadEffectiveBoms()
+    }
     if (form.bomId) {
       await loadBomDetail(form.bomId)
     }
@@ -143,6 +217,7 @@ async function loadRecord() {
 }
 
 async function loadBomDetail(bomId: ResourceId | '') {
+  const requestId = ++bomDetailRequestId
   const normalizedBomId = normalizeOptionalId(bomId)
   selectedBomDetail.value = null
   if (normalizedBomId === undefined) {
@@ -150,11 +225,20 @@ async function loadBomDetail(bomId: ResourceId | '') {
   }
   bomLoading.value = true
   try {
-    selectedBomDetail.value = await bomApi.get(normalizedBomId)
+    const detail = await bomApi.get(normalizedBomId)
+    if (!isLatestBomDetailRequest(requestId, normalizedBomId)) {
+      return
+    }
+    selectedBomDetail.value = detail
+    clearBomScopedErrors()
   } catch (caught) {
-    formError.value = productionErrorMessage(caught)
+    if (isLatestBomDetailRequest(requestId, normalizedBomId)) {
+      formError.value = productionErrorMessage(caught)
+    }
   } finally {
-    bomLoading.value = false
+    if (requestId === bomDetailRequestId) {
+      bomLoading.value = false
+    }
   }
 }
 
@@ -163,11 +247,13 @@ function formatBomEffectiveRange(record: BomSummaryRecord) {
 }
 
 async function loadEffectiveBoms() {
+  const requestId = ++bomOptionsRequestId
   const productMaterialId = normalizeOptionalId(form.productMaterialId)
   const effectiveDate = form.plannedStartDate.trim()
-  bomSelectionWarning.value = ''
+  clearBomScopedErrors()
   if (productMaterialId === undefined || !effectiveDate) {
     bomOptions.value = []
+    bomOptionsLoading.value = false
     return
   }
 
@@ -181,26 +267,39 @@ async function loadEffectiveBoms() {
       page: 1,
       pageSize: 20,
     })
+    if (!isLatestBomOptionsRequest(requestId, productMaterialId, effectiveDate)) {
+      return
+    }
     const items = pageItems(page)
     bomOptions.value = items
     const selectedBomId = normalizeOptionalId(form.bomId)
     if (selectedBomId !== undefined && !items.some((item) => String(item.id) === String(selectedBomId))) {
       form.bomId = ''
       selectedBomDetail.value = null
-      bomSelectionWarning.value = '所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期'
-      formError.value = bomSelectionWarning.value
+      setBomSelectionInvalid()
     }
   } catch (caught) {
-    bomOptions.value = []
-    formError.value = productionErrorMessage(caught)
+    if (isLatestBomOptionsRequest(requestId, productMaterialId, effectiveDate)) {
+      bomOptions.value = []
+      setBomOptionsError(caught)
+    }
   } finally {
-    bomOptionsLoading.value = false
+    if (requestId === bomOptionsRequestId) {
+      bomOptionsLoading.value = false
+    }
   }
 }
 
 function clearSelectedBom() {
+  bomDetailRequestId += 1
   form.bomId = ''
   selectedBomDetail.value = null
+}
+
+function clearBomForContextChange() {
+  clearSelectedBom()
+  bomOptions.value = []
+  clearBomScopedErrors()
 }
 
 function validateForm(): ProductionWorkOrderPayload | null {
@@ -209,12 +308,24 @@ function validateForm(): ProductionWorkOrderPayload | null {
   const issueWarehouseId = normalizeRequiredId(form.issueWarehouseId)
   const receiptWarehouseId = normalizeRequiredId(form.receiptWarehouseId)
 
+  if (bomOptionsLoading.value || bomLoading.value) {
+    formError.value = 'BOM 信息加载中，请稍后保存'
+    return null
+  }
+  if (bomOptionsError.value) {
+    formError.value = bomOptionsError.value
+    return null
+  }
   if (bomSelectionWarning.value) {
     formError.value = bomSelectionWarning.value
     return null
   }
   if (productMaterialId === null || bomId === null || issueWarehouseId === null || receiptWarehouseId === null) {
     formError.value = '请完整选择产品物料、BOM、领料仓库和入库仓库'
+    return null
+  }
+  if (!availableBoms.value.some((item) => String(item.id) === String(bomId))) {
+    setBomSelectionInvalid()
     return null
   }
   if (!form.plannedStartDate.trim() || !form.plannedFinishDate.trim()) {
@@ -245,7 +356,7 @@ function validateForm(): ProductionWorkOrderPayload | null {
 }
 
 async function saveWorkOrder() {
-  if (formSubmitting.value) {
+  if (formSubmitting.value || bomOptionsLoading.value || bomLoading.value) {
     return
   }
   if (!isDraftRecord.value) {
@@ -286,22 +397,18 @@ function cancel() {
 }
 
 watch(() => form.productMaterialId, () => {
-  if (loadingRecord.value) {
+  if (loadingRecord.value || !isDraftRecord.value) {
     return
   }
-  if (isEdit.value && editingRecord.value && String(editingRecord.value.productMaterialId) === String(form.productMaterialId)) {
-    void loadEffectiveBoms()
-    return
-  }
-  clearSelectedBom()
+  clearBomForContextChange()
   void loadEffectiveBoms()
 })
 
 watch(() => form.plannedStartDate, () => {
-  if (loadingRecord.value) {
+  if (loadingRecord.value || !isDraftRecord.value) {
     return
   }
-  clearSelectedBom()
+  clearBomForContextChange()
   void loadEffectiveBoms()
 })
 
@@ -438,7 +545,7 @@ onMounted(async () => {
         data-test="save-production-work-order"
         type="primary"
         :loading="formSubmitting"
-        :disabled="formSubmitting || !isDraftRecord"
+        :disabled="saveDisabled"
         @click="saveWorkOrder"
       >
         保存

@@ -146,6 +146,45 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void enabledBomListFiltersByParentAndEffectiveDate() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		TestMaterials materials = createTestMaterials(admin, "T6_FILTER");
+
+		long historicalBomId = createBom(admin,
+				withEffectiveRange(
+						bomRequest("T6_FILTER_BOM_V0", materials.finishedGoodId(), "V0.9", "历史失效版本",
+								materials.unitEachId(),
+								List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 1, 0))),
+						"2026-06-01", "2026-06-30"));
+		enableBom(admin, historicalBomId);
+		long currentBomId = createBom(admin,
+				withEffectiveRange(
+						bomRequest("T6_FILTER_BOM_V1", materials.finishedGoodId(), "V1.0", "当前有效版本",
+								materials.unitEachId(),
+								List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 1, 0))),
+						"2026-07-01", "2026-07-31"));
+		enableBom(admin, currentBomId);
+		long futureBomId = createBom(admin,
+				withEffectiveRange(
+						bomRequest("T6_FILTER_BOM_V2", materials.finishedGoodId(), "V2.0", "未来生效版本",
+								materials.unitEachId(),
+								List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 1, 0))),
+						"2026-08-01", null));
+		enableBom(admin, futureBomId);
+		long wrongParentBomId = createBom(admin,
+				withEffectiveRange(
+						bomRequest("T6_FILTER_WRONG_PARENT", materials.semiFinishedId(), "V1.0", "错误父项版本",
+								materials.unitEachId(),
+								List.of(bomItem(10, materials.rawMaterialId(), materials.unitKgId(), 1, 0))),
+						"2026-07-01", "2026-07-31"));
+		enableBom(admin, wrongParentBomId);
+
+		assertSingleEffectiveBom(admin, materials.finishedGoodId(), "2026-06-13", historicalBomId, "T6_FILTER_BOM_V0");
+		assertSingleEffectiveBom(admin, materials.finishedGoodId(), "2026-07-13", currentBomId, "T6_FILTER_BOM_V1");
+		assertSingleEffectiveBom(admin, materials.finishedGoodId(), "2026-08-13", futureBomId, "T6_FILTER_BOM_V2");
+	}
+
+	@Test
 	void bomReferencesAndItemsMustBeValid() throws Exception {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		TestMaterials materials = createTestMaterials(admin, "T6_VALID");
@@ -333,6 +372,11 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 		return data(response).get("id").longValue();
 	}
 
+	private void enableBom(AuthenticatedSession admin, long bomId) throws Exception {
+		assertThat(exchange(HttpMethod.PUT, BOMS + "/" + bomId + "/enable",
+				versionBody(BOMS + "/" + bomId, admin), admin).getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
 	private Map<String, Object> materialRequest(String code, String name, String materialType, String sourceType,
 			long categoryId, long unitId, String status) {
 		Map<String, Object> request = new LinkedHashMap<>();
@@ -358,6 +402,23 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 		request.put("baseUnitId", baseUnitId);
 		request.put("effectiveFrom", "2026-07-03");
 		request.put("items", items);
+		return request;
+	}
+
+	private Map<String, Object> withEffectiveRange(Map<String, Object> request, String effectiveFrom,
+			String effectiveTo) {
+		if (effectiveFrom == null) {
+			request.remove("effectiveFrom");
+		}
+		else {
+			request.put("effectiveFrom", effectiveFrom);
+		}
+		if (effectiveTo == null) {
+			request.remove("effectiveTo");
+		}
+		else {
+			request.put("effectiveTo", effectiveTo);
+		}
 		return request;
 	}
 
@@ -491,6 +552,19 @@ class BomAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		return false;
+	}
+
+	private void assertSingleEffectiveBom(AuthenticatedSession admin, long parentMaterialId, String effectiveDate,
+			long expectedBomId, String expectedBomCode) throws Exception {
+		ResponseEntity<String> response = get(BOMS + "?status=ENABLED&parentMaterialId=" + parentMaterialId
+				+ "&effectiveDate=" + effectiveDate + "&page=1&pageSize=20", admin);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode page = data(response);
+		assertThat(page.get("total").longValue()).isEqualTo(1);
+		JsonNode items = page.get("items");
+		assertThat(items).hasSize(1);
+		assertThat(items.get(0).get("id").longValue()).isEqualTo(expectedBomId);
+		assertThat(items.get(0).get("bomCode").asText()).isEqualTo(expectedBomCode);
 	}
 
 	private String sessionCookie(ResponseEntity<String> response) {
