@@ -15,11 +15,12 @@
 
 - 阶段编号：`021`
 - 阶段名称：`成本财务主数据与 BOM 治理`
-- 当前状态：已完成实现、集中审查、集中整改、差异复审、交付前全量验证、桌面浏览器验收和相关页面视觉检验，并已纯快进合入 `main`、推送至 `origin/main`。
-- 当前分支：`codex/021-cost-financial-bom-governance`
+- 当前状态：021 原阶段已完成并进入 `main`；2026-07-13 发现 BOM 时效状态表达及生产工单按计划开工日期消费 BOM 的闭环缺陷，现已按阻断缺陷重新进入修复、审查和验证流程。
+- 当前分支：`codex/021-bom-effective-date-fix`
 - 权威输入：根目录 `AGENTS.md`、当前交接 `docs/handoffs/2026-07-12-project-handoff-current.md`、020 任务记录、020 实施计划、2026-07-13 固定五角色 021 讨论结论和用户最新指令。
 - 权威产物：本文件。后续固定角色实现、集中审查、定向复审和交付前全量验证均以本文件为唯一阶段输入。
-- 最终验证：后端 315/315、前端 82 个文件 648/648、类型检查、生产构建、空库 V1-V18、V17 存量升级、桌面浏览器业务验收和相关页面视觉检验全部通过；没有保存截图，没有执行移动端验收。
+- 原阶段最终验证：后端 315/315、前端 82 个文件 648/648、类型检查、生产构建、空库 V1-V18、V17 存量升级、桌面浏览器业务验收和相关页面视觉检验全部通过；没有保存截图，没有执行移动端验收。
+- 本次修复基线：受影响前端测试 27/27、受影响后端测试 22/22 通过；后端命令固定使用 JDK 21。本次修复尚未进入最终验证。
 
 ## 变更控制记录
 
@@ -31,6 +32,89 @@
 - 影响范围：`BomEngineeringChangePayload`、工程变更创建服务及测试、`BomDetailRecord`、BOM 详情页面及测试；不扩展审批、自动替代、库存计价或 022 以后范围。
 - 验收影响：创建前展示的工程变更编号必须与保存后记录一致且一次创建不重复占号；BOM 详情必须能追溯关联工程变更的新旧版本关系；相关权限、唯一冲突、版本并发和稳定错误语义继续由后端保证。
 - 决策依据：021 已确认的后端唯一编码原则、集中整改 `F-02`/`F-06`、产品与跨端差异复审证据，以及长期数据可追溯性与用户可预期性。
+
+### 2026-07-13：BOM 时效状态与生产工单消费闭环缺陷修复
+
+- 变更原因：验收库同一父项存在有效期不重叠的 V1 当前版本和 V2 未来版本，数据模型符合“同一业务日期只命中一个已发布 BOM”的规则；但 BOM 页面只显示“已发布”，生产工单又加载全部 `ENABLED` BOM，前后端均未按计划开工日期校验有效期，可能把未来或历史版本写入工单用料快照。
+- 缺陷等级：`BLOCKER`。错误 BOM 一旦随工单发布生成 `mfg_work_order_material` 快照，将影响核心生产数量与后续成本数据可信度；修复、复审和验证通过前不得将本分支合入 `main`。
+- 方案比较：仅改页面状态会留下后端绕过风险；仅加后端校验会继续给用户错误候选并在保存时才失败；最终采用“页面清晰表达 + 工单按业务日期查询 + 后端三处强校验”的双重防线。
+- 业务日期：生产工单选用 BOM 的业务日期固定为 `plannedStartDate`，不得使用当前日期、创建日期、发布日期或计划完工日期。
+- 日期规则：BOM 有效期继续使用闭区间；`effectiveFrom = null` 表示无限早，`effectiveTo = null` 表示无限未来。计划开工日期等于开始日或结束日均有效。
+- 状态口径：`DRAFT`、`ENABLED`、`DISABLED` 继续只表达发布生命周期；`ENABLED` 统一解释为“已发布”，不等同于“当前有效”。页面另行派生“当前有效、未来生效、历史失效、草稿未发布、已停用”，派生状态不落库。
+- 查询契约：生产工单沿用 `GET /api/admin/boms`，固定提交 `status=ENABLED`、`parentMaterialId`、`effectiveDate=plannedStartDate`、`page=1` 和受控 `pageSize`。服务层已有同父项同日期唯一命中约束，因此该查询最多返回一个有效版本，不新增候选接口或权限码。
+- 工单契约：新建和编辑时，未同时选择产品物料与计划开工日期不得选择 BOM；任一字段变化后重新查询并清理不再有效的 BOM。后端创建、更新、发布必须分别校验 BOM 已发布、父项匹配且计划开工日期落在有效期内；发布校验必须在锁定工单后、删除或生成用料快照前完成。
+- 错误语义：新增 `PRODUCTION_BOM_EFFECTIVE_DATE_INVALID`，HTTP `409`，文案为“所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期”。BOM 不存在、未发布或父项不匹配继续使用 `PRODUCTION_BOM_INVALID`。
+- 历史保护：既有草稿不批量改写，下次保存或发布时执行新规则；已发布、进行中、已完成、已取消工单及其用料快照不重算、不回写。无数据库结构变更，不新增 Flyway 迁移。
+- 页面范围：仅修改 `/materials/boms` 的发布状态/时效状态表达和已有有效日期筛选入口，以及生产工单创建/编辑表单的 BOM 查询、空态和错误提示；不扩展生产执行、自动排产、缺料净算、库存计价或后续阶段能力。
+- 验收影响：必须覆盖 V1 当前/V2 未来、历史失效、空起止日期、有效期首尾日、错误父项、草稿日期变化、发布前二次校验、无有效 BOM 空态、页面双状态表达及已发布工单快照保护。
+
+## 本次缺陷修复实施计划
+
+本计划是 021 唯一权威说明的一部分，不另建规格或实施计划文件。两个实现工作包可在接口和错误语义冻结后并行推进；每个工作包必须先写能稳定复现缺陷的失败测试，确认失败原因正确后再写实现。
+
+### 工作包一：后端工单 BOM 有效期完整性
+
+**所有权：** 后端开发固定角色；测试角色负责独立核对测试覆盖，前端开发固定角色负责交叉审查接口可消费性。
+
+**文件：**
+
+- 修改 `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`。
+- 修改 `apps/api/src/main/java/com/qherp/api/system/production/ProductionAdminService.java`。
+- 修改 `apps/api/src/test/java/com/qherp/api/system/production/ProductionAdminControllerTests.java`。
+
+**接口与实现约束：**
+
+- `BomRef` 增加 `LocalDate effectiveFrom`、`LocalDate effectiveTo`，`bomRef` 查询同步读取 `effective_from`、`effective_to`。
+- `validateBom` 调整为接收业务日期，或新增职责清晰的等价方法；闭区间判断固定为 `(effectiveFrom == null || !businessDate.isBefore(effectiveFrom)) && (effectiveTo == null || !businessDate.isAfter(effectiveTo))`。
+- `validateWorkOrderRequest` 必须先完成计划日期必填及先后关系校验，再按 `request.plannedStartDate()` 校验 BOM；创建和草稿更新共同走该逻辑。
+- `releaseWorkOrder` 必须按锁定工单的 `plannedStartDate` 再次校验 BOM，且校验位于 `delete from mfg_work_order_material` 之前。
+- 只有“BOM 存在、已发布、父项匹配，但业务日期不命中”返回 `PRODUCTION_BOM_EFFECTIVE_DATE_INVALID`；其他既有错误语义不得改变。
+
+**测试先行步骤：**
+
+1. 在 `ProductionAdminControllerTests` 先增加创建工单选择未来 BOM、历史 BOM 均返回新错误码的测试，并运行该测试确认旧实现错误地成功或返回错误语义。
+2. 增加 `plannedStartDate == effectiveFrom`、`plannedStartDate == effectiveTo`、空开始、空结束均允许的边界测试，确认旧实现不能证明日期规则。
+3. 增加草稿更新改变计划日期后拒绝原 BOM 的测试，以及草稿保存后有效期被截断、发布前拒绝且不生成用料快照的测试。
+4. 实现最小后端改动使上述红测转绿，同时保持错误父项、停用 BOM、空明细和既有发布快照测试通过。
+5. 定向运行 `BomAdminControllerTests,ProductionAdminControllerTests`；使用 `C:\Users\14567\.codex\jdks\jdk-21.0.11+10`，预期退出码 `0`。
+
+### 工作包二：BOM 时效表达与工单候选联动
+
+**所有权：** 前端开发固定角色；UI 设计师固定角色提供状态和空态约束，后端开发固定角色交叉审查请求参数与错误语义。
+
+**文件：**
+
+- 修改 `apps/web/src/modules/materials/boms/bomPageHelpers.ts`。
+- 新增 `apps/web/src/modules/materials/boms/bomPageHelpers.spec.ts`。
+- 修改 `apps/web/src/modules/materials/boms/BomListView.vue`。
+- 修改 `apps/web/src/modules/materials/boms/BomListView.spec.ts`。
+- 修改 `apps/web/src/modules/production/ProductionWorkOrderFormView.vue`。
+- 修改 `apps/web/src/modules/production/ProductionWorkOrderFormView.spec.ts`。
+- 如稳定错误文案映射需要，最小修改 `apps/web/src/modules/production/productionPageHelpers.ts` 及其对应测试。
+
+**接口与实现约束：**
+
+- 在 `bomPageHelpers.ts` 提供可测试的时效状态纯函数，输入发布状态、有效期和参考日期，输出 `CURRENT | FUTURE | EXPIRED | UNPUBLISHED | DISABLED`；页面文案分别为“当前有效、未来生效、历史失效、草稿未发布、已停用”。
+- BOM 列表保留现有“状态”列，并新增“时效状态”列；详情同时显示发布状态、时效状态和有效期。有效日期和包含历史使用已有查询字段，不改变路由。
+- `loadReferences` 只加载物料和仓库；BOM 由独立方法在产品物料和计划开工日期均存在时调用 `bomApi.list`，查询参数固定为 `status: 'ENABLED'`、`parentMaterialId`、`effectiveDate`、`page: 1`、`pageSize: 20`。
+- 新建工单中产品物料或计划开工日期变化时清空原 BOM 与明细预览并重新查询。编辑草稿加载详情后按保存的产品和日期查询；原 BOM 不再有效时清空选择、保留明确错误提示并阻止保存。
+- 未选择产品物料或计划开工日期时 BOM 控件禁用并提示“请先选择产品物料和计划开工日期”；查询无结果时提示该产品在所选计划开工日期无有效 BOM。
+- 候选项至少展示 BOM 编码、版本和有效期；错误必须显示在表单可见错误区域，不能只依赖瞬时消息。
+
+**测试先行步骤：**
+
+1. 新增 `bomPageHelpers.spec.ts`，固定参考日期验证当前、未来、历史、空起止、草稿和停用派生状态；先运行并确认函数缺失导致失败。
+2. 在 `BomListView.spec.ts` 增加发布状态与时效状态并列展示、有效日期筛选参数的测试；确认旧页面缺少时效状态而失败。
+3. 在 `ProductionWorkOrderFormView.spec.ts` 增加未选产品/日期时禁用、按父项和计划开工日期查询、字段变化清空旧 BOM、无候选空态、编辑态无效 BOM 阻止保存及后端 409 文案测试；确认旧实现继续加载全部 `ENABLED` BOM 而失败。
+4. 实现最小前端改动使红测转绿，不改变已发布工单只读快照展示。
+5. 定向运行 `BomListView.spec.ts`、`bomPageHelpers.spec.ts`、`ProductionWorkOrderFormView.spec.ts` 及受影响 helper 测试；随后运行 `npm run typecheck`，预期退出码均为 `0`。
+
+### 集中审查与验证
+
+- 产品经理核对业务日期、状态语义、既有草稿和历史工单处理；UI 设计师检查本阶段两个相关页面的桌面端状态、空态、错误和信息密度；前端与后端交叉审查非本人实现；测试角色核对边界、异常和回归覆盖。
+- 阻断和严重意见一次性合并整改；整改后只复审修复差异和受影响路径。
+- 交付前验证运行受影响后端测试、受影响前端测试、前端全量测试、类型检查和生产构建；本次不涉及迁移，若实现未新增迁移则不重复空库和存量库升级验证。
+- 真实桌面浏览器只验收 `/materials/boms` 的双状态表达与筛选，以及生产工单创建/编辑/发布的日期联动、无候选和错误路径；不保存截图，不执行移动端或窄屏验收。
 
 ## 阶段目标
 
