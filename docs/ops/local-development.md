@@ -15,12 +15,14 @@
 
 复制 `.env.example` 为 `.env` 后可按需调整本地数据库配置。默认值仅用于本地开发。
 
-## 启动本地 PostgreSQL
+## 启动本地 PostgreSQL 与 MinIO
 
 ```powershell
-docker compose up -d postgres
+docker compose up -d postgres minio
 docker compose ps
 ```
+
+PostgreSQL 默认监听主机端口 `15432`。MinIO S3 API 默认监听 `19000`，控制台监听 `19001`；bucket 由后端启动时按私有策略创建。以上仅表示依赖服务容器化，前后端和测试执行器仍运行在宿主机时不能表述为全容器隔离。
 
 ## 前端验证
 
@@ -79,7 +81,7 @@ cd apps/api
 .\mvnw.cmd spring-boot:run
 ```
 
-如果继续使用 Docker 化 JDK 21，可先启动 PostgreSQL，再运行：
+如果继续使用 Docker 化 JDK 21，可先启动 PostgreSQL 与 MinIO，再运行：
 
 ```powershell
 $api=(Resolve-Path 'apps/api').Path.Replace('\','/')
@@ -89,6 +91,9 @@ docker run --rm `
   -e QHERP_DATASOURCE_URL=jdbc:postgresql://host.docker.internal:15432/qherp `
   -e QHERP_DATASOURCE_USERNAME=qherp `
   -e QHERP_DATASOURCE_PASSWORD=qherp_dev_password `
+  -e QHERP_S3_ENDPOINT=http://host.docker.internal:19000 `
+  -e QHERP_S3_ACCESS_KEY=qherpminio `
+  -e QHERP_S3_SECRET_KEY=qherpminio123 `
   -v "${api}:/workspace" `
   -v qherp-maven-repo:/root/.m2 `
   -w /workspace `

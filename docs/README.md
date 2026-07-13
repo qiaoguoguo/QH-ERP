@@ -34,6 +34,8 @@
 - [库存可用量、占用、冻结与预留基础任务记录](tasks/018-inventory-availability-reservation-foundation.md)
 - [批次、序列号与来源去向追溯基础任务记录](tasks/019-batch-serial-trace-foundation.md)
 - [销售项目与合同管理基础任务记录](tasks/020-sales-project-contract-foundation.md)
+- [成本财务主数据与 BOM 治理任务记录](tasks/021-cost-financial-master-data-bom-governance.md)
+- [固定审批与业务单据平台基础任务记录](tasks/022-fixed-approval-document-platform.md)
 
 ## 产品
 
