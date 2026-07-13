@@ -142,6 +142,49 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void ecoApprovalBlocksDirectApplyAndRejectsChangedBusinessObjectVersion() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long unitId = createUnit(admin, "S22_ECO_UNIT_" + SEQUENCE.incrementAndGet(), "二十二 ECO 单位");
+		long categoryId = createCategory(admin, "S22_ECO_CAT_" + SEQUENCE.incrementAndGet(), "二十二 ECO 分类");
+		long parentId = createMaterial(admin, "S22_ECO_PARENT_" + SEQUENCE.incrementAndGet(), "ECO 父项",
+				categoryId, unitId, "FINISHED_GOOD", "SELF_MADE");
+		long childId = createMaterial(admin, "S22_ECO_CHILD_" + SEQUENCE.incrementAndGet(), "ECO 子项",
+				categoryId, unitId);
+		long sourceBomId = createBom(admin,
+				bomRequest("S22_ECO_SRC_" + SEQUENCE.incrementAndGet(), parentId, "V1.0", "ECO 来源 BOM", unitId,
+						"2026-07-01", "2026-07-31", List.of(bomItem(10, childId, unitId, "1.000000", "0"))));
+		enableBom(admin, sourceBomId);
+		long targetBomId = createBom(admin,
+				bomRequest("S22_ECO_TGT_" + SEQUENCE.incrementAndGet(), parentId, "V2.0", "ECO 目标 BOM", unitId,
+						"2026-08-01", null, List.of(bomItem(10, childId, unitId, "2.000000", "0"))));
+		Map<String, Object> ecoPayload = ecoRequest("S22_ECO_" + SEQUENCE.incrementAndGet(), sourceBomId,
+				targetBomId, "2026-08-01", "ECO 审批变更");
+		JsonNode eco = data(post(admin, "/api/admin/bom-engineering-changes", ecoPayload));
+		long ecoId = eco.get("id").longValue();
+
+		assertError(action(admin, "/api/admin/bom-engineering-changes/" + ecoId + "/apply",
+				Map.of("version", eco.get("version").longValue())), HttpStatus.CONFLICT, "APPROVAL_REQUIRED");
+
+		JsonNode submitted = data(post(admin, "/api/admin/approvals/bom-eco-application/" + ecoId + "/submit",
+				Map.of("version", eco.get("version").longValue(), "reason", "提交 ECO 审批",
+						"idempotencyKey", "eco-approval-" + ecoId)));
+		ecoPayload.put("changeSummary", "ECO 审批提交后业务对象变化");
+		ecoPayload.put("version", eco.get("version").longValue());
+		JsonNode changedEco = data(put(admin, "/api/admin/bom-engineering-changes/" + ecoId, ecoPayload));
+		assertThat(changedEco.get("version").longValue()).isGreaterThan(eco.get("version").longValue());
+
+		AuthenticatedSession approver = createUserAndLogin("stage022-eco-approver", "S22_ECO_APPROVER",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"material:bom-eco:view", "material:bom-eco:apply-approve"));
+		JsonNode task = firstTask(approver, "TODO");
+		assertError(post(approver, "/api/admin/approval-tasks/" + task.get("id").longValue() + "/approve",
+				Map.of("version", task.get("version").longValue(), "comment", "业务对象已变化")),
+				HttpStatus.CONFLICT, "APPROVAL_BUSINESS_OBJECT_CHANGED");
+		assertThat(ecoStatus(ecoId)).isEqualTo("DRAFT");
+		assertThat(pendingTaskCount(submitted.get("id").longValue())).isOne();
+	}
+
+	@Test
 	void approvalRejectWithdrawAndCancelCloseTasksCreateMessagesAndKeepBusinessDraft() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long customerId = insertCustomer("S22_APPR_END_CUS_" + SEQUENCE.incrementAndGet(), "二十二审批终态客户",
@@ -371,6 +414,40 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void printPreviewTaskAndDownloadRecheckBusinessPermissionAndExpiry() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("S22_PRINT_AUTH_CUS_" + SEQUENCE.incrementAndGet(), "二十二打印权限客户",
+				"ENABLED");
+		long ownerUserId = userId("admin");
+		long projectId = data(createProject(admin, projectPayload(customerId, ownerUserId))).get("id").longValue();
+		JsonNode contract = data(createContract(admin, projectId, contractPayload("打印权限审批合同")));
+		JsonNode approval = data(post(admin,
+				"/api/admin/approvals/sales-project-contract-activation/" + contract.get("id").longValue()
+						+ "/submit",
+				Map.of("version", contract.get("version").longValue(), "reason", "打印权限审批",
+						"idempotencyKey", "print-auth-approval-" + contract.get("id").longValue())));
+		long approvalId = approval.get("id").longValue();
+
+		AuthenticatedSession printOnly = createUserAndLogin("stage022-print-only", "S22_PRINT_ONLY",
+				List.of("platform:print:generate"));
+		assertError(get(printOnly, "/api/admin/print-previews/" + approvalId), HttpStatus.FORBIDDEN,
+				"AUTH_FORBIDDEN");
+		assertError(postWithIdempotency(printOnly, "/api/admin/print-tasks",
+				Map.of("approvalInstanceId", approvalId, "templateCode", "CONTRACT_ACTIVATION_APPROVAL_V1"),
+				"print-only-task-" + approvalId), HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		JsonNode task = data(postWithIdempotency(admin, "/api/admin/print-tasks",
+				Map.of("approvalInstanceId", approvalId, "templateCode", "CONTRACT_ACTIVATION_APPROVAL_V1"),
+				"print-expire-task-" + approvalId));
+		JsonNode succeeded = processTaskUntilStatus(admin, task.get("id").longValue(), "SUCCEEDED", 8);
+		assertThat(succeeded.get("status").asText()).isEqualTo("SUCCEEDED");
+		this.jdbcTemplate.update("update platform_document_task set expires_at = now() - interval '1 second' where id = ?",
+				task.get("id").longValue());
+		assertError(getString(admin, "/api/admin/document-tasks/" + task.get("id").longValue() + "/download"),
+				HttpStatus.GONE, "DOCUMENT_RESULT_EXPIRED");
+	}
+
+	@Test
 	void messagesRequireRelatedBusinessObjectPermissionForListReadAndReadAll() throws Exception {
 		AuthenticatedSession contractDenied = createUserAndLogin("stage022-msg-contract-denied", "S22_MSG_CON_DENIED",
 				List.of("platform:message:view", "platform:message:read"));
@@ -551,6 +628,33 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		JsonNode blankSucceeded = processTaskUntilStatus(admin, blankCodeTask.get("id").longValue(), "SUCCEEDED", 8);
 		assertThat(blankSucceeded.get("status").asText()).isEqualTo("SUCCEEDED");
 		assertThat(countMaterial("S22_AUTO_MAT_0001")).isOne();
+	}
+
+	@Test
+	void materialImportValidationFailureIsAtomicAndIdempotencyKeyRejectsDifferentFile() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String unitCode = "S22_ATOMIC_UNIT_" + SEQUENCE.incrementAndGet();
+		String categoryCode = "S22_ATOMIC_CAT_" + SEQUENCE.incrementAndGet();
+		createUnit(admin, unitCode, "二十二原子导入单位");
+		createCategory(admin, categoryCode, "二十二原子导入分类");
+		String validMaterialCode = "S22_ATOMIC_MAT_" + SEQUENCE.incrementAndGet();
+		byte[] invalidWorkbook = materialImportWorkbookRows(List.<String[]>of(
+				new String[] { validMaterialCode, "原子导入有效行", categoryCode, unitCode },
+				new String[] { "S22_ATOMIC_BAD_" + SEQUENCE.incrementAndGet(), "原子导入错误行", "S22_MISSING_CAT",
+						unitCode }));
+		String idempotencyKey = "material-import-atomic-" + SEQUENCE.incrementAndGet();
+
+		JsonNode task = data(uploadImport(admin, "/api/admin/imports/materials", "atomic-materials.xlsx",
+				invalidWorkbook, idempotencyKey));
+		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
+
+		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(failed.get("errorCount").intValue()).isPositive();
+		assertThat(countMaterial(validMaterialCode)).isZero();
+		assertError(uploadImport(admin, "/api/admin/imports/materials", "atomic-materials-different.xlsx",
+				materialImportWorkbookRows(List.<String[]>of(new String[] { "S22_ATOMIC_OTHER_" + SEQUENCE.incrementAndGet(),
+						"原子导入另一文件", categoryCode, unitCode })), idempotencyKey), HttpStatus.CONFLICT,
+				"DOCUMENT_TASK_IDEMPOTENCY_CONFLICT");
 	}
 
 	@Test
@@ -765,8 +869,62 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		return data(exchange(session, HttpMethod.POST, "/api/admin/master/materials", payload)).get("id").longValue();
 	}
 
+	private long createBom(AuthenticatedSession session, Map<String, Object> payload) throws Exception {
+		return data(exchange(session, HttpMethod.POST, "/api/admin/boms", payload)).get("id").longValue();
+	}
+
+	private void enableBom(AuthenticatedSession session, long bomId) throws Exception {
+		JsonNode bom = data(get(session, "/api/admin/boms/" + bomId));
+		assertThat(action(session, "/api/admin/boms/" + bomId + "/enable",
+				Map.of("version", bom.get("version").longValue())).getStatusCode()).isEqualTo(HttpStatus.OK);
+	}
+
+	private Map<String, Object> bomRequest(String bomCode, long parentMaterialId, String versionCode, String name,
+			long baseUnitId, String effectiveFrom, String effectiveTo, List<Map<String, Object>> items) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("bomCode", bomCode);
+		payload.put("parentMaterialId", parentMaterialId);
+		payload.put("versionCode", versionCode);
+		payload.put("name", name);
+		payload.put("baseQuantity", "1.000000");
+		payload.put("baseUnitId", baseUnitId);
+		payload.put("effectiveFrom", effectiveFrom);
+		payload.put("effectiveTo", effectiveTo);
+		payload.put("items", items);
+		return payload;
+	}
+
+	private Map<String, Object> bomItem(int lineNo, long childMaterialId, long unitId, String quantity,
+			String lossRate) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("lineNo", lineNo);
+		payload.put("childMaterialId", childMaterialId);
+		payload.put("unitId", unitId);
+		payload.put("quantity", quantity);
+		payload.put("lossRate", lossRate);
+		return payload;
+	}
+
+	private Map<String, Object> ecoRequest(String ecoNo, long sourceBomId, long targetBomId, String effectiveFrom,
+			String changeSummary) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("ecoNo", ecoNo);
+		payload.put("sourceBomId", sourceBomId);
+		payload.put("targetBomId", targetBomId);
+		payload.put("effectiveFrom", effectiveFrom);
+		payload.put("changeReason", "二十二 ECO 审批");
+		payload.put("impactScope", "后续新工单");
+		payload.put("changeSummary", changeSummary);
+		return payload;
+	}
+
 	private long countMaterial(String code) {
 		return this.jdbcTemplate.queryForObject("select count(*) from mst_material where code = ?", Long.class, code);
+	}
+
+	private String ecoStatus(long ecoId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_bom_engineering_change where id = ?",
+				String.class, ecoId);
 	}
 
 	private String taskStatus(long taskId) {
@@ -815,6 +973,31 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 					"ENABLED", "DIRECT_MATERIAL", "VALUATED_MATERIAL", "true", "true", "导入成本", "导入备注" };
 			for (int i = 0; i < values.length; i++) {
 				if (values[i] != null) {
+					row.createCell(i).setCellValue(values[i]);
+				}
+			}
+			workbook.write(output);
+			return output.toByteArray();
+		}
+	}
+
+	private byte[] materialImportWorkbookRows(List<String[]> rows) throws Exception {
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet("materials");
+			Row header = sheet.createRow(0);
+			String[] headers = { "code", "name", "specification", "materialType", "sourceType", "trackingMethod",
+					"categoryCode", "unitCode", "status", "costCategory", "inventoryValuationCategory",
+					"inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark" };
+			for (int i = 0; i < headers.length; i++) {
+				header.createCell(i).setCellValue(headers[i]);
+			}
+			for (int rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+				String[] rowValues = rows.get(rowIndex);
+				Row row = sheet.createRow(rowIndex + 1);
+				String[] values = { rowValues[0], rowValues[1], "S", "RAW_MATERIAL", "PURCHASED", "NONE",
+						rowValues[2], rowValues[3], "ENABLED", "DIRECT_MATERIAL", "VALUATED_MATERIAL", "true",
+						"true", "导入成本", "导入备注" };
+				for (int i = 0; i < values.length; i++) {
 					row.createCell(i).setCellValue(values[i]);
 				}
 			}
