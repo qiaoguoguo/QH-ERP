@@ -463,7 +463,8 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		long invalidBomWorkOrderId = createWorkOrder(admin, invalidBomFixture.productMaterialId(),
 				invalidBomFixture.bomId(), invalidBomFixture.issueWarehouseId(),
 				invalidBomFixture.receiptWarehouseId(), "5.000000");
-		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + invalidBomFixture.bomId() + "/disable", null, admin));
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + invalidBomFixture.bomId() + "/disable",
+				Map.of("version", bomVersion(admin, invalidBomFixture.bomId())), admin));
 		assertError(releaseWorkOrder(admin, invalidBomWorkOrderId), HttpStatus.BAD_REQUEST, "PRODUCTION_BOM_INVALID");
 
 		ProductionFixture stockFixture = fixture(admin);
@@ -726,12 +727,14 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private long createBom(AuthenticatedSession admin, long productId, long unitId, long rawMaterialId,
 			long auxiliaryId) throws Exception {
-		long bomId = createDraftBom(admin, productId, unitId, rawMaterialId, auxiliaryId);
-		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + bomId + "/enable", null, admin));
+		JsonNode bom = createDraftBom(admin, productId, unitId, rawMaterialId, auxiliaryId);
+		long bomId = bom.get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + bomId + "/enable",
+				Map.of("version", bom.get("version").longValue()), admin));
 		return bomId;
 	}
 
-	private long createDraftBom(AuthenticatedSession admin, long productId, long unitId, long rawMaterialId,
+	private JsonNode createDraftBom(AuthenticatedSession admin, long productId, long unitId, long rawMaterialId,
 			long auxiliaryId) throws Exception {
 		int sequence = SEQUENCE.incrementAndGet();
 		Map<String, Object> body = new LinkedHashMap<>();
@@ -746,7 +749,11 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				bomItem(2, auxiliaryId, unitId, "1.000000")));
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/boms", body, admin);
 		assertOk(response);
-		return data(response).get("id").longValue();
+		return data(response);
+	}
+
+	private long bomVersion(AuthenticatedSession admin, long bomId) throws Exception {
+		return data(exchange(HttpMethod.GET, "/api/admin/boms/" + bomId, null, admin)).get("version").longValue();
 	}
 
 	private Map<String, Object> bomItem(int lineNo, long materialId, long unitId, String quantity) {

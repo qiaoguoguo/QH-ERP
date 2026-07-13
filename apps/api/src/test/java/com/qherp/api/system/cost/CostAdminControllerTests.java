@@ -505,8 +505,10 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 				bomItem(2, auxiliaryId, unitId, "1.000000")));
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/boms", body, admin);
 		assertOk(response);
-		long bomId = data(response).get("id").longValue();
-		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + bomId + "/enable", null, admin));
+		JsonNode created = data(response);
+		long bomId = created.get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/boms/" + bomId + "/enable",
+				Map.of("version", created.get("version").longValue()), admin));
 		return bomId;
 	}
 

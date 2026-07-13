@@ -1850,11 +1850,14 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 				fixture.unitId());
 		long bomItemId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_bom_item (
-					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark, created_at, updated_at
+					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark,
+					business_unit_id, business_quantity, base_unit_id, base_quantity, quantity_basis,
+					created_at, updated_at
 				)
-				values (?, 1, ?, ?, 1, 0, ?, now(), now())
+				values (?, 1, ?, ?, 1, 0, ?, ?, 1, ?, 1, 'BASE_UNIT', now(), now())
 				returning id
-				""", Long.class, bomId, fixture.rawMaterialId(), fixture.unitId(), remark);
+				""", Long.class, bomId, fixture.rawMaterialId(), fixture.unitId(), remark, fixture.unitId(),
+				fixture.unitId());
 		String workOrderNo = "RPT-WO-" + suffix;
 		long workOrderId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_work_order (
@@ -1872,12 +1875,14 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long workOrderMaterialId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_work_order_material (
 					work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity,
-					issued_quantity, loss_rate, remark, created_at, updated_at
+					issued_quantity, loss_rate, remark, business_unit_id, business_quantity,
+					base_unit_id, base_required_quantity, quantity_basis, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, 0, 0, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, 0, 0, ?, ?, ?, ?, ?, 'BASE_UNIT', now(), now())
 				returning id
 				""", Long.class, workOrderId, bomItemId, fixture.rawMaterialId(), fixture.unitId(),
-				new BigDecimal(plannedQuantity), remark);
+				new BigDecimal(plannedQuantity), remark, fixture.unitId(), new BigDecimal(plannedQuantity),
+				fixture.unitId(), new BigDecimal(plannedQuantity));
 		return new ProductionFixture(workOrderId, workOrderNo, workOrderMaterialId, fixture.finishedMaterialId(),
 				businessDate);
 	}

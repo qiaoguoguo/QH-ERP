@@ -1840,11 +1840,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				"生产反向BOM" + suffix, fixture.unitId(), LocalDate.now().minusDays(1));
 		long bomItemId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_bom_item (
-					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark, created_at, updated_at
+					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, remark,
+					business_unit_id, business_quantity, base_unit_id, base_quantity, quantity_basis,
+					created_at, updated_at
 				)
-				values (?, 1, ?, ?, 1, 0, '生产反向BOM明细', now(), now())
+				values (?, 1, ?, ?, 1, 0, '生产反向BOM明细', ?, 1, ?, 1, 'BASE_UNIT', now(), now())
 				returning id
-				""", Long.class, bomId, fixture.materialId(), fixture.unitId());
+				""", Long.class, bomId, fixture.materialId(), fixture.unitId(), fixture.unitId(),
+				fixture.unitId());
 		String workOrderStatus = "POSTED".equals(issueStatus) ? "RELEASED" : issueStatus;
 		String workOrderNo = "REV-WO-" + suffix;
 		long workOrderId = this.jdbcTemplate.queryForObject("""
@@ -1863,12 +1866,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long workOrderMaterialId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_work_order_material (
 					work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity, issued_quantity,
-					loss_rate, remark, created_at, updated_at
+					loss_rate, remark, business_unit_id, business_quantity, base_unit_id,
+					base_required_quantity, quantity_basis, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, 12, ?, 0, '生产反向工单用料', now(), now())
+				values (?, 1, ?, ?, ?, 12, ?, 0, '生产反向工单用料', ?, 12, ?, 12, 'BASE_UNIT', now(), now())
 				returning id
 				""", Long.class, workOrderId, bomItemId, fixture.materialId(), fixture.unitId(),
-				"POSTED".equals(issueStatus) ? new BigDecimal(issuedQuantity) : BigDecimal.ZERO);
+				"POSTED".equals(issueStatus) ? new BigDecimal(issuedQuantity) : BigDecimal.ZERO, fixture.unitId(),
+				fixture.unitId());
 		String issueNo = "REV-ISS-" + suffix;
 		long issueId = this.jdbcTemplate.queryForObject("""
 				insert into mfg_material_issue (

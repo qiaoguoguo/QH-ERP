@@ -1,8 +1,8 @@
 alter table mst_material
-	add column cost_category varchar(32),
-	add column inventory_valuation_category varchar(32),
-	add column inventory_value_enabled boolean,
-	add column project_cost_enabled boolean,
+	add column cost_category varchar(32) default 'UNCLASSIFIED',
+	add column inventory_valuation_category varchar(32) default 'UNCLASSIFIED',
+	add column inventory_value_enabled boolean default false,
+	add column project_cost_enabled boolean default false,
 	add column cost_remark varchar(500);
 
 update mst_material
@@ -10,7 +10,10 @@ set cost_category = 'UNCLASSIFIED',
 	inventory_valuation_category = 'UNCLASSIFIED',
 	inventory_value_enabled = false,
 	project_cost_enabled = false
-where cost_category is null;
+where cost_category is null
+	or inventory_valuation_category is null
+	or inventory_value_enabled is null
+	or project_cost_enabled is null;
 
 alter table mst_material
 	alter column cost_category set not null,
