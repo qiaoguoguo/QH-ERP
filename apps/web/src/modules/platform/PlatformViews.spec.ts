@@ -116,7 +116,8 @@ describe('022 平台页面', () => {
     vi.clearAllMocks()
     documentPlatformApiMock.approvalTasks.list.mockResolvedValue({
       items: [{
-        id: 7,
+        id: 3,
+        taskId: 70,
         taskNo: 'AT-001',
         sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
         objectType: 'SALES_PROJECT_CONTRACT',
@@ -136,6 +137,7 @@ describe('022 平台页面', () => {
     })
     documentPlatformApiMock.approvals.get.mockResolvedValue({
       id: 3,
+      taskId: 701,
       sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
       objectType: 'SALES_PROJECT_CONTRACT',
       objectId: 55,
@@ -146,7 +148,7 @@ describe('022 平台页面', () => {
       submittedAt: '2026-07-13T10:00:00+08:00',
       version: 6,
       availableActions: ['APPROVE', 'REJECT', 'WITHDRAW', 'CANCEL'],
-      steps: [{ stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve' }],
+      steps: [{ taskId: 701, stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve' }],
       histories: [{ action: 'SUBMIT', operatorName: '销售', operatedAt: '2026-07-13T10:00:00+08:00', comment: '提交' }],
       attachmentSnapshots: [],
     })
@@ -268,7 +270,7 @@ describe('022 平台页面', () => {
 
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
-    expect(documentPlatformApiMock.approvals.get).toHaveBeenCalledWith(7)
+    expect(documentPlatformApiMock.approvals.get).toHaveBeenCalledWith(3)
     expect(wrapper.text()).toContain('固定审批')
     expect(wrapper.text()).toContain('提交')
     expect(wrapper.find('[data-test="approval-cancel"]').exists()).toBe(true)
@@ -276,7 +278,7 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="approval-comment"]').setValue('同意生效')
     await wrapper.find('[data-test="approve-task"]').trigger('click')
     await flushPromises()
-    expect(documentPlatformApiMock.approvalTasks.approve).toHaveBeenCalledWith(7, {
+    expect(documentPlatformApiMock.approvalTasks.approve).toHaveBeenCalledWith(701, {
       version: 6,
       comment: '同意生效',
       idempotencyKey: expect.any(String),
@@ -291,7 +293,7 @@ describe('022 平台页面', () => {
     await rejectWrapper.find('[data-test="approval-comment"]').setValue('合同金额需调整')
     await rejectWrapper.find('[data-test="reject-task"]').trigger('click')
     await flushPromises()
-    expect(documentPlatformApiMock.approvalTasks.reject).toHaveBeenCalledWith(7, {
+    expect(documentPlatformApiMock.approvalTasks.reject).toHaveBeenCalledWith(701, {
       version: 6,
       reason: '合同金额需调整',
       idempotencyKey: expect.any(String),
@@ -322,6 +324,37 @@ describe('022 平台页面', () => {
       reason: '对象已失效',
       idempotencyKey: expect.any(String),
     })
+  })
+
+  it('审批详情缺少 taskId 时隐藏通过和驳回，且不退回使用实例 id', async () => {
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 3,
+      taskId: null,
+      sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
+      objectType: 'SALES_PROJECT_CONTRACT',
+      objectId: 55,
+      objectNo: 'SC-001',
+      objectName: '主合同',
+      status: 'SUBMITTED',
+      applicantName: '销售',
+      submittedAt: '2026-07-13T10:00:00+08:00',
+      version: 6,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ stepName: '固定审批', status: 'PENDING', candidatePermission: 'sales:contract:activate-approve' }],
+      histories: [],
+      attachmentSnapshots: [],
+    })
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="approve-task"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="reject-task"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('当前审批任务不可处理，请刷新审批详情')
+    expect(documentPlatformApiMock.approvalTasks.approve).not.toHaveBeenCalled()
+    expect(documentPlatformApiMock.approvalTasks.reject).not.toHaveBeenCalled()
   })
 
   it('消息中心支持未读筛选、单条已读和全部已读，已读携带版本且业务跳转只用白名单路由', async () => {

@@ -32,8 +32,15 @@ const detail = ref<ApprovalInstanceDetail | null>(null)
 const selectedTask = ref<ApprovalTaskRecord | null>(null)
 const actionComment = ref('')
 
-const canApprove = computed(() => detail.value?.availableActions?.includes('APPROVE') ?? false)
-const canReject = computed(() => detail.value?.availableActions?.includes('REJECT') ?? false)
+const currentTaskId = computed(() => detail.value?.taskId
+  ?? (detail.value?.steps ?? []).find((step) => step.status === 'PENDING' && step.taskId !== null && step.taskId !== undefined)?.taskId
+  ?? null)
+const hasPendingTaskActionWithoutTaskId = computed(() => {
+  const actions = detail.value?.availableActions ?? []
+  return !currentTaskId.value && (actions.includes('APPROVE') || actions.includes('REJECT'))
+})
+const canApprove = computed(() => Boolean(currentTaskId.value) && (detail.value?.availableActions?.includes('APPROVE') ?? false))
+const canReject = computed(() => Boolean(currentTaskId.value) && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
 
@@ -85,7 +92,12 @@ async function openDetail(record: ApprovalTaskRecord) {
 }
 
 async function submitTaskAction(action: 'approve' | 'reject') {
-  if (!selectedTask.value || !detail.value || actionLoading.value) {
+  if (!detail.value || actionLoading.value) {
+    return
+  }
+  const taskId = currentTaskId.value
+  if (taskId === null || taskId === undefined) {
+    actionError.value = '当前审批任务不可处理，请刷新审批详情'
     return
   }
   if (action === 'reject' && !actionComment.value.trim()) {
@@ -97,13 +109,13 @@ async function submitTaskAction(action: 'approve' | 'reject') {
   try {
     const comment = actionComment.value.trim()
     if (action === 'approve') {
-      detail.value = await documentPlatformApi.approvalTasks.approve(selectedTask.value.id, {
+      detail.value = await documentPlatformApi.approvalTasks.approve(taskId, {
         version: detail.value.version,
         ...(comment ? { comment } : {}),
         idempotencyKey: createIdempotencyKey('approval-approve'),
       })
     } else {
-      detail.value = await documentPlatformApi.approvalTasks.reject(selectedTask.value.id, {
+      detail.value = await documentPlatformApi.approvalTasks.reject(taskId, {
         version: detail.value.version,
         reason: comment,
         idempotencyKey: createIdempotencyKey('approval-reject'),
@@ -247,6 +259,13 @@ onMounted(() => {
     <el-drawer v-model="detailVisible" title="审批详情" size="min(680px, 92vw)">
       <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="detailLoading" class="state-alert" type="info" title="审批详情加载中" :closable="false" />
+      <el-alert
+        v-if="hasPendingTaskActionWithoutTaskId"
+        class="state-alert"
+        type="warning"
+        title="当前审批任务不可处理，请刷新审批详情"
+        :closable="false"
+      />
       <dl v-if="detail" class="platform-detail-list">
         <dt>对象</dt><dd>{{ detail.objectNo || '-' }} {{ detail.objectName || '' }}</dd>
         <dt>审批状态</dt><dd><el-tag :type="approvalStatusTagType(detail.status)">{{ approvalStatusLabel(detail.status) }}</el-tag></dd>

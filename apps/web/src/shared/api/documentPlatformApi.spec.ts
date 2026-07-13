@@ -56,6 +56,7 @@ const task: DocumentTaskRecord = {
 
 const approvalDetail = {
   id: 3,
+  taskId: 701,
   sceneCode: 'SALES_PROJECT_CONTRACT_ACTIVATION',
   objectType: 'SALES_PROJECT_CONTRACT',
   objectId: 55,

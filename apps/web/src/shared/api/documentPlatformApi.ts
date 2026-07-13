@@ -51,6 +51,7 @@ export interface ApprovalActionPayload {
 
 export interface ApprovalTaskRecord {
   id: ResourceId
+  taskId?: ResourceId | null
   taskNo?: string | null
   sceneCode: ApprovalSceneCode | string
   objectType: string
@@ -100,6 +101,7 @@ export interface ApprovalAttachmentSnapshot {
 
 export interface ApprovalInstanceDetail {
   id: ResourceId
+  taskId?: ResourceId | null
   sceneCode: ApprovalSceneCode | string
   objectType: string
   objectId: ResourceId
