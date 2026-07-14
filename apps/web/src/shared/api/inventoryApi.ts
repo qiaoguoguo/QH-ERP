@@ -533,8 +533,8 @@ export interface InventoryControlledDocumentSummaryRecord {
   version: number
   allowedActions?: InventoryAllowedAction[] | string[]
   approvalSummary?: InventoryApprovalSummary | null
-  amountImpactSummary?: string | null
-  keyInfoSummary?: string | null
+  amountImpactSummary?: unknown
+  keyInfoSummary?: unknown
   costVisible?: boolean | null
   createdByName?: string | null
   createdAt?: string | null

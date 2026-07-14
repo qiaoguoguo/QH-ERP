@@ -27,10 +27,13 @@ import AttachmentPanel from '../platform/components/AttachmentPanel.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import {
+  controlledDocumentStatusLabel,
+  formatInventoryAmountImpact,
   formatInventoryAmount,
   formatQuantity,
   inventoryActionLabel,
   ownershipTypeLabel,
+  valuationAdjustmentTypeLabel,
 } from './inventoryPageHelpers'
 
 type DocumentKind = 'warehouseTransfer' | 'ownershipConversion' | 'stocktake' | 'valuationAdjustment'
@@ -294,12 +297,24 @@ function actionPayload(recordValue: InventoryRecord): InventoryControlledDocumen
   }
 }
 
+function submitApprovalPayload(recordValue: InventoryRecord): InventoryControlledDocumentActionPayload | null {
+  const reason = recordValue.reason?.trim()
+  if (!reason) {
+    actionError.value = '请先填写并保存业务原因后再提交审批'
+    return null
+  }
+  return {
+    ...actionPayload(recordValue),
+    reason,
+  }
+}
+
 function documentNo(recordValue: InventoryRecord) {
   return recordValue.documentNo
 }
 
 function statusText(recordValue: InventoryRecord) {
-  return recordValue.statusName || String(recordValue.status)
+  return recordValue.statusName || controlledDocumentStatusLabel(String(recordValue.status))
 }
 
 function approvalStatusText(recordValue: InventoryRecord) {
@@ -319,7 +334,11 @@ function approvalStatusText(recordValue: InventoryRecord) {
 }
 
 function amountImpactText(recordValue: InventoryRecord) {
-  return recordValue.amountImpactSummary || recordValue.keyInfoSummary || '-'
+  return formatInventoryAmountImpact(recordValue.amountImpactSummary, recordValue.keyInfoSummary, recordValue.costVisible)
+}
+
+function adjustmentTypeText(recordValue: InventoryValuationAdjustmentRecord) {
+  return recordValue.adjustmentTypeName || valuationAdjustmentTypeLabel(String(recordValue.adjustmentType))
 }
 
 function formattedDateTime(value?: string | null) {
@@ -586,6 +605,12 @@ async function refreshCurrent() {
   }
 }
 
+function isVersionConflictError(error: unknown): boolean {
+  const status = (error as { status?: number }).status
+  const code = (error as { code?: unknown }).code
+  return status === 409 && (code === 'CONFLICT' || code === 'VERSION_CONFLICT')
+}
+
 async function runAction(target: InventoryRecord, action: InventoryAllowedAction | string) {
   if (
     config.value.kind === 'stocktake'
@@ -595,29 +620,33 @@ async function runAction(target: InventoryRecord, action: InventoryAllowedAction
     actionError.value = '存在未保存盘点行，请先保存实盘'
     return
   }
+  const payload = action === 'SUBMIT_APPROVAL' ? submitApprovalPayload(target) : actionPayload(target)
+  if (!payload) {
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
     if (action === 'POST' && config.value.api.post) {
-      await config.value.api.post(target.id, actionPayload(target))
+      await config.value.api.post(target.id, payload)
     } else if (action === 'SUBMIT_APPROVAL' && config.value.api.submitApproval) {
-      await config.value.api.submitApproval(target.id, actionPayload(target))
+      await config.value.api.submitApproval(target.id, payload)
     } else if (action === 'WITHDRAW' && config.value.api.withdraw) {
-      await config.value.api.withdraw(target.id, actionPayload(target))
+      await config.value.api.withdraw(target.id, payload)
     } else if (action === 'START' && config.value.api.start) {
-      await config.value.api.start(target.id, actionPayload(target))
+      await config.value.api.start(target.id, payload)
     } else if (action === 'RECONCILE' && config.value.api.reconcile) {
-      await config.value.api.reconcile(target.id, actionPayload(target))
+      await config.value.api.reconcile(target.id, payload)
     } else if (action === 'COMPLETE_ZERO_VARIANCE' && config.value.api.completeZeroVariance) {
-      await config.value.api.completeZeroVariance(target.id, actionPayload(target))
+      await config.value.api.completeZeroVariance(target.id, payload)
     } else if (action === 'CANCEL' && config.value.api.cancel) {
-      await config.value.api.cancel(target.id, actionPayload(target))
+      await config.value.api.cancel(target.id, payload)
     }
     await refreshCurrent()
   } catch (caught) {
-    const status = (caught as { status?: number }).status
-    actionError.value = status === 409 ? '数据已过期，请刷新后重试' : errorMessage(caught)
-    if (status === 409) {
+    const isVersionConflict = isVersionConflictError(caught)
+    actionError.value = isVersionConflict ? '数据已过期，请刷新后重试' : errorMessage(caught)
+    if (isVersionConflict) {
       await refreshCurrent()
     }
   } finally {
@@ -1465,7 +1494,7 @@ onMounted(() => {
         <el-table :data="(record as InventoryValuationAdjustmentRecord).lines ?? []" empty-text="暂无估值明细" stripe>
           <el-table-column prop="lineNo" label="行号" min-width="80" />
           <el-table-column label="调整类型" min-width="130">
-            <template #default>{{ (record as InventoryValuationAdjustmentRecord).adjustmentTypeName || (record as InventoryValuationAdjustmentRecord).adjustmentType }}</template>
+            <template #default>{{ adjustmentTypeText(record as InventoryValuationAdjustmentRecord) }}</template>
           </el-table-column>
           <el-table-column label="物料" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>

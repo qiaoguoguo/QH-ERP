@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { RouterLink } from 'vue-router'
 import {
   createIdempotencyKey,
   documentPlatformApi,
@@ -58,6 +59,20 @@ const canApprove = computed(() => hasCurrentTaskVersion.value && (detail.value?.
 const canReject = computed(() => hasCurrentTaskVersion.value && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
+
+const businessObjectPaths: Record<string, string> = {
+  INVENTORY_STOCKTAKE: '/inventory/stocktakes',
+  INVENTORY_OWNERSHIP_CONVERSION: '/inventory/ownership-conversions',
+  INVENTORY_VALUATION_ADJUSTMENT: '/inventory/valuation-adjustments',
+}
+
+function businessObjectRoute(record: { objectType?: string | null, objectId?: string | number | null }) {
+  if (!record.objectType || record.objectId === null || record.objectId === undefined) {
+    return null
+  }
+  const basePath = businessObjectPaths[record.objectType]
+  return basePath ? `${basePath}/${encodeURIComponent(String(record.objectId))}` : null
+}
 
 function isStaleActionError(caught: unknown): boolean {
   const message = caught instanceof Error ? caught.message : String(caught)
@@ -264,7 +279,17 @@ onMounted(() => {
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无审批任务'" stripe>
         <el-table-column prop="taskNo" label="任务号" width="150" show-overflow-tooltip />
         <el-table-column label="对象" min-width="220" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.objectNo || '-' }} {{ row.objectName || '' }}</template>
+          <template #default="{ row }">
+            <span>{{ row.objectNo || '-' }} {{ row.objectName || '' }}</span>
+            <RouterLink
+              v-if="businessObjectRoute(row)"
+              class="inline-action-link"
+              data-test="approval-business-link"
+              :to="businessObjectRoute(row) || ''"
+            >
+              查看业务单据
+            </RouterLink>
+          </template>
         </el-table-column>
         <el-table-column prop="currentStepName" label="当前步骤" width="130" show-overflow-tooltip />
         <el-table-column prop="applicantName" label="提交人" width="110" show-overflow-tooltip />
@@ -306,6 +331,17 @@ onMounted(() => {
       />
       <dl v-if="detail" class="platform-detail-list">
         <dt>对象</dt><dd>{{ detail.objectNo || '-' }} {{ detail.objectName || '' }}</dd>
+        <dt>业务单据</dt>
+        <dd>
+          <RouterLink
+            v-if="businessObjectRoute(detail)"
+            data-test="approval-detail-business-link"
+            :to="businessObjectRoute(detail) || ''"
+          >
+            查看业务单据
+          </RouterLink>
+          <span v-else>无可跳转业务单据</span>
+        </dd>
         <dt>审批状态</dt><dd><el-tag :type="approvalStatusTagType(detail.status)">{{ approvalStatusLabel(detail.status) }}</el-tag></dd>
         <dt>提交人</dt><dd>{{ detail.applicantName || '-' }}</dd>
         <dt>提交时间</dt><dd>{{ formatPlatformDateTime(detail.submittedAt) }}</dd>

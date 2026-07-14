@@ -470,6 +470,7 @@ describe('库存受控单据页', () => {
     expect(inventoryApiMock.ownershipConversions.submitApproval).toHaveBeenCalledWith(1002, {
       version: 4,
       idempotencyKey: expect.any(String),
+      reason: '项目领用',
     })
   })
 
@@ -490,6 +491,79 @@ describe('库存受控单据页', () => {
     expect(wrapper.text()).toContain('审批中')
     expect(wrapper.text()).toContain('金额影响')
     expect(wrapper.text()).toContain('调增 1,000.00')
+  })
+
+  it('受控单据列表和详情把原始枚举转为中文并格式化结构化金额影响', async () => {
+    inventoryApiMock.warehouseTransfers.list.mockResolvedValueOnce({
+      items: [{
+        ...transferRecord,
+        statusName: undefined,
+        status: 'DRAFT',
+        amountImpactSummary: {},
+        keyInfoSummary: { documentNo: 'WT-001', businessDate: '2026-07-14', status: 'DRAFT' },
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const transfer = await mountInventoryDocument('/inventory/warehouse-transfers')
+    expect(transfer.wrapper.text()).toContain('草稿')
+    expect(transfer.wrapper.text()).toContain('未形成金额影响')
+    expect(transfer.wrapper.text()).not.toContain('DRAFT')
+    expect(transfer.wrapper.text()).not.toContain('{}')
+
+    inventoryApiMock.ownershipConversions.list.mockResolvedValueOnce({
+      items: [{
+        ...ownershipConversionRecord,
+        statusName: undefined,
+        status: 'SUBMITTED',
+        amountImpactSummary: { direction: 'INCREASE', amount: '1200.50' },
+        costVisible: true,
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const conversion = await mountInventoryDocument('/inventory/ownership-conversions')
+    expect(conversion.wrapper.text()).toContain('审批中')
+    expect(conversion.wrapper.text()).toContain('调增 1,200.50')
+    expect(conversion.wrapper.text()).not.toContain('SUBMITTED')
+    expect(conversion.wrapper.text()).not.toContain('{}')
+
+    inventoryApiMock.stocktakes.list.mockResolvedValueOnce({
+      items: [{
+        ...stocktakeRecord,
+        statusName: undefined,
+        status: 'COUNTING',
+        amountImpactSummary: { direction: 'DECREASE', amount: '300.00' },
+        costVisible: false,
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const stocktake = await mountInventoryDocument('/inventory/stocktakes')
+    expect(stocktake.wrapper.text()).toContain('盘点中')
+    expect(stocktake.wrapper.text()).toContain('金额受限')
+    expect(stocktake.wrapper.text()).not.toContain('300.00')
+    expect(stocktake.wrapper.text()).not.toContain('COUNTING')
+    expect(stocktake.wrapper.text()).not.toContain('{}')
+
+    inventoryApiMock.valuationAdjustments.get.mockResolvedValueOnce({
+      ...valuationAdjustmentRecord,
+      statusName: undefined,
+      status: 'DRAFT',
+      adjustmentTypeName: undefined,
+      adjustmentType: 'LEGACY_OPENING',
+    })
+    const adjustment = await mountInventoryDocument('/inventory/valuation-adjustments/1004')
+    expect(adjustment.wrapper.text()).toContain('草稿')
+    expect(adjustment.wrapper.text()).toContain('历史期初估值')
+    expect(adjustment.wrapper.text()).not.toContain('DRAFT')
+    expect(adjustment.wrapper.text()).not.toContain('LEGACY_OPENING')
   })
 
   it('新建仓库调拨提交后端完整 DTO，包含质量、批次、序列、项目和来源成本层', async () => {
@@ -1061,6 +1135,53 @@ describe('库存受控单据页', () => {
     expect(wrapper.text()).not.toContain('重新计算')
   })
 
+  it('盘点提交审批发送已保存业务原因', async () => {
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce({
+      ...stocktakeRecord,
+      status: 'RECONCILED',
+      statusName: '已确认差异',
+      allowedActions: ['SUBMIT_APPROVAL', 'CANCEL'],
+      reason: '月度盘点',
+    })
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+
+    await firstButton(wrapper, '提交审批').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.stocktakes.submitApproval).toHaveBeenCalledWith(1003, {
+      version: 5,
+      idempotencyKey: expect.any(String),
+      reason: '月度盘点',
+    })
+  })
+
+  it('估值调整提交审批发送已保存业务原因', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/valuation-adjustments/1004')
+
+    await firstButton(wrapper, '提交审批').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.valuationAdjustments.submitApproval).toHaveBeenCalledWith(1004, {
+      version: 6,
+      idempotencyKey: expect.any(String),
+      reason: '历史期初估值',
+    })
+  })
+
+  it('提交审批缺少已保存业务原因时提示并阻止请求', async () => {
+    inventoryApiMock.ownershipConversions.get.mockResolvedValueOnce({
+      ...ownershipConversionRecord,
+      reason: '   ',
+    })
+    const { wrapper } = await mountInventoryDocument('/inventory/ownership-conversions/1002')
+
+    await firstButton(wrapper, '提交审批').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请先填写并保存业务原因后再提交审批')
+    expect(inventoryApiMock.ownershipConversions.submitApproval).not.toHaveBeenCalled()
+  })
+
   it('动作发生版本冲突时刷新详情并提示已过期需刷新', async () => {
     inventoryApiMock.warehouseTransfers.post.mockRejectedValueOnce(new AccountPermissionApiError(
       '单据版本已过期',
@@ -1074,5 +1195,21 @@ describe('库存受控单据页', () => {
 
     expect(wrapper.text()).toContain('数据已过期，请刷新后重试')
     expect(inventoryApiMock.warehouseTransfers.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('业务 409 保留后端稳定错误消息且不按版本冲突刷新', async () => {
+    inventoryApiMock.warehouseTransfers.post.mockRejectedValueOnce(new AccountPermissionApiError(
+      '盘点范围已锁定',
+      'INVENTORY_STOCKTAKE_RANGE_LOCKED',
+      409,
+    ))
+    const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001')
+
+    await firstButton(wrapper, '过账').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('盘点范围已锁定')
+    expect(wrapper.text()).not.toContain('数据已过期，请刷新后重试')
+    expect(inventoryApiMock.warehouseTransfers.get).toHaveBeenCalledTimes(1)
   })
 })

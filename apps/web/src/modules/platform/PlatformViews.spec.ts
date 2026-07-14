@@ -285,6 +285,144 @@ describe('022 平台页面', () => {
     })
   })
 
+  it('审批列表为 023 业务对象提供业务单据入口且未知对象保持纯文本', async () => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [
+        {
+          id: 31,
+          taskId: 731,
+          taskNo: 'AT-STK',
+          sceneCode: 'INVENTORY_STOCKTAKE_VARIANCE_POST',
+          objectType: 'INVENTORY_STOCKTAKE',
+          objectId: 1,
+          objectNo: 'INV-STK-001',
+          objectName: '差异盘点',
+          status: 'PENDING',
+          currentStepName: '固定审批',
+          applicantName: '仓管',
+          assignedAt: '2026-07-14T10:00:00+08:00',
+          availableActions: [],
+          version: 1,
+        },
+        {
+          id: 32,
+          taskId: 732,
+          taskNo: 'AT-OWN',
+          sceneCode: 'INVENTORY_OWNERSHIP_CONVERSION_POST',
+          objectType: 'INVENTORY_OWNERSHIP_CONVERSION',
+          objectId: 2,
+          objectNo: 'INV-OWN-001',
+          objectName: '权属转换',
+          status: 'PENDING',
+          currentStepName: '固定审批',
+          applicantName: '仓管',
+          assignedAt: '2026-07-14T10:00:00+08:00',
+          availableActions: [],
+          version: 1,
+        },
+        {
+          id: 33,
+          taskId: 733,
+          taskNo: 'AT-VAL',
+          sceneCode: 'INVENTORY_VALUATION_ADJUSTMENT_POST',
+          objectType: 'INVENTORY_VALUATION_ADJUSTMENT',
+          objectId: 3,
+          objectNo: 'INV-VAL-001',
+          objectName: '估值调整',
+          status: 'PENDING',
+          currentStepName: '固定审批',
+          applicantName: '财务',
+          assignedAt: '2026-07-14T10:00:00+08:00',
+          availableActions: [],
+          version: 1,
+        },
+        {
+          id: 34,
+          taskId: 734,
+          taskNo: 'AT-UNK',
+          sceneCode: 'UNKNOWN_SCENE',
+          objectType: 'UNKNOWN_OBJECT',
+          objectId: 4,
+          objectNo: 'UNKNOWN-001',
+          objectName: '未知对象',
+          status: 'PENDING',
+          currentStepName: '固定审批',
+          applicantName: '系统',
+          assignedAt: '2026-07-14T10:00:00+08:00',
+          availableActions: [],
+          version: 1,
+        },
+      ],
+      total: 4,
+      page: 1,
+      pageSize: 10,
+    })
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+
+    expect(wrapper.find('[data-to="/inventory/stocktakes/1"]').text()).toContain('查看业务单据')
+    expect(wrapper.find('[data-to="/inventory/ownership-conversions/2"]').text()).toContain('查看业务单据')
+    expect(wrapper.find('[data-to="/inventory/valuation-adjustments/3"]').text()).toContain('查看业务单据')
+    expect(wrapper.text()).toContain('UNKNOWN-001')
+    expect(wrapper.find('[data-to="/inventory/unknown/4"]').exists()).toBe(false)
+  })
+
+  it.each([
+    ['INVENTORY_STOCKTAKE', 1, '/inventory/stocktakes/1'],
+    ['INVENTORY_OWNERSHIP_CONVERSION', 2, '/inventory/ownership-conversions/2'],
+    ['INVENTORY_VALUATION_ADJUSTMENT', 3, '/inventory/valuation-adjustments/3'],
+  ])('审批详情为 %s 提供业务单据入口', async (objectType, objectId, expectedPath) => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 41,
+        taskId: 741,
+        taskNo: 'AT-023',
+        sceneCode: 'INVENTORY_APPROVAL',
+        objectType,
+        objectId,
+        objectNo: 'INV-023-001',
+        objectName: '023 单据',
+        status: 'PENDING',
+        currentStepName: '固定审批',
+        applicantName: '仓管',
+        assignedAt: '2026-07-14T10:00:00+08:00',
+        availableActions: [],
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 41,
+      taskId: 741,
+      taskVersion: 1,
+      sceneCode: 'INVENTORY_APPROVAL',
+      objectType,
+      objectId,
+      objectNo: 'INV-023-001',
+      objectName: '023 单据',
+      status: 'SUBMITTED',
+      applicantName: '仓管',
+      submittedAt: '2026-07-14T10:00:00+08:00',
+      version: 1,
+      availableActions: [],
+      steps: [],
+      histories: [],
+      attachmentSnapshots: [],
+    })
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    const link = wrapper.find('[data-test="approval-detail-business-link"]')
+    expect(link.exists()).toBe(true)
+    expect(link.text()).toContain('查看业务单据')
+    expect(link.attributes('data-to')).toBe(expectedPath)
+  })
+
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {
     const zeroVersionDetail = {
       id: 3,

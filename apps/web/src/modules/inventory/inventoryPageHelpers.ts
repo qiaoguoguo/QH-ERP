@@ -41,6 +41,23 @@ const documentStatusTagTypes: Record<InventoryDocumentStatus, 'info' | 'success'
   POSTED: 'success',
 }
 
+const controlledDocumentStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  COUNTING: '盘点中',
+  RECONCILED: '已确认差异',
+  SUBMITTED: '审批中',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
+  WITHDRAWN: '已撤回',
+  POSTED: '已过账',
+  CANCELLED: '已取消',
+}
+
+const valuationAdjustmentTypeLabels: Record<string, string> = {
+  LEGACY_OPENING: '历史期初估值',
+  PROVISIONAL_REVALUATION: '暂估重估',
+}
+
 const movementTypeLabels: Record<InventoryMovementType, string> = {
   OPENING: '期初',
   ADJUSTMENT_INCREASE: '调增',
@@ -79,6 +96,14 @@ export function documentTypeLabel(type: InventoryDocumentType): string {
 
 export function documentStatusLabel(status: InventoryDocumentStatus): string {
   return documentStatusLabels[status]
+}
+
+export function controlledDocumentStatusLabel(status?: string | null): string {
+  return status ? controlledDocumentStatusLabels[status] ?? status : '-'
+}
+
+export function valuationAdjustmentTypeLabel(type?: string | null): string {
+  return type ? valuationAdjustmentTypeLabels[type] ?? type : '-'
 }
 
 export function documentStatusTagType(status: InventoryDocumentStatus): 'info' | 'success' {
@@ -161,6 +186,70 @@ export function formatInventoryAmount(value: unknown, fractionDigits = 2): strin
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   })
+}
+
+export function formatInventoryAmountImpact(
+  amountImpactSummary: unknown,
+  keyInfoSummary: unknown,
+  costVisible?: boolean | null,
+): string {
+  const summary = amountImpactSummary ?? keyInfoSummary
+  if (summary === null || summary === undefined || summary === '') {
+    return '-'
+  }
+  if (typeof summary === 'string') {
+    return costVisible === false ? '金额受限' : summary
+  }
+  if (typeof summary !== 'object') {
+    return String(summary)
+  }
+
+  const record = summary as Record<string, unknown>
+  if (Object.keys(record).length === 0) {
+    return '未形成金额影响'
+  }
+  const amount = firstPresent(record, [
+    'amount',
+    'amountImpact',
+    'inventoryAmount',
+    'movementAmount',
+    'adjustmentAmount',
+    'increaseAmount',
+    'decreaseAmount',
+  ])
+  if (amount === undefined || amount === null || amount === '') {
+    return '-'
+  }
+  if (costVisible === false) {
+    return '金额受限'
+  }
+  return `${amountDirectionLabel(record)} ${formatInventoryAmount(amount)}`.trim()
+}
+
+function firstPresent(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined && record[key] !== null && record[key] !== '') {
+      return record[key]
+    }
+  }
+  return undefined
+}
+
+function amountDirectionLabel(record: Record<string, unknown>): string {
+  const direction = String(record.direction ?? record.amountDirection ?? '').toUpperCase()
+  if (direction === 'INCREASE' || direction === 'IN') {
+    return '调增'
+  }
+  if (direction === 'DECREASE' || direction === 'OUT') {
+    return '调减'
+  }
+  if (record.increaseAmount !== undefined) {
+    return '调增'
+  }
+  if (record.decreaseAmount !== undefined) {
+    return '调减'
+  }
+  return '金额影响'
 }
 
 export function ownershipTypeLabel(type?: InventoryOwnershipType | string | null): string {
