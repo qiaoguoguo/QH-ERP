@@ -36,6 +36,7 @@
 - [销售项目与合同管理基础任务记录](tasks/020-sales-project-contract-foundation.md)
 - [成本财务主数据与 BOM 治理任务记录](tasks/021-cost-financial-master-data-bom-governance.md)
 - [固定审批与业务单据平台基础任务记录](tasks/022-fixed-approval-document-platform.md)
+- [库存计价与仓储账实一致任务记录](tasks/023-inventory-valuation-stock-integrity.md)
 
 ## 产品
 
