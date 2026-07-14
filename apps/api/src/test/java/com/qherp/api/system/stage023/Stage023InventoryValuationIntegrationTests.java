@@ -1,6 +1,12 @@
 package com.qherp.api.system.stage023;
 
+import com.qherp.api.common.BusinessException;
+import com.qherp.api.security.CurrentUser;
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.system.inventory.InventoryAvailabilityService;
+import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.inventory.InventoryReservationType;
+import com.qherp.api.system.user.SystemUserStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -13,6 +19,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.web.bind.annotation.RequestMethod;
@@ -21,6 +28,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,6 +57,8 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 
 	private static final String ADMIN_PASSWORD = "Qherp@2026!";
 
+	private static final long RESERVATION_ROOT_LOCK_OFFSET = 4_231_023_000_000_000_000L;
+
 	private static final AtomicInteger SEQUENCE = new AtomicInteger();
 
 	@Autowired
@@ -59,6 +69,9 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private InventoryAvailabilityService inventoryAvailabilityService;
 
 	@Autowired
 	private PasswordEncoder passwordEncoder;
@@ -1031,6 +1044,137 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?warehouseId=" + fixture.rawWarehouseId()
 				+ "&materialId=" + fixture.valuedMaterialId() + "&batchId=" + batchAId + "&qualityStatus=FROZEN")),
 				"quantityOnHand", "1.000000");
+	}
+
+	@Test
+	void 同源追踪子预留创建与释放必须经根级门闩串行且无半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_RELEASE_CHILD_RACE_");
+		markMaterialSellable(fixture.valuedMaterialId());
+		markMaterialTracking(fixture.valuedMaterialId(), "BATCH");
+		long batchAId = seedBatchStock(admin, fixture, "S23-REL-RACE-A-" + SEQUENCE.incrementAndGet(), "4.000000",
+				"10.000000");
+		long customerId = insertCustomer("S23_RELEASE_CHILD_RACE_C_");
+		JsonNode order = createSalesOrder(admin, customerId, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "3.000000");
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/confirm", null, admin));
+		long orderLineId = confirmed.get("lines").get(0).get("id").longValue();
+		long parentReservationId = parentReservationId("SALES_ORDER", orderLineId);
+
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		Connection latchConnection = this.jdbcTemplate.getDataSource().getConnection();
+		boolean committed = false;
+		try {
+			latchConnection.setAutoCommit(false);
+			lockReservationRootLatch(latchConnection, parentReservationId);
+			Future<String> release = executor.submit(() -> releaseReservationBySourceLine(orderLineId));
+			Future<String> child = executor
+				.submit(() -> reserveTrackedChild(parentReservationId, fixture, order.get("id").longValue(),
+						orderLineId, batchAId, "1.000000"));
+			waitForRootLatchWaiters(release, child);
+
+			latchConnection.commit();
+			committed = true;
+
+			String releaseResult = release.get(15, TimeUnit.SECONDS);
+			String childResult = child.get(15, TimeUnit.SECONDS);
+			assertStableServiceResult("release", releaseResult);
+			assertStableServiceResult("child", childResult);
+			assertThat(List.of(releaseResult, childResult)).as("根级门闩串行后至少一条路径必须完整完成")
+				.contains("OK");
+
+			boolean releaseOk = "OK".equals(releaseResult);
+			boolean childOk = "OK".equals(childResult);
+			BigDecimal expectedParentActive = releaseOk ? BigDecimal.ZERO
+					: new BigDecimal(childOk ? "2.000000" : "3.000000");
+
+			SoftAssertions.assertSoftly((softly) -> {
+				softly.assertThat(reservationActiveQuantity(parentReservationId)).as("根级串行后父级未分配量")
+					.isEqualByComparingTo(expectedParentActive);
+				softly.assertThat(activeChildQuantity(parentReservationId)).as("竞态结束后不得残留活动子预留")
+					.isEqualByComparingTo("0.000000");
+				softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId,
+						null, "PUBLIC", null, null)).as("竞态结束后批次余额不得残留锁定量")
+					.isEqualByComparingTo("0.000000");
+				softly.assertThat(batchTotalQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId))
+					.as("release 与 child 创建竞态不得改变库存实物数量")
+					.isEqualByComparingTo("4.000000");
+			});
+		}
+		finally {
+			if (!committed) {
+				latchConnection.rollback();
+			}
+			latchConnection.close();
+			executor.shutdownNow();
+			executor.awaitTermination(5, TimeUnit.SECONDS);
+		}
+	}
+
+	@Test
+	void 两批次反向顺序并发冻结不得发生批次锁序死锁或半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_BATCH_ORDER_LOCK_");
+		markMaterialTracking(fixture.valuedMaterialId(), "BATCH");
+		long batchAId = seedBatchStock(admin, fixture, "S23-ORDER-A-" + SEQUENCE.incrementAndGet(), "2.000000",
+				"10.000000");
+		long batchBId = seedBatchStock(admin, fixture, "S23-ORDER-B-" + SEQUENCE.incrementAndGet(), "2.000000",
+				"10.000000");
+		Map<String, Object> freezeAB = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "2.000000", "023 A 后 B 并发冻结");
+		freezeAB.put("ownershipType", "PUBLIC");
+		freezeAB.put("trackingAllocations", List.of(trackingByBatch(batchAId, "1.000000"),
+				trackingByBatch(batchBId, "1.000000")));
+		Map<String, Object> freezeBA = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "2.000000", "023 B 后 A 并发冻结");
+		freezeBA.put("ownershipType", "PUBLIC");
+		freezeBA.put("trackingAllocations", List.of(trackingByBatch(batchBId, "1.000000"),
+				trackingByBatch(batchAId, "1.000000")));
+
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		try {
+			Future<ResponseEntity<String>> first = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freezeAB, admin);
+			});
+			Future<ResponseEntity<String>> second = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freezeBA, admin);
+			});
+			start.countDown();
+			ResponseEntity<String> firstResponse = first.get(15, TimeUnit.SECONDS);
+			ResponseEntity<String> secondResponse = second.get(15, TimeUnit.SECONDS);
+			assertStableConcurrencyResponse("freezeAB", firstResponse);
+			assertStableConcurrencyResponse("freezeBA", secondResponse);
+			assertThat((firstResponse.getStatusCode().value() == 200 ? 1 : 0)
+					+ (secondResponse.getStatusCode().value() == 200 ? 1 : 0)).as("两批次库存足够时至少一笔并发冻结应完整成功")
+				.isGreaterThanOrEqualTo(1);
+		}
+		finally {
+			executor.shutdownNow();
+			executor.awaitTermination(5, TimeUnit.SECONDS);
+		}
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(batchTotalQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId))
+				.as("批次A总量守恒")
+				.isEqualByComparingTo("2.000000");
+			softly.assertThat(batchTotalQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchBId))
+				.as("批次B总量守恒")
+				.isEqualByComparingTo("2.000000");
+			softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId,
+					null, "PUBLIC", null, null)).as("批次A不得残留锁定量")
+				.isEqualByComparingTo("0.000000");
+			softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchBId,
+					null, "PUBLIC", null, null)).as("批次B不得残留锁定量")
+				.isEqualByComparingTo("0.000000");
+			softly.assertThat(balanceQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId,
+					"FROZEN")).as("批次A冻结量不得和批次B不一致")
+				.isEqualByComparingTo(balanceQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchBId,
+						"FROZEN"));
+		});
 	}
 
 	@Test
@@ -2334,6 +2478,111 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				  and cost_layer_id is not distinct from ?
 				""", BigDecimal.class, warehouseId, materialId, batchId, serialId, ownershipType, projectId,
 				costLayerId);
+	}
+
+	private BigDecimal balanceQuantity(long warehouseId, long materialId, Long batchId, String qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = ?
+				  and batch_id is not distinct from ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus, batchId);
+	}
+
+	private BigDecimal batchTotalQuantity(long warehouseId, long materialId, Long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and batch_id is not distinct from ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, warehouseId, materialId, batchId);
+	}
+
+	private void assertStableConcurrencyResponse(String action, ResponseEntity<String> response) {
+		assertThat(response.getStatusCode().is5xxServerError()).as(action + " 不得因死锁或事务异常返回 5xx: "
+				+ response.getBody()).isFalse();
+		assertThat(response.getStatusCode().value()).as(action + " 只能完整成功或稳定业务拒绝: " + response.getBody())
+			.isIn(200, 409);
+	}
+
+	private void assertStableServiceResult(String action, String result) {
+		assertThat(result).as(action + " 只能完整成功或稳定业务拒绝").matches("OK|BUSINESS:[A-Z0-9_]+");
+	}
+
+	private String releaseReservationBySourceLine(long orderLineId) {
+		try {
+			this.inventoryAvailabilityService.releaseBySourceLine(InventoryReservationType.RESERVATION,
+					InventoryAvailabilityService.SALES_ORDER_SOURCE, orderLineId, adminUser(),
+					request("PUT", "/api/admin/inventory/reservations/release-by-source-line"));
+			return "OK";
+		}
+		catch (BusinessException exception) {
+			return "BUSINESS:" + exception.errorCode().name();
+		}
+	}
+
+	private String reserveTrackedChild(long parentReservationId, InventoryFixture fixture, long orderId,
+			long orderLineId, long batchId, String quantity) {
+		try {
+			this.inventoryAvailabilityService.reserveFromWarehouse(new InventoryAvailabilityService.ReservationCommand(
+					InventoryReservationType.RESERVATION, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+					fixture.unitId(), new BigDecimal(quantity), InventoryAvailabilityService.SALES_ORDER_SOURCE,
+					orderId, orderLineId, "S23-ROOT-LATCH-" + orderId, LocalDate.now(), "023 根级门闩 child 并发",
+					null, "PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, batchId, null,
+					parentReservationId), adminUser(), request("POST", "/api/admin/inventory/reservations/child"));
+			return "OK";
+		}
+		catch (BusinessException exception) {
+			return "BUSINESS:" + exception.errorCode().name();
+		}
+	}
+
+	private CurrentUser adminUser() {
+		return new CurrentUser(1L, "admin", "admin", SystemUserStatus.ENABLED, List.of(), List.of(), List.of());
+	}
+
+	private MockHttpServletRequest request(String method, String path) {
+		return new MockHttpServletRequest(method, path);
+	}
+
+	private void lockReservationRootLatch(Connection connection, long parentReservationId) throws Exception {
+		try (var statement = connection.prepareStatement("""
+				select pg_advisory_xact_lock(?)
+				""")) {
+			statement.setLong(1, RESERVATION_ROOT_LOCK_OFFSET + parentReservationId);
+			statement.execute();
+		}
+	}
+
+	private void waitForRootLatchWaiters(Future<?> first, Future<?> second) throws Exception {
+		long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+		while (System.nanoTime() < deadline) {
+			if (!first.isDone() && !second.isDone() && waitingAdvisoryLockCount() >= 2L) {
+				return;
+			}
+			Thread.sleep(50);
+		}
+		assertThat(first.isDone()).as("第一条并发路径应等待生产 root advisory latch").isFalse();
+		assertThat(second.isDone()).as("第二条并发路径应等待生产 root advisory latch").isFalse();
+		assertThat(waitingAdvisoryLockCount()).as("两条并发路径应排队等待同一类 advisory latch").isGreaterThanOrEqualTo(2L);
+	}
+
+	private long waitingAdvisoryLockCount() {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from pg_locks
+				where locktype = 'advisory'
+				  and granted = false
+				""", Long.class);
 	}
 
 	private JsonNode reconciliationValue(long materialId) throws Exception {

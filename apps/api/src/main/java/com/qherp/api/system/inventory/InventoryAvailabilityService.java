@@ -33,6 +33,12 @@ public class InventoryAvailabilityService {
 
 	private static final BigDecimal ZERO = BigDecimal.ZERO;
 
+	private static final long RESERVATION_ROOT_LOCK_OFFSET = 4_231_023_000_000_000_000L;
+
+	private static final int RESERVATION_SOURCE_DOCUMENT_LOCK_NAMESPACE = 423_102_301;
+
+	private static final int RESERVATION_SOURCE_LINE_LOCK_NAMESPACE = 423_102_302;
+
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
 	private static final AtomicInteger RESERVATION_NO_SEQUENCE = new AtomicInteger();
@@ -115,6 +121,7 @@ public class InventoryAvailabilityService {
 		if (command.parentReservationId() != null) {
 			return reserveChildFromWarehouse(command, operator, request);
 		}
+		lockReservationSourceLatches(command);
 		validateReservationIdentity(command);
 		OffsetDateTime now = OffsetDateTime.now();
 		boolean rowLocking = rowLockingReservation(command);
@@ -128,6 +135,7 @@ public class InventoryAvailabilityService {
 
 	private long reserveChildFromWarehouse(ReservationCommand command, CurrentUser operator,
 			HttpServletRequest request) {
+		lockReservationRootLatch(command.parentReservationId());
 		ReservationLock parentSnapshot = findReservationById(command.parentReservationId())
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.VALIDATION_ERROR));
 		command = inheritParentReservationIdentity(parentSnapshot, command);
@@ -216,6 +224,12 @@ public class InventoryAvailabilityService {
 			return false;
 		}
 		ReservationLock parentSnapshot = parentReservation.get();
+		lockReservationRootLatch(parentSnapshot.id());
+		parentReservation = findActiveParentReservation(reservationType, sourceType, sourceLineId);
+		if (parentReservation.isEmpty()) {
+			return false;
+		}
+		parentSnapshot = parentReservation.get();
 		InventoryTrackingMethod trackingMethod = trackingMethod(parentSnapshot.materialId());
 		if (trackingMethod == InventoryTrackingMethod.NONE) {
 			return consumeBySourceLine(reservationType, sourceType, sourceLineId, quantity, operator, request);
@@ -243,6 +257,9 @@ public class InventoryAvailabilityService {
 	@Transactional
 	public void releaseBySource(InventoryReservationType reservationType, String sourceType, Long sourceId,
 			CurrentUser operator, HttpServletRequest request) {
+		lockReservationSourceDocumentLatch(sourceType, sourceId);
+		List<Long> rootIds = releaseReservationRootCandidatesBySource(reservationType, sourceType, sourceId);
+		lockReservationRootLatches(rootIds);
 		List<ReservationLock> candidates = releaseReservationCandidatesBySource(reservationType, sourceType, sourceId);
 		lockReleaseReservationBalances(candidates);
 		List<ReservationLock> reservations = lockActiveReservationsBySource(reservationType, sourceType, sourceId);
@@ -252,6 +269,9 @@ public class InventoryAvailabilityService {
 	@Transactional
 	public void releaseBySourceLine(InventoryReservationType reservationType, String sourceType, Long sourceLineId,
 			CurrentUser operator, HttpServletRequest request) {
+		lockReservationSourceLineLatch(sourceType, sourceLineId);
+		List<Long> rootIds = releaseReservationRootCandidatesBySourceLine(reservationType, sourceType, sourceLineId);
+		lockReservationRootLatches(rootIds);
 		List<ReservationLock> candidates = releaseReservationCandidatesBySourceLine(reservationType, sourceType,
 				sourceLineId);
 		lockReleaseReservationBalances(candidates);
@@ -430,6 +450,7 @@ public class InventoryAvailabilityService {
 				and ownership_type = ?
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
+				order by id
 				for update
 				""", (rs, rowNum) -> new BalanceLock(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
 					warehouseId, materialId, ownershipType, projectId, costLayerId)
@@ -453,6 +474,32 @@ public class InventoryAvailabilityService {
 					""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId)
 			.stream()
 			.findFirst();
+	}
+
+	private List<Long> releaseReservationRootCandidatesBySource(InventoryReservationType reservationType,
+			String sourceType, Long sourceId) {
+		return this.jdbcTemplate.queryForList("""
+				select distinct coalesce(parent_reservation_id, id) as root_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_id = ?
+				and status = 'ACTIVE'
+				order by root_id
+				""", Long.class, reservationType.name(), sourceType, sourceId);
+	}
+
+	private List<Long> releaseReservationRootCandidatesBySourceLine(InventoryReservationType reservationType,
+			String sourceType, Long sourceLineId) {
+		return this.jdbcTemplate.queryForList("""
+				select distinct coalesce(parent_reservation_id, id) as root_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_line_id = ?
+				and status = 'ACTIVE'
+				order by root_id
+				""", Long.class, reservationType.name(), sourceType, sourceLineId);
 	}
 
 	private List<ReservationLock> releaseReservationCandidatesBySource(InventoryReservationType reservationType,
@@ -490,11 +537,17 @@ public class InventoryAvailabilityService {
 	}
 
 	private void lockReleaseReservationBalances(List<ReservationLock> reservations) {
-		for (ReservationLock reservation : reservations) {
-			if (rowLockingReservation(reservation)) {
-				lockExactReservationBalance(reservation);
-			}
+		List<Long> balanceIds = reservations.stream()
+			.filter(this::rowLockingReservation)
+			.map(this::exactReservationBalanceId)
+			.flatMap(Optional::stream)
+			.distinct()
+			.sorted()
+			.toList();
+		if (balanceIds.isEmpty()) {
+			return;
 		}
+		lockBalanceIds(balanceIds);
 	}
 
 	private List<ReservationLock> lockActiveReservationsBySource(InventoryReservationType reservationType,
@@ -510,7 +563,7 @@ public class InventoryAvailabilityService {
 				and source_id = ?
 				and status = 'ACTIVE'
 				order by case when parent_reservation_id is null then 0 else 1 end,
-				         parent_reservation_id nulls first, id
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", this::mapReservationLock, reservationType.name(), sourceType, sourceId);
 	}
@@ -528,7 +581,7 @@ public class InventoryAvailabilityService {
 				and source_line_id = ?
 				and status = 'ACTIVE'
 				order by case when parent_reservation_id is null then 0 else 1 end,
-				         parent_reservation_id nulls first, id
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId);
 	}
@@ -553,6 +606,39 @@ public class InventoryAvailabilityService {
 					""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId)
 			.stream()
 			.findFirst();
+	}
+
+	private void lockReservationRootLatches(List<Long> rootIds) {
+		rootIds.stream().filter(Objects::nonNull).distinct().sorted().forEach(this::lockReservationRootLatch);
+	}
+
+	private void lockReservationSourceLatches(ReservationCommand command) {
+		lockReservationSourceDocumentLatch(command.sourceType(), command.sourceId());
+		lockReservationSourceLineLatch(command.sourceType(), command.sourceLineId());
+	}
+
+	private void lockReservationSourceDocumentLatch(String sourceType, Long sourceId) {
+		lockReservationSourceLatch(RESERVATION_SOURCE_DOCUMENT_LOCK_NAMESPACE, sourceType, sourceId);
+	}
+
+	private void lockReservationSourceLineLatch(String sourceType, Long sourceLineId) {
+		lockReservationSourceLatch(RESERVATION_SOURCE_LINE_LOCK_NAMESPACE, sourceType, sourceLineId);
+	}
+
+	private void lockReservationSourceLatch(int namespace, String sourceType, Long sourceId) {
+		if (!hasText(sourceType) || sourceId == null) {
+			return;
+		}
+		this.jdbcTemplate.query("select pg_advisory_xact_lock(?, hashtext(cast(? as text)))", (rs) -> null,
+				namespace, sourceType + ":" + sourceId);
+	}
+
+	private void lockReservationRootLatch(Long rootReservationId) {
+		if (rootReservationId == null) {
+			return;
+		}
+		this.jdbcTemplate.query("select pg_advisory_xact_lock(?)", (rs) -> null,
+				RESERVATION_ROOT_LOCK_OFFSET + rootReservationId);
 	}
 
 	private Optional<ReservationLock> findActiveParentReservation(InventoryReservationType reservationType,
@@ -729,6 +815,37 @@ public class InventoryAvailabilityService {
 				reservation.batchId(), reservation.serialId()));
 	}
 
+	private Optional<Long> exactReservationBalanceId(ReservationLock reservation) {
+		return this.jdbcTemplate
+			.query("""
+				select id
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				""", (rs, rowNum) -> rs.getLong("id"), reservation.warehouseId(), reservation.materialId(),
+					reservation.qualityStatus().name(), reservation.batchId(), reservation.serialId(),
+					reservation.ownershipType(), reservation.projectId(), reservation.costLayerId())
+			.stream()
+			.findFirst();
+	}
+
+	private void lockBalanceIds(List<Long> balanceIds) {
+		String placeholders = String.join(", ", balanceIds.stream().map((id) -> "?").toList());
+		this.jdbcTemplate.query("""
+				select id
+				from inv_stock_balance
+				where id in (%s)
+				order by id
+				for update
+				""".formatted(placeholders), (rs) -> null, balanceIds.toArray());
+	}
+
 	private BigDecimal aggregateAvailableQuantityForUpdate(ReservationCommand command) {
 		BigDecimal quantityOnHand = aggregateQualifiedQuantityForUpdate(command);
 		return quantityOnHand.subtract(activeLockedQuantityForUpdate(command.warehouseId(), command.materialId(),
@@ -751,6 +868,7 @@ public class InventoryAvailabilityService {
 				and ownership_type = ?
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), command.warehouseId(),
 				command.materialId(), command.qualityStatus().name(), command.batchId(), command.serialId(),
@@ -770,6 +888,7 @@ public class InventoryAvailabilityService {
 				and ownership_type = ?
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), command.warehouseId(),
 				command.materialId(), command.qualityStatus().name(), command.ownershipType(), command.projectId(),
@@ -791,6 +910,8 @@ public class InventoryAvailabilityService {
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 				.subtract(rs.getBigDecimal("released_quantity"))
@@ -813,6 +934,8 @@ public class InventoryAvailabilityService {
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
@@ -898,6 +1021,7 @@ public class InventoryAvailabilityService {
 				from inv_stock_reservation
 				where parent_reservation_id = ?
 				and status = 'ACTIVE'
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 				.subtract(rs.getBigDecimal("released_quantity"))

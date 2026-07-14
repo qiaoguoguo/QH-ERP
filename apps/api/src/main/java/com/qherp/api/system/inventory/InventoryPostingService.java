@@ -41,6 +41,8 @@ public class InventoryPostingService {
 		validateOutboundQualityStatus(request);
 		OffsetDateTime now = OffsetDateTime.now();
 		ValuationContext valuationContext = request.valuationContextOrDefault();
+		AggregateQualifiedBalanceSnapshot aggregateSnapshot = lockAggregateQualifiedBalanceSnapshotIfRequired(request,
+				valuationContext);
 		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(),
 				request.qualityStatus(), request.batchId(), request.serialId(), valuationContext.ownershipType(),
 				valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext), now);
@@ -59,7 +61,8 @@ public class InventoryPostingService {
 			assertQualifiedOutboundAvailable(request.warehouseId(), request.materialId(), request.quantity(),
 					request.batchId(), request.serialId(), valuationContext,
 					ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE, beforeQuantity,
-					request.consumedReservation(), request.reservationSourceType(), request.reservationSourceLineId());
+					request.consumedReservation(), request.reservationSourceType(), request.reservationSourceLineId(),
+					aggregateSnapshot);
 		}
 		Long movementId;
 		try {
@@ -154,15 +157,27 @@ public class InventoryPostingService {
 	public void assertQualifiedOutboundAvailable(Long warehouseId, Long materialId, BigDecimal quantity, Long batchId,
 			Long serialId, ValuationContext valuationContext, ApiErrorCode errorCode) {
 		ValuationContext context = valuationContext == null ? ValuationContext.publicStock(null) : valuationContext;
+		AggregateQualifiedBalanceSnapshot aggregateSnapshot = lockAggregateQualifiedBalanceSnapshotIfRequired(warehouseId,
+				materialId, batchId, serialId, context, false);
 		BigDecimal beforeQuantity = exactQualifiedQuantityForUpdate(warehouseId, materialId, batchId, serialId,
 				context.ownershipType(), context.projectId(), balanceIdentityCostLayerId(context));
 		assertQualifiedOutboundAvailable(warehouseId, materialId, quantity, batchId, serialId, context, errorCode,
-				beforeQuantity, false, null, null);
+				beforeQuantity, false, null, null, aggregateSnapshot);
 	}
 
 	private void assertQualifiedOutboundAvailable(Long warehouseId, Long materialId, BigDecimal quantity, Long batchId,
 			Long serialId, ValuationContext valuationContext, ApiErrorCode errorCode, BigDecimal beforeQuantity,
-			boolean consumedReservation, String sourceType, Long sourceLineId) {
+			boolean consumedReservation, String sourceType, Long sourceLineId,
+			AggregateQualifiedBalanceSnapshot aggregateSnapshot) {
+		boolean trackedMaterial = trackingMethod(materialId) != InventoryTrackingMethod.NONE;
+		AggregateQualifiedBalanceSnapshot requiredAggregateSnapshot = trackedMaterial && !consumedReservation
+				? requiredAggregateSnapshot(aggregateSnapshot)
+				: null;
+		BigDecimal parentUnallocatedQuantity = trackedMaterial && !consumedReservation
+				? activeAggregateParentUnallocatedQuantityForUpdate(warehouseId, materialId,
+						valuationContext.ownershipType(), valuationContext.projectId(),
+						balanceIdentityCostLayerId(valuationContext))
+				: null;
 		BigDecimal exactLockedQuantity = activeLockedQuantityForUpdate(warehouseId, materialId, batchId, serialId,
 				valuationContext.ownershipType(), valuationContext.projectId(),
 				balanceIdentityCostLayerId(valuationContext), consumedReservation, sourceType, sourceLineId);
@@ -172,19 +187,63 @@ public class InventoryPostingService {
 		if (consumedReservation) {
 			return;
 		}
-		if (trackingMethod(materialId) == InventoryTrackingMethod.NONE) {
+		if (!trackedMaterial) {
 			return;
 		}
-		BigDecimal aggregateQuantity = aggregateQualifiedQuantityForUpdate(warehouseId, materialId,
-				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
 		BigDecimal exactTrackedLockedQuantity = activeTrackedExactLockedQuantityForUpdate(warehouseId, materialId,
 				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
-		BigDecimal parentUnallocatedQuantity = activeAggregateParentUnallocatedQuantityForUpdate(warehouseId, materialId,
-				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
+		BigDecimal aggregateQuantity = requiredAggregateSnapshot.aggregateQuantity();
 		BigDecimal availableAfterThisOutbound = aggregateQuantity.subtract(quantity).subtract(exactTrackedLockedQuantity);
 		if (availableAfterThisOutbound.compareTo(parentUnallocatedQuantity) < 0) {
 			throw new BusinessException(errorCode);
 		}
+	}
+
+	private AggregateQualifiedBalanceSnapshot requiredAggregateSnapshot(
+			AggregateQualifiedBalanceSnapshot aggregateSnapshot) {
+		if (aggregateSnapshot == null) {
+			throw new BusinessException(ApiErrorCode.CONFLICT);
+		}
+		return aggregateSnapshot;
+	}
+
+	private AggregateQualifiedBalanceSnapshot lockAggregateQualifiedBalanceSnapshotIfRequired(PostingRequest request,
+			ValuationContext valuationContext) {
+		if (request.direction() != InventoryDirection.OUT || request.qualityStatus() != InventoryQualityStatus.QUALIFIED
+				|| request.consumedReservation()) {
+			return null;
+		}
+		return lockAggregateQualifiedBalanceSnapshotIfRequired(request.warehouseId(), request.materialId(),
+				request.batchId(), request.serialId(), valuationContext, false);
+	}
+
+	private AggregateQualifiedBalanceSnapshot lockAggregateQualifiedBalanceSnapshotIfRequired(Long warehouseId,
+			Long materialId, Long batchId, Long serialId, ValuationContext valuationContext,
+			boolean consumedReservation) {
+		if (consumedReservation || trackingMethod(materialId) == InventoryTrackingMethod.NONE) {
+			return null;
+		}
+		return lockAggregateQualifiedBalanceSnapshot(warehouseId, materialId, valuationContext);
+	}
+
+	private AggregateQualifiedBalanceSnapshot lockAggregateQualifiedBalanceSnapshot(Long warehouseId, Long materialId,
+			ValuationContext valuationContext) {
+		BigDecimal aggregateQuantity = this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				order by id
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
+				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext))
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		return new AggregateQualifiedBalanceSnapshot(aggregateQuantity);
 	}
 
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
@@ -230,6 +289,7 @@ public class InventoryPostingService {
 					and ownership_type = ?
 					and project_id is not distinct from ?
 					and cost_layer_id is not distinct from ?
+					order by id
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
 					warehouseId, materialId, qualityStatus.name(), batchId, serialId, ownershipType, projectId,
@@ -251,6 +311,7 @@ public class InventoryPostingService {
 				and ownership_type = ?
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId, batchId,
 				serialId, ownershipType, projectId, costLayerId)
@@ -270,6 +331,7 @@ public class InventoryPostingService {
 				and ownership_type = ?
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId, ownershipType,
 				projectId, costLayerId)
@@ -303,6 +365,8 @@ public class InventoryPostingService {
 					or source_type <> ?
 					or source_line_id is distinct from ?
 				)
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
@@ -325,6 +389,8 @@ public class InventoryPostingService {
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         coalesce(parent_reservation_id, id), id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 				.subtract(rs.getBigDecimal("released_quantity"))
@@ -349,6 +415,7 @@ public class InventoryPostingService {
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
+				order by id
 				for update
 				""", (rs, rowNum) -> parentUnallocatedQuantity(rs.getLong("id"), rs.getBigDecimal("quantity")
 				.subtract(rs.getBigDecimal("released_quantity"))
@@ -364,6 +431,7 @@ public class InventoryPostingService {
 				from inv_stock_reservation
 				where parent_reservation_id = ?
 				and status = 'ACTIVE'
+				order by id
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 				.subtract(rs.getBigDecimal("released_quantity"))
@@ -796,6 +864,9 @@ public class InventoryPostingService {
 				BigDecimal toBeforeQuantity, BigDecimal toAfterQuantity) {
 			this(fromBeforeQuantity, fromAfterQuantity, toBeforeQuantity, toAfterQuantity, null, null);
 		}
+	}
+
+	private record AggregateQualifiedBalanceSnapshot(BigDecimal aggregateQuantity) {
 	}
 
 	private record BalanceRow(Long id, BigDecimal quantityOnHand) {

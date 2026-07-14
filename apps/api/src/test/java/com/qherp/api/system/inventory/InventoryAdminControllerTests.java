@@ -965,28 +965,84 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 	@Test
 	void 预留消费与释放必须按余额父预留子预留顺序获取锁() throws Exception {
-		String source = Files.readString(Path.of(
+		String availabilitySource = Files.readString(Path.of(
 				"src/main/java/com/qherp/api/system/inventory/InventoryAvailabilityService.java"));
-		String trackedConsume = methodBody(source, "public boolean consumeTrackedBySourceLine",
-				"public void releaseBySource");
-		assertAppearsInOrder(trackedConsume, "findActiveParentReservation(", "lockExactReservationBalance(",
-				"lockActiveParentReservation(", "lockActiveChildReservation(");
+		String trackedConsume = methodBody(availabilitySource, "public boolean consumeTrackedBySourceLine");
+		assertAppearsInOrder(trackedConsume, "findActiveParentReservation(", "lockReservationRootLatch(",
+				"lockExactReservationBalance(", "lockActiveParentReservation(", "lockActiveChildReservation(");
 		assertThat(trackedConsume).doesNotContain("reserveFromWarehouse(");
 
-		String exactConsume = methodBody(source, "public boolean consumeBySourceLine",
-				"public boolean consumeTrackedBySourceLine");
+		String exactConsume = methodBody(availabilitySource, "public boolean consumeBySourceLine");
 		assertAppearsInOrder(exactConsume, "findActiveReservation(", "lockExactReservationBalance(",
 				"lockActiveReservation(");
 
-		String releaseBySource = methodBody(source, "public void releaseBySource",
-				"public void releaseBySourceLine");
-		assertAppearsInOrder(releaseBySource, "releaseReservationCandidatesBySource(",
+		String reserveFromWarehouse = methodBody(availabilitySource, "public long reserveFromWarehouse");
+		assertAppearsInOrder(reserveFromWarehouse, "validateReservationCommand(command)",
+				"if (command.parentReservationId() != null)", "lockReservationSourceLatches(command)",
+				"validateReservationIdentity(command)", "availableQuantity");
+
+		String releaseBySource = methodBody(availabilitySource, "public void releaseBySource");
+		assertAppearsInOrder(releaseBySource, "lockReservationSourceDocumentLatch(sourceType, sourceId)",
+				"releaseReservationRootCandidatesBySource(", "lockReservationRootLatches(",
+				"releaseReservationCandidatesBySource(",
 				"lockReleaseReservationBalances(", "lockActiveReservationsBySource(");
 
-		String releaseBySourceLine = methodBody(source, "public void releaseBySourceLine",
-				"public void assertQualifiedAvailable");
-		assertAppearsInOrder(releaseBySourceLine, "releaseReservationCandidatesBySourceLine(",
+		String releaseBySourceLine = methodBody(availabilitySource, "public void releaseBySourceLine");
+		assertAppearsInOrder(releaseBySourceLine, "lockReservationSourceLineLatch(sourceType, sourceLineId)",
+				"releaseReservationRootCandidatesBySourceLine(", "lockReservationRootLatches(",
+				"releaseReservationCandidatesBySourceLine(",
 				"lockReleaseReservationBalances(", "lockActiveReservationsBySourceLine(");
+		String sourceLatchOrder = methodBody(availabilitySource, "private void lockReservationSourceLatches(");
+		assertAppearsInOrder(sourceLatchOrder, "lockReservationSourceDocumentLatch(command.sourceType(), command.sourceId())",
+				"lockReservationSourceLineLatch(command.sourceType(), command.sourceLineId())");
+		String sourceLatch = methodBody(availabilitySource, "private void lockReservationSourceLatch(");
+		assertThat(sourceLatch).contains("pg_advisory_xact_lock(?, hashtext(cast(? as text)))");
+		assertThat(sourceLatch).doesNotContain("hashCode(");
+		assertAppearsInOrder(methodBody(availabilitySource,
+				"private Optional<BalanceLock> lockQualifiedBalance(Long warehouseId"),
+				"order by id", "for update");
+		assertAppearsInOrder(methodBody(availabilitySource, "private BigDecimal aggregateQualifiedQuantityForUpdate("),
+				"order by id", "for update");
+		assertReservationLockOrder(methodBody(availabilitySource,
+				"private BigDecimal activeExactLockedQuantityForUpdate("));
+		assertReservationLockOrder(methodBody(availabilitySource,
+				"private BigDecimal activeLockedQuantityForUpdate(Long warehouseId"));
+		assertReservationLockOrder(methodBody(availabilitySource,
+				"private List<ReservationLock> lockActiveReservationsBySource("));
+		assertReservationLockOrder(methodBody(availabilitySource,
+				"private List<ReservationLock> lockActiveReservationsBySourceLine("));
+		assertAppearsInOrder(methodBody(availabilitySource, "private BigDecimal activeChildQuantityForUpdate("),
+				"order by id", "for update");
+
+		String postingSource = Files.readString(Path.of(
+				"src/main/java/com/qherp/api/system/inventory/InventoryPostingService.java"));
+		String posting = methodBody(postingSource, "public PostingResult post");
+		assertAppearsInOrder(posting, "lockAggregateQualifiedBalanceSnapshotIfRequired(", "lockedBalance(",
+				"assertQualifiedOutboundAvailable(");
+		String directAssert = methodBody(postingSource, "public void assertQualifiedOutboundAvailable");
+		assertAppearsInOrder(directAssert, "lockAggregateQualifiedBalanceSnapshotIfRequired(",
+				"exactQualifiedQuantityForUpdate(", "assertQualifiedOutboundAvailable(");
+		String privateAssert = methodBody(postingSource, "private void assertQualifiedOutboundAvailable");
+		assertAppearsInOrder(privateAssert, "activeAggregateParentUnallocatedQuantityForUpdate(",
+				"activeLockedQuantityForUpdate(", "activeTrackedExactLockedQuantityForUpdate(");
+		assertThat(privateAssert).doesNotContain("aggregateSnapshot == null");
+		assertThat(privateAssert).doesNotContain("lockAggregateQualifiedBalanceSnapshot(");
+		assertThat(privateAssert).doesNotContain("aggregateQualifiedQuantityForUpdate(");
+		assertAppearsInOrder(methodBody(postingSource,
+				"private AggregateQualifiedBalanceSnapshot lockAggregateQualifiedBalanceSnapshot("),
+				"order by id", "for update");
+		assertAppearsInOrder(methodBody(postingSource,
+				"private BigDecimal aggregateQualifiedQuantityForUpdate("),
+				"order by id", "for update");
+		assertReservationLockOrder(methodBody(postingSource,
+				"boolean excludeSource, String sourceType"));
+		assertReservationLockOrder(methodBody(postingSource,
+				"private BigDecimal activeTrackedExactLockedQuantityForUpdate("));
+		assertAppearsInOrder(methodBody(postingSource,
+				"private BigDecimal activeAggregateParentUnallocatedQuantityForUpdate("),
+				"order by id", "for update");
+		assertAppearsInOrder(methodBody(postingSource, "private BigDecimal parentUnallocatedQuantity("),
+				"order by id", "for update");
 	}
 
 	@Test
@@ -2409,6 +2465,15 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		return future.get(10, TimeUnit.SECONDS);
 	}
 
+	private InventoryPostingService.PostingResult postBatchOutbound(InventoryFixture fixture, long batchId,
+			String reason) {
+		return this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.SALES_SHIPMENT, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("2.000000"),
+				InventoryQualityStatus.QUALIFIED, "STAGE023_BATCH_CONCURRENT", nextSourceId(), nextSourceLineId(),
+				LocalDate.now(), reason, null, "tester", false, batchId, null));
+	}
+
 	@Test
 	void lockedPeriodRejectsInventoryDocumentPost() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -3429,6 +3494,17 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				""", BigDecimal.class, warehouseId, materialId);
 	}
 
+	private BigDecimal batchBalanceQuantity(long warehouseId, long materialId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id = ?
+				""", BigDecimal.class, warehouseId, materialId, batchId);
+	}
+
 	private long movementCount(long warehouseId, long materialId) {
 		return this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -3578,21 +3654,77 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(availableActions.toString()).contains(actions);
 	}
 
-	private String methodBody(String source, String startMarker, String endMarker) {
+	private String methodBody(String source, String startMarker) {
 		int start = source.indexOf(startMarker);
-		int end = source.indexOf(endMarker, start + startMarker.length());
 		assertThat(start).as("必须找到方法起点: %s", startMarker).isGreaterThanOrEqualTo(0);
-		assertThat(end).as("必须找到方法终点: %s", endMarker).isGreaterThan(start);
-		return source.substring(start, end);
+		int openBrace = source.indexOf('{', start + startMarker.length());
+		assertThat(openBrace).as("必须找到方法左花括号: %s", startMarker).isGreaterThan(start);
+		int depth = 0;
+		for (int index = openBrace; index < source.length(); index++) {
+			char current = source.charAt(index);
+			if (current == '{') {
+				depth++;
+			}
+			else if (current == '}') {
+				depth--;
+				if (depth == 0) {
+					return source.substring(start, index + 1);
+				}
+			}
+		}
+		throw new AssertionError("必须找到方法右花括号: " + startMarker);
 	}
 
 	private void assertAppearsInOrder(String body, String... markers) {
 		int previous = -1;
 		for (String marker : markers) {
-			int current = body.indexOf(marker);
+			int current = body.indexOf(marker, previous + 1);
 			assertThat(current).as("必须找到锁序标记: %s", marker).isGreaterThanOrEqualTo(0);
 			assertThat(current).as("锁序标记顺序错误: %s", marker).isGreaterThan(previous);
 			previous = current;
+		}
+	}
+
+	private void assertReservationLockOrder(String body) {
+		assertAppearsInOrder(body, "order by case when parent_reservation_id is null then 0 else 1 end",
+				"coalesce(parent_reservation_id, id), id", "for update");
+	}
+
+	@Test
+	void 两个批次普通出库并发必须按统一余额顺序完成且不死锁() throws Exception {
+		InventoryFixture fixture = fixture();
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",
+				fixture.rawMaterialId());
+		PurchaseReceiptSource source = insertPurchaseReceiptSource(fixture);
+		long batchA = insertTrackedBatchStock(fixture, source, "B-POST-ORDER-A-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "4.000000");
+		long batchB = insertTrackedBatchStock(fixture, source, "B-POST-ORDER-B-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "4.000000");
+		reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				"PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, null, null, null);
+
+		ExecutorService executorService = Executors.newFixedThreadPool(2);
+		CountDownLatch start = new CountDownLatch(1);
+		try {
+			Future<InventoryPostingService.PostingResult> first = executorService.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return postBatchOutbound(fixture, batchA, "并发批次 A");
+			});
+			Future<InventoryPostingService.PostingResult> second = executorService.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return postBatchOutbound(fixture, batchB, "并发批次 B");
+			});
+			start.countDown();
+
+			assertThat(first.get(15, TimeUnit.SECONDS).afterQuantity()).isEqualByComparingTo("2.000000");
+			assertThat(second.get(15, TimeUnit.SECONDS).afterQuantity()).isEqualByComparingTo("2.000000");
+			assertDecimal(batchBalanceQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchA),
+					"2.000000");
+			assertDecimal(batchBalanceQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchB),
+					"2.000000");
+		}
+		finally {
+			executorService.shutdownNow();
 		}
 	}
 
