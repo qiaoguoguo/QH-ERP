@@ -1178,6 +1178,231 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 同仓同物料冻结与解冻反向过账必须经统一锁序且无半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_POST_SCOPE_QUAL_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"4.000000", "10.000000");
+		Map<String, Object> initialFreeze = qualityTransferPayload(fixture.rawWarehouseId(),
+				fixture.valuedMaterialId(), fixture.unitId(), "2.000000", "023 初始冻结");
+		initialFreeze.put("ownershipType", "PUBLIC");
+		assertThat(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", initialFreeze, admin)
+			.getStatusCode()).isEqualTo(HttpStatus.OK);
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "023 并发冻结");
+		freeze.put("ownershipType", "PUBLIC");
+		Map<String, Object> unfreeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "023 并发解冻");
+		unfreeze.put("ownershipType", "PUBLIC");
+
+		List<ResponseEntity<String>> responses = runTwoHttpConcurrently(
+				() -> exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freeze, admin),
+				() -> exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/unfreeze", unfreeze, admin));
+		ResponseEntity<String> freezeResponse = responses.get(0);
+		ResponseEntity<String> unfreezeResponse = responses.get(1);
+		assertStableConcurrencyResponse("freeze", freezeResponse);
+		assertStableConcurrencyResponse("unfreeze", unfreezeResponse);
+		assertThat(okCount(responses)).as("库存充足时反向质量过账至少一条路径必须完整成功").isGreaterThanOrEqualTo(1);
+
+		BigDecimal delta = new BigDecimal("1.000000");
+		BigDecimal expectedQualified = new BigDecimal("2.000000")
+			.subtract(isOk(freezeResponse) ? delta : BigDecimal.ZERO)
+			.add(isOk(unfreezeResponse) ? delta : BigDecimal.ZERO);
+		BigDecimal expectedFrozen = new BigDecimal("2.000000")
+			.add(isOk(freezeResponse) ? delta : BigDecimal.ZERO)
+			.subtract(isOk(unfreezeResponse) ? delta : BigDecimal.ZERO);
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(publicQualityQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+					"QUALIFIED")).as("QUALIFIED 数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedQualified);
+			softly.assertThat(publicQualityQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), "FROZEN"))
+				.as("FROZEN 数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedFrozen);
+			softly.assertThat(publicTotalQuantity(fixture.valuedMaterialId())).as("质量转换不得改变总数量")
+				.isEqualByComparingTo("4.000000");
+			softly.assertThat(publicTotalAmount(fixture.valuedMaterialId())).as("质量转换不得改变总价值")
+				.isEqualByComparingTo("40.00");
+			softly.assertThat(publicQualityAmount(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+					"QUALIFIED")).as("QUALIFIED 价值必须与数量同向变更")
+				.isEqualByComparingTo(amountAtTen(expectedQualified));
+			softly.assertThat(publicQualityAmount(fixture.rawWarehouseId(), fixture.valuedMaterialId(), "FROZEN"))
+				.as("FROZEN 价值必须与数量同向变更")
+				.isEqualByComparingTo(amountAtTen(expectedFrozen));
+		});
+	}
+
+	@Test
+	void 两仓反向调拨并发过账必须经统一锁序且无半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_POST_SCOPE_TRANSFER_");
+		long targetWarehouseId = createWarehouse(admin, "S23_POST_SCOPE_TRANSFER_TO_" + SEQUENCE.incrementAndGet());
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"2.000000", "10.000000");
+		seedQuantityWithoutVersion(admin, targetWarehouseId, fixture.valuedMaterialId(), fixture.unitId(),
+				"2.000000", "10.000000");
+		JsonNode transferAB = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, fixture.valuedMaterialId(),
+						fixture.unitId(), null, "1.000000"),
+				admin));
+		JsonNode transferBA = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(targetWarehouseId, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+						fixture.unitId(), null, "1.000000"),
+				admin));
+
+		List<ResponseEntity<String>> responses = runTwoHttpConcurrently(
+				() -> exchange(HttpMethod.PUT,
+						"/api/admin/inventory/warehouse-transfers/" + transferAB.get("id").longValue() + "/post",
+						actionBody(transferAB, "023 A 到 B 并发过账"), admin),
+				() -> exchange(HttpMethod.PUT,
+						"/api/admin/inventory/warehouse-transfers/" + transferBA.get("id").longValue() + "/post",
+						actionBody(transferBA, "023 B 到 A 并发过账"), admin));
+		ResponseEntity<String> responseAB = responses.get(0);
+		ResponseEntity<String> responseBA = responses.get(1);
+		assertStableConcurrencyResponse("transferAB", responseAB);
+		assertStableConcurrencyResponse("transferBA", responseBA);
+		assertThat(okCount(responses)).as("两仓库存充足时反向调拨至少一条路径必须完整成功").isGreaterThanOrEqualTo(1);
+
+		BigDecimal delta = new BigDecimal("1.000000");
+		BigDecimal expectedSource = new BigDecimal("2.000000")
+			.subtract(isOk(responseAB) ? delta : BigDecimal.ZERO)
+			.add(isOk(responseBA) ? delta : BigDecimal.ZERO);
+		BigDecimal expectedTarget = new BigDecimal("2.000000")
+			.add(isOk(responseAB) ? delta : BigDecimal.ZERO)
+			.subtract(isOk(responseBA) ? delta : BigDecimal.ZERO);
+		SoftAssertions.assertSoftly((softly) -> {
+			assertDocumentStatusMatchesResponse(softly, "inv_warehouse_transfer", transferAB.get("id").longValue(),
+					responseAB, "A 到 B 调拨");
+			assertDocumentStatusMatchesResponse(softly, "inv_warehouse_transfer", transferBA.get("id").longValue(),
+					responseBA, "B 到 A 调拨");
+			softly.assertThat(publicQualityQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+					"QUALIFIED")).as("源仓数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedSource);
+			softly.assertThat(publicQualityQuantity(targetWarehouseId, fixture.valuedMaterialId(), "QUALIFIED"))
+				.as("目标仓数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedTarget);
+			softly.assertThat(publicTotalQuantity(fixture.valuedMaterialId())).as("反向调拨不得改变企业总数量")
+				.isEqualByComparingTo("4.000000");
+			softly.assertThat(publicTotalAmount(fixture.valuedMaterialId())).as("反向调拨不得改变企业总价值")
+				.isEqualByComparingTo("40.00");
+			softly.assertThat(publicQualityAmount(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+					"QUALIFIED")).as("源仓价值必须与数量同向变更")
+				.isEqualByComparingTo(amountAtTen(expectedSource));
+			softly.assertThat(publicQualityAmount(targetWarehouseId, fixture.valuedMaterialId(), "QUALIFIED"))
+				.as("目标仓价值必须与数量同向变更")
+				.isEqualByComparingTo(amountAtTen(expectedTarget));
+		});
+	}
+
+	@Test
+	void 项目A与项目B反向所有权转换审批过账必须经统一锁序且无半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_POST_SCOPE_OWNER_");
+		long projectAId = insertProject("S23_POST_SCOPE_OWNER_A_");
+		long projectBId = insertProject("S23_POST_SCOPE_OWNER_B_");
+		JsonNode projectALayer = createProjectLayerFromPublic(admin, fixture, projectAId, "2.000000",
+				"10.000000");
+		JsonNode projectBLayer = createProjectLayerFromPublic(admin, fixture, projectBId, "2.000000",
+				"20.000000");
+		long projectALayerId = projectALayer.get("id").longValue();
+		long projectBLayerId = projectBLayer.get("id").longValue();
+		JsonNode projectAToB = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("023 项目A转项目B反向并发", List.of(
+						ownershipLine(1, "PROJECT", projectAId, "PROJECT", projectBId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+								null, projectALayerId))),
+				admin));
+		JsonNode projectBToA = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("023 项目B转项目A反向并发", List.of(
+						ownershipLine(1, "PROJECT", projectBId, "PROJECT", projectAId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+								null, projectBLayerId))),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + projectAToB.get("id").longValue() + "/submit",
+				actionBody(projectAToB, "提交项目A转项目B反向并发"), admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + projectBToA.get("id").longValue() + "/submit",
+				actionBody(projectBToA, "提交项目B转项目A反向并发"), admin));
+		ApprovalTaskRef projectAToBTask = approvalTaskForOwnershipConversion(projectAToB.get("id").longValue());
+		ApprovalTaskRef projectBToATask = approvalTaskForOwnershipConversion(projectBToA.get("id").longValue());
+		AuthenticatedSession approverA = createUserAndLogin("stage023-post-scope-owner-a-",
+				"S23_SCOPE_OWNER_A_",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"inventory:ownership-conversion:view", "inventory:balance:view",
+						"inventory:movement:view", "inventory:valuation:view",
+						"inventory:ownership-conversion:post-approve"));
+		AuthenticatedSession approverB = createUserAndLogin("stage023-post-scope-owner-b-",
+				"S23_SCOPE_OWNER_B_",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"inventory:ownership-conversion:view", "inventory:balance:view",
+						"inventory:movement:view", "inventory:valuation:view",
+						"inventory:ownership-conversion:post-approve"));
+
+		List<ResponseEntity<String>> responses = runTwoHttpConcurrently(
+				() -> approveTask(approverA, projectAToBTask, "023 项目A转项目B审批过账"),
+				() -> approveTask(approverB, projectBToATask, "023 项目B转项目A审批过账"));
+		ResponseEntity<String> projectAToBResponse = responses.get(0);
+		ResponseEntity<String> projectBToAResponse = responses.get(1);
+		assertStableConcurrencyResponse("projectAToB", projectAToBResponse);
+		assertStableConcurrencyResponse("projectBToA", projectBToAResponse);
+		assertThat(okCount(responses)).as("两个项目库存充足时反向所有权转换至少一条路径必须完整成功").isGreaterThanOrEqualTo(1);
+
+		BigDecimal delta = new BigDecimal("1.000000");
+		BigDecimal expectedProjectA = new BigDecimal("2.000000")
+			.subtract(isOk(projectAToBResponse) ? delta : BigDecimal.ZERO)
+			.add(isOk(projectBToAResponse) ? delta : BigDecimal.ZERO);
+		BigDecimal expectedProjectB = new BigDecimal("2.000000")
+			.add(isOk(projectAToBResponse) ? delta : BigDecimal.ZERO)
+			.subtract(isOk(projectBToAResponse) ? delta : BigDecimal.ZERO);
+		BigDecimal expectedProjectAAmount = new BigDecimal("20.00")
+			.subtract(isOk(projectAToBResponse) ? new BigDecimal("10.00") : BigDecimal.ZERO)
+			.add(isOk(projectBToAResponse) ? new BigDecimal("20.00") : BigDecimal.ZERO);
+		BigDecimal expectedProjectBAmount = new BigDecimal("40.00")
+			.add(isOk(projectAToBResponse) ? new BigDecimal("10.00") : BigDecimal.ZERO)
+			.subtract(isOk(projectBToAResponse) ? new BigDecimal("20.00") : BigDecimal.ZERO);
+		BigDecimal expectedProjectALayer = new BigDecimal("2.000000")
+			.subtract(isOk(projectAToBResponse) ? delta : BigDecimal.ZERO);
+		BigDecimal expectedProjectBLayer = new BigDecimal("2.000000")
+			.subtract(isOk(projectBToAResponse) ? delta : BigDecimal.ZERO);
+		SoftAssertions.assertSoftly((softly) -> {
+			assertDocumentStatusMatchesResponse(softly, "inv_ownership_conversion",
+					projectAToB.get("id").longValue(), projectAToBResponse, "项目A转项目B");
+			assertDocumentStatusMatchesResponse(softly, "inv_ownership_conversion",
+					projectBToA.get("id").longValue(), projectBToAResponse, "项目B转项目A");
+			softly.assertThat(publicTotalQuantity(fixture.valuedMaterialId())).as("项目间转换不得污染公共池数量")
+				.isEqualByComparingTo("0.000000");
+			softly.assertThat(publicTotalAmount(fixture.valuedMaterialId())).as("项目间转换不得污染公共池价值")
+				.isEqualByComparingTo("0.00");
+			softly.assertThat(projectTotalQuantity(projectAId, fixture.valuedMaterialId()))
+				.as("项目A数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedProjectA);
+			softly.assertThat(projectTotalAmount(projectAId, fixture.valuedMaterialId()))
+				.as("项目A价值必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedProjectAAmount);
+			softly.assertThat(projectTotalQuantity(projectBId, fixture.valuedMaterialId()))
+				.as("项目B数量必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedProjectB);
+			softly.assertThat(projectTotalAmount(projectBId, fixture.valuedMaterialId()))
+				.as("项目B价值必须按成功路径完整提交或回滚")
+				.isEqualByComparingTo(expectedProjectBAmount);
+			softly.assertThat(projectTotalQuantity(projectAId, fixture.valuedMaterialId())
+				.add(projectTotalQuantity(projectBId, fixture.valuedMaterialId()))).as("项目间转换不得改变总数量")
+				.isEqualByComparingTo("4.000000");
+			softly.assertThat(projectTotalAmount(projectAId, fixture.valuedMaterialId())
+				.add(projectTotalAmount(projectBId, fixture.valuedMaterialId()))).as("项目间转换不得改变总价值")
+				.isEqualByComparingTo("60.00");
+			softly.assertThat(projectLayerQuantity(projectALayerId)).as("项目A原成本层只随A转B成功而减少")
+				.isEqualByComparingTo(expectedProjectALayer);
+			softly.assertThat(projectLayerAmount(projectALayerId)).as("项目A原成本层价值只随A转B成功而减少")
+				.isEqualByComparingTo(amountAtTen(expectedProjectALayer));
+			softly.assertThat(projectLayerQuantity(projectBLayerId)).as("项目B原成本层只随B转A成功而减少")
+				.isEqualByComparingTo(expectedProjectBLayer);
+			softly.assertThat(projectLayerAmount(projectBLayerId)).as("项目B原成本层价值只随B转A成功而减少")
+				.isEqualByComparingTo(amountAt(expectedProjectBLayer, "20.00"));
+		});
+	}
+
+	@Test
 	void 序列销售父子预留必须要求显式序列且子预留数量固定为一() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		InventoryFixture fixture = createFixture("S23_SERIAL_PARENT_RSV_");
@@ -2507,6 +2732,162 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				""", BigDecimal.class, warehouseId, materialId, batchId);
 	}
 
+	private List<ResponseEntity<String>> runTwoHttpConcurrently(Callable<ResponseEntity<String>> first,
+			Callable<ResponseEntity<String>> second) throws Exception {
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		try {
+			Future<ResponseEntity<String>> firstFuture = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return first.call();
+			});
+			Future<ResponseEntity<String>> secondFuture = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return second.call();
+			});
+			start.countDown();
+			return List.of(firstFuture.get(15, TimeUnit.SECONDS), secondFuture.get(15, TimeUnit.SECONDS));
+		}
+		finally {
+			executor.shutdownNow();
+			executor.awaitTermination(5, TimeUnit.SECONDS);
+		}
+	}
+
+	private long okCount(List<ResponseEntity<String>> responses) {
+		return responses.stream().filter(this::isOk).count();
+	}
+
+	private boolean isOk(ResponseEntity<String> response) {
+		return response.getStatusCode() == HttpStatus.OK;
+	}
+
+	private BigDecimal publicQualityQuantity(long warehouseId, long materialId, String qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus);
+	}
+
+	private BigDecimal publicQualityAmount(long warehouseId, long materialId, String qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(inventory_amount), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, warehouseId, materialId, qualityStatus);
+	}
+
+	private BigDecimal publicTotalQuantity(long materialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where material_id = ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, materialId);
+	}
+
+	private BigDecimal publicTotalAmount(long materialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(inventory_amount), 0)
+				from inv_stock_balance
+				where material_id = ?
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", BigDecimal.class, materialId);
+	}
+
+	private BigDecimal projectTotalQuantity(long projectId, long materialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where material_id = ?
+				  and ownership_type = 'PROJECT'
+				  and project_id = ?
+				""", BigDecimal.class, materialId, projectId);
+	}
+
+	private BigDecimal projectTotalAmount(long projectId, long materialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(inventory_amount), 0)
+				from inv_stock_balance
+				where material_id = ?
+				  and ownership_type = 'PROJECT'
+				  and project_id = ?
+				""", BigDecimal.class, materialId, projectId);
+	}
+
+	private BigDecimal projectLayerQuantity(long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				select remaining_quantity
+				from inv_project_cost_layer
+				where id = ?
+				""", BigDecimal.class, costLayerId);
+	}
+
+	private BigDecimal projectLayerAmount(long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				select remaining_amount
+				from inv_project_cost_layer
+				where id = ?
+				""", BigDecimal.class, costLayerId);
+	}
+
+	private BigDecimal amountAtTen(BigDecimal quantity) {
+		return amountAt(quantity, "10.00");
+	}
+
+	private BigDecimal amountAt(BigDecimal quantity, String unitCost) {
+		return quantity.multiply(new BigDecimal(unitCost)).setScale(2);
+	}
+
+	private void assertDocumentStatusMatchesResponse(SoftAssertions softly, String tableName, long id,
+			ResponseEntity<String> response, String label) {
+		String actualStatus = status(tableName, id);
+		if (isOk(response)) {
+			softly.assertThat(actualStatus).as(label + " 成功响应必须完整过账").isEqualTo("POSTED");
+			return;
+		}
+		softly.assertThat(actualStatus).as(label + " 业务拒绝必须回滚单据状态").isNotEqualTo("POSTED");
+	}
+
+	private ApprovalTaskRef approvalTaskForOwnershipConversion(long conversionId) {
+		return this.jdbcTemplate.query("""
+				select t.id, t.version
+				from platform_approval_task t
+				join platform_approval_instance i on i.id = t.instance_id
+				where i.scene_code = 'INVENTORY_OWNERSHIP_CONVERSION_POST'
+				  and i.business_object_type = 'INVENTORY_OWNERSHIP_CONVERSION'
+				  and i.business_object_id = ?
+				  and t.status = 'PENDING'
+				order by t.id desc
+				limit 1
+				""", (rs, rowNum) -> new ApprovalTaskRef(rs.getLong("id"), rs.getLong("version")),
+				conversionId).stream().findFirst()
+			.orElseThrow(() -> new AssertionError("未找到所有权转换审批任务 " + conversionId));
+	}
+
+	private ResponseEntity<String> approveTask(AuthenticatedSession approver, ApprovalTaskRef task, String comment)
+			throws Exception {
+		return exchange(HttpMethod.POST, "/api/admin/approval-tasks/" + task.taskId() + "/approve",
+				Map.of("version", task.version(), "comment", comment, "idempotencyKey",
+						"s23-approve-task-" + task.taskId() + "-" + SEQUENCE.incrementAndGet()),
+				approver);
+	}
+
 	private void assertStableConcurrencyResponse(String action, ResponseEntity<String> response) {
 		assertThat(response.getStatusCode().is5xxServerError()).as(action + " 不得因死锁或事务异常返回 5xx: "
 				+ response.getBody()).isFalse();
@@ -3026,6 +3407,9 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 
 	private record InventoryFixture(long unitId, long categoryId, long rawWarehouseId, long valuedMaterialId,
 			long nonValuedMaterialId) {
+	}
+
+	private record ApprovalTaskRef(long taskId, long version) {
 	}
 
 	private record RequiredRoute(RequestMethod method, String path) {

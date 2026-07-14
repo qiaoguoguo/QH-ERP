@@ -233,8 +233,10 @@ public class QualityAdminService {
 		BigDecimal quantity = parsePositiveQuantity(request.quantity());
 		String reason = validateText(request.reason(), 200, ApiErrorCode.QUALITY_STATUS_REASON_REQUIRED);
 		String remark = validateOptionalText(request.remark(), 500);
-		boolean useTracking = shouldUseTracking(request.materialId(), request.trackingAllocations());
 		InventoryPostingService.ValuationContext valuationContext = qualityTransferContext(request);
+		this.inventoryPostingService.lockPostingScopes(List.of(
+				new InventoryPostingService.PostingScope(request.warehouseId(), request.materialId())));
+		boolean useTracking = shouldUseTracking(request.materialId(), request.trackingAllocations());
 		long sourceId = nextQualityStatusTransferSourceId();
 		if (useTracking) {
 			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService

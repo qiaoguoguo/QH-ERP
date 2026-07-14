@@ -1046,6 +1046,66 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void 多端点过账必须在首次余额锁前按稳定库存端点加事务锁() throws Exception {
+		String postingSource = Files.readString(Path.of(
+				"src/main/java/com/qherp/api/system/inventory/InventoryPostingService.java"));
+		String scopeLock = methodBody(postingSource, "public void lockPostingScopes(");
+		assertThat(scopeLock).contains("POSTING_SCOPE_LOCK_NAMESPACE");
+		assertThat(scopeLock).contains("TransactionSynchronizationManager.isActualTransactionActive()");
+		assertAppearsInOrder(postingSource, "@Transactional(propagation = Propagation.MANDATORY)",
+				"public void lockPostingScopes(");
+		assertAppearsInOrder(scopeLock, "postingScopeLockKeys(scopes)", ".distinct()", ".sorted()",
+				"pg_advisory_xact_lock(?, ?)");
+		String scopeKeys = methodBody(postingSource, "private List<Integer> postingScopeLockKeys(");
+		assertThat(scopeKeys).contains("hashtext(cast(? as text))");
+		assertThat(scopeKeys).doesNotContain("hashCode(");
+
+		String qualityTransfer = methodBody(postingSource,
+				"String operatorName, Long batchId, Long serialId, ValuationContext requestedContext)");
+		assertAppearsInOrder(qualityTransfer, "lockPostingScopes(List.of(",
+				"new PostingScope(warehouseId, materialId)", "qualityTransferSourceContext(",
+				"PostingResult fromResult = post(");
+
+		String stage023Source = Files.readString(Path.of(
+				"src/main/java/com/qherp/api/system/inventory/InventoryStage023AdminService.java"));
+		String warehouseTransferPost = methodBody(stage023Source,
+				"public Map<String, Object> postWarehouseTransfer(");
+		assertAppearsInOrder(warehouseTransferPost, "List<TransferLine> lines = transferLines(id)",
+				"lockWarehouseTransferPostingScopes(lines)", "for (TransferLine line : lines)",
+				"this.inventoryPostingService.post(");
+		assertThat(methodBody(stage023Source, "private void lockWarehouseTransferPostingScopes("))
+			.contains("new InventoryPostingService.PostingScope(line.sourceWarehouseId(), line.materialId())")
+			.contains("new InventoryPostingService.PostingScope(line.targetWarehouseId(), line.materialId())")
+			.contains("this.inventoryPostingService.lockPostingScopes(scopes)");
+
+		String ownershipConversionPost = methodBody(stage023Source,
+				"public void postOwnershipConversionFromApproval(");
+		assertAppearsInOrder(ownershipConversionPost, "List<OwnershipLine> lines = ownershipLines(id)",
+				"lockOwnershipConversionPostingScopes(lines)", "resolveOwnershipConversionSourceLayers(lines)",
+				"for (OwnershipLine line : lines)",
+				"this.inventoryPostingService.post(");
+		assertThat(methodBody(stage023Source, "private void lockOwnershipConversionPostingScopes("))
+			.contains("new InventoryPostingService.PostingScope(line.sourceWarehouseId(), line.materialId())")
+			.contains("new InventoryPostingService.PostingScope(line.targetWarehouseId(), line.materialId())")
+			.contains("this.inventoryPostingService.lockPostingScopes(scopes)");
+	}
+
+	@Test
+	void 质量冻结解冻入口必须先拿过账端点锁再做可用量校验和过账() throws Exception {
+		String qualitySource = Files.readString(Path.of(
+				"src/main/java/com/qherp/api/system/quality/QualityAdminService.java"));
+		String qualityTransfer = methodBody(qualitySource,
+				"private QualityStatusTransferResponse transferQualityStatus(");
+		assertAppearsInOrder(qualityTransfer, "this.inventoryPostingService.lockPostingScopes(List.of(",
+				"new InventoryPostingService.PostingScope(request.warehouseId(), request.materialId())",
+				"assertTrackedFreezeAvailable(");
+		assertAppearsInOrder(qualityTransfer, "this.inventoryPostingService.lockPostingScopes(List.of(",
+				"assertQualityFreezeAvailable(");
+		assertAppearsInOrder(qualityTransfer, "this.inventoryPostingService.lockPostingScopes(List.of(",
+				"this.inventoryPostingService.transferQualityStatus(");
+	}
+
+	@Test
 	void 批次追踪父级聚合预留不写具体批次锁但必须保护剩余总量() {
 		InventoryFixture fixture = fixture();
 		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",

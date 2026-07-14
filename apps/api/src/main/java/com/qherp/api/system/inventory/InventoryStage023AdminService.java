@@ -320,6 +320,7 @@ public class InventoryStage023AdminService {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
 		List<TransferLine> lines = transferLines(id);
+		lockWarehouseTransferPostingScopes(lines);
 		for (TransferLine line : lines) {
 			requireNoStocktakeLock(line.sourceWarehouseId(), line.materialId());
 			ensureWarehouseTransferSourceLayer(line);
@@ -491,11 +492,11 @@ public class InventoryStage023AdminService {
 		}
 		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
 				"INVENTORY_OWNERSHIP_CONVERSION", id);
-		for (OwnershipLine line : ownershipLines(id)) {
-			Long sourceCostLayerId = line.sourceCostLayerId() == null
-					? sourceCostLayerId(line.sourceOwnershipType(), line.sourceProjectId(), line.sourceWarehouseId(),
-							line.materialId(), line.qualityStatus(), line.batchId(), line.serialId())
-					: line.sourceCostLayerId();
+		List<OwnershipLine> lines = ownershipLines(id);
+		lockOwnershipConversionPostingScopes(lines);
+		Map<Long, Long> sourceCostLayerIds = resolveOwnershipConversionSourceLayers(lines);
+		for (OwnershipLine line : lines) {
+			Long sourceCostLayerId = sourceCostLayerIds.get(line.id());
 			InventoryPostingService.PostingResult out = this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 					InventoryMovementType.OWNERSHIP_CONVERSION_OUT, InventoryDirection.OUT, line.sourceWarehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.valueOf(line.qualityStatus()),
@@ -1238,6 +1239,36 @@ public class InventoryStage023AdminService {
 
 	private Long projectSourceCostLayerId(WarehouseTransferLineRequest line) {
 		return "PROJECT".equals(defaultOwnership(line.ownershipType())) ? line.sourceCostLayerId() : null;
+	}
+
+	private void lockWarehouseTransferPostingScopes(List<TransferLine> lines) {
+		List<InventoryPostingService.PostingScope> scopes = new ArrayList<>();
+		for (TransferLine line : lines) {
+			scopes.add(new InventoryPostingService.PostingScope(line.sourceWarehouseId(), line.materialId()));
+			scopes.add(new InventoryPostingService.PostingScope(line.targetWarehouseId(), line.materialId()));
+		}
+		this.inventoryPostingService.lockPostingScopes(scopes);
+	}
+
+	private void lockOwnershipConversionPostingScopes(List<OwnershipLine> lines) {
+		List<InventoryPostingService.PostingScope> scopes = new ArrayList<>();
+		for (OwnershipLine line : lines) {
+			scopes.add(new InventoryPostingService.PostingScope(line.sourceWarehouseId(), line.materialId()));
+			scopes.add(new InventoryPostingService.PostingScope(line.targetWarehouseId(), line.materialId()));
+		}
+		this.inventoryPostingService.lockPostingScopes(scopes);
+	}
+
+	private Map<Long, Long> resolveOwnershipConversionSourceLayers(List<OwnershipLine> lines) {
+		Map<Long, Long> sourceCostLayerIds = new LinkedHashMap<>();
+		for (OwnershipLine line : lines) {
+			Long sourceCostLayerId = line.sourceCostLayerId() == null
+					? sourceCostLayerId(line.sourceOwnershipType(), line.sourceProjectId(), line.sourceWarehouseId(),
+							line.materialId(), line.qualityStatus(), line.batchId(), line.serialId())
+					: line.sourceCostLayerId();
+			sourceCostLayerIds.put(line.id(), sourceCostLayerId);
+		}
+		return sourceCostLayerIds;
 	}
 
 	private void ensureWarehouseTransferSourceLayer(TransferLine line) {

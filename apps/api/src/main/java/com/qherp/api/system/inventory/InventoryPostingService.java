@@ -5,14 +5,18 @@ import com.qherp.api.common.BusinessException;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collection;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -20,6 +24,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class InventoryPostingService {
 
 	private static final BigDecimal ZERO = BigDecimal.ZERO;
+
+	private static final int POSTING_SCOPE_LOCK_NAMESPACE = 423_102_303;
 
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
 
@@ -108,6 +114,18 @@ public class InventoryPostingService {
 				valuationResult.valueMovementId());
 	}
 
+	@Transactional(propagation = Propagation.MANDATORY)
+	public void lockPostingScopes(Collection<PostingScope> scopes) {
+		if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+			throw new IllegalStateException("库存过账端点锁必须在活动事务内获取");
+		}
+		List<Integer> lockKeys = postingScopeLockKeys(scopes).stream().distinct().sorted().toList();
+		for (Integer lockKey : lockKeys) {
+			this.jdbcTemplate.query("select pg_advisory_xact_lock(?, ?)", (rs) -> null,
+					POSTING_SCOPE_LOCK_NAMESPACE, lockKey);
+		}
+	}
+
 	@Transactional
 	public QualityTransferResult transferQualityStatus(Long warehouseId, Long materialId, Long unitId,
 			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
@@ -136,6 +154,7 @@ public class InventoryPostingService {
 		}
 		Long fromSourceLineId = transferSourceLineId(sourceLineId, fromStatus);
 		Long toSourceLineId = transferSourceLineId(sourceLineId, toStatus);
+		lockPostingScopes(List.of(new PostingScope(warehouseId, materialId)));
 		ValuationContext sourceContext = qualityTransferSourceContext(warehouseId, materialId, fromStatus, batchId,
 				serialId, quantity, requestedContext);
 		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
@@ -244,6 +263,19 @@ public class InventoryPostingService {
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
 		return new AggregateQualifiedBalanceSnapshot(aggregateQuantity);
+	}
+
+	private List<Integer> postingScopeLockKeys(Collection<PostingScope> scopes) {
+		if (scopes == null || scopes.isEmpty()) {
+			return List.of();
+		}
+		return scopes.stream()
+			.filter(Objects::nonNull)
+			.map(PostingScope::lockKey)
+			.distinct()
+			.map((key) -> this.jdbcTemplate.queryForObject("select hashtext(cast(? as text))", Integer.class, key))
+			.filter(Objects::nonNull)
+			.toList();
 	}
 
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
@@ -819,6 +851,19 @@ public class InventoryPostingService {
 
 		private Long reservationSourceLineId() {
 			return this.consumedReservationSourceLineId == null ? this.sourceLineId : this.consumedReservationSourceLineId;
+		}
+	}
+
+	public record PostingScope(Long warehouseId, Long materialId) {
+
+		public PostingScope {
+			if (warehouseId == null || materialId == null) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+		}
+
+		private String lockKey() {
+			return "posting-scope|" + warehouseId + "|" + materialId;
 		}
 	}
 
