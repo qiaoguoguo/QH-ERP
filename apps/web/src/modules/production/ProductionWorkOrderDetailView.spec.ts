@@ -65,6 +65,10 @@ const detailRecord: ProductionWorkOrderDetailRecord = {
   createdByName: '管理员',
   createdAt: '2026-07-03T08:00:00+08:00',
   updatedAt: '2026-07-03T09:00:00+08:00',
+  completionValuationState: 'CURRENT_AVERAGE_PROVISIONAL',
+  requiresManualProvisionalUnitCost: false,
+  currentAverageUnitCost: '10.000000',
+  costVisible: true,
   materials: [
     {
       id: 100,

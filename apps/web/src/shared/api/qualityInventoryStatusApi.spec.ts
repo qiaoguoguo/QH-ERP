@@ -10,6 +10,7 @@ import {
 import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
+type IsOptional<T, K extends keyof T> = Record<string, never> extends Pick<T, K> ? true : false
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -89,6 +90,13 @@ describe('质量库存状态 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    transferRequiresOwnershipDimension: true as AssertTrue<
+      QualityStatusTransferPayload extends {
+        ownershipType: 'PUBLIC' | 'PROJECT'
+        projectId?: unknown
+        costLayerId?: unknown
+      } ? IsOptional<QualityStatusTransferPayload, 'ownershipType'> extends false ? true : false : false
+    >,
     inspectionRecordReturnsTrackingAllocations: true as AssertTrue<
       QualityInspectionRecord extends {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
@@ -105,6 +113,7 @@ describe('质量库存状态 API', () => {
     expect(qualityTrackingTypeContract).toMatchObject({
       processAcceptsTrackingAllocations: true,
       transferAcceptsTrackingAllocations: true,
+      transferRequiresOwnershipDimension: true,
       inspectionRecordReturnsTrackingAllocations: true,
       inspectionDetailReturnsTrackingAllocations: true,
     })
@@ -206,6 +215,9 @@ describe('质量库存状态 API', () => {
       materialId: 11,
       unitId: 3,
       quantity: '2.000000',
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      costLayerId: 9001,
       reason: '客户投诉隔离',
       trackingAllocations: [{ batchId: 31, quantity: '2.000000' }],
     })
@@ -215,6 +227,9 @@ describe('质量库存状态 API', () => {
       materialId: 11,
       unitId: 3,
       quantity: '1.000000',
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      costLayerId: 9001,
       reason: '复核通过',
       trackingAllocations: [{ batchId: 31, quantity: '1.000000' }],
     })
@@ -224,11 +239,20 @@ describe('质量库存状态 API', () => {
       method: 'POST',
     }))
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/quality-transfers/freeze', expect.objectContaining({
+      body: expect.stringContaining('"ownershipType":"PROJECT"'),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/quality-transfers/freeze', expect.objectContaining({
+      body: expect.stringContaining('"costLayerId":9001'),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/inventory/quality-transfers/freeze', expect.objectContaining({
       body: expect.stringContaining('"trackingAllocations"'),
     }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/inventory/quality-transfers/unfreeze', expect.objectContaining({
       body: expect.stringContaining('"quantity":"1.000000"'),
       method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/inventory/quality-transfers/unfreeze', expect.objectContaining({
+      body: expect.stringContaining('"ownershipType":"PROJECT"'),
     }))
   })
 

@@ -199,7 +199,11 @@ export interface ProductionMovementRecord {
   occurredAt: string
 }
 
-export interface ProductionWorkOrderDetailRecord extends ProductionWorkOrderSummaryRecord {
+export type ProductionWorkOrderDetailRecord = ProductionWorkOrderSummaryRecord & {
+  completionValuationState: string | null
+  requiresManualProvisionalUnitCost: boolean
+  currentAverageUnitCost: string | null
+  costVisible: boolean
   materials: ProductionWorkOrderMaterialRecord[]
   materialIssues: ProductionMaterialIssueSummaryRecord[]
   reports: ProductionWorkReportRecord[]

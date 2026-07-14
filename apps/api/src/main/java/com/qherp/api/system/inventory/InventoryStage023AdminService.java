@@ -57,11 +57,21 @@ public class InventoryStage023AdminService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> costLayers(Long projectId, Long materialId, int page, int pageSize,
-			CurrentUser currentUser) {
+	public PageResponse<Map<String, Object>> costLayers(Long costLayerId, String ownershipType, Long projectId,
+			Long materialId, Long warehouseId, String sourceType, Long sourceId, String batchNo, String serialNo,
+			String status, String keyword, int page, int pageSize, CurrentUser currentUser) {
 		boolean costVisible = currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
 		List<Object> args = new ArrayList<>();
 		StringBuilder where = new StringBuilder(" where 1 = 1");
+		if (costLayerId != null) {
+			where.append(" and l.id = ?");
+			args.add(costLayerId);
+		}
+		if (ownershipType != null && !ownershipType.isBlank()) {
+			if (!"PROJECT".equals(ownershipType.trim().toUpperCase())) {
+				where.append(" and 1 = 0");
+			}
+		}
 		if (projectId != null) {
 			where.append(" and l.project_id = ?");
 			args.add(projectId);
@@ -70,17 +80,65 @@ public class InventoryStage023AdminService {
 			where.append(" and l.material_id = ?");
 			args.add(materialId);
 		}
-		long total = this.jdbcTemplate.queryForObject("select count(*) from inv_project_cost_layer l" + where,
-				Long.class, args.toArray());
+		if (warehouseId != null) {
+			where.append("""
+					and exists (
+						select 1
+						from inv_stock_balance b
+						where b.cost_layer_id = l.id
+						and b.warehouse_id = ?
+						and b.quantity_on_hand > 0
+					)
+					""");
+			args.add(warehouseId);
+		}
+		if (sourceType != null && !sourceType.isBlank()) {
+			where.append(" and l.source_type = ?");
+			args.add(sourceType.trim());
+		}
+		if (sourceId != null) {
+			where.append(" and l.source_id = ?");
+			args.add(sourceId);
+		}
+		if (batchNo != null && !batchNo.isBlank()) {
+			where.append(" and bt.batch_no ilike ?");
+			args.add("%" + batchNo.trim() + "%");
+		}
+		if (serialNo != null && !serialNo.isBlank()) {
+			where.append(" and sr.serial_no ilike ?");
+			args.add("%" + serialNo.trim() + "%");
+		}
+		if (status != null && !status.isBlank()) {
+			where.append(" and l.status = ?");
+			args.add(status.trim().toUpperCase());
+		}
+		if (keyword != null && !keyword.isBlank()) {
+			where.append(" and (m.code ilike ? or m.name ilike ? or l.source_type ilike ?)");
+			String pattern = "%" + keyword.trim() + "%";
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+		}
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_project_cost_layer l
+				join mst_material m on m.id = l.material_id
+				left join inv_batch bt on bt.id = l.batch_id
+				left join inv_serial sr on sr.id = l.serial_id
+				%s
+				""".formatted(where), Long.class, args.toArray());
 		args.add(pageSize);
 		args.add((Math.max(page, 1) - 1) * pageSize);
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select l.id, l.project_id, l.material_id, m.code as material_code, m.name as material_name,
 				       l.source_type, l.source_id, l.source_line_id, l.parent_layer_id, l.batch_id, l.serial_id,
+				       bt.batch_no, sr.serial_no,
 				       l.original_quantity, l.original_amount, l.remaining_quantity, l.remaining_amount,
 				       l.unit_cost, l.status, l.created_at, l.version
 				from inv_project_cost_layer l
 				join mst_material m on m.id = l.material_id
+				left join inv_batch bt on bt.id = l.batch_id
+				left join inv_serial sr on sr.id = l.serial_id
 				%s
 				order by l.id
 				limit ? offset ?
@@ -97,6 +155,8 @@ public class InventoryStage023AdminService {
 			row.put("parentLayerId", nullableLong(rs, "parent_layer_id"));
 			row.put("batchId", nullableLong(rs, "batch_id"));
 			row.put("serialId", nullableLong(rs, "serial_id"));
+			row.put("batchNo", rs.getString("batch_no"));
+			row.put("serialNo", rs.getString("serial_no"));
 			row.put("originalQuantity", decimal(rs.getBigDecimal("original_quantity")));
 			row.put("remainingQuantity", decimal(rs.getBigDecimal("remaining_quantity")));
 			row.put("status", rs.getString("status"));
@@ -196,7 +256,7 @@ public class InventoryStage023AdminService {
 	public Map<String, Object> createWarehouseTransfer(WarehouseTransferRequest request, CurrentUser operator) {
 		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.CREATE,
 				"INVENTORY_WAREHOUSE_TRANSFER", null);
-		validateLines(request.lines());
+		validateWarehouseTransferLines(request.lines());
 		for (WarehouseTransferLineRequest line : request.lines()) {
 			requireNoStocktakeLock(line.sourceWarehouseId(), line.materialId());
 		}
@@ -213,13 +273,13 @@ public class InventoryStage023AdminService {
 			this.jdbcTemplate.update("""
 					insert into inv_warehouse_transfer_line (
 						transfer_id, line_no, source_warehouse_id, target_warehouse_id, ownership_type, project_id,
-						material_id, unit_id, quality_status, batch_id, serial_id, quantity
+						material_id, unit_id, quality_status, batch_id, serial_id, quantity, source_cost_layer_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", id, line.lineNo(), line.sourceWarehouseId(), line.targetWarehouseId(),
 					defaultOwnership(line.ownershipType()), publicProject(line.ownershipType(), line.projectId()),
 					line.materialId(), line.unitId(), defaultQuality(line.qualityStatus()), line.batchId(),
-					line.serialId(), line.quantity());
+					line.serialId(), line.quantity(), projectSourceCostLayerId(line));
 		}
 		return warehouseTransfer(id, operator);
 	}
@@ -227,7 +287,7 @@ public class InventoryStage023AdminService {
 	@Transactional
 	public Map<String, Object> updateWarehouseTransfer(Long id, WarehouseTransferRequest request,
 			CurrentUser operator) {
-		validateLines(request.lines());
+		validateWarehouseTransferLines(request.lines());
 		Header transfer = lockHeader("inv_warehouse_transfer", id);
 		requireVersion(transfer.version(), request.version());
 		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.UPDATE,
@@ -262,15 +322,14 @@ public class InventoryStage023AdminService {
 		List<TransferLine> lines = transferLines(id);
 		for (TransferLine line : lines) {
 			requireNoStocktakeLock(line.sourceWarehouseId(), line.materialId());
+			ensureWarehouseTransferSourceLayer(line);
 			InventoryPostingService.PostingResult out = this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 					InventoryMovementType.WAREHOUSE_TRANSFER_OUT, InventoryDirection.OUT, line.sourceWarehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.valueOf(line.qualityStatus()),
 					"WAREHOUSE_TRANSFER", id, line.id() * 10 + 1, transfer.businessDate(), transfer.reason(),
 					null, operator.username(), false, line.batchId(), line.serialId(),
 					new InventoryPostingService.ValuationContext(line.ownershipType(), line.projectId(), null,
-							sourceCostLayerId(line.ownershipType(), line.projectId(), line.sourceWarehouseId(),
-									line.materialId(), line.qualityStatus(), line.batchId(), line.serialId()),
-							null)));
+							line.sourceCostLayerId(), null)));
 			InventoryPostingService.ValuationContext inContext = new InventoryPostingService.ValuationContext(
 					line.ownershipType(), line.projectId(), out.unitCost(), out.costLayerId(), out.valueMovementId(),
 					out.inventoryAmount());
@@ -995,6 +1054,9 @@ public class InventoryStage023AdminService {
 		row.put("version", version);
 		row.put("costVisible", costVisible(currentUser));
 		row.put("allowedActions", allowedActions(documentType, status, currentUser, id));
+		row.put("approvalSummary", approvalSummaryForDocument(documentType, id));
+		row.put("keyInfoSummary", Map.of("documentNo", documentNo, "businessDate", businessDate, "status", status));
+		row.put("amountImpactSummary", costVisible(currentUser) ? Map.of() : null);
 		return row;
 	}
 
@@ -1003,13 +1065,13 @@ public class InventoryStage023AdminService {
 			this.jdbcTemplate.update("""
 					insert into inv_warehouse_transfer_line (
 						transfer_id, line_no, source_warehouse_id, target_warehouse_id, ownership_type, project_id,
-						material_id, unit_id, quality_status, batch_id, serial_id, quantity
+						material_id, unit_id, quality_status, batch_id, serial_id, quantity, source_cost_layer_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", id, line.lineNo(), line.sourceWarehouseId(), line.targetWarehouseId(),
 					defaultOwnership(line.ownershipType()), publicProject(line.ownershipType(), line.projectId()),
 					line.materialId(), line.unitId(), defaultQuality(line.qualityStatus()), line.batchId(),
-					line.serialId(), line.quantity());
+					line.serialId(), line.quantity(), projectSourceCostLayerId(line));
 		}
 	}
 
@@ -1170,6 +1232,42 @@ public class InventoryStage023AdminService {
 		}
 	}
 
+	private void validateWarehouseTransferLines(List<WarehouseTransferLineRequest> lines) {
+		validateLines(lines);
+	}
+
+	private Long projectSourceCostLayerId(WarehouseTransferLineRequest line) {
+		return "PROJECT".equals(defaultOwnership(line.ownershipType())) ? line.sourceCostLayerId() : null;
+	}
+
+	private void ensureWarehouseTransferSourceLayer(TransferLine line) {
+		if (!"PROJECT".equals(line.ownershipType())) {
+			return;
+		}
+		if (line.sourceCostLayerId() == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
+		List<Long> balances = this.jdbcTemplate.query("""
+				select id
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and cost_layer_id = ?
+				and quantity_on_hand >= ?
+				for update
+				""", (rs, rowNum) -> rs.getLong("id"), line.sourceWarehouseId(), line.materialId(),
+				defaultQuality(line.qualityStatus()), line.batchId(), line.serialId(), line.projectId(),
+				line.sourceCostLayerId(), line.quantity());
+		if (balances.isEmpty()) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
+	}
+
 	private void requireNoStocktakeLock(Long warehouseId, Long materialId) {
 		Long count = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -1197,10 +1295,11 @@ public class InventoryStage023AdminService {
 	@Transactional(readOnly = true)
 	public Map<String, Object> warehouseTransfer(Long id, CurrentUser currentUser) {
 		Header header = header("inv_warehouse_transfer", id);
+		boolean costVisible = costVisible(currentUser);
 		Map<String, Object> result = headerMap(header);
-		result.put("costVisible", costVisible(currentUser));
+		result.put("costVisible", costVisible);
 		result.put("allowedActions", allowedActions("WAREHOUSE_TRANSFER", header.status(), currentUser, id));
-		result.put("lines", transferLines(id).stream().map(this::lineMap).toList());
+		result.put("lines", transferLines(id).stream().map((line) -> lineMap(line, costVisible)).toList());
 		return result;
 	}
 
@@ -1230,13 +1329,14 @@ public class InventoryStage023AdminService {
 	@Transactional(readOnly = true)
 	public Map<String, Object> stocktake(Long id, CurrentUser currentUser) {
 		Header header = header("inv_stocktake", id);
+		boolean costVisible = costVisible(currentUser);
 		Map<String, Object> result = headerMap(header);
 		result.put("scopeType", stocktakeScope(id).get("scopeType"));
 		result.put("warehouseId", header.warehouseId());
 		result.put("materialId", header.materialId());
-		result.put("costVisible", costVisible(currentUser));
+		result.put("costVisible", costVisible);
 		result.put("allowedActions", allowedActions("STOCKTAKE", header.status(), currentUser, id));
-		result.put("lines", stocktakeLines(id).stream().map(this::lineMap).toList());
+		result.put("lines", stocktakeLines(id).stream().map((line) -> lineMap(line, costVisible)).toList());
 		result.put("approvalSummary", approvalSummary("INVENTORY_STOCKTAKE_VARIANCE_POST", "INVENTORY_STOCKTAKE",
 				id));
 		return result;
@@ -1328,7 +1428,19 @@ public class InventoryStage023AdminService {
 			row.put("submittedAt", rs.getObject("submitted_at", OffsetDateTime.class));
 			row.put("version", rs.getLong("version"));
 			return row;
-		}, sceneCode, objectType, objectId).stream().findFirst().orElse(null);
+				}, sceneCode, objectType, objectId).stream().findFirst().orElse(null);
+	}
+
+	private Map<String, Object> approvalSummaryForDocument(String documentType, Long objectId) {
+		return switch (documentType) {
+			case "OWNERSHIP_CONVERSION" -> approvalSummary("INVENTORY_OWNERSHIP_CONVERSION_POST",
+					"INVENTORY_OWNERSHIP_CONVERSION", objectId);
+			case "STOCKTAKE" -> approvalSummary("INVENTORY_STOCKTAKE_VARIANCE_POST", "INVENTORY_STOCKTAKE",
+					objectId);
+			case "VALUATION_ADJUSTMENT" -> approvalSummary("INVENTORY_VALUATION_ADJUSTMENT_POST",
+					"INVENTORY_VALUATION_ADJUSTMENT", objectId);
+			default -> null;
+		};
 	}
 
 	private Header lockHeader(String tableName, Long id) {
@@ -1413,7 +1525,7 @@ public class InventoryStage023AdminService {
 	private List<TransferLine> transferLines(Long transferId) {
 		return this.jdbcTemplate.query("""
 				select id, line_no, source_warehouse_id, target_warehouse_id, ownership_type, project_id,
-				       material_id, unit_id, quality_status, batch_id, serial_id, quantity
+				       material_id, unit_id, quality_status, batch_id, serial_id, quantity, source_cost_layer_id
 				from inv_warehouse_transfer_line
 				where transfer_id = ?
 				order by line_no, id
@@ -1421,7 +1533,7 @@ public class InventoryStage023AdminService {
 				rs.getLong("source_warehouse_id"), rs.getLong("target_warehouse_id"), rs.getString("ownership_type"),
 				nullableLong(rs, "project_id"), rs.getLong("material_id"), rs.getLong("unit_id"),
 				rs.getString("quality_status"), nullableLong(rs, "batch_id"), nullableLong(rs, "serial_id"),
-				rs.getBigDecimal("quantity")), transferId);
+				rs.getBigDecimal("quantity"), nullableLong(rs, "source_cost_layer_id")), transferId);
 	}
 
 	private List<OwnershipLine> ownershipLines(Long conversionId) {
@@ -1486,19 +1598,33 @@ public class InventoryStage023AdminService {
 	}
 
 	private Map<String, Object> lineMap(TransferLine line) {
+		return lineMap(line, true);
+	}
+
+	private Map<String, Object> lineMap(TransferLine line, boolean costVisible) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		row.put("id", line.id());
 		row.put("lineNo", line.lineNo());
 		row.put("sourceWarehouseId", line.sourceWarehouseId());
+		row.put("sourceWarehouseName", warehouseName(line.sourceWarehouseId()));
 		row.put("targetWarehouseId", line.targetWarehouseId());
+		row.put("targetWarehouseName", warehouseName(line.targetWarehouseId()));
 		row.put("ownershipType", line.ownershipType());
 		row.put("projectId", line.projectId());
+		putProject(row, "", line.projectId());
 		row.put("materialId", line.materialId());
+		putMaterial(row, line.materialId());
 		row.put("unitId", line.unitId());
+		row.put("unitName", unitName(line.unitId()));
 		row.put("qualityStatus", line.qualityStatus());
 		row.put("batchId", line.batchId());
+		row.put("batchNo", batchNo(line.batchId()));
 		row.put("serialId", line.serialId());
+		row.put("serialNo", serialNo(line.serialId()));
 		row.put("quantity", decimal(line.quantity()));
+		if (costVisible) {
+			row.put("sourceCostLayerId", line.sourceCostLayerId());
+		}
 		return row;
 	}
 
@@ -1509,11 +1635,14 @@ public class InventoryStage023AdminService {
 	private Map<String, Object> lineMap(OwnershipLine line, boolean costVisible) {
 		Map<String, Object> row = lineMap(new TransferLine(line.id(), line.lineNo(), line.sourceWarehouseId(),
 				line.targetWarehouseId(), line.targetOwnershipType(), line.targetProjectId(), line.materialId(),
-				line.unitId(), line.qualityStatus(), line.batchId(), line.serialId(), line.quantity()));
+				line.unitId(), line.qualityStatus(), line.batchId(), line.serialId(), line.quantity(),
+				line.sourceCostLayerId()), costVisible);
 		row.put("sourceOwnershipType", line.sourceOwnershipType());
 		row.put("sourceProjectId", line.sourceProjectId());
+		putProject(row, "source", line.sourceProjectId());
 		row.put("targetOwnershipType", line.targetOwnershipType());
 		row.put("targetProjectId", line.targetProjectId());
+		putProject(row, "target", line.targetProjectId());
 		if (costVisible) {
 			row.put("sourceUnitCost", decimal(line.sourceUnitCost()));
 			row.put("sourceCostLayerId", line.sourceCostLayerId());
@@ -1522,17 +1651,30 @@ public class InventoryStage023AdminService {
 	}
 
 	private Map<String, Object> lineMap(StocktakeLine line) {
+		return lineMap(line, true);
+	}
+
+	private Map<String, Object> lineMap(StocktakeLine line, boolean costVisible) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		row.put("id", line.id());
 		row.put("lineNo", line.lineNo());
 		row.put("warehouseId", line.warehouseId());
+		row.put("warehouseName", warehouseName(line.warehouseId()));
 		row.put("materialId", line.materialId());
+		putMaterial(row, line.materialId());
 		row.put("unitId", line.unitId());
+		row.put("unitName", unitName(line.unitId()));
 		row.put("qualityStatus", line.qualityStatus());
 		row.put("ownershipType", line.ownershipType());
 		row.put("projectId", line.projectId());
+		putProject(row, "", line.projectId());
 		row.put("batchId", line.batchId());
+		row.put("batchNo", batchNo(line.batchId()));
 		row.put("serialId", line.serialId());
+		row.put("serialNo", serialNo(line.serialId()));
+		if (costVisible) {
+			row.put("costLayerId", line.costLayerId());
+		}
 		row.put("bookQuantity", decimal(line.bookQuantity()));
 		row.put("countedQuantity", decimal(line.countedQuantity()));
 		row.put("varianceQuantity", decimal(line.varianceQuantity()));
@@ -1550,7 +1692,9 @@ public class InventoryStage023AdminService {
 		row.put("lineNo", line.lineNo());
 		row.put("ownershipType", line.ownershipType());
 		row.put("projectId", line.projectId());
+		putProject(row, "", line.projectId());
 		row.put("materialId", line.materialId());
+		putMaterial(row, line.materialId());
 		row.put("quantity", decimal(line.quantity()));
 		if (costVisible) {
 			row.put("unitCost", decimal(line.unitCost()));
@@ -1564,6 +1708,68 @@ public class InventoryStage023AdminService {
 
 	private boolean costVisible(CurrentUser currentUser) {
 		return currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
+	}
+
+	private void putMaterial(Map<String, Object> row, Long materialId) {
+		if (materialId == null) {
+			return;
+		}
+		Map<String, Object> material = this.jdbcTemplate.query("""
+				select code, name
+				from mst_material
+				where id = ?
+				""", (rs, rowNum) -> Map.<String, Object>of("code", rs.getString("code"), "name",
+				rs.getString("name")), materialId).stream().findFirst().orElse(Map.of());
+		row.put("materialCode", material.get("code"));
+		row.put("materialName", material.get("name"));
+	}
+
+	private void putProject(Map<String, Object> row, String prefix, Long projectId) {
+		String normalizedPrefix = prefix == null || prefix.isBlank() ? "" : prefix;
+		String idKey = normalizedPrefix.isBlank() ? "projectId"
+				: normalizedPrefix + "ProjectId";
+		String noKey = normalizedPrefix.isBlank() ? "projectNo"
+				: normalizedPrefix + "ProjectNo";
+		String nameKey = normalizedPrefix.isBlank() ? "projectName"
+				: normalizedPrefix + "ProjectName";
+		row.put(idKey, projectId);
+		if (projectId == null) {
+			row.put(noKey, null);
+			row.put(nameKey, null);
+			return;
+		}
+		Map<String, Object> project = this.jdbcTemplate.query("""
+				select project_no, name
+				from sal_project
+				where id = ?
+				""", (rs, rowNum) -> Map.<String, Object>of("projectNo", rs.getString("project_no"), "projectName",
+				rs.getString("name")), projectId).stream().findFirst().orElse(Map.of());
+		row.put(noKey, project.get("projectNo"));
+		row.put(nameKey, project.get("projectName"));
+	}
+
+	private String warehouseName(Long warehouseId) {
+		return lookupName("mst_warehouse", "name", warehouseId);
+	}
+
+	private String unitName(Long unitId) {
+		return lookupName("mst_unit", "name", unitId);
+	}
+
+	private String batchNo(Long batchId) {
+		return lookupName("inv_batch", "batch_no", batchId);
+	}
+
+	private String serialNo(Long serialId) {
+		return lookupName("inv_serial", "serial_no", serialId);
+	}
+
+	private String lookupName(String tableName, String columnName, Long id) {
+		if (id == null) {
+			return null;
+		}
+		return this.jdbcTemplate.query("select %s from %s where id = ?".formatted(columnName, tableName),
+				(rs, rowNum) -> rs.getString(1), id).stream().findFirst().orElse(null);
 	}
 
 	private Long sourceCostLayerId(String ownershipType, Long projectId, Long warehouseId, Long materialId,
@@ -1641,7 +1847,7 @@ public class InventoryStage023AdminService {
 
 	public record WarehouseTransferLineRequest(Integer lineNo, Long sourceWarehouseId, Long targetWarehouseId,
 			String ownershipType, Long projectId, Long materialId, Long unitId, String qualityStatus, Long batchId,
-			Long serialId, BigDecimal quantity) {
+			Long serialId, BigDecimal quantity, Long sourceCostLayerId) {
 	}
 
 	public record OwnershipConversionRequest(@NotNull LocalDate businessDate, @NotNull String reason,
@@ -1680,7 +1886,7 @@ public class InventoryStage023AdminService {
 
 	private record TransferLine(Long id, Integer lineNo, Long sourceWarehouseId, Long targetWarehouseId,
 			String ownershipType, Long projectId, Long materialId, Long unitId, String qualityStatus, Long batchId,
-			Long serialId, BigDecimal quantity) {
+			Long serialId, BigDecimal quantity, Long sourceCostLayerId) {
 	}
 
 	private record OwnershipLine(Long id, Integer lineNo, String sourceOwnershipType, Long sourceProjectId,

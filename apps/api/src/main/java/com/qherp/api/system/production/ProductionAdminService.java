@@ -149,8 +149,13 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public WorkOrderDetailResponse workOrder(Long id) {
+		return workOrder(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public WorkOrderDetailResponse workOrder(Long id, CurrentUser currentUser) {
 		WorkOrderSummaryResponse summary = workOrderSummary(id).orElseThrow(this::workOrderNotFound);
-		return workOrderDetail(summary);
+		return workOrderDetail(summary, currentUser);
 	}
 
 	@Transactional
@@ -1162,7 +1167,9 @@ public class ProductionAdminService {
 		return where(conditions, args);
 	}
 
-	private WorkOrderDetailResponse workOrderDetail(WorkOrderSummaryResponse summary) {
+	private WorkOrderDetailResponse workOrderDetail(WorkOrderSummaryResponse summary, CurrentUser currentUser) {
+		CompletionValuationState completionValuationState = completionValuationState(summary.productMaterialId(),
+				currentUser);
 		return new WorkOrderDetailResponse(summary.id(), summary.workOrderNo(), summary.productMaterialId(),
 				summary.productMaterialCode(), summary.productMaterialName(), summary.bomId(), summary.bomCode(),
 				summary.bomVersionCode(), summary.plannedQuantity(), summary.reportedQuantity(),
@@ -1172,9 +1179,25 @@ public class ProductionAdminService {
 				summary.status(), summary.remark(), summary.createdByName(), summary.createdAt(),
 				summary.updatedAt(), summary.releasedByName(), summary.releasedAt(), summary.completedByName(),
 				summary.completedAt(), summary.cancelledByName(), summary.cancelledAt(),
+				completionValuationState.state(), completionValuationState.requiresManualProvisionalUnitCost(),
+				completionValuationState.currentAverageUnitCost(), completionValuationState.costVisible(),
 				workOrderMaterials(summary.id()), materialIssues(summary.id(), 1, 100).items(),
 				reports(summary.id(), 1, 100).items(), completionReceipts(summary.id(), 1, 100).items(),
 				productionMovements(summary.id()));
+	}
+
+	private CompletionValuationState completionValuationState(Long materialId, CurrentUser currentUser) {
+		boolean costVisible = currentUser == null || currentUser.permissions().contains("inventory:valuation:view");
+		if (!materialValueEnabled(materialId)) {
+			return new CompletionValuationState("NON_VALUED", false, null, costVisible);
+		}
+		Optional<BigDecimal> currentAverage = this.inventoryValuationService.currentPublicAverageUnitCost(materialId);
+		if (currentAverage.isPresent()) {
+			return new CompletionValuationState("CURRENT_AVERAGE_PROVISIONAL", false,
+					costVisible ? currentAverage.get().setScale(6, java.math.RoundingMode.HALF_UP).toPlainString() : null,
+					costVisible);
+		}
+		return new CompletionValuationState("MANUAL_PROVISIONAL_REQUIRED", true, null, costVisible);
 	}
 
 	private Optional<WorkOrderSummaryResponse> workOrderSummary(Long id) {
@@ -1781,6 +1804,8 @@ public class ProductionAdminService {
 			LocalDate plannedFinishDate, String status, String remark, String createdByName, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt, String releasedByName, OffsetDateTime releasedAt, String completedByName,
 			OffsetDateTime completedAt, String cancelledByName, OffsetDateTime cancelledAt,
+			String completionValuationState, boolean requiresManualProvisionalUnitCost,
+			String currentAverageUnitCost, boolean costVisible,
 			List<WorkOrderMaterialResponse> materials, List<MaterialIssueSummaryResponse> materialIssues,
 			List<WorkReportResponse> reports, List<CompletionReceiptResponse> completionReceipts,
 			List<ProductionMovementResponse> movements) {
@@ -1851,6 +1876,10 @@ public class ProductionAdminService {
 	}
 
 	private record CompletionValuation(BigDecimal unitCost, String valuationState) {
+	}
+
+	private record CompletionValuationState(String state, boolean requiresManualProvisionalUnitCost,
+			String currentAverageUnitCost, boolean costVisible) {
 	}
 
 	private record WorkOrderRow(Long id, String workOrderNo, Long productMaterialId, Long bomId,

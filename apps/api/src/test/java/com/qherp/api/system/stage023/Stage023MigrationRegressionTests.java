@@ -32,11 +32,11 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须从v1迁移到v20并建立计价结构权限和审批种子() {
+	void 空库必须从v1迁移到v21并建立计价结构权限和审批种子() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -59,6 +59,8 @@ class Stage023MigrationRegressionTests {
 				"average_unit_cost",
 				"cost_layer_id",
 				"public_pool_id"));
+		assertColumnsExist(jdbcTemplate, "inv_warehouse_transfer_line", List.of(
+				"source_cost_layer_id"));
 		assertColumnsExist(jdbcTemplate, "inv_stock_movement", List.of(
 				"ownership_type",
 				"project_id",
@@ -71,6 +73,9 @@ class Stage023MigrationRegressionTests {
 			.isTrue();
 		assertThat(indexExists(jdbcTemplate, "idx_inv_value_movement_source")).isTrue();
 		assertThat(indexExists(jdbcTemplate, "idx_inv_project_cost_layer_project_material")).isTrue();
+		assertThat(indexExists(jdbcTemplate, "idx_inv_warehouse_transfer_line_source_layer")).isTrue();
+		assertThat(constraintExists(jdbcTemplate, "inv_warehouse_transfer_line",
+				"fk_inv_warehouse_transfer_line_source_layer")).isTrue();
 
 		assertPermissionsExist(jdbcTemplate, List.of(
 				"inventory:valuation:view",
@@ -103,7 +108,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v19代表性存量升级到v20必须保留数量质量追踪预留并标记历史未估值() {
+	void v19代表性存量升级到v21必须保留数量质量追踪预留并标记历史未估值() {
 		migrate("19");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
@@ -111,7 +116,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
 		assertThat(queryText(jdbcTemplate, """
@@ -149,6 +154,53 @@ class Stage023MigrationRegressionTests {
 				from inv_stock_balance
 				where id = ?
 				""", data.valuedBalanceId())).isNull();
+		assertThat(count(jdbcTemplate, "inv_project_cost_layer")).isZero();
+		assertThat(count(jdbcTemplate, "inv_value_movement")).isZero();
+	}
+
+	@Test
+	void v20代表性存量升级到v21必须保留既有计价状态并新增调拨成本层字段() {
+		migrate("20");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
+		RepresentativeStockData data = insertRepresentativeV20Stock(jdbcTemplate);
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
+		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_balance
+				where id = ?
+				""", data.valuedBalanceId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_balance
+				where id = ?
+				""", data.nonValuedBalanceId())).isEqualTo("PUBLIC:NULL:NON_VALUED");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select quantity_on_hand
+				from inv_stock_balance
+				where id = ?
+				""", data.valuedBalanceId())).isEqualByComparingTo("12.000000");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select quantity
+				from inv_public_valuation_pool
+				where material_id = (
+					select material_id from inv_stock_balance where id = ?
+				)
+				""", data.valuedBalanceId())).isEqualByComparingTo("12.000000");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_movement
+				where id = ?
+				""", data.movementId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", data.reservationId())).isEqualTo("PUBLIC:NULL");
 		assertThat(count(jdbcTemplate, "inv_project_cost_layer")).isZero();
 		assertThat(count(jdbcTemplate, "inv_value_movement")).isZero();
 	}
@@ -224,6 +276,92 @@ class Stage023MigrationRegressionTests {
 				values ('S23-MIG-RES-001', 'RESERVATION', 'ACTIVE', ?, ?, ?, 'FROZEN',
 					3.000000, 0.000000, 0.000000, 'SALES_ORDER', 1, 1, 'S23-SO-001',
 					date '2026-01-11', '023迁移预留', 'test', now(), 'test', now(), ?)
+				returning id
+				""", warehouseId, valuedMaterialId, unitId, batchId);
+		return new RepresentativeStockData(valuedBalanceId, nonValuedBalanceId, movementId, reservationId, batchId);
+	}
+
+	private RepresentativeStockData insertRepresentativeV20Stock(JdbcTemplate jdbcTemplate) {
+		long unitId = id(jdbcTemplate, """
+				insert into mst_unit (
+					code, name, precision_scale, status, sort_order, created_by, created_at, updated_by, updated_at
+				)
+				values ('S23_MIG20_UNIT', '023迁移V20单位', 6, 'ENABLED', 1, 'test', now(), 'test', now())
+				returning id
+				""");
+		long warehouseId = id(jdbcTemplate, """
+				insert into mst_warehouse (
+					code, name, warehouse_type, status, created_by, created_at, updated_by, updated_at
+				)
+				values ('S23_MIG20_WH', '023迁移V20仓库', 'NORMAL', 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""");
+		long categoryId = id(jdbcTemplate, """
+				insert into mst_material_category (
+					code, name, status, sort_order, created_by, created_at, updated_by, updated_at
+				)
+				values ('S23_MIG20_CAT', '023迁移V20分类', 'ENABLED', 1, 'test', now(), 'test', now())
+				returning id
+				""");
+		long valuedMaterialId = insertMaterial(jdbcTemplate, "S23_MIG20_VAL", "VALUATED_MATERIAL", true,
+				categoryId, unitId, "BATCH");
+		long nonValuedMaterialId = insertMaterial(jdbcTemplate, "S23_MIG20_NVAL", "NON_VALUATED_CONSUMABLE", false,
+				categoryId, unitId, "NONE");
+		long batchId = id(jdbcTemplate, """
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date, remark,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'S23-MIG20-BATCH-001', 'MIGRATION_TEST', 1, 1, date '2026-01-10',
+					'023迁移V20批次', 'test', now(), 'test', now())
+				returning id
+				""", valuedMaterialId);
+		long valuedBalanceId = id(jdbcTemplate, """
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+					quality_status, batch_id, ownership_type, valuation_state, inventory_amount,
+					average_unit_cost, created_at, updated_at
+				)
+				values (?, ?, ?, 12.000000, 2.000000, 'FROZEN', ?, 'PUBLIC', 'LEGACY_UNVALUED',
+					null, null, now(), now())
+				returning id
+				""", warehouseId, valuedMaterialId, unitId, batchId);
+		long nonValuedBalanceId = id(jdbcTemplate, """
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+					quality_status, ownership_type, valuation_state, created_at, updated_at
+				)
+				values (?, ?, ?, 7.000000, 0.000000, 'QUALIFIED', 'PUBLIC', 'NON_VALUED', now(), now())
+				returning id
+				""", warehouseId, nonValuedMaterialId, unitId);
+		id(jdbcTemplate, """
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, 12.000000, null, null, 'LEGACY_UNVALUED')
+				returning id
+				""", valuedMaterialId);
+		long movementId = id(jdbcTemplate, """
+				insert into inv_stock_movement (
+					movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
+					before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
+					reason, operator_name, occurred_at, quality_status, batch_id, ownership_type, valuation_state
+				)
+				values ('S23-MIG20-MOV-001', 'OPENING', 'IN', ?, ?, ?, 12.000000, 0.000000, 12.000000,
+					'MIGRATION_TEST', 1, 1, date '2026-01-10', '023迁移V20历史流水', 'test', now(),
+					'FROZEN', ?, 'PUBLIC', 'LEGACY_UNVALUED')
+				returning id
+				""", warehouseId, valuedMaterialId, unitId, batchId);
+		long reservationId = id(jdbcTemplate, """
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id,
+					quality_status, quantity, released_quantity, consumed_quantity, source_type,
+					source_id, source_line_id, source_document_no, business_date, reason,
+					created_by, created_at, updated_by, updated_at, batch_id, ownership_type
+				)
+				values ('S23-MIG20-RES-001', 'RESERVATION', 'ACTIVE', ?, ?, ?, 'FROZEN',
+					3.000000, 0.000000, 0.000000, 'SALES_ORDER', 1, 1, 'S23-SO-020',
+					date '2026-01-11', '023迁移V20预留', 'test', now(), 'test', now(), ?, 'PUBLIC')
 				returning id
 				""", warehouseId, valuedMaterialId, unitId, batchId);
 		return new RepresentativeStockData(valuedBalanceId, nonValuedBalanceId, movementId, reservationId, batchId);

@@ -20,6 +20,7 @@ import {
 import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
+type IsOptional<T, K extends keyof T> = Record<string, never> extends Pick<T, K> ? true : false
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -175,11 +176,21 @@ describe('生产执行 API', () => {
     >,
     workOrderDetailReturnsCompletionValuationHint: true as AssertTrue<
       ProductionWorkOrderDetailRecord extends {
-        completionValuationState?: unknown
-        requiresManualProvisionalUnitCost?: unknown
-        currentAverageUnitCost?: unknown
-        costVisible?: unknown
-      } ? true : false
+        completionValuationState: unknown
+        requiresManualProvisionalUnitCost: unknown
+        currentAverageUnitCost: unknown
+        costVisible: unknown
+      }
+        ? IsOptional<ProductionWorkOrderDetailRecord, 'completionValuationState'> extends false
+          ? IsOptional<ProductionWorkOrderDetailRecord, 'requiresManualProvisionalUnitCost'> extends false
+            ? IsOptional<ProductionWorkOrderDetailRecord, 'currentAverageUnitCost'> extends false
+              ? IsOptional<ProductionWorkOrderDetailRecord, 'costVisible'> extends false
+                ? true
+                : false
+              : false
+            : false
+          : false
+        : false
     >,
   }
 

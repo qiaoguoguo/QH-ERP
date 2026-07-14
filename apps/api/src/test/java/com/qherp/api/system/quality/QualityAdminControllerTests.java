@@ -254,6 +254,37 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void qualityTransferRequiresExplicitOwnershipWhenPublicAndProjectSourcesCoexist() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		QualityFixture fixture = fixture();
+		markMaterialValued(fixture.materialId());
+		insertValuedPublicBalance(fixture, InventoryQualityStatus.QUALIFIED, "2.000000", "10.00", "5.000000");
+		long projectId = insertProject("023 质量转换项目");
+		long costLayerId = insertProjectCostLayer(projectId, fixture.materialId(), "3.000000", "24.00",
+				"8.000000");
+		insertProjectBalance(fixture, projectId, costLayerId, InventoryQualityStatus.QUALIFIED, "3.000000", "24.00",
+				"8.000000");
+
+		Map<String, Object> missingSource = qualityTransferPayload(fixture, "1.000000", LocalDate.now(),
+				"混合所有权未指定来源");
+		assertError(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", missingSource, admin),
+				HttpStatus.CONFLICT, "INVENTORY_OWNERSHIP_PROJECT_MISMATCH");
+
+		Map<String, Object> projectSource = qualityTransferPayload(fixture, "1.000000", LocalDate.now(),
+				"项目质量冻结保留成本层");
+		projectSource.put("ownershipType", "PROJECT");
+		projectSource.put("projectId", projectId);
+		projectSource.put("costLayerId", costLayerId);
+		assertOk(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", projectSource, admin));
+
+		assertDecimal(projectBalanceQuantity(fixture, projectId, costLayerId, InventoryQualityStatus.QUALIFIED),
+				"2.000000");
+		assertDecimal(projectBalanceQuantity(fixture, projectId, costLayerId, InventoryQualityStatus.FROZEN),
+				"1.000000");
+		assertDecimal(publicBalanceQuantity(fixture, InventoryQualityStatus.QUALIFIED), "2.000000");
+	}
+
+	@Test
 	void freezeTrackedBatchReservedQuantityReturnsTrackingUnavailable() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		QualityFixture fixture = fixture();
@@ -787,6 +818,66 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				qualityStatus.name(), batchId, serialId);
 	}
 
+	private void insertValuedPublicBalance(QualityFixture fixture, InventoryQualityStatus qualityStatus,
+			String quantity, String amount, String unitCost) {
+		Long poolId = this.jdbcTemplate.queryForObject("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, ?, ?, ?, 'VALUED')
+				returning id
+				""", Long.class, fixture.materialId(), new BigDecimal(quantity), new BigDecimal(amount),
+				new BigDecimal(unitCost));
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, valuation_state, inventory_amount, average_unit_cost, public_pool_id,
+					created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, ?, 'PUBLIC', 'VALUED', ?, ?, ?, now(), now())
+				""", fixture.warehouseId(), fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
+				qualityStatus.name(), new BigDecimal(amount), new BigDecimal(unitCost), poolId);
+	}
+
+	private void insertProjectBalance(QualityFixture fixture, long projectId, long costLayerId,
+			InventoryQualityStatus qualityStatus, String quantity, String amount, String unitCost) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, project_id, valuation_state, inventory_amount, average_unit_cost,
+					cost_layer_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, ?, 'PROJECT', ?, 'VALUED', ?, ?, ?, now(), now())
+				""", fixture.warehouseId(), fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
+				qualityStatus.name(), projectId, new BigDecimal(amount), new BigDecimal(unitCost), costLayerId);
+	}
+
+	private BigDecimal publicBalanceQuantity(QualityFixture fixture, InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and ownership_type = 'PUBLIC'
+				""", BigDecimal.class, fixture.warehouseId(), fixture.materialId(), qualityStatus.name());
+	}
+
+	private BigDecimal projectBalanceQuantity(QualityFixture fixture, long projectId, long costLayerId,
+			InventoryQualityStatus qualityStatus) {
+		return this.jdbcTemplate.queryForObject("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and cost_layer_id = ?
+				""", BigDecimal.class, fixture.warehouseId(), fixture.materialId(), qualityStatus.name(), projectId,
+				costLayerId);
+	}
+
 	private long insertSourceTrackingAllocation(QualityFixture fixture, String documentType, long documentId,
 			long documentLineId, Long batchId, Long serialId, String quantity) {
 		return this.jdbcTemplate.queryForObject("""
@@ -909,6 +1000,57 @@ class QualityAdminControllerTests extends PostgresIntegrationTest {
 				values (?, ?, 'RAW_MATERIAL', 'PURCHASED', ?, ?, 'ENABLED', 'test', now(), 'test', now())
 				returning id
 				""", Long.class, code, name, categoryId, unitId);
+	}
+
+	private void markMaterialValued(long materialId) {
+		this.jdbcTemplate.update("""
+				update mst_material
+				set cost_category = 'DIRECT_MATERIAL',
+				    inventory_valuation_category = 'VALUATED_MATERIAL',
+				    inventory_value_enabled = true,
+				    project_cost_enabled = true,
+				    updated_at = now()
+				where id = ?
+				""", materialId);
+	}
+
+	private long insertCustomer(String name) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-CUS-" + suffix, name + suffix);
+	}
+
+	private long insertProject(String name) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long customerId = insertCustomer(name + "客户");
+		long ownerId = this.jdbcTemplate.queryForObject("select id from sys_user where username = 'admin'",
+				Long.class);
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project (
+					project_no, name, customer_id, owner_user_id, planned_start_date, planned_finish_date, status,
+					target_revenue, target_cost, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, ?, ?, 'ACTIVE', 10000.00, 5000.00, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "QI-PRJ-" + suffix, name + suffix, customerId, ownerId, LocalDate.now(),
+				LocalDate.now().plusDays(30));
+	}
+
+	private long insertProjectCostLayer(long projectId, long materialId, String quantity, String amount,
+			String unitCost) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_project_cost_layer (
+					project_id, material_id, source_type, source_id, source_line_id, original_quantity,
+					original_amount, remaining_quantity, remaining_amount, unit_cost, status
+				)
+				values (?, ?, 'QUALITY_TRANSFER_TEST', ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+				returning id
+				""", Long.class, projectId, materialId, 8_100_000L + SEQUENCE.incrementAndGet(),
+				8_200_000L + SEQUENCE.incrementAndGet(), new BigDecimal(quantity), new BigDecimal(amount),
+				new BigDecimal(quantity), new BigDecimal(amount), new BigDecimal(unitCost));
 	}
 
 	private AuthenticatedSession createQualityUserAndLogin(String usernamePrefix, String rolePrefix,

@@ -504,6 +504,10 @@ describe('库存变动流水页', () => {
       keyword: '钢板',
       warehouseId: 1,
       materialId: 2,
+      ownershipType: undefined,
+      projectId: undefined,
+      valuationMethod: undefined,
+      costLayerId: undefined,
       movementType: 'ADJUSTMENT_DECREASE',
       direction: 'OUT',
       qualityStatus: 'QUALIFIED',
@@ -512,6 +516,9 @@ describe('库存变动流水页', () => {
       batchNo: 'B-20260711-001',
       serialId: undefined,
       serialNo: 'SN-20260711-001',
+      sourceType: undefined,
+      sourceId: undefined,
+      sourceLineId: undefined,
       dateFrom: '2026-07-01',
       dateTo: '2026-07-03',
       page: 1,
@@ -534,6 +541,20 @@ describe('库存变动流水页', () => {
       projectId: 501,
       valuationMethod: 'PROJECT_ACTUAL_LAYER',
       costLayerId: 9001,
+    }))
+  })
+
+  it('从来源追溯路由进入时同步发送来源类型、来源单据和来源行筛选', async () => {
+    await mountMovements({
+      sourceType: 'WAREHOUSE_TRANSFER',
+      sourceId: '1001',
+      sourceLineId: '2001',
+    })
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceType: 'WAREHOUSE_TRANSFER',
+      sourceId: 1001,
+      sourceLineId: 2001,
     }))
   })
 

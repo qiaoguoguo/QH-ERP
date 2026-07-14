@@ -774,6 +774,299 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 显式公共质量冻结不得消费同仓同料项目库存() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_QUALITY_PUBLIC_");
+		long projectId = insertProject("S23_QUALITY_PUBLIC_P_");
+		JsonNode projectLayer = createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "12.000000");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"5.000000", "10.000000");
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "显式公共库存冻结");
+		freeze.put("ownershipType", "PUBLIC");
+
+		ResponseEntity<String> frozen = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				freeze, admin);
+
+		assertThat(frozen.getStatusCode()).as(frozen.getBody()).isEqualTo(HttpStatus.OK);
+		JsonNode publicFrozen = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PUBLIC&warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.valuedMaterialId()
+				+ "&qualityStatus=FROZEN"));
+		JsonNode projectQualified = firstItem(get(admin,
+				"/api/admin/inventory/balances?ownershipType=PROJECT&projectId=" + projectId + "&warehouseId="
+						+ fixture.rawWarehouseId() + "&materialId=" + fixture.valuedMaterialId()
+						+ "&qualityStatus=QUALIFIED"));
+		assertDecimal(publicFrozen, "quantityOnHand", "1.000000");
+		assertDecimal(publicFrozen, "inventoryAmount", "10.00");
+		assertDecimal(projectQualified, "quantityOnHand", "2.000000");
+		assertDecimal(projectQualified, "inventoryAmount", "24.00");
+		assertThat(projectQualified.get("costLayerId").longValue()).isEqualTo(projectLayer.get("id").longValue());
+	}
+
+	@Test
+	void 同仓同料公共和项目库存并存时含糊质量冻结必须稳定拒绝() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_QUALITY_AMBIG_");
+		long projectId = insertProject("S23_QUALITY_AMBIG_P_");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "12.000000");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"5.000000", "10.000000");
+
+		ResponseEntity<String> ambiguous = exchange(HttpMethod.POST,
+				"/api/admin/inventory/quality-transfers/freeze",
+				qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+						"1.000000", "含糊所有权冻结"),
+				admin);
+
+		assertError(ambiguous, HttpStatus.CONFLICT, "INVENTORY_OWNERSHIP_PROJECT_MISMATCH");
+	}
+
+	@Test
+	void 项目仓库调拨必须按指定成本层移动并保持项目层总价值() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_LAYER_TRANSFER_");
+		long projectId = insertProject("S23_LAYER_TRANSFER_P_");
+		long targetWarehouseId = createWarehouse(admin, "S23_LAYER_TRANSFER_TO_" + SEQUENCE.incrementAndGet());
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "10.000000");
+		createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "20.000000");
+		JsonNode layers = data(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + fixture.valuedMaterialId())).get("items");
+		JsonNode tenCostLayer = findLayer(layers, "10.000000");
+		JsonNode twentyCostLayer = findLayer(layers, "20.000000");
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, projectId,
+						fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+						twentyCostLayer.get("id").longValue()),
+				admin));
+		ResponseEntity<String> posted = exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "指定 20 元成本层调拨"), admin);
+
+		assertThat(posted.getStatusCode()).as(posted.getBody()).isEqualTo(HttpStatus.OK);
+		long transferId = transfer.get("id").longValue();
+		long selectedCostLayerId = twentyCostLayer.get("id").longValue();
+		assertProjectLayer(tenCostLayer.get("id").longValue(), "2.000000", "20.00");
+		assertProjectLayer(selectedCostLayerId, "3.000000", "60.00");
+		assertProjectWarehouseBalance(fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				selectedCostLayerId, "4.000000");
+		assertProjectWarehouseBalance(targetWarehouseId, projectId, fixture.valuedMaterialId(), selectedCostLayerId,
+				"1.000000");
+		assertTransferValueMovement(transferId, "WAREHOUSE_TRANSFER_OUT", selectedCostLayerId, "1.000000", "20.00");
+		assertTransferValueMovement(transferId, "WAREHOUSE_TRANSFER_IN", selectedCostLayerId, "1.000000", "20.00");
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "80.00");
+	}
+
+	@Test
+	void 项目仓库调拨缺失成本层必须稳定拒绝() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture missingLayerFixture = createFixture("S23_LAYER_MISSING_");
+		long projectId = insertProject("S23_LAYER_MISSING_P_");
+		long targetWarehouseId = createWarehouse(admin, "S23_LAYER_MISSING_TO_" + SEQUENCE.incrementAndGet());
+		createProjectLayerFromPublic(admin, missingLayerFixture, projectId, "2.000000", "10.000000");
+		Map<String, Object> missingLayerPayload = warehouseTransferPayload(missingLayerFixture.rawWarehouseId(),
+				targetWarehouseId, missingLayerFixture.valuedMaterialId(), missingLayerFixture.unitId(), null,
+				"1.000000");
+		@SuppressWarnings("unchecked")
+		Map<String, Object> missingLayerLine = (Map<String, Object>) ((List<?>) missingLayerPayload.get("lines"))
+			.get(0);
+		missingLayerLine.put("ownershipType", "PROJECT");
+		missingLayerLine.put("projectId", projectId);
+		JsonNode missingLayerTransfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				missingLayerPayload, admin));
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + missingLayerTransfer.get("id").longValue() + "/post",
+				actionBody(missingLayerTransfer, "缺失成本层不得过账"), admin), HttpStatus.CONFLICT,
+				"INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT");
+	}
+
+	@Test
+	void 项目仓库调拨错误成本层必须稳定拒绝() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture wrongLayerFixture = createFixture("S23_LAYER_WRONG_");
+		long sourceProjectId = insertProject("S23_LAYER_WRONG_P_");
+		long otherProjectId = insertProject("S23_LAYER_WRONG_OTHER_P_");
+		long wrongTargetWarehouseId = createWarehouse(admin, "S23_LAYER_WRONG_TO_" + SEQUENCE.incrementAndGet());
+		createProjectLayerFromPublic(admin, wrongLayerFixture, sourceProjectId, "2.000000", "10.000000");
+		JsonNode otherLayer = createProjectLayerFromPublic(admin, wrongLayerFixture, otherProjectId, "1.000000",
+				"30.000000");
+		JsonNode wrongLayerTransfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(wrongLayerFixture.rawWarehouseId(), wrongTargetWarehouseId,
+						sourceProjectId, wrongLayerFixture.valuedMaterialId(), wrongLayerFixture.unitId(),
+						"1.000000", otherLayer.get("id").longValue()),
+				admin));
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + wrongLayerTransfer.get("id").longValue() + "/post",
+				actionBody(wrongLayerTransfer, "错误成本层不得过账"), admin), HttpStatus.CONFLICT,
+				"INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT");
+	}
+
+	@Test
+	void 生产工单详情必须返回完工估值状态且按成本权限脱敏() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PRODUCTION_DETAIL_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"5.000000", "9.000000");
+		long workOrderId = createProductionWorkOrder(fixture);
+		AuthenticatedSession noCost = createUserAndLogin("stage023-production-no-cost-", "S23_PROD_NOVAL_",
+				List.of("production:work-order:view"));
+
+		JsonNode detail = data(get(admin, "/api/admin/production/work-orders/" + workOrderId));
+		JsonNode restricted = data(get(noCost, "/api/admin/production/work-orders/" + workOrderId));
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(detail.has("completionValuationState"))
+				.as("生产工单详情必须直接给出完工估值状态")
+				.isTrue();
+			softly.assertThat(detail.has("requiresManualProvisionalUnitCost"))
+				.as("生产工单详情必须直接给出是否需要手工暂估")
+				.isTrue();
+			softly.assertThat(detail.has("currentAverageUnitCost"))
+				.as("生产工单详情必须直接给出当前公共平均成本")
+				.isTrue();
+			softly.assertThat(detail.has("costVisible")).as("生产工单详情必须返回成本可见标记").isTrue();
+			if (detail.has("currentAverageUnitCost") && !detail.get("currentAverageUnitCost").isNull()) {
+				softly.assertThat(detail.get("currentAverageUnitCost").asText()).isEqualTo("9.000000");
+			}
+			if (detail.has("costVisible")) {
+				softly.assertThat(detail.get("costVisible").booleanValue()).isTrue();
+			}
+			softly.assertThat(restricted.has("costVisible")).as("无成本权限详情仍必须返回 costVisible=false").isTrue();
+			if (restricted.has("costVisible")) {
+				softly.assertThat(restricted.get("costVisible").booleanValue()).isFalse();
+			}
+			softly.assertThat(restricted.hasNonNull("currentAverageUnitCost"))
+				.as("无 inventory:valuation:view 时不得泄露当前平均成本")
+				.isFalse();
+		});
+	}
+
+	@Test
+	void 成本层必须按costLayerId精确筛选() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture layerFixture = createFixture("S23_FILTER_LAYER_");
+		long projectId = insertProject("S23_FILTER_LAYER_P_");
+		createProjectLayerFromPublic(admin, layerFixture, projectId, "2.000000", "10.000000");
+		createProjectLayerFromPublic(admin, layerFixture, projectId, "3.000000", "20.000000");
+		JsonNode layers = data(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + layerFixture.valuedMaterialId())).get("items");
+		long expectedLayerId = findLayer(layers, "20.000000").get("id").longValue();
+
+		JsonNode filteredLayers = data(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + layerFixture.valuedMaterialId() + "&costLayerId=" + expectedLayerId));
+
+		assertThat(filteredLayers.get("total").longValue()).as(filteredLayers.toString()).isOne();
+		assertThat(filteredLayers.get("items").get(0).get("id").longValue()).isEqualTo(expectedLayerId);
+	}
+
+	@Test
+	void 库存流水必须按来源三元组精确筛选() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture movementFixture = createFixture("S23_FILTER_MOVEMENT_");
+		JsonNode firstDocument = data(createDocument(admin, documentPayload("OPENING", "来源筛选第一笔",
+				List.of(line(1, movementFixture.rawWarehouseId(), movementFixture.valuedMaterialId(),
+						movementFixture.unitId(), "1.000000", null, "8.000000")))));
+		JsonNode firstPosted = postDocument(admin, firstDocument);
+		JsonNode secondDocument = data(createDocument(admin, documentPayload("ADJUSTMENT", "来源筛选第二笔",
+				List.of(line(1, movementFixture.rawWarehouseId(), movementFixture.valuedMaterialId(),
+						movementFixture.unitId(), "1.000000", "INCREASE", "9.000000")))));
+		postDocument(admin, secondDocument);
+		long firstDocumentId = firstPosted.get("id").longValue();
+		long firstLineId = firstPosted.get("lines").get(0).get("id").longValue();
+		JsonNode filteredMovements = data(get(admin, "/api/admin/inventory/movements?materialId="
+				+ movementFixture.valuedMaterialId() + "&sourceType=INVENTORY_DOCUMENT&sourceId="
+				+ firstDocumentId + "&sourceLineId=" + firstLineId));
+
+		assertThat(filteredMovements.get("total").longValue()).as(filteredMovements.toString()).isOne();
+		JsonNode movement = filteredMovements.get("items").get(0);
+		assertThat(movement.get("sourceType").asText()).isEqualTo("INVENTORY_DOCUMENT");
+		assertThat(movement.get("sourceId").longValue()).isEqualTo(firstDocumentId);
+		assertThat(movement.get("sourceLineId").longValue()).isEqualTo(firstLineId);
+	}
+
+	@Test
+	void 四类受控单据详情必须冻结展示字段且不得回归availableActions() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_DETAIL_FREEZE_");
+		long projectId = insertProject("S23_DETAIL_FREEZE_P_");
+		long targetWarehouseId = createWarehouse(admin, "S23_DETAIL_FREEZE_TO_" + SEQUENCE.incrementAndGet());
+		JsonNode layer = createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "10.000000");
+		long costLayerId = layer.get("id").longValue();
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, projectId,
+						fixture.valuedMaterialId(), fixture.unitId(), "1.000000", costLayerId),
+				admin));
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("详情冻结项目转公共", List.of(
+						ownershipLine(1, "PROJECT", projectId, "PUBLIC", null, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+								null, costLayerId))),
+				admin));
+		JsonNode stocktake = startStocktake(admin, fixture, LocalDate.now());
+		JsonNode adjustment = data(exchange(HttpMethod.POST, "/api/admin/inventory/valuation-adjustments",
+				projectValuationAdjustmentPayload(projectId, fixture.valuedMaterialId(), costLayerId,
+						"11.000000", "3.00"),
+				admin));
+		AuthenticatedSession noCost = createUserAndLogin("stage023-detail-no-cost-", "S23_DETAIL_NOVAL_",
+				List.of("inventory:warehouse-transfer:view", "inventory:ownership-conversion:view",
+						"inventory:stocktake:view", "inventory:valuation-adjustment:view", "inventory:balance:view"));
+
+		JsonNode transferDetail = data(get(admin,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue()));
+		JsonNode conversionDetail = data(get(admin,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue()));
+		JsonNode stocktakeDetail = data(get(admin, "/api/admin/inventory/stocktakes/" + stocktake.get("id").longValue()));
+		JsonNode adjustmentDetail = data(get(admin,
+				"/api/admin/inventory/valuation-adjustments/" + adjustment.get("id").longValue()));
+		JsonNode restrictedConversion = data(get(noCost,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue()));
+		JsonNode restrictedAdjustment = data(get(noCost,
+				"/api/admin/inventory/valuation-adjustments/" + adjustment.get("id").longValue()));
+
+		JsonNode transferLine = transferDetail.get("lines").get(0);
+		JsonNode conversionLine = conversionDetail.get("lines").get(0);
+		JsonNode stocktakeProjectLine = findLineByProject(stocktakeDetail.get("lines"), projectId);
+		JsonNode adjustmentLine = adjustmentDetail.get("lines").get(0);
+		SoftAssertions.assertSoftly((softly) -> {
+			assertOnlyAllowedActions(softly, transferDetail, "仓库调拨详情");
+			assertOnlyAllowedActions(softly, conversionDetail, "所有权转换详情");
+			assertOnlyAllowedActions(softly, stocktakeDetail, "盘点详情");
+			assertOnlyAllowedActions(softly, adjustmentDetail, "估值调整详情");
+			assertLineIdentity(softly, transferLine, "仓库调拨行", fixture.valuedMaterialId(), fixture.unitId(),
+					projectId);
+			softly.assertThat(transferLine.has("sourceCostLayerId") || transferLine.has("costLayerId"))
+				.as("项目仓库调拨详情必须冻结展示所选成本层")
+				.isTrue();
+			assertLineIdentity(softly, conversionLine, "所有权转换行", fixture.valuedMaterialId(), fixture.unitId(),
+					projectId);
+			softly.assertThat(conversionLine.get("sourceCostLayerId").longValue()).isEqualTo(costLayerId);
+			assertLineIdentity(softly, stocktakeProjectLine, "盘点项目行", fixture.valuedMaterialId(), fixture.unitId(),
+					projectId);
+			softly.assertThat(stocktakeProjectLine.has("costLayerId")).as("盘点项目行必须冻结展示成本层").isTrue();
+			assertLineIdentity(softly, adjustmentLine, "估值调整行", fixture.valuedMaterialId(), null, projectId);
+			softly.assertThat(adjustmentLine.get("costLayerId").longValue()).isEqualTo(costLayerId);
+			softly.assertThat(restrictedConversion.get("lines").get(0).has("sourceUnitCost"))
+				.as("无成本权限时所有权转换不得返回 sourceUnitCost")
+				.isFalse();
+			softly.assertThat(restrictedConversion.get("lines").get(0).has("sourceCostLayerId"))
+				.as("无成本权限时所有权转换不得返回 sourceCostLayerId")
+				.isFalse();
+			softly.assertThat(restrictedAdjustment.get("lines").get(0).has("unitCost"))
+				.as("无成本权限时估值调整不得返回 unitCost")
+				.isFalse();
+			softly.assertThat(restrictedAdjustment.get("lines").get(0).has("adjustmentAmount"))
+				.as("无成本权限时估值调整不得返回 adjustmentAmount")
+				.isFalse();
+			softly.assertThat(restrictedAdjustment.get("lines").get(0).has("costLayerId"))
+				.as("无成本权限时估值调整不得返回 costLayerId")
+				.isFalse();
+		});
+	}
+
+	@Test
 	void 前端受控库存单据路径必须由后端真实映射支持() {
 		List<RequiredRoute> requiredRoutes = List.of(
 				route(RequestMethod.GET, "/api/admin/inventory/warehouse-transfers"),
@@ -813,6 +1106,160 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		}
 		assertThat(missingRoutes).as("前端已声明的 023 受控库存单据路径必须全部由后端真实控制器支持")
 			.isEmpty();
+	}
+
+	private void assertProjectLayer(long layerId, String remainingQuantity, String remainingAmount) {
+		Map<String, Object> layer = this.jdbcTemplate.queryForMap("""
+				select remaining_quantity, remaining_amount
+				from inv_project_cost_layer
+				where id = ?
+				""", layerId);
+		assertThat(((BigDecimal) layer.get("remaining_quantity")).compareTo(new BigDecimal(remainingQuantity)))
+			.as("成本层 " + layerId + " 剩余数量")
+			.isZero();
+		assertThat(((BigDecimal) layer.get("remaining_amount")).compareTo(new BigDecimal(remainingAmount)))
+			.as("成本层 " + layerId + " 剩余金额")
+			.isZero();
+	}
+
+	private void assertProjectWarehouseBalance(long warehouseId, long projectId, long materialId, long costLayerId,
+			String quantityOnHand) {
+		Map<String, Object> balance = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id, quantity_on_hand, cost_layer_id
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and project_id = ?
+				  and material_id = ?
+				  and quality_status = 'QUALIFIED'
+				""", warehouseId, projectId, materialId);
+		assertThat(balance.get("ownership_type")).as("仓库余额所有权").isEqualTo("PROJECT");
+		assertThat(((Number) balance.get("project_id")).longValue()).as("仓库余额项目").isEqualTo(projectId);
+		assertThat(((Number) balance.get("cost_layer_id")).longValue()).as("仓库余额成本层").isEqualTo(costLayerId);
+		assertThat(((BigDecimal) balance.get("quantity_on_hand")).compareTo(new BigDecimal(quantityOnHand)))
+			.as("仓库 " + warehouseId + " 项目余额数量")
+			.isZero();
+	}
+
+	private void assertTransferValueMovement(long transferId, String movementType, long costLayerId, String quantity,
+			String amount) {
+		Map<String, Object> movement = this.jdbcTemplate.queryForMap("""
+				select quantity, inventory_amount, cost_layer_id
+				from inv_value_movement
+				where source_type = 'WAREHOUSE_TRANSFER'
+				  and source_id = ?
+				  and movement_type = ?
+				""", transferId, movementType);
+		assertThat(((Number) movement.get("cost_layer_id")).longValue()).as(movementType + " 成本层")
+			.isEqualTo(costLayerId);
+		assertThat(((BigDecimal) movement.get("quantity")).compareTo(new BigDecimal(quantity)))
+			.as(movementType + " 数量")
+			.isZero();
+		assertThat(((BigDecimal) movement.get("inventory_amount")).compareTo(new BigDecimal(amount)))
+			.as(movementType + " 金额")
+			.isZero();
+	}
+
+	private long createProductionWorkOrder(InventoryFixture fixture) {
+		long bomId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom (
+					bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status,
+					effective_from, created_by, created_at, updated_by, updated_at, enabled_by, enabled_at
+				)
+				values (?, ?, ?, ?, 1.000000, ?, 'ENABLED', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "BOM-S23-PROD-" + SEQUENCE.incrementAndGet(), fixture.valuedMaterialId(),
+				"V" + SEQUENCE.incrementAndGet(), "023 生产详情估值 BOM", fixture.unitId(), LocalDate.now());
+		long bomItemId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom_item (
+					bom_id, line_no, child_material_id, unit_id, quantity, loss_rate, business_unit_id,
+					business_quantity, base_unit_id, base_quantity, quantity_basis, created_at, updated_at
+				)
+				values (?, 1, ?, ?, 1.000000, 0, ?, 1.000000, ?, 1.000000, 'BASE_UNIT', now(), now())
+				returning id
+				""", Long.class, bomId, fixture.nonValuedMaterialId(), fixture.unitId(), fixture.unitId(),
+				fixture.unitId());
+		long workOrderId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_work_order (
+					work_order_no, product_material_id, bom_id, planned_quantity, reported_quantity,
+					qualified_quantity, defective_quantity, received_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_start_date, planned_finish_date, status, remark,
+					created_by, created_at, updated_by, updated_at, released_by, released_at
+				)
+				values (?, ?, ?, 1.000000, 0, 0, 0, 0, ?, ?, ?, ?, 'RELEASED', '023 生产详情估值',
+					'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "WO-S23-PROD-" + SEQUENCE.incrementAndGet(), fixture.valuedMaterialId(),
+				bomId, fixture.rawWarehouseId(), fixture.rawWarehouseId(), LocalDate.now(),
+				LocalDate.now().plusDays(1));
+		this.jdbcTemplate.update("""
+				insert into mfg_work_order_material (
+					work_order_id, line_no, bom_item_id, material_id, unit_id, required_quantity, issued_quantity,
+					loss_rate, remark, created_at, updated_at, business_unit_id, business_quantity,
+					base_unit_id, base_required_quantity, quantity_basis
+				)
+				values (?, 1, ?, ?, ?, 1.000000, 0, 0, '023 生产详情原料', now(), now(), ?, 1.000000, ?,
+					1.000000, 'BASE_UNIT')
+				""", workOrderId, bomItemId, fixture.nonValuedMaterialId(), fixture.unitId(), fixture.unitId(),
+				fixture.unitId());
+		return workOrderId;
+	}
+
+	private Map<String, Object> projectValuationAdjustmentPayload(long projectId, long materialId, long costLayerId,
+			String unitCost, String adjustmentAmount) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", 1);
+		line.put("ownershipType", "PROJECT");
+		line.put("projectId", projectId);
+		line.put("materialId", materialId);
+		line.put("quantity", "1.000000");
+		line.put("unitCost", unitCost);
+		line.put("adjustmentAmount", adjustmentAmount);
+		line.put("costLayerId", costLayerId);
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("adjustmentType", "PROVISIONAL_REVALUATION");
+		body.put("businessDate", LocalDate.now().toString());
+		body.put("reason", "023 项目层暂估重估详情");
+		body.put("idempotencyKey", "s23-project-valuation-" + SEQUENCE.incrementAndGet());
+		body.put("lines", List.of(line));
+		return body;
+	}
+
+	private JsonNode findLineByProject(JsonNode lines, long projectId) {
+		for (JsonNode line : lines) {
+			if (line.has("projectId") && !line.get("projectId").isNull()
+					&& line.get("projectId").longValue() == projectId) {
+				return line;
+			}
+			if (line.has("sourceProjectId") && !line.get("sourceProjectId").isNull()
+					&& line.get("sourceProjectId").longValue() == projectId) {
+				return line;
+			}
+			if (line.has("targetProjectId") && !line.get("targetProjectId").isNull()
+					&& line.get("targetProjectId").longValue() == projectId) {
+				return line;
+			}
+		}
+		throw new AssertionError("未找到项目行 " + projectId + "，实际：" + lines);
+	}
+
+	private void assertOnlyAllowedActions(SoftAssertions softly, JsonNode detail, String label) {
+		softly.assertThat(detail.has("allowedActions")).as(label + " 必须返回 allowedActions").isTrue();
+		softly.assertThat(detail.has("availableActions")).as(label + " 不得回归 availableActions").isFalse();
+	}
+
+	private void assertLineIdentity(SoftAssertions softly, JsonNode line, String label, long materialId, Long unitId,
+			long projectId) {
+		softly.assertThat(line.get("materialId").longValue()).as(label + " 必须冻结物料").isEqualTo(materialId);
+		if (unitId != null) {
+			softly.assertThat(line.get("unitId").longValue()).as(label + " 必须冻结单位").isEqualTo(unitId);
+		}
+		boolean projectMatched = (line.has("projectId") && !line.get("projectId").isNull()
+				&& line.get("projectId").longValue() == projectId)
+				|| (line.has("sourceProjectId") && !line.get("sourceProjectId").isNull()
+						&& line.get("sourceProjectId").longValue() == projectId)
+				|| (line.has("targetProjectId") && !line.get("targetProjectId").isNull()
+						&& line.get("targetProjectId").longValue() == projectId);
+		softly.assertThat(projectMatched).as(label + " 必须冻结项目归属").isTrue();
 	}
 
 	private JsonNode createProjectLayerFromPublic(AuthenticatedSession admin, InventoryFixture fixture, long projectId,

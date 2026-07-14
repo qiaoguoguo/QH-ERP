@@ -534,6 +534,7 @@ export interface InventoryControlledDocumentSummaryRecord {
   approvalSummary?: InventoryApprovalSummary | null
   amountImpactSummary?: string | null
   keyInfoSummary?: string | null
+  costVisible?: boolean | null
   createdByName?: string | null
   createdAt?: string | null
   updatedAt?: string | null
@@ -560,7 +561,9 @@ export interface InventoryWarehouseTransferLineRecord {
   projectName?: string | null
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
+  batchId?: ResourceId | null
   batchNo?: string | null
+  serialId?: ResourceId | null
   serialNo?: string | null
   quantity: string
   sourceCostLayerId?: ResourceId | null
@@ -595,6 +598,12 @@ export interface InventoryOwnershipConversionLineRecord {
   costLayerId?: ResourceId | null
   costLayerNo?: string | null
   sourceUnitCost?: string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
   quantity: string
 }
 
@@ -633,6 +642,7 @@ export interface InventoryValuationAdjustmentLineRecord {
   materialCode?: string
   materialName?: string
   ownershipType?: InventoryOwnershipType | null
+  ownershipTypeName?: string | null
   projectId?: ResourceId | null
   projectNo?: string | null
   projectName?: string | null
@@ -686,7 +696,9 @@ export interface InventoryOwnershipConversionLinePayload {
   unitId: ResourceId
   quantity: InventoryQuantityPayload
   sourceCostLayerId?: ResourceId
-  sourceUnitCost?: string
+  qualityStatus?: InventoryQualityStatus
+  batchId?: ResourceId
+  serialId?: ResourceId
   remark?: string
 }
 

@@ -38,8 +38,9 @@ public class ProductionAdminController {
 	}
 
 	@GetMapping("/work-orders/{id}")
-	public ApiResponse<ProductionAdminService.WorkOrderDetailResponse> workOrder(@PathVariable Long id) {
-		return ApiResponse.ok(this.productionAdminService.workOrder(id));
+	public ApiResponse<ProductionAdminService.WorkOrderDetailResponse> workOrder(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.workOrder(id, currentUser));
 	}
 
 	@PostMapping("/work-orders")

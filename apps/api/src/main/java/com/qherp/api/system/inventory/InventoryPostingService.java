@@ -12,6 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -121,13 +122,22 @@ public class InventoryPostingService {
 			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName, Long batchId, Long serialId) {
+		return transferQualityStatus(warehouseId, materialId, unitId, fromStatus, toStatus, quantity, sourceType,
+				sourceId, sourceLineId, businessDate, reason, remark, operatorName, batchId, serialId, null);
+	}
+
+	@Transactional
+	public QualityTransferResult transferQualityStatus(Long warehouseId, Long materialId, Long unitId,
+			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus, BigDecimal quantity, String sourceType,
+			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
+			String operatorName, Long batchId, Long serialId, ValuationContext requestedContext) {
 		if (!allowedQualityStatusTransfer(fromStatus, toStatus)) {
 			throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
 		}
 		Long fromSourceLineId = transferSourceLineId(sourceLineId, fromStatus);
 		Long toSourceLineId = transferSourceLineId(sourceLineId, toStatus);
 		ValuationContext sourceContext = qualityTransferSourceContext(warehouseId, materialId, fromStatus, batchId,
-				serialId, quantity);
+				serialId, quantity, requestedContext);
 		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.OUT, warehouseId, materialId, unitId, quantity, fromStatus, sourceType, sourceId,
 				fromSourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
@@ -360,24 +370,69 @@ public class InventoryPostingService {
 	}
 
 	private ValuationContext qualityTransferSourceContext(Long warehouseId, Long materialId,
-			InventoryQualityStatus qualityStatus, Long batchId, Long serialId, BigDecimal quantity) {
-		return this.jdbcTemplate.query("""
-				select ownership_type, project_id, cost_layer_id
-				from inv_stock_balance
+			InventoryQualityStatus qualityStatus, Long batchId, Long serialId, BigDecimal quantity,
+			ValuationContext requestedContext) {
+		List<Object> args = new java.util.ArrayList<>();
+		StringBuilder where = new StringBuilder("""
 				where warehouse_id = ?
 				and material_id = ?
 				and quality_status = ?
 				and batch_id is not distinct from ?
 				and serial_id is not distinct from ?
 				and quantity_on_hand >= ?
-				order by case ownership_type when 'PROJECT' then 0 else 1 end, id
-				limit 1
-				""", (rs, rowNum) -> new ValuationContext(rs.getString("ownership_type"),
-				nullableLong(rs, "project_id"), null, nullableLong(rs, "cost_layer_id"), null), warehouseId,
-				materialId, qualityStatus.name(), batchId, serialId, quantity)
-			.stream()
-			.findFirst()
-			.orElse(ValuationContext.publicStock(null));
+				""");
+		args.add(warehouseId);
+		args.add(materialId);
+		args.add(qualityStatus.name());
+		args.add(batchId);
+		args.add(serialId);
+		args.add(quantity);
+		if (requestedContext != null && hasText(requestedContext.ownershipType())) {
+			where.append(" and ownership_type = ?");
+			args.add(requestedContext.ownershipType());
+			if ("PROJECT".equals(requestedContext.ownershipType())) {
+				if (requestedContext.projectId() == null) {
+					throw new BusinessException(ApiErrorCode.INVENTORY_OWNERSHIP_PROJECT_MISMATCH);
+				}
+				where.append(" and project_id = ?");
+				args.add(requestedContext.projectId());
+				if (requestedContext.costLayerId() != null) {
+					where.append(" and cost_layer_id = ?");
+					args.add(requestedContext.costLayerId());
+				}
+			}
+			else if ("PUBLIC".equals(requestedContext.ownershipType())) {
+				where.append(" and project_id is null");
+			}
+			else {
+				throw new BusinessException(ApiErrorCode.INVENTORY_OWNERSHIP_PROJECT_MISMATCH);
+			}
+		}
+		List<ValuationContext> candidates = this.jdbcTemplate.query("""
+				select ownership_type, project_id, cost_layer_id
+				from inv_stock_balance
+				%s
+				order by id
+				""".formatted(where), (rs, rowNum) -> new ValuationContext(rs.getString("ownership_type"),
+				nullableLong(rs, "project_id"), null, nullableLong(rs, "cost_layer_id"), null), args.toArray());
+		if (candidates.isEmpty()) {
+			if (requestedContext != null && hasText(requestedContext.ownershipType())) {
+				return requestedContext;
+			}
+			return ValuationContext.publicStock(null);
+		}
+		if (candidates.size() > 1) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_OWNERSHIP_PROJECT_MISMATCH);
+		}
+		ValuationContext candidate = candidates.getFirst();
+		if ("PROJECT".equals(candidate.ownershipType()) && candidate.costLayerId() == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
+		if (requestedContext != null && "PROJECT".equals(requestedContext.ownershipType())
+				&& requestedContext.costLayerId() == null) {
+			return candidate;
+		}
+		return candidate;
 	}
 
 	private PublicPoolSnapshot publicPoolSnapshot(Long materialId) {

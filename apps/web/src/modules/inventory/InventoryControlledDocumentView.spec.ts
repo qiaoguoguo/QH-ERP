@@ -82,6 +82,12 @@ const transferRecord = {
     projectId: 501,
     projectNo: 'PRJ-001',
     projectName: '一号项目',
+    qualityStatus: 'QUALIFIED',
+    qualityStatusName: '合格',
+    batchId: 610,
+    batchNo: 'B-TF-001',
+    serialId: 711,
+    serialNo: 'SN-TF-001',
     sourceCostLayerId: 9001,
     costLayerNo: 'CL-PRJ-001',
   }],
@@ -124,6 +130,12 @@ const ownershipConversionRecord = {
     sourceCostLayerId: 9001,
     costLayerNo: 'CL-PRJ-001',
     sourceUnitCost: '11.000000',
+    qualityStatus: 'QUALIFIED',
+    qualityStatusName: '合格',
+    batchId: 610,
+    batchNo: 'B-OC-001',
+    serialId: 711,
+    serialNo: 'SN-OC-001',
     quantity: '5.000000',
   }],
 }
@@ -190,11 +202,15 @@ const valuationAdjustmentRecord = {
     materialCode: 'RM-001',
     materialName: '钢板',
     ownershipType: 'PROJECT',
+    ownershipTypeName: '项目库存',
     projectId: 501,
+    projectNo: 'PRJ-001',
+    projectName: '一号项目',
     quantity: '100.000000',
     unitCost: '10.000000',
     adjustmentAmount: '1000.00',
     costLayerId: 9001,
+    costLayerNo: 'CL-PRJ-001',
   }],
 }
 
@@ -389,17 +405,20 @@ describe('库存受控单据页', () => {
     expect(wrapper.text()).toContain('调增 1,000.00')
   })
 
-  it('新建仓库调拨提交后端完整 DTO，包含幂等键、单位、项目和来源成本层', async () => {
+  it('新建仓库调拨提交后端完整 DTO，包含质量、批次、序列、项目和来源成本层', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/create')
 
     await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
     await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目仓调拨')
+    await setSelectValue(wrapper, 'inventory-controlled-quality-status', 'QUALIFIED')
     await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
     await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
     await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
     await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
     await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('7.000000')
     await wrapper.find('input[name="inventory-controlled-project-id"]').setValue('501')
+    await wrapper.find('input[name="inventory-controlled-batch-id"]').setValue('610')
+    await wrapper.find('input[name="inventory-controlled-serial-id"]').setValue('711')
     await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
@@ -416,18 +435,24 @@ describe('库存受控单据页', () => {
         quantity: '7.000000',
         ownershipType: 'PROJECT',
         projectId: 501,
+        qualityStatus: 'QUALIFIED',
+        batchId: 610,
+        serialId: 711,
         sourceCostLayerId: 9001,
       })],
     }))
   })
 
-  it('编辑仓库调拨从详情回填字段并携带版本保存，避免空表单覆盖', async () => {
+  it('编辑仓库调拨从详情回填质量、批次、序列和成本层并携带版本保存，避免空表单覆盖', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001/edit')
 
     expect((wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').element as HTMLInputElement).value).toBe('1')
     expect((wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').element as HTMLInputElement).value).toBe('2')
     expect((wrapper.find('input[name="inventory-controlled-material-id"]').element as HTMLInputElement).value).toBe('3')
     expect((wrapper.find('input[name="inventory-controlled-unit-id"]').element as HTMLInputElement).value).toBe('4')
+    expect((wrapper.find('input[name="inventory-controlled-batch-id"]').element as HTMLInputElement).value).toBe('610')
+    expect((wrapper.find('input[name="inventory-controlled-serial-id"]').element as HTMLInputElement).value).toBe('711')
+    expect((wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').element as HTMLInputElement).value).toBe('9001')
 
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
@@ -439,18 +464,23 @@ describe('库存受控单据页', () => {
         targetWarehouseId: 2,
         materialId: 3,
         unitId: 4,
+        qualityStatus: 'QUALIFIED',
+        batchId: 610,
+        serialId: 711,
+        sourceCostLayerId: 9001,
         quantity: '12.345678',
       })],
     }))
   })
 
-  it('所有权转换支持项目间转换并提交来源目标仓库、项目、单位和成本层', async () => {
+  it('所有权转换支持项目间转换并提交来源目标仓库、项目、单位、质量、追踪身份和成本层', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/ownership-conversions/create')
 
     await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
     await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目间借用')
     await setSelectValue(wrapper, 'inventory-controlled-source-ownership-type', 'PROJECT')
     await setSelectValue(wrapper, 'inventory-controlled-target-ownership-type', 'PROJECT')
+    await setSelectValue(wrapper, 'inventory-controlled-quality-status', 'QUALIFIED')
     await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
     await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
     await wrapper.find('input[name="inventory-controlled-source-project-id"]').setValue('501')
@@ -458,8 +488,10 @@ describe('库存受控单据页', () => {
     await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
     await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
     await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('5.000000')
+    await wrapper.find('input[name="inventory-controlled-batch-id"]').setValue('610')
+    await wrapper.find('input[name="inventory-controlled-serial-id"]').setValue('711')
     await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
-    await wrapper.find('input[name="inventory-controlled-source-unit-cost"]').setValue('11.000000')
+    expect(wrapper.find('input[name="inventory-controlled-source-unit-cost"]').exists()).toBe(false)
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
 
@@ -475,10 +507,55 @@ describe('库存受控单据页', () => {
         materialId: 3,
         unitId: 4,
         sourceCostLayerId: 9001,
-        sourceUnitCost: '11.000000',
+        qualityStatus: 'QUALIFIED',
+        batchId: 610,
+        serialId: 711,
         quantity: '5.000000',
       })],
     }))
+    expect(inventoryApiMock.ownershipConversions.create.mock.calls[0][0].lines[0])
+      .not.toHaveProperty('sourceUnitCost')
+  })
+
+  it('受控单据详情提供桌面复核字段，来源单位成本仅只读展示且受成本权限控制', async () => {
+    const transfer = await mountInventoryDocument('/inventory/warehouse-transfers/1001')
+
+    expect(transfer.wrapper.text()).toContain('项目')
+    expect(transfer.wrapper.text()).toContain('PRJ-001 一号项目')
+    expect(transfer.wrapper.text()).toContain('单位')
+    expect(transfer.wrapper.text()).toContain('千克')
+    expect(transfer.wrapper.text()).toContain('来源成本层')
+    expect(transfer.wrapper.text()).toContain('CL-PRJ-001')
+    expect(transfer.wrapper.text()).toContain('质量状态')
+    expect(transfer.wrapper.text()).toContain('合格')
+    expect(transfer.wrapper.text()).toContain('B-TF-001 / SN-TF-001')
+
+    const conversion = await mountInventoryDocument('/inventory/ownership-conversions/1002')
+    expect(conversion.wrapper.text()).toContain('来源项目')
+    expect(conversion.wrapper.text()).toContain('PRJ-001 一号项目')
+    expect(conversion.wrapper.text()).toContain('目标项目')
+    expect(conversion.wrapper.text()).toContain('来源仓库')
+    expect(conversion.wrapper.text()).toContain('目标仓库')
+    expect(conversion.wrapper.text()).toContain('来源实际成本')
+    expect(conversion.wrapper.text()).toContain('11.000000')
+    expect(conversion.wrapper.find('input[name="inventory-controlled-source-unit-cost"]').exists()).toBe(false)
+
+    inventoryApiMock.ownershipConversions.get.mockResolvedValueOnce({
+      ...ownershipConversionRecord,
+      costVisible: false,
+    })
+    const restricted = await mountInventoryDocument('/inventory/ownership-conversions/1002')
+    expect(restricted.wrapper.text()).toContain('金额受限')
+    expect(restricted.wrapper.text()).not.toContain('11.000000')
+
+    const adjustment = await mountInventoryDocument('/inventory/valuation-adjustments/1004')
+    expect(adjustment.wrapper.text()).toContain('调整类型')
+    expect(adjustment.wrapper.text()).toContain('期初估值')
+    expect(adjustment.wrapper.text()).toContain('所有权')
+    expect(adjustment.wrapper.text()).toContain('项目库存')
+    expect(adjustment.wrapper.text()).toContain('PRJ-001 一号项目')
+    expect(adjustment.wrapper.text()).toContain('成本层')
+    expect(adjustment.wrapper.text()).toContain('CL-PRJ-001')
   })
 
   it('盘点详情严格区分未盘和实盘为零，行保存发送单据版本、行版本和 countedQuantity', async () => {

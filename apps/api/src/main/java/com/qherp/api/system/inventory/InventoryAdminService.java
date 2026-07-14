@@ -238,20 +238,20 @@ public class InventoryAdminService {
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus, int page,
 			int pageSize) {
 		return movements(keyword, warehouseId, materialId, movementType, direction, dateFrom, dateTo, qualityStatus,
-				null, null, null, null, null, null, null, null, null, page, pageSize, null);
+				null, null, null, null, null, null, null, null, null, null, null, null, page, pageSize, null);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus,
 			String trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo, String ownershipType,
-			Long projectId, String valuationMethod, Long costLayerId, int page, int pageSize,
-			CurrentUser currentUser) {
+			Long projectId, String valuationMethod, Long costLayerId, String sourceType, Long sourceId,
+			Long sourceLineId, int page, int pageSize, CurrentUser currentUser) {
 		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		InventoryTrackingMethod parsedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
 		QueryParts queryParts = movementQueryParts(keyword, warehouseId, materialId, movementType, direction, dateFrom,
 				dateTo, parsedQualityStatus, parsedTrackingMethod, batchId, batchNo, serialId, serialNo, ownershipType,
-				projectId, valuationMethod, costLayerId);
+				projectId, valuationMethod, costLayerId, sourceType, sourceId, sourceLineId);
 		boolean costVisible = hasPermission(currentUser, "inventory:valuation:view");
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -929,7 +929,8 @@ public class InventoryAdminService {
 	private QueryParts movementQueryParts(String keyword, Long warehouseId, Long materialId, String movementType,
 			String direction, LocalDate dateFrom, LocalDate dateTo, InventoryQualityStatus qualityStatus,
 			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo,
-			String ownershipType, Long projectId, String valuationMethod, Long costLayerId) {
+			String ownershipType, Long projectId, String valuationMethod, Long costLayerId, String sourceType,
+			Long sourceId, Long sourceLineId) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -1003,6 +1004,18 @@ public class InventoryAdminService {
 		if (costLayerId != null) {
 			conditions.add("vm.cost_layer_id = ?");
 			args.add(costLayerId);
+		}
+		if (hasText(sourceType)) {
+			conditions.add("mv.source_type = ?");
+			args.add(sourceType.trim());
+		}
+		if (sourceId != null) {
+			conditions.add("mv.source_id = ?");
+			args.add(sourceId);
+		}
+		if (sourceLineId != null) {
+			conditions.add("mv.source_line_id = ?");
+			args.add(sourceLineId);
 		}
 		return where(conditions, args);
 	}

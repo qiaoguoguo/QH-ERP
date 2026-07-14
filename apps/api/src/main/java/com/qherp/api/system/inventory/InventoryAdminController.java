@@ -64,20 +64,29 @@ public class InventoryAdminController {
 			@RequestParam(required = false) String serialNo,
 			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
 			@RequestParam(required = false) String valuationMethod, @RequestParam(required = false) Long costLayerId,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) Long sourceLineId,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.inventoryAdminService.movements(keyword, warehouseId, materialId, movementType,
 				direction, dateFrom, dateTo, qualityStatus, trackingMethod, batchId, batchNo, serialId, serialNo,
-				ownershipType, projectId, valuationMethod, costLayerId, page, pageSize, currentUser));
+				ownershipType, projectId, valuationMethod, costLayerId, sourceType, sourceId, sourceLineId, page,
+				pageSize, currentUser));
 	}
 
 	@GetMapping("/cost-layers")
 	public ApiResponse<PageResponse<java.util.Map<String, Object>>> costLayers(
+			@RequestParam(required = false) Long costLayerId,
+			@RequestParam(required = false) String ownershipType,
 			@RequestParam(required = false) Long projectId, @RequestParam(required = false) Long materialId,
+			@RequestParam(required = false) Long warehouseId,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) String batchNo, @RequestParam(required = false) String serialNo,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.stage023AdminService.costLayers(projectId, materialId, page, pageSize,
-				currentUser));
+		return ApiResponse.ok(this.stage023AdminService.costLayers(costLayerId, ownershipType, projectId, materialId,
+				warehouseId, sourceType, sourceId, batchNo, serialNo, status, keyword, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/reconciliations")

@@ -249,9 +249,11 @@ public class QualityAdminService {
 				.resolveQualityAllocations(request.warehouseId(), request.materialId(), request.unitId(), fromStatus,
 						quantity, request.trackingAllocations(), toStatus, "trackingAllocations");
 			assertTrackedQualityQuantity(trackingAllocations, toStatus, quantity);
+			InventoryPostingService.ValuationContext valuationContext = qualityTransferContext(request);
 			TrackedTransferSummary trackedResult = transferTrackedQualityStatus(request.warehouseId(),
 					request.materialId(), request.unitId(), fromStatus, toStatus, trackingAllocations, sourceId,
-					request.businessDate(), hasText(reason) ? reason : defaultReason, remark, operator.username());
+					request.businessDate(), hasText(reason) ? reason : defaultReason, remark, operator.username(),
+					valuationContext);
 			this.auditService.record(operator, auditAction, QUALITY_STATUS_TRANSFER_SOURCE, sourceId, reason,
 					servletRequest);
 			return new QualityStatusTransferResponse(fromStatus.name(), fromStatus.displayName(), toStatus.name(),
@@ -262,7 +264,8 @@ public class QualityAdminService {
 		InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
 				request.warehouseId(), request.materialId(), request.unitId(), fromStatus, toStatus, quantity,
 				QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceId, request.businessDate(),
-				hasText(reason) ? reason : defaultReason, remark, operator.username());
+				hasText(reason) ? reason : defaultReason, remark, operator.username(), null, null,
+				qualityTransferContext(request));
 		this.auditService.record(operator, auditAction, QUALITY_STATUS_TRANSFER_SOURCE, sourceId, reason,
 				servletRequest);
 		return new QualityStatusTransferResponse(fromStatus.name(), fromStatus.displayName(), toStatus.name(),
@@ -305,7 +308,8 @@ public class QualityAdminService {
 	private TrackedTransferSummary transferTrackedQualityStatus(Long warehouseId, Long materialId, Long unitId,
 			InventoryQualityStatus fromStatus, InventoryQualityStatus toStatus,
 			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations, Long sourceId,
-			LocalDate businessDate, String reason, String remark, String operatorName) {
+			LocalDate businessDate, String reason, String remark, String operatorName,
+			InventoryPostingService.ValuationContext valuationContext) {
 		BigDecimal fromBeforeQuantity = ZERO;
 		BigDecimal fromAfterQuantity = ZERO;
 		BigDecimal toBeforeQuantity = ZERO;
@@ -318,7 +322,7 @@ public class QualityAdminService {
 			InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
 					warehouseId, materialId, unitId, fromStatus, toStatus, allocation.quantity(),
 					QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceLineId, businessDate, reason, remark,
-					operatorName, allocation.batchId(), allocation.serialId());
+					operatorName, allocation.batchId(), allocation.serialId(), valuationContext);
 			Long allocationId = this.inventoryTrackingService.recordQualityAllocation(QUALITY_STATUS_TRANSFER_SOURCE, sourceId,
 					sourceLineId, warehouseId, materialId, unitId, toStatus, allocation, result.toMovementId(),
 					operatorName);
@@ -333,6 +337,19 @@ public class QualityAdminService {
 		}
 		return new TrackedTransferSummary(fromBeforeQuantity, fromAfterQuantity, toBeforeQuantity, toAfterQuantity,
 				responses);
+	}
+
+	private InventoryPostingService.ValuationContext qualityTransferContext(QualityStatusTransferRequest request) {
+		if (request == null || !hasText(request.ownershipType())) {
+			return null;
+		}
+		String ownershipType = request.ownershipType().trim().toUpperCase();
+		if (!"PUBLIC".equals(ownershipType) && !"PROJECT".equals(ownershipType)) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_OWNERSHIP_PROJECT_MISMATCH);
+		}
+		Long projectId = "PROJECT".equals(ownershipType) ? request.projectId() : null;
+		Long costLayerId = "PROJECT".equals(ownershipType) ? request.costLayerId() : null;
+		return new InventoryPostingService.ValuationContext(ownershipType, projectId, null, costLayerId, null);
 	}
 
 	private void assertTrackedQualityQuantity(List<InventoryTrackingService.ResolvedTrackingAllocation> allocations,
@@ -652,6 +669,7 @@ public class QualityAdminService {
 
 	public record QualityStatusTransferRequest(Long warehouseId, Long materialId, Long unitId,
 			@NotNull LocalDate businessDate, String quantity, String reason, String remark,
+			String ownershipType, Long projectId, Long costLayerId,
 			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 

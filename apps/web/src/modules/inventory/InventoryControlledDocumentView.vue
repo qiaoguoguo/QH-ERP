@@ -10,6 +10,7 @@ import {
   type InventoryControlledDocumentSummaryRecord,
   type InventoryOwnershipConversionPayload,
   type InventoryOwnershipConversionRecord,
+  type InventoryQualityStatus,
   type InventoryStocktakeLineRecord,
   type InventoryStocktakeLineUpdatePayload,
   type InventoryStocktakePayload,
@@ -191,8 +192,10 @@ const form = reactive({
   sourceProjectId: '',
   targetProjectId: '',
   sourceCostLayerId: '',
-  sourceUnitCost: '',
   costLayerId: '',
+  qualityStatus: 'QUALIFIED' as InventoryQualityStatus,
+  batchId: '',
+  serialId: '',
   adjustmentType: 'LEGACY_OPENING' as 'LEGACY_OPENING' | 'PROVISIONAL_REVALUATION',
   quantity: '',
   unitCost: '',
@@ -346,8 +349,10 @@ function resetForm() {
   form.sourceProjectId = ''
   form.targetProjectId = ''
   form.sourceCostLayerId = ''
-  form.sourceUnitCost = ''
   form.costLayerId = ''
+  form.qualityStatus = 'QUALIFIED'
+  form.batchId = ''
+  form.serialId = ''
   form.adjustmentType = 'LEGACY_OPENING'
   form.quantity = ''
   form.unitCost = ''
@@ -368,6 +373,9 @@ function fillFormFromRecord(detail: InventoryRecord) {
     form.ownershipType = line?.ownershipType === 'PROJECT' ? 'PROJECT' : 'PUBLIC'
     form.projectId = stringifyOptional(line?.projectId)
     form.sourceCostLayerId = stringifyOptional(line?.sourceCostLayerId)
+    form.qualityStatus = line?.qualityStatus ?? 'QUALIFIED'
+    form.batchId = stringifyOptional(line?.batchId)
+    form.serialId = stringifyOptional(line?.serialId)
     form.quantity = stringifyOptional(line?.quantity)
     return
   }
@@ -382,7 +390,9 @@ function fillFormFromRecord(detail: InventoryRecord) {
     form.materialId = stringifyOptional(line?.materialId)
     form.unitId = stringifyOptional(line?.unitId)
     form.sourceCostLayerId = stringifyOptional(line?.sourceCostLayerId)
-    form.sourceUnitCost = stringifyOptional(line?.sourceUnitCost)
+    form.qualityStatus = line?.qualityStatus ?? 'QUALIFIED'
+    form.batchId = stringifyOptional(line?.batchId)
+    form.serialId = stringifyOptional(line?.serialId)
     form.quantity = stringifyOptional(line?.quantity)
     return
   }
@@ -551,6 +561,9 @@ function buildPayload(): object {
         quantity: form.quantity,
         ownershipType: projectId ? 'PROJECT' : form.ownershipType,
         ...(projectId ? { projectId } : {}),
+        qualityStatus: form.qualityStatus,
+        ...(normalizeOptionalId(form.batchId) ? { batchId: normalizeOptionalId(form.batchId) } : {}),
+        ...(normalizeOptionalId(form.serialId) ? { serialId: normalizeOptionalId(form.serialId) } : {}),
         ...(normalizeOptionalId(form.sourceCostLayerId) ? { sourceCostLayerId: normalizeOptionalId(form.sourceCostLayerId) } : {}),
       }],
     } satisfies InventoryWarehouseTransferPayload
@@ -570,7 +583,9 @@ function buildPayload(): object {
         unitId: normalizeId(form.unitId),
         quantity: form.quantity,
         ...(normalizeOptionalId(form.sourceCostLayerId) ? { sourceCostLayerId: normalizeOptionalId(form.sourceCostLayerId) } : {}),
-        ...(form.sourceUnitCost ? { sourceUnitCost: form.sourceUnitCost } : {}),
+        qualityStatus: form.qualityStatus,
+        ...(normalizeOptionalId(form.batchId) ? { batchId: normalizeOptionalId(form.batchId) } : {}),
+        ...(normalizeOptionalId(form.serialId) ? { serialId: normalizeOptionalId(form.serialId) } : {}),
       }],
     } satisfies InventoryOwnershipConversionPayload
   }
@@ -621,15 +636,58 @@ function cancelForm() {
 
 function rowProjectText(row: { projectNo?: string | null; projectName?: string | null }) {
   const target = row as {
+    projectId?: ResourceId | null
     projectNo?: string | null
     projectName?: string | null
     targetProjectNo?: string | null
     targetProjectName?: string | null
+    targetProjectId?: ResourceId | null
   }
   if (target.projectNo) {
     return `${target.projectNo} ${target.projectName || ''}`.trim()
   }
-  return target.targetProjectNo ? `${target.targetProjectNo} ${target.targetProjectName || ''}`.trim() : '-'
+  if (target.targetProjectNo) {
+    return `${target.targetProjectNo} ${target.targetProjectName || ''}`.trim()
+  }
+  if (target.projectId) {
+    return String(target.projectId)
+  }
+  return target.targetProjectId ? String(target.targetProjectId) : '-'
+}
+
+function projectText(projectId?: ResourceId | null, projectNo?: string | null, projectName?: string | null) {
+  if (projectNo) {
+    return `${projectNo} ${projectName || ''}`.trim()
+  }
+  return projectId ? String(projectId) : '-'
+}
+
+function rowSourceProjectText(row: { sourceProjectId?: ResourceId | null; sourceProjectNo?: string | null; sourceProjectName?: string | null }) {
+  return projectText(row.sourceProjectId, row.sourceProjectNo, row.sourceProjectName)
+}
+
+function rowTargetProjectText(row: { targetProjectId?: ResourceId | null; targetProjectNo?: string | null; targetProjectName?: string | null }) {
+  return projectText(row.targetProjectId, row.targetProjectNo, row.targetProjectName)
+}
+
+function trackingIdentityText(row: { batchNo?: string | null; serialNo?: string | null; batchId?: ResourceId | null; serialId?: ResourceId | null }) {
+  const batch = row.batchNo || (row.batchId ? String(row.batchId) : '')
+  const serial = row.serialNo || (row.serialId ? String(row.serialId) : '')
+  if (batch && serial) {
+    return `${batch} / ${serial}`
+  }
+  return batch || serial || '-'
+}
+
+function costLayerText(row: { sourceCostLayerId?: ResourceId | null; costLayerId?: ResourceId | null; costLayerNo?: string | null }) {
+  return row.costLayerNo || row.sourceCostLayerId || row.costLayerId || '-'
+}
+
+function sourceUnitCostText(document: InventoryRecord, row: { sourceUnitCost?: string | null }) {
+  if (document.costVisible === false) {
+    return '金额受限'
+  }
+  return formatInventoryAmount(row.sourceUnitCost, 6)
 }
 
 watch(() => route.name, () => {
@@ -835,6 +893,18 @@ onMounted(() => {
               <el-option label="项目库存" value="PROJECT" />
             </el-select>
           </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="质量状态">
+            <el-select
+              v-model="form.qualityStatus"
+              data-test="inventory-controlled-quality-status"
+              placeholder="质量状态"
+            >
+              <el-option label="合格" value="QUALIFIED" />
+              <el-option label="待检" value="PENDING_INSPECTION" />
+              <el-option label="不合格" value="REJECTED" />
+              <el-option label="冻结" value="FROZEN" />
+            </el-select>
+          </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="调整金额">
             <el-input v-model="form.adjustmentAmount" name="inventory-controlled-adjustment-amount" placeholder="0.00" />
           </el-form-item>
@@ -868,14 +938,17 @@ onMounted(() => {
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="单位">
             <el-input v-model="form.unitId" name="inventory-controlled-unit-id" placeholder="单位标识" />
           </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="批次">
+            <el-input v-model="form.batchId" name="inventory-controlled-batch-id" placeholder="批次标识，无批次留空" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="序列号">
+            <el-input v-model="form.serialId" name="inventory-controlled-serial-id" placeholder="序列标识，无序列留空" />
+          </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="单价">
             <el-input v-model="form.unitCost" name="inventory-controlled-unit-cost" placeholder="0.000000" />
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="来源成本层">
-            <el-input v-model="form.sourceCostLayerId" name="inventory-controlled-source-cost-layer-id" placeholder="项目库存成本层标识" />
-          </el-form-item>
-          <el-form-item v-if="config.kind === 'ownershipConversion'" label="来源单位成本">
-            <el-input v-model="form.sourceUnitCost" name="inventory-controlled-source-unit-cost" placeholder="0.000000" />
+            <el-input v-model="form.sourceCostLayerId" name="inventory-controlled-source-cost-layer-id" placeholder="项目库存必须明确来源成本层" />
           </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="成本层">
             <el-input v-model="form.costLayerId" name="inventory-controlled-cost-layer-id" placeholder="成本层标识" />
@@ -993,6 +1066,19 @@ onMounted(() => {
           <el-table-column label="所有权" min-width="110">
             <template #default="{ row }">{{ row.ownershipTypeName || ownershipTypeLabel(row.ownershipType) }}</template>
           </el-table-column>
+          <el-table-column label="项目" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ rowProjectText(row) }}</template>
+          </el-table-column>
+          <el-table-column prop="unitName" label="单位" min-width="90" show-overflow-tooltip />
+          <el-table-column label="来源成本层" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ costLayerText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="质量状态" min-width="110">
+            <template #default="{ row }">{{ row.qualityStatusName || row.qualityStatus || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ trackingIdentityText(row) }}</template>
+          </el-table-column>
           <el-table-column label="数量" min-width="110" align="right">
             <template #default="{ row }">{{ formatQuantity(row.quantity) }}</template>
           </el-table-column>
@@ -1008,8 +1094,26 @@ onMounted(() => {
           <el-table-column label="目标所有权" min-width="120">
             <template #default="{ row }">{{ ownershipTypeLabel(row.targetOwnershipType) }}</template>
           </el-table-column>
+          <el-table-column label="来源项目" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ rowSourceProjectText(row) }}</template>
+          </el-table-column>
           <el-table-column label="目标项目" min-width="170" show-overflow-tooltip>
-            <template #default="{ row }">{{ rowProjectText(row) }}</template>
+            <template #default="{ row }">{{ rowTargetProjectText(row) }}</template>
+          </el-table-column>
+          <el-table-column prop="sourceWarehouseName" label="来源仓库" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="targetWarehouseName" label="目标仓库" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="unitName" label="单位" min-width="90" show-overflow-tooltip />
+          <el-table-column label="来源成本层" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ costLayerText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="来源实际成本" min-width="130" align="right">
+            <template #default="{ row }">{{ sourceUnitCostText(record, row) }}</template>
+          </el-table-column>
+          <el-table-column label="质量状态" min-width="110">
+            <template #default="{ row }">{{ row.qualityStatusName || row.qualityStatus || '-' }}</template>
+          </el-table-column>
+          <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ trackingIdentityText(row) }}</template>
           </el-table-column>
           <el-table-column label="物料" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
@@ -1060,8 +1164,20 @@ onMounted(() => {
       <div v-else class="table-scroll">
         <el-table :data="(record as InventoryValuationAdjustmentRecord).lines ?? []" empty-text="暂无估值明细" stripe>
           <el-table-column prop="lineNo" label="行号" min-width="80" />
+          <el-table-column label="调整类型" min-width="130">
+            <template #default>{{ (record as InventoryValuationAdjustmentRecord).adjustmentTypeName || (record as InventoryValuationAdjustmentRecord).adjustmentType }}</template>
+          </el-table-column>
           <el-table-column label="物料" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
+          </el-table-column>
+          <el-table-column label="所有权" min-width="110">
+            <template #default="{ row }">{{ row.ownershipTypeName || ownershipTypeLabel(row.ownershipType) }}</template>
+          </el-table-column>
+          <el-table-column label="项目" min-width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ rowProjectText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="成本层" min-width="130" show-overflow-tooltip>
+            <template #default="{ row }">{{ costLayerText(row) }}</template>
           </el-table-column>
           <el-table-column label="数量" min-width="110" align="right">
             <template #default="{ row }">{{ formatQuantity(row.quantity) }}</template>

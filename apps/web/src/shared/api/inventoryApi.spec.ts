@@ -423,6 +423,9 @@ describe('库存 API', () => {
         quantity: '12.345678',
         ownershipType: 'PROJECT',
         projectId: 501,
+        qualityStatus: 'QUALIFIED',
+        batchId: 610,
+        serialId: 711,
         sourceCostLayerId: 9001,
       }],
     }
@@ -442,7 +445,9 @@ describe('库存 API', () => {
         unitId: 4,
         quantity: '5.000000',
         sourceCostLayerId: 9001,
-        sourceUnitCost: '11.000000',
+        qualityStatus: 'QUALIFIED',
+        batchId: 610,
+        serialId: 711,
       }],
     }
     const stocktakeLine: InventoryStocktakeLinePayload = {
@@ -499,10 +504,16 @@ describe('库存 API', () => {
     }
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].quantity).toBe('12.345678')
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].unitId).toBe(4)
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].qualityStatus).toBe('QUALIFIED')
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].batchId).toBe(610)
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].serialId).toBe(711)
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].sourceCostLayerId).toBe(9001)
     expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].sourceWarehouseId).toBe(1)
     expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].targetWarehouseId).toBe(2)
-    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].sourceUnitCost).toBe('11.000000')
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].qualityStatus).toBe('QUALIFIED')
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].batchId).toBe(610)
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].serialId).toBe(711)
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0]).not.toHaveProperty('sourceUnitCost')
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers/1/post')).toEqual(actionPayload)
     expect(bodyForPath('/api/admin/inventory/stocktakes/3/lines')).toEqual({
       version: 9,

@@ -129,6 +129,31 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void workOrderDetailReturnsCompletionValuationStateAndMasksCosts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		markMaterialValued(fixture.productMaterialId());
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+
+		JsonNode detail = data(getWorkOrder(admin, workOrderId));
+		assertThat(detail.get("completionValuationState").asText()).isEqualTo("MANUAL_PROVISIONAL_REQUIRED");
+		assertThat(detail.get("requiresManualProvisionalUnitCost").booleanValue()).isTrue();
+		assertThat(detail.get("costVisible").booleanValue()).isTrue();
+		assertThat(detail.has("currentAverageUnitCost")).isTrue();
+		assertThat(detail.get("currentAverageUnitCost").isNull()).isTrue();
+
+		AuthenticatedSession costHidden = createProductionUserAndLogin("prod_cost_hidden", "prod_cost_hidden_role",
+				List.of("production:work-order:view"));
+		JsonNode hidden = data(getWorkOrder(costHidden, workOrderId));
+		assertThat(hidden.get("completionValuationState").asText()).isEqualTo("MANUAL_PROVISIONAL_REQUIRED");
+		assertThat(hidden.get("requiresManualProvisionalUnitCost").booleanValue()).isTrue();
+		assertThat(hidden.get("costVisible").booleanValue()).isFalse();
+		assertThat(hidden.has("currentAverageUnitCost")).isTrue();
+		assertThat(hidden.get("currentAverageUnitCost").isNull()).isTrue();
+	}
+
+	@Test
 	void completionReceiptBatchAllocationCreatesFinishedGoodsTrackingFacts() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
@@ -1319,6 +1344,18 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	private void setTrackingMethod(long materialId, String trackingMethod) {
 		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
 				trackingMethod, materialId);
+	}
+
+	private void markMaterialValued(long materialId) {
+		this.jdbcTemplate.update("""
+				update mst_material
+				set cost_category = 'DIRECT_MATERIAL',
+				    inventory_valuation_category = 'VALUATED_MATERIAL',
+				    inventory_value_enabled = true,
+				    project_cost_enabled = true,
+				    updated_at = now()
+				where id = ?
+				""", materialId);
 	}
 
 	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,

@@ -68,6 +68,9 @@ const filters = reactive<{
   batchNo: string
   serialId: ResourceId | ''
   serialNo: string
+  sourceType: string
+  sourceId: ResourceId | ''
+  sourceLineId: ResourceId | ''
   dateFrom: string
   dateTo: string
 }>({
@@ -86,6 +89,9 @@ const filters = reactive<{
   batchNo: normalizeRouteText(route.query.batchNo),
   serialId: normalizeRouteId(route.query.serialId),
   serialNo: normalizeRouteText(route.query.serialNo),
+  sourceType: normalizeRouteText(route.query.sourceType),
+  sourceId: normalizeRouteId(route.query.sourceId),
+  sourceLineId: normalizeRouteId(route.query.sourceLineId),
   dateFrom: '',
   dateTo: '',
 })
@@ -236,6 +242,9 @@ async function loadRecords() {
       batchNo: filters.batchNo.trim(),
       serialId: normalizeOptionalId(filters.serialId),
       serialNo: filters.serialNo.trim(),
+      sourceType: filters.sourceType.trim() || undefined,
+      sourceId: normalizeOptionalId(filters.sourceId),
+      sourceLineId: normalizeOptionalId(filters.sourceLineId),
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       page: pagination.page,
@@ -273,6 +282,9 @@ function resetSearch() {
   filters.batchNo = ''
   filters.serialId = ''
   filters.serialNo = ''
+  filters.sourceType = ''
+  filters.sourceId = ''
+  filters.sourceLineId = ''
   filters.dateFrom = ''
   filters.dateTo = ''
   pagination.page = 1
