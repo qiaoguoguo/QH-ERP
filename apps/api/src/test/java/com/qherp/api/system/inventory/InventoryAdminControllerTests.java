@@ -29,6 +29,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -959,6 +961,32 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.VALIDATION_ERROR);
 		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerA),
 				"0.000000");
+	}
+
+	@Test
+	void 预留消费与释放必须按余额父预留子预留顺序获取锁() throws Exception {
+		String source = Files.readString(Path.of(
+				"src/main/java/com/qherp/api/system/inventory/InventoryAvailabilityService.java"));
+		String trackedConsume = methodBody(source, "public boolean consumeTrackedBySourceLine",
+				"public void releaseBySource");
+		assertAppearsInOrder(trackedConsume, "findActiveParentReservation(", "lockExactReservationBalance(",
+				"lockActiveParentReservation(", "lockActiveChildReservation(");
+		assertThat(trackedConsume).doesNotContain("reserveFromWarehouse(");
+
+		String exactConsume = methodBody(source, "public boolean consumeBySourceLine",
+				"public boolean consumeTrackedBySourceLine");
+		assertAppearsInOrder(exactConsume, "findActiveReservation(", "lockExactReservationBalance(",
+				"lockActiveReservation(");
+
+		String releaseBySource = methodBody(source, "public void releaseBySource",
+				"public void releaseBySourceLine");
+		assertAppearsInOrder(releaseBySource, "releaseReservationCandidatesBySource(",
+				"lockReleaseReservationBalances(", "lockActiveReservationsBySource(");
+
+		String releaseBySourceLine = methodBody(source, "public void releaseBySourceLine",
+				"public void assertQualifiedAvailable");
+		assertAppearsInOrder(releaseBySourceLine, "releaseReservationCandidatesBySourceLine(",
+				"lockReleaseReservationBalances(", "lockActiveReservationsBySourceLine(");
 	}
 
 	@Test
@@ -3548,6 +3576,24 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode availableActions = node.get("allowedActions");
 		assertThat(availableActions).as("allowedActions").isNotNull();
 		assertThat(availableActions.toString()).contains(actions);
+	}
+
+	private String methodBody(String source, String startMarker, String endMarker) {
+		int start = source.indexOf(startMarker);
+		int end = source.indexOf(endMarker, start + startMarker.length());
+		assertThat(start).as("必须找到方法起点: %s", startMarker).isGreaterThanOrEqualTo(0);
+		assertThat(end).as("必须找到方法终点: %s", endMarker).isGreaterThan(start);
+		return source.substring(start, end);
+	}
+
+	private void assertAppearsInOrder(String body, String... markers) {
+		int previous = -1;
+		for (String marker : markers) {
+			int current = body.indexOf(marker);
+			assertThat(current).as("必须找到锁序标记: %s", marker).isGreaterThanOrEqualTo(0);
+			assertThat(current).as("锁序标记顺序错误: %s", marker).isGreaterThan(previous);
+			previous = current;
+		}
 	}
 
 	private void assertAvailableActionsEmpty(JsonNode node) {

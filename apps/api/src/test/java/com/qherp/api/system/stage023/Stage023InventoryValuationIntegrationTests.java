@@ -960,6 +960,80 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 追踪发货消费父级预留与质量冻结并发不得反向锁死或半提交() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PARENT_LOCK_ORDER_");
+		markMaterialSellable(fixture.valuedMaterialId());
+		markMaterialTracking(fixture.valuedMaterialId(), "BATCH");
+		long batchAId = seedBatchStock(admin, fixture, "S23-LOCK-A-" + SEQUENCE.incrementAndGet(), "4.000000",
+				"10.000000");
+		seedBatchStock(admin, fixture, "S23-LOCK-B-" + SEQUENCE.incrementAndGet(), "4.000000", "10.000000");
+		long customerId = insertCustomer("S23_PARENT_LOCK_ORDER_C_");
+		JsonNode order = createSalesOrder(admin, customerId, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "5.000000");
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/confirm", null, admin));
+		long orderLineId = confirmed.get("lines").get(0).get("id").longValue();
+		long parentReservationId = parentReservationId("SALES_ORDER", orderLineId);
+		JsonNode shipment = data(exchange(HttpMethod.POST,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/shipments",
+				salesShipmentPayload(fixture.rawWarehouseId(), orderLineId, fixture.valuedMaterialId(),
+						fixture.unitId(), "2.000000", List.of(trackingByBatch(batchAId, "2.000000"))),
+				admin));
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "023 父级预留并发质量冻结");
+		freeze.put("ownershipType", "PUBLIC");
+		freeze.put("trackingAllocations", List.of(trackingByBatch(batchAId, "1.000000")));
+
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		try {
+			Future<ResponseEntity<String>> shipmentPost = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipment.get("id").longValue()
+						+ "/post", null, admin);
+			});
+			Future<ResponseEntity<String>> qualityFreeze = executor.submit(() -> {
+				start.await(10, TimeUnit.SECONDS);
+				return exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freeze, admin);
+			});
+			start.countDown();
+
+			ResponseEntity<String> shipmentResponse = shipmentPost.get(15, TimeUnit.SECONDS);
+			ResponseEntity<String> freezeResponse = qualityFreeze.get(15, TimeUnit.SECONDS);
+
+			assertThat(shipmentResponse.getStatusCode()).as(shipmentResponse.getBody()).isEqualTo(HttpStatus.OK);
+			assertThat(freezeResponse.getStatusCode()).as(freezeResponse.getBody()).isEqualTo(HttpStatus.OK);
+		}
+		finally {
+			executor.shutdownNow();
+			executor.awaitTermination(5, TimeUnit.SECONDS);
+		}
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(reservationActiveQuantity(parentReservationId)).as("发货消费后父级未分配量")
+				.isEqualByComparingTo("3.000000");
+			softly.assertThat(childReservationCount(parentReservationId)).as("发货过账必须只有一个精确子预留")
+				.isEqualTo(1L);
+			softly.assertThat(childReservationIdentity(parentReservationId, batchAId, null))
+				.as("子预留必须消费完成且继承父级源单身份")
+				.isEqualTo("CHILD:CONSUMED:SALES_ORDER:" + orderLineId + ":PUBLIC:NULL:NULL:" + batchAId
+						+ ":NULL:2.000000:2.000000");
+			softly.assertThat(activeChildQuantity(parentReservationId)).as("并发结束后不得残留活动子锁")
+				.isEqualByComparingTo("0.000000");
+			softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId,
+					null, "PUBLIC", null, null)).as("并发结束后批次余额不得残留锁定量")
+				.isEqualByComparingTo("0.000000");
+		});
+		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?warehouseId=" + fixture.rawWarehouseId()
+				+ "&materialId=" + fixture.valuedMaterialId() + "&batchId=" + batchAId + "&qualityStatus=QUALIFIED")),
+				"quantityOnHand", "1.000000");
+		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?warehouseId=" + fixture.rawWarehouseId()
+				+ "&materialId=" + fixture.valuedMaterialId() + "&batchId=" + batchAId + "&qualityStatus=FROZEN")),
+				"quantityOnHand", "1.000000");
+	}
+
+	@Test
 	void 序列销售父子预留必须要求显式序列且子预留数量固定为一() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		InventoryFixture fixture = createFixture("S23_SERIAL_PARENT_RSV_");

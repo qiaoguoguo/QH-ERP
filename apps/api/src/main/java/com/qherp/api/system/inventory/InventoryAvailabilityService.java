@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -111,16 +112,39 @@ public class InventoryAvailabilityService {
 	@Transactional
 	public long reserveFromWarehouse(ReservationCommand command, CurrentUser operator, HttpServletRequest request) {
 		validateReservationCommand(command);
-		command = inheritParentReservationIdentity(command);
+		if (command.parentReservationId() != null) {
+			return reserveChildFromWarehouse(command, operator, request);
+		}
 		validateReservationIdentity(command);
 		OffsetDateTime now = OffsetDateTime.now();
 		boolean rowLocking = rowLockingReservation(command);
-		assertParentReservationAvailable(command);
 		BigDecimal availableQuantity = rowLocking ? exactAvailableQuantityForUpdate(command)
 				: aggregateAvailableQuantityForUpdate(command);
 		if (availableQuantity.compareTo(command.quantity()) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_AVAILABLE_NOT_ENOUGH);
 		}
+		return insertReservation(command, rowLocking, operator, request, now);
+	}
+
+	private long reserveChildFromWarehouse(ReservationCommand command, CurrentUser operator,
+			HttpServletRequest request) {
+		ReservationLock parentSnapshot = findReservationById(command.parentReservationId())
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.VALIDATION_ERROR));
+		command = inheritParentReservationIdentity(parentSnapshot, command);
+		validateReservationIdentity(command);
+		BigDecimal availableQuantity = lockExactReservationBalance(command);
+		if (availableQuantity.compareTo(command.quantity()) < 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_AVAILABLE_NOT_ENOUGH);
+		}
+		ReservationLock parent = lockReservationById(command.parentReservationId())
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+		assertParentReservationStillMatches(parentSnapshot, parent, command);
+		assertParentReservationAvailable(parent, command.quantity());
+		return insertReservation(command, true, operator, request, OffsetDateTime.now());
+	}
+
+	private long insertReservation(ReservationCommand command, boolean rowLocking, CurrentUser operator,
+			HttpServletRequest request, OffsetDateTime now) {
 		try {
 			Long id = this.jdbcTemplate.queryForObject("""
 					insert into inv_stock_reservation (
@@ -163,11 +187,20 @@ public class InventoryAvailabilityService {
 	public boolean consumeBySourceLine(InventoryReservationType reservationType, String sourceType, Long sourceLineId,
 			BigDecimal quantity, CurrentUser operator, HttpServletRequest request) {
 		validateQuantity(quantity);
+		Optional<ReservationLock> snapshot = findActiveReservation(reservationType, sourceType, sourceLineId);
+		if (snapshot.isEmpty()) {
+			return false;
+		}
+		ReservationLock expected = snapshot.get();
+		if (rowLockingReservation(expected)) {
+			lockExactReservationBalance(expected);
+		}
 		Optional<ReservationLock> reservation = lockActiveReservation(reservationType, sourceType, sourceLineId);
 		if (reservation.isEmpty()) {
 			return false;
 		}
 		ReservationLock current = reservation.get();
+		assertReservationStillMatches(expected, current);
 		consumeReservation(current, quantity, operator, request, false);
 		return true;
 	}
@@ -177,59 +210,53 @@ public class InventoryAvailabilityService {
 			Long sourceLineId, BigDecimal quantity, Long batchId, Long serialId, CurrentUser operator,
 			HttpServletRequest request) {
 		validateQuantity(quantity);
-		Optional<ReservationLock> parentReservation = lockActiveParentReservation(reservationType, sourceType,
+		Optional<ReservationLock> parentReservation = findActiveParentReservation(reservationType, sourceType,
 				sourceLineId);
 		if (parentReservation.isEmpty()) {
 			return false;
 		}
-		ReservationLock parent = parentReservation.get();
-		InventoryTrackingMethod trackingMethod = trackingMethod(parent.materialId());
+		ReservationLock parentSnapshot = parentReservation.get();
+		InventoryTrackingMethod trackingMethod = trackingMethod(parentSnapshot.materialId());
 		if (trackingMethod == InventoryTrackingMethod.NONE) {
 			return consumeBySourceLine(reservationType, sourceType, sourceLineId, quantity, operator, request);
 		}
 		validateTrackedChildIdentity(trackingMethod, quantity, batchId, serialId);
-		Optional<ReservationLock> child = lockActiveChildReservation(parent.id(), batchId, serialId);
-		Long childId = child.map(ReservationLock::id).orElseGet(() -> reserveFromWarehouse(
-				ReservationCommand.childOf(parent, quantity, batchId, serialId), operator, request));
-		ReservationLock lockedChild = lockReservationById(childId)
+		ReservationCommand childCommand = ReservationCommand.childOf(parentSnapshot, quantity, batchId, serialId);
+		BigDecimal availableQuantity = lockExactReservationBalance(childCommand);
+		ReservationLock parent = lockActiveParentReservation(reservationType, sourceType, sourceLineId)
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
-		consumeReservation(lockedChild, quantity, operator, request, true);
+		assertParentReservationStillMatches(parentSnapshot, parent, childCommand);
+		Optional<ReservationLock> child = lockActiveChildReservation(parent.id(), batchId, serialId);
+		ReservationLock lockedChild = child.orElseGet(() -> {
+			if (availableQuantity.compareTo(quantity) < 0) {
+				throw new BusinessException(ApiErrorCode.INVENTORY_AVAILABLE_NOT_ENOUGH);
+			}
+			assertParentReservationAvailable(parent, quantity);
+			Long childId = insertReservation(childCommand, true, operator, request, OffsetDateTime.now());
+			return lockActiveChildReservation(parent.id(), batchId, serialId)
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+		});
+		consumeChildReservation(lockedChild, parent, quantity, operator, request);
 		return true;
 	}
 
 	@Transactional
 	public void releaseBySource(InventoryReservationType reservationType, String sourceType, Long sourceId,
 			CurrentUser operator, HttpServletRequest request) {
-		List<ReservationLock> reservations = this.jdbcTemplate.query("""
-				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
-				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
-				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
-				       ownership_type, project_id, cost_layer_id
-				from inv_stock_reservation
-				where reservation_type = ?
-				and source_type = ?
-				and source_id = ?
-				and status = 'ACTIVE'
-				for update
-				""", this::mapReservationLock, reservationType.name(), sourceType, sourceId);
+		List<ReservationLock> candidates = releaseReservationCandidatesBySource(reservationType, sourceType, sourceId);
+		lockReleaseReservationBalances(candidates);
+		List<ReservationLock> reservations = lockActiveReservationsBySource(reservationType, sourceType, sourceId);
 		releaseReservations(reservations, operator, request);
 	}
 
 	@Transactional
 	public void releaseBySourceLine(InventoryReservationType reservationType, String sourceType, Long sourceLineId,
 			CurrentUser operator, HttpServletRequest request) {
-		List<ReservationLock> reservations = this.jdbcTemplate.query("""
-				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
-				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
-				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
-				       ownership_type, project_id, cost_layer_id
-				from inv_stock_reservation
-				where reservation_type = ?
-				and source_type = ?
-				and source_line_id = ?
-				and status = 'ACTIVE'
-				for update
-				""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId);
+		List<ReservationLock> candidates = releaseReservationCandidatesBySourceLine(reservationType, sourceType,
+				sourceLineId);
+		lockReleaseReservationBalances(candidates);
+		List<ReservationLock> reservations = lockActiveReservationsBySourceLine(reservationType, sourceType,
+				sourceLineId);
 		releaseReservations(reservations, operator, request);
 	}
 
@@ -410,6 +437,102 @@ public class InventoryAvailabilityService {
 			.findFirst();
 	}
 
+	private Optional<ReservationLock> findActiveReservation(InventoryReservationType reservationType, String sourceType,
+			Long sourceLineId) {
+		return this.jdbcTemplate
+			.query("""
+					select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+					       consumed_quantity, source_type, source_id, source_line_id, source_document_no,
+					       business_date, reason, remark, quality_status, batch_id, serial_id,
+					       parent_reservation_id, ownership_type, project_id, cost_layer_id
+					from inv_stock_reservation
+					where reservation_type = ?
+					and source_type = ?
+					and source_line_id = ?
+					and status = 'ACTIVE'
+					""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId)
+			.stream()
+			.findFirst();
+	}
+
+	private List<ReservationLock> releaseReservationCandidatesBySource(InventoryReservationType reservationType,
+			String sourceType, Long sourceId) {
+		return this.jdbcTemplate.query("""
+				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
+				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
+				       ownership_type, project_id, cost_layer_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_id = ?
+				and status = 'ACTIVE'
+				order by warehouse_id, material_id, quality_status, batch_id nulls first, serial_id nulls first,
+				         ownership_type, project_id nulls first, cost_layer_id nulls first, id
+				""", this::mapReservationLock, reservationType.name(), sourceType, sourceId);
+	}
+
+	private List<ReservationLock> releaseReservationCandidatesBySourceLine(InventoryReservationType reservationType,
+			String sourceType, Long sourceLineId) {
+		return this.jdbcTemplate.query("""
+				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
+				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
+				       ownership_type, project_id, cost_layer_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_line_id = ?
+				and status = 'ACTIVE'
+				order by warehouse_id, material_id, quality_status, batch_id nulls first, serial_id nulls first,
+				         ownership_type, project_id nulls first, cost_layer_id nulls first, id
+				""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId);
+	}
+
+	private void lockReleaseReservationBalances(List<ReservationLock> reservations) {
+		for (ReservationLock reservation : reservations) {
+			if (rowLockingReservation(reservation)) {
+				lockExactReservationBalance(reservation);
+			}
+		}
+	}
+
+	private List<ReservationLock> lockActiveReservationsBySource(InventoryReservationType reservationType,
+			String sourceType, Long sourceId) {
+		return this.jdbcTemplate.query("""
+				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
+				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
+				       ownership_type, project_id, cost_layer_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_id = ?
+				and status = 'ACTIVE'
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         parent_reservation_id nulls first, id
+				for update
+				""", this::mapReservationLock, reservationType.name(), sourceType, sourceId);
+	}
+
+	private List<ReservationLock> lockActiveReservationsBySourceLine(InventoryReservationType reservationType,
+			String sourceType, Long sourceLineId) {
+		return this.jdbcTemplate.query("""
+				select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+				       consumed_quantity, source_type, source_id, source_line_id, source_document_no, business_date,
+				       reason, remark, quality_status, batch_id, serial_id, parent_reservation_id,
+				       ownership_type, project_id, cost_layer_id
+				from inv_stock_reservation
+				where reservation_type = ?
+				and source_type = ?
+				and source_line_id = ?
+				and status = 'ACTIVE'
+				order by case when parent_reservation_id is null then 0 else 1 end,
+				         parent_reservation_id nulls first, id
+				for update
+				""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId);
+	}
+
 	private Optional<ReservationLock> lockActiveParentReservation(InventoryReservationType reservationType,
 			String sourceType, Long sourceLineId) {
 		return this.jdbcTemplate
@@ -432,6 +555,27 @@ public class InventoryAvailabilityService {
 			.findFirst();
 	}
 
+	private Optional<ReservationLock> findActiveParentReservation(InventoryReservationType reservationType,
+			String sourceType, Long sourceLineId) {
+		return this.jdbcTemplate
+			.query("""
+					select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+					       consumed_quantity, source_type, source_id, source_line_id, source_document_no,
+					       business_date, reason, remark, quality_status, batch_id, serial_id,
+					       parent_reservation_id, ownership_type, project_id, cost_layer_id
+					from inv_stock_reservation
+					where reservation_type = ?
+					and source_type = ?
+					and source_line_id = ?
+					and parent_reservation_id is null
+					and batch_id is null
+					and serial_id is null
+					and status = 'ACTIVE'
+					""", this::mapReservationLock, reservationType.name(), sourceType, sourceLineId)
+			.stream()
+			.findFirst();
+	}
+
 	private Optional<ReservationLock> lockActiveChildReservation(Long parentReservationId, Long batchId, Long serialId) {
 		return this.jdbcTemplate
 			.query("""
@@ -446,6 +590,20 @@ public class InventoryAvailabilityService {
 					and status = 'ACTIVE'
 					for update
 					""", this::mapReservationLock, parentReservationId, batchId, serialId)
+			.stream()
+			.findFirst();
+	}
+
+	private Optional<ReservationLock> findReservationById(Long id) {
+		return this.jdbcTemplate
+			.query("""
+					select id, reservation_type, warehouse_id, material_id, unit_id, quantity, released_quantity,
+					       consumed_quantity, source_type, source_id, source_line_id, source_document_no,
+					       business_date, reason, remark, quality_status, batch_id, serial_id,
+					       parent_reservation_id, ownership_type, project_id, cost_layer_id
+					from inv_stock_reservation
+					where id = ?
+					""", this::mapReservationLock, id)
 			.stream()
 			.findFirst();
 	}
@@ -492,10 +650,40 @@ public class InventoryAvailabilityService {
 				current.sourceDocumentNo(), request);
 	}
 
+	private void consumeChildReservation(ReservationLock child, ReservationLock parent, BigDecimal quantity,
+			CurrentUser operator, HttpServletRequest request) {
+		BigDecimal activeQuantity = child.activeQuantity();
+		if (activeQuantity.compareTo(quantity) < 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_STATUS_INVALID);
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		BigDecimal consumedQuantity = child.consumedQuantity().add(quantity);
+		InventoryReservationStatus nextStatus = activeQuantity.compareTo(quantity) == 0
+				? InventoryReservationStatus.CONSUMED : InventoryReservationStatus.ACTIVE;
+		this.jdbcTemplate.update("""
+				update inv_stock_reservation
+				set status = ?, consumed_quantity = ?, updated_by = ?, updated_at = ?, version = version + 1
+				where id = ?
+				""", nextStatus.name(), consumedQuantity, operator.username(), now, child.id());
+		if (rowLockingReservation(child)) {
+			adjustLockedQuantity(child.warehouseId(), child.materialId(), child.qualityStatus(), child.batchId(),
+					child.serialId(), child.ownershipType(), child.projectId(), child.costLayerId(), quantity.negate(),
+					now);
+		}
+		consumeLockedParentReservation(parent, quantity, operator, now);
+		this.auditService.record(operator, consumeAction(child.reservationType()), TARGET_TYPE, child.id(),
+				child.sourceDocumentNo(), request);
+	}
+
 	private void consumeParentReservation(Long parentReservationId, BigDecimal quantity, CurrentUser operator,
 			OffsetDateTime now) {
 		ReservationLock parent = lockReservationById(parentReservationId)
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+		consumeLockedParentReservation(parent, quantity, operator, now);
+	}
+
+	private void consumeLockedParentReservation(ReservationLock parent, BigDecimal quantity, CurrentUser operator,
+			OffsetDateTime now) {
 		BigDecimal activeQuantity = parent.activeQuantity();
 		if (activeQuantity.compareTo(quantity) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_STATUS_INVALID);
@@ -513,6 +701,32 @@ public class InventoryAvailabilityService {
 	private BigDecimal exactAvailableQuantityForUpdate(ReservationCommand command) {
 		BigDecimal quantityOnHand = exactQualifiedQuantityForUpdate(command);
 		return quantityOnHand.subtract(activeExactLockedQuantityForUpdate(command));
+	}
+
+	private BigDecimal lockExactReservationBalance(ReservationCommand command) {
+		return this.jdbcTemplate.query("""
+				select quantity_on_hand - locked_quantity as available_quantity
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("available_quantity"), command.warehouseId(),
+				command.materialId(), command.qualityStatus().name(), command.batchId(), command.serialId(),
+				command.ownershipType(), command.projectId(), command.costLayerId())
+			.stream()
+			.findFirst()
+			.orElse(ZERO);
+	}
+
+	private BigDecimal lockExactReservationBalance(ReservationLock reservation) {
+		return lockExactReservationBalance(ReservationCommand.childOf(reservation, reservation.activeQuantity(),
+				reservation.batchId(), reservation.serialId()));
 	}
 
 	private BigDecimal aggregateAvailableQuantityForUpdate(ReservationCommand command) {
@@ -626,12 +840,7 @@ public class InventoryAvailabilityService {
 				projectId, costLayerId);
 	}
 
-	private ReservationCommand inheritParentReservationIdentity(ReservationCommand command) {
-		if (command.parentReservationId() == null) {
-			return command;
-		}
-		ReservationLock parent = lockReservationById(command.parentReservationId())
-			.orElseThrow(() -> new BusinessException(ApiErrorCode.VALIDATION_ERROR));
+	private ReservationCommand inheritParentReservationIdentity(ReservationLock parent, ReservationCommand command) {
 		if (parent.parentReservationId() != null || parent.batchId() != null || parent.serialId() != null
 				|| parent.activeQuantity().compareTo(ZERO) <= 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_STATUS_INVALID);
@@ -645,15 +854,40 @@ public class InventoryAvailabilityService {
 				command.batchId(), command.serialId(), parent.id());
 	}
 
-	private void assertParentReservationAvailable(ReservationCommand command) {
-		if (command.parentReservationId() == null) {
-			return;
+	private void assertParentReservationStillMatches(ReservationLock expected, ReservationLock actual,
+			ReservationCommand command) {
+		assertReservationStillMatches(expected, actual);
+		if (actual.parentReservationId() != null || actual.batchId() != null || actual.serialId() != null
+				|| !Objects.equals(actual.id(), command.parentReservationId())
+				|| actual.activeQuantity().compareTo(ZERO) <= 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_STATUS_INVALID);
 		}
-		ReservationLock parent = lockReservationById(command.parentReservationId())
-			.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
+	}
+
+	private void assertReservationStillMatches(ReservationLock expected, ReservationLock actual) {
+		if (!Objects.equals(expected.id(), actual.id())
+				|| expected.reservationType() != actual.reservationType()
+				|| !Objects.equals(expected.warehouseId(), actual.warehouseId())
+				|| !Objects.equals(expected.materialId(), actual.materialId())
+				|| !Objects.equals(expected.unitId(), actual.unitId())
+				|| !Objects.equals(expected.sourceType(), actual.sourceType())
+				|| !Objects.equals(expected.sourceId(), actual.sourceId())
+				|| !Objects.equals(expected.sourceLineId(), actual.sourceLineId())
+				|| expected.qualityStatus() != actual.qualityStatus()
+				|| !Objects.equals(expected.batchId(), actual.batchId())
+				|| !Objects.equals(expected.serialId(), actual.serialId())
+				|| !Objects.equals(expected.parentReservationId(), actual.parentReservationId())
+				|| !Objects.equals(expected.ownershipType(), actual.ownershipType())
+				|| !Objects.equals(expected.projectId(), actual.projectId())
+				|| !Objects.equals(expected.costLayerId(), actual.costLayerId())) {
+			throw new BusinessException(ApiErrorCode.CONFLICT);
+		}
+	}
+
+	private void assertParentReservationAvailable(ReservationLock parent, BigDecimal quantity) {
 		BigDecimal childActiveQuantity = activeChildQuantityForUpdate(parent.id());
 		BigDecimal parentUnallocatedQuantity = parent.activeQuantity().subtract(childActiveQuantity);
-		if (parentUnallocatedQuantity.compareTo(command.quantity()) < 0) {
+		if (parentUnallocatedQuantity.compareTo(quantity) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVATION_STATUS_INVALID);
 		}
 	}
