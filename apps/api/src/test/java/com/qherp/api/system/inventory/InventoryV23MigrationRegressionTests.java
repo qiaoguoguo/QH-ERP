@@ -33,22 +33,29 @@ class InventoryV23MigrationRegressionTests {
 	}
 
 	@Test
-	void v1v19v20v21v22升级到v23必须补齐预留成本层结构() {
+	void v1v19v20v21v22v23升级到v24必须补齐预留成本层和盘点估值结构() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertReservationCostLayerSchema(jdbcTemplate);
+		assertStocktakeValuationSchema(jdbcTemplate);
 
-		for (String target : List.of("19", "20", "21", "22")) {
+		for (String target : List.of("19", "20", "21", "22", "23")) {
 			clean();
 			migrate(target);
 			jdbcTemplate = new JdbcTemplate(dataSource());
 			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(target);
+			if ("23".equals(target)) {
+				assertReservationCostLayerSchema(jdbcTemplate);
+				assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_unit_cost")).isFalse();
+				assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_reason")).isFalse();
+			}
 
 			migrate(null);
 
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 			assertReservationCostLayerSchema(jdbcTemplate);
+			assertStocktakeValuationSchema(jdbcTemplate);
 		}
 	}
 
@@ -64,7 +71,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isNull();
 		assertThat(queryText(jdbcTemplate, """
@@ -104,7 +111,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':' || coalesce(batch_id::text, 'NULL') || ':'
 					|| coalesce(serial_id::text, 'NULL') || ':' || coalesce(cost_layer_id::text, 'NULL')
@@ -138,7 +145,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isEqualTo(layerId);
 	}
@@ -163,6 +170,14 @@ class InventoryV23MigrationRegressionTests {
 			.isTrue();
 		assertThat(indexExists(jdbcTemplate, "idx_inv_stock_reservation_cost_layer")).isTrue();
 		assertThat(indexExists(jdbcTemplate, "idx_inv_stock_reservation_identity")).isTrue();
+	}
+
+	private void assertStocktakeValuationSchema(JdbcTemplate jdbcTemplate) {
+		assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_unit_cost")).isTrue();
+		assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_reason")).isTrue();
+		assertThat(constraintExists(jdbcTemplate, "inv_stocktake_line", "ck_inv_stocktake_line_variance_unit_cost"))
+			.isTrue();
+		assertThat(indexExists(jdbcTemplate, "idx_inv_stocktake_line_stocktake_order")).isTrue();
 	}
 
 	private ReservationSeed insertReservationSeed(JdbcTemplate jdbcTemplate, String prefix) {

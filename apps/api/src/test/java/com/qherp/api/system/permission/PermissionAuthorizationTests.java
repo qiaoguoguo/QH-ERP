@@ -144,6 +144,7 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.POST, "/api/admin/inventory/documents", "inventory:document:create");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/inventory/documents/1", "inventory:document:update");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/inventory/documents/1/post", "inventory:document:post");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/inventory/stocktakes/1/lines", "inventory:stocktake:view");
 	}
 
 	@Test

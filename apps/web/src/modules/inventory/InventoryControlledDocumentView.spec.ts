@@ -30,6 +30,7 @@ const inventoryApiMock = vi.hoisted(() => ({
     get: vi.fn(),
     create: vi.fn(),
     start: vi.fn(),
+    listLines: vi.fn(),
     updateLines: vi.fn(),
     reconcile: vi.fn(),
     submitApproval: vi.fn(),
@@ -179,6 +180,75 @@ const stocktakeRecord = {
   ],
 }
 
+const stocktakeLineSummary = {
+  totalLines: 2,
+  countedLines: 1,
+  varianceLines: 1,
+  positiveVarianceLines: 0,
+  negativeVarianceLines: 1,
+  uncountedLines: 1,
+}
+
+function stocktakeLinePage(items: unknown[], page = 1, pageSize = 20, total = items.length) {
+  return {
+    items,
+    page,
+    pageSize,
+    total,
+    totalPages: Math.ceil(total / pageSize),
+  }
+}
+
+function stocktakeLine(
+  overrides: Partial<{
+    id: number
+    lineNo: number
+    warehouseName: string
+    materialCode: string
+    materialName: string
+    ownershipType: string
+    projectNo: string | null
+    projectName: string | null
+    bookQuantity: string
+    countedQuantity: string | null
+    varianceQuantity: string | null
+    varianceUnitCost: string | null
+    varianceReason: string | null
+    valuationRequirement: {
+      mode: string
+      requiredUnitCost: boolean
+      requiredReason: boolean
+      requiredAttachment: boolean
+      unitCost?: string | null
+    }
+    version: number
+  }> = {},
+) {
+  return {
+    id: 2003,
+    lineNo: 10,
+    warehouseName: '原料仓',
+    materialCode: 'RM-001',
+    materialName: '钢板',
+    ownershipType: 'PUBLIC',
+    projectNo: null,
+    projectName: null,
+    bookQuantity: '12.000000',
+    countedQuantity: null,
+    varianceQuantity: null,
+    varianceUnitCost: null,
+    varianceReason: null,
+    valuationRequirement: {
+      mode: 'NONE',
+      requiredUnitCost: false,
+      requiredReason: false,
+      requiredAttachment: false,
+    },
+    version: 7,
+    ...overrides,
+  }
+}
+
 const valuationAdjustmentRecord = {
   id: 1004,
   documentNo: 'VA-001',
@@ -268,7 +338,15 @@ async function mountInventoryDocument(path: string, permissions: string[] = [
   await router.push(path)
   await router.isReady()
   const wrapper = mount(InventoryControlledDocumentView, {
-    global: { plugins: [pinia, router, ElementPlus] },
+    global: {
+      plugins: [pinia, router, ElementPlus],
+      stubs: {
+        AttachmentPanel: {
+          props: ['objectType', 'objectId', 'title', 'readonly'],
+          template: '<section data-test="stocktake-evidence-attachment">{{ objectType }} {{ objectId }} {{ title }} {{ readonly }}</section>',
+        },
+      },
+    },
   })
   await flushPromises()
   return { wrapper, router }
@@ -285,6 +363,14 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
   expect(select.exists()).toBe(true)
   select.vm.$emit('update:modelValue', value)
   await flushPromises()
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settled) => {
+    resolve = settled
+  })
+  return { promise, resolve }
 }
 
 describe('库存受控单据页', () => {
@@ -327,6 +413,7 @@ describe('库存受控单据页', () => {
     inventoryApiMock.stocktakes.get.mockResolvedValue(stocktakeRecord)
     inventoryApiMock.stocktakes.create.mockResolvedValue(stocktakeRecord)
     inventoryApiMock.stocktakes.start.mockResolvedValue(stocktakeRecord)
+    inventoryApiMock.stocktakes.listLines.mockResolvedValue(stocktakeLinePage(stocktakeRecord.lines))
     inventoryApiMock.stocktakes.updateLines.mockResolvedValue(stocktakeRecord)
     inventoryApiMock.stocktakes.reconcile.mockResolvedValue({ ...stocktakeRecord, status: 'RECONCILED' })
     inventoryApiMock.stocktakes.submitApproval.mockResolvedValue(stocktakeRecord)
@@ -558,7 +645,7 @@ describe('库存受控单据页', () => {
     expect(adjustment.wrapper.text()).toContain('CL-PRJ-001')
   })
 
-  it('盘点详情严格区分未盘和实盘为零，行保存发送单据版本、行版本和 countedQuantity', async () => {
+  it('盘点详情严格区分未盘和实盘为零，行保存只发送已填写的脏行 countedQuantity', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
 
     expect(wrapper.text()).toContain('库存盘点')
@@ -568,7 +655,6 @@ describe('库存受控单据页', () => {
     expect(wrapper.find('[data-test="stocktake-line-actual-2004"]').text()).toBe('0')
 
     await wrapper.find('input[name="stocktake-line-actual-2003"]').setValue('12.000000')
-    await wrapper.find('input[name="stocktake-line-actual-2004"]').setValue('')
     await firstButton(wrapper, '保存实盘').trigger('click')
     await flushPromises()
 
@@ -576,9 +662,336 @@ describe('库存受控单据页', () => {
       version: 5,
       lines: [
         { id: 2003, version: 7, countedQuantity: '12.000000' },
-        { id: 2004, version: 8, countedQuantity: null },
       ],
     })
+  })
+
+  it('盘点详情不依赖无界 lines，按分页接口加载行并按服务端估值要求显示单价、原因和证据附件', async () => {
+    const header = {
+      ...stocktakeRecord,
+      lineCount: 4,
+      lineSummary: {
+        totalLines: 4,
+        countedLines: 3,
+        varianceLines: 3,
+        positiveVarianceLines: 3,
+        negativeVarianceLines: 0,
+        uncountedLines: 1,
+      },
+      costVisible: true,
+      lines: undefined,
+    }
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([
+      stocktakeLine({ id: 2101, lineNo: 10, countedQuantity: null, varianceQuantity: null, version: 11 }),
+      stocktakeLine({
+        id: 2102,
+        lineNo: 20,
+        countedQuantity: '6.000000',
+        bookQuantity: '5.000000',
+        varianceQuantity: '1.000000',
+        valuationRequirement: {
+          mode: 'AUTO_PUBLIC_AVERAGE',
+          requiredUnitCost: false,
+          requiredReason: false,
+          requiredAttachment: false,
+          unitCost: '8.000000',
+        },
+        version: 12,
+      }),
+      stocktakeLine({
+        id: 2103,
+        lineNo: 30,
+        countedQuantity: '6.000000',
+        bookQuantity: '5.000000',
+        varianceQuantity: '1.000000',
+        valuationRequirement: {
+          mode: 'EXPLICIT_UNIT_COST',
+          requiredUnitCost: true,
+          requiredReason: false,
+          requiredAttachment: false,
+        },
+        version: 13,
+      }),
+      stocktakeLine({
+        id: 2104,
+        lineNo: 40,
+        ownershipType: 'PROJECT',
+        projectNo: 'PRJ-001',
+        projectName: '一号项目',
+        countedQuantity: '6.000000',
+        bookQuantity: '5.000000',
+        varianceQuantity: '1.000000',
+        valuationRequirement: {
+          mode: 'PROJECT_EXPLICIT_UNIT_COST',
+          requiredUnitCost: true,
+          requiredReason: true,
+          requiredAttachment: true,
+        },
+        version: 14,
+      }),
+    ], 1, 20, 4))
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+
+    expect(inventoryApiMock.stocktakes.listLines).toHaveBeenCalledWith(1003, { page: 1, pageSize: 20 })
+    expect(wrapper.text()).toContain('总行 4')
+    expect(wrapper.find('[data-test="stocktake-line-actual-2101"]').text()).toBe('未盘')
+    expect(wrapper.text()).toContain('自动沿用公共均价')
+    expect(wrapper.text()).toContain('8.000000')
+    expect(wrapper.find('input[name="stocktake-line-unit-cost-2103"]').exists()).toBe(true)
+    expect(wrapper.find('input[name="stocktake-line-reason-2104"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="stocktake-evidence-attachment"]').text()).toContain('INVENTORY_STOCKTAKE 1003')
+  })
+
+  it('盘点跨页编辑只保存脏行，保留 0 字符串并带显式估值字段', async () => {
+    const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: true }
+    const firstLine = stocktakeLine({ id: 2201, countedQuantity: null, version: 21 })
+    const secondLine = stocktakeLine({
+      id: 2202,
+      lineNo: 20,
+      ownershipType: 'PROJECT',
+      projectNo: 'PRJ-001',
+      projectName: '一号项目',
+      countedQuantity: '1.000000',
+      bookQuantity: '1.000000',
+      varianceQuantity: '0.000000',
+      valuationRequirement: {
+        mode: 'PROJECT_EXPLICIT_UNIT_COST',
+        requiredUnitCost: true,
+        requiredReason: true,
+        requiredAttachment: true,
+      },
+      version: 22,
+    })
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines
+      .mockResolvedValueOnce(stocktakeLinePage([firstLine], 1, 1, 2))
+      .mockResolvedValueOnce(stocktakeLinePage([secondLine], 2, 1, 2))
+      .mockResolvedValueOnce(stocktakeLinePage([{
+        ...secondLine,
+        countedQuantity: '9.000000',
+        varianceQuantity: '8.000000',
+        varianceUnitCost: '3.000000',
+        version: 23,
+      }], 2, 1, 2))
+    inventoryApiMock.stocktakes.updateLines.mockResolvedValueOnce({ ...header, version: 6 })
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+    await wrapper.find('input[name="stocktake-line-actual-2201"]').setValue('0.000000')
+    wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)
+    await flushPromises()
+    await wrapper.find('input[name="stocktake-line-actual-2202"]').setValue('9.000000')
+    await wrapper.find('input[name="stocktake-line-unit-cost-2202"]').setValue('3.000000')
+    await wrapper.find('input[name="stocktake-line-reason-2202"]').setValue('项目盘盈复核')
+    await firstButton(wrapper, '保存实盘').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.stocktakes.updateLines).toHaveBeenCalledWith(1003, {
+      version: 5,
+      lines: [
+        { id: 2201, version: 21, countedQuantity: '0.000000' },
+        {
+          id: 2202,
+          version: 22,
+          countedQuantity: '9.000000',
+          varianceUnitCost: '3.000000',
+          varianceReason: '项目盘盈复核',
+        },
+      ],
+    })
+  })
+
+  it('盘点分页加载期间禁用行输入、保存和分页，旧行不能误保存到新页上下文', async () => {
+    const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: true }
+    const loadingPage = deferred<ReturnType<typeof stocktakeLinePage>>()
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines
+      .mockResolvedValueOnce(stocktakeLinePage([stocktakeLine({ id: 2501, countedQuantity: null, version: 51 })], 1, 1, 2))
+      .mockReturnValueOnce(loadingPage.promise)
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+    await wrapper.find('input[name="stocktake-line-actual-2501"]').setValue('12.000000')
+    wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 2)
+    await flushPromises()
+
+    const input = wrapper.find('input[name="stocktake-line-actual-2501"]')
+    const disabledAttribute = input.exists() ? input.attributes().disabled : undefined
+    expect(!input.exists() || disabledAttribute !== undefined).toBe(true)
+    expect((firstButton(wrapper, '保存实盘').props() as Record<string, unknown>).disabled).toBe(true)
+    expect((wrapper.findComponent({ name: 'ElPagination' }).props() as Record<string, unknown>).disabled).toBe(true)
+
+    await firstButton(wrapper, '保存实盘').trigger('click')
+    await flushPromises()
+    expect(inventoryApiMock.stocktakes.updateLines).not.toHaveBeenCalled()
+
+    loadingPage.resolve(stocktakeLinePage([stocktakeLine({ id: 2502, lineNo: 20, countedQuantity: null, version: 52 })], 2, 1, 2))
+    await flushPromises()
+    expect(wrapper.find('input[name="stocktake-line-actual-2502"]').exists()).toBe(true)
+  })
+
+  it('盘点脏行重载发现服务端行版本变化时提示冲突并阻止用新版本提交旧输入', async () => {
+    const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: true }
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines
+      .mockResolvedValueOnce(stocktakeLinePage([stocktakeLine({ id: 2601, countedQuantity: null, version: 61 })]))
+      .mockResolvedValueOnce(stocktakeLinePage([stocktakeLine({ id: 2601, countedQuantity: '8.000000', version: 62 })]))
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+    await wrapper.find('input[name="stocktake-line-actual-2601"]').setValue('12.000000')
+    wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('current-change', 1)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('盘点行已被其他人更新，请刷新后重新录入')
+    await firstButton(wrapper, '保存实盘').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.stocktakes.updateLines).not.toHaveBeenCalled()
+  })
+
+  it('盘点存在未保存脏行时阻止确认和提交动作，失败保存保留用户输入', async () => {
+    const header = {
+      ...stocktakeRecord,
+      allowedActions: ['UPDATE_LINES', 'RECONCILE', 'SUBMIT_APPROVAL', 'COMPLETE_ZERO_VARIANCE'],
+      lineSummary: stocktakeLineSummary,
+      lines: undefined,
+      costVisible: true,
+    }
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines.mockResolvedValue(stocktakeLinePage([
+      stocktakeLine({ id: 2301, countedQuantity: null, version: 31 }),
+    ]))
+    inventoryApiMock.stocktakes.updateLines.mockRejectedValueOnce(new AccountPermissionApiError(
+      '单据版本已过期',
+      'CONFLICT',
+      409,
+    ))
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+    await wrapper.find('input[name="stocktake-line-actual-2301"]').setValue('12.000000')
+    await firstButton(wrapper, '确认差异').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.stocktakes.reconcile).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('存在未保存盘点行，请先保存实盘')
+
+    await firstButton(wrapper, '保存实盘').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('单据版本已过期')
+    expect((wrapper.find('input[name="stocktake-line-actual-2301"]').element as HTMLInputElement).value).toBe('12.000000')
+  })
+
+  it('盘点无成本权限时不渲染估值单价或成本输入', async () => {
+    const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: false }
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([
+      stocktakeLine({
+        id: 2401,
+        countedQuantity: '6.000000',
+        bookQuantity: '5.000000',
+        varianceQuantity: '1.000000',
+        valuationRequirement: {
+          mode: 'AUTO_PUBLIC_AVERAGE',
+          requiredUnitCost: false,
+          requiredReason: false,
+          requiredAttachment: false,
+          unitCost: '8.000000',
+        },
+        version: 41,
+      }),
+    ]))
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+
+    expect(wrapper.text()).toContain('金额受限')
+    expect(wrapper.text()).not.toContain('8.000000')
+    expect(wrapper.find('input[name="stocktake-line-unit-cost-2401"]').exists()).toBe(false)
+  })
+
+  it('盘点附件在确认后提交审批前可补证据，审批中只读', async () => {
+    const projectPositiveLine = stocktakeLine({
+      id: 2701,
+      ownershipType: 'PROJECT',
+      projectNo: 'PRJ-001',
+      projectName: '一号项目',
+      countedQuantity: '6.000000',
+      bookQuantity: '5.000000',
+      varianceQuantity: '1.000000',
+      valuationRequirement: {
+        mode: 'PROJECT_EXPLICIT_UNIT_COST',
+        requiredUnitCost: true,
+        requiredReason: true,
+        requiredAttachment: true,
+      },
+      version: 71,
+    })
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce({
+      ...stocktakeRecord,
+      status: 'RECONCILED',
+      statusName: '已确认差异',
+      allowedActions: ['SUBMIT_APPROVAL', 'CANCEL'],
+      lineSummary: { ...stocktakeLineSummary, positiveVarianceLines: 1 },
+      lines: undefined,
+      costVisible: true,
+    })
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([projectPositiveLine]))
+
+    const reconciled = await mountInventoryDocument('/inventory/stocktakes/1003')
+    expect(reconciled.wrapper.find('[data-test="stocktake-evidence-attachment"]').text())
+      .toContain('INVENTORY_STOCKTAKE 1003 项目盘盈证据附件 false')
+
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce({
+      ...stocktakeRecord,
+      status: 'SUBMITTED',
+      statusName: '审批中',
+      allowedActions: [],
+      approvalSummary: { id: 3003, status: 'SUBMITTED', submittedAt: '2026-07-14T11:00:00+08:00' },
+      lineSummary: { ...stocktakeLineSummary, positiveVarianceLines: 1 },
+      lines: undefined,
+      costVisible: true,
+    })
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([projectPositiveLine]))
+
+    const submitted = await mountInventoryDocument('/inventory/stocktakes/1003')
+    expect(submitted.wrapper.find('[data-test="stocktake-evidence-attachment"]').text())
+      .toContain('INVENTORY_STOCKTAKE 1003 项目盘盈证据附件 true')
+  })
+
+  it('盘点无成本权限保存数量时 payload 完全省略 varianceUnitCost', async () => {
+    const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: false }
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([
+      stocktakeLine({
+        id: 2801,
+        countedQuantity: null,
+        bookQuantity: '5.000000',
+        varianceQuantity: null,
+        valuationRequirement: {
+          mode: 'PROJECT_EXPLICIT_UNIT_COST',
+          requiredUnitCost: true,
+          requiredReason: true,
+          requiredAttachment: true,
+        },
+        version: 81,
+      }),
+    ]))
+    inventoryApiMock.stocktakes.updateLines.mockResolvedValueOnce({ ...header, version: 6 })
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+    await wrapper.find('input[name="stocktake-line-actual-2801"]').setValue('6.000000')
+    await wrapper.find('input[name="stocktake-line-reason-2801"]').setValue('项目盘盈复核')
+    await firstButton(wrapper, '保存实盘').trigger('click')
+    await flushPromises()
+
+    const payload = inventoryApiMock.stocktakes.updateLines.mock.calls[0][1]
+    expect(payload.lines[0]).toEqual({
+      id: 2801,
+      version: 81,
+      countedQuantity: '6.000000',
+      varianceReason: '项目盘盈复核',
+    })
+    expect(payload.lines[0]).not.toHaveProperty('varianceUnitCost')
   })
 
   it('盘点 START/RECONCILE/COMPLETE_ZERO_VARIANCE 只需更新权限，提交审批才需要提交权限', async () => {

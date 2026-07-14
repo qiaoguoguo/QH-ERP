@@ -16,6 +16,7 @@ import {
   type InventoryCostLayerRecord,
   type InventoryOwnershipConversionPayload,
   type InventoryStocktakeLinePayload,
+  type InventoryStocktakeLineRecord,
   type InventoryValuationAdjustmentPayload,
   type InventoryWarehouseTransferPayload,
 } from './inventoryApi'
@@ -125,6 +126,17 @@ describe('库存 API', () => {
         idempotencyKey: string
       } ? true : false
     >,
+    stocktakeLineUsesServerValuationRequirement: true as AssertTrue<
+      InventoryStocktakeLineRecord extends {
+        valuationRequirement?: {
+          mode: 'AUTO_PUBLIC_AVERAGE' | 'EXPLICIT_UNIT_COST' | 'PROJECT_EXPLICIT_UNIT_COST' | 'NONE' | string
+          requiredUnitCost?: boolean
+          requiredReason?: boolean
+          requiredAttachment?: boolean
+          unitCost?: string | null
+        } | null
+      } ? true : false
+    >,
   }
 
   it('库存余额类型使用非负净需求缺口字段', () => {
@@ -140,7 +152,27 @@ describe('库存 API', () => {
       movementHasValuationFields: true,
       costLayerUsesDecimalStrings: true,
       controlledActionsUseVersionAndIdempotency: true,
+      stocktakeLineUsesServerValuationRequirement: true,
     })
+  })
+
+  it('按冻结契约分页获取盘点行', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 2, pageSize: 50 }))
+    const api = createInventoryApi({ fetcher })
+    const stocktakes = api.stocktakes as typeof api.stocktakes & {
+      listLines(id: number, params: { page: number; pageSize: number }): Promise<unknown>
+    }
+
+    await stocktakes.listLines(3, { page: 2, pageSize: 50 })
+
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/admin/inventory/stocktakes/3/lines?page=2&pageSize=50',
+      {
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+        method: 'GET',
+      },
+    )
   })
 
   it('按查询条件分页获取库存余额', async () => {
@@ -454,6 +486,8 @@ describe('库存 API', () => {
       id: 7001,
       version: 4,
       countedQuantity: '0.000000',
+      varianceUnitCost: '12.000000',
+      varianceReason: '项目盘盈复核',
     }
     const valuationPayload: InventoryValuationAdjustmentPayload = {
       adjustmentType: 'LEGACY_OPENING',
@@ -517,7 +551,13 @@ describe('库存 API', () => {
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers/1/post')).toEqual(actionPayload)
     expect(bodyForPath('/api/admin/inventory/stocktakes/3/lines')).toEqual({
       version: 9,
-      lines: [{ id: 7001, version: 4, countedQuantity: '0.000000' }],
+      lines: [{
+        id: 7001,
+        version: 4,
+        countedQuantity: '0.000000',
+        varianceUnitCost: '12.000000',
+        varianceReason: '项目盘盈复核',
+      }],
     })
     expect(bodyForPath('/api/admin/inventory/valuation-adjustments').lines[0].adjustmentAmount).toBe('1000.00')
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([

@@ -312,6 +312,14 @@ public class InventoryAdminController {
 		return ApiResponse.ok(this.stage023AdminService.stocktake(id, currentUser));
 	}
 
+	@GetMapping("/stocktakes/{id}/lines")
+	public ApiResponse<PageResponse<java.util.Map<String, Object>>> stocktakeLines(@PathVariable Long id,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(required = false) Integer size,
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
+		int resolvedPageSize = size == null ? pageSize : size;
+		return ApiResponse.ok(this.stage023AdminService.stocktakeLines(id, page, resolvedPageSize, currentUser));
+	}
+
 	@PutMapping("/stocktakes/{id}/start")
 	public ApiResponse<java.util.Map<String, Object>> startStocktake(@PathVariable Long id,
 			@Valid @RequestBody InventoryStage023AdminService.VersionedActionRequest request,

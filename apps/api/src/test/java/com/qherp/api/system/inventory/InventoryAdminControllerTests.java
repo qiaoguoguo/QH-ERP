@@ -1423,13 +1423,354 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 		JsonNode counted = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + firstDraft.get("id").longValue() + "/lines",
-				stocktakeLineUpdatePayload(firstCounting, true), admin));
+				stocktakeLineUpdatePayload(firstCounting,
+						stocktakeLines(firstDraft.get("id").longValue(), 1, 20, admin), true), admin));
 		JsonNode reconciled = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + firstDraft.get("id").longValue() + "/reconcile",
 				Map.of("version", counted.get("version").longValue(), "reason", "确认盘差",
 						"idempotencyKey", "STK-LOCK-RECON-" + firstDraft.get("id").longValue()),
 				admin));
 		assertThat(reconciled.get("status").asText()).isEqualTo("RECONCILED");
+	}
+
+	@Test
+	void 盘点详情不返回无界行且分页行接口返回估值要求并脱敏成本() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		postValuedInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "5.000000",
+				"8.000000", InventoryQualityStatus.QUALIFIED, "023 盘点均价库存");
+
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 分页盘点"), admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始分页盘点",
+						"idempotencyKey", "STK-PAGE-START-" + stocktakeId),
+				admin));
+
+		assertThat(counting.has("lines")).isFalse();
+		assertThat(counting.get("lineSummary").get("totalLines").longValue()).isEqualTo(1L);
+		JsonNode firstPage = stocktakeLines(stocktakeId, 1, 1, admin);
+		assertThat(firstPage.get("total").longValue()).isEqualTo(1L);
+		JsonNode line = firstPage.get("items").get(0);
+		assertThat(line.get("valuationRequirement").get("mode").asText()).isEqualTo("NONE");
+
+		ResponseEntity<String> countResponse = exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeLineUpdatePayload(counting, firstPage, true), admin);
+		assertOk(countResponse);
+		JsonNode counted = data(countResponse);
+		JsonNode valuedLine = stocktakeLines(stocktakeId, 1, 1, admin).get("items").get(0);
+		assertThat(valuedLine.get("valuationRequirement").get("mode").asText())
+			.isEqualTo("AUTO_PUBLIC_AVERAGE");
+		assertDecimal(new BigDecimal(valuedLine.get("valuationRequirement").get("unitCost").asText()),
+				"8.000000");
+		assertThat(valuedLine.get("varianceUnitCost").isNull()).isTrue();
+
+		AuthenticatedSession stocktakeViewer = createStocktakeViewerWithoutValuationAndLogin();
+		JsonNode maskedLine = stocktakeLines(stocktakeId, 1, 1, stocktakeViewer).get("items").get(0);
+		assertThat(maskedLine.get("valuationRequirement").get("mode").asText())
+			.isEqualTo("AUTO_PUBLIC_AVERAGE");
+		assertThat(maskedLine.has("costLayerId")).isFalse();
+		assertThat(maskedLine.has("varianceUnitCost")).isFalse();
+		assertThat(maskedLine.get("valuationRequirement").has("unitCost")).isFalse();
+		assertThat(counted.has("lines")).isFalse();
+	}
+
+	@Test
+	void 盘点跨页行更新必须保留未提交页并区分零单价和空单价() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				InventoryQualityStatus.QUALIFIED);
+		postInventory(fixture.rawWarehouseId(), fixture.auxiliaryMaterialId(), fixture.meterUnitId(), "3.000000",
+				InventoryQualityStatus.QUALIFIED);
+
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("businessDate", LocalDate.now().toString());
+		body.put("scopeType", "WAREHOUSE");
+		body.put("warehouseId", fixture.rawWarehouseId());
+		body.put("reason", "023 跨页盘点");
+		body.put("idempotencyKey", "STK-CROSS-PAGE-" + SEQUENCE.incrementAndGet());
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes", body, admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始跨页盘点",
+						"idempotencyKey", "STK-CROSS-START-" + stocktakeId),
+				admin));
+		JsonNode firstPage = stocktakeLines(stocktakeId, 1, 1, admin);
+		JsonNode secondPage = stocktakeLines(stocktakeId, 2, 1, admin);
+
+		JsonNode firstLine = firstPage.get("items").get(0);
+		BigDecimal countedQuantity = new BigDecimal(firstLine.get("bookQuantity").asText()).add(BigDecimal.ONE);
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("id", firstLine.get("id").longValue());
+		line.put("version", firstLine.get("version").longValue());
+		line.put("countedQuantity", countedQuantity.toPlainString());
+		line.put("varianceUnitCost", "0.000000");
+		line.put("varianceReason", "跨页零单价保留");
+		Map<String, Object> update = new LinkedHashMap<>();
+		update.put("version", counting.get("version").longValue());
+		update.put("lines", List.of(line));
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines", update,
+				admin));
+
+		JsonNode updatedFirstLine = stocktakeLines(stocktakeId, 1, 1, admin).get("items").get(0);
+		JsonNode untouchedSecondLine = stocktakeLines(stocktakeId, 2, 1, admin).get("items").get(0);
+		assertThat(updatedFirstLine.get("varianceUnitCost").asText()).isEqualTo("0.000000");
+		assertThat(untouchedSecondLine.get("id").longValue()).isEqualTo(secondPage.get("items").get(0).get("id")
+			.longValue());
+		assertThat(untouchedSecondLine.get("countedQuantity").isNull()).isTrue();
+		assertThat(untouchedSecondLine.get("varianceUnitCost").isNull()).isTrue();
+	}
+
+	@Test
+	void 盘点显式成本写入必须具备成本权限且有权限用户可写() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		insertPublicBalanceWithoutAverage(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+				"4.000000");
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 显式成本权限盘点"), admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始显式成本权限盘点",
+						"idempotencyKey", "STK-COST-PERM-START-" + stocktakeId),
+				admin));
+		JsonNode linePage = stocktakeLines(stocktakeId, 1, 20, admin);
+		Map<String, Object> payload = stocktakeLineUpdatePayload(counting, linePage, true, "9.000000",
+				"显式成本写入");
+		AuthenticatedSession updaterWithoutCost = createInventoryUserAndLogin("stocktake-updater-", "STK_UPD_",
+				"盘点更新无成本", List.of("inventory:stocktake:view", "inventory:stocktake:update"));
+
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines", payload,
+				updaterWithoutCost), HttpStatus.FORBIDDEN, "INVENTORY_COST_PERMISSION_REQUIRED");
+
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines", payload,
+				admin));
+		JsonNode updatedLine = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(updatedLine.get("varianceUnitCost").asText()).isEqualTo("9.000000");
+	}
+
+	@Test
+	void 无成本权限更新盘点数量不得用空成本清空已有正差异单价() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		insertPublicBalanceWithoutAverage(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+				"4.000000");
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 空成本权限盘点"), admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始空成本权限盘点",
+						"idempotencyKey", "STK-NULL-COST-START-" + stocktakeId),
+				admin));
+		JsonNode linePage = stocktakeLines(stocktakeId, 1, 20, admin);
+		JsonNode priced = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeLineUpdatePayload(counting, linePage, true, "9.000000", "初始显式成本"), admin));
+		JsonNode pricedLine = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(pricedLine.get("varianceUnitCost").asText()).isEqualTo("9.000000");
+		AuthenticatedSession updaterWithoutCost = createInventoryUserAndLogin("stocktake-null-cost-", "STK_NULL_",
+				"盘点更新空成本", List.of("inventory:stocktake:view", "inventory:stocktake:update"));
+
+		JsonNode nullCostUpdate = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeSingleLineUpdatePayload(priced, pricedLine, "6.000000", true, null, "无成本权限保留空成本"),
+				updaterWithoutCost));
+		JsonNode afterNullCost = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(afterNullCost.get("varianceUnitCost").asText()).isEqualTo("9.000000");
+
+		JsonNode missingCostUpdate = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeSingleLineUpdatePayload(nullCostUpdate, afterNullCost, "7.000000", false, null,
+						"无成本权限缺失成本"),
+				updaterWithoutCost));
+		JsonNode afterMissingCost = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(afterMissingCost.get("varianceUnitCost").asText()).isEqualTo("9.000000");
+
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeSingleLineUpdatePayload(missingCostUpdate, afterMissingCost, "8.000000", true,
+						"11.000000", "无成本权限尝试改成本"),
+				updaterWithoutCost), HttpStatus.FORBIDDEN, "INVENTORY_COST_PERMISSION_REQUIRED");
+
+		JsonNode cleared = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeSingleLineUpdatePayload(missingCostUpdate, afterMissingCost, "8.000000", true, null,
+						"有成本权限清空成本"),
+				admin));
+		JsonNode afterCleared = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(afterCleared.get("varianceUnitCost").isNull()).isTrue();
+
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeSingleLineUpdatePayload(cleared, afterCleared, "9.000000", true, "12.000000",
+						"有成本权限重写成本"),
+				admin));
+		JsonNode afterRewrite = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(afterRewrite.get("varianceUnitCost").asText()).isEqualTo("12.000000");
+	}
+
+	@Test
+	void 公共池数量为零的历史均价不得自动作为盘盈成本() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		insertPublicBalanceWithPoolAverage(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+				"4.000000", "0.000000", "0.00", "0.000000");
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 零数量均价盘点"), admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始零数量均价盘点",
+						"idempotencyKey", "STK-ZERO-AVG-START-" + stocktakeId),
+				admin));
+		JsonNode linePage = stocktakeLines(stocktakeId, 1, 20, admin);
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeLineUpdatePayload(counting, linePage, true), admin));
+
+		JsonNode countedLine = stocktakeLines(stocktakeId, 1, 20, admin).get("items").get(0);
+		assertThat(countedLine.get("valuationRequirement").get("mode").asText()).isEqualTo("EXPLICIT_UNIT_COST");
+		JsonNode counted = data(get("/api/admin/inventory/stocktakes/" + stocktakeId, admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/reconcile",
+				Map.of("version", counted.get("version").longValue(), "reason", "确认零数量均价盘点",
+						"idempotencyKey", "STK-ZERO-AVG-RECON-" + stocktakeId),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_VALUATION_UNIT_COST_REQUIRED");
+	}
+
+	@Test
+	void 公共盘盈必须按均价自动或显式单价完成估值() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		postValuedInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "5.000000",
+				"8.000000", InventoryQualityStatus.QUALIFIED, "023 公共均价盘盈");
+
+		JsonNode autoDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 公共均价盘盈盘点"), admin));
+		long autoStocktakeId = autoDraft.get("id").longValue();
+		JsonNode autoCounting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + autoStocktakeId + "/start",
+				Map.of("version", autoDraft.get("version").longValue(), "reason", "开始公共均价盘点",
+						"idempotencyKey", "STK-PUBLIC-AUTO-START-" + autoStocktakeId),
+				admin));
+		JsonNode autoCounted = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + autoStocktakeId + "/lines",
+				stocktakeLineUpdatePayload(autoCounting,
+						stocktakeLines(autoStocktakeId, 1, 20, admin), true), admin));
+		JsonNode autoReconciled = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + autoStocktakeId + "/reconcile",
+				Map.of("version", autoCounted.get("version").longValue(), "reason", "确认公共均价盘盈",
+						"idempotencyKey", "STK-PUBLIC-AUTO-RECON-" + autoStocktakeId),
+				admin));
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + autoStocktakeId + "/submit-approval",
+				Map.of("version", autoReconciled.get("version").longValue(), "reason", "提交公共均价盘盈",
+						"idempotencyKey", "STK-PUBLIC-AUTO-SUBMIT-" + autoStocktakeId),
+				admin));
+		this.stage023AdminService.postStocktakeFromApproval(autoStocktakeId, backendOperator());
+		assertDecimal(stocktakeInboundUnitCost(autoStocktakeId), "8.000000");
+
+		InventoryFixture noAverageFixture = fixture();
+		markMaterialValued(noAverageFixture.rawMaterialId());
+		insertPublicBalanceWithoutAverage(noAverageFixture.rawWarehouseId(), noAverageFixture.rawMaterialId(),
+				noAverageFixture.kgUnitId(), "4.000000");
+		JsonNode manualDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(noAverageFixture.rawWarehouseId(), noAverageFixture.rawMaterialId(),
+						"023 公共无均价盘盈盘点"),
+				admin));
+		long manualStocktakeId = manualDraft.get("id").longValue();
+		JsonNode manualCounting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + manualStocktakeId + "/start",
+				Map.of("version", manualDraft.get("version").longValue(), "reason", "开始公共无均价盘点",
+						"idempotencyKey", "STK-PUBLIC-MANUAL-START-" + manualStocktakeId),
+				admin));
+		JsonNode manualCounted = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + manualStocktakeId + "/lines",
+				stocktakeLineUpdatePayload(manualCounting,
+						stocktakeLines(manualStocktakeId, 1, 20, admin), true), admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + manualStocktakeId + "/reconcile",
+				Map.of("version", manualCounted.get("version").longValue(), "reason", "缺少公共无均价单价",
+						"idempotencyKey", "STK-PUBLIC-MANUAL-RECON-MISSING-" + manualStocktakeId),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_VALUATION_UNIT_COST_REQUIRED");
+	}
+
+	@Test
+	void 项目盘盈必须校验单价原因附件并创建真实项目成本层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		long projectId = insertProject("023 项目盘盈项目");
+		long sourceLayerId = insertProjectCostLayer(projectId, fixture.rawMaterialId(), "5.000000", "50.00",
+				"10.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId,
+				sourceLayerId, "5.000000", "50.00", "10.000000");
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 项目盘盈盘点"), admin));
+		long stocktakeId = draft.get("id").longValue();
+		JsonNode counting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/start",
+				Map.of("version", draft.get("version").longValue(), "reason", "开始项目盘盈",
+						"idempotencyKey", "STK-PROJECT-START-" + stocktakeId),
+				admin));
+		JsonNode page = stocktakeLines(stocktakeId, 1, 20, admin);
+		JsonNode stocktakeLine = page.get("items").get(0);
+		JsonNode missingCost = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + stocktakeId + "/lines",
+				stocktakeLineUpdatePayload(counting, page, true), admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/reconcile",
+				Map.of("version", missingCost.get("version").longValue(), "reason", "缺少项目盘盈单价",
+						"idempotencyKey", "STK-PROJECT-RECON-MISSING-COST-" + stocktakeId),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_VALUATION_UNIT_COST_REQUIRED");
+
+		JsonNode withCost = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId
+				+ "/lines", stocktakeLineUpdatePayload(missingCost,
+						stocktakeLines(stocktakeId, 1, 20, admin), true, "12.000000", null),
+				admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/reconcile",
+				Map.of("version", withCost.get("version").longValue(), "reason", "缺少项目盘盈原因",
+						"idempotencyKey", "STK-PROJECT-RECON-MISSING-REASON-" + stocktakeId),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_STOCKTAKE_VARIANCE_REASON_REQUIRED");
+
+		JsonNode withReason = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId
+				+ "/lines", stocktakeLineUpdatePayload(withCost, stocktakeLines(stocktakeId, 1, 20, admin), true,
+						"12.000000", "项目盘盈实物复核"),
+				admin));
+		JsonNode reconciled = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId
+				+ "/reconcile", Map.of("version", withReason.get("version").longValue(), "reason", "确认项目盘盈",
+						"idempotencyKey", "STK-PROJECT-RECON-" + stocktakeId),
+				admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId + "/submit-approval",
+				Map.of("version", reconciled.get("version").longValue(), "reason", "缺少项目盘盈证据",
+						"idempotencyKey", "STK-PROJECT-SUBMIT-MISSING-EVIDENCE-" + stocktakeId),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_STOCKTAKE_EVIDENCE_REQUIRED");
+
+		long attachmentId = insertStocktakeEvidence(stocktakeId, "项目盘盈证据");
+		JsonNode submitted = data(exchange(HttpMethod.PUT, "/api/admin/inventory/stocktakes/" + stocktakeId
+				+ "/submit-approval", Map.of("version", reconciled.get("version").longValue(), "reason", "提交项目盘盈",
+						"idempotencyKey", "STK-PROJECT-SUBMIT-" + stocktakeId),
+				admin));
+		assertThat(submitted.get("status").asText()).isEqualTo("SUBMITTED");
+		this.jdbcTemplate.update("update platform_business_attachment set status = 'DELETED' where id = ?",
+				attachmentId);
+		assertThatThrownBy(() -> this.stage023AdminService.postStocktakeFromApproval(stocktakeId, backendOperator()))
+			.isInstanceOf(BusinessException.class)
+			.satisfies((exception) -> assertThat(((BusinessException) exception).errorCode().name())
+				.isEqualTo("INVENTORY_STOCKTAKE_EVIDENCE_REQUIRED"));
+
+		insertStocktakeEvidence(stocktakeId, "项目盘盈补充证据");
+		this.stage023AdminService.postStocktakeFromApproval(stocktakeId, backendOperator());
+		assertThat(data(get("/api/admin/inventory/stocktakes/" + stocktakeId, admin)).get("status").asText())
+			.isEqualTo("POSTED");
+		BigDecimal varianceQuantity = BigDecimal.ONE.setScale(6);
+		Map<String, Object> layer = stocktakeProjectLayer(stocktakeId, stocktakeLine.get("id").longValue());
+		assertDecimal((BigDecimal) layer.get("original_quantity"), varianceQuantity.toPlainString());
+		assertDecimal((BigDecimal) layer.get("unit_cost"), "12.000000");
+		assertDecimal((BigDecimal) layer.get("original_amount"), "12.00");
 	}
 
 	@Test
@@ -1472,7 +1813,8 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				admin));
 		JsonNode zeroCounted = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + zeroStocktakeId + "/lines",
-				stocktakeLineUpdatePayload(zeroCounting, false), admin));
+				stocktakeLineUpdatePayload(zeroCounting, stocktakeLines(zeroStocktakeId, 1, 20, admin), false),
+				admin));
 		JsonNode zeroReconciled = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + zeroStocktakeId + "/reconcile",
 				Map.of("version", zeroCounted.get("version").longValue(), "reason", "确认零差异",
@@ -1497,7 +1839,9 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				admin));
 		JsonNode varianceCounted = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + varianceStocktakeId + "/lines",
-				stocktakeLineUpdatePayload(varianceCounting, true), admin));
+				stocktakeLineUpdatePayload(varianceCounting, stocktakeLines(varianceStocktakeId, 1, 20, admin),
+						true),
+				admin));
 		JsonNode varianceReconciled = data(exchange(HttpMethod.PUT,
 				"/api/admin/inventory/stocktakes/" + varianceStocktakeId + "/reconcile",
 				Map.of("version", varianceCounted.get("version").longValue(), "reason", "确认盘差",
@@ -3148,6 +3492,90 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				""", materialId, new BigDecimal(quantity));
 	}
 
+	private void insertPublicBalanceWithoutAverage(long warehouseId, long materialId, long unitId, String quantity) {
+		long poolId = this.jdbcTemplate.queryForObject("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, ?, null, null, 'VALUED')
+				returning id
+				""", Long.class, materialId, new BigDecimal(quantity));
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, valuation_state, public_pool_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', 'PUBLIC', 'VALUED', ?, now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), poolId);
+	}
+
+	private void insertPublicBalanceWithPoolAverage(long warehouseId, long materialId, long unitId,
+			String balanceQuantity, String poolQuantity, String amount, String averageUnitCost) {
+		long poolId = this.jdbcTemplate.queryForObject("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, ?, ?, ?, 'VALUED')
+				returning id
+				""", Long.class, materialId, new BigDecimal(poolQuantity), new BigDecimal(amount),
+				new BigDecimal(averageUnitCost));
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, valuation_state, inventory_amount, average_unit_cost, public_pool_id,
+					created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', 'PUBLIC', 'VALUED', ?, ?, ?, now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(balanceQuantity), new BigDecimal(amount),
+				new BigDecimal(averageUnitCost), poolId);
+	}
+
+	private BigDecimal stocktakeInboundUnitCost(long stocktakeId) {
+		return this.jdbcTemplate.queryForObject("""
+				select unit_cost
+				from inv_value_movement
+				where source_type = 'STOCKTAKE'
+				  and source_id = ?
+				  and quantity > 0
+				order by id desc
+				limit 1
+				""", BigDecimal.class, stocktakeId);
+	}
+
+	private Map<String, Object> stocktakeProjectLayer(long stocktakeId, long stocktakeLineId) {
+		return this.jdbcTemplate.queryForMap("""
+				select original_quantity, original_amount, unit_cost, remaining_quantity, remaining_amount
+				from inv_project_cost_layer
+				where source_type = 'STOCKTAKE'
+				  and source_id = ?
+				  and source_line_id = ?
+				order by id desc
+				limit 1
+				""", stocktakeId, stocktakeLineId);
+	}
+
+	private long insertStocktakeEvidence(long stocktakeId, String description) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long fileId = this.jdbcTemplate.queryForObject("""
+				insert into platform_file_object (
+					bucket, object_key, original_filename, content_type, size_bytes, sha256, etag,
+					file_usage, status, created_by_user_id, created_by_username, created_at
+				)
+				values ('qherp-test-private', ?, ?, 'text/plain', 12, ?, 'etag-test',
+					'ATTACHMENT', 'AVAILABLE', 1, 'admin', now())
+				returning id
+				""", Long.class, "stocktake-evidence/" + suffix, "stocktake-evidence-" + suffix + ".txt",
+				("%064d").formatted(suffix));
+		return this.jdbcTemplate.queryForObject("""
+				insert into platform_business_attachment (
+					object_type, object_id, file_id, description, status, created_by_user_id,
+					created_by_username, created_at
+				)
+				values ('INVENTORY_STOCKTAKE', ?, ?, ?, 'AVAILABLE', 1, 'admin', now())
+				returning id
+				""", Long.class, stocktakeId, fileId, description);
+	}
+
 	private Map<String, Object> warehouseTransferPayload(long sourceWarehouseId, long targetWarehouseId,
 			long materialId, long unitId, String quantity, String reason) {
 		Map<String, Object> line = new LinkedHashMap<>();
@@ -3199,9 +3627,23 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		return body;
 	}
 
-	private Map<String, Object> stocktakeLineUpdatePayload(JsonNode stocktakeDetail, boolean addVariance) {
+	private JsonNode stocktakeLines(long stocktakeId, int page, int pageSize, AuthenticatedSession session)
+			throws Exception {
+		ResponseEntity<String> response = get("/api/admin/inventory/stocktakes/" + stocktakeId + "/lines?page="
+				+ page + "&pageSize=" + pageSize, session);
+		assertOk(response);
+		return data(response);
+	}
+
+	private Map<String, Object> stocktakeLineUpdatePayload(JsonNode stocktakeDetail, JsonNode linePage,
+			boolean addVariance) {
+		return stocktakeLineUpdatePayload(stocktakeDetail, linePage, addVariance, null, null);
+	}
+
+	private Map<String, Object> stocktakeLineUpdatePayload(JsonNode stocktakeDetail, JsonNode linePage,
+			boolean addVariance, String varianceUnitCost, String varianceReason) {
 		List<Map<String, Object>> lines = new ArrayList<>();
-		for (JsonNode lineNode : stocktakeDetail.get("lines")) {
+		for (JsonNode lineNode : linePage.get("items")) {
 			BigDecimal countedQuantity = new BigDecimal(lineNode.get("bookQuantity").asText());
 			if (addVariance && lines.isEmpty()) {
 				countedQuantity = countedQuantity.add(BigDecimal.ONE);
@@ -3210,11 +3652,35 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 			line.put("id", lineNode.get("id").longValue());
 			line.put("version", lineNode.get("version").longValue());
 			line.put("countedQuantity", countedQuantity.toPlainString());
+			if (varianceUnitCost != null) {
+				line.put("varianceUnitCost", varianceUnitCost);
+			}
+			if (varianceReason != null) {
+				line.put("varianceReason", varianceReason);
+			}
 			lines.add(line);
 		}
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("version", stocktakeDetail.get("version").longValue());
 		body.put("lines", lines);
+		return body;
+	}
+
+	private Map<String, Object> stocktakeSingleLineUpdatePayload(JsonNode stocktakeDetail, JsonNode lineNode,
+			String countedQuantity, boolean includeVarianceUnitCost, String varianceUnitCost, String varianceReason) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("id", lineNode.get("id").longValue());
+		line.put("version", lineNode.get("version").longValue());
+		line.put("countedQuantity", countedQuantity);
+		if (includeVarianceUnitCost) {
+			line.put("varianceUnitCost", varianceUnitCost);
+		}
+		if (varianceReason != null) {
+			line.put("varianceReason", varianceReason);
+		}
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("version", stocktakeDetail.get("version").longValue());
+		body.put("lines", List.of(line));
 		return body;
 	}
 
@@ -3273,6 +3739,11 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		return createInventoryUserAndLogin("inventory-reader-", "INV_READER_", "库存只读", List.of("inventory:balance:view",
 				"inventory:availability:view", "inventory:reservation:view", "inventory:movement:view",
 				"inventory:document:view"));
+	}
+
+	private AuthenticatedSession createStocktakeViewerWithoutValuationAndLogin() {
+		return createInventoryUserAndLogin("stocktake-reader-", "STK_READER_", "盘点只读",
+				List.of("inventory:stocktake:view"));
 	}
 
 	private AuthenticatedSession createNoInventoryUserAndLogin() {
@@ -3840,7 +4311,7 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void assertDecimal(BigDecimal actual, String expected) {
-		assertThat(actual.compareTo(new BigDecimal(expected))).isZero();
+		assertThat(actual).isEqualByComparingTo(new BigDecimal(expected));
 	}
 
 	private record PurchaseReceiptFact(long receiptId, String receiptNo, long supplierId, long receiptLineId,

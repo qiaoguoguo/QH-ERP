@@ -616,23 +616,64 @@ export interface InventoryStocktakeLineRecord {
   id: ResourceId
   lineNo: number
   version: number
+  warehouseId?: ResourceId
   warehouseName?: string
+  materialId?: ResourceId
   materialCode?: string
   materialName?: string
+  unitId?: ResourceId
+  unitName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
   ownershipType?: InventoryOwnershipType
   ownershipTypeName?: string | null
+  projectId?: ResourceId | null
   projectNo?: string | null
   projectName?: string | null
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
+  costLayerId?: ResourceId | null
   bookQuantity?: string | null
   countedQuantity?: string | null
   varianceQuantity?: string | null
+  varianceUnitCost?: string | null
+  varianceReason?: string | null
   differenceAmount?: string | null
+  valuationRequirement?: InventoryStocktakeValuationRequirement | null
+}
+
+export type InventoryStocktakeValuationMode =
+  | 'AUTO_PUBLIC_AVERAGE'
+  | 'EXPLICIT_UNIT_COST'
+  | 'PROJECT_EXPLICIT_UNIT_COST'
+  | 'NONE'
+  | string
+
+export interface InventoryStocktakeValuationRequirement {
+  mode: InventoryStocktakeValuationMode
+  requiredUnitCost?: boolean
+  requiredReason?: boolean
+  requiredAttachment?: boolean
+  unitCost?: string | null
+}
+
+export interface InventoryStocktakeLineSummary {
+  totalLines?: number
+  countedLines?: number
+  varianceLines?: number
+  positiveVarianceLines?: number
+  negativeVarianceLines?: number
+  uncountedLines?: number
 }
 
 export interface InventoryStocktakeRecord extends InventoryControlledDocumentSummaryRecord {
   scopeType?: 'WAREHOUSE' | 'MATERIAL' | string
   warehouseId?: ResourceId | null
   warehouseName?: string | null
+  materialId?: ResourceId | null
+  lineSummary?: InventoryStocktakeLineSummary | null
   lines?: InventoryStocktakeLineRecord[]
 }
 
@@ -727,11 +768,18 @@ export interface InventoryStocktakeLinePayload {
   id: ResourceId
   version: number
   countedQuantity: InventoryQuantityPayload | null
+  varianceUnitCost?: string | null
+  varianceReason?: string | null
 }
 
 export interface InventoryStocktakeLineUpdatePayload {
   version: number
   lines: InventoryStocktakeLinePayload[]
+}
+
+export interface InventoryStocktakeLineListParams {
+  page: number
+  pageSize: number
 }
 
 export interface InventoryValuationAdjustmentLinePayload {
@@ -868,6 +916,7 @@ export interface InventoryApi {
     get(id: ResourceId): Promise<InventoryStocktakeRecord>
     create(payload: InventoryStocktakePayload): Promise<InventoryStocktakeRecord>
     start(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+    listLines(id: ResourceId, params: InventoryStocktakeLineListParams): Promise<PageResult<InventoryStocktakeLineRecord>>
     updateLines(id: ResourceId, payload: InventoryStocktakeLineUpdatePayload): Promise<InventoryStocktakeRecord>
     reconcile(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
     submitApproval(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
@@ -1176,6 +1225,11 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
       get: (id) => get<InventoryStocktakeRecord>(stocktakePath(id)),
       create: (payload) => write<InventoryStocktakeRecord>('POST', stocktakePath(), payload),
       start: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/start`, payload),
+      listLines: (id, params) =>
+        get<PageResult<InventoryStocktakeLineRecord>>(
+          `${stocktakePath(id)}/lines`,
+          pickQuery(params, ['page', 'pageSize']),
+        ),
       updateLines: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/lines`, payload),
       reconcile: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/reconcile`, payload),
       submitApproval: (id, payload) =>

@@ -23,6 +23,7 @@ import {
 } from '../../shared/api/inventoryApi'
 import { useAuthStore } from '../../stores/authStore'
 import ApprovalStatusPanel from '../platform/components/ApprovalStatusPanel.vue'
+import AttachmentPanel from '../platform/components/AttachmentPanel.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import {
@@ -43,6 +44,7 @@ type ApiBucket = {
   submitApproval?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   withdraw?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   start?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
+  listLines?(id: ResourceId, params: { page: number; pageSize: number }): Promise<PageResult<InventoryStocktakeLineRecord>>
   updateLines?(id: ResourceId, payload: InventoryStocktakeLineUpdatePayload): Promise<InventoryRecord>
   reconcile?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   completeZeroVariance?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
@@ -53,6 +55,16 @@ type InventoryRecord =
   | InventoryOwnershipConversionRecord
   | InventoryStocktakeRecord
   | InventoryValuationAdjustmentRecord
+
+interface StocktakeLineInputState {
+  countedQuantity: string
+  varianceUnitCost: string
+  varianceReason: string
+}
+
+interface StocktakeLineOriginalState extends StocktakeLineInputState {
+  version: number
+}
 
 interface DocumentConfig {
   kind: DocumentKind
@@ -175,7 +187,14 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const actionError = ref('')
-const stocktakeActualInputs = reactive<Record<string, string>>({})
+const stocktakeLines = ref<InventoryStocktakeLineRecord[]>([])
+const stocktakeLinePagination = reactive({ page: 1, pageSize: 20, total: 0 })
+const stocktakeLineLoading = ref(false)
+const stocktakeLineError = ref('')
+const stocktakeLineConflictMessage = ref('')
+const stocktakeLineInputs = reactive<Record<string, StocktakeLineInputState>>({})
+const stocktakeLineOriginals = reactive<Record<string, StocktakeLineOriginalState>>({})
+const stocktakeLineCache = reactive<Record<string, InventoryStocktakeLineRecord>>({})
 const form = reactive({
   businessDate: '',
   reason: '',
@@ -208,6 +227,22 @@ const canCancel = computed(() => authStore.hasPermission(config.value.cancelPerm
 const canPost = computed(() => !config.value.postPermission || authStore.hasPermission(config.value.postPermission))
 const canSubmit = computed(() => !config.value.submitPermission || authStore.hasPermission(config.value.submitPermission))
 const canWithdraw = computed(() => !config.value.withdrawPermission || authStore.hasPermission(config.value.withdrawPermission))
+const stocktakeCostVisible = computed(() => {
+  return config.value.kind !== 'stocktake' || (record.value as InventoryStocktakeRecord | null)?.costVisible !== false
+})
+const dirtyStocktakeLineCount = computed(() => {
+  return Object.keys(stocktakeLineInputs).filter((id) => stocktakeLineDirty(id)).length
+})
+const stocktakeEvidenceRequired = computed(() => {
+  return Object.values(stocktakeLineCache).some((line) => line.valuationRequirement?.requiredAttachment)
+})
+const showStocktakeEvidencePanel = computed(() => {
+  if (config.value.kind !== 'stocktake' || !record.value) {
+    return false
+  }
+  const summary = (record.value as InventoryStocktakeRecord).lineSummary
+  return stocktakeEvidenceRequired.value || Number(summary?.positiveVarianceLines ?? 0) > 0
+})
 
 function normalizeId(value: ResourceId | ''): ResourceId {
   const text = String(value).trim()
@@ -324,13 +359,92 @@ async function loadList() {
   }
 }
 
-function fillStocktakeInputs(lines: InventoryStocktakeLineRecord[] = []) {
-  Object.keys(stocktakeActualInputs).forEach((key) => {
-    delete stocktakeActualInputs[key]
+function clearReactiveRecord(target: Record<string, unknown>) {
+  Object.keys(target).forEach((key) => {
+    delete target[key]
   })
+}
+
+function resetStocktakeLineState() {
+  stocktakeLines.value = []
+  stocktakeLinePagination.page = 1
+  stocktakeLinePagination.pageSize = 20
+  stocktakeLinePagination.total = 0
+  stocktakeLineError.value = ''
+  stocktakeLineConflictMessage.value = ''
+  clearReactiveRecord(stocktakeLineInputs)
+  clearReactiveRecord(stocktakeLineOriginals)
+  clearReactiveRecord(stocktakeLineCache)
+}
+
+function stocktakeLineValues(line: InventoryStocktakeLineRecord): StocktakeLineInputState {
+  return {
+    countedQuantity: line.countedQuantity ?? '',
+    varianceUnitCost: line.varianceUnitCost ?? '',
+    varianceReason: line.varianceReason ?? '',
+  }
+}
+
+function stocktakeLineDirty(id: string) {
+  const input = stocktakeLineInputs[id]
+  const original = stocktakeLineOriginals[id]
+  if (!input || !original) {
+    return false
+  }
+  return input.countedQuantity !== original.countedQuantity
+    || input.varianceUnitCost !== original.varianceUnitCost
+    || input.varianceReason !== original.varianceReason
+}
+
+function syncStocktakeLinePage(lines: InventoryStocktakeLineRecord[]) {
+  let hasConflict = false
   lines.forEach((line) => {
-    stocktakeActualInputs[String(line.id)] = line.countedQuantity ?? ''
+    const id = String(line.id)
+    const values = stocktakeLineValues(line)
+    const original = stocktakeLineOriginals[id]
+    if (stocktakeLineDirty(id) && original && original.version !== line.version) {
+      hasConflict = true
+      return
+    }
+    stocktakeLineCache[id] = line
+    if (!stocktakeLineInputs[id] || !stocktakeLineDirty(id)) {
+      stocktakeLineInputs[id] = { ...values }
+      stocktakeLineOriginals[id] = {
+        ...values,
+        version: line.version,
+      }
+    }
   })
+  stocktakeLines.value = lines
+  if (hasConflict) {
+    stocktakeLineConflictMessage.value = '盘点行已被其他人更新，请刷新后重新录入'
+    actionError.value = stocktakeLineConflictMessage.value
+  }
+}
+
+async function loadStocktakeLines() {
+  if (!record.value || config.value.kind !== 'stocktake' || !config.value.api.listLines) {
+    return
+  }
+  stocktakeLineLoading.value = true
+  stocktakeLineError.value = ''
+  try {
+    const page = await config.value.api.listLines(record.value.id, {
+      page: stocktakeLinePagination.page,
+      pageSize: stocktakeLinePagination.pageSize,
+    })
+    const items = pageItems(page) as InventoryStocktakeLineRecord[]
+    syncStocktakeLinePage(items)
+    stocktakeLinePagination.page = Number(page.page ?? stocktakeLinePagination.page)
+    stocktakeLinePagination.pageSize = Number(page.pageSize ?? stocktakeLinePagination.pageSize)
+    stocktakeLinePagination.total = Number(page.total ?? items.length)
+  } catch (caught) {
+    stocktakeLines.value = []
+    stocktakeLinePagination.total = 0
+    stocktakeLineError.value = errorMessage(caught)
+  } finally {
+    stocktakeLineLoading.value = false
+  }
 }
 
 function resetForm() {
@@ -421,6 +535,9 @@ async function loadDetail() {
   }
   loading.value = true
   error.value = ''
+  if (config.value.kind === 'stocktake') {
+    resetStocktakeLineState()
+  }
   try {
     const detail = await config.value.api.get(recordId.value)
     record.value = detail
@@ -428,7 +545,7 @@ async function loadDetail() {
       fillFormFromRecord(detail)
     }
     if (config.value.kind === 'stocktake') {
-      fillStocktakeInputs((detail as InventoryStocktakeRecord).lines ?? [])
+      await loadStocktakeLines()
     }
   } catch (caught) {
     record.value = null
@@ -470,6 +587,14 @@ async function refreshCurrent() {
 }
 
 async function runAction(target: InventoryRecord, action: InventoryAllowedAction | string) {
+  if (
+    config.value.kind === 'stocktake'
+    && ['RECONCILE', 'SUBMIT_APPROVAL', 'COMPLETE_ZERO_VARIANCE'].includes(String(action))
+    && dirtyStocktakeLineCount.value > 0
+  ) {
+    actionError.value = '存在未保存盘点行，请先保存实盘'
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
@@ -504,14 +629,64 @@ function stocktakeActualText(line: InventoryStocktakeLineRecord) {
   return line.countedQuantity === null || line.countedQuantity === undefined ? '未盘' : formatQuantity(line.countedQuantity)
 }
 
-function editableStocktakeLines() {
+function stocktakeRequirementText(line: InventoryStocktakeLineRecord) {
+  const requirement = line.valuationRequirement
+  if (!requirement || requirement.mode === 'NONE') {
+    return '无需估值输入'
+  }
+  if (!stocktakeCostVisible.value) {
+    return '金额受限'
+  }
+  if (requirement.mode === 'AUTO_PUBLIC_AVERAGE') {
+    return `自动沿用公共均价${requirement.unitCost ? ` ${formatInventoryAmount(requirement.unitCost, 6)}` : ''}`
+  }
+  if (requirement.mode === 'PROJECT_EXPLICIT_UNIT_COST') {
+    return '项目盘盈需单位成本、原因和证据'
+  }
+  if (requirement.mode === 'EXPLICIT_UNIT_COST') {
+    return '需录入公共单位成本'
+  }
+  return String(requirement.mode)
+}
+
+function showStocktakeUnitCostInput(line: InventoryStocktakeLineRecord) {
+  return actionVisible(record.value as InventoryRecord, 'UPDATE_LINES')
+    && stocktakeCostVisible.value
+    && Boolean(line.valuationRequirement?.requiredUnitCost)
+}
+
+function showStocktakeReasonInput(line: InventoryStocktakeLineRecord) {
+  return actionVisible(record.value as InventoryRecord, 'UPDATE_LINES')
+    && Boolean(line.valuationRequirement?.requiredReason)
+}
+
+function stocktakeAttachmentReadonly(recordValue: InventoryRecord) {
+  return !actionVisible(recordValue, 'UPDATE_LINES') && !actionVisible(recordValue, 'SUBMIT_APPROVAL')
+}
+
+function stocktakeLinePayloads() {
   if (!record.value || config.value.kind !== 'stocktake') {
     return []
   }
-  return ((record.value as InventoryStocktakeRecord).lines ?? []).filter((line) => {
-    const value = stocktakeActualInputs[String(line.id)]
-    const original = line.countedQuantity ?? ''
-    return value !== undefined && value !== original
+  return Object.entries(stocktakeLineInputs).filter(([id]) => stocktakeLineDirty(id)).map(([id, input]) => {
+    const line = stocktakeLineCache[id]
+    const original = stocktakeLineOriginals[id]
+    const countedQuantity = input.countedQuantity.trim()
+    const varianceUnitCost = input.varianceUnitCost.trim()
+    const varianceReason = input.varianceReason.trim()
+    const payload: InventoryStocktakeLineUpdatePayload['lines'][number] = {
+      id: line.id,
+      version: original.version,
+      countedQuantity: countedQuantity === '' ? null : countedQuantity,
+    }
+    if (stocktakeCostVisible.value
+      && (line.valuationRequirement?.requiredUnitCost || varianceUnitCost || stocktakeLineOriginals[id]?.varianceUnitCost)) {
+      payload.varianceUnitCost = varianceUnitCost === '' ? null : varianceUnitCost
+    }
+    if (line.valuationRequirement?.requiredReason || varianceReason || stocktakeLineOriginals[id]?.varianceReason) {
+      payload.varianceReason = varianceReason === '' ? null : varianceReason
+    }
+    return payload
   })
 }
 
@@ -519,25 +694,66 @@ async function saveStocktakeLines() {
   if (!record.value || !config.value.api.updateLines) {
     return
   }
+  if (stocktakeLineLoading.value) {
+    actionError.value = '盘点行正在加载，请稍后再保存'
+    return
+  }
+  if (stocktakeLineConflictMessage.value) {
+    actionError.value = stocktakeLineConflictMessage.value
+    return
+  }
+  const lines = stocktakeLinePayloads()
+  if (lines.length === 0) {
+    actionError.value = '没有需要保存的盘点行'
+    return
+  }
+  if (lines.some((line) => line.countedQuantity === null)) {
+    actionError.value = '实盘数不能为空；未盘行保持留空即可，不会提交'
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
-    await config.value.api.updateLines(record.value.id, {
+    const saved = await config.value.api.updateLines(record.value.id, {
       version: record.value.version,
-      lines: editableStocktakeLines().map((line) => ({
-        id: line.id,
-        version: line.version,
-        countedQuantity: stocktakeActualInputs[String(line.id)] === ''
-          ? null
-          : stocktakeActualInputs[String(line.id)],
-      })),
+      lines,
     })
-    await loadDetail()
+    record.value = saved
+    stocktakeLineConflictMessage.value = ''
+    clearReactiveRecord(stocktakeLineInputs)
+    clearReactiveRecord(stocktakeLineOriginals)
+    clearReactiveRecord(stocktakeLineCache)
+    await loadStocktakeLines()
   } catch (caught) {
     actionError.value = errorMessage(caught)
   } finally {
     actionLoading.value = false
   }
+}
+
+function changeStocktakeLinePage(page: number) {
+  if (stocktakeLineLoading.value) {
+    return
+  }
+  stocktakeLinePagination.page = page
+  void loadStocktakeLines()
+}
+
+function changeStocktakeLinePageSize(pageSize: number) {
+  if (stocktakeLineLoading.value) {
+    return
+  }
+  stocktakeLinePagination.pageSize = pageSize
+  stocktakeLinePagination.page = 1
+  void loadStocktakeLines()
+}
+
+function stocktakeLineSummaryText(recordValue: InventoryRecord) {
+  const summary = (recordValue as InventoryStocktakeRecord).lineSummary
+  if (!summary) {
+    return `明细 ${recordValue.lineCount ?? 0} 行`
+  }
+  return `总行 ${summary.totalLines ?? 0}，已盘 ${summary.countedLines ?? 0}，未盘 ${summary.uncountedLines ?? 0}，盘差 ${summary.varianceLines ?? 0}`
 }
 
 function buildPayload(): object {
@@ -694,6 +910,7 @@ watch(() => route.name, () => {
   records.value = []
   record.value = null
   actionError.value = ''
+  resetStocktakeLineState()
   if (isList.value) {
     void loadList()
   } else if (isForm.value && mode.value === 'create') {
@@ -1124,41 +1341,124 @@ onMounted(() => {
         </el-table>
       </div>
 
-      <div v-else-if="config.kind === 'stocktake'" class="table-scroll">
-        <el-button
-          v-if="actionVisible(record, 'UPDATE_LINES')"
-          class="stocktake-save"
-          type="primary"
-          :loading="actionLoading"
-          @click="saveStocktakeLines"
-        >
-          保存实盘
-        </el-button>
-        <el-table :data="(record as InventoryStocktakeRecord).lines ?? []" empty-text="暂无盘点行" stripe>
-          <el-table-column prop="lineNo" label="行号" min-width="80" />
-          <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
-          <el-table-column label="物料" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
-          </el-table-column>
-          <el-table-column label="账面数" min-width="110" align="right">
-            <template #default="{ row }">{{ formatQuantity(row.bookQuantity) }}</template>
-          </el-table-column>
-          <el-table-column label="实盘数" min-width="160" align="right">
-            <template #default="{ row }">
-              <span :data-test="`stocktake-line-actual-${row.id}`">{{ stocktakeActualText(row) }}</span>
-              <el-input
-                v-if="actionVisible(record, 'UPDATE_LINES')"
-                v-model="stocktakeActualInputs[String(row.id)]"
-                class="stocktake-actual-input"
-                :name="`stocktake-line-actual-${row.id}`"
-                placeholder="留空为未盘"
-              />
-            </template>
-          </el-table-column>
-          <el-table-column label="差异数" min-width="110" align="right">
-            <template #default="{ row }">{{ row.varianceQuantity === null || row.varianceQuantity === undefined ? '-' : formatQuantity(row.varianceQuantity) }}</template>
-          </el-table-column>
-        </el-table>
+      <div v-else-if="config.kind === 'stocktake'" class="stocktake-lines-section">
+        <div class="stocktake-toolbar">
+          <span class="stocktake-line-summary">{{ stocktakeLineSummaryText(record) }}</span>
+          <el-button
+            v-if="actionVisible(record, 'UPDATE_LINES')"
+            class="stocktake-save"
+            type="primary"
+            :loading="actionLoading"
+            :disabled="stocktakeLineLoading || Boolean(stocktakeLineConflictMessage)"
+            @click="saveStocktakeLines"
+          >
+            保存实盘
+          </el-button>
+        </div>
+        <el-alert
+          v-if="stocktakeLineError"
+          class="state-alert"
+          type="error"
+          :title="stocktakeLineError"
+          :closable="false"
+        />
+        <div class="table-scroll">
+          <el-table
+            v-loading="stocktakeLineLoading"
+            :data="stocktakeLines"
+            :empty-text="stocktakeLineLoading ? '盘点行加载中' : '暂无盘点行'"
+            stripe
+          >
+            <el-table-column prop="lineNo" label="行号" min-width="80" />
+            <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
+            <el-table-column label="物料" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
+            </el-table-column>
+            <el-table-column label="所有权" min-width="110">
+              <template #default="{ row }">{{ row.ownershipTypeName || ownershipTypeLabel(row.ownershipType) }}</template>
+            </el-table-column>
+            <el-table-column label="项目" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">{{ rowProjectText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">{{ trackingIdentityText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="账面数" min-width="110" align="right">
+              <template #default="{ row }">{{ formatQuantity(row.bookQuantity) }}</template>
+            </el-table-column>
+            <el-table-column label="实盘数" min-width="160" align="right">
+              <template #default="{ row }">
+                <span :data-test="`stocktake-line-actual-${row.id}`">{{ stocktakeActualText(row) }}</span>
+                <el-input
+                  v-if="actionVisible(record, 'UPDATE_LINES') && stocktakeLineInputs[String(row.id)]"
+                  v-model="stocktakeLineInputs[String(row.id)].countedQuantity"
+                  class="stocktake-actual-input"
+                  :name="`stocktake-line-actual-${row.id}`"
+                  :disabled="stocktakeLineLoading || Boolean(stocktakeLineConflictMessage)"
+                  placeholder="未盘行留空；保存时需填实盘数"
+                  @input="actionError = ''"
+                />
+              </template>
+            </el-table-column>
+            <el-table-column label="差异数" min-width="110" align="right">
+              <template #default="{ row }">{{ row.varianceQuantity === null || row.varianceQuantity === undefined ? '-' : formatQuantity(row.varianceQuantity) }}</template>
+            </el-table-column>
+            <el-table-column label="估值要求" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">{{ stocktakeRequirementText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="单位成本" min-width="150" align="right">
+              <template #default="{ row }">
+                <span v-if="!stocktakeCostVisible && row.valuationRequirement?.mode && row.valuationRequirement?.mode !== 'NONE'">金额受限</span>
+                <span v-else-if="row.valuationRequirement?.mode === 'AUTO_PUBLIC_AVERAGE'">
+                  {{ formatInventoryAmount(row.valuationRequirement?.unitCost, 6) }}
+                </span>
+                <el-input
+                  v-else-if="showStocktakeUnitCostInput(row) && stocktakeLineInputs[String(row.id)]"
+                  v-model="stocktakeLineInputs[String(row.id)].varianceUnitCost"
+                  class="stocktake-actual-input"
+                  :name="`stocktake-line-unit-cost-${row.id}`"
+                  :disabled="stocktakeLineLoading || Boolean(stocktakeLineConflictMessage)"
+                  placeholder="0.000000"
+                  @input="actionError = ''"
+                />
+                <span v-else>{{ formatInventoryAmount(row.varianceUnitCost, 6) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="盘盈原因" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                <el-input
+                  v-if="showStocktakeReasonInput(row) && stocktakeLineInputs[String(row.id)]"
+                  v-model="stocktakeLineInputs[String(row.id)].varianceReason"
+                  :name="`stocktake-line-reason-${row.id}`"
+                  :disabled="stocktakeLineLoading || Boolean(stocktakeLineConflictMessage)"
+                  placeholder="项目盘盈原因必填"
+                  @input="actionError = ''"
+                />
+                <span v-else>{{ row.varianceReason || '-' }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <el-pagination
+          class="table-pagination"
+          data-test="stocktake-line-pagination"
+          layout="total, sizes, prev, pager, next"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="stocktakeLinePagination.total"
+          :page-size="stocktakeLinePagination.pageSize"
+          :current-page="stocktakeLinePagination.page"
+          :disabled="stocktakeLineLoading"
+          @current-change="changeStocktakeLinePage"
+          @size-change="changeStocktakeLinePageSize"
+        />
+        <AttachmentPanel
+          v-if="showStocktakeEvidencePanel"
+          class="stocktake-evidence-panel"
+          object-type="INVENTORY_STOCKTAKE"
+          :object-id="record.id"
+          title="项目盘盈证据附件"
+          :readonly="stocktakeAttachmentReadonly(record)"
+        />
       </div>
 
       <div v-else class="table-scroll">
@@ -1239,13 +1539,31 @@ onMounted(() => {
   word-break: break-word;
 }
 
-.stocktake-save {
+.stocktake-lines-section {
+  margin-top: 8px;
+}
+
+.stocktake-toolbar {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: space-between;
   margin: 0 0 10px;
+}
+
+.stocktake-line-summary {
+  color: var(--qherp-muted);
+  font-size: 13px;
 }
 
 .stocktake-actual-input {
   margin-top: 6px;
   max-width: 140px;
+}
+
+.stocktake-evidence-panel {
+  margin-top: 14px;
 }
 
 @media (max-width: 900px) {

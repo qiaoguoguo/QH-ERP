@@ -29,12 +29,19 @@ class Stage022MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(tableExists(jdbcTemplate, "platform_approval_instance")).isTrue();
 		assertThat(columnExists(jdbcTemplate, "sys_audit_log", "detail_json")).isTrue();
-		assertThat(count(jdbcTemplate, "platform_approval_definition")).isEqualTo(2);
-		assertThat(count(jdbcTemplate, "platform_approval_definition_step")).isEqualTo(2);
-		assertThat(count(jdbcTemplate, "platform_print_template")).isEqualTo(2);
+		assertThat(approvalDefinitionExists(jdbcTemplate, "SALES_PROJECT_CONTRACT_ACTIVATION")).isTrue();
+		assertThat(approvalDefinitionExists(jdbcTemplate, "BOM_ECO_APPLICATION")).isTrue();
+		assertThat(approvalStepExists(jdbcTemplate, "SALES_PROJECT_CONTRACT_ACTIVATION",
+				"sales:contract:activate-approve")).isTrue();
+		assertThat(approvalStepExists(jdbcTemplate, "BOM_ECO_APPLICATION",
+				"material:bom-eco:apply-approve")).isTrue();
+		assertThat(printTemplateExists(jdbcTemplate, "CONTRACT_ACTIVATION_APPROVAL_V1",
+				"SALES_PROJECT_CONTRACT_ACTIVATION")).isTrue();
+		assertThat(printTemplateExists(jdbcTemplate, "BOM_ECO_APPLICATION_APPROVAL_V1",
+				"BOM_ECO_APPLICATION")).isTrue();
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
 		assertThat(count(jdbcTemplate, "platform_message")).isZero();
@@ -383,6 +390,36 @@ class Stage022MigrationRegressionTests {
 
 	private long count(JdbcTemplate jdbcTemplate, String tableName) {
 		return jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
+	}
+
+	private boolean approvalDefinitionExists(JdbcTemplate jdbcTemplate, String sceneCode) {
+		return jdbcTemplate.queryForObject("""
+				select count(*) > 0
+				from platform_approval_definition
+				where scene_code = ?
+				  and status = 'ENABLED'
+				""", Boolean.class, sceneCode);
+	}
+
+	private boolean approvalStepExists(JdbcTemplate jdbcTemplate, String sceneCode, String permissionCode) {
+		return jdbcTemplate.queryForObject("""
+				select count(*) > 0
+				from platform_approval_definition_step s
+				join platform_approval_definition d on d.id = s.definition_id
+				where d.scene_code = ?
+				  and s.step_no = 1
+				  and s.candidate_permission_code = ?
+				""", Boolean.class, sceneCode, permissionCode);
+	}
+
+	private boolean printTemplateExists(JdbcTemplate jdbcTemplate, String templateCode, String sceneCode) {
+		return jdbcTemplate.queryForObject("""
+				select count(*) > 0
+				from platform_print_template
+				where template_code = ?
+				  and scene_code = ?
+				  and status = 'ENABLED'
+				""", Boolean.class, templateCode, sceneCode);
 	}
 
 	private String status(JdbcTemplate jdbcTemplate, String tableName, long id) {

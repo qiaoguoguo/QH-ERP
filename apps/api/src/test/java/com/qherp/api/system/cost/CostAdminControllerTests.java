@@ -76,7 +76,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(materialCost.get("sourceLineId").isNull()).isFalse();
 		assertThat(materialCost.get("materialId").longValue()).isEqualTo(fixture.rawMaterialId());
 		assertDecimal(materialCost, "quantity", "4.000000");
-		assertThat(materialCost.get("amount").isNull()).isTrue();
+		assertDecimal(materialCost, "amount", "4.000000");
 		assertThat(auditCount("MFG_COST_RECORD_AUTO_CREATE", "MFG_COST_RECORD")).isGreaterThanOrEqualTo(1L);
 	}
 
@@ -538,6 +538,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		line.put("warehouseId", warehouseId);
 		line.put("materialId", materialId);
 		line.put("quantity", quantity);
+		line.put("unitPrice", "1.000000");
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("documentType", "OPENING");
 		body.put("businessDate", LocalDate.now().toString());
@@ -754,6 +755,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("businessDate", LocalDate.now().toString());
 		body.put("receiptWarehouseId", receiptWarehouseId);
 		body.put("quantity", quantity);
+		body.put("provisionalUnitCost", "1.000000");
 		body.put("remark", "成本完工入库测试");
 		return body;
 	}

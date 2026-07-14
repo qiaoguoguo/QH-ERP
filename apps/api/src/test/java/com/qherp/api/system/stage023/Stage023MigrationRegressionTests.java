@@ -34,11 +34,11 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须从v1迁移到v23并建立计价结构权限审批种子和预留成本层身份() {
+	void 空库必须从v1迁移到v24并建立计价结构权限审批种子和预留成本层身份() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -83,6 +83,7 @@ class Stage023MigrationRegressionTests {
 		assertThat(constraintExists(jdbcTemplate, "inv_warehouse_transfer_line",
 				"fk_inv_warehouse_transfer_line_source_layer")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 
 		assertPermissionsExist(jdbcTemplate, List.of(
 				"inventory:valuation:view",
@@ -115,7 +116,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v19代表性存量升级到v23必须保留数量质量追踪预留并标记历史未估值() {
+	void v19代表性存量升级到v24必须保留数量质量追踪预留并标记历史未估值() {
 		migrate("19");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
@@ -123,8 +124,9 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
 		assertThat(queryText(jdbcTemplate, """
@@ -167,17 +169,20 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v20代表性存量升级到v23必须保留既有计价状态并具备成本层和预留身份() {
+	void v20代表性存量升级到v24必须保留既有计价状态并具备成本层和预留身份() {
 		migrate("20");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
 		RepresentativeStockData data = insertRepresentativeV20Stock(jdbcTemplate);
+		long oldDraftLineId = insertLegacyStocktakeDraft(jdbcTemplate, data.valuedBalanceId());
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
 				from inv_stock_balance
@@ -216,16 +221,19 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v21代表性存量升级到v23必须保留既有计价状态并补齐成本层余额和预留身份() {
+	void v21代表性存量升级到v24必须保留既有计价状态并补齐成本层余额和预留身份() {
 		migrate("21");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
 		RepresentativeStockData data = insertRepresentativeV20Stock(jdbcTemplate);
+		long oldDraftLineId = insertLegacyStocktakeDraft(jdbcTemplate, data.valuedBalanceId());
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
 				from inv_stock_balance
@@ -257,15 +265,18 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v23必须为预留补齐成本层身份并兼容公共唯一项目和历史项目空层() {
+	void v22到v24必须为预留补齐成本层身份并兼容公共唯一项目和历史项目空层() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		ReservationLayerMigrationData data = insertV22ReservationLayerData(jdbcTemplate, false);
+		long oldDraftLineId = insertLegacyStocktakeDraftForReservation(jdbcTemplate, data.publicReservationId());
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of("cost_layer_id"));
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
 					|| coalesce(cost_layer_id::text, 'NULL')
@@ -289,14 +300,14 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v23仅公共活动预留必须重建公共锁定且清除项目层旧污染锁定() {
+	void v22到v24仅公共活动预留必须重建公共锁定且清除项目层旧污染锁定() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		PublicReservationMigrationData data = insertV22PublicOnlyReservationData(jdbcTemplate);
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
 					|| coalesce(cost_layer_id::text, 'NULL')
@@ -316,14 +327,14 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v23追踪物料空批次活动预留必须保留父级聚合且不锁具体批次余额() {
+	void v22到v24追踪物料空批次活动预留必须保留父级聚合且不锁具体批次余额() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		TrackingAggregateReservationMigrationData data = insertV22TrackingAggregateReservationData(jdbcTemplate);
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':'
 					|| coalesce(batch_id::text, 'NULL') || ':' || coalesce(serial_id::text, 'NULL')
@@ -343,7 +354,23 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v23遇到活动项目预留空层且存在多个候选成本层必须迁移失败() {
+	void 旧v23升级到v24必须新增盘点估值字段且保留历史草稿为空() {
+		migrate("23");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertStocktakeVarianceColumnsAbsent(jdbcTemplate);
+		PublicReservationMigrationData data = insertV22PublicOnlyReservationData(jdbcTemplate);
+		long oldDraftLineId = insertLegacyStocktakeDraftForReservation(jdbcTemplate, data.publicReservationId());
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
+	}
+
+	@Test
+	void v22到v24遇到活动项目预留空层且存在多个候选成本层必须迁移失败() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		insertV22ReservationLayerData(jdbcTemplate, true);
@@ -810,6 +837,116 @@ class Stage023MigrationRegressionTests {
 					?, 'DIRECT_MATERIAL', ?, ?, ?, '023迁移物料', 'test', now(), 'test', now())
 				returning id
 				""", code, code + "物料", categoryId, unitId, trackingMethod, valuationCategory, valued, valued);
+	}
+
+	private long insertLegacyStocktakeDraftForReservation(JdbcTemplate jdbcTemplate, long reservationId) {
+		Long balanceId = jdbcTemplate.queryForObject("""
+				select b.id
+				from inv_stock_reservation r
+				join inv_stock_balance b on b.warehouse_id = r.warehouse_id
+					and b.material_id = r.material_id
+					and b.unit_id = r.unit_id
+					and b.quality_status = r.quality_status
+					and b.ownership_type = r.ownership_type
+					and b.project_id is not distinct from r.project_id
+				where r.id = ?
+				order by b.id
+				limit 1
+				""", Long.class, reservationId);
+		return insertLegacyStocktakeDraft(jdbcTemplate, balanceId);
+	}
+
+	private long insertLegacyStocktakeDraft(JdbcTemplate jdbcTemplate, long balanceId) {
+		long suffix = count(jdbcTemplate, "inv_stocktake") + 1;
+		long createdByUserId = insertLegacyUser(jdbcTemplate, "s23_mig_stocktake_owner_" + suffix);
+		long stocktakeId = id(jdbcTemplate, """
+				insert into inv_stocktake (
+					stocktake_no, business_date, scope_type, warehouse_id, material_id, reason, status,
+					idempotency_key, created_by_user_id, created_by_username, updated_by_username
+				)
+				select ?, current_date, 'WAREHOUSE', warehouse_id, null, '023迁移旧盘点行兼容', 'COUNTING',
+					?, ?, 'test', 'test'
+				from inv_stock_balance
+				where id = ?
+				returning id
+				""", "S23-MIG-STK-" + suffix, "S23-MIG-STK-IDEMP-" + suffix, createdByUserId, balanceId);
+		return id(jdbcTemplate, """
+				insert into inv_stocktake_line (
+					stocktake_id, balance_id, line_no, warehouse_id, material_id, unit_id, quality_status,
+					ownership_type, project_id, batch_id, serial_id, book_quantity, counted_quantity,
+					variance_quantity
+				)
+				select ?, id, 1, warehouse_id, material_id, unit_id, quality_status, ownership_type, project_id,
+					batch_id, serial_id, quantity_on_hand, null, null
+				from inv_stock_balance
+				where id = ?
+				returning id
+				""", stocktakeId, balanceId);
+	}
+
+	private long insertLegacyUser(JdbcTemplate jdbcTemplate, String username) {
+		return id(jdbcTemplate, """
+				insert into sys_user (
+					username, password_hash, display_name, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'test', ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", username, "023迁移旧盘点创建人");
+	}
+
+	private void assertStocktakeVarianceColumnsNullable(JdbcTemplate jdbcTemplate) {
+		assertColumnsExist(jdbcTemplate, "inv_stocktake_line", List.of(
+				"variance_unit_cost",
+				"variance_reason"));
+		SoftAssertions.assertSoftly((softly) -> {
+			for (String columnName : List.of("variance_unit_cost", "variance_reason")) {
+				softly.assertThat(queryText(jdbcTemplate, """
+						select is_nullable
+						from information_schema.columns
+						where table_schema = 'public'
+						  and table_name = 'inv_stocktake_line'
+						  and column_name = ?
+						""", columnName)).as(columnName + " 必须允许旧盘点行为空").isEqualTo("YES");
+			}
+			softly.assertThat(constraintExists(jdbcTemplate, "inv_stocktake_line",
+					"ck_inv_stocktake_line_variance_unit_cost"))
+				.as("盘点行盘盈单价必须有非负数据库约束")
+				.isTrue();
+			softly.assertThat(indexExists(jdbcTemplate, "idx_inv_stocktake_line_stocktake_order"))
+				.as("盘点行分页必须有稳定顺序索引")
+				.isTrue();
+		});
+	}
+
+	private void assertStocktakeVarianceColumnsAbsent(JdbcTemplate jdbcTemplate) {
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_unit_cost"))
+				.as("旧 V23 不应包含盘盈单价字段")
+				.isFalse();
+			softly.assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_reason"))
+				.as("旧 V23 不应包含盘盈原因字段")
+				.isFalse();
+			softly.assertThat(constraintExists(jdbcTemplate, "inv_stocktake_line",
+					"ck_inv_stocktake_line_variance_unit_cost"))
+				.as("旧 V23 不应包含 V24 非负约束")
+				.isFalse();
+			softly.assertThat(indexExists(jdbcTemplate, "idx_inv_stocktake_line_stocktake_order"))
+				.as("旧 V23 不应包含 V24 盘点行分页索引")
+				.isFalse();
+		});
+	}
+
+	private void assertLegacyStocktakeDraftVarianceFieldsNull(JdbcTemplate jdbcTemplate, long lineId) {
+		assertThat(queryDecimal(jdbcTemplate, """
+				select variance_unit_cost
+				from inv_stocktake_line
+				where id = ?
+				""", lineId)).isNull();
+		assertThat(queryText(jdbcTemplate, """
+				select variance_reason
+				from inv_stocktake_line
+				where id = ?
+				""", lineId)).isNull();
 	}
 
 	private void assertTablesExist(JdbcTemplate jdbcTemplate, List<String> tableNames) {

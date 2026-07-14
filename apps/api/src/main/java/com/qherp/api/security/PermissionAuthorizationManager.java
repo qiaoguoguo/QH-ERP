@@ -923,7 +923,8 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "inventory:ownership-conversion:update";
 		}
 		String stocktakePath = "/api/admin/inventory/stocktakes";
-		if ("GET".equals(method) && (stocktakePath.equals(path) || matchesIdPath(path, stocktakePath))) {
+		if ("GET".equals(method) && (stocktakePath.equals(path) || matchesIdPath(path, stocktakePath)
+				|| path.matches(Pattern.quote(stocktakePath) + "/\\d+/lines"))) {
 			return "inventory:stocktake:view";
 		}
 		if ("POST".equals(method) && stocktakePath.equals(path)) {

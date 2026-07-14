@@ -598,13 +598,37 @@ public class InventoryStage023AdminService {
 		if (!"COUNTING".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		if (request == null || request.lines() == null || request.lines().isEmpty()) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		boolean canEditCost = costVisible(operator);
 		for (StocktakeLineCount line : request.lines()) {
+			if (line == null || line.id() == null || line.version() == null || line.countedQuantity() == null) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+			if (line.varianceUnitCost() != null && line.varianceUnitCost().compareTo(BigDecimal.ZERO) < 0) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+			if (line.varianceUnitCost() != null && !canEditCost) {
+				throw new BusinessException(ApiErrorCode.INVENTORY_COST_PERMISSION_REQUIRED);
+			}
+			String varianceReason = trimToNull(line.varianceReason());
 			int updated = this.jdbcTemplate.update("""
 					update inv_stocktake_line
-					set counted_quantity = ?, variance_quantity = ? - book_quantity, updated_at = now(),
+					set counted_quantity = ?,
+					    variance_quantity = ? - book_quantity,
+					    variance_unit_cost = case
+					        when ? - book_quantity <= 0 then null
+					        when cast(? as boolean) then ?::numeric
+					        else variance_unit_cost
+					    end,
+					    variance_reason = case when ? - book_quantity > 0 then ? else null end,
+					    updated_at = now(),
 					    version = version + 1
 					where id = ? and stocktake_id = ? and version = ?
-					""", line.countedQuantity(), line.countedQuantity(), line.id(), id, line.version());
+					""", line.countedQuantity(), line.countedQuantity(), line.countedQuantity(), canEditCost,
+					line.varianceUnitCost(), line.countedQuantity(), varianceReason, line.id(), id,
+					line.version());
 			if (updated == 0) {
 				throw new BusinessException(ApiErrorCode.CONFLICT);
 			}
@@ -635,6 +659,7 @@ public class InventoryStage023AdminService {
 		if (uncounted != null && uncounted > 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_STOCKTAKE_UNCOUNTED_LINE_EXISTS);
 		}
+		validateStocktakeVarianceRequirements(id, false);
 		this.jdbcTemplate.update("""
 				update inv_stocktake
 				set status = 'RECONCILED', updated_by_username = ?, updated_at = now(), version = version + 1
@@ -655,6 +680,7 @@ public class InventoryStage023AdminService {
 		if (!"RECONCILED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		validateStocktakeVarianceRequirements(id, true);
 		PlatformApprovalService.ApprovalInstanceRecord approval = this.approvalService.submitInventoryStocktake(id,
 				new PlatformApprovalService.ApprovalSubmitRequest(request.version(), request.reason(),
 						request.idempotencyKey()),
@@ -735,20 +761,27 @@ public class InventoryStage023AdminService {
 		}
 		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
 				"INVENTORY_STOCKTAKE", id);
+		validateStocktakeVarianceRequirements(id, true);
 		for (StocktakeLine line : stocktakeLines(id)) {
-			if (line.varianceQuantity().compareTo(BigDecimal.ZERO) == 0) {
+			BigDecimal varianceQuantity = stocktakeVarianceQuantity(line);
+			if (varianceQuantity.compareTo(BigDecimal.ZERO) == 0) {
 				continue;
 			}
-			InventoryDirection direction = line.varianceQuantity().compareTo(BigDecimal.ZERO) > 0
+			InventoryDirection direction = varianceQuantity.compareTo(BigDecimal.ZERO) > 0
 					? InventoryDirection.IN : InventoryDirection.OUT;
 			InventoryMovementType movementType = direction == InventoryDirection.IN
 					? InventoryMovementType.STOCKTAKE_VARIANCE_IN : InventoryMovementType.STOCKTAKE_VARIANCE_OUT;
-			this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(movementType, direction,
-					line.warehouseId(), line.materialId(), line.unitId(), line.varianceQuantity().abs(),
-					InventoryQualityStatus.valueOf(line.qualityStatus()), "STOCKTAKE", id, line.id(),
-					header.businessDate(), header.reason(), null, operator.username(), false, line.batchId(),
-					line.serialId(), new InventoryPostingService.ValuationContext(line.ownershipType(),
-							line.projectId(), null, line.costLayerId(), null)));
+			InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+					new InventoryPostingService.PostingRequest(movementType, direction, line.warehouseId(),
+							line.materialId(), line.unitId(), varianceQuantity.abs(),
+							InventoryQualityStatus.valueOf(line.qualityStatus()), "STOCKTAKE", id, line.id(),
+							header.businessDate(), stocktakeMovementReason(header, line), null, operator.username(),
+							false, line.batchId(), line.serialId(), stocktakeValuationContext(line, direction)));
+			this.jdbcTemplate.update("""
+					update inv_stocktake_line
+					set variance_movement_id = ?, version = version + 1
+					where id = ?
+					""", posting.movementId(), line.id());
 		}
 		this.jdbcTemplate.update("update inv_stocktake_range_lock set released_at = now() where stocktake_id = ?",
 				id);
@@ -1132,6 +1165,28 @@ public class InventoryStage023AdminService {
 			.orElse(Map.of());
 	}
 
+	private Map<String, Object> stocktakeLineSummary(Long id) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*) as total_lines,
+				       count(*) filter (where counted_quantity is not null) as counted_lines,
+				       count(*) filter (where coalesce(variance_quantity, 0) <> 0) as variance_lines,
+				       count(*) filter (where coalesce(variance_quantity, 0) > 0) as positive_variance_lines,
+				       count(*) filter (where coalesce(variance_quantity, 0) < 0) as negative_variance_lines,
+				       count(*) filter (where counted_quantity is null) as uncounted_lines
+				from inv_stocktake_line
+				where stocktake_id = ?
+				""", (rs, rowNum) -> {
+			Map<String, Object> summary = new LinkedHashMap<>();
+			summary.put("totalLines", rs.getLong("total_lines"));
+			summary.put("countedLines", rs.getLong("counted_lines"));
+			summary.put("varianceLines", rs.getLong("variance_lines"));
+			summary.put("positiveVarianceLines", rs.getLong("positive_variance_lines"));
+			summary.put("negativeVarianceLines", rs.getLong("negative_variance_lines"));
+			summary.put("uncountedLines", rs.getLong("uncounted_lines"));
+			return summary;
+		}, id);
+	}
+
 	private List<String> allowedActions(String documentType, String status, CurrentUser currentUser, Long documentId) {
 		if (currentUser == null) {
 			return List.of();
@@ -1212,6 +1267,41 @@ public class InventoryStage023AdminService {
 				where stocktake_id = ?
 				and coalesce(variance_quantity, 0) <> 0
 				""", Long.class, documentId);
+		return count != null && count > 0;
+	}
+
+	private void validateStocktakeVarianceRequirements(Long stocktakeId, boolean requireProjectEvidence) {
+		boolean projectPositiveVariance = false;
+		for (StocktakeLine line : stocktakeLines(stocktakeId)) {
+			StocktakeValuationRequirement requirement = valuationRequirement(line);
+			if ("EXPLICIT_UNIT_COST".equals(requirement.mode()) && line.varianceUnitCost() == null) {
+				throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
+			}
+			if ("PROJECT_EXPLICIT_UNIT_COST".equals(requirement.mode())) {
+				projectPositiveVariance = true;
+				if (line.varianceUnitCost() == null) {
+					throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
+				}
+				if (!hasText(line.varianceReason())) {
+					throw new BusinessException(ApiErrorCode.INVENTORY_STOCKTAKE_VARIANCE_REASON_REQUIRED);
+				}
+			}
+		}
+		if (requireProjectEvidence && projectPositiveVariance && !hasActiveStocktakeEvidence(stocktakeId)) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_STOCKTAKE_EVIDENCE_REQUIRED);
+		}
+	}
+
+	private boolean hasActiveStocktakeEvidence(Long stocktakeId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from platform_business_attachment a
+				join platform_file_object f on f.id = a.file_id
+				where a.object_type = 'INVENTORY_STOCKTAKE'
+				  and a.object_id = ?
+				  and a.status = 'AVAILABLE'
+				  and f.status = 'AVAILABLE'
+				""", Long.class, stocktakeId);
 		return count != null && count > 0;
 	}
 
@@ -1367,10 +1457,29 @@ public class InventoryStage023AdminService {
 		result.put("materialId", header.materialId());
 		result.put("costVisible", costVisible);
 		result.put("allowedActions", allowedActions("STOCKTAKE", header.status(), currentUser, id));
-		result.put("lines", stocktakeLines(id).stream().map((line) -> lineMap(line, costVisible)).toList());
+		result.put("lineSummary", stocktakeLineSummary(id));
 		result.put("approvalSummary", approvalSummary("INVENTORY_STOCKTAKE_VARIANCE_POST", "INVENTORY_STOCKTAKE",
 				id));
 		return result;
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<Map<String, Object>> stocktakeLines(Long id, int page, int pageSize,
+			CurrentUser currentUser) {
+		header("inv_stocktake", id);
+		boolean costVisible = costVisible(currentUser);
+		long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stocktake_line
+				where stocktake_id = ?
+				""", Long.class, id);
+		int safePageSize = Math.max(pageSize, 1);
+		int safePage = Math.max(page, 1);
+		List<Map<String, Object>> items = stocktakeLines(id, safePageSize, (safePage - 1) * safePageSize)
+			.stream()
+			.map((line) -> lineMap(line, costVisible))
+			.toList();
+		return PageResponse.of(items, safePage, safePageSize, total);
 	}
 
 	private Map<String, Object> valuationAdjustmentMap(Long id, CurrentUser currentUser) {
@@ -1585,21 +1694,35 @@ public class InventoryStage023AdminService {
 	}
 
 	private List<StocktakeLine> stocktakeLines(Long stocktakeId) {
+		return stocktakeLines(stocktakeId, null, null);
+	}
+
+	private List<StocktakeLine> stocktakeLines(Long stocktakeId, Integer limit, Integer offset) {
+		List<Object> args = new ArrayList<>();
+		args.add(stocktakeId);
+		String pageSql = "";
+		if (limit != null && offset != null) {
+			pageSql = " limit ? offset ?";
+			args.add(limit);
+			args.add(offset);
+		}
 		return this.jdbcTemplate.query("""
 				select l.id, l.line_no, l.warehouse_id, l.material_id, l.unit_id, l.quality_status,
 				       l.ownership_type, l.project_id, l.batch_id, l.serial_id, l.book_quantity,
 				       l.counted_quantity, coalesce(l.variance_quantity, 0) as variance_quantity,
-				       b.cost_layer_id, l.version
+				       l.variance_unit_cost, l.variance_reason, b.cost_layer_id, l.version
 				from inv_stocktake_line l
 				join inv_stock_balance b on b.id = l.balance_id
 				where l.stocktake_id = ?
 				order by l.line_no, l.id
-				""", (rs, rowNum) -> new StocktakeLine(rs.getLong("id"), rs.getInt("line_no"),
+				%s
+				""".formatted(pageSql), (rs, rowNum) -> new StocktakeLine(rs.getLong("id"), rs.getInt("line_no"),
 				rs.getLong("warehouse_id"), rs.getLong("material_id"), rs.getLong("unit_id"),
 				rs.getString("quality_status"), rs.getString("ownership_type"), nullableLong(rs, "project_id"),
 				nullableLong(rs, "batch_id"), nullableLong(rs, "serial_id"), rs.getBigDecimal("book_quantity"),
 				rs.getBigDecimal("counted_quantity"), rs.getBigDecimal("variance_quantity"),
-				nullableLong(rs, "cost_layer_id"), rs.getLong("version")), stocktakeId);
+				rs.getBigDecimal("variance_unit_cost"), rs.getString("variance_reason"),
+				nullableLong(rs, "cost_layer_id"), rs.getLong("version")), args.toArray());
 	}
 
 	private List<ValuationAdjustmentLine> valuationAdjustmentLines(Long adjustmentId) {
@@ -1705,10 +1828,13 @@ public class InventoryStage023AdminService {
 		row.put("serialNo", serialNo(line.serialId()));
 		if (costVisible) {
 			row.put("costLayerId", line.costLayerId());
+			row.put("varianceUnitCost", decimal(line.varianceUnitCost()));
 		}
 		row.put("bookQuantity", decimal(line.bookQuantity()));
 		row.put("countedQuantity", decimal(line.countedQuantity()));
-		row.put("varianceQuantity", decimal(line.varianceQuantity()));
+		row.put("varianceQuantity", decimal(stocktakeVarianceQuantity(line)));
+		row.put("varianceReason", line.varianceReason());
+		row.put("valuationRequirement", valuationRequirementMap(line, costVisible));
 		row.put("version", line.version());
 		return row;
 	}
@@ -1735,6 +1861,75 @@ public class InventoryStage023AdminService {
 		}
 		row.put("version", line.version());
 		return row;
+	}
+
+	private Map<String, Object> valuationRequirementMap(StocktakeLine line, boolean costVisible) {
+		StocktakeValuationRequirement requirement = valuationRequirement(line);
+		Map<String, Object> row = new LinkedHashMap<>();
+		row.put("mode", requirement.mode());
+		row.put("requiredUnitCost", requirement.requiredUnitCost());
+		row.put("requiredReason", requirement.requiredReason());
+		row.put("requiredAttachment", requirement.requiredAttachment());
+		if (costVisible && requirement.unitCost() != null) {
+			row.put("unitCost", decimal(requirement.unitCost()));
+		}
+		return row;
+	}
+
+	private StocktakeValuationRequirement valuationRequirement(StocktakeLine line) {
+		if (stocktakeVarianceQuantity(line).compareTo(BigDecimal.ZERO) <= 0 || !inventoryValueEnabled(line.materialId())) {
+			return new StocktakeValuationRequirement("NONE", false, false, false, null);
+		}
+		if ("PROJECT".equals(line.ownershipType())) {
+			return new StocktakeValuationRequirement("PROJECT_EXPLICIT_UNIT_COST", true, true, true, null);
+		}
+		BigDecimal averageUnitCost = publicAverageUnitCost(line.materialId());
+		if (averageUnitCost != null) {
+			return new StocktakeValuationRequirement("AUTO_PUBLIC_AVERAGE", false, false, false,
+					averageUnitCost);
+		}
+		return new StocktakeValuationRequirement("EXPLICIT_UNIT_COST", true, false, false, null);
+	}
+
+	private InventoryPostingService.ValuationContext stocktakeValuationContext(StocktakeLine line,
+			InventoryDirection direction) {
+		if (direction == InventoryDirection.OUT) {
+			return new InventoryPostingService.ValuationContext(line.ownershipType(), line.projectId(), null,
+					line.costLayerId(), null);
+		}
+		StocktakeValuationRequirement requirement = valuationRequirement(line);
+		return switch (requirement.mode()) {
+			case "AUTO_PUBLIC_AVERAGE" -> InventoryPostingService.ValuationContext.publicStock(requirement.unitCost());
+			case "EXPLICIT_UNIT_COST" -> InventoryPostingService.ValuationContext.publicStock(line.varianceUnitCost());
+			case "PROJECT_EXPLICIT_UNIT_COST" -> new InventoryPostingService.ValuationContext("PROJECT",
+					line.projectId(), line.varianceUnitCost(), null, null);
+			default -> new InventoryPostingService.ValuationContext(line.ownershipType(), line.projectId(), null,
+					line.costLayerId(), null);
+		};
+	}
+
+	private String stocktakeMovementReason(Header header, StocktakeLine line) {
+		return hasText(line.varianceReason()) ? line.varianceReason().trim() : header.reason();
+	}
+
+	private BigDecimal stocktakeVarianceQuantity(StocktakeLine line) {
+		if (line.countedQuantity() != null) {
+			return line.countedQuantity().subtract(line.bookQuantity());
+		}
+		return line.varianceQuantity() == null ? BigDecimal.ZERO : line.varianceQuantity();
+	}
+
+	private boolean inventoryValueEnabled(Long materialId) {
+		Boolean enabled = this.jdbcTemplate.queryForObject("""
+				select coalesce(inventory_value_enabled, false)
+				from mst_material
+				where id = ?
+				""", Boolean.class, materialId);
+		return Boolean.TRUE.equals(enabled);
+	}
+
+	private BigDecimal publicAverageUnitCost(Long materialId) {
+		return this.inventoryValuationService.currentPublicAverageUnitCost(materialId).orElse(null);
 	}
 
 	private boolean costVisible(CurrentUser currentUser) {
@@ -1864,6 +2059,14 @@ public class InventoryStage023AdminService {
 		return value == null ? BigDecimal.ZERO : value;
 	}
 
+	private static String trimToNull(String value) {
+		return hasText(value) ? value.trim() : null;
+	}
+
+	private static boolean hasText(String value) {
+		return value != null && !value.isBlank();
+	}
+
 	private static Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
 		long value = rs.getLong(column);
 		return rs.wasNull() ? null : value;
@@ -1898,7 +2101,8 @@ public class InventoryStage023AdminService {
 	public record StocktakeLineUpdateRequest(Long version, List<StocktakeLineCount> lines) {
 	}
 
-	public record StocktakeLineCount(Long id, Long version, BigDecimal countedQuantity) {
+	public record StocktakeLineCount(Long id, Long version, BigDecimal countedQuantity,
+			BigDecimal varianceUnitCost, String varianceReason) {
 	}
 
 	public record ValuationAdjustmentRequest(Long version, @NotNull String adjustmentType,
@@ -1928,8 +2132,12 @@ public class InventoryStage023AdminService {
 
 	private record StocktakeLine(Long id, Integer lineNo, Long warehouseId, Long materialId, Long unitId,
 			String qualityStatus, String ownershipType, Long projectId, Long batchId, Long serialId,
-			BigDecimal bookQuantity, BigDecimal countedQuantity, BigDecimal varianceQuantity, Long costLayerId,
-			Long version) {
+			BigDecimal bookQuantity, BigDecimal countedQuantity, BigDecimal varianceQuantity,
+			BigDecimal varianceUnitCost, String varianceReason, Long costLayerId, Long version) {
+	}
+
+	private record StocktakeValuationRequirement(String mode, boolean requiredUnitCost, boolean requiredReason,
+			boolean requiredAttachment, BigDecimal unitCost) {
 	}
 
 	private record ValuationAdjustmentLine(Long id, Integer lineNo, String ownershipType, Long projectId,
