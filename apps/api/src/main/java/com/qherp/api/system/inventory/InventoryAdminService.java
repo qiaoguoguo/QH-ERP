@@ -87,6 +87,7 @@ public class InventoryAdminService {
 				: "m.tracking_method, null::bigint as batch_id, null::varchar as batch_no, null::bigint as serial_id, null::varchar as serial_no,";
 		String trackingGroupBy = trackingBreakdown ? ", m.tracking_method, b.batch_id, bt.batch_no, b.serial_id, sr.serial_no"
 				: ", m.tracking_method";
+		String costLayerGroupBy = ", b.cost_layer_id";
 		String selectedQuality = selectedQualityStatus == null ? null : selectedQualityStatus.name();
 		String inventoryAmountSelect = selectedQuality == null ? "sum(b.inventory_amount)"
 				: "sum(case when b.quality_status = '%s' then b.inventory_amount else 0 end)".formatted(selectedQuality);
@@ -94,10 +95,7 @@ public class InventoryAdminService {
 				? "count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null)"
 				: "count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null and b.quality_status = '%s')"
 					.formatted(selectedQuality);
-		String costLayerIdSelect = selectedQuality == null
-				? "max(b.cost_layer_id) filter (where b.cost_layer_id is not null)"
-				: "max(b.cost_layer_id) filter (where b.cost_layer_id is not null and b.quality_status = '%s')"
-					.formatted(selectedQuality);
+		String costLayerIdSelect = "b.cost_layer_id";
 		String reservationJoin = trackingBreakdown ? """
 				left join (
 					select warehouse_id, material_id, batch_id, serial_id,
@@ -130,7 +128,7 @@ public class InventoryAdminService {
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from (
-					select b.warehouse_id, b.material_id, b.unit_id%s%s
+					select b.warehouse_id, b.material_id, b.unit_id%s%s%s
 					from inv_stock_balance b
 					left join mst_warehouse w on w.id = b.warehouse_id
 					left join mst_material m on m.id = b.material_id
@@ -138,11 +136,11 @@ public class InventoryAdminService {
 					left join inv_batch bt on bt.id = b.batch_id
 					left join inv_serial sr on sr.id = b.serial_id
 					%s
-					group by b.warehouse_id, b.material_id, b.unit_id%s%s
+					group by b.warehouse_id, b.material_id, b.unit_id%s%s%s
 					%s
 				) grouped
-				""".formatted(ownershipCountSelect, trackingCountSelect, queryParts.where(), ownershipCountSelect,
-						trackingCountSelect, havingParts.having()),
+				""".formatted(ownershipCountSelect, trackingCountSelect, costLayerGroupBy, queryParts.where(),
+						ownershipCountSelect, trackingCountSelect, costLayerGroupBy, havingParts.having()),
 				Long.class, countArgs.toArray());
 		List<Object> args = new ArrayList<>(queryParts.args());
 		args.addAll(havingParts.args());
@@ -223,7 +221,8 @@ public class InventoryAdminService {
 				) pd on pd.warehouse_id = b.warehouse_id and pd.material_id = b.material_id
 				%s
 				group by b.warehouse_id, w.code, w.name, b.material_id, m.code, m.name, m.specification,
-				         m.material_type%s, b.ownership_type, b.project_id, b.valuation_state, b.unit_id, u.name
+				         m.material_type%s, b.ownership_type, b.project_id, b.valuation_state, b.cost_layer_id,
+				         b.unit_id, u.name
 				%s
 				order by max(b.updated_at) desc, min(b.id) desc
 				limit ? offset ?

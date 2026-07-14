@@ -43,7 +43,7 @@ public class InventoryPostingService {
 		ValuationContext valuationContext = request.valuationContextOrDefault();
 		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(),
 				request.qualityStatus(), request.batchId(), request.serialId(), valuationContext.ownershipType(),
-				valuationContext.projectId(), now);
+				valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext), now);
 		BigDecimal beforeQuantity = balance.quantityOnHand();
 		BigDecimal afterQuantity = request.direction() == InventoryDirection.IN ? beforeQuantity.add(request.quantity())
 				: beforeQuantity.subtract(request.quantity());
@@ -154,19 +154,19 @@ public class InventoryPostingService {
 	}
 
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
-			Long batchId, Long serialId, String ownershipType, Long projectId, OffsetDateTime now) {
+			Long batchId, Long serialId, String ownershipType, Long projectId, Long costLayerId, OffsetDateTime now) {
 		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId,
-				ownershipType, projectId);
+				ownershipType, projectId, costLayerId);
 		if (balance.isEmpty()) {
 			try {
 				this.jdbcTemplate.update("""
 						insert into inv_stock_balance (
 							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
-							quality_status, batch_id, serial_id, ownership_type, project_id
+							quality_status, batch_id, serial_id, ownership_type, project_id, cost_layer_id
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name(), batchId,
-						serialId, ownershipType, projectId);
+						serialId, ownershipType, projectId, costLayerId);
 			}
 			catch (DuplicateKeyException exception) {
 				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")
@@ -176,13 +176,14 @@ public class InventoryPostingService {
 					throw exception;
 				}
 			}
-			balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId, ownershipType, projectId);
+			balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId, ownershipType, projectId,
+					costLayerId);
 		}
 		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
 	}
 
 	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
-			Long batchId, Long serialId, String ownershipType, Long projectId) {
+			Long batchId, Long serialId, String ownershipType, Long projectId, Long costLayerId) {
 		return this.jdbcTemplate
 			.query("""
 					select id, quantity_on_hand
@@ -194,9 +195,11 @@ public class InventoryPostingService {
 					and serial_id is not distinct from ?
 					and ownership_type = ?
 					and project_id is not distinct from ?
+					and cost_layer_id is not distinct from ?
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
-					warehouseId, materialId, qualityStatus.name(), batchId, serialId, ownershipType, projectId)
+					warehouseId, materialId, qualityStatus.name(), batchId, serialId, ownershipType, projectId,
+					costLayerId)
 			.stream()
 			.findFirst();
 	}
@@ -369,6 +372,10 @@ public class InventoryPostingService {
 				valuationResult.costLayerId() == null ? context.costLayerId() : valuationResult.costLayerId(), null);
 	}
 
+	private Long balanceIdentityCostLayerId(ValuationContext context) {
+		return "PROJECT".equals(context.ownershipType()) ? context.costLayerId() : null;
+	}
+
 	private ValuationContext qualityTransferSourceContext(Long warehouseId, Long materialId,
 			InventoryQualityStatus qualityStatus, Long batchId, Long serialId, BigDecimal quantity,
 			ValuationContext requestedContext) {
@@ -417,6 +424,9 @@ public class InventoryPostingService {
 				nullableLong(rs, "project_id"), null, nullableLong(rs, "cost_layer_id"), null), args.toArray());
 		if (candidates.isEmpty()) {
 			if (requestedContext != null && hasText(requestedContext.ownershipType())) {
+				if ("PROJECT".equals(requestedContext.ownershipType()) && requestedContext.costLayerId() != null) {
+					throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+				}
 				return requestedContext;
 			}
 			return ValuationContext.publicStock(null);

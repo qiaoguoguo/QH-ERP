@@ -82,7 +82,7 @@ public class InventoryStage023AdminService {
 		}
 		if (warehouseId != null) {
 			where.append("""
-					and exists (
+					 and exists (
 						select 1
 						from inv_stock_balance b
 						where b.cost_layer_id = l.id
@@ -1777,7 +1777,7 @@ public class InventoryStage023AdminService {
 		if (!"PROJECT".equals(ownershipType)) {
 			return null;
 		}
-		return this.jdbcTemplate.query("""
+		List<Long> costLayerIds = this.jdbcTemplate.query("""
 				select cost_layer_id
 				from inv_stock_balance
 				where warehouse_id = ?
@@ -1789,13 +1789,13 @@ public class InventoryStage023AdminService {
 				and project_id = ?
 				and quantity_on_hand > 0
 				order by id
-				limit 1
 				for update
 				""", (rs, rowNum) -> nullableLong(rs, "cost_layer_id"), warehouseId, materialId,
-				defaultQuality(qualityStatus), batchId, serialId, projectId)
-			.stream()
-			.findFirst()
-			.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT));
+				defaultQuality(qualityStatus), batchId, serialId, projectId);
+		if (costLayerIds.size() != 1 || costLayerIds.getFirst() == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
+		return costLayerIds.getFirst();
 	}
 
 	private static void requireVersion(Long actual, Long expected) {

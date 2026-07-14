@@ -180,10 +180,7 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 			.isEqualTo("INVENTORY_OWNERSHIP_CONVERSION_POST");
 		approveLatestTask("inventory:ownership-conversion:post-approve");
 
-		JsonNode projectABalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
-				+ projectAId + "&materialId=" + fixture.valuedMaterialId()));
-		assertDecimal(projectABalance, "quantityOnHand", "11.000000");
-		assertDecimal(projectABalance, "inventoryAmount", "132.00");
+		assertProjectBalanceTotal(admin, projectAId, fixture.valuedMaterialId(), "11.000000", "132.00");
 		JsonNode projectBBalances = data(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
 				+ projectBId + "&materialId=" + fixture.valuedMaterialId()));
 		assertThat(projectBBalances.get("total").longValue()).isZero();
@@ -848,8 +845,10 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		long selectedCostLayerId = twentyCostLayer.get("id").longValue();
 		assertProjectLayer(tenCostLayer.get("id").longValue(), "2.000000", "20.00");
 		assertProjectLayer(selectedCostLayerId, "3.000000", "60.00");
+		assertProjectWarehouseBalanceTotal(fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"4.000000");
 		assertProjectWarehouseBalance(fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
-				selectedCostLayerId, "4.000000");
+				selectedCostLayerId, "2.000000");
 		assertProjectWarehouseBalance(targetWarehouseId, projectId, fixture.valuedMaterialId(), selectedCostLayerId,
 				"1.000000");
 		assertTransferValueMovement(transferId, "WAREHOUSE_TRANSFER_OUT", selectedCostLayerId, "1.000000", "20.00");
@@ -901,6 +900,157 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				"/api/admin/inventory/warehouse-transfers/" + wrongLayerTransfer.get("id").longValue() + "/post",
 				actionBody(wrongLayerTransfer, "错误成本层不得过账"), admin), HttpStatus.CONFLICT,
 				"INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT");
+	}
+
+	@Test
+	void 同仓同项目同物料多成本层必须在余额和候选中分别返回() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_MULTI_LAYER_BAL_");
+		long projectId = insertProject("S23_MULTI_LAYER_BAL_P_");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "10.000000");
+		createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "20.000000");
+		JsonNode layers = projectCostLayers(admin, projectId, fixture.valuedMaterialId());
+		long layerAId = findLayer(layers, "10.000000").get("id").longValue();
+		long layerBId = findLayer(layers, "20.000000").get("id").longValue();
+
+		JsonNode balances = projectBalances(admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), "QUALIFIED");
+		JsonNode candidates = data(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + fixture.valuedMaterialId() + "&warehouseId=" + fixture.rawWarehouseId()
+				+ "&page=1&pageSize=20"));
+
+		assertThat(balances.get("total").longValue()).as(balances.toString()).isEqualTo(2);
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerAId, "2.000000", "20.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerBId, "3.000000", "60.00");
+		assertThat(candidates.get("total").longValue()).as(candidates.toString()).isEqualTo(2);
+		assertThat(layerIds(candidates.get("items"))).containsExactlyInAnyOrder(layerAId, layerBId);
+		assertProjectLayer(layerAId, "2.000000", "20.00");
+		assertProjectLayer(layerBId, "3.000000", "60.00");
+	}
+
+	@Test
+	void 多成本层项目仓库调拨必须只移动指定层并保持项目总价值() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_MULTI_LAYER_TRF_");
+		long projectId = insertProject("S23_MULTI_LAYER_TRF_P_");
+		long targetWarehouseId = createWarehouse(admin, "S23_MULTI_LAYER_TRF_TO_" + SEQUENCE.incrementAndGet());
+		createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "20.000000");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "10.000000");
+		JsonNode layers = projectCostLayers(admin, projectId, fixture.valuedMaterialId());
+		long layerAId = findLayer(layers, "10.000000").get("id").longValue();
+		long layerBId = findLayer(layers, "20.000000").get("id").longValue();
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, projectId,
+						fixture.valuedMaterialId(), fixture.unitId(), "1.000000", layerAId),
+				admin));
+		ResponseEntity<String> posted = exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "只调拨 10 元成本层"), admin);
+
+		assertThat(posted.getStatusCode()).as(posted.getBody()).isEqualTo(HttpStatus.OK);
+		assertProjectLayer(layerAId, "2.000000", "20.00");
+		assertProjectLayer(layerBId, "3.000000", "60.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerAId, "1.000000", "10.00");
+		assertProjectBalanceByLayer(admin, targetWarehouseId, projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerAId, "1.000000", "10.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerBId, "3.000000", "60.00");
+		assertTransferValueMovement(transfer.get("id").longValue(), "WAREHOUSE_TRANSFER_OUT", layerAId,
+				"1.000000", "10.00");
+		assertTransferValueMovement(transfer.get("id").longValue(), "WAREHOUSE_TRANSFER_IN", layerAId,
+				"1.000000", "10.00");
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "80.00");
+	}
+
+	@Test
+	void 多成本层项目质量冻结解冻必须只移动指定层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_MULTI_LAYER_QUAL_");
+		long projectId = insertProject("S23_MULTI_LAYER_QUAL_P_");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "10.000000");
+		createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "20.000000");
+		JsonNode layers = projectCostLayers(admin, projectId, fixture.valuedMaterialId());
+		long layerAId = findLayer(layers, "10.000000").get("id").longValue();
+		long layerBId = findLayer(layers, "20.000000").get("id").longValue();
+
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "只冻结 20 元成本层");
+		freeze.put("ownershipType", "PROJECT");
+		freeze.put("projectId", projectId);
+		freeze.put("costLayerId", layerBId);
+		ResponseEntity<String> frozen = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				freeze, admin);
+
+		assertThat(frozen.getStatusCode()).as(frozen.getBody()).isEqualTo(HttpStatus.OK);
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerAId, "2.000000", "20.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerBId, "2.000000", "40.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"FROZEN", layerBId, "1.000000", "20.00");
+
+		Map<String, Object> unfreeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "只解冻 20 元成本层");
+		unfreeze.put("ownershipType", "PROJECT");
+		unfreeze.put("projectId", projectId);
+		unfreeze.put("costLayerId", layerBId);
+		ResponseEntity<String> unfrozen = exchange(HttpMethod.POST,
+				"/api/admin/inventory/quality-transfers/unfreeze", unfreeze, admin);
+
+		assertThat(unfrozen.getStatusCode()).as(unfrozen.getBody()).isEqualTo(HttpStatus.OK);
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerAId, "2.000000", "20.00");
+		assertProjectBalanceByLayer(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"QUALIFIED", layerBId, "3.000000", "60.00");
+		assertProjectBalanceQuantityOrZero(admin, fixture.rawWarehouseId(), projectId, fixture.valuedMaterialId(),
+				"FROZEN", layerBId, "0.000000");
+		assertProjectLayer(layerAId, "2.000000", "20.00");
+		assertProjectLayer(layerBId, "3.000000", "60.00");
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "80.00");
+	}
+
+	@Test
+	void 项目质量冻结指定不存在成本层必须稳定拒绝且不能回退任意层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_QUALITY_UNKNOWN_LAYER_");
+		long projectId = insertProject("S23_QUALITY_UNKNOWN_LAYER_P_");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "10.000000");
+		long missingCostLayerId = 9_999_999_999L;
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "不存在成本层不得冻结");
+		freeze.put("ownershipType", "PROJECT");
+		freeze.put("projectId", projectId);
+		freeze.put("costLayerId", missingCostLayerId);
+
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				freeze, admin);
+
+		assertError(response, HttpStatus.CONFLICT, "INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT");
+	}
+
+	@Test
+	void 项目质量冻结指定其他项目成本层必须稳定拒绝且不能回退任意层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_QUALITY_OTHER_LAYER_");
+		long sourceProjectId = insertProject("S23_QUALITY_OTHER_LAYER_SRC_");
+		long otherProjectId = insertProject("S23_QUALITY_OTHER_LAYER_OTH_");
+		createProjectLayerFromPublic(admin, fixture, sourceProjectId, "2.000000", "10.000000");
+		JsonNode otherLayer = createProjectLayerFromPublic(admin, fixture, otherProjectId, "1.000000",
+				"30.000000");
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000", "其他项目成本层不得冻结");
+		freeze.put("ownershipType", "PROJECT");
+		freeze.put("projectId", sourceProjectId);
+		freeze.put("costLayerId", otherLayer.get("id").longValue());
+
+		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				freeze, admin);
+
+		assertError(response, HttpStatus.CONFLICT, "INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT");
 	}
 
 	@Test
@@ -1131,13 +1281,111 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				  and project_id = ?
 				  and material_id = ?
 				  and quality_status = 'QUALIFIED'
-				""", warehouseId, projectId, materialId);
+				  and cost_layer_id = ?
+				""", warehouseId, projectId, materialId, costLayerId);
 		assertThat(balance.get("ownership_type")).as("仓库余额所有权").isEqualTo("PROJECT");
 		assertThat(((Number) balance.get("project_id")).longValue()).as("仓库余额项目").isEqualTo(projectId);
 		assertThat(((Number) balance.get("cost_layer_id")).longValue()).as("仓库余额成本层").isEqualTo(costLayerId);
 		assertThat(((BigDecimal) balance.get("quantity_on_hand")).compareTo(new BigDecimal(quantityOnHand)))
 			.as("仓库 " + warehouseId + " 项目余额数量")
 			.isZero();
+	}
+
+	private void assertProjectWarehouseBalanceTotal(long warehouseId, long projectId, long materialId,
+			String quantityOnHand) {
+		BigDecimal actualQuantity = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where ownership_type = 'PROJECT'
+				  and warehouse_id = ?
+				  and project_id = ?
+				  and material_id = ?
+				  and quality_status = 'QUALIFIED'
+				""", BigDecimal.class, warehouseId, projectId, materialId);
+		assertThat(actualQuantity.compareTo(new BigDecimal(quantityOnHand)))
+			.as("仓库 " + warehouseId + " 项目分层余额总数量")
+			.isZero();
+	}
+
+	private void assertProjectBalanceTotal(AuthenticatedSession admin, long projectId, long materialId,
+			String quantityOnHand, String inventoryAmount) throws Exception {
+		JsonNode items = data(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
+				+ projectId + "&materialId=" + materialId)).get("items");
+		assertThat(items).isNotNull();
+		assertThat(items.size()).as("项目分层余额行数").isPositive();
+		BigDecimal actualQuantity = BigDecimal.ZERO;
+		BigDecimal actualAmount = BigDecimal.ZERO;
+		for (JsonNode item : items) {
+			actualQuantity = actualQuantity.add(new BigDecimal(item.get("quantityOnHand").asText()));
+			actualAmount = actualAmount.add(new BigDecimal(item.get("inventoryAmount").asText()));
+		}
+		assertThat(actualQuantity.compareTo(new BigDecimal(quantityOnHand))).as("项目分层余额总数量").isZero();
+		assertThat(actualAmount.compareTo(new BigDecimal(inventoryAmount))).as("项目分层余额总金额").isZero();
+	}
+
+	private JsonNode projectCostLayers(AuthenticatedSession admin, long projectId, long materialId) throws Exception {
+		return data(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + materialId + "&page=1&pageSize=20")).get("items");
+	}
+
+	private JsonNode projectBalances(AuthenticatedSession admin, long warehouseId, long projectId, long materialId,
+			String qualityStatus) throws Exception {
+		return data(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId=" + projectId
+				+ "&warehouseId=" + warehouseId + "&materialId=" + materialId + "&qualityStatus=" + qualityStatus
+				+ "&includeZero=true&page=1&pageSize=20"));
+	}
+
+	private List<Long> layerIds(JsonNode items) {
+		List<Long> result = new ArrayList<>();
+		for (JsonNode item : items) {
+			result.add(item.get("id").longValue());
+		}
+		return result;
+	}
+
+	private void assertProjectBalanceByLayer(AuthenticatedSession admin, long warehouseId, long projectId,
+			long materialId, String qualityStatus, long costLayerId, String quantityOnHand, String inventoryAmount)
+			throws Exception {
+		JsonNode balance = projectBalanceByLayer(admin, warehouseId, projectId, materialId, qualityStatus,
+				costLayerId);
+		assertDecimal(balance, "quantityOnHand", quantityOnHand);
+		assertDecimal(balance, "inventoryAmount", inventoryAmount);
+		assertThat(balance.get("costLayerId").longValue()).as("余额成本层").isEqualTo(costLayerId);
+	}
+
+	private void assertProjectBalanceQuantityOrZero(AuthenticatedSession admin, long warehouseId, long projectId,
+			long materialId, String qualityStatus, long costLayerId, String quantityOnHand) throws Exception {
+		JsonNode balance = findProjectBalanceByLayer(admin, warehouseId, projectId, materialId, qualityStatus,
+				costLayerId);
+		if (balance == null) {
+			assertThat(new BigDecimal(quantityOnHand).compareTo(BigDecimal.ZERO)).as("未找到成本层余额时只能期望零数量")
+				.isZero();
+			return;
+		}
+		assertDecimal(balance, "quantityOnHand", quantityOnHand);
+	}
+
+	private JsonNode projectBalanceByLayer(AuthenticatedSession admin, long warehouseId, long projectId,
+			long materialId, String qualityStatus, long costLayerId) throws Exception {
+		JsonNode balance = findProjectBalanceByLayer(admin, warehouseId, projectId, materialId, qualityStatus,
+				costLayerId);
+		assertThat(balance)
+			.as("未找到仓库 %s 项目 %s 物料 %s 质量 %s 成本层 %s 的独立余额，实际：%s",
+					warehouseId, projectId, materialId, qualityStatus, costLayerId,
+					projectBalances(admin, warehouseId, projectId, materialId, qualityStatus))
+			.isNotNull();
+		return balance;
+	}
+
+	private JsonNode findProjectBalanceByLayer(AuthenticatedSession admin, long warehouseId, long projectId,
+			long materialId, String qualityStatus, long costLayerId) throws Exception {
+		JsonNode items = projectBalances(admin, warehouseId, projectId, materialId, qualityStatus).get("items");
+		for (JsonNode item : items) {
+			if (item.hasNonNull("costLayerId") && item.get("costLayerId").longValue() == costLayerId) {
+				return item;
+			}
+		}
+		return null;
 	}
 
 	private void assertTransferValueMovement(long transferId, String movementType, long costLayerId, String quantity,

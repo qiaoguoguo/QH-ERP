@@ -1,6 +1,7 @@
 package com.qherp.api.system.stage023;
 
 import org.flywaydb.core.Flyway;
+import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -32,11 +33,11 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须从v1迁移到v21并建立计价结构权限和审批种子() {
+	void 空库必须从v1迁移到v22并建立计价结构权限和审批种子() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -76,6 +77,7 @@ class Stage023MigrationRegressionTests {
 		assertThat(indexExists(jdbcTemplate, "idx_inv_warehouse_transfer_line_source_layer")).isTrue();
 		assertThat(constraintExists(jdbcTemplate, "inv_warehouse_transfer_line",
 				"fk_inv_warehouse_transfer_line_source_layer")).isTrue();
+		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 
 		assertPermissionsExist(jdbcTemplate, List.of(
 				"inventory:valuation:view",
@@ -108,7 +110,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v19代表性存量升级到v21必须保留数量质量追踪预留并标记历史未估值() {
+	void v19代表性存量升级到v22必须保留数量质量追踪预留并标记历史未估值() {
 		migrate("19");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
@@ -116,7 +118,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
 		assertThat(queryText(jdbcTemplate, """
@@ -159,7 +162,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v20代表性存量升级到v21必须保留既有计价状态并新增调拨成本层字段() {
+	void v20代表性存量升级到v22必须保留既有计价状态并具备成本层余额身份() {
 		migrate("20");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
@@ -167,8 +170,9 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
+		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
 				from inv_stock_balance
@@ -190,6 +194,46 @@ class Stage023MigrationRegressionTests {
 				where material_id = (
 					select material_id from inv_stock_balance where id = ?
 				)
+				""", data.valuedBalanceId())).isEqualByComparingTo("12.000000");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_movement
+				where id = ?
+				""", data.movementId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", data.reservationId())).isEqualTo("PUBLIC:NULL");
+		assertThat(count(jdbcTemplate, "inv_project_cost_layer")).isZero();
+		assertThat(count(jdbcTemplate, "inv_value_movement")).isZero();
+	}
+
+	@Test
+	void v21代表性存量升级到v22必须保留既有计价状态并补齐成本层余额唯一索引() {
+		migrate("21");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
+		RepresentativeStockData data = insertRepresentativeV20Stock(jdbcTemplate);
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_balance
+				where id = ?
+				""", data.valuedBalanceId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
+				from inv_stock_balance
+				where id = ?
+				""", data.nonValuedBalanceId())).isEqualTo("PUBLIC:NULL:NON_VALUED");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select quantity_on_hand
+				from inv_stock_balance
+				where id = ?
 				""", data.valuedBalanceId())).isEqualByComparingTo("12.000000");
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
@@ -408,6 +452,27 @@ class Stage023MigrationRegressionTests {
 			assertThat(count(jdbcTemplate, "platform_approval_definition", "scene_code = ? and status = 'ENABLED'",
 					sceneCode)).as("缺少审批场景 " + sceneCode).isOne();
 		}
+	}
+
+	private void assertStockBalanceUniqueIndexesIncludeCostLayer(JdbcTemplate jdbcTemplate) {
+		SoftAssertions.assertSoftly((softly) -> {
+			assertIndexDefinitionContains(softly, jdbcTemplate, "uk_inv_stock_balance_untracked", "cost_layer_id");
+			assertIndexDefinitionContains(softly, jdbcTemplate, "uk_inv_stock_balance_batch", "cost_layer_id");
+			assertIndexDefinitionContains(softly, jdbcTemplate, "uk_inv_stock_balance_serial", "cost_layer_id");
+		});
+	}
+
+	private void assertIndexDefinitionContains(SoftAssertions softly, JdbcTemplate jdbcTemplate, String indexName,
+			String expectedColumn) {
+		String indexDefinition = jdbcTemplate.queryForObject("""
+				select indexdef
+				from pg_indexes
+				where schemaname = 'public'
+				  and indexname = ?
+				""", String.class, indexName);
+		softly.assertThat(indexDefinition == null ? "" : indexDefinition.toLowerCase())
+			.as(indexName + " 必须包含 " + expectedColumn)
+			.contains(expectedColumn);
 	}
 
 	private void migrate(String target) {
