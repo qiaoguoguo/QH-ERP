@@ -822,7 +822,8 @@ public class ProductionAdminService {
 					new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
 							workOrder.issueWarehouseId(), material.materialId(), material.unitId(), remainingQuantity,
 							InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, workOrder.id(), material.id(),
-							workOrder.workOrderNo(), workOrder.plannedStartDate(), "生产工单释放预留", null),
+							workOrder.workOrderNo(), workOrder.plannedStartDate(), "生产工单释放预留", null, "PUBLIC", null,
+							null),
 					operator, servletRequest);
 		}
 	}

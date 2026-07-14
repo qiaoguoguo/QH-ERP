@@ -59,7 +59,8 @@ public class InventoryPostingService {
 				&& !request.consumedReservation()) {
 			BigDecimal availableQuantity = beforeQuantity
 				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId(), request.batchId(),
-						request.serialId(), valuationContext.ownershipType(), valuationContext.projectId()));
+						request.serialId(), valuationContext.ownershipType(), valuationContext.projectId(),
+						balanceIdentityCostLayerId(valuationContext)));
 			if (availableQuantity.compareTo(request.quantity()) < 0) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
 			}
@@ -205,7 +206,7 @@ public class InventoryPostingService {
 	}
 
 	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId,
-			String ownershipType, Long projectId) {
+			String ownershipType, Long projectId, Long costLayerId) {
 		return this.jdbcTemplate.query("""
 				select quantity, released_quantity, consumed_quantity
 				from inv_stock_reservation
@@ -216,12 +217,13 @@ public class InventoryPostingService {
 				and serial_id is not distinct from ?
 				and ownership_type = ?
 				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
 					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, batchId, serialId,
-				ownershipType, projectId)
+				ownershipType, projectId, costLayerId)
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
 	}

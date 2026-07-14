@@ -234,13 +234,13 @@ public class QualityAdminService {
 		String reason = validateText(request.reason(), 200, ApiErrorCode.QUALITY_STATUS_REASON_REQUIRED);
 		String remark = validateOptionalText(request.remark(), 500);
 		boolean useTracking = shouldUseTracking(request.materialId(), request.trackingAllocations());
+		InventoryPostingService.ValuationContext valuationContext = qualityTransferContext(request);
 		if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
 			if (useTracking) {
 				assertTrackedFreezeAvailable(request.warehouseId(), request.materialId(), quantity);
 			}
 			else {
-				this.inventoryAvailabilityService.assertQualifiedAvailable(request.warehouseId(), request.materialId(),
-						quantity, ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+				assertQualityFreezeAvailable(request, quantity, valuationContext);
 			}
 		}
 		long sourceId = nextQualityStatusTransferSourceId();
@@ -249,7 +249,6 @@ public class QualityAdminService {
 				.resolveQualityAllocations(request.warehouseId(), request.materialId(), request.unitId(), fromStatus,
 						quantity, request.trackingAllocations(), toStatus, "trackingAllocations");
 			assertTrackedQualityQuantity(trackingAllocations, toStatus, quantity);
-			InventoryPostingService.ValuationContext valuationContext = qualityTransferContext(request);
 			TrackedTransferSummary trackedResult = transferTrackedQualityStatus(request.warehouseId(),
 					request.materialId(), request.unitId(), fromStatus, toStatus, trackingAllocations, sourceId,
 					request.businessDate(), hasText(reason) ? reason : defaultReason, remark, operator.username(),
@@ -265,7 +264,7 @@ public class QualityAdminService {
 				request.warehouseId(), request.materialId(), request.unitId(), fromStatus, toStatus, quantity,
 				QUALITY_STATUS_TRANSFER_SOURCE, sourceId, sourceId, request.businessDate(),
 				hasText(reason) ? reason : defaultReason, remark, operator.username(), null, null,
-				qualityTransferContext(request));
+				valuationContext);
 		this.auditService.record(operator, auditAction, QUALITY_STATUS_TRANSFER_SOURCE, sourceId, reason,
 				servletRequest);
 		return new QualityStatusTransferResponse(fromStatus.name(), fromStatus.displayName(), toStatus.name(),
@@ -350,6 +349,71 @@ public class QualityAdminService {
 		Long projectId = "PROJECT".equals(ownershipType) ? request.projectId() : null;
 		Long costLayerId = "PROJECT".equals(ownershipType) ? request.costLayerId() : null;
 		return new InventoryPostingService.ValuationContext(ownershipType, projectId, null, costLayerId, null);
+	}
+
+	private void assertQualityFreezeAvailable(QualityStatusTransferRequest request, BigDecimal quantity,
+			InventoryPostingService.ValuationContext valuationContext) {
+		if (valuationContext == null || "PUBLIC".equals(valuationContext.ownershipType())) {
+			this.inventoryAvailabilityService.assertQualifiedAvailable(request.warehouseId(), request.materialId(),
+					quantity, ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+			return;
+		}
+		if (!"PROJECT".equals(valuationContext.ownershipType()) || valuationContext.projectId() == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_OWNERSHIP_PROJECT_MISMATCH);
+		}
+		validateProjectQualityTransferLayer(request.materialId(), valuationContext.projectId(),
+				valuationContext.costLayerId());
+		BigDecimal quantityOnHand = this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and cost_layer_id = ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), request.warehouseId(),
+				request.materialId(), valuationContext.projectId(), valuationContext.costLayerId())
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and cost_layer_id = ?
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+				.subtract(rs.getBigDecimal("released_quantity"))
+				.subtract(rs.getBigDecimal("consumed_quantity")), request.warehouseId(), request.materialId(),
+				valuationContext.projectId(), valuationContext.costLayerId())
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		if (quantityOnHand.subtract(lockedQuantity).compareTo(quantity) < 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+		}
+	}
+
+	private void validateProjectQualityTransferLayer(Long materialId, Long projectId, Long costLayerId) {
+		if (costLayerId == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_project_cost_layer
+				where id = ?
+				and project_id = ?
+				and material_id = ?
+				and status = 'ACTIVE'
+				""", Long.class, costLayerId, projectId, materialId);
+		if (count == null || count != 1L) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		}
 	}
 
 	private void assertTrackedQualityQuantity(List<InventoryTrackingService.ResolvedTrackingAllocation> allocations,

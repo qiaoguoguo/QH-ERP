@@ -31,16 +31,16 @@ class InventoryV22MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须迁移到v22并重建包含成本层的余额唯一索引() {
+	void 空库迁移到最新版本必须保留v22包含成本层的余额唯一索引() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 		assertBalanceIndexesContainCostLayer(jdbcTemplate);
 	}
 
 	@Test
-	void v19v20v21升级到v22必须保留存量并重建成本层余额身份() {
+	void v19v20v21升级到最新版本必须保留存量并保留成本层余额身份() {
 		for (String target : List.of("19", "20", "21")) {
 			Flyway.configure()
 				.dataSource(dataSource())
@@ -54,7 +54,7 @@ class InventoryV22MigrationRegressionTests {
 
 			migrate(null);
 
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 			assertThat(count(jdbcTemplate, "inv_stock_balance")).isEqualTo(before);
 			assertBalanceIndexesContainCostLayer(jdbcTemplate);
 		}

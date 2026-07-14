@@ -521,7 +521,7 @@ public class SalesAdminService {
 					new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
 							line.reservationWarehouseId(), line.materialId(), line.unitId(), remainingQuantity,
 							InventoryAvailabilityService.SALES_ORDER_SOURCE, order.id(), line.id(), order.orderNo(),
-							order.orderDate(), "销售订单确认预留", null),
+							order.orderDate(), "销售订单确认预留", null, "PUBLIC", null, null),
 					operator, servletRequest);
 		}
 	}

@@ -819,6 +819,71 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 销售公共预留释放和出库不得污染同仓同料项目双成本层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PUBLIC_RESERVE_");
+		long projectId = insertProject("S23_PUBLIC_RESERVE_P_");
+		markMaterialSellable(fixture.valuedMaterialId());
+		createProjectLayerFromPublic(admin, fixture, projectId, "3.000000", "10.000000");
+		createProjectLayerFromPublic(admin, fixture, projectId, "2.000000", "12.000000");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"10.000000", "11.000000");
+		JsonNode layers = projectCostLayers(admin, projectId, fixture.valuedMaterialId());
+		JsonNode layerA = findLayer(layers, "10.000000");
+		JsonNode layerB = findLayer(layers, "12.000000");
+		long customerId = insertCustomer("S23_PUBLIC_RESERVE_C_");
+
+		JsonNode cancelOrder = createSalesOrder(admin, customerId, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId(), fixture.unitId(), "4.000000");
+		long cancelOrderId = cancelOrder.get("id").longValue();
+		data(exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + cancelOrderId + "/confirm", null, admin));
+		SoftAssertions softly = new SoftAssertions();
+		softly.assertThat(reservationOwnership(cancelOrderId))
+			.as("销售公共预留必须显式保持 PUBLIC 且 projectId 为空")
+			.isEqualTo("PUBLIC:NULL");
+		assertBalanceQuantities(softly, "公共预留后 PUBLIC", publicBalance(admin, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId()), "10.000000", "4.000000", "4.000000", "0.000000", "6.000000");
+		assertProjectLayerQuantities(softly, "公共预留后项目层A", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerA.get("id").longValue(), "3.000000", "0.000000", "0.000000",
+				"0.000000", "3.000000");
+		assertProjectLayerQuantities(softly, "公共预留后项目层B", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerB.get("id").longValue(), "2.000000", "0.000000", "0.000000",
+				"0.000000", "2.000000");
+
+		data(exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + cancelOrderId + "/cancel", null, admin));
+		assertBalanceQuantities(softly, "公共取消后 PUBLIC", publicBalance(admin, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId()), "10.000000", "0.000000", "0.000000", "0.000000", "10.000000");
+		assertProjectLayerQuantities(softly, "公共取消后项目层A", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerA.get("id").longValue(), "3.000000", "0.000000", "0.000000",
+				"0.000000", "3.000000");
+		assertProjectLayerQuantities(softly, "公共取消后项目层B", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerB.get("id").longValue(), "2.000000", "0.000000", "0.000000",
+				"0.000000", "2.000000");
+
+		JsonNode shipOrder = createSalesOrder(admin, customerId, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId(), fixture.unitId(), "3.000000");
+		long shipOrderId = shipOrder.get("id").longValue();
+		JsonNode confirmed = data(exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + shipOrderId + "/confirm",
+				null, admin));
+		long orderLineId = confirmed.get("lines").get(0).get("id").longValue();
+		JsonNode shipment = data(exchange(HttpMethod.POST, "/api/admin/sales/orders/" + shipOrderId + "/shipments",
+				salesShipmentPayload(fixture.rawWarehouseId(), orderLineId, fixture.valuedMaterialId(),
+						fixture.unitId(), "2.000000"),
+				admin));
+		data(exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipment.get("id").longValue() + "/post",
+				null, admin));
+		assertBalanceQuantities(softly, "公共出库后 PUBLIC", publicBalance(admin, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId()), "8.000000", "1.000000", "1.000000", "0.000000", "7.000000");
+		assertProjectLayerQuantities(softly, "公共出库后项目层A", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerA.get("id").longValue(), "3.000000", "0.000000", "0.000000",
+				"0.000000", "3.000000");
+		assertProjectLayerQuantities(softly, "公共出库后项目层B", admin, fixture.rawWarehouseId(), projectId,
+				fixture.valuedMaterialId(), layerB.get("id").longValue(), "2.000000", "0.000000", "0.000000",
+				"0.000000", "2.000000");
+		softly.assertAll();
+	}
+
+	@Test
 	void 项目仓库调拨必须按指定成本层移动并保持项目层总价值() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		InventoryFixture fixture = createFixture("S23_LAYER_TRANSFER_");
@@ -1388,6 +1453,31 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		return null;
 	}
 
+	private JsonNode publicBalance(AuthenticatedSession admin, long warehouseId, long materialId) throws Exception {
+		return firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PUBLIC&warehouseId=" + warehouseId
+				+ "&materialId=" + materialId + "&qualityStatus=QUALIFIED&includeZero=true"));
+	}
+
+	private void assertProjectLayerQuantities(SoftAssertions softly, String label, AuthenticatedSession admin,
+			long warehouseId, long projectId, long materialId, long costLayerId, String quantityOnHand,
+			String lockedQuantity, String reservedQuantity, String occupiedQuantity, String availableQuantity)
+			throws Exception {
+		JsonNode balance = projectBalanceByLayer(admin, warehouseId, projectId, materialId, "QUALIFIED",
+				costLayerId);
+		softly.assertThat(balance.get("costLayerId").longValue()).as(label + " 成本层").isEqualTo(costLayerId);
+		assertBalanceQuantities(softly, label, balance, quantityOnHand, lockedQuantity, reservedQuantity,
+				occupiedQuantity, availableQuantity);
+	}
+
+	private void assertBalanceQuantities(SoftAssertions softly, String label, JsonNode balance, String quantityOnHand,
+			String lockedQuantity, String reservedQuantity, String occupiedQuantity, String availableQuantity) {
+		assertDecimal(softly, balance, "quantityOnHand", quantityOnHand, label);
+		assertDecimal(softly, balance, "lockedQuantity", lockedQuantity, label);
+		assertDecimal(softly, balance, "reservedQuantity", reservedQuantity, label);
+		assertDecimal(softly, balance, "occupiedQuantity", occupiedQuantity, label);
+		assertDecimal(softly, balance, "availableQuantity", availableQuantity, label);
+	}
+
 	private void assertTransferValueMovement(long transferId, String movementType, long costLayerId, String quantity,
 			String amount) {
 		Map<String, Object> movement = this.jdbcTemplate.queryForMap("""
@@ -1774,6 +1864,68 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		return payload;
 	}
 
+	private JsonNode createSalesOrder(AuthenticatedSession admin, long customerId, long warehouseId, long materialId,
+			long unitId, String quantity) throws Exception {
+		return data(exchange(HttpMethod.POST, "/api/admin/sales/orders",
+				salesOrderPayload(customerId, List.of(salesOrderLine(1, warehouseId, materialId, unitId, quantity))),
+				admin));
+	}
+
+	private Map<String, Object> salesOrderPayload(long customerId, List<Map<String, Object>> lines) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("customerId", customerId);
+		payload.put("orderDate", LocalDate.now().toString());
+		payload.put("expectedShipDate", LocalDate.now().plusDays(3).toString());
+		payload.put("remark", "023 公共预留隔离测试");
+		payload.put("lines", lines);
+		return payload;
+	}
+
+	private Map<String, Object> salesOrderLine(int lineNo, long warehouseId, long materialId, long unitId,
+			String quantity) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", lineNo);
+		line.put("materialId", materialId);
+		line.put("unitId", unitId);
+		line.put("quantity", quantity);
+		line.put("unitPrice", "1.000000");
+		line.put("reservationWarehouseId", warehouseId);
+		line.put("expectedShipDate", LocalDate.now().plusDays(3).toString());
+		return line;
+	}
+
+	private Map<String, Object> salesShipmentPayload(long warehouseId, long orderLineId, long materialId, long unitId,
+			String quantity) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("warehouseId", warehouseId);
+		payload.put("businessDate", LocalDate.now().toString());
+		payload.put("remark", "023 公共预留出库隔离测试");
+		payload.put("lines", List.of(salesShipmentLine(1, orderLineId, materialId, unitId, quantity)));
+		return payload;
+	}
+
+	private Map<String, Object> salesShipmentLine(int lineNo, long orderLineId, long materialId, long unitId,
+			String quantity) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", lineNo);
+		line.put("orderLineId", orderLineId);
+		line.put("materialId", materialId);
+		line.put("unitId", unitId);
+		line.put("quantity", quantity);
+		return line;
+	}
+
+	private String reservationOwnership(long orderId) {
+		return this.jdbcTemplate.queryForObject("""
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL')
+				from inv_stock_reservation
+				where source_type = 'SALES_ORDER'
+				  and source_id = ?
+				order by id
+				limit 1
+				""", String.class, orderId);
+	}
+
 	private JsonNode reconciliationValue(long materialId) throws Exception {
 		return data(get(login("admin", ADMIN_PASSWORD), "/api/admin/inventory/reconciliations?materialId=" + materialId));
 	}
@@ -1789,11 +1941,7 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 
 	private long insertProject(String prefix) {
 		int suffix = SEQUENCE.incrementAndGet();
-		long customerId = this.jdbcTemplate.queryForObject("""
-				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
-				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
-				returning id
-				""", Long.class, prefix + "CUS_" + suffix, prefix + "客户");
+		long customerId = insertCustomer(prefix + "CUS_");
 		long userId = userId("admin");
 		return this.jdbcTemplate.queryForObject("""
 				insert into sal_project (
@@ -1804,6 +1952,15 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 					'test', now(), 'test', now())
 				returning id
 				""", Long.class, prefix + "PRJ_" + suffix, prefix + "项目", customerId, userId);
+	}
+
+	private long insertCustomer(String prefix) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, prefix + suffix, prefix + "客户");
 	}
 
 	private long userId(String username) {
@@ -1948,6 +2105,16 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		return data(exchange(HttpMethod.POST, "/api/admin/master/materials", payload, session)).get("id").longValue();
 	}
 
+	private void markMaterialSellable(long materialId) {
+		this.jdbcTemplate.update("""
+				update mst_material
+				set material_type = 'FINISHED_GOOD',
+					source_type = 'SELF_MADE',
+					updated_at = now()
+				where id = ?
+				""", materialId);
+	}
+
 	private Map<String, Object> documentPayload(String documentType, String reason, List<Map<String, Object>> lines) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("documentType", documentType);
@@ -2027,6 +2194,15 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		assertThat(new BigDecimal(node.get(field).asText()).compareTo(new BigDecimal(expected)))
 			.as(field + " 实际值 " + node.get(field).asText())
 			.isZero();
+	}
+
+	private void assertDecimal(SoftAssertions softly, JsonNode node, String field, String expected, String label) {
+		softly.assertThat(node.has(field)).as(label + " 缺少字段 " + field + "，实际响应：" + node).isTrue();
+		if (node.has(field)) {
+			softly.assertThat(new BigDecimal(node.get(field).asText()).compareTo(new BigDecimal(expected)))
+				.as(label + " " + field + " 实际值 " + node.get(field).asText())
+				.isZero();
+		}
 	}
 
 	private AuthenticatedSession login(String username, String password) throws Exception {

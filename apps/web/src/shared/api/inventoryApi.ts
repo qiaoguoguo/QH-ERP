@@ -218,6 +218,7 @@ export interface InventoryBalanceRecord {
   inventoryAmount?: string | null
   averageUnitCost?: string | null
   costLayerCount?: number | string | null
+  costLayerId?: ResourceId | null
   abnormalReason?: string | null
   bookQuantity?: number | string
   quantityOnHand: number | string

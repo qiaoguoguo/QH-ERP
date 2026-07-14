@@ -480,6 +480,77 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('880.00')
   })
 
+  it('同仓同项目同物料的不同成本层余额行可区分并按当前层下钻', async () => {
+    const firstLayerBalance = {
+      ...projectValuedBalance,
+      id: 21,
+      costLayerId: 9001,
+      costLayerCount: 1,
+      quantityOnHand: '1.000000',
+      availableQuantity: '1.000000',
+    } as InventoryBalanceRecord
+    const secondLayerBalance = {
+      ...projectValuedBalance,
+      id: 22,
+      costLayerId: 9002,
+      costLayerCount: 1,
+      quantityOnHand: '1.000000',
+      availableQuantity: '1.000000',
+    } as InventoryBalanceRecord
+    inventoryApiMock.balances.list.mockResolvedValueOnce({
+      items: [firstLayerBalance, secondLayerBalance],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    })
+    const { wrapper, router } = await mountBalancesWithPermissions([
+      'inventory:balance:view',
+      'inventory:movement:view',
+      'inventory:valuation:view',
+    ])
+
+    expect(wrapper.text()).toContain('层 #9001')
+    expect(wrapper.text()).toContain('层 #9002')
+
+    await wrapper.find('[data-test="view-inventory-movements"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.query).toEqual(expect.objectContaining({
+      costLayerId: '9001',
+    }))
+
+    await router.push('/')
+    await flushPromises()
+    await wrapper.find('[data-test="view-cost-layers-21"]').trigger('click')
+    await flushPromises()
+    expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({
+      costLayerId: 9001,
+    }))
+  })
+
+  it('成本权限受限时不展示项目成本层身份', async () => {
+    inventoryApiMock.balances.list.mockResolvedValueOnce({
+      items: [{
+        ...restrictedCostBalance,
+        id: 23,
+        costLayerId: 9101,
+        costLayerCount: 1,
+      } as InventoryBalanceRecord],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountBalancesWithPermissions([
+      'inventory:balance:view',
+      'inventory:movement:view',
+      'inventory:valuation:view',
+    ])
+
+    expect(wrapper.text()).toContain('金额受限')
+    expect(wrapper.text()).not.toContain('层 #9101')
+  })
+
   it('桌面首屏优先展示仓库物料、双数量、金额均价、估值状态和成本层列', async () => {
     const { wrapper } = await mountBalancesWithPermissions([
       'inventory:balance:view',

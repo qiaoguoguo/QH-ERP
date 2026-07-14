@@ -204,6 +204,7 @@ function viewMovements(record: InventoryBalanceRecord) {
       ...(record.batchNo ? { batchNo: String(record.batchNo) } : {}),
       ...(record.serialId ? { serialId: String(record.serialId) } : {}),
       ...(record.serialNo ? { serialNo: String(record.serialNo) } : {}),
+      ...(!isCostRestricted(record) && record.costLayerId ? { costLayerId: String(record.costLayerId) } : {}),
     },
   })
 }
@@ -216,6 +217,13 @@ function isCostRestricted(record: InventoryBalanceRecord) {
   return record.costVisible === false
 }
 
+function costLayerText(record: InventoryBalanceRecord) {
+  if (!isCostRestricted(record) && record.ownershipType === 'PROJECT' && record.costLayerId) {
+    return `层 #${record.costLayerId}`
+  }
+  return record.costLayerCount ?? '-'
+}
+
 async function loadCostLayers(record: InventoryBalanceRecord) {
   costLayerLoading.value = true
   costLayerError.value = ''
@@ -225,6 +233,7 @@ async function loadCostLayers(record: InventoryBalanceRecord) {
       projectId: record.projectId ?? undefined,
       warehouseId: record.warehouseId,
       materialId: record.materialId,
+      ...(!isCostRestricted(record) && record.costLayerId ? { costLayerId: record.costLayerId } : {}),
       page: 1,
       pageSize: 20,
     })
@@ -584,7 +593,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="成本层" min-width="100" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ row.costLayerCount ?? '-' }}</span>
+            <span class="numeric-cell">{{ costLayerText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" min-width="260">

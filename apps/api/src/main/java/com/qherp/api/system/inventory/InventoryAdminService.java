@@ -98,7 +98,7 @@ public class InventoryAdminService {
 		String costLayerIdSelect = "b.cost_layer_id";
 		String reservationJoin = trackingBreakdown ? """
 				left join (
-					select warehouse_id, material_id, batch_id, serial_id,
+					select warehouse_id, material_id, batch_id, serial_id, ownership_type, project_id, cost_layer_id,
 					       sum(case when reservation_type = 'RESERVATION'
 					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
 					       sum(case when reservation_type = 'OCCUPATION'
@@ -106,13 +106,16 @@ public class InventoryAdminService {
 					from inv_stock_reservation
 					where status = 'ACTIVE'
 					and quality_status = 'QUALIFIED'
-					group by warehouse_id, material_id, batch_id, serial_id
+					group by warehouse_id, material_id, batch_id, serial_id, ownership_type, project_id, cost_layer_id
 				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
 					and r.batch_id is not distinct from b.batch_id
 					and r.serial_id is not distinct from b.serial_id
+					and r.ownership_type = b.ownership_type
+					and r.project_id is not distinct from b.project_id
+					and r.cost_layer_id is not distinct from b.cost_layer_id
 				""" : """
 				left join (
-					select warehouse_id, material_id,
+					select warehouse_id, material_id, ownership_type, project_id, cost_layer_id,
 					       sum(case when reservation_type = 'RESERVATION'
 					                then quantity - released_quantity - consumed_quantity else 0 end) as reserved_quantity,
 					       sum(case when reservation_type = 'OCCUPATION'
@@ -120,8 +123,11 @@ public class InventoryAdminService {
 					from inv_stock_reservation
 					where status = 'ACTIVE'
 					and quality_status = 'QUALIFIED'
-					group by warehouse_id, material_id
+					group by warehouse_id, material_id, ownership_type, project_id, cost_layer_id
 				) r on r.warehouse_id = b.warehouse_id and r.material_id = b.material_id
+					and r.ownership_type = b.ownership_type
+					and r.project_id is not distinct from b.project_id
+					and r.cost_layer_id is not distinct from b.cost_layer_id
 				""";
 		List<Object> countArgs = new ArrayList<>(queryParts.args());
 		countArgs.addAll(havingParts.args());
@@ -506,7 +512,8 @@ public class InventoryAdminService {
 				       r.unit_id, u.name as unit_name, r.quality_status, r.quantity, r.released_quantity,
 				       r.consumed_quantity, r.source_type, r.source_id, r.source_line_id,
 				       r.source_document_no, r.business_date, r.reason, r.remark, r.created_by,
-				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at
+				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at,
+				       r.ownership_type, r.project_id, r.cost_layer_id
 				from inv_stock_reservation r
 				join mst_warehouse w on w.id = r.warehouse_id
 				join mst_material m on m.id = r.material_id
@@ -528,7 +535,8 @@ public class InventoryAdminService {
 				       r.unit_id, u.name as unit_name, r.quality_status, r.quantity, r.released_quantity,
 				       r.consumed_quantity, r.source_type, r.source_id, r.source_line_id,
 				       r.source_document_no, r.business_date, r.reason, r.remark, r.created_by,
-				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at
+				       r.created_at, r.updated_by, r.updated_at, r.released_by, r.released_at,
+				       r.ownership_type, r.project_id, r.cost_layer_id
 				from inv_stock_reservation r
 				join mst_warehouse w on w.id = r.warehouse_id
 				join mst_material m on m.id = r.material_id
@@ -1712,7 +1720,8 @@ public class InventoryAdminService {
 				rs.getString("material_spec"), rs.getLong("unit_id"), rs.getString("unit_name"),
 				qualityStatus.name(), qualityStatus.displayName(), quantity, releasedQuantity, consumedQuantity,
 				remainingQuantity, sourceType, sourceTypeName(sourceType), sourceId, sourceLineId,
-				sourceDocumentNo, sourceSummary, rs.getObject("business_date", LocalDate.class),
+				sourceDocumentNo, rs.getString("ownership_type"), nullableLong(rs, "project_id"),
+				nullableLong(rs, "cost_layer_id"), sourceSummary, rs.getObject("business_date", LocalDate.class),
 				rs.getString("reason"), rs.getString("remark"), auditRecords, rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getString("updated_by"),
 				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("released_by"),
@@ -2157,8 +2166,9 @@ public class InventoryAdminService {
 			Long unitId, String unitName, String qualityStatus, String qualityStatusName, BigDecimal quantity,
 			BigDecimal releasedQuantity, BigDecimal consumedQuantity, BigDecimal remainingQuantity, String sourceType,
 			String sourceTypeName, Long sourceId, Long sourceLineId, String sourceDocumentNo,
-			Map<String, Object> sourceSummary, LocalDate businessDate, String reason, String remark,
-			List<InventoryReservationAuditRecordResponse> auditRecords, String createdByName,
+			String ownershipType, Long projectId, Long costLayerId, Map<String, Object> sourceSummary,
+			LocalDate businessDate, String reason, String remark, List<InventoryReservationAuditRecordResponse> auditRecords,
+			String createdByName,
 			OffsetDateTime createdAt, String updatedByName, OffsetDateTime updatedAt, String releasedByName,
 			OffsetDateTime releasedAt) {
 	}

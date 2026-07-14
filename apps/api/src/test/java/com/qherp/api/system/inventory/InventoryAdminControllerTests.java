@@ -72,6 +72,9 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	private InventoryStage023AdminService stage023AdminService;
 
 	@Autowired
+	private InventoryAvailabilityService inventoryAvailabilityService;
+
+	@Autowired
 	private ProcurementAdminService procurementAdminService;
 
 	@Autowired
@@ -848,6 +851,117 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void 项目预留占用必须绑定成本层并隔离公共库存和其他项目层() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		postValuedInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "4.000000",
+				"8.000000", InventoryQualityStatus.QUALIFIED, "023 公共预留库存");
+		long projectId = insertProject("023 成本层预留项目");
+		long layerA = insertProjectCostLayer(projectId, fixture.rawMaterialId(), "5.000000", "50.00",
+				"10.000000");
+		long layerB = insertProjectCostLayer(projectId, fixture.rawMaterialId(), "7.000000", "84.00",
+				"12.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId,
+				layerA, "5.000000", "50.00", "10.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId,
+				layerB, "7.000000", "84.00", "12.000000");
+
+		long publicReservationId = reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "2.000000", "PUBLIC", null, null);
+		long layerAReservationId = reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "3.000000", "PROJECT", projectId, layerA);
+
+		assertThat(reservationCostLayerId(publicReservationId)).isNull();
+		assertThat(reservationCostLayerId(layerAReservationId)).isEqualTo(layerA);
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PUBLIC", null, null),
+				"2.000000");
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerA),
+				"3.000000");
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerB),
+				"0.000000");
+
+		JsonNode publicBalance = firstItem(get("/api/admin/inventory/balances?ownershipType=PUBLIC&warehouseId="
+				+ fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId(), admin));
+		assertDecimal(publicBalance, "reservedQuantity", "2.000000");
+		assertDecimal(publicBalance, "availableQuantity", "2.000000");
+		JsonNode projectBalances = data(get("/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
+				+ projectId + "&warehouseId=" + fixture.rawWarehouseId() + "&materialId=" + fixture.rawMaterialId()
+				+ "&qualityStatus=QUALIFIED&page=1&pageSize=20", admin)).get("items");
+		JsonNode layerABalance = balanceItemByCostLayer(projectBalances, layerA);
+		JsonNode layerBBalance = balanceItemByCostLayer(projectBalances, layerB);
+		assertDecimal(layerABalance, "reservedQuantity", "3.000000");
+		assertDecimal(layerABalance, "availableQuantity", "2.000000");
+		assertDecimal(layerBBalance, "reservedQuantity", "0.000000");
+		assertDecimal(layerBBalance, "availableQuantity", "7.000000");
+
+		Map<String, Object> layerATransfer = projectWarehouseTransferBody(fixture.rawWarehouseId(),
+				fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId, layerA,
+				"3.000000", "023 层A预留后不足调拨");
+		JsonNode layerATransferDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				layerATransfer, admin));
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + layerATransferDraft.get("id").longValue() + "/post",
+				Map.of("version", layerATransferDraft.get("version").longValue(), "reason", "层A预留不足",
+						"idempotencyKey", "TRF-LAYER-A-RESERVED-" + layerATransferDraft.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE");
+
+		Map<String, Object> layerBTransfer = projectWarehouseTransferBody(fixture.rawWarehouseId(),
+				fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId, layerB,
+				"7.000000", "023 层B不受层A预留影响");
+		JsonNode layerBTransferDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				layerBTransfer, admin));
+		assertOk(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + layerBTransferDraft.get("id").longValue() + "/post",
+				Map.of("version", layerBTransferDraft.get("version").longValue(), "reason", "层B全量调拨",
+						"idempotencyKey", "TRF-LAYER-B-FREE-" + layerBTransferDraft.get("id").longValue()),
+				admin));
+		assertDecimal((BigDecimal) projectBalance(fixture.finishedWarehouseId(), fixture.rawMaterialId(), projectId,
+				layerB).get("quantity_on_hand"), "7.000000");
+
+		this.inventoryAvailabilityService.consumeBySourceLine(InventoryReservationType.RESERVATION, "STAGE023_TEST",
+				reservationSourceLineId(layerAReservationId), new BigDecimal("1.000000"), backendOperator(),
+				request());
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerA),
+				"2.000000");
+		this.inventoryAvailabilityService.releaseBySourceLine(InventoryReservationType.RESERVATION, "STAGE023_TEST",
+				reservationSourceLineId(layerAReservationId), backendOperator(), request());
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerA),
+				"0.000000");
+	}
+
+	@Test
+	void 项目预留缺失或错误成本层必须稳定拒绝且不锁定余额() {
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		long projectId = insertProject("023 预留成本层校验项目");
+		long otherProjectId = insertProject("023 预留成本层其他项目");
+		long layerA = insertProjectCostLayer(projectId, fixture.rawMaterialId(), "5.000000", "50.00",
+				"10.000000");
+		long otherLayer = insertProjectCostLayer(otherProjectId, fixture.rawMaterialId(), "2.000000", "30.00",
+				"15.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId,
+				layerA, "5.000000", "50.00", "10.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), otherProjectId,
+				otherLayer, "2.000000", "30.00", "15.000000");
+
+		assertThatThrownBy(() -> reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "1.000000", "PROJECT", projectId, null))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		assertThatThrownBy(() -> reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "1.000000", "PROJECT", projectId, otherLayer))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT);
+		assertThatThrownBy(() -> reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(),
+				fixture.kgUnitId(), "1.000000", "PUBLIC", projectId, layerA))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.VALIDATION_ERROR);
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", projectId, layerA),
+				"0.000000");
+	}
+
+	@Test
 	void 项目质量转换显式成本层必须校验存在性和项目归属() throws Exception {
 		InventoryFixture fixture = fixture();
 		markMaterialValued(fixture.rawMaterialId());
@@ -876,6 +990,66 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 			.isInstanceOfSatisfying(BusinessException.class,
 					(exception) -> assertThat(exception.errorCode())
 						.isEqualTo(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT));
+	}
+
+	@Test
+	void 项目质量冻结解冻必须按成本层校验锁定量且先校验成本层身份() throws Exception {
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		long sourceProjectId = insertProject("023 质量冻结预留源项目");
+		long otherProjectId = insertProject("023 质量冻结预留其他项目");
+		long sourceLayer = insertProjectCostLayer(sourceProjectId, fixture.rawMaterialId(), "5.000000", "50.00",
+				"10.000000");
+		long otherLayer = insertProjectCostLayer(otherProjectId, fixture.rawMaterialId(), "2.000000", "30.00",
+				"15.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), sourceProjectId,
+				sourceLayer, "5.000000", "50.00", "10.000000");
+
+		assertThatThrownBy(() -> this.qualityAdminService.freeze(
+				new QualityAdminService.QualityStatusTransferRequest(fixture.rawWarehouseId(),
+						fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "1.000000",
+						"不存在成本层不得冻结", null, "PROJECT", sourceProjectId, 9_999_999_999L, null),
+				backendOperator(), request()))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT));
+		assertThatThrownBy(() -> this.qualityAdminService.freeze(
+				new QualityAdminService.QualityStatusTransferRequest(fixture.rawWarehouseId(),
+						fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "1.000000",
+						"其他项目成本层不得冻结", null, "PROJECT", sourceProjectId, otherLayer, null),
+				backendOperator(), request()))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT));
+
+		this.qualityAdminService.freeze(new QualityAdminService.QualityStatusTransferRequest(fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "1.000000",
+				"无预留项目层可质量冻结", null, "PROJECT", sourceProjectId, sourceLayer, null), backendOperator(),
+				request());
+		assertDecimal((BigDecimal) projectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), sourceProjectId,
+				sourceLayer).get("quantity_on_hand"), "4.000000");
+		assertDecimal((BigDecimal) projectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), sourceProjectId,
+				sourceLayer, InventoryQualityStatus.FROZEN).get("quantity_on_hand"), "1.000000");
+
+		this.qualityAdminService.unfreeze(new QualityAdminService.QualityStatusTransferRequest(fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "1.000000",
+				"无预留项目层可质量解冻", null, "PROJECT", sourceProjectId, sourceLayer, null), backendOperator(),
+				request());
+		assertDecimal((BigDecimal) projectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), sourceProjectId,
+				sourceLayer).get("quantity_on_hand"), "5.000000");
+
+		reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000", "PROJECT",
+				sourceProjectId, sourceLayer);
+		assertThatThrownBy(() -> this.qualityAdminService.freeze(
+				new QualityAdminService.QualityStatusTransferRequest(fixture.rawWarehouseId(),
+						fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "4.000000",
+						"锁定量不足不得冻结", null, "PROJECT", sourceProjectId, sourceLayer, null),
+				backendOperator(), request()))
+			.isInstanceOfSatisfying(BusinessException.class,
+					(exception) -> assertThat(exception.errorCode())
+						.isEqualTo(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE));
+		assertDecimal(lockedQuantity(fixture.rawWarehouseId(), fixture.rawMaterialId(), "PROJECT", sourceProjectId,
+				sourceLayer), "2.000000");
 	}
 
 	@Test
@@ -2487,6 +2661,69 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		return ids;
+	}
+
+	private JsonNode balanceItemByCostLayer(JsonNode items, long costLayerId) {
+		for (JsonNode item : items) {
+			if (item.hasNonNull("costLayerId") && item.get("costLayerId").longValue() == costLayerId) {
+				return item;
+			}
+		}
+		throw new AssertionError("未找到成本层余额：" + costLayerId + "，实际：" + items);
+	}
+
+	private long reserveInventory(long warehouseId, long materialId, long unitId, String quantity, String ownershipType,
+			Long projectId, Long costLayerId) {
+		long sourceId = 4_000_000L + SEQUENCE.incrementAndGet();
+		long sourceLineId = 4_100_000L + SEQUENCE.incrementAndGet();
+		return this.inventoryAvailabilityService.reserveFromWarehouse(
+				new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION, warehouseId,
+						materialId, unitId, new BigDecimal(quantity), "STAGE023_TEST", sourceId, sourceLineId,
+						"RSV-023-" + sourceLineId, LocalDate.now(), "023 成本层预留", null, ownershipType, projectId,
+						costLayerId),
+				backendOperator(), request());
+	}
+
+	private Long reservationCostLayerId(long reservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select cost_layer_id
+				from inv_stock_reservation
+				where id = ?
+				""", Long.class, reservationId);
+	}
+
+	private long reservationSourceLineId(long reservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select source_line_id
+				from inv_stock_reservation
+				where id = ?
+				""", Long.class, reservationId);
+	}
+
+	private BigDecimal lockedQuantity(long warehouseId, long materialId, String ownershipType, Long projectId,
+			Long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(locked_quantity), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = 'QUALIFIED'
+				  and ownership_type = ?
+				  and project_id is not distinct from ?
+				  and cost_layer_id is not distinct from ?
+				""", BigDecimal.class, warehouseId, materialId, ownershipType, projectId, costLayerId);
+	}
+
+	private Map<String, Object> projectWarehouseTransferBody(long sourceWarehouseId, long targetWarehouseId,
+			long materialId, long unitId, long projectId, long costLayerId, String quantity, String reason) {
+		Map<String, Object> body = warehouseTransferPayload(sourceWarehouseId, targetWarehouseId, materialId, unitId,
+				quantity, reason);
+		@SuppressWarnings("unchecked")
+		Map<String, Object> line = (Map<String, Object>) ((List<?>) body.get("lines")).get(0);
+		line.put("ownershipType", "PROJECT");
+		line.put("projectId", projectId);
+		line.put("sourceCostLayerId", costLayerId);
+		return body;
 	}
 
 	private CostRecordFact materialIssueCostRecord(long issueLineId) {

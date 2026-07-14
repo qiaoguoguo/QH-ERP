@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @Testcontainers
 class Stage023MigrationRegressionTests {
@@ -33,11 +34,11 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须从v1迁移到v22并建立计价结构权限和审批种子() {
+	void 空库必须从v1迁移到v23并建立计价结构权限审批种子和预留成本层身份() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -69,6 +70,10 @@ class Stage023MigrationRegressionTests {
 				"unit_cost",
 				"inventory_amount",
 				"value_movement_id",
+				"cost_layer_id"));
+		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of(
+				"ownership_type",
+				"project_id",
 				"cost_layer_id"));
 		assertThat(constraintExists(jdbcTemplate, "inv_stock_balance", "ck_inv_stock_balance_ownership"))
 			.isTrue();
@@ -110,7 +115,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v19代表性存量升级到v22必须保留数量质量追踪预留并标记历史未估值() {
+	void v19代表性存量升级到v23必须保留数量质量追踪预留并标记历史未估值() {
 		migrate("19");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
@@ -118,7 +123,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
@@ -162,7 +167,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v20代表性存量升级到v22必须保留既有计价状态并具备成本层余额身份() {
+	void v20代表性存量升级到v23必须保留既有计价状态并具备成本层和预留身份() {
 		migrate("20");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
@@ -170,7 +175,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
@@ -201,16 +206,17 @@ class Stage023MigrationRegressionTests {
 				where id = ?
 				""", data.movementId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
 		assertThat(queryText(jdbcTemplate, """
-				select ownership_type || ':' || coalesce(project_id::text, 'NULL')
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
+					|| coalesce(cost_layer_id::text, 'NULL')
 				from inv_stock_reservation
 				where id = ?
-				""", data.reservationId())).isEqualTo("PUBLIC:NULL");
+				""", data.reservationId())).isEqualTo("PUBLIC:NULL:NULL");
 		assertThat(count(jdbcTemplate, "inv_project_cost_layer")).isZero();
 		assertThat(count(jdbcTemplate, "inv_value_movement")).isZero();
 	}
 
 	@Test
-	void v21代表性存量升级到v22必须保留既有计价状态并补齐成本层余额唯一索引() {
+	void v21代表性存量升级到v23必须保留既有计价状态并补齐成本层余额和预留身份() {
 		migrate("21");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
@@ -218,7 +224,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("22");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
@@ -241,12 +247,183 @@ class Stage023MigrationRegressionTests {
 				where id = ?
 				""", data.movementId())).isEqualTo("PUBLIC:NULL:LEGACY_UNVALUED");
 		assertThat(queryText(jdbcTemplate, """
-				select ownership_type || ':' || coalesce(project_id::text, 'NULL')
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
+					|| coalesce(cost_layer_id::text, 'NULL')
 				from inv_stock_reservation
 				where id = ?
-				""", data.reservationId())).isEqualTo("PUBLIC:NULL");
+				""", data.reservationId())).isEqualTo("PUBLIC:NULL:NULL");
 		assertThat(count(jdbcTemplate, "inv_project_cost_layer")).isZero();
 		assertThat(count(jdbcTemplate, "inv_value_movement")).isZero();
+	}
+
+	@Test
+	void v22到v23必须为预留补齐成本层身份并兼容公共唯一项目和历史项目空层() {
+		migrate("22");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		ReservationLayerMigrationData data = insertV22ReservationLayerData(jdbcTemplate, false);
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of("cost_layer_id"));
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
+					|| coalesce(cost_layer_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", data.publicReservationId())).isEqualTo("PUBLIC:NULL:NULL");
+		assertThat(queryText(jdbcTemplate, """
+				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
+					|| coalesce(cost_layer_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", data.activeProjectReservationId()))
+			.isEqualTo("PROJECT:" + data.projectId() + ":" + data.costLayerId());
+		assertThat(queryText(jdbcTemplate, """
+				select status || ':' || ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
+					|| coalesce(cost_layer_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", data.historyProjectReservationId())).isEqualTo("RELEASED:PROJECT:" + data.projectId()
+					+ ":NULL");
+	}
+
+	@Test
+	void v22到v23遇到活动项目预留空层且存在多个候选成本层必须迁移失败() {
+		migrate("22");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		insertV22ReservationLayerData(jdbcTemplate, true);
+
+		assertThatThrownBy(() -> migrate(null))
+			.as("ACTIVE PROJECT 预留缺 costLayerId 且同维度存在多个成本层时必须拒绝升级，避免迁移后浮动锁定")
+			.isInstanceOf(Exception.class);
+	}
+
+	private ReservationLayerMigrationData insertV22ReservationLayerData(JdbcTemplate jdbcTemplate,
+			boolean ambiguousProjectLayer) {
+		int suffix = (int) count(jdbcTemplate, "mst_unit") + 2300;
+		long unitId = id(jdbcTemplate, """
+				insert into mst_unit (
+					code, name, precision_scale, status, sort_order, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 6, 'ENABLED', 1, 'test', now(), 'test', now())
+				returning id
+				""", "S23_MIG23_UNIT_" + suffix, "023迁移V23单位");
+		long warehouseId = id(jdbcTemplate, """
+				insert into mst_warehouse (
+					code, name, warehouse_type, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'NORMAL', 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", "S23_MIG23_WH_" + suffix, "023迁移V23仓库");
+		long categoryId = id(jdbcTemplate, """
+				insert into mst_material_category (
+					code, name, status, sort_order, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'ENABLED', 1, 'test', now(), 'test', now())
+				returning id
+				""", "S23_MIG23_CAT_" + suffix, "023迁移V23分类");
+		long materialId = insertMaterial(jdbcTemplate, "S23_MIG23_VAL_" + suffix, "VALUATED_MATERIAL", true,
+				categoryId, unitId, "NONE");
+		long customerId = id(jdbcTemplate, """
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", "S23_MIG23_CUS_" + suffix, "023迁移V23客户");
+		long ownerUserId = id(jdbcTemplate, """
+				insert into sys_user (
+					username, password_hash, display_name, status, created_by, created_at, updated_by, updated_at
+				)
+				values (?, 'test', ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", "s23_mig23_owner_" + suffix, "023迁移V23负责人");
+		long projectId = id(jdbcTemplate, """
+				insert into sal_project (
+					project_no, name, customer_id, owner_user_id, planned_start_date, planned_finish_date,
+					status, target_revenue, target_cost, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, date '2026-01-01', date '2026-12-31', 'ACTIVE', 100000.00, 60000.00,
+					'test', now(), 'test', now())
+				returning id
+				""", "S23-MIG23-PRJ-" + suffix, "023迁移V23项目", customerId, ownerUserId);
+		id(jdbcTemplate, """
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+					quality_status, ownership_type, valuation_state, inventory_amount, average_unit_cost,
+					created_at, updated_at
+				)
+				values (?, ?, ?, 5.000000, 0.000000, 'QUALIFIED', 'PUBLIC', 'VALUED',
+					50.00, 10.000000, now(), now())
+				returning id
+				""", warehouseId, materialId, unitId);
+		long costLayerId = id(jdbcTemplate, """
+				insert into inv_project_cost_layer (
+					project_id, material_id, source_type, source_id, source_line_id, original_quantity,
+					original_amount, remaining_quantity, remaining_amount, unit_cost, status,
+					created_at, updated_at
+				)
+				values (?, ?, 'MIGRATION_TEST', 1, 1, 3.000000, 30.00, 3.000000, 30.00, 10.000000, 'ACTIVE',
+					now(), now())
+				returning id
+				""", projectId, materialId);
+		id(jdbcTemplate, """
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+					quality_status, ownership_type, project_id, valuation_state, inventory_amount,
+					average_unit_cost, cost_layer_id, created_at, updated_at
+				)
+				values (?, ?, ?, 3.000000, 1.000000, 'QUALIFIED', 'PROJECT', ?, 'VALUED',
+					30.00, 10.000000, ?, now(), now())
+				returning id
+				""", warehouseId, materialId, unitId, projectId, costLayerId);
+		if (ambiguousProjectLayer) {
+			long secondLayerId = id(jdbcTemplate, """
+					insert into inv_project_cost_layer (
+						project_id, material_id, source_type, source_id, source_line_id, original_quantity,
+						original_amount, remaining_quantity, remaining_amount, unit_cost, status,
+						created_at, updated_at
+					)
+					values (?, ?, 'MIGRATION_TEST', 2, 2, 2.000000, 24.00, 2.000000, 24.00, 12.000000,
+						'ACTIVE', now(), now())
+					returning id
+					""", projectId, materialId);
+			id(jdbcTemplate, """
+					insert into inv_stock_balance (
+						warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity,
+						quality_status, ownership_type, project_id, valuation_state, inventory_amount,
+						average_unit_cost, cost_layer_id, created_at, updated_at
+					)
+					values (?, ?, ?, 2.000000, 0.000000, 'QUALIFIED', 'PROJECT', ?, 'VALUED',
+						24.00, 12.000000, ?, now(), now())
+					returning id
+					""", warehouseId, materialId, unitId, projectId, secondLayerId);
+		}
+		long publicReservationId = insertV22Reservation(jdbcTemplate, "S23-MIG23-PUBLIC-" + suffix,
+				"PUBLIC", null, "ACTIVE", warehouseId, materialId, unitId, 10);
+		long activeProjectReservationId = insertV22Reservation(jdbcTemplate, "S23-MIG23-PROJECT-" + suffix,
+				"PROJECT", projectId, "ACTIVE", warehouseId, materialId, unitId, 20);
+		long historyProjectReservationId = insertV22Reservation(jdbcTemplate, "S23-MIG23-HISTORY-" + suffix,
+				"PROJECT", projectId, "RELEASED", warehouseId, materialId, unitId, 30);
+		return new ReservationLayerMigrationData(projectId, costLayerId, publicReservationId,
+				activeProjectReservationId, historyProjectReservationId);
+	}
+
+	private long insertV22Reservation(JdbcTemplate jdbcTemplate, String reservationNo, String ownershipType,
+			Long projectId, String status, long warehouseId, long materialId, long unitId, long sourceLineId) {
+		return id(jdbcTemplate, """
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id,
+					quality_status, quantity, released_quantity, consumed_quantity, source_type,
+					source_id, source_line_id, source_document_no, business_date, reason,
+					created_by, created_at, updated_by, updated_at, ownership_type, project_id
+				)
+				values (?, 'RESERVATION', ?, ?, ?, ?, 'QUALIFIED', 1.000000,
+					case when ? = 'RELEASED' then 1.000000 else 0.000000 end,
+					0.000000, 'STAGE023_MIGRATION', 23, ?, ?, date '2026-01-11',
+					'023迁移V23预留', 'test', now(), 'test', now(), ?, ?)
+				returning id
+				""", reservationNo, status, warehouseId, materialId, unitId, status, sourceLineId,
+				reservationNo, ownershipType, projectId);
 	}
 
 	private RepresentativeStockData insertRepresentativeV19Stock(JdbcTemplate jdbcTemplate) {
@@ -567,6 +744,14 @@ class Stage023MigrationRegressionTests {
 			long movementId,
 			long reservationId,
 			long batchId) {
+	}
+
+	private record ReservationLayerMigrationData(
+			long projectId,
+			long costLayerId,
+			long publicReservationId,
+			long activeProjectReservationId,
+			long historyProjectReservationId) {
 	}
 
 }
