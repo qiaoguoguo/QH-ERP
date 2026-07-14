@@ -62,11 +62,13 @@ public class InventoryAdminController {
 			@RequestParam(required = false) String trackingMethod, @RequestParam(required = false) Long batchId,
 			@RequestParam(required = false) String batchNo, @RequestParam(required = false) Long serialId,
 			@RequestParam(required = false) String serialNo,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) String valuationMethod, @RequestParam(required = false) Long costLayerId,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.inventoryAdminService.movements(keyword, warehouseId, materialId, movementType,
-				direction, dateFrom, dateTo, qualityStatus, trackingMethod, batchId, batchNo, serialId, serialNo, page,
-				pageSize, currentUser));
+				direction, dateFrom, dateTo, qualityStatus, trackingMethod, batchId, batchNo, serialId, serialNo,
+				ownershipType, projectId, valuationMethod, costLayerId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/cost-layers")
@@ -194,14 +196,17 @@ public class InventoryAdminController {
 
 	@GetMapping("/warehouse-transfers")
 	public ApiResponse<PageResponse<java.util.Map<String, Object>>> warehouseTransfers(
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.stage023AdminService.warehouseTransfers(status, page, pageSize));
+			@RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.warehouseTransfers(status, keyword, page, pageSize,
+				currentUser));
 	}
 
 	@GetMapping("/warehouse-transfers/{id}")
-	public ApiResponse<java.util.Map<String, Object>> warehouseTransfer(@PathVariable Long id) {
-		return ApiResponse.ok(this.stage023AdminService.warehouseTransfer(id));
+	public ApiResponse<java.util.Map<String, Object>> warehouseTransfer(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.warehouseTransfer(id, currentUser));
 	}
 
 	@PutMapping("/warehouse-transfers/{id}")
@@ -234,14 +239,17 @@ public class InventoryAdminController {
 
 	@GetMapping("/ownership-conversions")
 	public ApiResponse<PageResponse<java.util.Map<String, Object>>> ownershipConversions(
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.stage023AdminService.ownershipConversions(status, page, pageSize));
+			@RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.ownershipConversions(status, keyword, page, pageSize,
+				currentUser));
 	}
 
 	@GetMapping("/ownership-conversions/{id}")
-	public ApiResponse<java.util.Map<String, Object>> ownershipConversion(@PathVariable Long id) {
-		return ApiResponse.ok(this.stage023AdminService.ownershipConversion(id));
+	public ApiResponse<java.util.Map<String, Object>> ownershipConversion(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.ownershipConversion(id, currentUser));
 	}
 
 	@PutMapping("/ownership-conversions/{id}")
@@ -283,14 +291,16 @@ public class InventoryAdminController {
 
 	@GetMapping("/stocktakes")
 	public ApiResponse<PageResponse<java.util.Map<String, Object>>> stocktakes(
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.stage023AdminService.stocktakes(status, page, pageSize));
+			@RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.stocktakes(status, keyword, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/stocktakes/{id}")
-	public ApiResponse<java.util.Map<String, Object>> stocktake(@PathVariable Long id) {
-		return ApiResponse.ok(this.stage023AdminService.stocktake(id));
+	public ApiResponse<java.util.Map<String, Object>> stocktake(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.stocktake(id, currentUser));
 	}
 
 	@PutMapping("/stocktakes/{id}/start")
@@ -337,14 +347,17 @@ public class InventoryAdminController {
 
 	@GetMapping("/valuation-adjustments")
 	public ApiResponse<PageResponse<java.util.Map<String, Object>>> valuationAdjustments(
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.stage023AdminService.valuationAdjustments(status, page, pageSize));
+			@RequestParam(required = false) String status, @RequestParam(required = false) String keyword,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.valuationAdjustments(status, keyword, page, pageSize,
+				currentUser));
 	}
 
 	@GetMapping("/valuation-adjustments/{id}")
-	public ApiResponse<java.util.Map<String, Object>> valuationAdjustment(@PathVariable Long id) {
-		return ApiResponse.ok(this.stage023AdminService.valuationAdjustment(id));
+	public ApiResponse<java.util.Map<String, Object>> valuationAdjustment(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.stage023AdminService.valuationAdjustment(id, currentUser));
 	}
 
 	@PostMapping("/valuation-adjustments")

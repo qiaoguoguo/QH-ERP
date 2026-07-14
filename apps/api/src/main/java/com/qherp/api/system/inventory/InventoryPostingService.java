@@ -36,6 +36,7 @@ public class InventoryPostingService {
 	@Transactional
 	public PostingResult post(PostingRequest request) {
 		validateRequest(request);
+		requireNoActiveStocktakeLock(request);
 		validateOutboundQualityStatus(request);
 		OffsetDateTime now = OffsetDateTime.now();
 		ValuationContext valuationContext = request.valuationContextOrDefault();
@@ -46,10 +47,12 @@ public class InventoryPostingService {
 		BigDecimal afterQuantity = request.direction() == InventoryDirection.IN ? beforeQuantity.add(request.quantity())
 				: beforeQuantity.subtract(request.quantity());
 		if (afterQuantity.compareTo(ZERO) < 0) {
-			if ("PUBLIC".equals(valuationContext.ownershipType()) && materialValueEnabled(request.materialId())) {
+			ApiErrorCode errorCode = stockNotEnoughErrorCode(request, request.quantity());
+			if (errorCode == ApiErrorCode.INVENTORY_STOCK_NOT_ENOUGH && "PUBLIC".equals(valuationContext.ownershipType())
+					&& materialValueEnabled(request.materialId())) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_PUBLIC_POOL_INSUFFICIENT);
 			}
-			throw new BusinessException(stockNotEnoughErrorCode(request, request.quantity()));
+			throw new BusinessException(errorCode);
 		}
 		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED
 				&& !request.consumedReservation()) {
@@ -123,11 +126,15 @@ public class InventoryPostingService {
 		}
 		Long fromSourceLineId = transferSourceLineId(sourceLineId, fromStatus);
 		Long toSourceLineId = transferSourceLineId(sourceLineId, toStatus);
+		ValuationContext sourceContext = qualityTransferSourceContext(warehouseId, materialId, fromStatus, batchId,
+				serialId, quantity);
 		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.OUT, warehouseId, materialId, unitId, quantity, fromStatus, sourceType, sourceId,
-				fromSourceLineId, businessDate, reason, remark, operatorName, batchId, serialId));
-		ValuationContext transferContext = new ValuationContext("PUBLIC", null, fromResult.unitCost(),
-				fromResult.costLayerId(), fromResult.valueMovementId());
+				fromSourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
+				sourceContext));
+		ValuationContext transferContext = new ValuationContext(sourceContext.ownershipType(),
+				sourceContext.projectId(), fromResult.unitCost(), fromResult.costLayerId(),
+				fromResult.valueMovementId(), fromResult.inventoryAmount());
 		PostingResult toResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.IN, warehouseId, materialId, unitId, quantity, toStatus, sourceType, sourceId,
 				toSourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
@@ -304,6 +311,22 @@ public class InventoryPostingService {
 		return total == null ? ZERO : total;
 	}
 
+	private void requireNoActiveStocktakeLock(PostingRequest request) {
+		if ("STOCKTAKE".equals(request.sourceType())) {
+			return;
+		}
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stocktake_range_lock
+				where released_at is null
+				and (warehouse_id is null or warehouse_id = ?)
+				and (material_id is null or material_id = ?)
+				""", Long.class, request.warehouseId(), request.materialId());
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_STOCKTAKE_RANGE_LOCKED);
+		}
+	}
+
 	private boolean materialValueEnabled(Long materialId) {
 		Boolean enabled = this.jdbcTemplate.queryForObject("""
 				select coalesce(inventory_value_enabled, false)
@@ -325,19 +348,36 @@ public class InventoryPostingService {
 		}
 		if ("PUBLIC".equals(context.ownershipType())) {
 			PublicPoolSnapshot pool = publicPoolSnapshot(request.materialId());
-			BigDecimal amount = afterQuantity.compareTo(ZERO) == 0 ? ZERO.setScale(2)
-					: afterQuantity.multiply(pool.averageUnitCost()).setScale(2, java.math.RoundingMode.HALF_UP);
+			BigDecimal amount = afterQuantity.multiply(pool.averageUnitCost()).setScale(2,
+					java.math.RoundingMode.HALF_UP);
 			return new BalanceValue(amount, pool.averageUnitCost(), null, pool.id());
 		}
-		BigDecimal projectAmount = this.jdbcTemplate.queryForObject("""
-				select coalesce(sum(remaining_amount), 0)
-				from inv_project_cost_layer
-				where project_id = ?
+		BigDecimal unitCost = valuationResult.unitCost() == null ? context.unitPrice() : valuationResult.unitCost();
+		BigDecimal projectAmount = unitCost == null ? null
+				: afterQuantity.multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
+		return new BalanceValue(projectAmount, unitCost,
+				valuationResult.costLayerId() == null ? context.costLayerId() : valuationResult.costLayerId(), null);
+	}
+
+	private ValuationContext qualityTransferSourceContext(Long warehouseId, Long materialId,
+			InventoryQualityStatus qualityStatus, Long batchId, Long serialId, BigDecimal quantity) {
+		return this.jdbcTemplate.query("""
+				select ownership_type, project_id, cost_layer_id
+				from inv_stock_balance
+				where warehouse_id = ?
 				and material_id = ?
-				and status <> 'CANCELLED'
-				""", BigDecimal.class, context.projectId(), request.materialId());
-		return new BalanceValue(projectAmount == null ? ZERO.setScale(2) : projectAmount.setScale(2),
-				valuationResult.unitCost(), valuationResult.costLayerId(), null);
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and quantity_on_hand >= ?
+				order by case ownership_type when 'PROJECT' then 0 else 1 end, id
+				limit 1
+				""", (rs, rowNum) -> new ValuationContext(rs.getString("ownership_type"),
+				nullableLong(rs, "project_id"), null, nullableLong(rs, "cost_layer_id"), null), warehouseId,
+				materialId, qualityStatus.name(), batchId, serialId, quantity)
+			.stream()
+			.findFirst()
+			.orElse(ValuationContext.publicStock(null));
 	}
 
 	private PublicPoolSnapshot publicPoolSnapshot(Long materialId) {
@@ -385,6 +425,11 @@ public class InventoryPostingService {
 
 	private static boolean hasText(String value) {
 		return value != null && !value.isBlank();
+	}
+
+	private static Long nullableLong(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
+		long value = rs.getLong(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	public record PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
@@ -458,7 +503,12 @@ public class InventoryPostingService {
 	}
 
 	public record ValuationContext(String ownershipType, Long projectId, BigDecimal unitPrice, Long costLayerId,
-			Long originalValueMovementId) {
+			Long originalValueMovementId, BigDecimal inventoryAmount) {
+
+		public ValuationContext(String ownershipType, Long projectId, BigDecimal unitPrice, Long costLayerId,
+				Long originalValueMovementId) {
+			this(ownershipType, projectId, unitPrice, costLayerId, originalValueMovementId, null);
+		}
 
 		public ValuationContext {
 			if (!hasText(ownershipType)) {
@@ -470,7 +520,7 @@ public class InventoryPostingService {
 		}
 
 		public static ValuationContext publicStock(BigDecimal unitPrice) {
-			return new ValuationContext("PUBLIC", null, unitPrice, null, null);
+			return new ValuationContext("PUBLIC", null, unitPrice, null, null, null);
 		}
 	}
 

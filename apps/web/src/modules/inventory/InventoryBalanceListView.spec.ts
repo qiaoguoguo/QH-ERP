@@ -308,6 +308,8 @@ describe('库存余额页', () => {
         materialId: 2,
         materialCode: 'RM-STEEL',
         materialName: '冷轧钢板',
+        batchNo: 'B-20260711-001',
+        serialNo: 'SN-001',
         originalQuantity: '120.500000',
         originalAmount: '1325.50',
         remainingQuantity: '80.000000',
@@ -317,6 +319,7 @@ describe('库存余额页', () => {
         statusName: '开放',
         sourceType: 'OWNERSHIP_CONVERSION',
         sourceDocumentNo: 'OC-001',
+        parentLayerId: 8801,
         createdAt: '2026-07-03T09:00:00+08:00',
       }],
       page: 1,
@@ -354,11 +357,11 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('批次管理')
     expect(wrapper.text()).toContain('B-20260711-001')
     expect(wrapper.text()).toContain('合格')
-    expect(wrapper.text()).toContain('账面库存')
+    expect(wrapper.text()).toContain('账面数')
     expect(wrapper.text()).toContain('合格现存')
     expect(wrapper.text()).toContain('占用库存')
     expect(wrapper.text()).toContain('预留库存')
-    expect(wrapper.text()).toContain('现货净可用')
+    expect(wrapper.text()).toContain('可用数')
     expect(wrapper.text()).toContain('采购在途参考')
     expect(wrapper.text()).toContain('可承诺量')
     expect(wrapper.text()).toContain('净需求缺口')
@@ -440,8 +443,8 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('所有权')
     expect(wrapper.text()).toContain('项目')
     expect(wrapper.text()).toContain('估值状态')
-    expect(wrapper.text()).toContain('库存金额')
-    expect(wrapper.text()).toContain('平均单价')
+    expect(wrapper.text()).toContain('金额')
+    expect(wrapper.text()).toContain('均价')
     expect(wrapper.text()).toContain('成本层')
     expect(wrapper.text()).toContain('项目库存')
     expect(wrapper.text()).toContain('PRJ-001 一号项目')
@@ -465,8 +468,45 @@ describe('库存余额页', () => {
       pageSize: 20,
     }))
     expect(wrapper.text()).toContain('成本层追溯')
+    expect(wrapper.text()).toContain('批次/序列')
+    expect(wrapper.text()).toContain('原始金额')
+    expect(wrapper.text()).toContain('父层')
+    expect(wrapper.text()).toContain('来源类型')
     expect(wrapper.text()).toContain('CL-PRJ-001')
+    expect(wrapper.text()).toContain('B-20260711-001 / SN-001')
+    expect(wrapper.text()).toContain('1,325.50')
+    expect(wrapper.text()).toContain('8801')
+    expect(wrapper.text()).toContain('所有权转换')
     expect(wrapper.text()).toContain('880.00')
+  })
+
+  it('桌面首屏优先展示仓库物料、双数量、金额均价、估值状态和成本层列', async () => {
+    const { wrapper } = await mountBalancesWithPermissions([
+      'inventory:balance:view',
+      'inventory:movement:view',
+      'inventory:valuation:view',
+    ])
+    const labels = wrapper.findAllComponents({ name: 'ElTableColumn' })
+      .map((column) => column.props('label'))
+      .filter(Boolean)
+
+    expect(labels.slice(0, 12)).toEqual([
+      '仓库',
+      '物料',
+      '质量',
+      '所有权',
+      '项目',
+      '账面数',
+      '可用数',
+      '金额',
+      '均价',
+      '估值状态',
+      '成本层',
+      '操作',
+    ])
+    const actionColumn = wrapper.findAllComponents({ name: 'ElTableColumn' })
+      .find((column) => column.props('label') === '操作')
+    expect(actionColumn?.props('fixed')).toBe('right')
   })
 
   it('按所有权、项目和估值状态查询，发送冻结查询字段', async () => {

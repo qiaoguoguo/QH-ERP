@@ -271,8 +271,8 @@ onMounted(() => {
         title="首次完工需要录入暂估单价，暂估库存后续出库价值不会被重写。"
         :closable="false"
       />
-      <el-alert
-        v-else-if="workOrder.currentAverageUnitCost"
+        <el-alert
+        v-else-if="workOrder.costVisible !== false && workOrder.currentAverageUnitCost"
         class="state-alert"
         type="info"
         :title="`沿用当前公共平均价 ${formatInventoryAmount(workOrder.currentAverageUnitCost, 6)}，正式完工成本留待后续阶段处理。`"

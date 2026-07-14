@@ -11,6 +11,7 @@ import {
   type InventoryOwnershipConversionPayload,
   type InventoryOwnershipConversionRecord,
   type InventoryStocktakeLineRecord,
+  type InventoryStocktakeLineUpdatePayload,
   type InventoryStocktakePayload,
   type InventoryStocktakeRecord,
   type InventoryValuationAdjustmentPayload,
@@ -41,7 +42,7 @@ type ApiBucket = {
   submitApproval?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   withdraw?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   start?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
-  updateLines?(id: ResourceId, payload: { idempotencyKey: string; lines: Array<{ id: ResourceId; version: number; actualQuantity: string }> }): Promise<InventoryRecord>
+  updateLines?(id: ResourceId, payload: InventoryStocktakeLineUpdatePayload): Promise<InventoryRecord>
   reconcile?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   completeZeroVariance?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
   cancel?(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryRecord>
@@ -64,6 +65,7 @@ interface DocumentConfig {
   updatePermission: string
   postPermission?: string
   submitPermission?: string
+  withdrawPermission?: string
   cancelPermission: string
   api: ApiBucket
 }
@@ -98,6 +100,7 @@ const configs: Record<DocumentKind, DocumentConfig> = {
     createPermission: 'inventory:ownership-conversion:create',
     updatePermission: 'inventory:ownership-conversion:update',
     submitPermission: 'inventory:ownership-conversion:submit',
+    withdrawPermission: 'inventory:ownership-conversion:withdraw',
     cancelPermission: 'inventory:ownership-conversion:cancel',
     api: inventoryApi.ownershipConversions,
   },
@@ -126,6 +129,7 @@ const configs: Record<DocumentKind, DocumentConfig> = {
     createPermission: 'inventory:valuation-adjustment:create',
     updatePermission: 'inventory:valuation-adjustment:update',
     submitPermission: 'inventory:valuation-adjustment:submit',
+    withdrawPermission: 'inventory:valuation-adjustment:withdraw',
     cancelPermission: 'inventory:valuation-adjustment:cancel',
     api: inventoryApi.valuationAdjustments,
   },
@@ -179,9 +183,20 @@ const form = reactive({
   targetWarehouseId: '',
   warehouseId: '',
   materialId: '',
+  unitId: '',
+  ownershipType: 'PUBLIC' as 'PUBLIC' | 'PROJECT',
+  projectId: '',
+  sourceOwnershipType: 'PUBLIC' as 'PUBLIC' | 'PROJECT',
+  targetOwnershipType: 'PROJECT' as 'PUBLIC' | 'PROJECT',
+  sourceProjectId: '',
+  targetProjectId: '',
+  sourceCostLayerId: '',
+  sourceUnitCost: '',
+  costLayerId: '',
+  adjustmentType: 'LEGACY_OPENING' as 'LEGACY_OPENING' | 'PROVISIONAL_REVALUATION',
   quantity: '',
   unitCost: '',
-  amount: '',
+  adjustmentAmount: '',
 })
 
 const canCreate = computed(() => authStore.hasPermission(config.value.createPermission))
@@ -189,6 +204,21 @@ const canUpdate = computed(() => authStore.hasPermission(config.value.updatePerm
 const canCancel = computed(() => authStore.hasPermission(config.value.cancelPermission))
 const canPost = computed(() => !config.value.postPermission || authStore.hasPermission(config.value.postPermission))
 const canSubmit = computed(() => !config.value.submitPermission || authStore.hasPermission(config.value.submitPermission))
+const canWithdraw = computed(() => !config.value.withdrawPermission || authStore.hasPermission(config.value.withdrawPermission))
+
+function normalizeId(value: ResourceId | ''): ResourceId {
+  const text = String(value).trim()
+  return /^\d+$/.test(text) ? Number(text) : text
+}
+
+function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
+  const text = String(value).trim()
+  return text ? normalizeId(text) : undefined
+}
+
+function stringifyOptional(value: unknown) {
+  return value === null || value === undefined ? '' : String(value)
+}
 
 function allowed(recordValue: InventoryControlledDocumentSummaryRecord, action: InventoryAllowedAction | string): boolean {
   return (recordValue.allowedActions ?? []).includes(action)
@@ -204,8 +234,14 @@ function actionVisible(recordValue: InventoryRecord, action: InventoryAllowedAct
   if (action === 'POST') {
     return canPost.value
   }
-  if (action === 'SUBMIT_APPROVAL' || action === 'WITHDRAW' || action === 'RECONCILE' || action === 'COMPLETE_ZERO_VARIANCE' || action === 'START') {
+  if (action === 'START' || action === 'UPDATE_LINES' || action === 'RECONCILE' || action === 'COMPLETE_ZERO_VARIANCE') {
+    return canUpdate.value
+  }
+  if (action === 'SUBMIT_APPROVAL') {
     return canSubmit.value
+  }
+  if (action === 'WITHDRAW') {
+    return canWithdraw.value
   }
   if (action === 'CANCEL') {
     return canCancel.value
@@ -226,6 +262,26 @@ function documentNo(recordValue: InventoryRecord) {
 
 function statusText(recordValue: InventoryRecord) {
   return recordValue.statusName || String(recordValue.status)
+}
+
+function approvalStatusText(recordValue: InventoryRecord) {
+  const status = recordValue.approvalSummary?.status
+  if (!status) {
+    return '-'
+  }
+  const labels: Record<string, string> = {
+    DRAFT: '草稿',
+    SUBMITTED: '审批中',
+    APPROVED: '已通过',
+    REJECTED: '已驳回',
+    WITHDRAWN: '已撤回',
+    CANCELLED: '已取消',
+  }
+  return labels[String(status)] ?? String(status)
+}
+
+function amountImpactText(recordValue: InventoryRecord) {
+  return recordValue.amountImpactSummary || recordValue.keyInfoSummary || '-'
 }
 
 function formattedDateTime(value?: string | null) {
@@ -270,8 +326,83 @@ function fillStocktakeInputs(lines: InventoryStocktakeLineRecord[] = []) {
     delete stocktakeActualInputs[key]
   })
   lines.forEach((line) => {
-    stocktakeActualInputs[String(line.id)] = line.actualQuantity ?? ''
+    stocktakeActualInputs[String(line.id)] = line.countedQuantity ?? ''
   })
+}
+
+function resetForm() {
+  form.businessDate = ''
+  form.reason = ''
+  form.remark = ''
+  form.sourceWarehouseId = ''
+  form.targetWarehouseId = ''
+  form.warehouseId = ''
+  form.materialId = ''
+  form.unitId = ''
+  form.ownershipType = 'PUBLIC'
+  form.projectId = ''
+  form.sourceOwnershipType = 'PUBLIC'
+  form.targetOwnershipType = 'PROJECT'
+  form.sourceProjectId = ''
+  form.targetProjectId = ''
+  form.sourceCostLayerId = ''
+  form.sourceUnitCost = ''
+  form.costLayerId = ''
+  form.adjustmentType = 'LEGACY_OPENING'
+  form.quantity = ''
+  form.unitCost = ''
+  form.adjustmentAmount = ''
+}
+
+function fillFormFromRecord(detail: InventoryRecord) {
+  resetForm()
+  form.businessDate = detail.businessDate
+  form.reason = detail.reason
+  form.remark = stringifyOptional((detail as { remark?: string | null }).remark)
+  if (config.value.kind === 'warehouseTransfer') {
+    const line = (detail as InventoryWarehouseTransferRecord).lines?.[0]
+    form.sourceWarehouseId = stringifyOptional(line?.sourceWarehouseId)
+    form.targetWarehouseId = stringifyOptional(line?.targetWarehouseId)
+    form.materialId = stringifyOptional(line?.materialId)
+    form.unitId = stringifyOptional(line?.unitId)
+    form.ownershipType = line?.ownershipType === 'PROJECT' ? 'PROJECT' : 'PUBLIC'
+    form.projectId = stringifyOptional(line?.projectId)
+    form.sourceCostLayerId = stringifyOptional(line?.sourceCostLayerId)
+    form.quantity = stringifyOptional(line?.quantity)
+    return
+  }
+  if (config.value.kind === 'ownershipConversion') {
+    const line = (detail as InventoryOwnershipConversionRecord).lines?.[0]
+    form.sourceOwnershipType = line?.sourceOwnershipType === 'PROJECT' ? 'PROJECT' : 'PUBLIC'
+    form.targetOwnershipType = line?.targetOwnershipType === 'PUBLIC' ? 'PUBLIC' : 'PROJECT'
+    form.sourceWarehouseId = stringifyOptional(line?.sourceWarehouseId)
+    form.targetWarehouseId = stringifyOptional(line?.targetWarehouseId)
+    form.sourceProjectId = stringifyOptional(line?.sourceProjectId)
+    form.targetProjectId = stringifyOptional(line?.targetProjectId)
+    form.materialId = stringifyOptional(line?.materialId)
+    form.unitId = stringifyOptional(line?.unitId)
+    form.sourceCostLayerId = stringifyOptional(line?.sourceCostLayerId)
+    form.sourceUnitCost = stringifyOptional(line?.sourceUnitCost)
+    form.quantity = stringifyOptional(line?.quantity)
+    return
+  }
+  if (config.value.kind === 'stocktake') {
+    const stocktake = detail as InventoryStocktakeRecord
+    form.warehouseId = stringifyOptional(stocktake.warehouseId)
+    return
+  }
+  const adjustment = detail as InventoryValuationAdjustmentRecord
+  const line = adjustment.lines?.[0]
+  form.adjustmentType = adjustment.adjustmentType === 'PROVISIONAL_REVALUATION'
+    ? 'PROVISIONAL_REVALUATION'
+    : 'LEGACY_OPENING'
+  form.materialId = stringifyOptional(line?.materialId)
+  form.ownershipType = line?.ownershipType === 'PROJECT' || line?.projectId ? 'PROJECT' : 'PUBLIC'
+  form.projectId = stringifyOptional(line?.projectId)
+  form.costLayerId = stringifyOptional(line?.costLayerId)
+  form.quantity = stringifyOptional(line?.quantity)
+  form.unitCost = stringifyOptional(line?.unitCost)
+  form.adjustmentAmount = stringifyOptional(line?.adjustmentAmount)
 }
 
 async function loadDetail() {
@@ -283,6 +414,9 @@ async function loadDetail() {
   try {
     const detail = await config.value.api.get(recordId.value)
     record.value = detail
+    if (mode.value === 'edit') {
+      fillFormFromRecord(detail)
+    }
     if (config.value.kind === 'stocktake') {
       fillStocktakeInputs((detail as InventoryStocktakeRecord).lines ?? [])
     }
@@ -357,7 +491,7 @@ async function runAction(target: InventoryRecord, action: InventoryAllowedAction
 }
 
 function stocktakeActualText(line: InventoryStocktakeLineRecord) {
-  return line.actualQuantity === null || line.actualQuantity === undefined ? '未盘' : formatQuantity(line.actualQuantity)
+  return line.countedQuantity === null || line.countedQuantity === undefined ? '未盘' : formatQuantity(line.countedQuantity)
 }
 
 function editableStocktakeLines() {
@@ -366,7 +500,8 @@ function editableStocktakeLines() {
   }
   return ((record.value as InventoryStocktakeRecord).lines ?? []).filter((line) => {
     const value = stocktakeActualInputs[String(line.id)]
-    return value !== undefined && value !== '' && value !== line.actualQuantity
+    const original = line.countedQuantity ?? ''
+    return value !== undefined && value !== original
   })
 }
 
@@ -378,11 +513,13 @@ async function saveStocktakeLines() {
   actionError.value = ''
   try {
     await config.value.api.updateLines(record.value.id, {
-      idempotencyKey: createIdempotencyKey('inventory-stocktake-lines'),
+      version: record.value.version,
       lines: editableStocktakeLines().map((line) => ({
         id: line.id,
         version: line.version,
-        actualQuantity: stocktakeActualInputs[String(line.id)],
+        countedQuantity: stocktakeActualInputs[String(line.id)] === ''
+          ? null
+          : stocktakeActualInputs[String(line.id)],
       })),
     })
     await loadDetail()
@@ -395,20 +532,26 @@ async function saveStocktakeLines() {
 
 function buildPayload(): object {
   const common = {
+    idempotencyKey: createIdempotencyKey(`inventory-${config.value.kind}`),
+    ...(mode.value === 'edit' && record.value ? { version: record.value.version } : {}),
     businessDate: form.businessDate,
     reason: form.reason,
     ...(form.remark ? { remark: form.remark } : {}),
   }
   if (config.value.kind === 'warehouseTransfer') {
+    const projectId = normalizeOptionalId(form.projectId)
     return {
       ...common,
       lines: [{
         lineNo: 10,
-        sourceWarehouseId: form.sourceWarehouseId,
-        targetWarehouseId: form.targetWarehouseId,
-        materialId: form.materialId,
+        sourceWarehouseId: normalizeId(form.sourceWarehouseId),
+        targetWarehouseId: normalizeId(form.targetWarehouseId),
+        materialId: normalizeId(form.materialId),
+        unitId: normalizeId(form.unitId),
         quantity: form.quantity,
-        ownershipType: 'PUBLIC',
+        ownershipType: projectId ? 'PROJECT' : form.ownershipType,
+        ...(projectId ? { projectId } : {}),
+        ...(normalizeOptionalId(form.sourceCostLayerId) ? { sourceCostLayerId: normalizeOptionalId(form.sourceCostLayerId) } : {}),
       }],
     } satisfies InventoryWarehouseTransferPayload
   }
@@ -417,11 +560,17 @@ function buildPayload(): object {
       ...common,
       lines: [{
         lineNo: 10,
-        sourceOwnershipType: 'PUBLIC',
-        targetOwnershipType: 'PROJECT',
-        warehouseId: form.warehouseId,
-        materialId: form.materialId,
+        sourceOwnershipType: form.sourceOwnershipType,
+        targetOwnershipType: form.targetOwnershipType,
+        sourceWarehouseId: normalizeId(form.sourceWarehouseId),
+        targetWarehouseId: normalizeId(form.targetWarehouseId),
+        ...(normalizeOptionalId(form.sourceProjectId) ? { sourceProjectId: normalizeOptionalId(form.sourceProjectId) } : {}),
+        ...(normalizeOptionalId(form.targetProjectId) ? { targetProjectId: normalizeOptionalId(form.targetProjectId) } : {}),
+        materialId: normalizeId(form.materialId),
+        unitId: normalizeId(form.unitId),
         quantity: form.quantity,
+        ...(normalizeOptionalId(form.sourceCostLayerId) ? { sourceCostLayerId: normalizeOptionalId(form.sourceCostLayerId) } : {}),
+        ...(form.sourceUnitCost ? { sourceUnitCost: form.sourceUnitCost } : {}),
       }],
     } satisfies InventoryOwnershipConversionPayload
   }
@@ -429,18 +578,22 @@ function buildPayload(): object {
     return {
       ...common,
       scopeType: 'WAREHOUSE',
-      warehouseId: form.warehouseId,
+      warehouseId: normalizeOptionalId(form.warehouseId),
     } satisfies InventoryStocktakePayload
   }
+  const adjustmentProjectId = normalizeOptionalId(form.projectId)
   return {
     ...common,
-    adjustmentType: 'LEGACY_OPENING',
+    adjustmentType: form.adjustmentType,
     lines: [{
       lineNo: 10,
-      materialId: form.materialId,
+      materialId: normalizeId(form.materialId),
+      ownershipType: adjustmentProjectId ? 'PROJECT' : form.ownershipType,
+      ...(adjustmentProjectId ? { projectId: adjustmentProjectId } : {}),
       quantity: form.quantity,
       unitCost: form.unitCost,
-      amount: form.amount,
+      adjustmentAmount: form.adjustmentAmount,
+      ...(normalizeOptionalId(form.costLayerId) ? { costLayerId: normalizeOptionalId(form.costLayerId) } : {}),
     }],
   } satisfies InventoryValuationAdjustmentPayload
 }
@@ -450,7 +603,7 @@ async function saveForm() {
   actionError.value = ''
   try {
     const saved = mode.value === 'edit' && recordId.value && config.value.api.update
-      ? await config.value.api.update(recordId.value, buildPayload())
+      ? await config.value.api.update(normalizeId(recordId.value), buildPayload())
       : await config.value.api.create?.(buildPayload())
     if (saved) {
       await router.push({ name: config.value.detailRouteName, params: { id: String(saved.id) } })
@@ -467,7 +620,16 @@ function cancelForm() {
 }
 
 function rowProjectText(row: { projectNo?: string | null; projectName?: string | null }) {
-  return row.projectNo ? `${row.projectNo} ${row.projectName || ''}`.trim() : '-'
+  const target = row as {
+    projectNo?: string | null
+    projectName?: string | null
+    targetProjectNo?: string | null
+    targetProjectName?: string | null
+  }
+  if (target.projectNo) {
+    return `${target.projectNo} ${target.projectName || ''}`.trim()
+  }
+  return target.targetProjectNo ? `${target.targetProjectNo} ${target.targetProjectName || ''}`.trim() : '-'
 }
 
 watch(() => route.name, () => {
@@ -476,6 +638,8 @@ watch(() => route.name, () => {
   actionError.value = ''
   if (isList.value) {
     void loadList()
+  } else if (isForm.value && mode.value === 'create') {
+    resetForm()
   } else if (isForm.value && mode.value === 'edit') {
     void loadDetail()
   } else if (mode.value === 'detail') {
@@ -486,6 +650,8 @@ watch(() => route.name, () => {
 onMounted(() => {
   if (isList.value) {
     void loadList()
+  } else if (mode.value === 'create') {
+    resetForm()
   } else if (mode.value === 'detail' || mode.value === 'edit') {
     void loadDetail()
   }
@@ -534,6 +700,16 @@ onMounted(() => {
             <el-tag size="small">{{ statusText(row) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="审批状态" min-width="110">
+          <template #default="{ row }">
+            {{ approvalStatusText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="金额影响" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ amountImpactText(row) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column prop="reason" label="原因" min-width="180" show-overflow-tooltip />
         <el-table-column prop="lineCount" label="明细数" min-width="80" />
@@ -557,6 +733,16 @@ onMounted(() => {
               {{ inventoryActionLabel('POST') }}
             </el-button>
             <el-button
+              v-if="actionVisible(row, 'START')"
+              size="small"
+              text
+              type="primary"
+              :loading="actionLoading"
+              @click="runAction(row, 'START')"
+            >
+              {{ inventoryActionLabel('START') }}
+            </el-button>
+            <el-button
               v-if="actionVisible(row, 'SUBMIT_APPROVAL')"
               size="small"
               text
@@ -565,6 +751,15 @@ onMounted(() => {
               @click="runAction(row, 'SUBMIT_APPROVAL')"
             >
               {{ inventoryActionLabel('SUBMIT_APPROVAL') }}
+            </el-button>
+            <el-button
+              v-if="actionVisible(row, 'WITHDRAW')"
+              size="small"
+              text
+              :loading="actionLoading"
+              @click="runAction(row, 'WITHDRAW')"
+            >
+              {{ inventoryActionLabel('WITHDRAW') }}
             </el-button>
             <el-button
               v-if="actionVisible(row, 'CANCEL')"
@@ -600,23 +795,90 @@ onMounted(() => {
           <el-form-item label="原因">
             <el-input v-model="form.reason" name="inventory-controlled-reason" placeholder="必填原因" />
           </el-form-item>
-          <el-form-item v-if="config.kind === 'valuationAdjustment'" label="金额">
-            <el-input v-model="form.amount" name="inventory-controlled-amount" placeholder="0.00" />
+          <el-form-item v-if="config.kind === 'valuationAdjustment'" label="调整类型">
+            <el-select
+              v-model="form.adjustmentType"
+              data-test="inventory-controlled-adjustment-type"
+              placeholder="请选择调整类型"
+            >
+              <el-option label="历史期初估值" value="LEGACY_OPENING" />
+              <el-option label="暂估重估" value="PROVISIONAL_REVALUATION" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'ownershipConversion'" label="来源所有权">
+            <el-select
+              v-model="form.sourceOwnershipType"
+              data-test="inventory-controlled-source-ownership-type"
+              placeholder="来源所有权"
+            >
+              <el-option label="公共库存" value="PUBLIC" />
+              <el-option label="项目库存" value="PROJECT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'ownershipConversion'" label="目标所有权">
+            <el-select
+              v-model="form.targetOwnershipType"
+              data-test="inventory-controlled-target-ownership-type"
+              placeholder="目标所有权"
+            >
+              <el-option label="公共库存" value="PUBLIC" />
+              <el-option label="项目库存" value="PROJECT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'valuationAdjustment'" label="所有权">
+            <el-select
+              v-model="form.ownershipType"
+              data-test="inventory-controlled-ownership-type"
+              placeholder="所有权"
+            >
+              <el-option label="公共库存" value="PUBLIC" />
+              <el-option label="项目库存" value="PROJECT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'valuationAdjustment'" label="调整金额">
+            <el-input v-model="form.adjustmentAmount" name="inventory-controlled-adjustment-amount" placeholder="0.00" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'valuationAdjustment'" label="数量">
+            <el-input v-model="form.quantity" name="inventory-controlled-quantity" placeholder="0.000000" />
           </el-form-item>
           <el-form-item v-else label="数量">
             <el-input v-model="form.quantity" name="inventory-controlled-quantity" placeholder="0.000000" />
           </el-form-item>
-          <el-form-item label="仓库">
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="来源仓库">
+            <el-input v-model="form.sourceWarehouseId" name="inventory-controlled-source-warehouse-id" placeholder="来源仓库标识" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="目标仓库">
+            <el-input v-model="form.targetWarehouseId" name="inventory-controlled-target-warehouse-id" placeholder="目标仓库标识" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'stocktake'" label="仓库">
             <el-input v-model="form.warehouseId" name="inventory-controlled-warehouse-id" placeholder="仓库标识" />
           </el-form-item>
-          <el-form-item v-if="config.kind === 'warehouseTransfer'" label="目标仓库">
-            <el-input v-model="form.targetWarehouseId" name="inventory-controlled-target-warehouse-id" placeholder="目标仓库标识" />
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'valuationAdjustment'" label="项目">
+            <el-input v-model="form.projectId" name="inventory-controlled-project-id" placeholder="项目标识，公共库存留空" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'ownershipConversion'" label="来源项目">
+            <el-input v-model="form.sourceProjectId" name="inventory-controlled-source-project-id" placeholder="来源项目标识，公共库存留空" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'ownershipConversion'" label="目标项目">
+            <el-input v-model="form.targetProjectId" name="inventory-controlled-target-project-id" placeholder="目标项目标识，公共库存留空" />
           </el-form-item>
           <el-form-item label="物料">
             <el-input v-model="form.materialId" name="inventory-controlled-material-id" placeholder="物料标识" />
           </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="单位">
+            <el-input v-model="form.unitId" name="inventory-controlled-unit-id" placeholder="单位标识" />
+          </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="单价">
             <el-input v-model="form.unitCost" name="inventory-controlled-unit-cost" placeholder="0.000000" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="来源成本层">
+            <el-input v-model="form.sourceCostLayerId" name="inventory-controlled-source-cost-layer-id" placeholder="项目库存成本层标识" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'ownershipConversion'" label="来源单位成本">
+            <el-input v-model="form.sourceUnitCost" name="inventory-controlled-source-unit-cost" placeholder="0.000000" />
+          </el-form-item>
+          <el-form-item v-if="config.kind === 'valuationAdjustment'" label="成本层">
+            <el-input v-model="form.costLayerId" name="inventory-controlled-cost-layer-id" placeholder="成本层标识" />
           </el-form-item>
         </div>
         <el-form-item label="备注">
@@ -672,12 +934,27 @@ onMounted(() => {
           过账
         </el-button>
         <el-button
+          v-if="actionVisible(record, 'START')"
+          type="primary"
+          :loading="actionLoading"
+          @click="runAction(record, 'START')"
+        >
+          开始盘点
+        </el-button>
+        <el-button
           v-if="actionVisible(record, 'SUBMIT_APPROVAL')"
           type="primary"
           :loading="actionLoading"
           @click="runAction(record, 'SUBMIT_APPROVAL')"
         >
           提交审批
+        </el-button>
+        <el-button
+          v-if="actionVisible(record, 'WITHDRAW')"
+          :loading="actionLoading"
+          @click="runAction(record, 'WITHDRAW')"
+        >
+          撤回
         </el-button>
         <el-button
           v-if="actionVisible(record, 'RECONCILE')"
@@ -775,7 +1052,7 @@ onMounted(() => {
             </template>
           </el-table-column>
           <el-table-column label="差异数" min-width="110" align="right">
-            <template #default="{ row }">{{ row.differenceQuantity === null || row.differenceQuantity === undefined ? '-' : formatQuantity(row.differenceQuantity) }}</template>
+            <template #default="{ row }">{{ row.varianceQuantity === null || row.varianceQuantity === undefined ? '-' : formatQuantity(row.varianceQuantity) }}</template>
           </el-table-column>
         </el-table>
       </div>
@@ -793,7 +1070,7 @@ onMounted(() => {
             <template #default="{ row }">{{ formatInventoryAmount(row.unitCost, 6) }}</template>
           </el-table-column>
           <el-table-column label="金额" min-width="120" align="right">
-            <template #default="{ row }">{{ formatInventoryAmount(row.amount) }}</template>
+            <template #default="{ row }">{{ formatInventoryAmount(row.adjustmentAmount) }}</template>
           </el-table-column>
         </el-table>
       </div>

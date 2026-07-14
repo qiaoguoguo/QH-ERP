@@ -184,6 +184,54 @@ const salesShipmentMovement: InventoryMovementRecord = {
   occurredAt: '2026-07-03T14:00:00+08:00',
 }
 
+const warehouseTransferMovement: InventoryMovementRecord = {
+  ...valuedMovement,
+  id: 29,
+  movementNo: 'MV202607030006',
+  movementType: 'WAREHOUSE_TRANSFER_OUT',
+  sourceType: 'WAREHOUSE_TRANSFER',
+  sourceId: 1001,
+  sourceLineId: 2001,
+  targetDocumentNo: 'WT-001',
+  reason: '仓库调拨出库',
+}
+
+const ownershipConversionMovement: InventoryMovementRecord = {
+  ...valuedMovement,
+  id: 30,
+  movementNo: 'MV202607030007',
+  movementType: 'OWNERSHIP_CONVERSION_OUT',
+  sourceType: 'OWNERSHIP_CONVERSION',
+  sourceId: 1002,
+  sourceLineId: 2002,
+  targetDocumentNo: 'OC-001',
+  reason: '所有权转出',
+}
+
+const stocktakeMovement: InventoryMovementRecord = {
+  ...valuedMovement,
+  id: 31,
+  movementNo: 'MV202607030008',
+  movementType: 'STOCKTAKE_GAIN',
+  sourceType: 'STOCKTAKE',
+  sourceId: 1003,
+  sourceLineId: 2003,
+  targetDocumentNo: 'ST-001',
+  reason: '盘盈入库',
+}
+
+const valuationAdjustmentMovement: InventoryMovementRecord = {
+  ...valuedMovement,
+  id: 32,
+  movementNo: 'MV202607030009',
+  movementType: 'VALUATION_ADJUSTMENT',
+  sourceType: 'VALUATION_ADJUSTMENT',
+  sourceId: 1004,
+  sourceLineId: 2004,
+  targetDocumentNo: 'VA-001',
+  reason: '估值调整',
+}
+
 const movementPage: PageResult<InventoryMovementRecord> = {
   items: [movement],
   page: 1,
@@ -262,6 +310,10 @@ async function mountMovements(
     'inventory:document:view',
     'procurement:receipt:view',
     'sales:shipment:view',
+    'inventory:warehouse-transfer:view',
+    'inventory:ownership-conversion:view',
+    'inventory:stocktake:view',
+    'inventory:valuation-adjustment:view',
     'inventory:trace:view',
   ],
 ) {
@@ -277,6 +329,10 @@ async function mountMovements(
     routes: [
       { path: '/inventory/movements', name: 'inventory-movements', component: InventoryMovementListView },
       { path: '/inventory/documents/:id', name: 'inventory-document-detail', component: { render: () => null } },
+      { path: '/inventory/warehouse-transfers/:id', name: 'inventory-warehouse-transfer-detail', component: { render: () => null } },
+      { path: '/inventory/ownership-conversions/:id', name: 'inventory-ownership-conversion-detail', component: { render: () => null } },
+      { path: '/inventory/stocktakes/:id', name: 'inventory-stocktake-detail', component: { render: () => null } },
+      { path: '/inventory/valuation-adjustments/:id', name: 'inventory-valuation-adjustment-detail', component: { render: () => null } },
       { path: '/procurement/receipts/:id', name: 'procurement-receipt-detail', component: { render: () => null } },
       { path: '/sales/shipments/:id', name: 'sales-shipment-detail', component: { render: () => null } },
     ],
@@ -677,6 +733,29 @@ describe('库存变动流水页', () => {
     expect(wrapper.text()).toContain('销售出库')
     expect(wrapper.text()).toContain('无来源单据权限')
     expect(wrapper.find('[data-test="view-source-document"]').exists()).toBe(false)
+  })
+
+  it.each([
+    [warehouseTransferMovement, 'inventory-warehouse-transfer-detail', '1001', '仓库调拨出库'],
+    [ownershipConversionMovement, 'inventory-ownership-conversion-detail', '1002', '所有权转出'],
+    [stocktakeMovement, 'inventory-stocktake-detail', '1003', '盘盈入库'],
+    [valuationAdjustmentMovement, 'inventory-valuation-adjustment-detail', '1004', '估值调整'],
+  ])('受控库存来源流水可跳转到对应受控单据详情', async (sourceMovement, routeName, id, text) => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [sourceMovement],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper, router } = await mountMovements()
+
+    expect(wrapper.text()).toContain(text)
+    await wrapper.find('[data-test="view-source-document"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.name).toBe(routeName)
+    expect(router.currentRoute.value.params.id).toBe(id)
   })
 
   it('来源和追溯不可用时展示明确状态文案', async () => {

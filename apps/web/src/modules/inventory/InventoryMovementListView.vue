@@ -329,6 +329,16 @@ function canViewSourceDocument(record: InventoryMovementRecord) {
   if (!record.sourceType || !record.sourceId) {
     return false
   }
+  const controlledSourcePermissions: Record<string, string> = {
+    WAREHOUSE_TRANSFER: 'inventory:warehouse-transfer:view',
+    OWNERSHIP_CONVERSION: 'inventory:ownership-conversion:view',
+    STOCKTAKE: 'inventory:stocktake:view',
+    VALUATION_ADJUSTMENT: 'inventory:valuation-adjustment:view',
+  }
+  const controlledPermission = controlledSourcePermissions[String(record.sourceType)]
+  if (controlledPermission) {
+    return authStore.hasPermission(controlledPermission)
+  }
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     return authStore.hasPermission('procurement:receipt:view')
   }
@@ -342,6 +352,21 @@ function canViewSourceDocument(record: InventoryMovementRecord) {
 }
 
 function viewSourceDocument(record: InventoryMovementRecord) {
+  const controlledSourceRoutes: Record<string, string> = {
+    WAREHOUSE_TRANSFER: 'inventory-warehouse-transfer-detail',
+    OWNERSHIP_CONVERSION: 'inventory-ownership-conversion-detail',
+    STOCKTAKE: 'inventory-stocktake-detail',
+    VALUATION_ADJUSTMENT: 'inventory-valuation-adjustment-detail',
+  }
+  const controlledRouteName = controlledSourceRoutes[String(record.sourceType)]
+  if (controlledRouteName) {
+    void router.push({
+      name: controlledRouteName,
+      params: { id: String(record.sourceId) },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
+    return
+  }
   if (record.sourceType === 'PURCHASE_RECEIPT') {
     void router.push({
       name: 'procurement-receipt-detail',

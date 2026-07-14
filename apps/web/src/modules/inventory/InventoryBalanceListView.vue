@@ -523,8 +523,16 @@ onMounted(() => {
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无库存余额'" stripe>
         <el-table-column prop="warehouseName" label="仓库" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="materialCode" label="物料编码" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="materialName" label="物料名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.materialCode }} {{ row.materialName }}
+          </template>
+        </el-table-column>
+        <el-table-column label="质量" min-width="100">
+          <template #default="{ row }">
+            <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
+          </template>
+        </el-table-column>
         <el-table-column label="所有权" min-width="110">
           <template #default="{ row }">
             <el-tag size="small" :type="row.ownershipType === 'PROJECT' ? 'warning' : 'info'">
@@ -537,11 +545,78 @@ onMounted(() => {
             {{ projectText(row) }}
           </template>
         </el-table-column>
+        <el-table-column label="账面数" min-width="120" align="right">
+          <template #default="{ row }">
+            <span data-test="book-quantity-cell" class="numeric-cell">
+              {{ formatQuantity(row.bookQuantity ?? row.totalQuantityOnHand ?? row.quantityOnHand) }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="可用数" min-width="120" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="金额" min-width="130" align="right">
+          <template #default="{ row }">
+            <span
+              v-if="isCostRestricted(row)"
+              :data-test="`balance-cost-restricted-${row.id}`"
+              class="restricted-cost"
+            >
+              金额受限
+            </span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.inventoryAmount) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="均价" min-width="130" align="right">
+          <template #default="{ row }">
+            <span v-if="isCostRestricted(row)" class="restricted-cost">金额受限</span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.averageUnitCost, 6) }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="估值状态" min-width="130">
           <template #default="{ row }">
             <el-tag size="small" :type="row.valuationState === 'ABNORMAL' ? 'danger' : 'info'">
               {{ row.valuationStateName || valuationStateLabel(row.valuationState) }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="成本层" min-width="100" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ row.costLayerCount ?? '-' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="260">
+          <template #default="{ row }">
+            <el-button size="small" text data-test="view-inventory-movements" @click="viewMovements(row)">
+              查看流水
+            </el-button>
+            <el-button
+              v-if="canTraceRecord(row)"
+              size="small"
+              text
+              data-test="view-inventory-trace"
+              @click="viewTrace(row)"
+            >
+              追溯
+            </el-button>
+            <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
+            <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
+              占用
+            </el-button>
+            <el-button
+              v-if="canViewValuation && !isCostRestricted(row) && Number(row.costLayerCount || 0) > 0"
+              size="small"
+              text
+              :data-test="`view-cost-layers-${row.id}`"
+              @click="viewCostLayers(row)"
+            >
+              成本层
+            </el-button>
+            <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
+              在途参考
+            </el-button>
           </template>
         </el-table-column>
         <el-table-column prop="materialSpec" label="规格" min-width="130" show-overflow-tooltip />
@@ -551,11 +626,6 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column prop="unitName" label="单位" min-width="90" />
-        <el-table-column label="质量状态" min-width="100">
-          <template #default="{ row }">
-            <QualityStatusTag :quality-status="row.qualityStatus" :quality-status-name="row.qualityStatusName" />
-          </template>
-        </el-table-column>
         <el-table-column label="追踪方式" min-width="120">
           <template #default="{ row }">
             {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
@@ -569,13 +639,6 @@ onMounted(() => {
         <el-table-column label="追踪数量" min-width="120" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.traceableQuantity ?? row.quantityOnHand) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="账面库存" min-width="120" align="right">
-          <template #default="{ row }">
-            <span data-test="book-quantity-cell" class="numeric-cell">
-              {{ formatQuantity(row.bookQuantity ?? row.totalQuantityOnHand ?? row.quantityOnHand) }}
-            </span>
           </template>
         </el-table-column>
         <el-table-column label="合格现存" min-width="120" align="right">
@@ -596,34 +659,6 @@ onMounted(() => {
         <el-table-column label="冻结库存" min-width="120" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.frozenQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="现货净可用" min-width="130" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="库存金额" min-width="130" align="right">
-          <template #default="{ row }">
-            <span
-              v-if="isCostRestricted(row)"
-              :data-test="`balance-cost-restricted-${row.id}`"
-              class="restricted-cost"
-            >
-              金额受限
-            </span>
-            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.inventoryAmount) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="平均单价" min-width="130" align="right">
-          <template #default="{ row }">
-            <span v-if="isCostRestricted(row)" class="restricted-cost">金额受限</span>
-            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.averageUnitCost, 6) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="成本层" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ row.costLayerCount ?? '-' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="采购在途参考" min-width="130" align="right">
@@ -655,38 +690,6 @@ onMounted(() => {
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }">
             {{ formatDateTime(row.updatedAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="260">
-          <template #default="{ row }">
-            <el-button size="small" text data-test="view-inventory-movements" @click="viewMovements(row)">
-              查看流水
-            </el-button>
-            <el-button
-              v-if="canTraceRecord(row)"
-              size="small"
-              text
-              data-test="view-inventory-trace"
-              @click="viewTrace(row)"
-            >
-              追溯
-            </el-button>
-            <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
-            <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
-              占用预留
-            </el-button>
-            <el-button
-              v-if="canViewValuation && !isCostRestricted(row) && Number(row.costLayerCount || 0) > 0"
-              size="small"
-              text
-              :data-test="`view-cost-layers-${row.id}`"
-              @click="viewCostLayers(row)"
-            >
-              成本层
-            </el-button>
-            <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
-              在途参考
-            </el-button>
           </template>
         </el-table-column>
       </el-table>

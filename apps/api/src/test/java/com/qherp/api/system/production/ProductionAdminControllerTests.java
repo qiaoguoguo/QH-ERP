@@ -964,6 +964,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		line.put("warehouseId", warehouseId);
 		line.put("materialId", materialId);
 		line.put("quantity", quantity);
+		line.put("unitPrice", "1.000000");
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("documentType", "OPENING");
 		body.put("businessDate", LocalDate.now().toString());
@@ -1208,6 +1209,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("businessDate", LocalDate.now().toString());
 		body.put("receiptWarehouseId", receiptWarehouseId);
 		body.put("quantity", quantity);
+		body.put("provisionalUnitCost", "1.000000");
 		body.put("remark", "完工入库测试");
 		return body;
 	}
@@ -1321,6 +1323,24 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
 			String quantity) {
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitCost = new BigDecimal("1.000000");
+		BigDecimal amount = quantityValue.multiply(unitCost).setScale(2, java.math.RoundingMode.HALF_UP);
+		Long poolId = this.jdbcTemplate.queryForObject("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, ?, ?, ?, 'VALUED')
+				on conflict (material_id) do update
+				set quantity = inv_public_valuation_pool.quantity + excluded.quantity,
+				    amount = coalesce(inv_public_valuation_pool.amount, 0) + excluded.amount,
+				    average_unit_cost = ((coalesce(inv_public_valuation_pool.amount, 0) + excluded.amount)
+				        / (inv_public_valuation_pool.quantity + excluded.quantity))::numeric(18, 6),
+				    valuation_state = 'VALUED',
+				    updated_at = now(),
+				    version = inv_public_valuation_pool.version + 1
+				returning id
+				""", Long.class, materialId, quantityValue, amount, unitCost);
 		long batchId = this.jdbcTemplate.queryForObject("""
 				insert into inv_batch (
 					material_id, batch_no, source_type, source_id, source_line_id, business_date,
@@ -1333,10 +1353,11 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		this.jdbcTemplate.update("""
 				insert into inv_stock_balance (
 					warehouse_id, material_id, unit_id, quality_status, quantity_on_hand, locked_quantity,
-					batch_id, created_at, updated_at
+					batch_id, valuation_state, inventory_amount, average_unit_cost, public_pool_id,
+					created_at, updated_at
 				)
-				values (?, ?, ?, 'QUALIFIED', ?, 0, ?, now(), now())
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity), batchId);
+				values (?, ?, ?, 'QUALIFIED', ?, 0, ?, 'VALUED', ?, ?, ?, now(), now())
+				""", warehouseId, materialId, unitId, quantityValue, batchId, amount, unitCost, poolId);
 		return new TrackedBatch(batchId, batchNo);
 	}
 

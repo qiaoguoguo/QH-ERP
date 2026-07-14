@@ -507,9 +507,11 @@ export interface InventoryCostLayerRecord {
   status: string
   statusName?: string | null
   sourceType?: string | null
+  sourceTypeName?: string | null
   sourceId?: ResourceId | null
   sourceDocumentNo?: string | null
   parentLayerId?: ResourceId | null
+  parentLayerNo?: string | null
   createdAt?: string | null
 }
 
@@ -530,6 +532,8 @@ export interface InventoryControlledDocumentSummaryRecord {
   version: number
   allowedActions?: InventoryAllowedAction[] | string[]
   approvalSummary?: InventoryApprovalSummary | null
+  amountImpactSummary?: string | null
+  keyInfoSummary?: string | null
   createdByName?: string | null
   createdAt?: string | null
   updatedAt?: string | null
@@ -547,6 +551,8 @@ export interface InventoryWarehouseTransferLineRecord {
   materialId?: ResourceId
   materialCode?: string
   materialName?: string
+  unitId?: ResourceId
+  unitName?: string | null
   ownershipType?: InventoryOwnershipType
   ownershipTypeName?: string
   projectId?: ResourceId | null
@@ -557,6 +563,8 @@ export interface InventoryWarehouseTransferLineRecord {
   batchNo?: string | null
   serialNo?: string | null
   quantity: string
+  sourceCostLayerId?: ResourceId | null
+  costLayerNo?: string | null
 }
 
 export interface InventoryWarehouseTransferRecord extends InventoryControlledDocumentSummaryRecord {
@@ -574,13 +582,19 @@ export interface InventoryOwnershipConversionLineRecord {
   targetProjectId?: ResourceId | null
   targetProjectNo?: string | null
   targetProjectName?: string | null
-  warehouseId?: ResourceId
-  warehouseName?: string
+  sourceWarehouseId?: ResourceId
+  sourceWarehouseName?: string
+  targetWarehouseId?: ResourceId
+  targetWarehouseName?: string
   materialId?: ResourceId
   materialCode?: string
   materialName?: string
+  unitId?: ResourceId
+  unitName?: string | null
+  sourceCostLayerId?: ResourceId | null
   costLayerId?: ResourceId | null
   costLayerNo?: string | null
+  sourceUnitCost?: string | null
   quantity: string
 }
 
@@ -600,8 +614,8 @@ export interface InventoryStocktakeLineRecord {
   projectNo?: string | null
   projectName?: string | null
   bookQuantity?: string | null
-  actualQuantity?: string | null
-  differenceQuantity?: string | null
+  countedQuantity?: string | null
+  varianceQuantity?: string | null
   differenceAmount?: string | null
 }
 
@@ -618,12 +632,15 @@ export interface InventoryValuationAdjustmentLineRecord {
   materialId?: ResourceId
   materialCode?: string
   materialName?: string
+  ownershipType?: InventoryOwnershipType | null
   projectId?: ResourceId | null
   projectNo?: string | null
   projectName?: string | null
   quantity?: string | null
   unitCost?: string | null
-  amount?: string | null
+  adjustmentAmount?: string | null
+  costLayerId?: ResourceId | null
+  costLayerNo?: string | null
 }
 
 export interface InventoryValuationAdjustmentRecord extends InventoryControlledDocumentSummaryRecord {
@@ -637,17 +654,20 @@ export interface InventoryWarehouseTransferLinePayload {
   sourceWarehouseId: ResourceId
   targetWarehouseId: ResourceId
   materialId: ResourceId
+  unitId: ResourceId
   quantity: InventoryQuantityPayload
   ownershipType: InventoryOwnershipType
   projectId?: ResourceId
   qualityStatus?: InventoryQualityStatus
   batchId?: ResourceId
   serialId?: ResourceId
-  costLayerId?: ResourceId
+  sourceCostLayerId?: ResourceId
   remark?: string
 }
 
 export interface InventoryWarehouseTransferPayload {
+  idempotencyKey: string
+  version?: number
   businessDate: string
   reason: string
   remark?: string
@@ -660,14 +680,19 @@ export interface InventoryOwnershipConversionLinePayload {
   targetOwnershipType: InventoryOwnershipType
   sourceProjectId?: ResourceId
   targetProjectId?: ResourceId
-  warehouseId: ResourceId
+  sourceWarehouseId: ResourceId
+  targetWarehouseId: ResourceId
   materialId: ResourceId
+  unitId: ResourceId
   quantity: InventoryQuantityPayload
-  costLayerId?: ResourceId
+  sourceCostLayerId?: ResourceId
+  sourceUnitCost?: string
   remark?: string
 }
 
 export interface InventoryOwnershipConversionPayload {
+  idempotencyKey: string
+  version?: number
   businessDate: string
   reason: string
   remark?: string
@@ -675,6 +700,8 @@ export interface InventoryOwnershipConversionPayload {
 }
 
 export interface InventoryStocktakePayload {
+  idempotencyKey: string
+  version?: number
   businessDate: string
   scopeType: 'WAREHOUSE' | 'MATERIAL' | string
   warehouseId?: ResourceId
@@ -686,27 +713,30 @@ export interface InventoryStocktakePayload {
 export interface InventoryStocktakeLinePayload {
   id: ResourceId
   version: number
-  actualQuantity: InventoryQuantityPayload
+  countedQuantity: InventoryQuantityPayload | null
 }
 
 export interface InventoryStocktakeLineUpdatePayload {
-  idempotencyKey: string
+  version: number
   lines: InventoryStocktakeLinePayload[]
 }
 
 export interface InventoryValuationAdjustmentLinePayload {
   lineNo: number
   materialId: ResourceId
+  ownershipType?: InventoryOwnershipType
   projectId?: ResourceId
   quantity?: InventoryQuantityPayload
   unitCost?: string
-  amount?: string
+  adjustmentAmount: string
   costLayerId?: ResourceId
   remark?: string
 }
 
 export interface InventoryValuationAdjustmentPayload {
   adjustmentType: InventoryValuationAdjustmentType
+  idempotencyKey: string
+  version?: number
   businessDate: string
   reason: string
   remark?: string

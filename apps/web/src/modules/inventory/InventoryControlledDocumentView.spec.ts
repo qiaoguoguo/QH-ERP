@@ -67,13 +67,23 @@ const transferRecord = {
   lines: [{
     id: 2001,
     lineNo: 10,
+    sourceWarehouseId: 1,
     sourceWarehouseName: '原料仓',
+    targetWarehouseId: 2,
     targetWarehouseName: '成品仓',
+    materialId: 3,
     materialCode: 'RM-001',
     materialName: '钢板',
+    unitId: 4,
+    unitName: '千克',
     quantity: '12.345678',
-    ownershipType: 'PUBLIC',
-    ownershipTypeName: '公共库存',
+    ownershipType: 'PROJECT',
+    ownershipTypeName: '项目库存',
+    projectId: 501,
+    projectNo: 'PRJ-001',
+    projectName: '一号项目',
+    sourceCostLayerId: 9001,
+    costLayerNo: 'CL-PRJ-001',
   }],
 }
 
@@ -94,13 +104,26 @@ const ownershipConversionRecord = {
   lines: [{
     id: 2002,
     lineNo: 10,
-    sourceOwnershipType: 'PUBLIC',
+    sourceOwnershipType: 'PROJECT',
     targetOwnershipType: 'PROJECT',
+    sourceProjectId: 501,
+    sourceProjectNo: 'PRJ-001',
+    sourceProjectName: '一号项目',
+    targetProjectId: 502,
     targetProjectNo: 'PRJ-001',
     targetProjectName: '一号项目',
-    warehouseName: '原料仓',
+    sourceWarehouseId: 1,
+    sourceWarehouseName: '原料仓',
+    targetWarehouseId: 2,
+    targetWarehouseName: '成品仓',
+    materialId: 3,
     materialCode: 'RM-001',
     materialName: '钢板',
+    unitId: 4,
+    unitName: '千克',
+    sourceCostLayerId: 9001,
+    costLayerNo: 'CL-PRJ-001',
+    sourceUnitCost: '11.000000',
     quantity: '5.000000',
   }],
 }
@@ -126,8 +149,8 @@ const stocktakeRecord = {
       materialCode: 'RM-001',
       materialName: '钢板',
       bookQuantity: '12.000000',
-      actualQuantity: null,
-      differenceQuantity: null,
+      countedQuantity: null,
+      varianceQuantity: null,
       version: 7,
     },
     {
@@ -137,8 +160,8 @@ const stocktakeRecord = {
       materialCode: 'RM-002',
       materialName: '螺母',
       bookQuantity: '8.000000',
-      actualQuantity: '0.000000',
-      differenceQuantity: '-8.000000',
+      countedQuantity: '0.000000',
+      varianceQuantity: '-8.000000',
       version: 8,
     },
   ],
@@ -157,6 +180,7 @@ const valuationAdjustmentRecord = {
   version: 6,
   allowedActions: ['UPDATE', 'SUBMIT_APPROVAL', 'CANCEL'],
   approvalSummary: null,
+  amountImpactSummary: '调增 1,000.00',
   createdByName: '管理员',
   createdAt: '2026-07-14T09:00:00+08:00',
   updatedAt: '2026-07-14T09:30:00+08:00',
@@ -165,9 +189,12 @@ const valuationAdjustmentRecord = {
     lineNo: 10,
     materialCode: 'RM-001',
     materialName: '钢板',
+    ownershipType: 'PROJECT',
+    projectId: 501,
     quantity: '100.000000',
     unitCost: '10.000000',
-    amount: '1000.00',
+    adjustmentAmount: '1000.00',
+    costLayerId: 9001,
   }],
 }
 
@@ -200,6 +227,7 @@ async function mountInventoryDocument(path: string, permissions: string[] = [
   'inventory:ownership-conversion:create',
   'inventory:ownership-conversion:update',
   'inventory:ownership-conversion:submit',
+  'inventory:ownership-conversion:withdraw',
   'inventory:ownership-conversion:cancel',
   'inventory:stocktake:view',
   'inventory:stocktake:create',
@@ -210,6 +238,7 @@ async function mountInventoryDocument(path: string, permissions: string[] = [
   'inventory:valuation-adjustment:create',
   'inventory:valuation-adjustment:update',
   'inventory:valuation-adjustment:submit',
+  'inventory:valuation-adjustment:withdraw',
   'inventory:valuation-adjustment:cancel',
 ]) {
   const pinia = createPinia()
@@ -233,6 +262,13 @@ function firstButton(wrapper: VueWrapper, text: string) {
   const button = wrapper.findAllComponents({ name: 'ElButton' }).find((item) => item.text().trim() === text)
   expect(button?.exists()).toBe(true)
   return button as VueWrapper
+}
+
+async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unknown) {
+  const select = wrapper.findComponent(`[data-test="${dataTest}"]`) as VueWrapper
+  expect(select.exists()).toBe(true)
+  select.vm.$emit('update:modelValue', value)
+  await flushPromises()
 }
 
 describe('库存受控单据页', () => {
@@ -334,7 +370,118 @@ describe('库存受控单据页', () => {
     })
   })
 
-  it('盘点详情严格区分未盘和实盘为零，行保存发送行版本和实际数量字符串', async () => {
+  it('受控单据列表展示独立审批状态和金额影响摘要', async () => {
+    inventoryApiMock.valuationAdjustments.list.mockResolvedValueOnce({
+      items: [{
+        ...valuationAdjustmentRecord,
+        approvalSummary: { id: 3002, status: 'SUBMITTED', submittedAt: '2026-07-14T10:00:00+08:00' },
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountInventoryDocument('/inventory/valuation-adjustments')
+
+    expect(wrapper.text()).toContain('审批状态')
+    expect(wrapper.text()).toContain('审批中')
+    expect(wrapper.text()).toContain('金额影响')
+    expect(wrapper.text()).toContain('调增 1,000.00')
+  })
+
+  it('新建仓库调拨提交后端完整 DTO，包含幂等键、单位、项目和来源成本层', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/create')
+
+    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目仓调拨')
+    await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
+    await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
+    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
+    await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
+    await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('7.000000')
+    await wrapper.find('input[name="inventory-controlled-project-id"]').setValue('501')
+    await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
+    await firstButton(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.warehouseTransfers.create).toHaveBeenCalledWith(expect.objectContaining({
+      businessDate: '2026-07-15',
+      reason: '项目仓调拨',
+      idempotencyKey: expect.any(String),
+      lines: [expect.objectContaining({
+        sourceWarehouseId: 1,
+        targetWarehouseId: 2,
+        materialId: 3,
+        unitId: 4,
+        quantity: '7.000000',
+        ownershipType: 'PROJECT',
+        projectId: 501,
+        sourceCostLayerId: 9001,
+      })],
+    }))
+  })
+
+  it('编辑仓库调拨从详情回填字段并携带版本保存，避免空表单覆盖', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001/edit')
+
+    expect((wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').element as HTMLInputElement).value).toBe('1')
+    expect((wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').element as HTMLInputElement).value).toBe('2')
+    expect((wrapper.find('input[name="inventory-controlled-material-id"]').element as HTMLInputElement).value).toBe('3')
+    expect((wrapper.find('input[name="inventory-controlled-unit-id"]').element as HTMLInputElement).value).toBe('4')
+
+    await firstButton(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.warehouseTransfers.update).toHaveBeenCalledWith(1001, expect.objectContaining({
+      version: 3,
+      lines: [expect.objectContaining({
+        sourceWarehouseId: 1,
+        targetWarehouseId: 2,
+        materialId: 3,
+        unitId: 4,
+        quantity: '12.345678',
+      })],
+    }))
+  })
+
+  it('所有权转换支持项目间转换并提交来源目标仓库、项目、单位和成本层', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/ownership-conversions/create')
+
+    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目间借用')
+    await setSelectValue(wrapper, 'inventory-controlled-source-ownership-type', 'PROJECT')
+    await setSelectValue(wrapper, 'inventory-controlled-target-ownership-type', 'PROJECT')
+    await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
+    await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
+    await wrapper.find('input[name="inventory-controlled-source-project-id"]').setValue('501')
+    await wrapper.find('input[name="inventory-controlled-target-project-id"]').setValue('502')
+    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
+    await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
+    await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('5.000000')
+    await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
+    await wrapper.find('input[name="inventory-controlled-source-unit-cost"]').setValue('11.000000')
+    await firstButton(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.ownershipConversions.create).toHaveBeenCalledWith(expect.objectContaining({
+      idempotencyKey: expect.any(String),
+      lines: [expect.objectContaining({
+        sourceOwnershipType: 'PROJECT',
+        targetOwnershipType: 'PROJECT',
+        sourceWarehouseId: 1,
+        targetWarehouseId: 2,
+        sourceProjectId: 501,
+        targetProjectId: 502,
+        materialId: 3,
+        unitId: 4,
+        sourceCostLayerId: 9001,
+        sourceUnitCost: '11.000000',
+        quantity: '5.000000',
+      })],
+    }))
+  })
+
+  it('盘点详情严格区分未盘和实盘为零，行保存发送单据版本、行版本和 countedQuantity', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
 
     expect(wrapper.text()).toContain('库存盘点')
@@ -344,13 +491,73 @@ describe('库存受控单据页', () => {
     expect(wrapper.find('[data-test="stocktake-line-actual-2004"]').text()).toBe('0')
 
     await wrapper.find('input[name="stocktake-line-actual-2003"]').setValue('12.000000')
+    await wrapper.find('input[name="stocktake-line-actual-2004"]').setValue('')
     await firstButton(wrapper, '保存实盘').trigger('click')
     await flushPromises()
 
     expect(inventoryApiMock.stocktakes.updateLines).toHaveBeenCalledWith(1003, {
-      idempotencyKey: expect.any(String),
-      lines: [{ id: 2003, version: 7, actualQuantity: '12.000000' }],
+      version: 5,
+      lines: [
+        { id: 2003, version: 7, countedQuantity: '12.000000' },
+        { id: 2004, version: 8, countedQuantity: null },
+      ],
     })
+  })
+
+  it('盘点 START/RECONCILE/COMPLETE_ZERO_VARIANCE 只需更新权限，提交审批才需要提交权限', async () => {
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce({
+      ...stocktakeRecord,
+      status: 'DRAFT',
+      statusName: '草稿',
+      allowedActions: ['START', 'RECONCILE', 'COMPLETE_ZERO_VARIANCE', 'SUBMIT_APPROVAL', 'CANCEL'],
+    })
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003', [
+      'inventory:stocktake:view',
+      'inventory:stocktake:update',
+      'inventory:stocktake:cancel',
+    ])
+
+    expect(wrapper.text()).toContain('开始盘点')
+    expect(wrapper.text()).toContain('确认差异')
+    expect(wrapper.text()).toContain('结束零差异盘点')
+    expect(wrapper.text()).not.toContain('提交审批')
+
+    await firstButton(wrapper, '开始盘点').trigger('click')
+    await flushPromises()
+    expect(inventoryApiMock.stocktakes.start).toHaveBeenCalledWith(1003, {
+      version: 5,
+      idempotencyKey: expect.any(String),
+    })
+  })
+
+  it('估值调整支持暂估重估类型和项目成本层金额影响字段', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/valuation-adjustments/create')
+
+    await setSelectValue(wrapper, 'inventory-controlled-adjustment-type', 'PROVISIONAL_REVALUATION')
+    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    await wrapper.find('input[name="inventory-controlled-reason"]').setValue('暂估价修正')
+    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
+    await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('10.000000')
+    await wrapper.find('input[name="inventory-controlled-unit-cost"]').setValue('12.000000')
+    await wrapper.find('input[name="inventory-controlled-adjustment-amount"]').setValue('120.00')
+    await wrapper.find('input[name="inventory-controlled-project-id"]').setValue('501')
+    await wrapper.find('input[name="inventory-controlled-cost-layer-id"]').setValue('9001')
+    await firstButton(wrapper, '保存').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.valuationAdjustments.create).toHaveBeenCalledWith(expect.objectContaining({
+      adjustmentType: 'PROVISIONAL_REVALUATION',
+      idempotencyKey: expect.any(String),
+      lines: [expect.objectContaining({
+        materialId: 3,
+        ownershipType: 'PROJECT',
+        projectId: 501,
+        costLayerId: 9001,
+        quantity: '10.000000',
+        unitCost: '12.000000',
+        adjustmentAmount: '120.00',
+      })],
+    }))
   })
 
   it('估值调整详情展示期初估值金额但不提供前端重算入口', async () => {

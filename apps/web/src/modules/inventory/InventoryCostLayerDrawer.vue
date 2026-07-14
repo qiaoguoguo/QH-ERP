@@ -16,6 +16,28 @@ const emit = defineEmits<{
 function updateVisible(value: boolean) {
   emit('update:modelValue', value)
 }
+
+function trackingText(row: InventoryCostLayerRecord) {
+  if (row.batchNo && row.serialNo) {
+    return `${row.batchNo} / ${row.serialNo}`
+  }
+  return row.batchNo || row.serialNo || '-'
+}
+
+function sourceTypeText(row: InventoryCostLayerRecord) {
+  if (row.sourceTypeName) {
+    return row.sourceTypeName
+  }
+  const labels: Record<string, string> = {
+    WAREHOUSE_TRANSFER: '仓库调拨',
+    OWNERSHIP_CONVERSION: '所有权转换',
+    STOCKTAKE: '库存盘点',
+    VALUATION_ADJUSTMENT: '估值调整',
+    PURCHASE_RECEIPT: '采购入库',
+    PRODUCTION_RECEIPT: '完工入库',
+  }
+  return row.sourceType ? labels[String(row.sourceType)] ?? String(row.sourceType) : '-'
+}
 </script>
 
 <template>
@@ -49,9 +71,19 @@ function updateVisible(value: boolean) {
           {{ row.projectNo ? `${row.projectNo} ${row.projectName || ''}` : '-' }}
         </template>
       </el-table-column>
+      <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ trackingText(row) }}
+        </template>
+      </el-table-column>
       <el-table-column label="原始数量" min-width="110" align="right">
         <template #default="{ row }">
           <span class="numeric-cell">{{ formatQuantity(row.originalQuantity) }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column label="原始金额" min-width="120" align="right">
+        <template #default="{ row }">
+          <span class="numeric-cell">{{ formatInventoryAmount(row.originalAmount) }}</span>
         </template>
       </el-table-column>
       <el-table-column label="剩余数量" min-width="110" align="right">
@@ -70,6 +102,16 @@ function updateVisible(value: boolean) {
         </template>
       </el-table-column>
       <el-table-column prop="statusName" label="状态" min-width="90" />
+      <el-table-column label="父层" min-width="110" show-overflow-tooltip>
+        <template #default="{ row }">
+          {{ row.parentLayerNo || row.parentLayerId || '-' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="来源类型" min-width="120">
+        <template #default="{ row }">
+          {{ sourceTypeText(row) }}
+        </template>
+      </el-table-column>
       <el-table-column prop="sourceDocumentNo" label="来源单据" min-width="150" show-overflow-tooltip />
     </el-table>
   </el-drawer>

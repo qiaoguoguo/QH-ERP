@@ -29,9 +29,7 @@ public class InventoryValuationService {
 		InventoryPostingService.ValuationContext context = request.valuationContextOrDefault();
 		MaterialValuation material = materialValuation(request.materialId());
 		if (!material.inventoryValueEnabled()) {
-			Long valueMovementId = insertValueMovement(request, stockMovementId, movementNo, null, null, "NON_VALUED", "NON_VALUED",
-					null, null);
-			return new ValuationResult("NON_VALUED", null, null, "NON_VALUED", null, valueMovementId);
+			return new ValuationResult("NON_VALUED", null, null, "NON_VALUED", null, null);
 		}
 		if ("PROJECT".equals(context.ownershipType())) {
 			if (context.projectId() == null) {
@@ -58,11 +56,18 @@ public class InventoryValuationService {
 
 	private ValuationResult applyPublicInbound(InventoryPostingService.PostingRequest request, Long stockMovementId,
 			String movementNo, PublicPool pool, InventoryPostingService.ValuationContext context, OffsetDateTime now) {
+		BigDecimal inboundAmount = context.inventoryAmount();
 		BigDecimal unitPrice = context.unitPrice();
+		if (inboundAmount != null) {
+			inboundAmount = inboundAmount.setScale(2, RoundingMode.HALF_UP);
+			unitPrice = inboundAmount.divide(request.quantity(), 6, RoundingMode.HALF_UP);
+		}
 		if (unitPrice == null || unitPrice.compareTo(ZERO) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
 		}
-		BigDecimal inboundAmount = request.quantity().multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
+		if (inboundAmount == null) {
+			inboundAmount = request.quantity().multiply(unitPrice).setScale(2, RoundingMode.HALF_UP);
+		}
 		BigDecimal newQuantity = pool.quantity().add(request.quantity()).setScale(6, RoundingMode.UNNECESSARY);
 		BigDecimal currentAmount = pool.amount() == null ? ZERO : pool.amount();
 		BigDecimal newAmount = currentAmount.add(inboundAmount).setScale(2, RoundingMode.HALF_UP);
@@ -102,7 +107,7 @@ public class InventoryValuationService {
 				RoundingMode.HALF_UP);
 		BigDecimal outboundAmount;
 		BigDecimal newAmount;
-		if (afterQuantity.compareTo(ZERO) == 0 || pool.quantity().subtract(request.quantity()).compareTo(ZERO) == 0) {
+		if (pool.quantity().subtract(request.quantity()).compareTo(ZERO) == 0) {
 			outboundAmount = pool.amount().setScale(2, RoundingMode.HALF_UP);
 			newAmount = ZERO.setScale(2, RoundingMode.UNNECESSARY);
 		}
@@ -125,12 +130,41 @@ public class InventoryValuationService {
 
 	private ValuationResult applyProjectInbound(InventoryPostingService.PostingRequest request, Long stockMovementId,
 			String movementNo, InventoryPostingService.ValuationContext context) {
+		BigDecimal amount = context.inventoryAmount();
 		BigDecimal unitPrice = context.unitPrice();
+		if (amount != null) {
+			amount = amount.setScale(2, RoundingMode.HALF_UP);
+			unitPrice = amount.divide(request.quantity(), 6, RoundingMode.HALF_UP);
+		}
 		if (unitPrice == null || unitPrice.compareTo(ZERO) < 0) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
 		}
 		BigDecimal unitCost = unitPrice.setScale(6, RoundingMode.HALF_UP);
-		BigDecimal amount = request.quantity().multiply(unitCost).setScale(2, RoundingMode.HALF_UP);
+		if (amount == null) {
+			amount = request.quantity().multiply(unitCost).setScale(2, RoundingMode.HALF_UP);
+		}
+		if (context.costLayerId() != null && context.originalValueMovementId() != null) {
+			ProjectLayer existingLayer = lockProjectLayer(context.costLayerId());
+			if (existingLayer.projectId().equals(context.projectId())
+					&& existingLayer.materialId().equals(request.materialId())) {
+				BigDecimal newRemainingQuantity = existingLayer.remainingQuantity()
+					.add(request.quantity())
+					.setScale(6, RoundingMode.UNNECESSARY);
+				BigDecimal newRemainingAmount = existingLayer.remainingAmount()
+					.add(amount)
+					.setScale(2, RoundingMode.HALF_UP);
+				this.jdbcTemplate.update("""
+						update inv_project_cost_layer
+						set remaining_quantity = ?, remaining_amount = ?, status = 'ACTIVE',
+						    updated_at = now(), version = version + 1
+						where id = ?
+						""", newRemainingQuantity, newRemainingAmount, existingLayer.id());
+				Long valueMovementId = insertValueMovement(request, stockMovementId, movementNo, unitCost, amount,
+						"PROJECT_ACTUAL_LAYER", "VALUED", existingLayer.id(), context.originalValueMovementId());
+				return new ValuationResult("VALUED", unitCost, amount, "PROJECT_ACTUAL_LAYER", existingLayer.id(),
+						valueMovementId);
+			}
+		}
 		Long layerId = this.jdbcTemplate.queryForObject("""
 				insert into inv_project_cost_layer (
 					project_id, material_id, source_type, source_id, source_line_id, parent_layer_id,

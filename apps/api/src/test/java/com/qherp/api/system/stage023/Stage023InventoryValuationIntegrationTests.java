@@ -34,6 +34,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import org.assertj.core.api.SoftAssertions;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
@@ -181,7 +183,7 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		JsonNode projectABalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
 				+ projectAId + "&materialId=" + fixture.valuedMaterialId()));
 		assertDecimal(projectABalance, "quantityOnHand", "11.000000");
-		assertDecimal(projectABalance, "inventoryAmount", "147.00");
+		assertDecimal(projectABalance, "inventoryAmount", "132.00");
 		JsonNode projectBBalances = data(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
 				+ projectBId + "&materialId=" + fixture.valuedMaterialId()));
 		assertThat(projectBBalances.get("total").longValue()).isZero();
@@ -353,6 +355,425 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 跨仓公共池单仓出清不得清空全池且最终全池出清才吸收尾差() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_POOL_");
+		long targetWarehouseId = createWarehouse(admin, "S23_POOL_TO_" + SEQUENCE.incrementAndGet());
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"3.000000", "3.333333");
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, fixture.valuedMaterialId(),
+						fixture.unitId(), null, "1.000000"),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "跨仓调拨"), admin));
+
+		JsonNode sourceOut = data(createDocument(admin, documentPayload("ADJUSTMENT", "023 单仓出清但全池未出清",
+				List.of(line(1, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+						"2.000000", "DECREASE", null)))));
+		postDocument(admin, sourceOut);
+
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "3.33");
+		JsonNode targetBalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PUBLIC&warehouseId="
+				+ targetWarehouseId + "&materialId=" + fixture.valuedMaterialId()));
+		assertDecimal(targetBalance, "quantityOnHand", "1.000000");
+		assertDecimal(targetBalance, "inventoryAmount", "3.33");
+
+		JsonNode finalOut = data(createDocument(admin, documentPayload("ADJUSTMENT", "023 全池最终出清吸收尾差",
+				List.of(line(1, targetWarehouseId, fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+						"DECREASE", null)))));
+		postDocument(admin, finalOut);
+
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "0.00");
+		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PUBLIC&materialId="
+				+ fixture.valuedMaterialId() + "&includeZero=true")), "quantityOnHand", "0.000000");
+	}
+
+	@Test
+	void 公共转项目不得使用客户端成本覆盖公共池真实平均价() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_OWN_COST_");
+		long projectId = insertProject("S23_OWN_COST_P_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"10.000000", "10.000000");
+
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("客户端伪造成本不得生效", List.of(
+						ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "2.000000",
+								"999.000000", null))),
+				admin));
+		JsonNode submitted = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue() + "/submit",
+				actionBody(conversion, "提交客户端伪造成本转换"), admin));
+		assertThat(submitted.get("status").asText()).isEqualTo("SUBMITTED");
+		approveLatestTask("inventory:ownership-conversion:post-approve");
+
+		JsonNode layer = firstItem(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + fixture.valuedMaterialId()));
+		assertDecimal(layer, "unitCost", "10.000000");
+		assertDecimal(layer, "remainingAmount", "20.00");
+		JsonNode publicBalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PUBLIC&materialId="
+				+ fixture.valuedMaterialId()));
+		assertDecimal(publicBalance, "inventoryAmount", "80.00");
+	}
+
+	@Test
+	void 项目仓库调拨必须携带并保留实际成本层价值() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PROJECT_TRF_");
+		long projectId = insertProject("S23_PROJECT_TRF_P_");
+		long targetWarehouseId = createWarehouse(admin, "S23_PROJECT_TRF_TO_" + SEQUENCE.incrementAndGet());
+		JsonNode layer = createProjectLayerFromPublic(admin, fixture, projectId, "4.000000", "12.000000");
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, projectId,
+						fixture.valuedMaterialId(), fixture.unitId(), "1.000000", layer.get("id").longValue()),
+				admin));
+		ResponseEntity<String> posted = exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "项目库存调拨保留层"), admin);
+		assertThat(posted.getStatusCode()).as(posted.getBody()).isEqualTo(HttpStatus.OK);
+		JsonNode targetBalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
+				+ projectId + "&warehouseId=" + targetWarehouseId + "&materialId=" + fixture.valuedMaterialId()));
+		assertDecimal(targetBalance, "inventoryAmount", "12.00");
+		assertThat(targetBalance.get("costLayerId").longValue()).isEqualTo(layer.get("id").longValue());
+		assertDecimal(reconciliationValue(fixture.valuedMaterialId()), "totalInventoryAmount", "48.00");
+	}
+
+	@Test
+	void 锁定期间必须拒绝仓库调拨直接过账() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PERIOD_TRF_");
+		LocalDate date = lockedBusinessDate();
+		long targetWarehouseId = createWarehouse(admin, "S23_PERIOD_TRF_TO_" + SEQUENCE.incrementAndGet());
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"3.000000", "10.000000");
+		Map<String, Object> payload = warehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId,
+				fixture.valuedMaterialId(), fixture.unitId(), null, "1.000000");
+		payload.put("businessDate", date.toString());
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers", payload, admin));
+
+		lockPeriod(date);
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "锁定期间调拨"), admin), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
+	void 锁定期间必须拒绝所有权转换审批过账并回滚审批动作() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PERIOD_OWN_");
+		LocalDate date = lockedBusinessDate();
+		long projectId = insertProject("S23_PERIOD_OWN_P_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"3.000000", "10.000000");
+		Map<String, Object> payload = ownershipConversionPayload("锁定期间所有权转换", List.of(
+				ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, fixture.rawWarehouseId(),
+						fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+						null, null)));
+		payload.put("businessDate", date.toString());
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions", payload,
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue() + "/submit",
+				actionBody(conversion, "锁定期间所有权转换审批"), admin));
+
+		lockPeriod(date);
+
+		ResponseEntity<String> approved = actOnLatestTask("inventory:ownership-conversion:post-approve",
+				"approve", "锁定期间不得通过");
+		assertError(approved, HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertThat(status("inv_ownership_conversion", conversion.get("id").longValue())).isEqualTo("SUBMITTED");
+		assertThat(countRows("inv_project_cost_layer", "project_id = ?", projectId)).isZero();
+	}
+
+	@Test
+	void 锁定期间必须拒绝盘差审批过账并保留原盘点状态() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PERIOD_STK_");
+		LocalDate date = lockedBusinessDate();
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"5.000000", "6.000000");
+		JsonNode submitted = submitVarianceStocktake(admin, fixture, date, "4.000000");
+
+		lockPeriod(date);
+
+		ResponseEntity<String> approved = actOnLatestTask("inventory:stocktake:variance-approve", "approve",
+				"锁定期间不得通过盘差");
+		assertError(approved, HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertThat(status("inv_stocktake", submitted.get("id").longValue())).isEqualTo("SUBMITTED");
+		assertThat(countRows("inv_value_movement", "source_type = 'STOCKTAKE' and source_id = ?",
+				submitted.get("id").longValue())).isZero();
+	}
+
+	@Test
+	void 锁定期间必须拒绝估值调整审批过账并保留历史未估值池() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PERIOD_VAL_");
+		LocalDate date = lockedBusinessDate();
+		insertLegacyUnvaluedPublicStock(fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"2.000000");
+		Map<String, Object> payload = valuationAdjustmentPayload(fixture.valuedMaterialId(), "2.000000",
+				"8.000000", "16.00");
+		payload.put("businessDate", date.toString());
+		JsonNode adjustment = data(exchange(HttpMethod.POST, "/api/admin/inventory/valuation-adjustments", payload,
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/valuation-adjustments/" + adjustment.get("id").longValue() + "/submit",
+				actionBody(adjustment, "锁定期间估值调整审批"), admin));
+
+		lockPeriod(date);
+
+		ResponseEntity<String> approved = actOnLatestTask("inventory:valuation-adjustment:post-approve",
+				"approve", "锁定期间不得通过估值");
+		assertError(approved, HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+		assertThat(status("inv_valuation_adjustment", adjustment.get("id").longValue())).isEqualTo("SUBMITTED");
+		assertThat(publicPoolState(fixture.valuedMaterialId())).isEqualTo("LEGACY_UNVALUED");
+	}
+
+	@Test
+	void 审批驳回必须回写业务状态并释放盘点范围锁() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture ownershipFixture = createFixture("S23_REJECT_OWN_");
+		long projectId = insertProject("S23_REJECT_OWN_P_");
+		seedQuantityWithoutVersion(admin, ownershipFixture.rawWarehouseId(), ownershipFixture.valuedMaterialId(),
+				ownershipFixture.unitId(), "2.000000", "10.000000");
+		JsonNode ownership = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("所有权转换驳回", List.of(
+						ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, ownershipFixture.rawWarehouseId(),
+								ownershipFixture.rawWarehouseId(), ownershipFixture.valuedMaterialId(),
+								ownershipFixture.unitId(), "1.000000", null, null))),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + ownership.get("id").longValue() + "/submit",
+				actionBody(ownership, "提交后驳回所有权转换"), admin));
+		data(actOnLatestTask("inventory:ownership-conversion:post-approve", "reject", "驳回所有权转换"));
+
+		InventoryFixture stocktakeFixture = createFixture("S23_REJECT_STK_");
+		seedQuantityWithoutVersion(admin, stocktakeFixture.rawWarehouseId(), stocktakeFixture.valuedMaterialId(),
+				stocktakeFixture.unitId(), "5.000000", "6.000000");
+		JsonNode stocktake = submitVarianceStocktake(admin, stocktakeFixture, LocalDate.now(), "4.000000");
+		data(actOnLatestTask("inventory:stocktake:variance-approve", "reject", "驳回盘差"));
+
+		InventoryFixture valuationFixture = createFixture("S23_REJECT_VAL_");
+		insertLegacyUnvaluedPublicStock(valuationFixture.rawWarehouseId(), valuationFixture.valuedMaterialId(),
+				valuationFixture.unitId(), "2.000000");
+		JsonNode adjustment = data(exchange(HttpMethod.POST, "/api/admin/inventory/valuation-adjustments",
+				valuationAdjustmentPayload(valuationFixture.valuedMaterialId(), "2.000000", "8.000000", "16.00"),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/valuation-adjustments/" + adjustment.get("id").longValue() + "/submit",
+				actionBody(adjustment, "提交后驳回估值"), admin));
+		data(actOnLatestTask("inventory:valuation-adjustment:post-approve", "reject", "驳回估值"));
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(status("inv_ownership_conversion", ownership.get("id").longValue()))
+				.as("所有权转换驳回后应回到可修订草稿")
+				.isEqualTo("DRAFT");
+			softly.assertThat(status("inv_stocktake", stocktake.get("id").longValue()))
+				.as("盘差驳回后不得继续停留 SUBMITTED")
+				.isNotEqualTo("SUBMITTED");
+			softly.assertThat(countRows("inv_stocktake_range_lock", "stocktake_id = ? and released_at is null",
+					stocktake.get("id").longValue()))
+				.as("盘差驳回后必须释放盘点锁")
+				.isZero();
+			softly.assertThat(status("inv_valuation_adjustment", adjustment.get("id").longValue()))
+				.as("估值调整驳回后应回到可修订草稿")
+				.isEqualTo("DRAFT");
+		});
+	}
+
+	@Test
+	void 无成本权限读取受控单据详情不得泄露行级成本字段() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_DETAIL_MASK_");
+		long projectId = insertProject("S23_DETAIL_MASK_P_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"2.000000", "10.000000");
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("详情脱敏所有权转换", List.of(
+						ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+								"888.000000", null))),
+				admin));
+		insertLegacyUnvaluedPublicStock(fixture.rawWarehouseId(), fixture.nonValuedMaterialId(), fixture.unitId(),
+				"1.000000");
+		JsonNode adjustment = data(exchange(HttpMethod.POST, "/api/admin/inventory/valuation-adjustments",
+				valuationAdjustmentPayload(fixture.nonValuedMaterialId(), "1.000000", "5.000000", "5.00"),
+				admin));
+		AuthenticatedSession noValuation = createUserAndLogin("stage023-no-valuation-", "S23_NOVAL_",
+				List.of("inventory:balance:view", "inventory:movement:view", "inventory:ownership-conversion:view",
+						"inventory:valuation-adjustment:view"));
+
+		JsonNode restrictedConversion = data(get(noValuation,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue()));
+		JsonNode restrictedAdjustment = data(get(noValuation,
+				"/api/admin/inventory/valuation-adjustments/" + adjustment.get("id").longValue()));
+
+		assertThat(restrictedConversion.get("lines").get(0).has("sourceUnitCost"))
+			.as("无 inventory:valuation:view 时所有权转换详情不得返回 sourceUnitCost")
+			.isFalse();
+		assertThat(restrictedAdjustment.get("lines").get(0).has("unitCost"))
+			.as("无 inventory:valuation:view 时估值详情不得返回 unitCost")
+			.isFalse();
+		assertThat(restrictedAdjustment.get("lines").get(0).has("adjustmentAmount"))
+			.as("无 inventory:valuation:view 时估值详情不得返回 adjustmentAmount")
+			.isFalse();
+	}
+
+	@Test
+	void 重复或重叠盘点范围锁必须被拒绝() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_LOCK_DUP_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"2.000000", "10.000000");
+		JsonNode first = startStocktake(admin, fixture, LocalDate.now());
+		JsonNode secondDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(), LocalDate.now(), "重复范围盘点"),
+				admin));
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + secondDraft.get("id").longValue() + "/start",
+				actionBody(secondDraft, "重复范围盘点开始"), admin), HttpStatus.CONFLICT,
+				"INVENTORY_STOCKTAKE_RANGE_LOCKED");
+		assertThat(countRows("inv_stocktake_range_lock", "stocktake_id = ? and released_at is null",
+				first.get("id").longValue())).isOne();
+	}
+
+	@Test
+	void 已提交所有权转换在盘点期间审批必须失败且原子回滚() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_APPROVAL_LOCK_");
+		long projectId = insertProject("S23_APPROVAL_LOCK_P_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"3.000000", "10.000000");
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("盘点期间审批转换", List.of(
+						ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), "1.000000",
+								null, null))),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue() + "/submit",
+				actionBody(conversion, "提交后再开启盘点锁"), admin));
+		startStocktake(admin, fixture, LocalDate.now());
+
+		ResponseEntity<String> approved = actOnLatestTask("inventory:ownership-conversion:post-approve",
+				"approve", "盘点期间不得通过");
+		assertError(approved, HttpStatus.CONFLICT, "INVENTORY_STOCKTAKE_RANGE_LOCKED");
+		assertThat(status("inv_ownership_conversion", conversion.get("id").longValue())).isEqualTo("SUBMITTED");
+		assertThat(countRows("inv_project_cost_layer", "project_id = ?", projectId)).isZero();
+	}
+
+	@Test
+	void allowedActions必须按权限状态和盘差计算() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_ACTION_");
+		long targetWarehouseId = createWarehouse(admin, "S23_ACTION_TO_" + SEQUENCE.incrementAndGet());
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"3.000000", "10.000000");
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, fixture.valuedMaterialId(),
+						fixture.unitId(), null, "1.000000"),
+				admin));
+		AuthenticatedSession viewOnly = createUserAndLogin("stage023-action-view-", "S23_ACTION_VIEW_",
+				List.of("inventory:warehouse-transfer:view", "inventory:stocktake:view", "inventory:balance:view"));
+		JsonNode viewOnlyTransfer = data(get(viewOnly,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue()));
+
+		InventoryFixture zeroFixture = createFixture("S23_ACTION_ZERO_");
+		seedQuantityWithoutVersion(admin, zeroFixture.rawWarehouseId(), zeroFixture.valuedMaterialId(),
+				zeroFixture.unitId(), "2.000000", "10.000000");
+		JsonNode zeroReconciled = reconcileStocktake(admin, zeroFixture, LocalDate.now(), "2.000000");
+
+		InventoryFixture varianceFixture = createFixture("S23_ACTION_VAR_");
+		seedQuantityWithoutVersion(admin, varianceFixture.rawWarehouseId(), varianceFixture.valuedMaterialId(),
+				varianceFixture.unitId(), "2.000000", "10.000000");
+		JsonNode varianceReconciled = reconcileStocktake(admin, varianceFixture, LocalDate.now(), "1.000000");
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(actions(viewOnlyTransfer))
+				.as("只有 view 权限的用户不得看到变更动作")
+				.doesNotContain("UPDATE", "POST", "CANCEL");
+			softly.assertThat(actions(zeroReconciled))
+				.as("零盘差不得展示提交审批")
+				.doesNotContain("SUBMIT_APPROVAL");
+			softly.assertThat(actions(zeroReconciled))
+				.as("零盘差应展示直接完成")
+				.contains("COMPLETE_ZERO_VARIANCE");
+			softly.assertThat(actions(varianceReconciled))
+				.as("有盘差不得展示零差异完成")
+				.doesNotContain("COMPLETE_ZERO_VARIANCE");
+			softly.assertThat(actions(varianceReconciled))
+				.as("有盘差应展示提交审批")
+				.contains("SUBMIT_APPROVAL");
+		});
+	}
+
+	@Test
+	void 项目库存质量转换必须保留项目层价值() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture projectFixture = createFixture("S23_QUALITY_PROJECT_");
+		long projectId = insertProject("S23_QUALITY_PROJECT_P_");
+		JsonNode layer = createProjectLayerFromPublic(admin, projectFixture, projectId, "2.000000", "10.000000");
+		Map<String, Object> freeze = qualityTransferPayload(projectFixture.rawWarehouseId(),
+				projectFixture.valuedMaterialId(), projectFixture.unitId(), "1.000000", "项目库存冻结");
+		freeze.put("ownershipType", "PROJECT");
+		freeze.put("projectId", projectId);
+		freeze.put("costLayerId", layer.get("id").longValue());
+
+		ResponseEntity<String> frozen = exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze",
+				freeze, admin);
+		assertThat(frozen.getStatusCode()).as(frozen.getBody()).isEqualTo(HttpStatus.OK);
+		JsonNode frozenBalance = firstItem(get(admin, "/api/admin/inventory/balances?ownershipType=PROJECT&projectId="
+				+ projectId + "&materialId=" + projectFixture.valuedMaterialId() + "&qualityStatus=FROZEN"));
+		assertDecimal(frozenBalance, "inventoryAmount", "10.00");
+		assertThat(frozenBalance.get("costLayerId").longValue()).isEqualTo(layer.get("id").longValue());
+	}
+
+	@Test
+	void 非计价物料不生成伪零金额价值流水() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture nonValuedFixture = createFixture("S23_NON_VALUE_MOVE_");
+		JsonNode nonValuedOpening = data(createDocument(admin, documentPayload("OPENING", "非计价物料数量入库",
+				List.of(line(1, nonValuedFixture.rawWarehouseId(), nonValuedFixture.nonValuedMaterialId(),
+						nonValuedFixture.unitId(), "1.000000", null, null)))));
+		postDocument(admin, nonValuedOpening);
+		assertThat(countRows("inv_value_movement", "material_id = ?", nonValuedFixture.nonValuedMaterialId()))
+			.as("非计价物料不得生成伪零金额价值流水")
+			.isZero();
+	}
+
+	@Test
+	void 流水筛选必须返回价值追溯字段且十进制字段使用字符串契约() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_MOVEMENT_CONTRACT_");
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"4.000000", "2.500000");
+
+		JsonNode movement = firstItem(get(admin, "/api/admin/inventory/movements?materialId="
+				+ fixture.valuedMaterialId() + "&movementType=ADJUSTMENT_INCREASE&direction=IN&dateFrom="
+				+ LocalDate.now() + "&dateTo=" + LocalDate.now()));
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(movement.get("ownershipType").asText()).isEqualTo("PUBLIC");
+			softly.assertThat(movement.has("valuationState")).isTrue();
+			softly.assertThat(movement.has("valuationMethod")).isTrue();
+			softly.assertThat(movement.has("originalValueMovementId")).isTrue();
+			softly.assertThat(movement.get("quantity").isTextual()).as("quantity 必须是十进制字符串").isTrue();
+			softly.assertThat(movement.get("unitCost").isTextual()).as("unitCost 必须是十进制字符串").isTrue();
+			softly.assertThat(movement.get("inventoryAmount").isTextual()).as("inventoryAmount 必须是十进制字符串")
+				.isTrue();
+			softly.assertThat(movement.get("unitCost").asText()).isEqualTo("2.500000");
+			softly.assertThat(movement.get("inventoryAmount").asText()).isEqualTo("10.00");
+		});
+	}
+
+	@Test
 	void 前端受控库存单据路径必须由后端真实映射支持() {
 		List<RequiredRoute> requiredRoutes = List.of(
 				route(RequestMethod.GET, "/api/admin/inventory/warehouse-transfers"),
@@ -392,6 +813,192 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 		}
 		assertThat(missingRoutes).as("前端已声明的 023 受控库存单据路径必须全部由后端真实控制器支持")
 			.isEmpty();
+	}
+
+	private JsonNode createProjectLayerFromPublic(AuthenticatedSession admin, InventoryFixture fixture, long projectId,
+			String quantity, String unitCost) throws Exception {
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				quantity, unitCost);
+		JsonNode conversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				ownershipConversionPayload("公共库存转项目层", List.of(
+						ownershipLine(1, "PUBLIC", null, "PROJECT", projectId, fixture.rawWarehouseId(),
+								fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), quantity,
+								null, null))),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/ownership-conversions/" + conversion.get("id").longValue() + "/submit",
+				actionBody(conversion, "提交公共转项目"), admin));
+		approveLatestTask("inventory:ownership-conversion:post-approve");
+		return firstItem(get(admin, "/api/admin/inventory/cost-layers?projectId=" + projectId
+				+ "&materialId=" + fixture.valuedMaterialId()));
+	}
+
+	private Map<String, Object> actionBody(JsonNode document, String reason) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("version", document.get("version").longValue());
+		body.put("reason", reason);
+		body.put("idempotencyKey", "s23-action-" + SEQUENCE.incrementAndGet() + "-"
+				+ document.get("id").longValue());
+		return body;
+	}
+
+	private JsonNode startStocktake(AuthenticatedSession admin, InventoryFixture fixture, LocalDate businessDate)
+			throws Exception {
+		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(), businessDate, "023 盘点"),
+				admin));
+		return data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + draft.get("id").longValue() + "/start",
+				actionBody(draft, "开始盘点"), admin));
+	}
+
+	private JsonNode reconcileStocktake(AuthenticatedSession admin, InventoryFixture fixture, LocalDate businessDate,
+			String countedQuantity) throws Exception {
+		JsonNode counting = startStocktake(admin, fixture, businessDate);
+		JsonNode line = counting.get("lines").get(0);
+		Map<String, Object> countedLine = new LinkedHashMap<>();
+		countedLine.put("id", line.get("id").longValue());
+		countedLine.put("version", line.get("version").longValue());
+		countedLine.put("countedQuantity", countedQuantity);
+		Map<String, Object> update = new LinkedHashMap<>();
+		update.put("version", counting.get("version").longValue());
+		update.put("lines", List.of(countedLine));
+		JsonNode counted = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + counting.get("id").longValue() + "/lines", update, admin));
+		return data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + counting.get("id").longValue() + "/confirm-variance",
+				actionBody(counted, "确认盘点差异"), admin));
+	}
+
+	private JsonNode submitVarianceStocktake(AuthenticatedSession admin, InventoryFixture fixture,
+			LocalDate businessDate, String countedQuantity) throws Exception {
+		JsonNode reconciled = reconcileStocktake(admin, fixture, businessDate, countedQuantity);
+		return data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + reconciled.get("id").longValue() + "/submit",
+				actionBody(reconciled, "提交盘差审批"), admin));
+	}
+
+	private Map<String, Object> stocktakePayload(long warehouseId, long materialId, LocalDate businessDate,
+			String reason) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("businessDate", businessDate.toString());
+		body.put("scopeType", "WAREHOUSE");
+		body.put("warehouseId", warehouseId);
+		body.put("materialId", materialId);
+		body.put("reason", reason);
+		body.put("idempotencyKey", "s23-stocktake-" + SEQUENCE.incrementAndGet());
+		return body;
+	}
+
+	private Map<String, Object> valuationAdjustmentPayload(long materialId, String quantity, String unitCost,
+			String amount) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", 1);
+		line.put("ownershipType", "PUBLIC");
+		line.put("materialId", materialId);
+		line.put("quantity", quantity);
+		line.put("unitCost", unitCost);
+		line.put("adjustmentAmount", amount);
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("adjustmentType", "LEGACY_OPENING");
+		body.put("businessDate", LocalDate.now().toString());
+		body.put("reason", "023 历史库存期初估值");
+		body.put("idempotencyKey", "s23-valuation-" + SEQUENCE.incrementAndGet());
+		body.put("lines", List.of(line));
+		return body;
+	}
+
+	private Map<String, Object> projectWarehouseTransferPayload(long sourceWarehouseId, long targetWarehouseId,
+			long projectId, long materialId, long unitId, String quantity, long costLayerId) {
+		Map<String, Object> payload = warehouseTransferPayload(sourceWarehouseId, targetWarehouseId, materialId,
+				unitId, null, quantity);
+		@SuppressWarnings("unchecked")
+		Map<String, Object> line = (Map<String, Object>) ((List<?>) payload.get("lines")).get(0);
+		line.put("ownershipType", "PROJECT");
+		line.put("projectId", projectId);
+		line.put("sourceCostLayerId", costLayerId);
+		line.put("costLayerId", costLayerId);
+		return payload;
+	}
+
+	private Map<String, Object> qualityTransferPayload(long warehouseId, long materialId, long unitId,
+			String quantity, String reason) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("warehouseId", warehouseId);
+		body.put("materialId", materialId);
+		body.put("unitId", unitId);
+		body.put("quantity", quantity);
+		body.put("businessDate", LocalDate.now().toString());
+		body.put("reason", reason);
+		return body;
+	}
+
+	private void insertLegacyUnvaluedPublicStock(long warehouseId, long materialId, long unitId, String quantity) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, valuation_state, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', 'PUBLIC', 'LEGACY_UNVALUED', now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
+		this.jdbcTemplate.update("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state
+				)
+				values (?, ?, null, null, 'LEGACY_UNVALUED')
+				""", materialId, new BigDecimal(quantity));
+	}
+
+	private ResponseEntity<String> actOnLatestTask(String actionPermission, String action, String comment)
+			throws Exception {
+		AuthenticatedSession approver = createUserAndLogin("stage023-task-actor-", "S23_TASK_ACTOR_",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"inventory:balance:view", "inventory:movement:view", "inventory:valuation:view",
+						actionPermission));
+		JsonNode todo = data(get(approver, "/api/admin/approval-tasks?scope=TODO&page=1&pageSize=1"));
+		assertThat(todo.get("total").longValue()).isPositive();
+		JsonNode task = todo.get("items").get(0);
+		return exchange(HttpMethod.POST,
+				"/api/admin/approval-tasks/" + task.get("taskId").longValue() + "/" + action,
+				Map.of("version", task.get("version").longValue(), "comment", comment,
+						"idempotencyKey", "s23-task-" + action + "-" + SEQUENCE.incrementAndGet()),
+				approver);
+	}
+
+	private LocalDate lockedBusinessDate() {
+		return LocalDate.of(2080 + SEQUENCE.incrementAndGet(), 7, 10);
+	}
+
+	private void lockPeriod(LocalDate date) {
+		this.jdbcTemplate.update("""
+				insert into biz_business_period (
+					period_code, period_name, start_date, end_date, status, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 'LOCKED', now(), now())
+				""", "S23-LOCK-" + SEQUENCE.incrementAndGet(), "023锁定期间", date.withDayOfMonth(1),
+				date.withDayOfMonth(date.lengthOfMonth()));
+	}
+
+	private String status(String tableName, long id) {
+		return this.jdbcTemplate.queryForObject("select status from " + tableName + " where id = ?",
+				String.class, id);
+	}
+
+	private String publicPoolState(long materialId) {
+		return this.jdbcTemplate.queryForObject(
+				"select valuation_state from inv_public_valuation_pool where material_id = ?", String.class,
+				materialId);
+	}
+
+	private List<String> actions(JsonNode node) {
+		List<String> result = new ArrayList<>();
+		JsonNode allowedActions = node.get("allowedActions");
+		if (allowedActions != null) {
+			for (JsonNode action : allowedActions) {
+				result.add(action.asText());
+			}
+		}
+		return result;
 	}
 
 	private JsonNode firstValueMovement(long materialId, String movementType) throws Exception {
@@ -552,7 +1159,7 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 						"inventory:balance:view", "inventory:movement:view", "inventory:valuation:view",
 						approvePermission));
 		JsonNode todo = data(get(approver, "/api/admin/approval-tasks?scope=TODO&page=1&pageSize=1"));
-		assertThat(todo.get("total").longValue()).isOne();
+		assertThat(todo.get("total").longValue()).isPositive();
 		JsonNode task = todo.get("items").get(0);
 		data(exchange(HttpMethod.POST, "/api/admin/approval-tasks/" + task.get("taskId").longValue() + "/approve",
 				Map.of("version", task.get("version").longValue(), "comment", "023 独立测试同意",

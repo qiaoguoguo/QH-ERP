@@ -184,13 +184,13 @@ const inventoryChildren: MenuNode[] = [
   {
     id: 'inventory-balances',
     code: 'inventory:balance:view',
-    name: '库存余额',
+    name: '库存余额与价值',
     routePath: inventoryBalancePath,
   },
   {
     id: 'inventory-movements',
     code: 'inventory:movement:view',
-    name: '库存变动',
+    name: '库存流水与价值',
     routePath: inventoryMovementPath,
   },
   {
@@ -519,13 +519,12 @@ function ensureSystemMenu(menus: MenuNode[]): MenuNode[] {
 
 function ensureInventoryMenu(menus: MenuNode[]): MenuNode[] {
   const allowedChildren = inventoryChildren.filter((child) => authStore.hasPermission(String(child.code)))
-  if (!allowedChildren.length) {
-    return menus
-  }
-
   const inventoryIndex = menus.findIndex((menu) =>
     menu.code === 'inventory' || (menu.routePath ? inventoryMenuPaths.has(menu.routePath) : false))
   if (inventoryIndex === -1) {
+    if (!allowedChildren.length) {
+      return menus
+    }
     return [
       ...menus,
       {
@@ -542,7 +541,10 @@ function ensureInventoryMenu(menus: MenuNode[]): MenuNode[] {
     if (index !== inventoryIndex) {
       return menu
     }
-    const children = [...(menu.children ?? [])]
+    const children = (menu.children ?? []).map((existing) => {
+      const currentDefinition = inventoryChildren.find((child) => child.routePath === existing.routePath)
+      return currentDefinition ? { ...existing, name: currentDefinition.name, code: currentDefinition.code } : existing
+    })
     for (const child of allowedChildren) {
       if (!children.some((existing) => existing.routePath === child.routePath)) {
         children.push(child)

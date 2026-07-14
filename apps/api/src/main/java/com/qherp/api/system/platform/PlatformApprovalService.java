@@ -219,6 +219,7 @@ public class PlatformApprovalService {
 			throw new BusinessException(ApiErrorCode.APPROVAL_CONCURRENT_MODIFICATION);
 		}
 		updateInstanceTerminal(task.instanceId(), task.instanceVersion(), "REJECTED", operator, request.comment());
+		reopenBusinessObjectAfterTerminal(task.sceneCode(), task.businessObjectId(), operator);
 		recordHistory(task.instanceId(), "REJECT", operator, request.comment());
 		this.auditService.record(operator, "APPROVAL_REJECT", APPROVAL_TARGET, task.instanceId(),
 				task.sceneCode() + ":" + task.businessObjectNo(), servletRequest);
@@ -256,6 +257,7 @@ public class PlatformApprovalService {
 		recordActionIdempotency("WITHDRAW", "INSTANCE", instance.id(), request, instance.id(), operator);
 		cancelPendingTasks(instance.id(), operator, request.comment());
 		updateInstanceTerminal(instance.id(), instance.version(), "WITHDRAWN", operator, request.comment());
+		reopenBusinessObjectAfterTerminal(instance.sceneCode(), instance.businessObjectId(), operator);
 		recordHistory(instance.id(), "WITHDRAW", operator, request.comment());
 		this.auditService.record(operator, "APPROVAL_WITHDRAW", APPROVAL_TARGET, instance.id(),
 				instance.sceneCode() + ":" + instance.businessObjectNo(), servletRequest);
@@ -282,6 +284,7 @@ public class PlatformApprovalService {
 		recordActionIdempotency("CANCEL", "INSTANCE", instance.id(), request, instance.id(), operator);
 		cancelPendingTasks(instance.id(), operator, request.comment());
 		updateInstanceTerminal(instance.id(), instance.version(), "CANCELLED", operator, request.comment());
+		reopenBusinessObjectAfterTerminal(instance.sceneCode(), instance.businessObjectId(), operator);
 		recordHistory(instance.id(), "CANCEL", operator, request.comment());
 		this.auditService.record(operator, "APPROVAL_CANCEL", APPROVAL_TARGET, instance.id(),
 				instance.sceneCode() + ":" + instance.businessObjectNo(), servletRequest);
@@ -374,6 +377,14 @@ public class PlatformApprovalService {
 			return;
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
+	}
+
+	private void reopenBusinessObjectAfterTerminal(String sceneCode, Long objectId, CurrentUser operator) {
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(sceneCode)
+				|| "INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)
+				|| "INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
+			this.inventoryStage023AdminService.reopenAfterApprovalTerminal(sceneCode, objectId, operator);
+		}
 	}
 
 	private void snapshotAttachments(Long instanceId, String objectType, Long objectId) {

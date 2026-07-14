@@ -564,6 +564,22 @@ describe('生产执行表单页', () => {
     expect(average.wrapper.find('input[name="production-receipt-provisional-unit-cost"]').exists()).toBe(false)
   })
 
+  it('无成本权限时完工入库不显示公共均价但仍按后端计价状态控制暂估输入', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce({
+      ...currentAverageProvisionalWorkOrder,
+      costVisible: false,
+    })
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    expect(wrapper.text()).not.toContain('沿用当前公共平均价')
+    expect(wrapper.text()).not.toContain('11.000000')
+    expect(wrapper.find('input[name="production-receipt-provisional-unit-cost"]').exists()).toBe(false)
+  })
+
   it('批次管理完工入库追踪数量合计不一致时阻止保存', async () => {
     const { wrapper } = await mountExecution(
       ProductionCompletionReceiptView,

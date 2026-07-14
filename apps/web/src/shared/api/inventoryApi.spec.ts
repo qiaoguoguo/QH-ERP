@@ -411,6 +411,7 @@ describe('库存 API', () => {
     const api = createInventoryApi({ fetcher })
     const actionPayload: InventoryControlledDocumentActionPayload = { version: 3, idempotencyKey: 'action-key' }
     const transferPayload: InventoryWarehouseTransferPayload = {
+      idempotencyKey: 'transfer-key',
       businessDate: '2026-07-14',
       reason: '仓间补货',
       lines: [{
@@ -418,38 +419,51 @@ describe('库存 API', () => {
         sourceWarehouseId: 1,
         targetWarehouseId: 2,
         materialId: 3,
+        unitId: 4,
         quantity: '12.345678',
-        ownershipType: 'PUBLIC',
+        ownershipType: 'PROJECT',
+        projectId: 501,
+        sourceCostLayerId: 9001,
       }],
     }
     const conversionPayload: InventoryOwnershipConversionPayload = {
+      idempotencyKey: 'conversion-key',
       businessDate: '2026-07-14',
       reason: '项目领用',
       lines: [{
         lineNo: 10,
-        sourceOwnershipType: 'PUBLIC',
+        sourceOwnershipType: 'PROJECT',
         targetOwnershipType: 'PROJECT',
+        sourceProjectId: 501,
         targetProjectId: 501,
-        warehouseId: 1,
+        sourceWarehouseId: 1,
+        targetWarehouseId: 2,
         materialId: 3,
+        unitId: 4,
         quantity: '5.000000',
+        sourceCostLayerId: 9001,
+        sourceUnitCost: '11.000000',
       }],
     }
     const stocktakeLine: InventoryStocktakeLinePayload = {
       id: 7001,
       version: 4,
-      actualQuantity: '0.000000',
+      countedQuantity: '0.000000',
     }
     const valuationPayload: InventoryValuationAdjustmentPayload = {
       adjustmentType: 'LEGACY_OPENING',
+      idempotencyKey: 'valuation-key',
       businessDate: '2026-07-14',
       reason: '历史期初估值',
       lines: [{
         lineNo: 10,
         materialId: 3,
+        ownershipType: 'PROJECT',
+        projectId: 501,
         quantity: '100.000000',
         unitCost: '10.000000',
-        amount: '1000.00',
+        adjustmentAmount: '1000.00',
+        costLayerId: 9001,
       }],
     }
 
@@ -462,9 +476,15 @@ describe('库存 API', () => {
     await api.ownershipConversions.submitApproval(2, actionPayload)
     await api.ownershipConversions.withdraw(2, actionPayload)
     await api.ownershipConversions.cancel(2, actionPayload)
-    await api.stocktakes.create({ businessDate: '2026-07-14', scopeType: 'WAREHOUSE', warehouseId: 1, reason: '月度盘点' })
+    await api.stocktakes.create({
+      idempotencyKey: 'stocktake-key',
+      businessDate: '2026-07-14',
+      scopeType: 'WAREHOUSE',
+      warehouseId: 1,
+      reason: '月度盘点',
+    })
     await api.stocktakes.start(3, actionPayload)
-    await api.stocktakes.updateLines(3, { lines: [stocktakeLine], idempotencyKey: 'stocktake-line-key' })
+    await api.stocktakes.updateLines(3, { version: 9, lines: [stocktakeLine] })
     await api.stocktakes.reconcile(3, actionPayload)
     await api.stocktakes.completeZeroVariance(3, actionPayload)
     await api.stocktakes.cancel(3, actionPayload)
@@ -478,9 +498,17 @@ describe('库存 API', () => {
       return JSON.parse(call?.[1].body as string)
     }
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].quantity).toBe('12.345678')
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].unitId).toBe(4)
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].sourceCostLayerId).toBe(9001)
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].sourceWarehouseId).toBe(1)
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].targetWarehouseId).toBe(2)
+    expect(bodyForPath('/api/admin/inventory/ownership-conversions').lines[0].sourceUnitCost).toBe('11.000000')
     expect(bodyForPath('/api/admin/inventory/warehouse-transfers/1/post')).toEqual(actionPayload)
-    expect(bodyForPath('/api/admin/inventory/stocktakes/3/lines').lines[0].actualQuantity).toBe('0.000000')
-    expect(bodyForPath('/api/admin/inventory/valuation-adjustments').lines[0].amount).toBe('1000.00')
+    expect(bodyForPath('/api/admin/inventory/stocktakes/3/lines')).toEqual({
+      version: 9,
+      lines: [{ id: 7001, version: 4, countedQuantity: '0.000000' }],
+    })
+    expect(bodyForPath('/api/admin/inventory/valuation-adjustments').lines[0].adjustmentAmount).toBe('1000.00')
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
       '/api/admin/inventory/warehouse-transfers',
       '/api/admin/inventory/warehouse-transfers/1',

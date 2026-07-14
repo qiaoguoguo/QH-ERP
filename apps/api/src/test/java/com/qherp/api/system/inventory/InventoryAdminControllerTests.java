@@ -228,6 +228,30 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void publicPoolTailDifferenceOnlyAbsorbsWhenCompanyMaterialPoolIsFullyDepleted() {
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		postValuedInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "1.000000",
+				"10.000000", InventoryQualityStatus.QUALIFIED, "023 公共池原料仓入库");
+		postValuedInventory(fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				"10.000000", InventoryQualityStatus.QUALIFIED, "023 公共池成品仓入库");
+
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_DECREASE, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("1.000000"),
+				InventoryQualityStatus.QUALIFIED, "INVENTORY_DOCUMENT", 2_800_000L + SEQUENCE.incrementAndGet(),
+				2_810_000L + SEQUENCE.incrementAndGet(), LocalDate.now(), "023 跨仓单仓出清", null, "tester"));
+
+		PublicPoolFact pool = publicPool(fixture.rawMaterialId());
+		assertDecimal(pool.quantity(), "2.000000");
+		assertDecimal(pool.amount(), "20.00");
+		assertDecimal(balanceAmount(fixture.rawWarehouseId(), fixture.rawMaterialId(), InventoryQualityStatus.QUALIFIED),
+				"0.00");
+		assertDecimal(balanceAmount(fixture.finishedWarehouseId(), fixture.rawMaterialId(),
+				InventoryQualityStatus.QUALIFIED), "20.00");
+	}
+
+	@Test
 	void procurementReceiptPostsValuedInventoryWithOrderUntaxedUnitPrice() {
 		InventoryFixture fixture = fixture();
 		markMaterialValued(fixture.rawMaterialId());
@@ -596,6 +620,178 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				admin);
 		assertOk(cancelledResponse);
 		assertThat(data(cancelledResponse).get("status").asText()).isEqualTo("CANCELLED");
+	}
+
+	@Test
+	void ownershipConversionUsesActualSourceValueAndProjectTransferPreservesLayer() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		AuthenticatedSession approver = createInventoryUserAndLogin("inventory-own-approver-", "INV_OWN_APPR_",
+				"所有权转换审批", List.of("platform:approval:view", "platform:todo:view", "platform:approval:approve",
+						"inventory:balance:view", "inventory:ownership-conversion:post-approve"));
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.rawMaterialId());
+		long projectId = insertProject("023 所有权价值项目");
+		postValuedInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				"8.000000", InventoryQualityStatus.QUALIFIED, "023 所有权来源公共库存");
+
+		Map<String, Object> conversionBody = ownershipConversionPayload(fixture.rawWarehouseId(),
+				fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId, "1.000000",
+				"023 所有权转换不得信任客户端单价");
+		@SuppressWarnings("unchecked")
+		Map<String, Object> conversionLine = (Map<String, Object>) ((List<?>) conversionBody.get("lines")).get(0);
+		conversionLine.put("sourceUnitCost", "99.000000");
+		JsonNode createdConversion = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				conversionBody, admin));
+		long conversionId = createdConversion.get("id").longValue();
+		long conversionLineId = createdConversion.get("lines").get(0).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/inventory/ownership-conversions/" + conversionId
+				+ "/submit-approval",
+				Map.of("version", createdConversion.get("version").longValue(), "reason", "提交所有权价值审批",
+						"idempotencyKey", "OWN-ACTUAL-SUBMIT-" + conversionId),
+				admin));
+		JsonNode task = firstItem(get("/api/admin/approval-tasks?scope=TODO", approver));
+		assertOk(exchange(HttpMethod.POST, "/api/admin/approval-tasks/" + task.get("taskId").longValue()
+				+ "/approve",
+				Map.of("version", task.get("version").longValue(), "comment", "同意所有权价值转换",
+						"idempotencyKey", "OWN-ACTUAL-APPROVE-" + conversionId),
+				approver));
+
+		ValueMovementFact sourceValue = valueMovement("OWNERSHIP_CONVERSION", conversionId, conversionLineId * 10 + 1);
+		ValueMovementFact targetValue = valueMovement("OWNERSHIP_CONVERSION", conversionId, conversionLineId * 10 + 2);
+		assertDecimal(sourceValue.inventoryAmount(), "8.00");
+		assertDecimal(targetValue.inventoryAmount(), "8.00");
+		assertDecimal(publicPool(fixture.rawMaterialId()).amount(), "8.00");
+
+		long transferProjectId = insertProject("023 项目调拨成本层项目");
+		long layerId = insertProjectCostLayer(transferProjectId, fixture.rawMaterialId(), "5.000000", "50.00",
+				"10.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), transferProjectId,
+				layerId, "5.000000", "50.00", "10.000000");
+		Map<String, Object> transferBody = warehouseTransferPayload(fixture.rawWarehouseId(),
+				fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "2.000000",
+				"023 项目库存调拨保留成本层");
+		@SuppressWarnings("unchecked")
+		Map<String, Object> transferLine = (Map<String, Object>) ((List<?>) transferBody.get("lines")).get(0);
+		transferLine.put("ownershipType", "PROJECT");
+		transferLine.put("projectId", transferProjectId);
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers", transferBody,
+				admin));
+		ResponseEntity<String> postedTransfer = exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				Map.of("version", transfer.get("version").longValue(), "reason", "过账项目调拨",
+						"idempotencyKey", "TRF-PROJECT-POST-" + transfer.get("id").longValue()),
+				admin);
+		assertOk(postedTransfer);
+		Map<String, Object> targetBalance = this.jdbcTemplate.queryForMap("""
+				select quantity_on_hand, inventory_amount, cost_layer_id
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and quality_status = 'QUALIFIED'
+				""", fixture.finishedWarehouseId(), fixture.rawMaterialId(), transferProjectId);
+		assertDecimal((BigDecimal) targetBalance.get("quantity_on_hand"), "2.000000");
+		assertDecimal((BigDecimal) targetBalance.get("inventory_amount"), "20.00");
+		assertThat(targetBalance.get("cost_layer_id")).isEqualTo(layerId);
+	}
+
+	@Test
+	void controlledInventoryDocumentsUseAllowedActionsKeywordPeriodGuardAndCostMasking() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		AuthenticatedSession viewer = createInventoryUserAndLogin("inventory-controlled-viewer-", "INV_CTRL_VIEW_",
+				"受控单据查看", List.of("inventory:ownership-conversion:view", "inventory:balance:view"));
+		InventoryFixture fixture = fixture();
+		long projectId = insertProject("023 受控单据脱敏项目");
+		Map<String, Object> conversionBody = ownershipConversionPayload(fixture.rawWarehouseId(),
+				fixture.finishedWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), projectId, "1.000000",
+				"023 受控单据 keyword 脱敏");
+		@SuppressWarnings("unchecked")
+		Map<String, Object> conversionLine = (Map<String, Object>) ((List<?>) conversionBody.get("lines")).get(0);
+		conversionLine.put("sourceUnitCost", "7.000000");
+		JsonNode created = data(exchange(HttpMethod.POST, "/api/admin/inventory/ownership-conversions",
+				conversionBody, admin));
+		assertThat(created.has("allowedActions")).isTrue();
+		assertThat(created.has("availableActions")).isFalse();
+
+		JsonNode hidden = data(get("/api/admin/inventory/ownership-conversions/" + created.get("id").longValue(),
+				viewer));
+		assertThat(hidden.get("costVisible").booleanValue()).isFalse();
+		assertThat(hidden.get("lines").get(0).has("sourceUnitCost")).isFalse();
+		assertThat(hidden.get("lines").get(0).has("sourceCostLayerId")).isFalse();
+		assertThat(hidden.get("allowedActions").size()).isZero();
+
+		ResponseEntity<String> emptyKeyword = get(
+				"/api/admin/inventory/ownership-conversions?keyword=023-%E4%B8%8D%E5%AD%98%E5%9C%A8",
+				admin);
+		assertOk(emptyKeyword);
+		assertThat(data(emptyKeyword).get("total").longValue()).isZero();
+
+		LocalDate lockedDate = LocalDate.of(2090, 8, 5);
+		lockPeriod(lockedDate);
+		assertError(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				withBusinessDate(warehouseTransferPayload(fixture.rawWarehouseId(), fixture.finishedWarehouseId(),
+						fixture.rawMaterialId(), fixture.kgUnitId(), "1.000000", "023 锁定期间调拨创建"), lockedDate),
+				admin), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
+	}
+
+	@Test
+	void stocktakeRangeLockBlocksOverlapsAndUnifiedPostingButAllowsStocktakeVariance() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = fixture();
+		postInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), "5.000000",
+				InventoryQualityStatus.QUALIFIED);
+		JsonNode firstDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 盘点范围锁一"), admin));
+		JsonNode firstCounting = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + firstDraft.get("id").longValue() + "/start",
+				Map.of("version", firstDraft.get("version").longValue(), "reason", "开始盘点范围锁一",
+						"idempotencyKey", "STK-LOCK-START-" + firstDraft.get("id").longValue()),
+				admin));
+		JsonNode secondDraft = data(exchange(HttpMethod.POST, "/api/admin/inventory/stocktakes",
+				stocktakePayload(fixture.rawWarehouseId(), fixture.rawMaterialId(), "023 盘点范围锁二"), admin));
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + secondDraft.get("id").longValue() + "/start",
+				Map.of("version", secondDraft.get("version").longValue(), "reason", "开始盘点范围锁二",
+						"idempotencyKey", "STK-LOCK-START-" + secondDraft.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "INVENTORY_STOCKTAKE_RANGE_LOCKED");
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_DECREASE, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("1.000000"),
+				InventoryQualityStatus.QUALIFIED, "INVENTORY_DOCUMENT", 2_900_000L + SEQUENCE.incrementAndGet(),
+				2_910_000L + SEQUENCE.incrementAndGet(), LocalDate.now(), "023 盘点锁禁止普通过账", null, "tester")))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_STOCKTAKE_RANGE_LOCKED);
+
+		JsonNode counted = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + firstDraft.get("id").longValue() + "/lines",
+				stocktakeLineUpdatePayload(firstCounting, true), admin));
+		JsonNode reconciled = data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/stocktakes/" + firstDraft.get("id").longValue() + "/reconcile",
+				Map.of("version", counted.get("version").longValue(), "reason", "确认盘差",
+						"idempotencyKey", "STK-LOCK-RECON-" + firstDraft.get("id").longValue()),
+				admin));
+		assertThat(reconciled.get("status").asText()).isEqualTo("RECONCILED");
+	}
+
+	@Test
+	void nonValuedMaterialsOnlyWriteQuantityMovementWithoutValueMovement() {
+		InventoryFixture fixture = fixture();
+		long sourceId = 2_920_000L + SEQUENCE.incrementAndGet();
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.ADJUSTMENT_INCREASE, InventoryDirection.IN, fixture.rawWarehouseId(),
+				fixture.auxiliaryMaterialId(), fixture.meterUnitId(), new BigDecimal("3.000000"),
+				InventoryQualityStatus.QUALIFIED, "INVENTORY_DOCUMENT", sourceId,
+				2_930_000L + SEQUENCE.incrementAndGet(), LocalDate.now(), "023 非计价物料只记数量", null, "tester"));
+
+		Long valueCount = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_value_movement
+				where source_type = 'INVENTORY_DOCUMENT'
+				and source_id = ?
+				""", Long.class, sourceId);
+		assertThat(valueCount).isZero();
 	}
 
 	@Test
@@ -2658,14 +2854,14 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void assertAvailableActions(JsonNode node, String... actions) {
-		JsonNode availableActions = node.get("availableActions");
-		assertThat(availableActions).as("availableActions").isNotNull();
+		JsonNode availableActions = node.get("allowedActions");
+		assertThat(availableActions).as("allowedActions").isNotNull();
 		assertThat(availableActions.toString()).contains(actions);
 	}
 
 	private void assertAvailableActionsEmpty(JsonNode node) {
-		JsonNode availableActions = node.get("availableActions");
-		assertThat(availableActions).as("availableActions").isNotNull();
+		JsonNode availableActions = node.get("allowedActions");
+		assertThat(availableActions).as("allowedActions").isNotNull();
 		assertThat(availableActions.size()).isZero();
 	}
 

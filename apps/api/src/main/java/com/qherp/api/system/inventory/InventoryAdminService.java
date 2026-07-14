@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -86,6 +87,17 @@ public class InventoryAdminService {
 				: "m.tracking_method, null::bigint as batch_id, null::varchar as batch_no, null::bigint as serial_id, null::varchar as serial_no,";
 		String trackingGroupBy = trackingBreakdown ? ", m.tracking_method, b.batch_id, bt.batch_no, b.serial_id, sr.serial_no"
 				: ", m.tracking_method";
+		String selectedQuality = selectedQualityStatus == null ? null : selectedQualityStatus.name();
+		String inventoryAmountSelect = selectedQuality == null ? "sum(b.inventory_amount)"
+				: "sum(case when b.quality_status = '%s' then b.inventory_amount else 0 end)".formatted(selectedQuality);
+		String costLayerCountSelect = selectedQuality == null
+				? "count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null)"
+				: "count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null and b.quality_status = '%s')"
+					.formatted(selectedQuality);
+		String costLayerIdSelect = selectedQuality == null
+				? "max(b.cost_layer_id) filter (where b.cost_layer_id is not null)"
+				: "max(b.cost_layer_id) filter (where b.cost_layer_id is not null and b.quality_status = '%s')"
+					.formatted(selectedQuality);
 		String reservationJoin = trackingBreakdown ? """
 				left join (
 					select warehouse_id, material_id, batch_id, serial_id,
@@ -158,9 +170,10 @@ public class InventoryAdminService {
 				       coalesce(max(pi.in_transit_quantity), 0) as in_transit_quantity,
 				       coalesce(max(sd.sales_demand_quantity), 0) as sales_demand_quantity,
 				       coalesce(max(pd.production_demand_quantity), 0) as production_demand_quantity,
-				       sum(b.inventory_amount) as inventory_amount,
+				       %s as inventory_amount,
 				       max(b.average_unit_cost) as average_unit_cost,
-				       count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null) as cost_layer_count,
+				       %s as cost_layer_count,
+				       %s as cost_layer_id,
 				       max(b.updated_at) as updated_at
 				from inv_stock_balance b
 				left join mst_warehouse w on w.id = b.warehouse_id
@@ -214,8 +227,8 @@ public class InventoryAdminService {
 				%s
 				order by max(b.updated_at) desc, min(b.id) desc
 				limit ? offset ?
-				""".formatted(trackingSelect, reservationJoin, queryParts.where(), trackingGroupBy,
-						havingParts.having()),
+				""".formatted(trackingSelect, inventoryAmountSelect, costLayerCountSelect, costLayerIdSelect,
+						reservationJoin, queryParts.where(), trackingGroupBy, havingParts.having()),
 				(rs, rowNum) -> mapBalance(rs, rowNum, selectedQualityStatus, costVisible), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
@@ -225,18 +238,20 @@ public class InventoryAdminService {
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus, int page,
 			int pageSize) {
 		return movements(keyword, warehouseId, materialId, movementType, direction, dateFrom, dateTo, qualityStatus,
-				null, null, null, null, null, page, pageSize, null);
+				null, null, null, null, null, null, null, null, null, page, pageSize, null);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus,
-			String trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo, int page,
-			int pageSize, CurrentUser currentUser) {
+			String trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo, String ownershipType,
+			Long projectId, String valuationMethod, Long costLayerId, int page, int pageSize,
+			CurrentUser currentUser) {
 		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		InventoryTrackingMethod parsedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
 		QueryParts queryParts = movementQueryParts(keyword, warehouseId, materialId, movementType, direction, dateFrom,
-				dateTo, parsedQualityStatus, parsedTrackingMethod, batchId, batchNo, serialId, serialNo);
+				dateTo, parsedQualityStatus, parsedTrackingMethod, batchId, batchNo, serialId, serialNo, ownershipType,
+				projectId, valuationMethod, costLayerId);
 		boolean costVisible = hasPermission(currentUser, "inventory:valuation:view");
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -246,6 +261,7 @@ public class InventoryAdminService {
 				join mst_unit u on u.id = mv.unit_id
 				left join inv_batch bt on bt.id = mv.batch_id
 				left join inv_serial sr on sr.id = mv.serial_id
+				left join inv_value_movement vm on vm.stock_movement_id = mv.id
 				%s
 				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
@@ -257,7 +273,8 @@ public class InventoryAdminService {
 				       mv.operator_name, mv.occurred_at, mv.quality_status, m.tracking_method, mv.batch_id,
 				       bt.batch_no, mv.serial_id, sr.serial_no, d.document_no as source_document_no,
 				       null::varchar as target_document_no, mv.ownership_type, mv.project_id, mv.valuation_state,
-				       vm.unit_cost, vm.inventory_amount, vm.valuation_method, vm.original_value_movement_id
+				       vm.id as value_flow_id, vm.unit_cost, vm.inventory_amount, vm.inventory_amount as movement_amount,
+				       vm.valuation_method, vm.cost_layer_id, vm.original_value_movement_id
 				from inv_stock_movement mv
 				join mst_warehouse w on w.id = mv.warehouse_id
 				join mst_material m on m.id = mv.material_id
@@ -911,7 +928,8 @@ public class InventoryAdminService {
 
 	private QueryParts movementQueryParts(String keyword, Long warehouseId, Long materialId, String movementType,
 			String direction, LocalDate dateFrom, LocalDate dateTo, InventoryQualityStatus qualityStatus,
-			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo) {
+			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo,
+			String ownershipType, Long projectId, String valuationMethod, Long costLayerId) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -969,6 +987,22 @@ public class InventoryAdminService {
 		if (hasText(serialNo)) {
 			conditions.add("sr.serial_no ilike ?");
 			args.add("%" + serialNo + "%");
+		}
+		if (hasText(ownershipType)) {
+			conditions.add("mv.ownership_type = ?");
+			args.add(parseOwnershipType(ownershipType));
+		}
+		if (projectId != null) {
+			conditions.add("mv.project_id = ?");
+			args.add(projectId);
+		}
+		if (hasText(valuationMethod)) {
+			conditions.add("vm.valuation_method = ?");
+			args.add(valuationMethod);
+		}
+		if (costLayerId != null) {
+			conditions.add("vm.cost_layer_id = ?");
+			args.add(costLayerId);
 		}
 		return where(conditions, args);
 	}
@@ -1299,7 +1333,7 @@ public class InventoryAdminService {
 				pendingInspectionQuantity, qualifiedQuantity, rejectedQuantity, frozenQuantity,
 				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getString("valuation_state"),
 				costVisible, inventoryAmount, averageUnitCost, rs.getLong("cost_layer_count"),
-				rs.getObject("updated_at", OffsetDateTime.class));
+				costVisible ? nullableLong(rs, "cost_layer_id") : null, rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum, boolean costVisible) throws SQLException {
@@ -1313,7 +1347,8 @@ public class InventoryAdminService {
 				rs.getString("movement_type"), rs.getString("direction"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
 				rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
-				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
+				quantity(rs.getBigDecimal("quantity")), quantity(rs.getBigDecimal("before_quantity")),
+				quantity(rs.getBigDecimal("after_quantity")),
 				sourceType, sourceId, sourceLineId,
 				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
 				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
@@ -1321,9 +1356,20 @@ public class InventoryAdminService {
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
 				rs.getString("serial_no"), sourceDocumentNo, rs.getString("target_document_no"),
 				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getString("valuation_state"),
-				costVisible, costVisible ? rs.getBigDecimal("unit_cost") : null,
-				costVisible ? rs.getBigDecimal("inventory_amount") : null, rs.getString("valuation_method"),
-				nullableLong(rs, "original_value_movement_id"));
+				costVisible, costVisible ? quantity(rs.getBigDecimal("unit_cost")) : null,
+				costVisible ? money(rs.getBigDecimal("inventory_amount")) : null,
+				costVisible ? money(rs.getBigDecimal("movement_amount")) : null, rs.getString("valuation_method"),
+				costVisible ? nullableLong(rs, "value_flow_id") : null, costVisible ? nullableLong(rs, "cost_layer_id") : null,
+				costVisible ? nullableLong(rs, "original_value_movement_id") : null,
+				costVisible ? nullableLong(rs, "original_value_movement_id") : null);
+	}
+
+	private static String quantity(BigDecimal value) {
+		return value == null ? null : value.setScale(6, RoundingMode.HALF_UP).toPlainString();
+	}
+
+	private static String money(BigDecimal value) {
+		return value == null ? null : value.setScale(2, RoundingMode.HALF_UP).toPlainString();
 	}
 
 	private InventoryBatchSummaryResponse mapBatchSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -2021,18 +2067,19 @@ public class InventoryAdminService {
 			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
 			BigDecimal frozenQuantity, String ownershipType, Long projectId, String valuationState,
 			boolean costVisible, BigDecimal inventoryAmount, BigDecimal averageUnitCost, Long costLayerCount,
-			OffsetDateTime updatedAt) {
+			Long costLayerId, OffsetDateTime updatedAt) {
 	}
 
 	public record InventoryMovementResponse(Long id, String movementNo, String movementType, String direction,
 			Long warehouseId, String warehouseName, Long materialId, String materialCode, String materialName,
-			Long unitId, String unitName, BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity,
+			Long unitId, String unitName, String quantity, String beforeQuantity, String afterQuantity,
 			String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName,
 			String trackingMethod, String trackingMethodName, Long batchId, String batchNo, Long serialId,
 			String serialNo, String sourceDocumentNo, String targetDocumentNo, String ownershipType, Long projectId,
-			String valuationState, boolean costVisible, BigDecimal unitCost, BigDecimal inventoryAmount,
-			String valuationMethod, Long originalValueMovementId) {
+			String valuationState, boolean costVisible, String unitCost, String inventoryAmount, String movementAmount,
+			String valuationMethod, Long valueFlowId, Long costLayerId, Long originalValueMovementId,
+			Long originalValueFlowId) {
 	}
 
 	public record InventoryTrackingQualityStatusSummaryResponse(String qualityStatus, String qualityStatusName,

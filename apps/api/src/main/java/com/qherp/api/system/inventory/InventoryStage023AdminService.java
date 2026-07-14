@@ -6,6 +6,8 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.platform.PlatformApprovalService;
+import com.qherp.api.system.period.BusinessPeriodGuard;
+import com.qherp.api.system.period.BusinessPeriodOperation;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -41,14 +43,17 @@ public class InventoryStage023AdminService {
 
 	private final AuditService auditService;
 
+	private final BusinessPeriodGuard businessPeriodGuard;
+
 	public InventoryStage023AdminService(JdbcTemplate jdbcTemplate, InventoryPostingService inventoryPostingService,
 			InventoryValuationService inventoryValuationService, PlatformApprovalService approvalService,
-			AuditService auditService) {
+			AuditService auditService, BusinessPeriodGuard businessPeriodGuard) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.inventoryPostingService = inventoryPostingService;
 		this.inventoryValuationService = inventoryValuationService;
 		this.approvalService = approvalService;
 		this.auditService = auditService;
+		this.businessPeriodGuard = businessPeriodGuard;
 	}
 
 	@Transactional(readOnly = true)
@@ -130,24 +135,35 @@ public class InventoryStage023AdminService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> warehouseTransfers(String status, int page, int pageSize) {
-		return documentPage("inv_warehouse_transfer", "transfer_no", status, page, pageSize, "WAREHOUSE_TRANSFER");
+	public PageResponse<Map<String, Object>> warehouseTransfers(String status, String keyword, int page, int pageSize,
+			CurrentUser currentUser) {
+		return documentPage("inv_warehouse_transfer", "transfer_no", status, keyword, page, pageSize,
+				"WAREHOUSE_TRANSFER", currentUser);
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> ownershipConversions(String status, int page, int pageSize) {
-		return documentPage("inv_ownership_conversion", "conversion_no", status, page, pageSize,
-				"OWNERSHIP_CONVERSION");
+	public PageResponse<Map<String, Object>> ownershipConversions(String status, String keyword, int page, int pageSize,
+			CurrentUser currentUser) {
+		return documentPage("inv_ownership_conversion", "conversion_no", status, keyword, page, pageSize,
+				"OWNERSHIP_CONVERSION", currentUser);
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> stocktakes(String status, int page, int pageSize) {
+	public PageResponse<Map<String, Object>> stocktakes(String status, String keyword, int page, int pageSize,
+			CurrentUser currentUser) {
 		List<Object> args = new ArrayList<>();
-		String where = "";
+		List<String> conditions = new ArrayList<>();
 		if (status != null && !status.isBlank()) {
-			where = "where status = ?";
+			conditions.add("status = ?");
 			args.add(status.trim().toUpperCase());
 		}
+		if (keyword != null && !keyword.isBlank()) {
+			conditions.add("(stocktake_no ilike ? or reason ilike ?)");
+			String pattern = "%" + keyword.trim() + "%";
+			args.add(pattern);
+			args.add(pattern);
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from inv_stocktake " + where, Long.class,
 				args.toArray());
 		args.add(pageSize);
@@ -166,7 +182,7 @@ public class InventoryStage023AdminService {
 					rs.getObject("posted_at", OffsetDateTime.class), rs.getObject("cancelled_at", OffsetDateTime.class),
 					rs.getString("created_by_username"), rs.getObject("created_at", OffsetDateTime.class),
 					rs.getString("updated_by_username"), rs.getObject("updated_at", OffsetDateTime.class),
-					rs.getLong("version"), "STOCKTAKE");
+					rs.getLong("version"), "STOCKTAKE", currentUser);
 			row.put("scopeType", rs.getString("scope_type"));
 			row.put("warehouseId", nullableLong(rs, "warehouse_id"));
 			row.put("materialId", nullableLong(rs, "material_id"));
@@ -178,6 +194,8 @@ public class InventoryStage023AdminService {
 
 	@Transactional
 	public Map<String, Object> createWarehouseTransfer(WarehouseTransferRequest request, CurrentUser operator) {
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.CREATE,
+				"INVENTORY_WAREHOUSE_TRANSFER", null);
 		validateLines(request.lines());
 		for (WarehouseTransferLineRequest line : request.lines()) {
 			requireNoStocktakeLock(line.sourceWarehouseId(), line.materialId());
@@ -203,7 +221,7 @@ public class InventoryStage023AdminService {
 					line.materialId(), line.unitId(), defaultQuality(line.qualityStatus()), line.batchId(),
 					line.serialId(), line.quantity());
 		}
-		return warehouseTransfer(id);
+		return warehouseTransfer(id, operator);
 	}
 
 	@Transactional
@@ -212,6 +230,8 @@ public class InventoryStage023AdminService {
 		validateLines(request.lines());
 		Header transfer = lockHeader("inv_warehouse_transfer", id);
 		requireVersion(transfer.version(), request.version());
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_WAREHOUSE_TRANSFER", id);
 		if (!"DRAFT".equals(transfer.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -227,13 +247,15 @@ public class InventoryStage023AdminService {
 		insertWarehouseTransferLines(id, request.lines());
 		this.auditService.record(operator, "INVENTORY_WAREHOUSE_TRANSFER_UPDATE",
 				"INVENTORY_WAREHOUSE_TRANSFER", id, transfer.documentNo(), null);
-		return warehouseTransfer(id);
+		return warehouseTransfer(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> postWarehouseTransfer(Long id, VersionedActionRequest request, CurrentUser operator) {
 		Header transfer = lockHeader("inv_warehouse_transfer", id);
 		requireVersion(transfer.version(), request.version());
+		this.businessPeriodGuard.assertWritable(transfer.businessDate(), BusinessPeriodOperation.POST,
+				"INVENTORY_WAREHOUSE_TRANSFER", id);
 		if (!"DRAFT".equals(transfer.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -246,9 +268,12 @@ public class InventoryStage023AdminService {
 					"WAREHOUSE_TRANSFER", id, line.id() * 10 + 1, transfer.businessDate(), transfer.reason(),
 					null, operator.username(), false, line.batchId(), line.serialId(),
 					new InventoryPostingService.ValuationContext(line.ownershipType(), line.projectId(), null,
-							null, null)));
+							sourceCostLayerId(line.ownershipType(), line.projectId(), line.sourceWarehouseId(),
+									line.materialId(), line.qualityStatus(), line.batchId(), line.serialId()),
+							null)));
 			InventoryPostingService.ValuationContext inContext = new InventoryPostingService.ValuationContext(
-					line.ownershipType(), line.projectId(), out.unitCost(), out.costLayerId(), out.valueMovementId());
+					line.ownershipType(), line.projectId(), out.unitCost(), out.costLayerId(), out.valueMovementId(),
+					out.inventoryAmount());
 			InventoryPostingService.PostingResult in = this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 					InventoryMovementType.WAREHOUSE_TRANSFER_IN, InventoryDirection.IN, line.targetWarehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.valueOf(line.qualityStatus()),
@@ -268,13 +293,15 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_WAREHOUSE_TRANSFER_POST", "INVENTORY_WAREHOUSE_TRANSFER",
 				id, transfer.documentNo(), null);
-		return warehouseTransfer(id);
+		return warehouseTransfer(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> cancelWarehouseTransfer(Long id, VersionedActionRequest request, CurrentUser operator) {
 		Header transfer = lockHeader("inv_warehouse_transfer", id);
 		requireVersion(transfer.version(), request.version());
+		this.businessPeriodGuard.assertWritable(transfer.businessDate(), BusinessPeriodOperation.CANCEL,
+				"INVENTORY_WAREHOUSE_TRANSFER", id);
 		if (!"DRAFT".equals(transfer.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -286,11 +313,13 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_WAREHOUSE_TRANSFER_CANCEL",
 				"INVENTORY_WAREHOUSE_TRANSFER", id, transfer.documentNo(), null);
-		return warehouseTransfer(id);
+		return warehouseTransfer(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> createOwnershipConversion(OwnershipConversionRequest request, CurrentUser operator) {
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.CREATE,
+				"INVENTORY_OWNERSHIP_CONVERSION", null);
 		validateLines(request.lines());
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into inv_ownership_conversion (
@@ -314,7 +343,7 @@ public class InventoryStage023AdminService {
 					line.targetWarehouseId(), line.materialId(), line.unitId(), defaultQuality(line.qualityStatus()),
 					line.batchId(), line.serialId(), line.quantity(), line.sourceUnitCost(), line.sourceCostLayerId());
 		}
-		return ownershipConversion(id);
+		return ownershipConversion(id, operator);
 	}
 
 	@Transactional
@@ -323,6 +352,8 @@ public class InventoryStage023AdminService {
 		validateLines(request.lines());
 		Header header = lockHeader("inv_ownership_conversion", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_OWNERSHIP_CONVERSION", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -335,7 +366,7 @@ public class InventoryStage023AdminService {
 		insertOwnershipConversionLines(id, request.lines());
 		this.auditService.record(operator, "INVENTORY_OWNERSHIP_CONVERSION_UPDATE",
 				"INVENTORY_OWNERSHIP_CONVERSION", id, header.documentNo(), null);
-		return ownershipConversion(id);
+		return ownershipConversion(id, operator);
 	}
 
 	@Transactional
@@ -343,6 +374,8 @@ public class InventoryStage023AdminService {
 			HttpServletRequest servletRequest) {
 		Header header = lockHeader("inv_ownership_conversion", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_OWNERSHIP_CONVERSION", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -357,7 +390,7 @@ public class InventoryStage023AdminService {
 				""", approval.id(), operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_OWNERSHIP_CONVERSION_SUBMIT",
 				"INVENTORY_OWNERSHIP_CONVERSION", id, header.documentNo(), servletRequest);
-		return ownershipConversion(id);
+		return ownershipConversion(id, operator);
 	}
 
 	@Transactional
@@ -372,6 +405,8 @@ public class InventoryStage023AdminService {
 			CurrentUser operator) {
 		Header header = lockHeader("inv_ownership_conversion", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.CANCEL,
+				"INVENTORY_OWNERSHIP_CONVERSION", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -383,7 +418,7 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_OWNERSHIP_CONVERSION_CANCEL",
 				"INVENTORY_OWNERSHIP_CONVERSION", id, header.documentNo(), null);
-		return ownershipConversion(id);
+		return ownershipConversion(id, operator);
 	}
 
 	@Transactional
@@ -395,22 +430,28 @@ public class InventoryStage023AdminService {
 		if (!"SUBMITTED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
+				"INVENTORY_OWNERSHIP_CONVERSION", id);
 		for (OwnershipLine line : ownershipLines(id)) {
+			Long sourceCostLayerId = line.sourceCostLayerId() == null
+					? sourceCostLayerId(line.sourceOwnershipType(), line.sourceProjectId(), line.sourceWarehouseId(),
+							line.materialId(), line.qualityStatus(), line.batchId(), line.serialId())
+					: line.sourceCostLayerId();
 			InventoryPostingService.PostingResult out = this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 					InventoryMovementType.OWNERSHIP_CONVERSION_OUT, InventoryDirection.OUT, line.sourceWarehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.valueOf(line.qualityStatus()),
 					"OWNERSHIP_CONVERSION", id, line.id() * 10 + 1, header.businessDate(), header.reason(),
 					null, operator.username(), false, line.batchId(), line.serialId(),
 					new InventoryPostingService.ValuationContext(line.sourceOwnershipType(), line.sourceProjectId(),
-							null, line.sourceCostLayerId(), null)));
-			BigDecimal targetUnitCost = line.sourceUnitCost() == null ? out.unitCost() : line.sourceUnitCost();
+							null, sourceCostLayerId, null)));
+			BigDecimal targetUnitCost = out.unitCost();
 			InventoryPostingService.PostingResult in = this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
 					InventoryMovementType.OWNERSHIP_CONVERSION_IN, InventoryDirection.IN, line.targetWarehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.valueOf(line.qualityStatus()),
 					"OWNERSHIP_CONVERSION", id, line.id() * 10 + 2, header.businessDate(), header.reason(),
 					null, operator.username(), false, line.batchId(), line.serialId(),
 					new InventoryPostingService.ValuationContext(line.targetOwnershipType(), line.targetProjectId(),
-							targetUnitCost, line.sourceCostLayerId(), out.valueMovementId())));
+							targetUnitCost, out.costLayerId(), out.valueMovementId(), out.inventoryAmount())));
 			this.jdbcTemplate.update("""
 					update inv_ownership_conversion_line
 					set source_movement_id = ?, target_movement_id = ?, version = version + 1
@@ -427,6 +468,8 @@ public class InventoryStage023AdminService {
 
 	@Transactional
 	public Map<String, Object> createStocktake(StocktakeRequest request, CurrentUser operator) {
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.CREATE,
+				"INVENTORY_STOCKTAKE", null);
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into inv_stocktake (
 					stocktake_no, business_date, scope_type, warehouse_id, material_id, reason, status,
@@ -437,16 +480,20 @@ public class InventoryStage023AdminService {
 				""", Long.class, documentNo("INV-STK"), request.businessDate(), request.scopeType(),
 				request.warehouseId(), request.materialId(), request.reason(), request.idempotencyKey(), operator.id(),
 				operator.username(), operator.username());
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> startStocktake(Long id, VersionedActionRequest request, CurrentUser operator) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		lockStocktakeRangeForMutation(header.warehouseId(), header.materialId());
+		requireNoStocktakeLock(header.warehouseId(), header.materialId());
 		this.jdbcTemplate.update("""
 				insert into inv_stocktake_range_lock (stocktake_id, warehouse_id, material_id)
 				values (?, ?, ?)
@@ -479,13 +526,15 @@ public class InventoryStage023AdminService {
 				    version = version + 1
 				where id = ?
 				""", operator.username(), id);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> updateStocktakeLines(Long id, StocktakeLineUpdateRequest request, CurrentUser operator) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"COUNTING".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -505,13 +554,15 @@ public class InventoryStage023AdminService {
 				set updated_by_username = ?, updated_at = now(), version = version + 1
 				where id = ?
 				""", operator.username(), id);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> confirmStocktakeVariance(Long id, VersionedActionRequest request, CurrentUser operator) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"COUNTING".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -531,7 +582,7 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_STOCKTAKE_RECONCILE", "INVENTORY_STOCKTAKE", id,
 				header.documentNo(), null);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
@@ -539,6 +590,8 @@ public class InventoryStage023AdminService {
 			HttpServletRequest servletRequest) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"RECONCILED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -553,7 +606,7 @@ public class InventoryStage023AdminService {
 				""", approval.id(), operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_STOCKTAKE_SUBMIT", "INVENTORY_STOCKTAKE", id,
 				header.documentNo(), servletRequest);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
@@ -561,6 +614,8 @@ public class InventoryStage023AdminService {
 			CurrentUser operator) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"RECONCILED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -583,13 +638,15 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_STOCKTAKE_COMPLETE_ZERO_VARIANCE", "INVENTORY_STOCKTAKE",
 				id, header.documentNo(), null);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> cancelStocktake(Long id, VersionedActionRequest request, CurrentUser operator) {
 		Header header = lockHeader("inv_stocktake", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.CANCEL,
+				"INVENTORY_STOCKTAKE", id);
 		if (!"DRAFT".equals(header.status()) && !"COUNTING".equals(header.status())
 				&& !"RECONCILED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
@@ -604,7 +661,7 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_STOCKTAKE_CANCEL", "INVENTORY_STOCKTAKE", id,
 				header.documentNo(), null);
-		return stocktake(id);
+		return stocktake(id, operator);
 	}
 
 	@Transactional
@@ -616,6 +673,8 @@ public class InventoryStage023AdminService {
 		if (!"SUBMITTED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
+				"INVENTORY_STOCKTAKE", id);
 		for (StocktakeLine line : stocktakeLines(id)) {
 			if (line.varianceQuantity().compareTo(BigDecimal.ZERO) == 0) {
 				continue;
@@ -642,13 +701,22 @@ public class InventoryStage023AdminService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> valuationAdjustments(String status, int page, int pageSize) {
+	public PageResponse<Map<String, Object>> valuationAdjustments(String status, String keyword, int page,
+			int pageSize, CurrentUser currentUser) {
+		boolean costVisible = costVisible(currentUser);
 		List<Object> args = new ArrayList<>();
-		String where = "";
+		List<String> conditions = new ArrayList<>();
 		if (status != null && !status.isBlank()) {
-			where = "where status = ?";
+			conditions.add("status = ?");
 			args.add(status.trim().toUpperCase());
 		}
+		if (keyword != null && !keyword.isBlank()) {
+			conditions.add("(adjustment_no ilike ? or reason ilike ?)");
+			String pattern = "%" + keyword.trim() + "%";
+			args.add(pattern);
+			args.add(pattern);
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from inv_valuation_adjustment " + where,
 				Long.class, args.toArray());
 		args.add(pageSize);
@@ -676,19 +744,23 @@ public class InventoryStage023AdminService {
 			row.put("updatedByName", rs.getString("updated_by_username"));
 			row.put("updatedAt", rs.getObject("updated_at", OffsetDateTime.class));
 			row.put("version", rs.getLong("version"));
-			row.put("availableActions", availableActions("VALUATION_ADJUSTMENT", rs.getString("status")));
+			row.put("costVisible", costVisible(currentUser));
+			row.put("allowedActions", allowedActions("VALUATION_ADJUSTMENT", rs.getString("status"), currentUser,
+					rs.getLong("id")));
 			return row;
 		}, args.toArray());
 		return PageResponse.of(items, page, pageSize, total);
 	}
 
 	@Transactional(readOnly = true)
-	public Map<String, Object> valuationAdjustment(Long id) {
-		return valuationAdjustmentMap(id);
+	public Map<String, Object> valuationAdjustment(Long id, CurrentUser currentUser) {
+		return valuationAdjustmentMap(id, currentUser);
 	}
 
 	@Transactional
 	public Map<String, Object> createValuationAdjustment(ValuationAdjustmentRequest request, CurrentUser operator) {
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.CREATE,
+				"INVENTORY_VALUATION_ADJUSTMENT", null);
 		validateValuationAdjustmentRequest(request);
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into inv_valuation_adjustment (
@@ -701,7 +773,7 @@ public class InventoryStage023AdminService {
 				request.reason().trim(), request.idempotencyKey().trim(), operator.id(), operator.username(),
 				operator.username());
 		insertValuationAdjustmentLines(id, request.lines());
-		return valuationAdjustmentMap(id);
+		return valuationAdjustmentMap(id, operator);
 	}
 
 	@Transactional
@@ -710,6 +782,8 @@ public class InventoryStage023AdminService {
 		validateValuationAdjustmentRequest(request);
 		Header header = lockHeader("inv_valuation_adjustment", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(request.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_VALUATION_ADJUSTMENT", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -722,7 +796,7 @@ public class InventoryStage023AdminService {
 				id);
 		this.jdbcTemplate.update("delete from inv_valuation_adjustment_line where adjustment_id = ?", id);
 		insertValuationAdjustmentLines(id, request.lines());
-		return valuationAdjustmentMap(id);
+		return valuationAdjustmentMap(id, operator);
 	}
 
 	@Transactional
@@ -730,6 +804,8 @@ public class InventoryStage023AdminService {
 			HttpServletRequest servletRequest) {
 		Header header = lockHeader("inv_valuation_adjustment", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.UPDATE,
+				"INVENTORY_VALUATION_ADJUSTMENT", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -745,7 +821,7 @@ public class InventoryStage023AdminService {
 				""", approval.id(), operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_VALUATION_ADJUSTMENT_SUBMIT",
 				"INVENTORY_VALUATION_ADJUSTMENT", id, header.documentNo(), servletRequest);
-		return valuationAdjustmentMap(id);
+		return valuationAdjustmentMap(id, operator);
 	}
 
 	@Transactional
@@ -753,6 +829,8 @@ public class InventoryStage023AdminService {
 			CurrentUser operator) {
 		Header header = lockHeader("inv_valuation_adjustment", id);
 		requireVersion(header.version(), request.version());
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.CANCEL,
+				"INVENTORY_VALUATION_ADJUSTMENT", id);
 		if (!"DRAFT".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
@@ -764,14 +842,14 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 		this.auditService.record(operator, "INVENTORY_VALUATION_ADJUSTMENT_CANCEL",
 				"INVENTORY_VALUATION_ADJUSTMENT", id, header.documentNo(), null);
-		return valuationAdjustmentMap(id);
+		return valuationAdjustmentMap(id, operator);
 	}
 
 	@Transactional
 	public Map<String, Object> withdrawValuationAdjustment(Long id, VersionedActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		return withdrawApprovalBackToDraft("inv_valuation_adjustment", id, request, operator, servletRequest,
-				this::valuationAdjustmentMap);
+				(detailId) -> valuationAdjustmentMap(detailId, operator));
 	}
 
 	@Transactional
@@ -783,6 +861,8 @@ public class InventoryStage023AdminService {
 		if (!"SUBMITTED".equals(header.status())) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_STATUS_INVALID);
 		}
+		this.businessPeriodGuard.assertWritable(header.businessDate(), BusinessPeriodOperation.POST,
+				"INVENTORY_VALUATION_ADJUSTMENT", id);
 		for (ValuationAdjustmentLine line : valuationAdjustmentLines(id)) {
 			if ("LEGACY_OPENING".equals(header.adjustmentType())) {
 				if (!"PUBLIC".equals(line.ownershipType())) {
@@ -824,14 +904,56 @@ public class InventoryStage023AdminService {
 				""", operator.username(), id);
 	}
 
-	private PageResponse<Map<String, Object>> documentPage(String tableName, String noColumn, String status, int page,
-			int pageSize, String documentType) {
+	@Transactional
+	public void reopenAfterApprovalTerminal(String sceneCode, Long objectId, CurrentUser operator) {
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(sceneCode)) {
+			reopenSubmittedDocument("inv_ownership_conversion", objectId, "DRAFT", operator);
+			return;
+		}
+		if ("INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)) {
+			reopenSubmittedDocument("inv_stocktake", objectId, "RECONCILED", operator);
+			releaseStocktakeRange(objectId);
+			return;
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
+			reopenSubmittedDocument("inv_valuation_adjustment", objectId, "DRAFT", operator);
+		}
+	}
+
+	private void reopenSubmittedDocument(String tableName, Long id, String targetStatus, CurrentUser operator) {
+		this.jdbcTemplate.update("""
+				update %s
+				set status = ?, approval_instance_id = null, updated_by_username = ?, updated_at = now(),
+				    version = version + 1
+				where id = ?
+				and status = 'SUBMITTED'
+				""".formatted(tableName), targetStatus, operator.username(), id);
+	}
+
+	private void releaseStocktakeRange(Long stocktakeId) {
+		this.jdbcTemplate.update("""
+				update inv_stocktake_range_lock
+				set released_at = now()
+				where stocktake_id = ?
+				and released_at is null
+				""", stocktakeId);
+	}
+
+	private PageResponse<Map<String, Object>> documentPage(String tableName, String noColumn, String status,
+			String keyword, int page, int pageSize, String documentType, CurrentUser currentUser) {
 		List<Object> args = new ArrayList<>();
-		String where = "";
+		List<String> conditions = new ArrayList<>();
 		if (status != null && !status.isBlank()) {
-			where = "where status = ?";
+			conditions.add("status = ?");
 			args.add(status.trim().toUpperCase());
 		}
+		if (keyword != null && !keyword.isBlank()) {
+			conditions.add("(%s ilike ? or reason ilike ?)".formatted(noColumn));
+			String pattern = "%" + keyword.trim() + "%";
+			args.add(pattern);
+			args.add(pattern);
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from %s %s".formatted(tableName, where),
 				Long.class, args.toArray());
 		args.add(pageSize);
@@ -848,7 +970,8 @@ public class InventoryStage023AdminService {
 				rs.getString("reason"), rs.getString("status"), rs.getObject("posted_at", OffsetDateTime.class),
 				rs.getObject("cancelled_at", OffsetDateTime.class), rs.getString("created_by_username"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getString("updated_by_username"),
-				rs.getObject("updated_at", OffsetDateTime.class), rs.getLong("version"), documentType),
+				rs.getObject("updated_at", OffsetDateTime.class), rs.getLong("version"), documentType,
+				currentUser),
 				args.toArray());
 		return PageResponse.of(items, page, pageSize, total);
 	}
@@ -856,7 +979,7 @@ public class InventoryStage023AdminService {
 	private Map<String, Object> documentRow(Long id, String documentNo, LocalDate businessDate, String reason,
 			String status, OffsetDateTime postedAt, OffsetDateTime cancelledAt, String createdByName,
 			OffsetDateTime createdAt, String updatedByName, OffsetDateTime updatedAt, Long version,
-			String documentType) {
+			String documentType, CurrentUser currentUser) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		row.put("id", id);
 		row.put("documentNo", documentNo);
@@ -870,7 +993,8 @@ public class InventoryStage023AdminService {
 		row.put("updatedByName", updatedByName);
 		row.put("updatedAt", updatedAt);
 		row.put("version", version);
-		row.put("availableActions", availableActions(documentType, status));
+		row.put("costVisible", costVisible(currentUser));
+		row.put("allowedActions", allowedActions(documentType, status, currentUser, id));
 		return row;
 	}
 
@@ -945,25 +1069,87 @@ public class InventoryStage023AdminService {
 			.orElse(Map.of());
 	}
 
-	private List<String> availableActions(String documentType, String status) {
+	private List<String> allowedActions(String documentType, String status, CurrentUser currentUser, Long documentId) {
+		if (currentUser == null) {
+			return List.of();
+		}
+		List<String> permissions = currentUser.permissions();
 		return switch (documentType) {
-			case "WAREHOUSE_TRANSFER" -> switch (status) {
-				case "DRAFT" -> List.of("UPDATE", "POST", "CANCEL");
-				default -> List.of();
-			};
-			case "OWNERSHIP_CONVERSION", "VALUATION_ADJUSTMENT" -> switch (status) {
-				case "DRAFT" -> List.of("UPDATE", "SUBMIT_APPROVAL", "CANCEL");
-				case "SUBMITTED" -> List.of("WITHDRAW");
-				default -> List.of();
-			};
-			case "STOCKTAKE" -> switch (status) {
-				case "DRAFT" -> List.of("START", "CANCEL");
-				case "COUNTING" -> List.of("UPDATE_LINES", "RECONCILE", "CANCEL");
-				case "RECONCILED" -> List.of("SUBMIT_APPROVAL", "COMPLETE_ZERO_VARIANCE", "CANCEL");
-				default -> List.of();
-			};
+			case "WAREHOUSE_TRANSFER" -> {
+				if (!"DRAFT".equals(status)) {
+					yield List.of();
+				}
+				List<String> actions = new ArrayList<>();
+				addIfPermitted(actions, permissions, "inventory:warehouse-transfer:update", "UPDATE");
+				addIfPermitted(actions, permissions, "inventory:warehouse-transfer:post", "POST");
+				addIfPermitted(actions, permissions, "inventory:warehouse-transfer:cancel", "CANCEL");
+				yield actions;
+			}
+			case "OWNERSHIP_CONVERSION" -> approvalDocumentActions(status, permissions,
+					"inventory:ownership-conversion:update", "inventory:ownership-conversion:submit",
+					"inventory:ownership-conversion:withdraw", "inventory:ownership-conversion:cancel");
+			case "VALUATION_ADJUSTMENT" -> approvalDocumentActions(status, permissions,
+					"inventory:valuation-adjustment:update", "inventory:valuation-adjustment:submit",
+					"inventory:valuation-adjustment:withdraw", "inventory:valuation-adjustment:cancel");
+			case "STOCKTAKE" -> stocktakeActions(status, permissions, documentId);
 			default -> List.of();
 		};
+	}
+
+	private List<String> approvalDocumentActions(String status, List<String> permissions, String updatePermission,
+			String submitPermission, String withdrawPermission, String cancelPermission) {
+		List<String> actions = new ArrayList<>();
+		if ("DRAFT".equals(status)) {
+			addIfPermitted(actions, permissions, updatePermission, "UPDATE");
+			addIfPermitted(actions, permissions, submitPermission, "SUBMIT_APPROVAL");
+			addIfPermitted(actions, permissions, cancelPermission, "CANCEL");
+		}
+		else if ("SUBMITTED".equals(status)) {
+			addIfPermitted(actions, permissions, withdrawPermission, "WITHDRAW");
+		}
+		return actions;
+	}
+
+	private List<String> stocktakeActions(String status, List<String> permissions, Long documentId) {
+		List<String> actions = new ArrayList<>();
+		if ("DRAFT".equals(status)) {
+			addIfPermitted(actions, permissions, "inventory:stocktake:update", "START");
+			addIfPermitted(actions, permissions, "inventory:stocktake:cancel", "CANCEL");
+		}
+		else if ("COUNTING".equals(status)) {
+			addIfPermitted(actions, permissions, "inventory:stocktake:update", "UPDATE_LINES");
+			addIfPermitted(actions, permissions, "inventory:stocktake:update", "RECONCILE");
+			addIfPermitted(actions, permissions, "inventory:stocktake:cancel", "CANCEL");
+		}
+		else if ("RECONCILED".equals(status)) {
+			if (hasStocktakeVariance(documentId)) {
+				addIfPermitted(actions, permissions, "inventory:stocktake:submit", "SUBMIT_APPROVAL");
+			}
+			else {
+				addIfPermitted(actions, permissions, "inventory:stocktake:update", "COMPLETE_ZERO_VARIANCE");
+			}
+			addIfPermitted(actions, permissions, "inventory:stocktake:cancel", "CANCEL");
+		}
+		return actions;
+	}
+
+	private void addIfPermitted(List<String> actions, List<String> permissions, String permission, String action) {
+		if (permissions.contains(permission)) {
+			actions.add(action);
+		}
+	}
+
+	private boolean hasStocktakeVariance(Long documentId) {
+		if (documentId == null) {
+			return true;
+		}
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stocktake_line
+				where stocktake_id = ?
+				and coalesce(variance_quantity, 0) <> 0
+				""", Long.class, documentId);
+		return count != null && count > 0;
 	}
 
 	private String tableAuditPrefix(String tableName) {
@@ -997,21 +1183,40 @@ public class InventoryStage023AdminService {
 		}
 	}
 
+	private void lockStocktakeRangeForMutation(Long warehouseId, Long materialId) {
+		long warehouseKey = warehouseId == null ? 0L : warehouseId;
+		this.jdbcTemplate.query("select pg_advisory_xact_lock(230023, ?::int)",
+				(rs) -> {}, Math.toIntExact(Math.floorMod(warehouseKey, Integer.MAX_VALUE)));
+	}
+
 	@Transactional(readOnly = true)
 	public Map<String, Object> warehouseTransfer(Long id) {
+		return warehouseTransfer(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public Map<String, Object> warehouseTransfer(Long id, CurrentUser currentUser) {
 		Header header = header("inv_warehouse_transfer", id);
 		Map<String, Object> result = headerMap(header);
-		result.put("availableActions", availableActions("WAREHOUSE_TRANSFER", header.status()));
+		result.put("costVisible", costVisible(currentUser));
+		result.put("allowedActions", allowedActions("WAREHOUSE_TRANSFER", header.status(), currentUser, id));
 		result.put("lines", transferLines(id).stream().map(this::lineMap).toList());
 		return result;
 	}
 
 	@Transactional(readOnly = true)
 	public Map<String, Object> ownershipConversion(Long id) {
+		return ownershipConversion(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public Map<String, Object> ownershipConversion(Long id, CurrentUser currentUser) {
 		Header header = header("inv_ownership_conversion", id);
+		boolean costVisible = costVisible(currentUser);
 		Map<String, Object> result = headerMap(header);
-		result.put("availableActions", availableActions("OWNERSHIP_CONVERSION", header.status()));
-		result.put("lines", ownershipLines(id).stream().map(this::lineMap).toList());
+		result.put("costVisible", costVisible);
+		result.put("allowedActions", allowedActions("OWNERSHIP_CONVERSION", header.status(), currentUser, id));
+		result.put("lines", ownershipLines(id).stream().map((line) -> lineMap(line, costVisible)).toList());
 		result.put("approvalSummary", approvalSummary("INVENTORY_OWNERSHIP_CONVERSION_POST",
 				"INVENTORY_OWNERSHIP_CONVERSION", id));
 		return result;
@@ -1019,24 +1224,32 @@ public class InventoryStage023AdminService {
 
 	@Transactional(readOnly = true)
 	public Map<String, Object> stocktake(Long id) {
+		return stocktake(id, null);
+	}
+
+	@Transactional(readOnly = true)
+	public Map<String, Object> stocktake(Long id, CurrentUser currentUser) {
 		Header header = header("inv_stocktake", id);
 		Map<String, Object> result = headerMap(header);
 		result.put("scopeType", stocktakeScope(id).get("scopeType"));
 		result.put("warehouseId", header.warehouseId());
 		result.put("materialId", header.materialId());
-		result.put("availableActions", availableActions("STOCKTAKE", header.status()));
+		result.put("costVisible", costVisible(currentUser));
+		result.put("allowedActions", allowedActions("STOCKTAKE", header.status(), currentUser, id));
 		result.put("lines", stocktakeLines(id).stream().map(this::lineMap).toList());
 		result.put("approvalSummary", approvalSummary("INVENTORY_STOCKTAKE_VARIANCE_POST", "INVENTORY_STOCKTAKE",
 				id));
 		return result;
 	}
 
-	private Map<String, Object> valuationAdjustmentMap(Long id) {
+	private Map<String, Object> valuationAdjustmentMap(Long id, CurrentUser currentUser) {
 		Header header = header("inv_valuation_adjustment", id);
+		boolean costVisible = costVisible(currentUser);
 		Map<String, Object> result = headerMap(header);
 		result.put("adjustmentType", header.adjustmentType());
-		result.put("availableActions", availableActions("VALUATION_ADJUSTMENT", header.status()));
-		result.put("lines", valuationAdjustmentLines(id).stream().map(this::lineMap).toList());
+		result.put("costVisible", costVisible);
+		result.put("allowedActions", allowedActions("VALUATION_ADJUSTMENT", header.status(), currentUser, id));
+		result.put("lines", valuationAdjustmentLines(id).stream().map((line) -> lineMap(line, costVisible)).toList());
 		result.put("approvalSummary", approvalSummary("INVENTORY_VALUATION_ADJUSTMENT_POST",
 				"INVENTORY_VALUATION_ADJUSTMENT", id));
 		return result;
@@ -1290,6 +1503,10 @@ public class InventoryStage023AdminService {
 	}
 
 	private Map<String, Object> lineMap(OwnershipLine line) {
+		return lineMap(line, true);
+	}
+
+	private Map<String, Object> lineMap(OwnershipLine line, boolean costVisible) {
 		Map<String, Object> row = lineMap(new TransferLine(line.id(), line.lineNo(), line.sourceWarehouseId(),
 				line.targetWarehouseId(), line.targetOwnershipType(), line.targetProjectId(), line.materialId(),
 				line.unitId(), line.qualityStatus(), line.batchId(), line.serialId(), line.quantity()));
@@ -1297,8 +1514,10 @@ public class InventoryStage023AdminService {
 		row.put("sourceProjectId", line.sourceProjectId());
 		row.put("targetOwnershipType", line.targetOwnershipType());
 		row.put("targetProjectId", line.targetProjectId());
-		row.put("sourceUnitCost", decimal(line.sourceUnitCost()));
-		row.put("sourceCostLayerId", line.sourceCostLayerId());
+		if (costVisible) {
+			row.put("sourceUnitCost", decimal(line.sourceUnitCost()));
+			row.put("sourceCostLayerId", line.sourceCostLayerId());
+		}
 		return row;
 	}
 
@@ -1322,6 +1541,10 @@ public class InventoryStage023AdminService {
 	}
 
 	private Map<String, Object> lineMap(ValuationAdjustmentLine line) {
+		return lineMap(line, true);
+	}
+
+	private Map<String, Object> lineMap(ValuationAdjustmentLine line, boolean costVisible) {
 		Map<String, Object> row = new LinkedHashMap<>();
 		row.put("id", line.id());
 		row.put("lineNo", line.lineNo());
@@ -1329,12 +1552,44 @@ public class InventoryStage023AdminService {
 		row.put("projectId", line.projectId());
 		row.put("materialId", line.materialId());
 		row.put("quantity", decimal(line.quantity()));
-		row.put("unitCost", decimal(line.unitCost()));
-		row.put("adjustmentAmount", money(line.adjustmentAmount()));
-		row.put("costLayerId", line.costLayerId());
-		row.put("valueMovementId", line.valueMovementId());
+		if (costVisible) {
+			row.put("unitCost", decimal(line.unitCost()));
+			row.put("adjustmentAmount", money(line.adjustmentAmount()));
+			row.put("costLayerId", line.costLayerId());
+			row.put("valueMovementId", line.valueMovementId());
+		}
 		row.put("version", line.version());
 		return row;
+	}
+
+	private boolean costVisible(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
+	}
+
+	private Long sourceCostLayerId(String ownershipType, Long projectId, Long warehouseId, Long materialId,
+			String qualityStatus, Long batchId, Long serialId) {
+		if (!"PROJECT".equals(ownershipType)) {
+			return null;
+		}
+		return this.jdbcTemplate.query("""
+				select cost_layer_id
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and quantity_on_hand > 0
+				order by id
+				limit 1
+				for update
+				""", (rs, rowNum) -> nullableLong(rs, "cost_layer_id"), warehouseId, materialId,
+				defaultQuality(qualityStatus), batchId, serialId, projectId)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_PROJECT_COST_LAYER_INSUFFICIENT));
 	}
 
 	private static void requireVersion(Long actual, Long expected) {
