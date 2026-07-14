@@ -4,10 +4,13 @@ import { useRouter } from 'vue-router'
 import {
   inventoryApi,
   type InventoryBalanceRecord,
+  type InventoryCostLayerRecord,
+  type InventoryOwnershipType,
   type InventoryReservationSummaryRecord,
   type InventoryQualityStatus,
   type InventoryTraceDetailRecord,
   type InventoryTrackingMethod,
+  type InventoryValuationState,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type MaterialType, type WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -16,7 +19,13 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { materialTypeLabel, trackingMethodLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
-import { formatQuantity } from './inventoryPageHelpers'
+import {
+  formatInventoryAmount,
+  formatQuantity,
+  ownershipTypeLabel,
+  valuationStateLabel,
+} from './inventoryPageHelpers'
+import InventoryCostLayerDrawer from './InventoryCostLayerDrawer.vue'
 import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
 
 const router = useRouter()
@@ -26,6 +35,9 @@ const filters = reactive<{
   warehouseId: ResourceId | ''
   materialId: ResourceId | ''
   materialType?: MaterialType
+  ownershipType?: InventoryOwnershipType
+  projectId: ResourceId | ''
+  valuationState?: InventoryValuationState
   qualityStatus?: InventoryQualityStatus
   trackingMethod?: InventoryTrackingMethod
   batchNo: string
@@ -37,6 +49,9 @@ const filters = reactive<{
   warehouseId: '',
   materialId: '',
   materialType: undefined,
+  ownershipType: undefined,
+  projectId: '',
+  valuationState: undefined,
   qualityStatus: undefined,
   trackingMethod: undefined,
   batchNo: '',
@@ -66,9 +81,14 @@ const traceDrawerVisible = ref(false)
 const traceDetail = ref<InventoryTraceDetailRecord | null>(null)
 const traceLoading = ref(false)
 const traceError = ref('')
+const costLayerDrawerVisible = ref(false)
+const costLayerRecords = ref<InventoryCostLayerRecord[]>([])
+const costLayerLoading = ref(false)
+const costLayerError = ref('')
 const availabilityDrawerSize = 'min(520px, 92vw)'
 const canViewReservations = computed(() => authStore.hasPermission('inventory:reservation:view'))
 const canViewTrace = computed(() => authStore.hasPermission('inventory:trace:view'))
+const canViewValuation = computed(() => authStore.hasPermission('inventory:valuation:view'))
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -113,6 +133,9 @@ async function loadRecords() {
       warehouseId: normalizeOptionalId(filters.warehouseId),
       materialId: normalizeOptionalId(filters.materialId),
       materialType: filters.materialType,
+      ownershipType: filters.ownershipType,
+      projectId: normalizeOptionalId(filters.projectId),
+      valuationState: filters.valuationState,
       qualityStatus: filters.qualityStatus,
       trackingMethod: filters.trackingMethod,
       batchNo: filters.batchNo.trim(),
@@ -143,6 +166,9 @@ function resetSearch() {
   filters.warehouseId = ''
   filters.materialId = ''
   filters.materialType = undefined
+  filters.ownershipType = undefined
+  filters.projectId = ''
+  filters.valuationState = undefined
   filters.qualityStatus = undefined
   filters.trackingMethod = undefined
   filters.batchNo = ''
@@ -170,6 +196,8 @@ function viewMovements(record: InventoryBalanceRecord) {
     query: {
       warehouseId: String(record.warehouseId),
       materialId: String(record.materialId),
+      ...(record.ownershipType ? { ownershipType: String(record.ownershipType) } : {}),
+      ...(record.projectId ? { projectId: String(record.projectId) } : {}),
       ...(record.qualityStatus ? { qualityStatus: String(record.qualityStatus) } : {}),
       ...(record.trackingMethod ? { trackingMethod: String(record.trackingMethod) } : {}),
       ...(record.batchId ? { batchId: String(record.batchId) } : {}),
@@ -178,6 +206,44 @@ function viewMovements(record: InventoryBalanceRecord) {
       ...(record.serialNo ? { serialNo: String(record.serialNo) } : {}),
     },
   })
+}
+
+function projectText(record: InventoryBalanceRecord) {
+  return record.projectNo ? `${record.projectNo} ${record.projectName || ''}`.trim() : '-'
+}
+
+function isCostRestricted(record: InventoryBalanceRecord) {
+  return record.costVisible === false
+}
+
+async function loadCostLayers(record: InventoryBalanceRecord) {
+  costLayerLoading.value = true
+  costLayerError.value = ''
+  try {
+    const page = await inventoryApi.costLayers.list({
+      ownershipType: record.ownershipType,
+      projectId: record.projectId ?? undefined,
+      warehouseId: record.warehouseId,
+      materialId: record.materialId,
+      page: 1,
+      pageSize: 20,
+    })
+    costLayerRecords.value = pageItems(page)
+  } catch (caught) {
+    costLayerRecords.value = []
+    costLayerError.value = errorMessage(caught)
+  } finally {
+    costLayerLoading.value = false
+  }
+}
+
+function viewCostLayers(record: InventoryBalanceRecord) {
+  if (!canViewValuation.value || isCostRestricted(record)) {
+    return
+  }
+  costLayerRecords.value = []
+  costLayerDrawerVisible.value = true
+  void loadCostLayers(record)
 }
 
 function canTraceRecord(record: InventoryBalanceRecord) {
@@ -288,7 +354,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="库存余额" description="展示账面库存、合格现存、占用预留、现货净可用、物料级采购在途参考、可承诺量和净需求缺口。">
+  <MasterDataTableView title="库存余额与价值" description="展示公共和项目库存的数量、可用量、估值状态和可授权查看的库存价值。">
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词">
@@ -342,6 +408,40 @@ onMounted(() => {
             <el-option label="半成品" value="SEMI_FINISHED" />
             <el-option label="成品" value="FINISHED_GOOD" />
             <el-option label="辅料" value="AUXILIARY" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="所有权">
+          <el-select
+            v-model="filters.ownershipType"
+            data-test="inventory-balance-ownership-type"
+            clearable
+            placeholder="全部所有权"
+          >
+            <el-option label="公共库存" value="PUBLIC" />
+            <el-option label="项目库存" value="PROJECT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <el-input
+            v-model="filters.projectId"
+            name="inventory-balance-project-id"
+            clearable
+            placeholder="项目标识"
+          />
+        </el-form-item>
+        <el-form-item label="估值状态">
+          <el-select
+            v-model="filters.valuationState"
+            data-test="inventory-balance-valuation-state"
+            clearable
+            placeholder="全部估值"
+          >
+            <el-option label="已估值" value="VALUED" />
+            <el-option label="历史未估值" value="LEGACY_UNVALUED" />
+            <el-option label="无需计价" value="NON_VALUED" />
+            <el-option label="当前平均暂估" value="CURRENT_AVERAGE_PROVISIONAL" />
+            <el-option label="手工暂估" value="MANUAL_PROVISIONAL" />
+            <el-option label="异常不平衡" value="ABNORMAL" />
           </el-select>
         </el-form-item>
         <el-form-item label="质量状态">
@@ -425,6 +525,25 @@ onMounted(() => {
         <el-table-column prop="warehouseName" label="仓库" min-width="150" show-overflow-tooltip />
         <el-table-column prop="materialCode" label="物料编码" min-width="140" show-overflow-tooltip />
         <el-table-column prop="materialName" label="物料名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="所有权" min-width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.ownershipType === 'PROJECT' ? 'warning' : 'info'">
+              {{ row.ownershipTypeName || ownershipTypeLabel(row.ownershipType) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="项目" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ projectText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="估值状态" min-width="130">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.valuationState === 'ABNORMAL' ? 'danger' : 'info'">
+              {{ row.valuationStateName || valuationStateLabel(row.valuationState) }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="materialSpec" label="规格" min-width="130" show-overflow-tooltip />
         <el-table-column label="物料类型" min-width="110">
           <template #default="{ row }">
@@ -484,6 +603,29 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="库存金额" min-width="130" align="right">
+          <template #default="{ row }">
+            <span
+              v-if="isCostRestricted(row)"
+              :data-test="`balance-cost-restricted-${row.id}`"
+              class="restricted-cost"
+            >
+              金额受限
+            </span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.inventoryAmount) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="平均单价" min-width="130" align="right">
+          <template #default="{ row }">
+            <span v-if="isCostRestricted(row)" class="restricted-cost">金额受限</span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.averageUnitCost, 6) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="成本层" min-width="100" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ row.costLayerCount ?? '-' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column label="采购在途参考" min-width="130" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatQuantity(row.inTransitQuantity) }}</span>
@@ -532,6 +674,15 @@ onMounted(() => {
             <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
             <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
               占用预留
+            </el-button>
+            <el-button
+              v-if="canViewValuation && !isCostRestricted(row) && Number(row.costLayerCount || 0) > 0"
+              size="small"
+              text
+              :data-test="`view-cost-layers-${row.id}`"
+              @click="viewCostLayers(row)"
+            >
+              成本层
             </el-button>
             <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
               在途参考
@@ -609,6 +760,12 @@ onMounted(() => {
       :loading="traceLoading"
       :error="traceError"
     />
+    <InventoryCostLayerDrawer
+      v-model="costLayerDrawerVisible"
+      :records="costLayerRecords"
+      :loading="costLayerLoading"
+      :error="costLayerError"
+    />
   </MasterDataTableView>
 </template>
 
@@ -632,6 +789,11 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   min-height: 24px;
+  color: var(--qherp-muted);
+  font-size: 13px;
+}
+
+.restricted-cost {
   color: var(--qherp-muted);
   font-size: 13px;
 }

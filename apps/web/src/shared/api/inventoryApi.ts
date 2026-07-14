@@ -12,6 +12,13 @@ export type InventoryMovementType =
   | 'PRODUCTION_RECEIPT'
   | 'PURCHASE_RECEIPT'
   | 'SALES_SHIPMENT'
+  | 'WAREHOUSE_TRANSFER_OUT'
+  | 'WAREHOUSE_TRANSFER_IN'
+  | 'OWNERSHIP_CONVERSION_OUT'
+  | 'OWNERSHIP_CONVERSION_IN'
+  | 'STOCKTAKE_GAIN'
+  | 'STOCKTAKE_LOSS'
+  | 'VALUATION_ADJUSTMENT'
 export type InventoryDirection = 'IN' | 'OUT'
 export type InventoryAdjustmentDirection = 'INCREASE' | 'DECREASE'
 export type InventoryQuantityPayload = string
@@ -20,12 +27,44 @@ export type InventoryReservationType = 'RESERVATION' | 'OCCUPATION'
 export type InventoryReservationStatus = 'ACTIVE' | 'RELEASED' | 'CONSUMED' | 'CANCELLED'
 export type InventoryTrackingMethod = 'NONE' | 'BATCH' | 'SERIAL'
 export type InventoryStockStatus = 'IN_STOCK' | 'RESERVED' | 'OCCUPIED' | 'OUTBOUND' | 'CANCELLED'
+export type InventoryOwnershipType = 'PUBLIC' | 'PROJECT'
+export type InventoryValuationState =
+  | 'VALUED'
+  | 'PROJECT_ACTUAL_LAYER'
+  | 'LEGACY_UNVALUED'
+  | 'NON_VALUED'
+  | 'CURRENT_AVERAGE_PROVISIONAL'
+  | 'MANUAL_PROVISIONAL'
+  | 'ABNORMAL'
+export type InventoryValuationMethod =
+  | 'MOVING_AVERAGE'
+  | 'PROJECT_ACTUAL_LAYER'
+  | 'LEGACY_UNVALUED'
+  | 'NON_VALUED'
+  | 'CURRENT_AVERAGE_PROVISIONAL'
+  | 'MANUAL_PROVISIONAL'
+export type InventoryControlledDocumentStatus = 'DRAFT' | 'COUNTING' | 'RECONCILED' | 'POSTED' | 'CANCELLED'
+export type InventoryAllowedAction =
+  | 'UPDATE'
+  | 'POST'
+  | 'CANCEL'
+  | 'SUBMIT_APPROVAL'
+  | 'WITHDRAW'
+  | 'START'
+  | 'UPDATE_LINES'
+  | 'RECONCILE'
+  | 'COMPLETE_ZERO_VARIANCE'
+export type InventoryValuationAdjustmentType = 'LEGACY_OPENING' | 'PROVISIONAL_REVALUATION'
 
 export interface InventoryBalanceListParams {
   keyword?: string
   warehouseId?: ResourceId
   materialId?: ResourceId
   materialType?: string
+  ownershipType?: InventoryOwnershipType
+  projectId?: ResourceId
+  valuationState?: InventoryValuationState
+  includeZero?: boolean
   qualityStatus?: InventoryQualityStatus
   trackingMethod?: InventoryTrackingMethod
   batchId?: ResourceId
@@ -42,6 +81,10 @@ export interface InventoryMovementListParams {
   keyword?: string
   warehouseId?: ResourceId
   materialId?: ResourceId
+  ownershipType?: InventoryOwnershipType
+  projectId?: ResourceId
+  valuationMethod?: InventoryValuationMethod
+  costLayerId?: ResourceId
   movementType?: InventoryMovementType
   direction?: InventoryDirection
   qualityStatus?: InventoryQualityStatus
@@ -53,6 +96,31 @@ export interface InventoryMovementListParams {
   sourceType?: string
   sourceId?: ResourceId
   sourceLineId?: ResourceId
+  dateFrom?: string
+  dateTo?: string
+  page: number
+  pageSize: number
+}
+
+export interface InventoryCostLayerListParams {
+  keyword?: string
+  ownershipType?: InventoryOwnershipType
+  projectId?: ResourceId
+  warehouseId?: ResourceId
+  materialId?: ResourceId
+  sourceType?: string
+  sourceId?: ResourceId
+  batchNo?: string
+  serialNo?: string
+  status?: string
+  costLayerId?: ResourceId
+  page: number
+  pageSize: number
+}
+
+export interface InventoryControlledDocumentListParams {
+  keyword?: string
+  status?: InventoryControlledDocumentStatus
   dateFrom?: string
   dateTo?: string
   page: number
@@ -139,6 +207,18 @@ export interface InventoryBalanceRecord {
   unitName: string
   qualityStatus?: InventoryQualityStatus
   qualityStatusName?: string
+  ownershipType?: InventoryOwnershipType
+  ownershipTypeName?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  costVisible?: boolean
+  valuationState?: InventoryValuationState | string | null
+  valuationStateName?: string | null
+  inventoryAmount?: string | null
+  averageUnitCost?: string | null
+  costLayerCount?: number | string | null
+  abnormalReason?: string | null
   bookQuantity?: number | string
   quantityOnHand: number | string
   lockedQuantity: number | string
@@ -359,6 +439,21 @@ export interface InventoryMovementRecord {
   unitName: string
   qualityStatus?: InventoryQualityStatus
   qualityStatusName?: string
+  ownershipType?: InventoryOwnershipType
+  ownershipTypeName?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  costVisible?: boolean
+  valuationMethod?: InventoryValuationMethod | string | null
+  valuationMethodName?: string | null
+  valuationState?: InventoryValuationState | string | null
+  valuationStateName?: string | null
+  unitCost?: string | null
+  movementAmount?: string | null
+  valueFlowId?: ResourceId | null
+  originalValueFlowId?: ResourceId | null
+  costLayerId?: ResourceId | null
   trackingMethod?: InventoryTrackingMethod
   trackingMethodName?: string | null
   batchId?: ResourceId | null
@@ -379,6 +474,243 @@ export interface InventoryMovementRecord {
   remark?: string | null
   operatorName: string
   occurredAt: string
+}
+
+export interface InventoryApprovalSummary {
+  id: ResourceId
+  status: string
+  submittedAt?: string | null
+}
+
+export interface InventoryCostLayerRecord {
+  id: ResourceId
+  layerNo: string
+  ownershipType: InventoryOwnershipType
+  ownershipTypeName?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  warehouseId?: ResourceId | null
+  warehouseName?: string | null
+  materialId: ResourceId
+  materialCode: string
+  materialName: string
+  batchId?: ResourceId | null
+  batchNo?: string | null
+  serialId?: ResourceId | null
+  serialNo?: string | null
+  originalQuantity: string
+  originalAmount?: string | null
+  remainingQuantity: string
+  remainingAmount?: string | null
+  unitCost?: string | null
+  status: string
+  statusName?: string | null
+  sourceType?: string | null
+  sourceId?: ResourceId | null
+  sourceDocumentNo?: string | null
+  parentLayerId?: ResourceId | null
+  createdAt?: string | null
+}
+
+export interface InventoryControlledDocumentActionPayload {
+  version: number
+  idempotencyKey: string
+  reason?: string
+}
+
+export interface InventoryControlledDocumentSummaryRecord {
+  id: ResourceId
+  documentNo: string
+  status: InventoryControlledDocumentStatus | string
+  statusName?: string | null
+  businessDate: string
+  reason: string
+  lineCount?: number
+  version: number
+  allowedActions?: InventoryAllowedAction[] | string[]
+  approvalSummary?: InventoryApprovalSummary | null
+  createdByName?: string | null
+  createdAt?: string | null
+  updatedAt?: string | null
+  postedByName?: string | null
+  postedAt?: string | null
+}
+
+export interface InventoryWarehouseTransferLineRecord {
+  id?: ResourceId
+  lineNo: number
+  sourceWarehouseId?: ResourceId
+  sourceWarehouseName?: string
+  targetWarehouseId?: ResourceId
+  targetWarehouseName?: string
+  materialId?: ResourceId
+  materialCode?: string
+  materialName?: string
+  ownershipType?: InventoryOwnershipType
+  ownershipTypeName?: string
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
+  qualityStatusName?: string | null
+  batchNo?: string | null
+  serialNo?: string | null
+  quantity: string
+}
+
+export interface InventoryWarehouseTransferRecord extends InventoryControlledDocumentSummaryRecord {
+  lines?: InventoryWarehouseTransferLineRecord[]
+}
+
+export interface InventoryOwnershipConversionLineRecord {
+  id?: ResourceId
+  lineNo: number
+  sourceOwnershipType?: InventoryOwnershipType
+  targetOwnershipType?: InventoryOwnershipType
+  sourceProjectId?: ResourceId | null
+  sourceProjectNo?: string | null
+  sourceProjectName?: string | null
+  targetProjectId?: ResourceId | null
+  targetProjectNo?: string | null
+  targetProjectName?: string | null
+  warehouseId?: ResourceId
+  warehouseName?: string
+  materialId?: ResourceId
+  materialCode?: string
+  materialName?: string
+  costLayerId?: ResourceId | null
+  costLayerNo?: string | null
+  quantity: string
+}
+
+export interface InventoryOwnershipConversionRecord extends InventoryControlledDocumentSummaryRecord {
+  lines?: InventoryOwnershipConversionLineRecord[]
+}
+
+export interface InventoryStocktakeLineRecord {
+  id: ResourceId
+  lineNo: number
+  version: number
+  warehouseName?: string
+  materialCode?: string
+  materialName?: string
+  ownershipType?: InventoryOwnershipType
+  ownershipTypeName?: string | null
+  projectNo?: string | null
+  projectName?: string | null
+  bookQuantity?: string | null
+  actualQuantity?: string | null
+  differenceQuantity?: string | null
+  differenceAmount?: string | null
+}
+
+export interface InventoryStocktakeRecord extends InventoryControlledDocumentSummaryRecord {
+  scopeType?: 'WAREHOUSE' | 'MATERIAL' | string
+  warehouseId?: ResourceId | null
+  warehouseName?: string | null
+  lines?: InventoryStocktakeLineRecord[]
+}
+
+export interface InventoryValuationAdjustmentLineRecord {
+  id?: ResourceId
+  lineNo: number
+  materialId?: ResourceId
+  materialCode?: string
+  materialName?: string
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  quantity?: string | null
+  unitCost?: string | null
+  amount?: string | null
+}
+
+export interface InventoryValuationAdjustmentRecord extends InventoryControlledDocumentSummaryRecord {
+  adjustmentType: InventoryValuationAdjustmentType | string
+  adjustmentTypeName?: string | null
+  lines?: InventoryValuationAdjustmentLineRecord[]
+}
+
+export interface InventoryWarehouseTransferLinePayload {
+  lineNo: number
+  sourceWarehouseId: ResourceId
+  targetWarehouseId: ResourceId
+  materialId: ResourceId
+  quantity: InventoryQuantityPayload
+  ownershipType: InventoryOwnershipType
+  projectId?: ResourceId
+  qualityStatus?: InventoryQualityStatus
+  batchId?: ResourceId
+  serialId?: ResourceId
+  costLayerId?: ResourceId
+  remark?: string
+}
+
+export interface InventoryWarehouseTransferPayload {
+  businessDate: string
+  reason: string
+  remark?: string
+  lines: InventoryWarehouseTransferLinePayload[]
+}
+
+export interface InventoryOwnershipConversionLinePayload {
+  lineNo: number
+  sourceOwnershipType: InventoryOwnershipType
+  targetOwnershipType: InventoryOwnershipType
+  sourceProjectId?: ResourceId
+  targetProjectId?: ResourceId
+  warehouseId: ResourceId
+  materialId: ResourceId
+  quantity: InventoryQuantityPayload
+  costLayerId?: ResourceId
+  remark?: string
+}
+
+export interface InventoryOwnershipConversionPayload {
+  businessDate: string
+  reason: string
+  remark?: string
+  lines: InventoryOwnershipConversionLinePayload[]
+}
+
+export interface InventoryStocktakePayload {
+  businessDate: string
+  scopeType: 'WAREHOUSE' | 'MATERIAL' | string
+  warehouseId?: ResourceId
+  materialId?: ResourceId
+  reason: string
+  remark?: string
+}
+
+export interface InventoryStocktakeLinePayload {
+  id: ResourceId
+  version: number
+  actualQuantity: InventoryQuantityPayload
+}
+
+export interface InventoryStocktakeLineUpdatePayload {
+  idempotencyKey: string
+  lines: InventoryStocktakeLinePayload[]
+}
+
+export interface InventoryValuationAdjustmentLinePayload {
+  lineNo: number
+  materialId: ResourceId
+  projectId?: ResourceId
+  quantity?: InventoryQuantityPayload
+  unitCost?: string
+  amount?: string
+  costLayerId?: ResourceId
+  remark?: string
+}
+
+export interface InventoryValuationAdjustmentPayload {
+  adjustmentType: InventoryValuationAdjustmentType
+  businessDate: string
+  reason: string
+  remark?: string
+  lines: InventoryValuationAdjustmentLinePayload[]
 }
 
 export interface InventoryDocumentSummaryRecord {
@@ -460,12 +792,53 @@ export interface InventoryApi {
   movements: {
     list(params: InventoryMovementListParams): Promise<PageResult<InventoryMovementRecord>>
   }
+  costLayers: {
+    list(params: InventoryCostLayerListParams): Promise<PageResult<InventoryCostLayerRecord>>
+    get(id: ResourceId): Promise<InventoryCostLayerRecord>
+  }
   documents: {
     list(params: InventoryDocumentListParams): Promise<PageResult<InventoryDocumentSummaryRecord>>
     get(id: ResourceId): Promise<InventoryDocumentDetailRecord>
     create(payload: InventoryDocumentPayload): Promise<InventoryDocumentDetailRecord>
     update(id: ResourceId, payload: InventoryDocumentPayload): Promise<InventoryDocumentDetailRecord>
     post(id: ResourceId): Promise<InventoryDocumentDetailRecord>
+  }
+  warehouseTransfers: {
+    list(params: InventoryControlledDocumentListParams): Promise<PageResult<InventoryWarehouseTransferRecord>>
+    get(id: ResourceId): Promise<InventoryWarehouseTransferRecord>
+    create(payload: InventoryWarehouseTransferPayload): Promise<InventoryWarehouseTransferRecord>
+    update(id: ResourceId, payload: InventoryWarehouseTransferPayload): Promise<InventoryWarehouseTransferRecord>
+    post(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryWarehouseTransferRecord>
+    cancel(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryWarehouseTransferRecord>
+  }
+  ownershipConversions: {
+    list(params: InventoryControlledDocumentListParams): Promise<PageResult<InventoryOwnershipConversionRecord>>
+    get(id: ResourceId): Promise<InventoryOwnershipConversionRecord>
+    create(payload: InventoryOwnershipConversionPayload): Promise<InventoryOwnershipConversionRecord>
+    update(id: ResourceId, payload: InventoryOwnershipConversionPayload): Promise<InventoryOwnershipConversionRecord>
+    submitApproval(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryOwnershipConversionRecord>
+    withdraw(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryOwnershipConversionRecord>
+    cancel(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryOwnershipConversionRecord>
+  }
+  stocktakes: {
+    list(params: InventoryControlledDocumentListParams): Promise<PageResult<InventoryStocktakeRecord>>
+    get(id: ResourceId): Promise<InventoryStocktakeRecord>
+    create(payload: InventoryStocktakePayload): Promise<InventoryStocktakeRecord>
+    start(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+    updateLines(id: ResourceId, payload: InventoryStocktakeLineUpdatePayload): Promise<InventoryStocktakeRecord>
+    reconcile(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+    submitApproval(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+    completeZeroVariance(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+    cancel(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryStocktakeRecord>
+  }
+  valuationAdjustments: {
+    list(params: InventoryControlledDocumentListParams): Promise<PageResult<InventoryValuationAdjustmentRecord>>
+    get(id: ResourceId): Promise<InventoryValuationAdjustmentRecord>
+    create(payload: InventoryValuationAdjustmentPayload): Promise<InventoryValuationAdjustmentRecord>
+    update(id: ResourceId, payload: InventoryValuationAdjustmentPayload): Promise<InventoryValuationAdjustmentRecord>
+    submitApproval(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryValuationAdjustmentRecord>
+    withdraw(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryValuationAdjustmentRecord>
+    cancel(id: ResourceId, payload: InventoryControlledDocumentActionPayload): Promise<InventoryValuationAdjustmentRecord>
   }
 }
 
@@ -482,6 +855,10 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'warehouseId',
     'materialId',
     'materialType',
+    'ownershipType',
+    'projectId',
+    'valuationState',
+    'includeZero',
     'qualityStatus',
     'trackingMethod',
     'batchId',
@@ -497,6 +874,10 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'keyword',
     'warehouseId',
     'materialId',
+    'ownershipType',
+    'projectId',
+    'valuationMethod',
+    'costLayerId',
     'movementType',
     'direction',
     'qualityStatus',
@@ -514,6 +895,22 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     'pageSize',
   ] as const
   const documentQueryKeys = ['keyword', 'documentType', 'status', 'dateFrom', 'dateTo', 'page', 'pageSize'] as const
+  const controlledDocumentQueryKeys = ['keyword', 'status', 'dateFrom', 'dateTo', 'page', 'pageSize'] as const
+  const costLayerQueryKeys = [
+    'keyword',
+    'ownershipType',
+    'projectId',
+    'warehouseId',
+    'materialId',
+    'sourceType',
+    'sourceId',
+    'batchNo',
+    'serialNo',
+    'status',
+    'costLayerId',
+    'page',
+    'pageSize',
+  ] as const
   const reservationQueryKeys = [
     'keyword',
     'warehouseId',
@@ -618,6 +1015,13 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
     return request<T>(path, init)
   }
 
+  const resourcePath = (basePath: string, id?: ResourceId) =>
+    `${basePath}${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
+  const warehouseTransferPath = (id?: ResourceId) => resourcePath('/api/admin/inventory/warehouse-transfers', id)
+  const ownershipConversionPath = (id?: ResourceId) => resourcePath('/api/admin/inventory/ownership-conversions', id)
+  const stocktakePath = (id?: ResourceId) => resourcePath('/api/admin/inventory/stocktakes', id)
+  const valuationAdjustmentPath = (id?: ResourceId) => resourcePath('/api/admin/inventory/valuation-adjustments', id)
+
   return {
     balances: {
       list: (params) =>
@@ -666,6 +1070,14 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
           pickQuery(params, movementQueryKeys),
         ),
     },
+    costLayers: {
+      list: (params) =>
+        get<PageResult<InventoryCostLayerRecord>>(
+          '/api/admin/inventory/cost-layers',
+          pickQuery(params, costLayerQueryKeys),
+        ),
+      get: (id) => get<InventoryCostLayerRecord>(`/api/admin/inventory/cost-layers/${encodeURIComponent(String(id))}`),
+    },
     documents: {
       list: (params) =>
         get<PageResult<InventoryDocumentSummaryRecord>>(
@@ -682,6 +1094,68 @@ export function createInventoryApi(options: InventoryApiOptions = {}): Inventory
         ),
       post: (id) =>
         write<InventoryDocumentDetailRecord>('PUT', `/api/admin/inventory/documents/${encodeURIComponent(String(id))}/post`),
+    },
+    warehouseTransfers: {
+      list: (params) =>
+        get<PageResult<InventoryWarehouseTransferRecord>>(
+          warehouseTransferPath(),
+          pickQuery(params, controlledDocumentQueryKeys),
+        ),
+      get: (id) => get<InventoryWarehouseTransferRecord>(warehouseTransferPath(id)),
+      create: (payload) => write<InventoryWarehouseTransferRecord>('POST', warehouseTransferPath(), payload),
+      update: (id, payload) => write<InventoryWarehouseTransferRecord>('PUT', warehouseTransferPath(id), payload),
+      post: (id, payload) => write<InventoryWarehouseTransferRecord>('PUT', `${warehouseTransferPath(id)}/post`, payload),
+      cancel: (id, payload) =>
+        write<InventoryWarehouseTransferRecord>('PUT', `${warehouseTransferPath(id)}/cancel`, payload),
+    },
+    ownershipConversions: {
+      list: (params) =>
+        get<PageResult<InventoryOwnershipConversionRecord>>(
+          ownershipConversionPath(),
+          pickQuery(params, controlledDocumentQueryKeys),
+        ),
+      get: (id) => get<InventoryOwnershipConversionRecord>(ownershipConversionPath(id)),
+      create: (payload) => write<InventoryOwnershipConversionRecord>('POST', ownershipConversionPath(), payload),
+      update: (id, payload) => write<InventoryOwnershipConversionRecord>('PUT', ownershipConversionPath(id), payload),
+      submitApproval: (id, payload) =>
+        write<InventoryOwnershipConversionRecord>('PUT', `${ownershipConversionPath(id)}/submit-approval`, payload),
+      withdraw: (id, payload) =>
+        write<InventoryOwnershipConversionRecord>('PUT', `${ownershipConversionPath(id)}/withdraw`, payload),
+      cancel: (id, payload) =>
+        write<InventoryOwnershipConversionRecord>('PUT', `${ownershipConversionPath(id)}/cancel`, payload),
+    },
+    stocktakes: {
+      list: (params) =>
+        get<PageResult<InventoryStocktakeRecord>>(
+          stocktakePath(),
+          pickQuery(params, controlledDocumentQueryKeys),
+        ),
+      get: (id) => get<InventoryStocktakeRecord>(stocktakePath(id)),
+      create: (payload) => write<InventoryStocktakeRecord>('POST', stocktakePath(), payload),
+      start: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/start`, payload),
+      updateLines: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/lines`, payload),
+      reconcile: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/reconcile`, payload),
+      submitApproval: (id, payload) =>
+        write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/submit-approval`, payload),
+      completeZeroVariance: (id, payload) =>
+        write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/complete-zero-variance`, payload),
+      cancel: (id, payload) => write<InventoryStocktakeRecord>('PUT', `${stocktakePath(id)}/cancel`, payload),
+    },
+    valuationAdjustments: {
+      list: (params) =>
+        get<PageResult<InventoryValuationAdjustmentRecord>>(
+          valuationAdjustmentPath(),
+          pickQuery(params, controlledDocumentQueryKeys),
+        ),
+      get: (id) => get<InventoryValuationAdjustmentRecord>(valuationAdjustmentPath(id)),
+      create: (payload) => write<InventoryValuationAdjustmentRecord>('POST', valuationAdjustmentPath(), payload),
+      update: (id, payload) => write<InventoryValuationAdjustmentRecord>('PUT', valuationAdjustmentPath(id), payload),
+      submitApproval: (id, payload) =>
+        write<InventoryValuationAdjustmentRecord>('PUT', `${valuationAdjustmentPath(id)}/submit-approval`, payload),
+      withdraw: (id, payload) =>
+        write<InventoryValuationAdjustmentRecord>('PUT', `${valuationAdjustmentPath(id)}/withdraw`, payload),
+      cancel: (id, payload) =>
+        write<InventoryValuationAdjustmentRecord>('PUT', `${valuationAdjustmentPath(id)}/cancel`, payload),
     },
   }
 }

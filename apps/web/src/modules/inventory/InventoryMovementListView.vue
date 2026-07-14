@@ -3,12 +3,15 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   inventoryApi,
+  type InventoryCostLayerRecord,
   type InventoryDirection,
   type InventoryMovementRecord,
   type InventoryMovementType,
+  type InventoryOwnershipType,
   type InventoryQualityStatus,
   type InventoryTraceDetailRecord,
   type InventoryTrackingMethod,
+  type InventoryValuationMethod,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -18,7 +21,14 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { trackingMethodLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import InventoryDirectionTag from './InventoryDirectionTag.vue'
-import { formatQuantity, movementTypeLabel } from './inventoryPageHelpers'
+import {
+  formatInventoryAmount,
+  formatQuantity,
+  movementTypeLabel,
+  ownershipTypeLabel,
+  valuationStateLabel,
+} from './inventoryPageHelpers'
+import InventoryCostLayerDrawer from './InventoryCostLayerDrawer.vue'
 import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
 
 const route = useRoute()
@@ -32,6 +42,13 @@ const routeMovementTypes = new Set<string>([
   'PRODUCTION_RECEIPT',
   'PURCHASE_RECEIPT',
   'SALES_SHIPMENT',
+  'WAREHOUSE_TRANSFER_OUT',
+  'WAREHOUSE_TRANSFER_IN',
+  'OWNERSHIP_CONVERSION_OUT',
+  'OWNERSHIP_CONVERSION_IN',
+  'STOCKTAKE_GAIN',
+  'STOCKTAKE_LOSS',
+  'VALUATION_ADJUSTMENT',
 ])
 const routeQualityStatuses = new Set<string>(['PENDING_INSPECTION', 'QUALIFIED', 'REJECTED', 'FROZEN'])
 const routeTrackingMethods = new Set<string>(['NONE', 'BATCH', 'SERIAL'])
@@ -39,6 +56,10 @@ const filters = reactive<{
   keyword: string
   warehouseId: ResourceId | ''
   materialId: ResourceId | ''
+  ownershipType?: InventoryOwnershipType
+  projectId: ResourceId | ''
+  valuationMethod?: InventoryValuationMethod
+  costLayerId: ResourceId | ''
   movementType?: InventoryMovementType
   direction?: InventoryDirection
   qualityStatus?: InventoryQualityStatus
@@ -53,6 +74,10 @@ const filters = reactive<{
   keyword: '',
   warehouseId: normalizeRouteId(route.query.warehouseId),
   materialId: normalizeRouteId(route.query.materialId),
+  ownershipType: normalizeRouteOwnershipType(route.query.ownershipType),
+  projectId: normalizeRouteId(route.query.projectId),
+  valuationMethod: normalizeRouteValuationMethod(route.query.valuationMethod),
+  costLayerId: normalizeRouteId(route.query.costLayerId),
   movementType: normalizeRouteMovementType(route.query.movementType),
   direction: undefined,
   qualityStatus: normalizeRouteQualityStatus(route.query.qualityStatus),
@@ -80,7 +105,12 @@ const traceDrawerVisible = ref(false)
 const traceDetail = ref<InventoryTraceDetailRecord | null>(null)
 const traceLoading = ref(false)
 const traceError = ref('')
+const costLayerDrawerVisible = ref(false)
+const costLayerRecords = ref<InventoryCostLayerRecord[]>([])
+const costLayerLoading = ref(false)
+const costLayerError = ref('')
 const canViewTrace = computed(() => authStore.hasPermission('inventory:trace:view'))
+const canViewValuation = computed(() => authStore.hasPermission('inventory:valuation:view'))
 
 function normalizeRouteId(value: unknown): ResourceId | '' {
   if (Array.isArray(value)) {
@@ -121,6 +151,28 @@ function normalizeRouteTrackingMethod(value: unknown): InventoryTrackingMethod |
     return undefined
   }
   return routeTrackingMethods.has(value) ? value as InventoryTrackingMethod : undefined
+}
+
+function normalizeRouteOwnershipType(value: unknown): InventoryOwnershipType | undefined {
+  if (Array.isArray(value)) {
+    return normalizeRouteOwnershipType(value[0])
+  }
+  return value === 'PUBLIC' || value === 'PROJECT' ? value : undefined
+}
+
+function normalizeRouteValuationMethod(value: unknown): InventoryValuationMethod | undefined {
+  if (Array.isArray(value)) {
+    return normalizeRouteValuationMethod(value[0])
+  }
+  const allowed = new Set<string>([
+    'MOVING_AVERAGE',
+    'PROJECT_ACTUAL_LAYER',
+    'LEGACY_UNVALUED',
+    'NON_VALUED',
+    'CURRENT_AVERAGE_PROVISIONAL',
+    'MANUAL_PROVISIONAL',
+  ])
+  return typeof value === 'string' && allowed.has(value) ? value as InventoryValuationMethod : undefined
 }
 
 function normalizeRouteText(value: unknown): string {
@@ -172,6 +224,10 @@ async function loadRecords() {
       keyword: filters.keyword,
       warehouseId: normalizeOptionalId(filters.warehouseId),
       materialId: normalizeOptionalId(filters.materialId),
+      ownershipType: filters.ownershipType,
+      projectId: normalizeOptionalId(filters.projectId),
+      valuationMethod: filters.valuationMethod,
+      costLayerId: normalizeOptionalId(filters.costLayerId),
       movementType: filters.movementType,
       direction: filters.direction,
       qualityStatus: filters.qualityStatus,
@@ -205,6 +261,10 @@ function resetSearch() {
   filters.keyword = ''
   filters.warehouseId = ''
   filters.materialId = ''
+  filters.ownershipType = undefined
+  filters.projectId = ''
+  filters.valuationMethod = undefined
+  filters.costLayerId = ''
   filters.movementType = undefined
   filters.direction = undefined
   filters.qualityStatus = undefined
@@ -217,6 +277,41 @@ function resetSearch() {
   filters.dateTo = ''
   pagination.page = 1
   void loadRecords()
+}
+
+function projectText(record: InventoryMovementRecord) {
+  return record.projectNo ? `${record.projectNo} ${record.projectName || ''}`.trim() : '-'
+}
+
+function isCostRestricted(record: InventoryMovementRecord) {
+  return record.costVisible === false
+}
+
+async function loadCostLayers(record: InventoryMovementRecord) {
+  costLayerLoading.value = true
+  costLayerError.value = ''
+  try {
+    const page = await inventoryApi.costLayers.list({
+      costLayerId: record.costLayerId ?? undefined,
+      page: 1,
+      pageSize: 20,
+    })
+    costLayerRecords.value = pageItems(page)
+  } catch (caught) {
+    costLayerRecords.value = []
+    costLayerError.value = errorMessage(caught)
+  } finally {
+    costLayerLoading.value = false
+  }
+}
+
+function viewCostLayer(record: InventoryMovementRecord) {
+  if (!canViewValuation.value || !record.costLayerId || isCostRestricted(record)) {
+    return
+  }
+  costLayerRecords.value = []
+  costLayerDrawerVisible.value = true
+  void loadCostLayers(record)
 }
 
 function changePage(page: number) {
@@ -355,7 +450,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="库存变动流水" description="追溯期初和库存调整产生的每一笔库存变化。">
+  <MasterDataTableView title="库存流水与价值追溯" description="追溯数量流水、所有权、项目归属、计价方法和可授权查看的价值流水。">
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词">
@@ -398,6 +493,48 @@ onMounted(() => {
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="所有权">
+          <el-select
+            v-model="filters.ownershipType"
+            data-test="inventory-movement-ownership-type"
+            clearable
+            placeholder="全部所有权"
+          >
+            <el-option label="公共库存" value="PUBLIC" />
+            <el-option label="项目库存" value="PROJECT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <el-input
+            v-model="filters.projectId"
+            name="inventory-movement-project-id"
+            clearable
+            placeholder="项目标识"
+          />
+        </el-form-item>
+        <el-form-item label="计价方法">
+          <el-select
+            v-model="filters.valuationMethod"
+            data-test="inventory-movement-valuation-method"
+            clearable
+            placeholder="全部方法"
+          >
+            <el-option label="移动加权平均" value="MOVING_AVERAGE" />
+            <el-option label="项目实际成本层" value="PROJECT_ACTUAL_LAYER" />
+            <el-option label="历史未估值" value="LEGACY_UNVALUED" />
+            <el-option label="无需计价" value="NON_VALUED" />
+            <el-option label="当前平均暂估" value="CURRENT_AVERAGE_PROVISIONAL" />
+            <el-option label="手工暂估" value="MANUAL_PROVISIONAL" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="成本层">
+          <el-input
+            v-model="filters.costLayerId"
+            name="inventory-movement-cost-layer-id"
+            clearable
+            placeholder="成本层标识"
+          />
+        </el-form-item>
         <el-form-item label="变动类型">
           <el-select
             v-model="filters.movementType"
@@ -412,6 +549,13 @@ onMounted(() => {
             <el-option label="完工入库" value="PRODUCTION_RECEIPT" />
             <el-option label="采购入库" value="PURCHASE_RECEIPT" />
             <el-option label="销售出库" value="SALES_SHIPMENT" />
+            <el-option label="调拨出库" value="WAREHOUSE_TRANSFER_OUT" />
+            <el-option label="调拨入库" value="WAREHOUSE_TRANSFER_IN" />
+            <el-option label="所有权转出" value="OWNERSHIP_CONVERSION_OUT" />
+            <el-option label="所有权转入" value="OWNERSHIP_CONVERSION_IN" />
+            <el-option label="盘盈" value="STOCKTAKE_GAIN" />
+            <el-option label="盘亏" value="STOCKTAKE_LOSS" />
+            <el-option label="估值调整" value="VALUATION_ADJUSTMENT" />
           </el-select>
         </el-form-item>
         <el-form-item label="方向">
@@ -513,6 +657,23 @@ onMounted(() => {
             {{ row.materialCode }} {{ row.materialName }}
           </template>
         </el-table-column>
+        <el-table-column label="所有权" min-width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.ownershipType === 'PROJECT' ? 'warning' : 'info'">
+              {{ row.ownershipTypeName || ownershipTypeLabel(row.ownershipType) }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="项目" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ projectText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="计价方法" min-width="140">
+          <template #default="{ row }">
+            {{ row.valuationMethodName || valuationStateLabel(row.valuationMethod) }}
+          </template>
+        </el-table-column>
         <el-table-column label="变动类型" min-width="100">
           <template #default="{ row }">
             <span data-test="movement-type-cell">{{ movementTypeLabel(row.movementType) }}</span>
@@ -548,6 +709,29 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatQuantity(row.afterQuantity) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="单位成本" min-width="120" align="right">
+          <template #default="{ row }">
+            <span
+              v-if="isCostRestricted(row)"
+              :data-test="`movement-cost-restricted-${row.id}`"
+              class="restricted-cost"
+            >
+              金额受限
+            </span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.unitCost, 6) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="变动金额" min-width="120" align="right">
+          <template #default="{ row }">
+            <span v-if="isCostRestricted(row)" class="restricted-cost">金额受限</span>
+            <span v-else class="numeric-cell">{{ formatInventoryAmount(row.movementAmount) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="价值流水" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.valueFlowId ?? '-' }}
+          </template>
+        </el-table-column>
         <el-table-column label="来源单据" min-width="140">
           <template #default="{ row }">
             <el-button
@@ -581,6 +765,20 @@ onMounted(() => {
             <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
           </template>
         </el-table-column>
+        <el-table-column label="成本层" min-width="100">
+          <template #default="{ row }">
+            <el-button
+              v-if="canViewValuation && row.costLayerId && !isCostRestricted(row)"
+              size="small"
+              text
+              data-test="view-movement-cost-layer"
+              @click="viewCostLayer(row)"
+            >
+              成本层
+            </el-button>
+            <span v-else class="operation-status">{{ isCostRestricted(row) ? '金额受限' : '无成本层' }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
         <el-table-column prop="operatorName" label="操作人" min-width="110" />
       </el-table>
@@ -599,6 +797,12 @@ onMounted(() => {
       :loading="traceLoading"
       :error="traceError"
     />
+    <InventoryCostLayerDrawer
+      v-model="costLayerDrawerVisible"
+      :records="costLayerRecords"
+      :loading="costLayerLoading"
+      :error="costLayerError"
+    />
   </MasterDataTableView>
 </template>
 
@@ -614,6 +818,11 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   min-height: 24px;
+  color: var(--qherp-muted);
+  font-size: 13px;
+}
+
+.restricted-cost {
   color: var(--qherp-muted);
   font-size: 13px;
 }

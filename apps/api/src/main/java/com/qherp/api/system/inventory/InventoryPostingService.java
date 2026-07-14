@@ -26,8 +26,11 @@ public class InventoryPostingService {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	public InventoryPostingService(JdbcTemplate jdbcTemplate) {
+	private final InventoryValuationService inventoryValuationService;
+
+	public InventoryPostingService(JdbcTemplate jdbcTemplate, InventoryValuationService inventoryValuationService) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.inventoryValuationService = inventoryValuationService;
 	}
 
 	@Transactional
@@ -35,19 +38,24 @@ public class InventoryPostingService {
 		validateRequest(request);
 		validateOutboundQualityStatus(request);
 		OffsetDateTime now = OffsetDateTime.now();
+		ValuationContext valuationContext = request.valuationContextOrDefault();
 		BalanceRow balance = lockedBalance(request.warehouseId(), request.materialId(), request.unitId(),
-				request.qualityStatus(), request.batchId(), request.serialId(), now);
+				request.qualityStatus(), request.batchId(), request.serialId(), valuationContext.ownershipType(),
+				valuationContext.projectId(), now);
 		BigDecimal beforeQuantity = balance.quantityOnHand();
 		BigDecimal afterQuantity = request.direction() == InventoryDirection.IN ? beforeQuantity.add(request.quantity())
 				: beforeQuantity.subtract(request.quantity());
 		if (afterQuantity.compareTo(ZERO) < 0) {
+			if ("PUBLIC".equals(valuationContext.ownershipType()) && materialValueEnabled(request.materialId())) {
+				throw new BusinessException(ApiErrorCode.INVENTORY_PUBLIC_POOL_INSUFFICIENT);
+			}
 			throw new BusinessException(stockNotEnoughErrorCode(request, request.quantity()));
 		}
 		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED
 				&& !request.consumedReservation()) {
 			BigDecimal availableQuantity = beforeQuantity
 				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId(), request.batchId(),
-						request.serialId()));
+						request.serialId(), valuationContext.ownershipType(), valuationContext.projectId()));
 			if (availableQuantity.compareTo(request.quantity()) < 0) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
 			}
@@ -58,25 +66,42 @@ public class InventoryPostingService {
 					insert into inv_stock_movement (
 						movement_no, movement_type, direction, warehouse_id, material_id, unit_id, quantity,
 						before_quantity, after_quantity, source_type, source_id, source_line_id, business_date,
-						reason, remark, operator_name, occurred_at, quality_status, batch_id, serial_id
+						reason, remark, operator_name, occurred_at, quality_status, batch_id, serial_id,
+						ownership_type, project_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					returning id
 					""", Long.class, movementNo(request), request.movementType().name(), request.direction().name(),
 					request.warehouseId(), request.materialId(), request.unitId(), request.quantity(), beforeQuantity,
 					afterQuantity, request.sourceType(), request.sourceId(), request.sourceLineId(),
 					request.businessDate(), request.reason(), blankToNull(request.remark()), request.operatorName(),
-					now, request.qualityStatus().name(), request.batchId(), request.serialId());
+					now, request.qualityStatus().name(), request.batchId(), request.serialId(),
+					valuationContext.ownershipType(), valuationContext.projectId());
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateMovementException(exception, request.sourceType());
 		}
+		String movementNo = this.jdbcTemplate.queryForObject("select movement_no from inv_stock_movement where id = ?",
+				String.class, movementId);
+		InventoryValuationService.ValuationResult valuationResult = this.inventoryValuationService.apply(request,
+				movementId, movementNo, beforeQuantity, afterQuantity, now);
+		BalanceValue balanceValue = balanceValue(request, valuationContext, valuationResult, afterQuantity);
 		this.jdbcTemplate.update("""
 				update inv_stock_balance
-				set quantity_on_hand = ?, unit_id = ?, updated_at = ?, version = version + 1
+				set quantity_on_hand = ?, unit_id = ?, valuation_state = ?, inventory_amount = ?,
+				    average_unit_cost = ?, cost_layer_id = ?, public_pool_id = ?,
+				    updated_at = ?, version = version + 1
 				where id = ?
-				""", afterQuantity, request.unitId(), now, balance.id());
-		return new PostingResult(beforeQuantity, afterQuantity, movementId);
+				""", afterQuantity, request.unitId(), valuationResult.valuationState(), balanceValue.inventoryAmount(),
+				balanceValue.averageUnitCost(), balanceValue.costLayerId(), balanceValue.publicPoolId(), now,
+				balance.id());
+		if ("PUBLIC".equals(valuationContext.ownershipType())
+				&& amountValuedState(valuationResult.valuationState())) {
+			this.inventoryValuationService.synchronizePublicBalanceValues(request.materialId());
+		}
+		return new PostingResult(beforeQuantity, afterQuantity, movementId, valuationResult.unitCost(),
+				valuationResult.inventoryAmount(), valuationResult.valuationMethod(), valuationResult.costLayerId(),
+				valuationResult.valueMovementId());
 	}
 
 	@Transactional
@@ -101,26 +126,30 @@ public class InventoryPostingService {
 		PostingResult fromResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.OUT, warehouseId, materialId, unitId, quantity, fromStatus, sourceType, sourceId,
 				fromSourceLineId, businessDate, reason, remark, operatorName, batchId, serialId));
+		ValuationContext transferContext = new ValuationContext("PUBLIC", null, fromResult.unitCost(),
+				fromResult.costLayerId(), fromResult.valueMovementId());
 		PostingResult toResult = post(new PostingRequest(InventoryMovementType.QUALITY_STATUS_TRANSFER,
 				InventoryDirection.IN, warehouseId, materialId, unitId, quantity, toStatus, sourceType, sourceId,
-				toSourceLineId, businessDate, reason, remark, operatorName, batchId, serialId));
+				toSourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
+				transferContext));
 		return new QualityTransferResult(fromResult.beforeQuantity(), fromResult.afterQuantity(),
 				toResult.beforeQuantity(), toResult.afterQuantity(), fromResult.movementId(), toResult.movementId());
 	}
 
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
-			Long batchId, Long serialId, OffsetDateTime now) {
-		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId);
+			Long batchId, Long serialId, String ownershipType, Long projectId, OffsetDateTime now) {
+		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId,
+				ownershipType, projectId);
 		if (balance.isEmpty()) {
 			try {
 				this.jdbcTemplate.update("""
 						insert into inv_stock_balance (
 							warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
-							quality_status, batch_id, serial_id
+							quality_status, batch_id, serial_id, ownership_type, project_id
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						""", warehouseId, materialId, unitId, ZERO, ZERO, now, now, qualityStatus.name(), batchId,
-						serialId);
+						serialId, ownershipType, projectId);
 			}
 			catch (DuplicateKeyException exception) {
 				if (!containsConstraint(exception, "uk_inv_stock_balance_warehouse_material_quality")
@@ -130,13 +159,13 @@ public class InventoryPostingService {
 					throw exception;
 				}
 			}
-			balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId);
+			balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId, ownershipType, projectId);
 		}
 		return balance.orElseThrow(() -> new BusinessException(ApiErrorCode.CONFLICT));
 	}
 
 	private Optional<BalanceRow> lockBalance(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
-			Long batchId, Long serialId) {
+			Long batchId, Long serialId, String ownershipType, Long projectId) {
 		return this.jdbcTemplate
 			.query("""
 					select id, quantity_on_hand
@@ -146,14 +175,17 @@ public class InventoryPostingService {
 					and quality_status = ?
 					and batch_id is not distinct from ?
 					and serial_id is not distinct from ?
+					and ownership_type = ?
+					and project_id is not distinct from ?
 					for update
 					""", (rs, rowNum) -> new BalanceRow(rs.getLong("id"), rs.getBigDecimal("quantity_on_hand")),
-					warehouseId, materialId, qualityStatus.name(), batchId, serialId)
+					warehouseId, materialId, qualityStatus.name(), batchId, serialId, ownershipType, projectId)
 			.stream()
 			.findFirst();
 	}
 
-	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId) {
+	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId,
+			String ownershipType, Long projectId) {
 		return this.jdbcTemplate.query("""
 				select quantity, released_quantity, consumed_quantity
 				from inv_stock_reservation
@@ -162,11 +194,14 @@ public class InventoryPostingService {
 				and quality_status = 'QUALIFIED'
 				and batch_id is not distinct from ?
 				and serial_id is not distinct from ?
+				and ownership_type = ?
+				and project_id is not distinct from ?
 				and status = 'ACTIVE'
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
-					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, batchId, serialId)
+					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, batchId, serialId,
+				ownershipType, projectId)
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
 	}
@@ -264,8 +299,57 @@ public class InventoryPostingService {
 				from inv_stock_balance
 				where warehouse_id = ?
 				and material_id = ?
+				and ownership_type = 'PUBLIC'
 				""", BigDecimal.class, warehouseId, materialId);
 		return total == null ? ZERO : total;
+	}
+
+	private boolean materialValueEnabled(Long materialId) {
+		Boolean enabled = this.jdbcTemplate.queryForObject("""
+				select coalesce(inventory_value_enabled, false)
+				from mst_material
+				where id = ?
+				""", Boolean.class, materialId);
+		return Boolean.TRUE.equals(enabled);
+	}
+
+	private boolean amountValuedState(String valuationState) {
+		return "VALUED".equals(valuationState) || "MANUAL_PROVISIONAL".equals(valuationState)
+				|| "CURRENT_AVERAGE_PROVISIONAL".equals(valuationState);
+	}
+
+	private BalanceValue balanceValue(PostingRequest request, ValuationContext context,
+			InventoryValuationService.ValuationResult valuationResult, BigDecimal afterQuantity) {
+		if ("NON_VALUED".equals(valuationResult.valuationState())) {
+			return new BalanceValue(null, null, null, null);
+		}
+		if ("PUBLIC".equals(context.ownershipType())) {
+			PublicPoolSnapshot pool = publicPoolSnapshot(request.materialId());
+			BigDecimal amount = afterQuantity.compareTo(ZERO) == 0 ? ZERO.setScale(2)
+					: afterQuantity.multiply(pool.averageUnitCost()).setScale(2, java.math.RoundingMode.HALF_UP);
+			return new BalanceValue(amount, pool.averageUnitCost(), null, pool.id());
+		}
+		BigDecimal projectAmount = this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(remaining_amount), 0)
+				from inv_project_cost_layer
+				where project_id = ?
+				and material_id = ?
+				and status <> 'CANCELLED'
+				""", BigDecimal.class, context.projectId(), request.materialId());
+		return new BalanceValue(projectAmount == null ? ZERO.setScale(2) : projectAmount.setScale(2),
+				valuationResult.unitCost(), valuationResult.costLayerId(), null);
+	}
+
+	private PublicPoolSnapshot publicPoolSnapshot(Long materialId) {
+		return this.jdbcTemplate.query("""
+				select id, average_unit_cost
+				from inv_public_valuation_pool
+				where material_id = ?
+				""", (rs, rowNum) -> new PublicPoolSnapshot(rs.getLong("id"), rs.getBigDecimal("average_unit_cost")),
+				materialId)
+			.stream()
+			.findFirst()
+			.orElse(new PublicPoolSnapshot(null, null));
 	}
 
 	private String movementNo(PostingRequest request) {
@@ -306,14 +390,22 @@ public class InventoryPostingService {
 	public record PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 			Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
-			String operatorName, boolean consumedReservation, Long batchId, Long serialId) {
+			String operatorName, boolean consumedReservation, Long batchId, Long serialId,
+			ValuationContext valuationContext) {
+
+		public PostingRequest {
+			if (valuationContext == null) {
+				valuationContext = ValuationContext.publicStock(null);
+			}
+		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
 				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
 				String remark, String operatorName) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
-					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null);
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null,
+					ValuationContext.publicStock(null));
 		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
@@ -321,7 +413,26 @@ public class InventoryPostingService {
 				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
 				String remark, String operatorName, Long batchId, Long serialId) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
-					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId);
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
+					ValuationContext.publicStock(null));
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, boolean consumedReservation, Long batchId, Long serialId) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, consumedReservation, batchId,
+					serialId, ValuationContext.publicStock(null));
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, Long batchId, Long serialId, BigDecimal unitPrice) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, batchId, serialId,
+					ValuationContext.publicStock(unitPrice));
 		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
@@ -330,21 +441,49 @@ public class InventoryPostingService {
 				String remark, String operatorName, boolean consumedReservation) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
 					sourceId, sourceLineId, businessDate, reason, remark, operatorName, consumedReservation, null,
-					null);
+					null, ValuationContext.publicStock(null));
 		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
 				Long materialId, Long unitId, BigDecimal quantity, String sourceType, Long sourceId, Long sourceLineId,
 				LocalDate businessDate, String reason, String remark, String operatorName) {
 			this(movementType, direction, warehouseId, materialId, unitId, quantity, InventoryQualityStatus.QUALIFIED,
-					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null);
+					sourceType, sourceId, sourceLineId, businessDate, reason, remark, operatorName, false, null, null,
+					ValuationContext.publicStock(null));
+		}
+
+		public ValuationContext valuationContextOrDefault() {
+			return this.valuationContext == null ? ValuationContext.publicStock(null) : this.valuationContext;
 		}
 	}
 
-	public record PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity, Long movementId) {
+	public record ValuationContext(String ownershipType, Long projectId, BigDecimal unitPrice, Long costLayerId,
+			Long originalValueMovementId) {
+
+		public ValuationContext {
+			if (!hasText(ownershipType)) {
+				ownershipType = "PUBLIC";
+			}
+			if ("PUBLIC".equals(ownershipType)) {
+				projectId = null;
+			}
+		}
+
+		public static ValuationContext publicStock(BigDecimal unitPrice) {
+			return new ValuationContext("PUBLIC", null, unitPrice, null, null);
+		}
+	}
+
+	public record PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity, Long movementId,
+			BigDecimal unitCost, BigDecimal inventoryAmount, String valuationMethod, Long costLayerId,
+			Long valueMovementId) {
 
 		public PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity) {
-			this(beforeQuantity, afterQuantity, null);
+			this(beforeQuantity, afterQuantity, null, null, null, null, null, null);
+		}
+
+		public PostingResult(BigDecimal beforeQuantity, BigDecimal afterQuantity, Long movementId) {
+			this(beforeQuantity, afterQuantity, movementId, null, null, null, null, null);
 		}
 	}
 
@@ -358,6 +497,13 @@ public class InventoryPostingService {
 	}
 
 	private record BalanceRow(Long id, BigDecimal quantityOnHand) {
+	}
+
+	private record BalanceValue(BigDecimal inventoryAmount, BigDecimal averageUnitCost, Long costLayerId,
+			Long publicPoolId) {
+	}
+
+	private record PublicPoolSnapshot(Long id, BigDecimal averageUnitCost) {
 	}
 
 }

@@ -160,6 +160,27 @@ describe('生产执行 API', () => {
         trackingAllocations?: InventoryTrackingAllocationPayload[]
       } ? true : false
     >,
+    completionReceiptAcceptsProvisionalUnitCost: true as AssertTrue<
+      ProductionCompletionReceiptPayload extends {
+        provisionalUnitCost?: string
+      } ? true : false
+    >,
+    completionReceiptReturnsValuationStatus: true as AssertTrue<
+      ProductionCompletionReceiptRecord extends {
+        valuationMethod?: unknown
+        valuationState?: unknown
+        unitCost?: unknown
+        amount?: unknown
+      } ? true : false
+    >,
+    workOrderDetailReturnsCompletionValuationHint: true as AssertTrue<
+      ProductionWorkOrderDetailRecord extends {
+        completionValuationState?: unknown
+        requiresManualProvisionalUnitCost?: unknown
+        currentAverageUnitCost?: unknown
+        costVisible?: unknown
+      } ? true : false
+    >,
   }
 
   it('声明生产详情和执行记录列表的类型契约', () => {
@@ -180,6 +201,9 @@ describe('生产执行 API', () => {
       materialIssueLineReturnsTrackingAllocations: true,
       completionReceiptAcceptsTrackingAllocations: true,
       completionReceiptReturnsTrackingAllocations: true,
+      completionReceiptAcceptsProvisionalUnitCost: true,
+      completionReceiptReturnsValuationStatus: true,
+      workOrderDetailReturnsCompletionValuationHint: true,
       workOrderDetailUsesMaterialIssueSummary: true,
       workOrderIncludesWarehouseAndCancelFields: true,
     })
@@ -489,6 +513,7 @@ describe('生产执行 API', () => {
       businessDate: '2026-07-03',
       receiptWarehouseId: 3,
       quantity: '10.000000',
+      provisionalUnitCost: '12.345678',
       trackingAllocations: [{ batchNo: 'B-WO-001', quantity: '10.000000' }],
     }
 
@@ -552,6 +577,26 @@ describe('生产执行 API', () => {
         'X-CSRF-TOKEN': 'csrf-receipt-post',
       },
       method: 'PUT',
+    })
+  })
+
+  it('完工入库暂估单价保持十进制字符串发送给后端', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ token: 'csrf-receipt-create', headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }))
+      .mockResolvedValueOnce(apiResponse({ id: 13, receiptNo: 'CR-1' }))
+    const api = createProductionApi({ fetcher })
+
+    await api.completionReceipts.create(9, {
+      businessDate: '2026-07-03',
+      receiptWarehouseId: 3,
+      quantity: '10.000000',
+      provisionalUnitCost: '999999999999.999999',
+    })
+
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string)).toMatchObject({
+      quantity: '10.000000',
+      provisionalUnitCost: '999999999999.999999',
     })
   })
 

@@ -134,6 +134,22 @@ const workOrder: ProductionWorkOrderDetailRecord = {
   movements: [],
 }
 
+const manualProvisionalWorkOrder = {
+  ...workOrder,
+  completionValuationState: 'MANUAL_PROVISIONAL_REQUIRED',
+  requiresManualProvisionalUnitCost: true,
+  currentAverageUnitCost: null,
+  costVisible: true,
+} as ProductionWorkOrderDetailRecord
+
+const currentAverageProvisionalWorkOrder = {
+  ...workOrder,
+  completionValuationState: 'CURRENT_AVERAGE_PROVISIONAL',
+  requiresManualProvisionalUnitCost: false,
+  currentAverageUnitCost: '11.000000',
+  costVisible: true,
+} as ProductionWorkOrderDetailRecord
+
 const selectableWorkOrder: ProductionWorkOrderDetailRecord = {
   ...workOrder,
   materials: workOrder.materials.map((material) => ({
@@ -486,6 +502,66 @@ describe('生产执行表单页', () => {
       quantity: '5.000000',
       trackingAllocations: [{ batchNo: 'B-FG-001', quantity: '5.000000' }],
     }))
+  })
+
+  it('首次完工无公共平均价时必须录入暂估单价并以字符串提交', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce(manualProvisionalWorkOrder)
+    const { wrapper } = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    expect(wrapper.text()).toContain('首次完工需要录入暂估单价')
+    expect(wrapper.text()).toContain('暂估库存后续出库价值不会被重写')
+    await wrapper.find('input[name="production-receipt-quantity"]').setValue('5.000000')
+    wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-FG-001', quantity: '5.000000' },
+    ])
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('请输入暂估单价')
+    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+
+    await wrapper.find('input[name="production-receipt-provisional-unit-cost"]').setValue('12.345678')
+    await submitButton(wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(productionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      quantity: '5.000000',
+      provisionalUnitCost: '12.345678',
+    }))
+  })
+
+  it('暂估单价限制 6 位小数且已有公共平均价时只提示沿用平均价', async () => {
+    productionApiMock.workOrders.get.mockResolvedValueOnce(manualProvisionalWorkOrder)
+    const manual = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+    await manual.wrapper.find('input[name="production-receipt-provisional-unit-cost"]').setValue('12.3456789')
+    await manual.wrapper.find('input[name="production-receipt-quantity"]').setValue('5.000000')
+    manual.wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-FG-001', quantity: '5.000000' },
+    ])
+    await submitButton(manual.wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(manual.wrapper.text()).toContain('暂估单价最多 6 位小数')
+    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+
+    productionApiMock.workOrders.get.mockResolvedValueOnce(currentAverageProvisionalWorkOrder)
+    const average = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+
+    expect(average.wrapper.text()).toContain('沿用当前公共平均价')
+    expect(average.wrapper.text()).toContain('11.000000')
+    expect(average.wrapper.find('input[name="production-receipt-provisional-unit-cost"]').exists()).toBe(false)
   })
 
   it('批次管理完工入库追踪数量合计不一致时阻止保存', async () => {

@@ -17,6 +17,9 @@ const inventoryApiMock = vi.hoisted(() => ({
   balances: {
     list: vi.fn(),
   },
+  costLayers: {
+    list: vi.fn(),
+  },
   reservations: {
     list: vi.fn(),
   },
@@ -103,6 +106,30 @@ const balance: InventoryBalanceRecord = {
   unavailableReason: null,
   updatedAt: '2026-07-03T09:30:00+08:00',
 }
+
+const projectValuedBalance = {
+  ...balance,
+  id: 13,
+  ownershipType: 'PROJECT',
+  ownershipTypeName: '项目库存',
+  projectId: 501,
+  projectNo: 'PRJ-001',
+  projectName: '一号项目',
+  costVisible: true,
+  valuationState: 'PROJECT_ACTUAL_LAYER',
+  valuationStateName: '项目实际成本层',
+  inventoryAmount: '1325.50',
+  averageUnitCost: '11.000000',
+  costLayerCount: 2,
+} as InventoryBalanceRecord
+
+const restrictedCostBalance = {
+  ...projectValuedBalance,
+  id: 14,
+  costVisible: false,
+  inventoryAmount: null,
+  averageUnitCost: null,
+} as InventoryBalanceRecord
 
 const nonTrackingBalance: InventoryBalanceRecord = {
   ...balance,
@@ -269,6 +296,34 @@ describe('库存余额页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     inventoryApiMock.balances.list.mockResolvedValue(balancePage)
+    inventoryApiMock.costLayers.list.mockResolvedValue({
+      items: [{
+        id: 9001,
+        layerNo: 'CL-PRJ-001',
+        ownershipType: 'PROJECT',
+        ownershipTypeName: '项目库存',
+        projectId: 501,
+        projectNo: 'PRJ-001',
+        projectName: '一号项目',
+        materialId: 2,
+        materialCode: 'RM-STEEL',
+        materialName: '冷轧钢板',
+        originalQuantity: '120.500000',
+        originalAmount: '1325.50',
+        remainingQuantity: '80.000000',
+        remainingAmount: '880.00',
+        unitCost: '11.000000',
+        status: 'OPEN',
+        statusName: '开放',
+        sourceType: 'OWNERSHIP_CONVERSION',
+        sourceDocumentNo: 'OC-001',
+        createdAt: '2026-07-03T09:00:00+08:00',
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
     inventoryApiMock.reservations.list.mockResolvedValue(reservationPage)
     inventoryApiMock.traces.getBatchTrace.mockResolvedValue(traceDetail)
     inventoryApiMock.traces.getSerialTrace.mockResolvedValue(traceDetail)
@@ -291,8 +346,8 @@ describe('库存余额页', () => {
   it('加载库存余额并显示仓库、物料、物料类型和右对齐数量', async () => {
     const { wrapper } = await mountBalances()
 
-    expect(wrapper.text()).toContain('库存余额')
-    expect(wrapper.text()).toContain('展示账面库存、合格现存、占用预留、现货净可用、物料级采购在途参考、可承诺量和净需求缺口。')
+    expect(wrapper.text()).toContain('库存余额与价值')
+    expect(wrapper.text()).toContain('展示公共和项目库存的数量、可用量、估值状态和可授权查看的库存价值。')
     expect(wrapper.text()).toContain('原料仓')
     expect(wrapper.text()).toContain('RM-STEEL')
     expect(wrapper.text()).toContain('原材料')
@@ -365,6 +420,69 @@ describe('库存余额页', () => {
       page: 1,
       pageSize: 10,
     })
+  })
+
+  it('升级为库存余额与价值视图，成本权限受限时不展示完整金额并可下钻成本层', async () => {
+    inventoryApiMock.balances.list.mockResolvedValueOnce({
+      items: [projectValuedBalance, restrictedCostBalance],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountBalancesWithPermissions([
+      'inventory:balance:view',
+      'inventory:movement:view',
+      'inventory:valuation:view',
+    ])
+
+    expect(wrapper.text()).toContain('库存余额与价值')
+    expect(wrapper.text()).toContain('所有权')
+    expect(wrapper.text()).toContain('项目')
+    expect(wrapper.text()).toContain('估值状态')
+    expect(wrapper.text()).toContain('库存金额')
+    expect(wrapper.text()).toContain('平均单价')
+    expect(wrapper.text()).toContain('成本层')
+    expect(wrapper.text()).toContain('项目库存')
+    expect(wrapper.text()).toContain('PRJ-001 一号项目')
+    expect(wrapper.text()).toContain('1,325.50')
+    expect(wrapper.text()).toContain('11.000000')
+    expect(wrapper.text()).toContain('金额受限')
+
+    const restrictedRowText = wrapper.find('[data-test="balance-cost-restricted-14"]').text()
+    expect(restrictedRowText).toContain('金额受限')
+    expect(restrictedRowText).not.toContain('1325.50')
+
+    await wrapper.find('[data-test="view-cost-layers-13"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      materialId: 2,
+      warehouseId: 1,
+      page: 1,
+      pageSize: 20,
+    }))
+    expect(wrapper.text()).toContain('成本层追溯')
+    expect(wrapper.text()).toContain('CL-PRJ-001')
+    expect(wrapper.text()).toContain('880.00')
+  })
+
+  it('按所有权、项目和估值状态查询，发送冻结查询字段', async () => {
+    const { wrapper } = await mountBalances()
+
+    await setSelectValue(wrapper, 'inventory-balance-ownership-type', 'PROJECT')
+    await wrapper.find('input[name="inventory-balance-project-id"]').setValue('501')
+    await setSelectValue(wrapper, 'inventory-balance-valuation-state', 'LEGACY_UNVALUED')
+    await wrapper.find('[data-test="search-inventory-balances"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.balances.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      valuationState: 'LEGACY_UNVALUED',
+    }))
   })
 
   it('无数据和错误状态有明确提示', async () => {

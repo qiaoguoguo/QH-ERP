@@ -35,6 +35,10 @@ const businessPeriodPath = '/system/business-periods'
 const inventoryBalancePath = '/inventory/balances'
 const inventoryMovementPath = '/inventory/movements'
 const inventoryDocumentPath = '/inventory/documents'
+const inventoryWarehouseTransferPath = '/inventory/warehouse-transfers'
+const inventoryOwnershipConversionPath = '/inventory/ownership-conversions'
+const inventoryStocktakePath = '/inventory/stocktakes'
+const inventoryValuationAdjustmentPath = '/inventory/valuation-adjustments'
 const procurementOrderPath = '/procurement/orders'
 const procurementReceiptPath = '/procurement/receipts'
 const procurementReturnPath = '/procurement/returns'
@@ -83,6 +87,10 @@ const supportedMenuPaths = new Set([
   inventoryBalancePath,
   inventoryMovementPath,
   inventoryDocumentPath,
+  inventoryWarehouseTransferPath,
+  inventoryOwnershipConversionPath,
+  inventoryStocktakePath,
+  inventoryValuationAdjustmentPath,
   procurementOrderPath,
   procurementReceiptPath,
   procurementReturnPath,
@@ -190,6 +198,30 @@ const inventoryChildren: MenuNode[] = [
     code: 'inventory:document:view',
     name: '库存单据',
     routePath: inventoryDocumentPath,
+  },
+  {
+    id: 'inventory-warehouse-transfers',
+    code: 'inventory:warehouse-transfer:view',
+    name: '仓库调拨',
+    routePath: inventoryWarehouseTransferPath,
+  },
+  {
+    id: 'inventory-ownership-conversions',
+    code: 'inventory:ownership-conversion:view',
+    name: '所有权转换',
+    routePath: inventoryOwnershipConversionPath,
+  },
+  {
+    id: 'inventory-stocktakes',
+    code: 'inventory:stocktake:view',
+    name: '库存盘点',
+    routePath: inventoryStocktakePath,
+  },
+  {
+    id: 'inventory-valuation-adjustments',
+    code: 'inventory:valuation-adjustment:view',
+    name: '估值调整',
+    routePath: inventoryValuationAdjustmentPath,
   },
 ]
 const inventoryMenuPaths = new Set(inventoryChildren.map((child) => child.routePath))

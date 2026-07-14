@@ -233,7 +233,10 @@ public class PlatformAttachmentService {
 			throw new BusinessException(ApiErrorCode.ATTACHMENT_FILE_SIZE_EXCEEDED);
 		}
 		if (!"SALES_PROJECT_CONTRACT".equals(upload.objectType())
-				&& !"BOM_ENGINEERING_CHANGE".equals(upload.objectType())) {
+				&& !"BOM_ENGINEERING_CHANGE".equals(upload.objectType())
+				&& !"INVENTORY_OWNERSHIP_CONVERSION".equals(upload.objectType())
+				&& !"INVENTORY_STOCKTAKE".equals(upload.objectType())
+				&& !"INVENTORY_VALUATION_ADJUSTMENT".equals(upload.objectType())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 		}
 		String extension = extension(upload.originalFilename());
@@ -390,6 +393,21 @@ public class PlatformAttachmentService {
 			requireExists("select count(*) from mfg_bom_engineering_change where id = ?", objectId);
 			return;
 		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION".equals(objectType)) {
+			requirePermission(currentUser, "inventory:balance:view");
+			requireExists("select count(*) from inv_ownership_conversion where id = ?", objectId);
+			return;
+		}
+		if ("INVENTORY_STOCKTAKE".equals(objectType)) {
+			requirePermission(currentUser, "inventory:balance:view");
+			requireExists("select count(*) from inv_stocktake where id = ?", objectId);
+			return;
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT".equals(objectType)) {
+			requirePermission(currentUser, "inventory:valuation:view");
+			requireExists("select count(*) from inv_valuation_adjustment where id = ?", objectId);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -401,6 +419,18 @@ public class PlatformAttachmentService {
 		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
 			return currentUser.permissions().contains("material:bom-eco:view")
 					&& exists("select count(*) from mfg_bom_engineering_change where id = ?", objectId);
+		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION".equals(objectType)) {
+			return currentUser.permissions().contains("inventory:balance:view")
+					&& exists("select count(*) from inv_ownership_conversion where id = ?", objectId);
+		}
+		if ("INVENTORY_STOCKTAKE".equals(objectType)) {
+			return currentUser.permissions().contains("inventory:balance:view")
+					&& exists("select count(*) from inv_stocktake where id = ?", objectId);
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT".equals(objectType)) {
+			return currentUser.permissions().contains("inventory:valuation:view")
+					&& exists("select count(*) from inv_valuation_adjustment where id = ?", objectId);
 		}
 		return false;
 	}

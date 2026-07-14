@@ -14,6 +14,7 @@ import com.qherp.api.system.inventory.InventoryQualityStatus;
 import com.qherp.api.system.inventory.InventoryReservationType;
 import com.qherp.api.system.inventory.InventoryTrackingMethod;
 import com.qherp.api.system.inventory.InventoryTrackingService;
+import com.qherp.api.system.inventory.InventoryValuationService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.quality.QualityAdminService;
@@ -85,6 +86,8 @@ public class ProductionAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final InventoryValuationService inventoryValuationService;
+
 	private final InventoryAvailabilityService inventoryAvailabilityService;
 
 	private final BusinessPeriodGuard businessPeriodGuard;
@@ -95,12 +98,14 @@ public class ProductionAdminService {
 
 	public ProductionAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			CostRecordWriter costRecordWriter, InventoryPostingService inventoryPostingService,
-			InventoryAvailabilityService inventoryAvailabilityService, BusinessPeriodGuard businessPeriodGuard,
-			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService) {
+			InventoryValuationService inventoryValuationService, InventoryAvailabilityService inventoryAvailabilityService,
+			BusinessPeriodGuard businessPeriodGuard, QualityAdminService qualityAdminService,
+			InventoryTrackingService inventoryTrackingService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.costRecordWriter = costRecordWriter;
 		this.inventoryPostingService = inventoryPostingService;
+		this.inventoryValuationService = inventoryValuationService;
 		this.inventoryAvailabilityService = inventoryAvailabilityService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
@@ -514,6 +519,7 @@ public class ProductionAdminService {
 		List<CompletionReceiptResponse> items = this.jdbcTemplate.query("""
 				select r.id, r.receipt_no, r.work_order_id, r.status, r.business_date, r.receipt_warehouse_id,
 				       w.name as receipt_warehouse_name, r.quantity, r.before_quantity, r.after_quantity,
+				       r.provisional_unit_cost, r.unit_cost, r.valuation_state,
 				       r.remark, r.created_by, r.created_at, r.updated_at, r.posted_by, r.posted_at,
 				       pm.tracking_method
 				from mfg_completion_receipt r
@@ -571,11 +577,11 @@ public class ProductionAdminService {
 		OffsetDateTime now = OffsetDateTime.now();
 		this.jdbcTemplate.update("""
 				update mfg_completion_receipt
-				set business_date = ?, receipt_warehouse_id = ?, quantity = ?, remark = ?, updated_by = ?,
-				    updated_at = ?, version = version + 1
+				set business_date = ?, receipt_warehouse_id = ?, quantity = ?, provisional_unit_cost = ?,
+				    remark = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", validated.businessDate(), validated.receiptWarehouseId(), validated.quantity(),
-				blankToNull(validated.remark()), operator.username(), now, id);
+				validated.provisionalUnitCost(), blankToNull(validated.remark()), operator.username(), now, id);
 		this.inventoryTrackingService.deleteDraftDocumentTracking(COMPLETION_RECEIPT_SOURCE, id);
 		prepareCompletionReceiptAllocations(id, product, validated, operator.username());
 		this.auditService.record(operator, "MFG_COMPLETION_RECEIPT_UPDATE", COMPLETION_RECEIPT_TARGET, id,
@@ -601,6 +607,7 @@ public class ProductionAdminService {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_RECEIPT_EXCEEDS_REPORTED);
 			}
 			MaterialRef product = validateProductMaterial(workOrder.productMaterialId());
+			CompletionValuation completionValuation = completionValuation(product.id(), detail.provisionalUnitCost());
 			OffsetDateTime now = OffsetDateTime.now();
 			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
 				.storedAllocations(COMPLETION_RECEIPT_SOURCE, id, id);
@@ -611,7 +618,8 @@ public class ProductionAdminService {
 						new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_RECEIPT,
 								InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
 								detail.quantity(), InventoryQualityStatus.PENDING_INSPECTION, COMPLETION_RECEIPT_SOURCE,
-								id, id, detail.businessDate(), "生产完工入库", detail.remark(), operator.username()));
+								id, id, detail.businessDate(), "生产完工入库", detail.remark(), operator.username(),
+								null, null, completionValuation.unitCost()));
 			}
 			else {
 				BigDecimal beforeQuantity = ZERO;
@@ -623,7 +631,8 @@ public class ProductionAdminService {
 									InventoryDirection.IN, detail.receiptWarehouseId(), product.id(), product.unitId(),
 									allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
 									COMPLETION_RECEIPT_SOURCE, id, id, detail.businessDate(), "生产完工入库",
-									detail.remark(), operator.username(), allocation.batchId(), allocation.serialId()));
+									detail.remark(), operator.username(), allocation.batchId(), allocation.serialId(),
+									completionValuation.unitCost()));
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), splitPosting.movementId());
 					this.inventoryTrackingService.markInboundPosted(allocation, detail.receiptWarehouseId(),
 							InventoryQualityStatus.PENDING_INSPECTION, splitPosting.movementId(), operator.username());
@@ -639,10 +648,11 @@ public class ProductionAdminService {
 			this.jdbcTemplate.update("""
 					update mfg_completion_receipt
 					set before_quantity = ?, after_quantity = ?, status = ?, posted_by = ?, posted_at = ?,
-					    updated_by = ?, updated_at = ?, version = version + 1
+					    unit_cost = ?, valuation_state = ?, updated_by = ?, updated_at = ?, version = version + 1
 					where id = ?
 					""", posting.beforeQuantity(), posting.afterQuantity(), ProductionDocumentStatus.POSTED.name(),
-					operator.username(), now, operator.username(), now, id);
+					operator.username(), now, completionValuation.unitCost(), completionValuation.valuationState(),
+					operator.username(), now, id);
 			this.jdbcTemplate.update("""
 					update mfg_work_order
 					set received_quantity = received_quantity + ?, status = ?, updated_by = ?, updated_at = ?,
@@ -667,6 +677,29 @@ public class ProductionAdminService {
 		if (trackingMethod == InventoryTrackingMethod.SERIAL) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_SERIAL_REQUIRED);
 		}
+	}
+
+	private CompletionValuation completionValuation(Long materialId, BigDecimal provisionalUnitCost) {
+		if (!materialValueEnabled(materialId)) {
+			return new CompletionValuation(null, "NON_VALUED");
+		}
+		Optional<BigDecimal> currentAverage = this.inventoryValuationService.currentPublicAverageUnitCost(materialId);
+		if (currentAverage.isPresent()) {
+			return new CompletionValuation(currentAverage.get(), "CURRENT_AVERAGE_PROVISIONAL");
+		}
+		if (provisionalUnitCost == null) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
+		}
+		return new CompletionValuation(provisionalUnitCost, "MANUAL_PROVISIONAL");
+	}
+
+	private boolean materialValueEnabled(Long materialId) {
+		Boolean enabled = this.jdbcTemplate.queryForObject("""
+				select coalesce(inventory_value_enabled, false)
+				from mst_material
+				where id = ?
+				""", Boolean.class, materialId);
+		return Boolean.TRUE.equals(enabled);
 	}
 
 	private void postMaterialIssueLine(WorkOrderRow workOrder, ProductionDocumentRow issue, MaterialIssueLineRow line,
@@ -820,7 +853,18 @@ public class ProductionAdminService {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_RECEIPT_EXCEEDS_REPORTED);
 		}
 		return new ValidatedReceipt(request.businessDate(), receiptWarehouseId, quantity,
-				validateOptionalText(request.remark(), 500), request.trackingAllocations());
+				validateOptionalUnitCost(request.provisionalUnitCost()), validateOptionalText(request.remark(), 500),
+				request.trackingAllocations());
+	}
+
+	private BigDecimal validateOptionalUnitCost(BigDecimal value) {
+		if (value == null) {
+			return null;
+		}
+		if (value.compareTo(ZERO) < 0 || value.scale() > 6 || integerDigits(value) > 12L) {
+			throw new BusinessException(ApiErrorCode.INVENTORY_VALUATION_UNIT_COST_REQUIRED);
+		}
+		return value;
 	}
 
 	private MaterialRef validateProductMaterial(Long materialId) {
@@ -1032,13 +1076,14 @@ public class ProductionAdminService {
 			try {
 				Long id = this.jdbcTemplate.queryForObject("""
 						insert into mfg_completion_receipt (
-							receipt_no, work_order_id, status, business_date, receipt_warehouse_id, quantity, remark,
-							created_by, created_at, updated_by, updated_at
+							receipt_no, work_order_id, status, business_date, receipt_warehouse_id, quantity,
+							provisional_unit_cost, remark, created_by, created_at, updated_by, updated_at
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						returning id
 						""", Long.class, receiptNo, workOrderId, ProductionDocumentStatus.DRAFT.name(),
 						receipt.businessDate(), receipt.receiptWarehouseId(), receipt.quantity(),
+						receipt.provisionalUnitCost(),
 						blankToNull(receipt.remark()), operatorName, now, operatorName, now);
 				return new CreatedDocument(id, receiptNo);
 			}
@@ -1388,6 +1433,7 @@ public class ProductionAdminService {
 		return this.jdbcTemplate.query("""
 				select r.id, r.receipt_no, r.work_order_id, r.status, r.business_date, r.receipt_warehouse_id,
 				       w.name as receipt_warehouse_name, r.quantity, r.before_quantity, r.after_quantity,
+				       r.provisional_unit_cost, r.unit_cost, r.valuation_state,
 				       r.remark, r.created_by, r.created_at, r.updated_at, r.posted_by, r.posted_at,
 				       pm.tracking_method
 				from mfg_completion_receipt r
@@ -1551,9 +1597,11 @@ public class ProductionAdminService {
 				rs.getLong("work_order_id"), rs.getString("status"), rs.getObject("business_date", LocalDate.class),
 				rs.getLong("receipt_warehouse_id"), rs.getString("receipt_warehouse_name"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
-				rs.getString("remark"), rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
-				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("posted_by"),
-				rs.getObject("posted_at", OffsetDateTime.class), trackingMethod.name(), trackingMethod.displayName(),
+				rs.getBigDecimal("provisional_unit_cost"), rs.getBigDecimal("unit_cost"),
+				rs.getString("valuation_state"), rs.getString("remark"), rs.getString("created_by"),
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
+				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class), trackingMethod.name(),
+				trackingMethod.displayName(),
 				this.inventoryTrackingService.allocationResponses(COMPLETION_RECEIPT_SOURCE, receiptId, receiptId));
 	}
 
@@ -1699,7 +1747,7 @@ public class ProductionAdminService {
 	}
 
 	public record CompletionReceiptRequest(@NotNull LocalDate businessDate, Long receiptWarehouseId,
-			@NotNull BigDecimal quantity, String remark,
+			@NotNull BigDecimal quantity, BigDecimal provisionalUnitCost, String remark,
 			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
@@ -1764,8 +1812,9 @@ public class ProductionAdminService {
 
 	public record CompletionReceiptResponse(Long id, String receiptNo, Long workOrderId, String status,
 			LocalDate businessDate, Long receiptWarehouseId, String receiptWarehouseName, BigDecimal quantity,
-			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark, String createdByName,
-			OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt,
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, BigDecimal provisionalUnitCost, BigDecimal unitCost,
+			String valuationState, String remark, String createdByName, OffsetDateTime createdAt,
+			OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt,
 			String trackingMethod, String trackingMethodName,
 			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations) {
 	}
@@ -1797,7 +1846,11 @@ public class ProductionAdminService {
 	}
 
 	private record ValidatedReceipt(LocalDate businessDate, Long receiptWarehouseId, BigDecimal quantity,
-			String remark, List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
+			BigDecimal provisionalUnitCost, String remark,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
+	}
+
+	private record CompletionValuation(BigDecimal unitCost, String valuationState) {
 	}
 
 	private record WorkOrderRow(Long id, String workOrderNo, Long productMaterialId, Long bomId,

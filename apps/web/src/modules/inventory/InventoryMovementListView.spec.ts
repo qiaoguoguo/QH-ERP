@@ -13,6 +13,9 @@ const inventoryApiMock = vi.hoisted(() => ({
   movements: {
     list: vi.fn(),
   },
+  costLayers: {
+    list: vi.fn(),
+  },
   traces: {
     getBatchTrace: vi.fn(),
     getSerialTrace: vi.fn(),
@@ -88,6 +91,34 @@ const movement: InventoryMovementRecord = {
   operatorName: '管理员',
   occurredAt: '2026-07-03T10:00:00+08:00',
 }
+
+const valuedMovement = {
+  ...movement,
+  id: 27,
+  ownershipType: 'PROJECT',
+  ownershipTypeName: '项目库存',
+  projectId: 501,
+  projectNo: 'PRJ-001',
+  projectName: '一号项目',
+  valuationMethod: 'PROJECT_ACTUAL_LAYER',
+  valuationMethodName: '项目实际成本层',
+  valuationState: 'VALUED',
+  valuationStateName: '已估值',
+  unitCost: '11.000000',
+  movementAmount: '33.00',
+  costVisible: true,
+  valueFlowId: 8801,
+  originalValueFlowId: 7701,
+  costLayerId: 9001,
+} as InventoryMovementRecord
+
+const restrictedValuedMovement = {
+  ...valuedMovement,
+  id: 28,
+  costVisible: false,
+  unitCost: null,
+  movementAmount: null,
+} as InventoryMovementRecord
 
 const productionIssueMovement: InventoryMovementRecord = {
   ...movement,
@@ -265,6 +296,34 @@ describe('库存变动流水页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     inventoryApiMock.movements.list.mockResolvedValue(movementPage)
+    inventoryApiMock.costLayers.list.mockResolvedValue({
+      items: [{
+        id: 9001,
+        layerNo: 'CL-PRJ-001',
+        ownershipType: 'PROJECT',
+        ownershipTypeName: '项目库存',
+        projectId: 501,
+        projectNo: 'PRJ-001',
+        projectName: '一号项目',
+        materialId: 2,
+        materialCode: 'RM-STEEL',
+        materialName: '冷轧钢板',
+        originalQuantity: '120.500000',
+        originalAmount: '1325.50',
+        remainingQuantity: '80.000000',
+        remainingAmount: '880.00',
+        unitCost: '11.000000',
+        status: 'OPEN',
+        statusName: '开放',
+        sourceType: 'OWNERSHIP_CONVERSION',
+        sourceDocumentNo: 'OC-001',
+        createdAt: '2026-07-03T09:00:00+08:00',
+      }],
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
     inventoryApiMock.traces.getBatchTrace.mockResolvedValue(traceDetail)
     inventoryApiMock.traces.getSerialTrace.mockResolvedValue(traceDetail)
     masterDataApiMock.warehouses.list.mockResolvedValue({
@@ -286,7 +345,7 @@ describe('库存变动流水页', () => {
   it('加载流水并用文字展示变动类型和出入库方向', async () => {
     const { wrapper } = await mountMovements()
 
-    expect(wrapper.text()).toContain('库存变动流水')
+    expect(wrapper.text()).toContain('库存流水与价值追溯')
     expect(wrapper.text()).toContain('调减')
     expect(wrapper.text()).toContain('出库')
     expect(wrapper.text()).toContain('批次管理')
@@ -295,6 +354,47 @@ describe('库存变动流水页', () => {
     expect(wrapper.text()).toContain('生产损耗调整')
     expect(wrapper.findAll('[data-test="create-inventory-document"]')).toHaveLength(0)
     expect(wrapper.find('[data-test="movement-quantity-cell"]').classes()).toContain('numeric-cell')
+  })
+
+  it('升级为库存流水与价值追溯，金额受限时不展示完整金额并可查看成本层', async () => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [valuedMovement, restrictedValuedMovement],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    })
+    const { wrapper } = await mountMovements({}, [
+      'inventory:movement:view',
+      'inventory:document:view',
+      'inventory:valuation:view',
+      'inventory:trace:view',
+    ])
+
+    expect(wrapper.text()).toContain('库存流水与价值追溯')
+    expect(wrapper.text()).toContain('所有权')
+    expect(wrapper.text()).toContain('项目')
+    expect(wrapper.text()).toContain('计价方法')
+    expect(wrapper.text()).toContain('单位成本')
+    expect(wrapper.text()).toContain('变动金额')
+    expect(wrapper.text()).toContain('价值流水')
+    expect(wrapper.text()).toContain('项目库存')
+    expect(wrapper.text()).toContain('PRJ-001 一号项目')
+    expect(wrapper.text()).toContain('11.000000')
+    expect(wrapper.text()).toContain('33.00')
+    expect(wrapper.text()).toContain('金额受限')
+    expect(wrapper.find('[data-test="movement-cost-restricted-28"]').text()).toContain('金额受限')
+
+    await wrapper.find('[data-test="view-movement-cost-layer"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({
+      costLayerId: 9001,
+      page: 1,
+      pageSize: 20,
+    }))
+    expect(wrapper.text()).toContain('成本层追溯')
+    expect(wrapper.text()).toContain('CL-PRJ-001')
   })
 
   it('用中文展示生产领料和完工入库流水类型', async () => {
@@ -361,6 +461,24 @@ describe('库存变动流水页', () => {
       page: 1,
       pageSize: 10,
     })
+  })
+
+  it('按所有权、项目、计价方法和成本层查询，发送冻结查询字段', async () => {
+    const { wrapper } = await mountMovements()
+
+    await setSelectValue(wrapper, 'inventory-movement-ownership-type', 'PROJECT')
+    await wrapper.find('input[name="inventory-movement-project-id"]').setValue('501')
+    await setSelectValue(wrapper, 'inventory-movement-valuation-method', 'PROJECT_ACTUAL_LAYER')
+    await wrapper.find('input[name="inventory-movement-cost-layer-id"]').setValue('9001')
+    await wrapper.find('[data-test="search-inventory-movements"]').trigger('click')
+    await flushPromises()
+
+    expect(inventoryApiMock.movements.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      valuationMethod: 'PROJECT_ACTUAL_LAYER',
+      costLayerId: 9001,
+    }))
   })
 
   it('默认每页显示 10 条并支持切换每页条数', async () => {

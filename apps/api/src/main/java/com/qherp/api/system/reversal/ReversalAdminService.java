@@ -294,6 +294,9 @@ public class ReversalAdminService {
 				ShipmentLineRow sourceLine = lockShipmentLine(shipment.id(), line.sourceShipmentLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validateLineStillReturnable(sourceLine, line);
+				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
+						SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(), line.quantity(),
+						sourceLine.unitPrice());
 				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
 					.resolveStoredSourceInheritedInboundAllocations(SALES_RETURN_SOURCE, salesReturn.id(), line.id(),
 							line.materialId(), line.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
@@ -306,8 +309,8 @@ public class ReversalAdminService {
 									InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(),
 									line.unitId(), allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
 									SALES_RETURN_SOURCE, salesReturn.id(), line.id(), salesReturn.businessDate(),
-									"销售退货入库", line.reason(), operator.username(), allocation.batchId(),
-									allocation.serialId()));
+									"销售退货入库", line.reason(), operator.username(), false, allocation.batchId(),
+									allocation.serialId(), valuationContext));
 					movementId = posting.movementId();
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
 					this.inventoryTrackingService.markInboundPosted(allocation, salesReturn.warehouseId(),
@@ -527,6 +530,9 @@ public class ReversalAdminService {
 				ReceiptLineRow sourceLine = lockReceiptLine(receipt.id(), line.sourceReceiptLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validatePurchaseLineStillReturnable(sourceLine, line);
+				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
+						PURCHASE_RECEIPT_SOURCE, receipt.id(), line.sourceReceiptLineId(), line.quantity(),
+						sourceLine.unitPrice());
 				if (line.qualityStatus() == InventoryQualityStatus.FROZEN) {
 					throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
 				}
@@ -547,7 +553,7 @@ public class ReversalAdminService {
 									line.unitId(), allocation.quantity(), line.qualityStatus(),
 									PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
 									purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username(),
-									allocation.batchId(), allocation.serialId()));
+									false, allocation.batchId(), allocation.serialId(), valuationContext));
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
 					this.inventoryTrackingService.markOutboundPosted(allocation, posting.movementId(),
 							operator.username());
@@ -785,6 +791,9 @@ public class ReversalAdminService {
 				ProductionIssueLineRow sourceLine = lockProductionIssueLine(issue.id(), line.sourceIssueLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validateMaterialReturnLineStillReturnable(sourceLine, line);
+				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
+						PRODUCTION_MATERIAL_ISSUE_SOURCE, issue.id(), line.sourceIssueLineId(), line.quantity(),
+						line.unitPrice());
 				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
 					.resolveStoredSourceInheritedInboundAllocations(PRODUCTION_MATERIAL_RETURN_SOURCE,
 							materialReturn.id(), line.id(), line.materialId(), line.quantity(),
@@ -798,7 +807,8 @@ public class ReversalAdminService {
 									line.warehouseId(), line.materialId(), line.unitId(), allocation.quantity(),
 									InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_RETURN_SOURCE,
 									materialReturn.id(), line.id(), materialReturn.businessDate(), "生产退料入库",
-									line.reason(), operator.username(), allocation.batchId(), allocation.serialId()));
+									line.reason(), operator.username(), false, allocation.batchId(),
+									allocation.serialId(), valuationContext));
 					movementId = posting.movementId();
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
 					this.inventoryTrackingService.markInboundPosted(allocation, line.warehouseId(),
@@ -3590,6 +3600,34 @@ public class ReversalAdminService {
 				where sl.shipment_id = ?
 				and sl.id = ?
 				""", this::mapShipmentLineRow, shipmentId, lineId).stream().findFirst();
+	}
+
+	private InventoryPostingService.ValuationContext originalPublicValueContext(String sourceType, Long sourceId,
+			Long sourceLineId, BigDecimal quantity, BigDecimal fallbackUnitCost) {
+		return this.jdbcTemplate.query("""
+				select min(id) as value_movement_id,
+				       coalesce(sum(quantity), 0) as quantity,
+				       sum(inventory_amount) as inventory_amount,
+				       max(unit_cost) as unit_cost
+				from inv_value_movement
+				where source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				and ownership_type = 'PUBLIC'
+				""", (rs, rowNum) -> {
+			Long valueMovementId = nullableLong(rs, "value_movement_id");
+			BigDecimal sourceQuantity = rs.getBigDecimal("quantity");
+			BigDecimal amount = rs.getBigDecimal("inventory_amount");
+			BigDecimal unitCost = rs.getBigDecimal("unit_cost");
+			if (amount != null && sourceQuantity != null && sourceQuantity.compareTo(ZERO) > 0) {
+				unitCost = amount.divide(sourceQuantity, 6, java.math.RoundingMode.HALF_UP);
+			}
+			if (unitCost == null) {
+				unitCost = fallbackUnitCost;
+			}
+			return new InventoryPostingService.ValuationContext("PUBLIC", null, unitCost, null, valueMovementId);
+		}, sourceType, sourceId, sourceLineId).stream().findFirst()
+			.orElse(InventoryPostingService.ValuationContext.publicStock(fallbackUnitCost));
 	}
 
 	private Optional<ReceiptLineRow> receiptLine(Long receiptId, Long lineId) {

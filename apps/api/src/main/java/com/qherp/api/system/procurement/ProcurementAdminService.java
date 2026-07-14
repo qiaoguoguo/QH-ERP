@@ -386,7 +386,8 @@ public class ProcurementAdminService {
 					new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RECEIPT,
 							InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
 							line.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE,
-							receipt.id(), line.id(), receipt.businessDate(), "采购入库", line.remark(), operatorName));
+							receipt.id(), line.id(), receipt.businessDate(), "采购入库", line.remark(), operatorName,
+							null, null, orderLine.unitPrice()));
 			beforeQuantity = posting.beforeQuantity();
 			afterQuantity = posting.afterQuantity();
 		}
@@ -397,7 +398,7 @@ public class ProcurementAdminService {
 								InventoryDirection.IN, receipt.warehouseId(), line.materialId(), line.unitId(),
 								allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION, RECEIPT_SOURCE_TYPE,
 								receipt.id(), line.id(), receipt.businessDate(), "采购入库", line.remark(),
-								operatorName, allocation.batchId(), allocation.serialId()));
+								operatorName, allocation.batchId(), allocation.serialId(), orderLine.unitPrice()));
 				this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
 				this.inventoryTrackingService.markInboundPosted(allocation, receipt.warehouseId(),
 						InventoryQualityStatus.PENDING_INSPECTION, posting.movementId(), operatorName);

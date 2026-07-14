@@ -6,9 +6,11 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.bom.BomEngineeringChangeAdminService;
+import com.qherp.api.system.inventory.InventoryStage023AdminService;
 import com.qherp.api.system.salesproject.SalesProjectContractService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -37,13 +39,17 @@ public class PlatformApprovalService {
 
 	private final BomEngineeringChangeAdminService engineeringChangeService;
 
+	private final InventoryStage023AdminService inventoryStage023AdminService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
-			BomEngineeringChangeAdminService engineeringChangeService) {
+			BomEngineeringChangeAdminService engineeringChangeService,
+			@Lazy InventoryStage023AdminService inventoryStage023AdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
 		this.engineeringChangeService = engineeringChangeService;
+		this.inventoryStage023AdminService = inventoryStage023AdminService;
 	}
 
 	@Transactional
@@ -56,6 +62,24 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitEcoApplication(Long ecoId, ApprovalSubmitRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		return submit("BOM_ECO_APPLICATION", ecoId, request, operator, servletRequest);
+	}
+
+	@Transactional
+	public ApprovalInstanceRecord submitInventoryOwnershipConversion(Long conversionId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("INVENTORY_OWNERSHIP_CONVERSION_POST", conversionId, request, operator, servletRequest);
+	}
+
+	@Transactional
+	public ApprovalInstanceRecord submitInventoryStocktake(Long stocktakeId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("INVENTORY_STOCKTAKE_VARIANCE_POST", stocktakeId, request, operator, servletRequest);
+	}
+
+	@Transactional
+	public ApprovalInstanceRecord submitInventoryValuationAdjustment(Long adjustmentId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("INVENTORY_VALUATION_ADJUSTMENT_POST", adjustmentId, request, operator, servletRequest);
 	}
 
 	@Transactional(readOnly = true)
@@ -337,6 +361,18 @@ public class PlatformApprovalService {
 					servletRequest);
 			return;
 		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(task.sceneCode())) {
+			this.inventoryStage023AdminService.postOwnershipConversionFromApproval(task.businessObjectId(), operator);
+			return;
+		}
+		if ("INVENTORY_STOCKTAKE_VARIANCE_POST".equals(task.sceneCode())) {
+			this.inventoryStage023AdminService.postStocktakeFromApproval(task.businessObjectId(), operator);
+			return;
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(task.sceneCode())) {
+			this.inventoryStage023AdminService.postValuationAdjustmentFromApproval(task.businessObjectId(), operator);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -448,6 +484,49 @@ public class PlatformApprovalService {
 				.stream()
 				.findFirst()
 				.orElseThrow(() -> new BusinessException(ApiErrorCode.BOM_ENGINEERING_CHANGE_NOT_FOUND));
+		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, conversion_no, reason,
+					       case when status in ('DRAFT', 'SUBMITTED') then 'DRAFT' else status end as approval_status,
+					       version
+					from inv_ownership_conversion
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("conversion_no"), rs.getString("reason"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND));
+		}
+		if ("INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, stocktake_no, reason,
+					       case when status in ('DRAFT', 'COUNTING', 'RECONCILED', 'SUBMITTED')
+					            then 'DRAFT' else status end as approval_status,
+					       version
+					from inv_stocktake
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("stocktake_no"), rs.getString("reason"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND));
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, adjustment_no, reason,
+					       case when status in ('DRAFT', 'SUBMITTED') then 'DRAFT' else status end as approval_status,
+					       version
+					from inv_valuation_adjustment
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("adjustment_no"), rs.getString("reason"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND));
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -785,6 +864,13 @@ public class PlatformApprovalService {
 		if ("BOM_ECO_APPLICATION".equals(sceneCode)) {
 			return operator.permissions().contains("material:bom-eco:view");
 		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(sceneCode)
+				|| "INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)) {
+			return operator.permissions().contains("inventory:balance:view");
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
+			return operator.permissions().contains("inventory:valuation:view");
+		}
 		return false;
 	}
 
@@ -831,6 +917,13 @@ public class PlatformApprovalService {
 		}
 		if ("BOM_ECO_APPLICATION".equals(sceneCode)) {
 			return "material:bom-eco:view";
+		}
+		if ("INVENTORY_OWNERSHIP_CONVERSION_POST".equals(sceneCode)
+				|| "INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)) {
+			return "inventory:balance:view";
+		}
+		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
+			return "inventory:valuation:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

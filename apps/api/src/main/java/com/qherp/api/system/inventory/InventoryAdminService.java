@@ -69,13 +69,17 @@ public class InventoryAdminService {
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryBalanceResponse> balances(String keyword, Long warehouseId, Long materialId,
 			String materialType, String qualityStatus, String trackingMethod, Long batchId, String batchNo,
-			Long serialId, String serialNo, boolean onlyPositive, int page, int pageSize) {
+			Long serialId, String serialNo, String ownershipType, Long projectId, String valuationState,
+			boolean onlyPositive, boolean includeZero, int page, int pageSize, CurrentUser currentUser) {
 		InventoryQualityStatus selectedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		InventoryTrackingMethod selectedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
 		boolean trackingBreakdown = trackingBreakdown(selectedTrackingMethod, batchId, batchNo, serialId, serialNo);
 		QueryParts queryParts = balanceQueryParts(keyword, warehouseId, materialId, materialType,
-				selectedTrackingMethod, batchId, batchNo, serialId, serialNo);
-		HavingParts havingParts = balanceHavingParts(selectedQualityStatus, onlyPositive);
+				selectedTrackingMethod, batchId, batchNo, serialId, serialNo, ownershipType, projectId,
+				valuationState);
+		HavingParts havingParts = balanceHavingParts(selectedQualityStatus, onlyPositive && !includeZero);
+		boolean costVisible = hasPermission(currentUser, "inventory:valuation:view");
+		String ownershipCountSelect = ", b.ownership_type, b.project_id, b.valuation_state";
 		String trackingCountSelect = trackingBreakdown ? ", b.batch_id, b.serial_id" : "";
 		String trackingSelect = trackingBreakdown
 				? "m.tracking_method, b.batch_id, bt.batch_no, b.serial_id, sr.serial_no,"
@@ -114,7 +118,7 @@ public class InventoryAdminService {
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from (
-					select b.warehouse_id, b.material_id, b.unit_id%s
+					select b.warehouse_id, b.material_id, b.unit_id%s%s
 					from inv_stock_balance b
 					left join mst_warehouse w on w.id = b.warehouse_id
 					left join mst_material m on m.id = b.material_id
@@ -122,10 +126,11 @@ public class InventoryAdminService {
 					left join inv_batch bt on bt.id = b.batch_id
 					left join inv_serial sr on sr.id = b.serial_id
 					%s
-					group by b.warehouse_id, b.material_id, b.unit_id%s
+					group by b.warehouse_id, b.material_id, b.unit_id%s%s
 					%s
 				) grouped
-				""".formatted(trackingCountSelect, queryParts.where(), trackingCountSelect, havingParts.having()),
+				""".formatted(ownershipCountSelect, trackingCountSelect, queryParts.where(), ownershipCountSelect,
+						trackingCountSelect, havingParts.having()),
 				Long.class, countArgs.toArray());
 		List<Object> args = new ArrayList<>(queryParts.args());
 		args.addAll(havingParts.args());
@@ -135,6 +140,7 @@ public class InventoryAdminService {
 				select min(b.id) as id, b.warehouse_id, w.code as warehouse_code, w.name as warehouse_name,
 				       b.material_id, m.code as material_code, m.name as material_name,
 				       m.specification as material_spec, m.material_type, %s
+				       b.ownership_type, b.project_id, b.valuation_state,
 				       b.unit_id, u.name as unit_name,
 				       sum(b.quantity_on_hand) as total_quantity_on_hand,
 				       sum(b.locked_quantity) as total_locked_quantity,
@@ -152,6 +158,9 @@ public class InventoryAdminService {
 				       coalesce(max(pi.in_transit_quantity), 0) as in_transit_quantity,
 				       coalesce(max(sd.sales_demand_quantity), 0) as sales_demand_quantity,
 				       coalesce(max(pd.production_demand_quantity), 0) as production_demand_quantity,
+				       sum(b.inventory_amount) as inventory_amount,
+				       max(b.average_unit_cost) as average_unit_cost,
+				       count(distinct b.cost_layer_id) filter (where b.cost_layer_id is not null) as cost_layer_count,
 				       max(b.updated_at) as updated_at
 				from inv_stock_balance b
 				left join mst_warehouse w on w.id = b.warehouse_id
@@ -201,13 +210,13 @@ public class InventoryAdminService {
 				) pd on pd.warehouse_id = b.warehouse_id and pd.material_id = b.material_id
 				%s
 				group by b.warehouse_id, w.code, w.name, b.material_id, m.code, m.name, m.specification,
-				         m.material_type%s, b.unit_id, u.name
+				         m.material_type%s, b.ownership_type, b.project_id, b.valuation_state, b.unit_id, u.name
 				%s
 				order by max(b.updated_at) desc, min(b.id) desc
 				limit ? offset ?
 				""".formatted(trackingSelect, reservationJoin, queryParts.where(), trackingGroupBy,
 						havingParts.having()),
-				(rs, rowNum) -> mapBalance(rs, rowNum, selectedQualityStatus), args.toArray());
+				(rs, rowNum) -> mapBalance(rs, rowNum, selectedQualityStatus, costVisible), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -216,18 +225,19 @@ public class InventoryAdminService {
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus, int page,
 			int pageSize) {
 		return movements(keyword, warehouseId, materialId, movementType, direction, dateFrom, dateTo, qualityStatus,
-				null, null, null, null, null, page, pageSize);
+				null, null, null, null, null, page, pageSize, null);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<InventoryMovementResponse> movements(String keyword, Long warehouseId, Long materialId,
 			String movementType, String direction, LocalDate dateFrom, LocalDate dateTo, String qualityStatus,
 			String trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo, int page,
-			int pageSize) {
+			int pageSize, CurrentUser currentUser) {
 		InventoryQualityStatus parsedQualityStatus = parseNullableQualityStatus(qualityStatus);
 		InventoryTrackingMethod parsedTrackingMethod = parseNullableTrackingMethod(trackingMethod);
 		QueryParts queryParts = movementQueryParts(keyword, warehouseId, materialId, movementType, direction, dateFrom,
 				dateTo, parsedQualityStatus, parsedTrackingMethod, batchId, batchNo, serialId, serialNo);
+		boolean costVisible = hasPermission(currentUser, "inventory:valuation:view");
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from inv_stock_movement mv
@@ -246,7 +256,8 @@ public class InventoryAdminService {
 				       mv.source_type, mv.source_id, mv.source_line_id, mv.business_date, mv.reason, mv.remark,
 				       mv.operator_name, mv.occurred_at, mv.quality_status, m.tracking_method, mv.batch_id,
 				       bt.batch_no, mv.serial_id, sr.serial_no, d.document_no as source_document_no,
-				       null::varchar as target_document_no
+				       null::varchar as target_document_no, mv.ownership_type, mv.project_id, mv.valuation_state,
+				       vm.unit_cost, vm.inventory_amount, vm.valuation_method, vm.original_value_movement_id
 				from inv_stock_movement mv
 				join mst_warehouse w on w.id = mv.warehouse_id
 				join mst_material m on m.id = mv.material_id
@@ -254,10 +265,12 @@ public class InventoryAdminService {
 				left join inv_batch bt on bt.id = mv.batch_id
 				left join inv_serial sr on sr.id = mv.serial_id
 				left join inv_inventory_document d on d.id = mv.source_id and mv.source_type = 'INVENTORY_DOCUMENT'
+				left join inv_value_movement vm on vm.stock_movement_id = mv.id
 				%s
-				order by mv.occurred_at desc, mv.id desc
+				order by mv.occurred_at asc, mv.id asc
 				limit ? offset ?
-				""".formatted(queryParts.where()), this::mapMovement, args.toArray());
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapMovement(rs, rowNum, costVisible),
+				args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -521,7 +534,7 @@ public class InventoryAdminService {
 		List<InventoryDocumentSummaryResponse> items = this.jdbcTemplate.query("""
 				select d.id, d.document_no, d.document_type, d.status, d.business_date, d.reason, d.remark,
 				       (select count(*) from inv_inventory_document_line l where l.document_id = d.id) as line_count,
-				       d.created_by, d.created_at, d.updated_at, d.posted_by, d.posted_at
+				       d.created_by, d.created_at, d.updated_at, d.posted_by, d.posted_at, d.version
 				from inv_inventory_document d
 				%s
 				order by d.updated_at desc, d.id desc
@@ -536,7 +549,7 @@ public class InventoryAdminService {
 		return new InventoryDocumentDetailResponse(summary.id(), summary.documentNo(), summary.documentType(),
 				summary.status(), summary.businessDate(), summary.reason(), summary.remark(), summary.lineCount(),
 				summary.createdByName(), summary.createdAt(), summary.updatedAt(), summary.postedByName(),
-				summary.postedAt(), documentLines(id));
+				summary.postedAt(), summary.version(), documentLines(id));
 	}
 
 	@Transactional
@@ -590,11 +603,15 @@ public class InventoryAdminService {
 	}
 
 	@Transactional
-	public InventoryDocumentDetailResponse postDocument(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+	public InventoryDocumentDetailResponse postDocument(Long id, InventoryDocumentPostRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
 		try {
 			DocumentRow document = lockDocument(id).orElseThrow(this::notFound);
 			if (document.status() != InventoryDocumentStatus.DRAFT) {
 				throw new BusinessException(ApiErrorCode.INVENTORY_DUPLICATE_POST);
+			}
+			if (request != null && request.version() != null && !request.version().equals(document.version())) {
+				throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 			}
 			this.businessPeriodGuard.assertWritable(document.businessDate(), BusinessPeriodOperation.POST, SOURCE_TYPE, id);
 			List<DocumentLineRow> lines = documentLineRows(id);
@@ -636,7 +653,7 @@ public class InventoryAdminService {
 				new InventoryPostingService.PostingRequest(movementType, direction, line.warehouseId(),
 						line.materialId(), line.unitId(), line.quantity(), InventoryQualityStatus.QUALIFIED,
 						SOURCE_TYPE, document.id(), line.id(), document.businessDate(), document.reason(),
-						line.remark(), operatorName));
+						line.remark(), operatorName, null, null, line.unitPrice()));
 		this.jdbcTemplate.update("""
 				update inv_inventory_document_line
 				set before_quantity = ?, after_quantity = ?, updated_at = ?
@@ -689,8 +706,9 @@ public class InventoryAdminService {
 			}
 			InventoryAdjustmentDirection adjustmentDirection = validateAdjustmentDirection(documentType,
 					line.adjustmentDirection());
+			BigDecimal unitPrice = validateUnitPrice(line.unitPrice());
 			lines.add(new ValidatedLine(line.lineNo(), line.warehouseId(), line.materialId(), unitId, quantity,
-					adjustmentDirection, lineRemark));
+					adjustmentDirection, lineRemark, unitPrice));
 		}
 		return new ValidatedDocument(documentType, request.businessDate(), reason, remark, lines);
 	}
@@ -712,6 +730,16 @@ public class InventoryAdminService {
 	private BigDecimal validateQuantity(BigDecimal value) {
 		if (value == null || value.compareTo(ZERO) <= 0 || value.scale() > 6 || integerDigits(value) > 12L) {
 			throw new BusinessException(ApiErrorCode.INVENTORY_QUANTITY_INVALID);
+		}
+		return value;
+	}
+
+	private BigDecimal validateUnitPrice(BigDecimal value) {
+		if (value == null) {
+			return null;
+		}
+		if (value.compareTo(ZERO) < 0 || value.scale() > 6 || integerDigits(value) > 12L) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		return value;
 	}
@@ -783,12 +811,12 @@ public class InventoryAdminService {
 			this.jdbcTemplate.update("""
 					insert into inv_inventory_document_line (
 						document_id, line_no, warehouse_id, material_id, unit_id, quantity, adjustment_direction,
-						remark, created_at, updated_at
+						unit_price, remark, created_at, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", documentId, line.lineNo(), line.warehouseId(), line.materialId(), line.unitId(),
 					line.quantity(), line.adjustmentDirection() == null ? null : line.adjustmentDirection().name(),
-					blankToNull(line.remark()), now, now);
+					line.unitPrice(), blankToNull(line.remark()), now, now);
 		}
 	}
 
@@ -823,7 +851,8 @@ public class InventoryAdminService {
 	}
 
 	private QueryParts balanceQueryParts(String keyword, Long warehouseId, Long materialId, String materialType,
-			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo) {
+			InventoryTrackingMethod trackingMethod, Long batchId, String batchNo, Long serialId, String serialNo,
+			String ownershipType, Long projectId, String valuationState) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -864,6 +893,18 @@ public class InventoryAdminService {
 		if (hasText(serialNo)) {
 			conditions.add("sr.serial_no ilike ?");
 			args.add("%" + serialNo + "%");
+		}
+		if (hasText(ownershipType)) {
+			conditions.add("b.ownership_type = ?");
+			args.add(parseOwnershipType(ownershipType));
+		}
+		if (projectId != null) {
+			conditions.add("b.project_id = ?");
+			args.add(projectId);
+		}
+		if (hasText(valuationState)) {
+			conditions.add("b.valuation_state = ?");
+			args.add(parseValuationState(valuationState));
 		}
 		return where(conditions, args);
 	}
@@ -1150,7 +1191,7 @@ public class InventoryAdminService {
 			.query("""
 					select d.id, d.document_no, d.document_type, d.status, d.business_date, d.reason, d.remark,
 					       (select count(*) from inv_inventory_document_line l where l.document_id = d.id) as line_count,
-					       d.created_by, d.created_at, d.updated_at, d.posted_by, d.posted_at
+					       d.created_by, d.created_at, d.updated_at, d.posted_by, d.posted_at, d.version
 					from inv_inventory_document d
 					where d.id = ?
 					""", this::mapDocumentSummary, id)
@@ -1161,7 +1202,7 @@ public class InventoryAdminService {
 	private Optional<DocumentRow> lockDocument(Long id) {
 		return this.jdbcTemplate
 			.query("""
-					select id, document_no, document_type, status, business_date, reason, remark
+					select id, document_no, document_type, status, business_date, reason, remark, version
 					from inv_inventory_document
 					where id = ?
 					for update
@@ -1173,7 +1214,7 @@ public class InventoryAdminService {
 	private List<DocumentLineRow> documentLineRows(Long documentId) {
 		return this.jdbcTemplate.query("""
 				select id, line_no, warehouse_id, material_id, unit_id, quantity, adjustment_direction,
-				       before_quantity, after_quantity, remark
+				       unit_price, before_quantity, after_quantity, remark
 				from inv_inventory_document_line
 				where document_id = ?
 				order by line_no asc, id asc
@@ -1184,7 +1225,7 @@ public class InventoryAdminService {
 		return this.jdbcTemplate.query("""
 				select l.id, l.line_no, l.warehouse_id, w.name as warehouse_name, l.material_id,
 				       m.code as material_code, m.name as material_name, l.unit_id, u.name as unit_name,
-				       l.quantity, l.adjustment_direction, l.before_quantity, l.after_quantity, l.remark
+				       l.quantity, l.adjustment_direction, l.unit_price, l.before_quantity, l.after_quantity, l.remark
 				from inv_inventory_document_line l
 				join mst_warehouse w on w.id = l.warehouse_id
 				join mst_material m on m.id = l.material_id
@@ -1195,11 +1236,13 @@ public class InventoryAdminService {
 				rs.getLong("warehouse_id"), rs.getString("warehouse_name"), rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
 				rs.getString("unit_name"), rs.getBigDecimal("quantity"), rs.getString("adjustment_direction"),
-				rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), rs.getString("remark")),
+				rs.getBigDecimal("unit_price"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
+				rs.getString("remark")),
 				documentId);
 	}
 
-	private InventoryBalanceResponse mapBalance(ResultSet rs, int rowNum, InventoryQualityStatus qualityStatus)
+	private InventoryBalanceResponse mapBalance(ResultSet rs, int rowNum, InventoryQualityStatus qualityStatus,
+			boolean costVisible)
 			throws SQLException {
 		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
 		Long batchId = nullableLong(rs, "batch_id");
@@ -1242,6 +1285,8 @@ public class InventoryAdminService {
 						? demandQuantity.subtract(materialAvailableQuantity.add(visibleInTransitQuantity)).max(ZERO)
 						: ZERO;
 		BigDecimal traceableQuantity = batchId != null || serialId != null ? quantityOnHand : null;
+		BigDecimal inventoryAmount = costVisible ? rs.getBigDecimal("inventory_amount") : null;
+		BigDecimal averageUnitCost = costVisible ? rs.getBigDecimal("average_unit_cost") : null;
 		return new InventoryBalanceResponse(rs.getLong("id"), rs.getLong("warehouse_id"),
 				rs.getString("warehouse_code"), rs.getString("warehouse_name"), rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getString("material_spec"),
@@ -1252,10 +1297,12 @@ public class InventoryAdminService {
 				availableQuantity, totalQuantity, visibleReservedQuantity, visibleOccupiedQuantity,
 				visibleInTransitQuantity, availableToPromiseQuantity, netRequirementShortageQuantity, totalQuantity,
 				pendingInspectionQuantity, qualifiedQuantity, rejectedQuantity, frozenQuantity,
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getString("valuation_state"),
+				costVisible, inventoryAmount, averageUnitCost, rs.getLong("cost_layer_count"),
 				rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
-	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum) throws SQLException {
+	private InventoryMovementResponse mapMovement(ResultSet rs, int rowNum, boolean costVisible) throws SQLException {
 		InventoryQualityStatus qualityStatus = InventoryQualityStatus.valueOf(rs.getString("quality_status"));
 		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
 		String sourceType = rs.getString("source_type");
@@ -1272,7 +1319,11 @@ public class InventoryAdminService {
 				rs.getString("operator_name"), rs.getObject("occurred_at", OffsetDateTime.class),
 				qualityStatus.name(), qualityStatus.displayName(), trackingMethod.name(), trackingMethod.displayName(),
 				nullableLong(rs, "batch_id"), rs.getString("batch_no"), nullableLong(rs, "serial_id"),
-				rs.getString("serial_no"), sourceDocumentNo, rs.getString("target_document_no"));
+				rs.getString("serial_no"), sourceDocumentNo, rs.getString("target_document_no"),
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getString("valuation_state"),
+				costVisible, costVisible ? rs.getBigDecimal("unit_cost") : null,
+				costVisible ? rs.getBigDecimal("inventory_amount") : null, rs.getString("valuation_method"),
+				nullableLong(rs, "original_value_movement_id"));
 	}
 
 	private InventoryBatchSummaryResponse mapBatchSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -1645,21 +1696,23 @@ public class InventoryAdminService {
 				rs.getString("document_type"), rs.getString("status"), rs.getObject("business_date", LocalDate.class),
 				rs.getString("reason"), rs.getString("remark"), rs.getInt("line_count"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
-				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class));
+				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class), rs.getLong("version"));
 	}
 
 	private DocumentRow mapDocumentRow(ResultSet rs, int rowNum) throws SQLException {
 		return new DocumentRow(rs.getLong("id"), rs.getString("document_no"),
 				InventoryDocumentType.valueOf(rs.getString("document_type")),
 				InventoryDocumentStatus.valueOf(rs.getString("status")),
-				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"));
+				rs.getObject("business_date", LocalDate.class), rs.getString("reason"), rs.getString("remark"),
+				rs.getLong("version"));
 	}
 
 	private DocumentLineRow mapDocumentLineRow(ResultSet rs, int rowNum) throws SQLException {
 		return new DocumentLineRow(rs.getLong("id"), rs.getInt("line_no"), rs.getLong("warehouse_id"),
 				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getBigDecimal("quantity"),
 				parseNullableAdjustmentDirection(rs.getString("adjustment_direction")),
-				rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"), rs.getString("remark"));
+				rs.getBigDecimal("unit_price"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
+				rs.getString("remark"));
 	}
 
 	private BusinessException duplicateInventoryException(DuplicateKeyException exception) {
@@ -1742,6 +1795,20 @@ public class InventoryAdminService {
 		catch (RuntimeException exception) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+	}
+
+	private String parseOwnershipType(String value) {
+		return switch (value) {
+			case "PUBLIC", "PROJECT" -> value;
+			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		};
+	}
+
+	private String parseValuationState(String value) {
+		return switch (value) {
+			case "VALUED", "LEGACY_UNVALUED", "NON_VALUED" -> value;
+			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		};
 	}
 
 	private InventoryReservationType parseReservationType(String value) {
@@ -1927,13 +1994,20 @@ public class InventoryAdminService {
 		return value != null && !value.isBlank();
 	}
 
+	private static boolean hasPermission(CurrentUser currentUser, String permissionCode) {
+		return currentUser != null && currentUser.permissions().contains(permissionCode);
+	}
+
 	public record InventoryDocumentLineRequest(@NotNull Integer lineNo, @NotNull Long warehouseId,
 			@NotNull Long materialId, Long unitId, @NotNull BigDecimal quantity, String adjustmentDirection,
-			String remark) {
+			BigDecimal unitPrice, String remark) {
 	}
 
 	public record InventoryDocumentRequest(@NotBlank String documentType, @NotNull LocalDate businessDate,
 			@NotBlank String reason, String remark, @Valid List<InventoryDocumentLineRequest> lines) {
+	}
+
+	public record InventoryDocumentPostRequest(Long version) {
 	}
 
 	public record InventoryBalanceResponse(Long id, Long warehouseId, String warehouseCode, String warehouseName,
@@ -1945,7 +2019,9 @@ public class InventoryAdminService {
 			BigDecimal occupiedQuantity, BigDecimal inTransitQuantity, BigDecimal availableToPromiseQuantity,
 			BigDecimal netRequirementShortageQuantity, BigDecimal totalQuantityOnHand,
 			BigDecimal pendingInspectionQuantity, BigDecimal qualifiedQuantity, BigDecimal rejectedQuantity,
-			BigDecimal frozenQuantity, OffsetDateTime updatedAt) {
+			BigDecimal frozenQuantity, String ownershipType, Long projectId, String valuationState,
+			boolean costVisible, BigDecimal inventoryAmount, BigDecimal averageUnitCost, Long costLayerCount,
+			OffsetDateTime updatedAt) {
 	}
 
 	public record InventoryMovementResponse(Long id, String movementNo, String movementType, String direction,
@@ -1954,7 +2030,9 @@ public class InventoryAdminService {
 			String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName, OffsetDateTime occurredAt, String qualityStatus, String qualityStatusName,
 			String trackingMethod, String trackingMethodName, Long batchId, String batchNo, Long serialId,
-			String serialNo, String sourceDocumentNo, String targetDocumentNo) {
+			String serialNo, String sourceDocumentNo, String targetDocumentNo, String ownershipType, Long projectId,
+			String valuationState, boolean costVisible, BigDecimal unitCost, BigDecimal inventoryAmount,
+			String valuationMethod, Long originalValueMovementId) {
 	}
 
 	public record InventoryTrackingQualityStatusSummaryResponse(String qualityStatus, String qualityStatusName,
@@ -2033,19 +2111,20 @@ public class InventoryAdminService {
 
 	public record InventoryDocumentSummaryResponse(Long id, String documentNo, String documentType, String status,
 			LocalDate businessDate, String reason, String remark, int lineCount, String createdByName,
-			OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt) {
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt,
+			Long version) {
 	}
 
 	public record InventoryDocumentLineResponse(Long id, Integer lineNo, Long warehouseId, String warehouseName,
 			Long materialId, String materialCode, String materialName, Long unitId, String unitName,
-			BigDecimal quantity, String adjustmentDirection, BigDecimal beforeQuantity, BigDecimal afterQuantity,
-			String remark) {
+			BigDecimal quantity, String adjustmentDirection, BigDecimal unitPrice, BigDecimal beforeQuantity,
+			BigDecimal afterQuantity, String remark) {
 	}
 
 	public record InventoryDocumentDetailResponse(Long id, String documentNo, String documentType, String status,
 			LocalDate businessDate, String reason, String remark, int lineCount, String createdByName,
 			OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName, OffsetDateTime postedAt,
-			List<InventoryDocumentLineResponse> lines) {
+			Long version, List<InventoryDocumentLineResponse> lines) {
 	}
 
 	private record ValidatedDocument(InventoryDocumentType documentType, LocalDate businessDate, String reason,
@@ -2053,16 +2132,16 @@ public class InventoryAdminService {
 	}
 
 	private record ValidatedLine(Integer lineNo, Long warehouseId, Long materialId, Long unitId, BigDecimal quantity,
-			InventoryAdjustmentDirection adjustmentDirection, String remark) {
+			InventoryAdjustmentDirection adjustmentDirection, String remark, BigDecimal unitPrice) {
 	}
 
 	private record DocumentRow(Long id, String documentNo, InventoryDocumentType documentType,
-			InventoryDocumentStatus status, LocalDate businessDate, String reason, String remark) {
+			InventoryDocumentStatus status, LocalDate businessDate, String reason, String remark, Long version) {
 	}
 
 	private record DocumentLineRow(Long id, Integer lineNo, Long warehouseId, Long materialId, Long unitId,
-			BigDecimal quantity, InventoryAdjustmentDirection adjustmentDirection, BigDecimal beforeQuantity,
-			BigDecimal afterQuantity, String remark) {
+			BigDecimal quantity, InventoryAdjustmentDirection adjustmentDirection, BigDecimal unitPrice,
+			BigDecimal beforeQuantity, BigDecimal afterQuantity, String remark) {
 	}
 
 	private record CreatedDocument(Long id, String documentNo) {

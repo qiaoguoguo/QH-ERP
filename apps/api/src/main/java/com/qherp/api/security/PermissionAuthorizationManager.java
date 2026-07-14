@@ -853,6 +853,13 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && "/api/admin/inventory/movements".equals(path)) {
 			return "inventory:movement:view";
 		}
+		String costLayerPath = "/api/admin/inventory/cost-layers";
+		if ("GET".equals(method) && (costLayerPath.equals(path) || matchesIdPath(path, costLayerPath))) {
+			return "inventory:cost-layer:view";
+		}
+		if ("GET".equals(method) && "/api/admin/inventory/reconciliations".equals(path)) {
+			return "inventory:reconciliation:view";
+		}
 		String batchPath = "/api/admin/inventory/batches";
 		if ("GET".equals(method) && (batchPath.equals(path) || matchesIdPath(path, batchPath))) {
 			return "inventory:batch:view";
@@ -879,6 +886,80 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(documentPath) + "/\\d+/post")) {
 			return "inventory:document:post";
+		}
+		String transferPath = "/api/admin/inventory/warehouse-transfers";
+		if ("GET".equals(method) && (transferPath.equals(path) || matchesIdPath(path, transferPath))) {
+			return "inventory:warehouse-transfer:view";
+		}
+		if ("POST".equals(method) && transferPath.equals(path)) {
+			return "inventory:warehouse-transfer:create";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(transferPath) + "/\\d+/post")) {
+			return "inventory:warehouse-transfer:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(transferPath) + "/\\d+/cancel")) {
+			return "inventory:warehouse-transfer:cancel";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, transferPath)) {
+			return "inventory:warehouse-transfer:update";
+		}
+		String conversionPath = "/api/admin/inventory/ownership-conversions";
+		if ("GET".equals(method) && (conversionPath.equals(path) || matchesIdPath(path, conversionPath))) {
+			return "inventory:ownership-conversion:view";
+		}
+		if ("POST".equals(method) && conversionPath.equals(path)) {
+			return "inventory:ownership-conversion:create";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(conversionPath) + "/\\d+/(submit|submit-approval)")) {
+			return "inventory:ownership-conversion:submit";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(conversionPath) + "/\\d+/withdraw")) {
+			return "inventory:ownership-conversion:withdraw";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(conversionPath) + "/\\d+/cancel")) {
+			return "inventory:ownership-conversion:cancel";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, conversionPath)) {
+			return "inventory:ownership-conversion:update";
+		}
+		String stocktakePath = "/api/admin/inventory/stocktakes";
+		if ("GET".equals(method) && (stocktakePath.equals(path) || matchesIdPath(path, stocktakePath))) {
+			return "inventory:stocktake:view";
+		}
+		if ("POST".equals(method) && stocktakePath.equals(path)) {
+			return "inventory:stocktake:create";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(stocktakePath) + "/\\d+/(submit|submit-approval)")) {
+			return "inventory:stocktake:submit";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(stocktakePath) + "/\\d+/cancel")) {
+			return "inventory:stocktake:cancel";
+		}
+		if ("PUT".equals(method) && (matchesIdPath(path, stocktakePath)
+				|| path.matches(Pattern.quote(stocktakePath)
+					+ "/\\d+/(start|lines|confirm-variance|reconcile|complete-zero-variance)"))) {
+			return "inventory:stocktake:update";
+		}
+		String valuationAdjustmentPath = "/api/admin/inventory/valuation-adjustments";
+		if ("GET".equals(method)
+				&& (valuationAdjustmentPath.equals(path) || matchesIdPath(path, valuationAdjustmentPath))) {
+			return "inventory:valuation-adjustment:view";
+		}
+		if ("POST".equals(method) && valuationAdjustmentPath.equals(path)) {
+			return "inventory:valuation-adjustment:create";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(valuationAdjustmentPath) + "/\\d+/(submit|submit-approval)")) {
+			return "inventory:valuation-adjustment:submit";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(valuationAdjustmentPath) + "/\\d+/withdraw")) {
+			return "inventory:valuation-adjustment:withdraw";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(valuationAdjustmentPath) + "/\\d+/cancel")) {
+			return "inventory:valuation-adjustment:cancel";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, valuationAdjustmentPath)) {
+			return "inventory:valuation-adjustment:update";
 		}
 		return null;
 	}

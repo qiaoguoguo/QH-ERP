@@ -234,7 +234,15 @@ describe('ERP 应用骨架', () => {
           children: [],
         },
       ],
-      permissions: ['inventory:balance:view', 'inventory:movement:view', 'inventory:document:view'],
+      permissions: [
+        'inventory:balance:view',
+        'inventory:movement:view',
+        'inventory:document:view',
+        'inventory:warehouse-transfer:view',
+        'inventory:ownership-conversion:view',
+        'inventory:stocktake:view',
+        'inventory:valuation-adjustment:view',
+      ],
     })
     const router = createQhErpRouter()
     router.push('/')
@@ -250,6 +258,17 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).toContain('库存余额')
     expect(wrapper.text()).toContain('库存变动')
     expect(wrapper.text()).toContain('库存单据')
+    expect(wrapper.text()).toContain('仓库调拨')
+    expect(wrapper.text()).toContain('所有权转换')
+    expect(wrapper.text()).toContain('库存盘点')
+    expect(wrapper.text()).toContain('估值调整')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining([
+        '/inventory/warehouse-transfers',
+        '/inventory/ownership-conversions',
+        '/inventory/stocktakes',
+        '/inventory/valuation-adjustments',
+      ]))
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/inventory')
   })

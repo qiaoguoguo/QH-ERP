@@ -44,12 +44,21 @@ public class CostRecordWriter {
 	public void writeMaterialIssue(Long issueId, CurrentUser operator, HttpServletRequest servletRequest) {
 		List<MaterialIssueCostSource> sources = this.jdbcTemplate.query("""
 				select i.id as issue_id, i.issue_no, i.work_order_id, wo.product_material_id, i.business_date,
-				       l.id as line_id, l.work_order_material_id, l.material_id, l.unit_id, l.quantity
+				       l.id as line_id, l.work_order_material_id, l.material_id, l.unit_id, l.quantity,
+				       sum(vm.inventory_amount) as inventory_amount,
+				       case when sum(vm.inventory_amount) is null then null
+				            else sum(vm.inventory_amount) / l.quantity end as unit_price
 				from mfg_material_issue i
 				join mfg_work_order wo on wo.id = i.work_order_id
 				join mfg_material_issue_line l on l.issue_id = i.id
+				left join inv_value_movement vm
+				       on vm.source_type = 'PRODUCTION_MATERIAL_ISSUE'
+				      and vm.source_id = i.id
+				      and vm.source_line_id = l.id
 				where i.id = ?
 				and i.status = 'POSTED'
+				group by i.id, i.issue_no, i.work_order_id, wo.product_material_id, i.business_date,
+				         l.id, l.work_order_material_id, l.material_id, l.unit_id, l.quantity
 				order by l.line_no asc, l.id asc
 				""", this::mapMaterialIssueCostSource, issueId);
 		if (sources.isEmpty()) {
@@ -60,7 +69,10 @@ public class CostRecordWriter {
 			Long recordId = insertAutoRecordWithRetry(new AutoCostRecord(source.workOrderId(),
 					source.productMaterialId(), CostType.MATERIAL, CostSourceDocumentType.PRODUCTION_MATERIAL_ISSUE,
 					source.issueNo(), source.issueId(), source.lineId(), source.workOrderMaterialId(),
-					source.materialId(), source.unitId(), source.quantity(), source.businessDate(), "生产领料自动归集"),
+					source.materialId(), source.unitId(), source.quantity(), source.unitPrice(), source.amount(),
+					source.amount() == null ? CostBasisType.SOURCE_QUANTITY_ONLY
+							: CostBasisType.MANUAL_UNIT_PRICE_QUANTITY,
+					source.businessDate(), "生产领料自动归集"),
 					operator.username(), now);
 			this.auditService.record(operator, "MFG_COST_RECORD_AUTO_CREATE", TARGET_TYPE, recordId,
 					source.issueNo(), servletRequest);
@@ -81,7 +93,8 @@ public class CostRecordWriter {
 		OffsetDateTime now = OffsetDateTime.now();
 		Long recordId = insertAutoRecordWithRetry(new AutoCostRecord(source.workOrderId(), source.productMaterialId(),
 				CostType.LABOR, CostSourceDocumentType.PRODUCTION_WORK_REPORT, source.reportNo(), source.reportId(),
-				null, null, null, null, source.totalQuantity(), source.businessDate(), "生产报工自动归集"),
+				null, null, null, null, source.totalQuantity(), null, null, CostBasisType.SOURCE_QUANTITY_ONLY,
+				source.businessDate(), "生产报工自动归集"),
 				operator.username(), now);
 		this.auditService.record(operator, "MFG_COST_RECORD_AUTO_CREATE", TARGET_TYPE, recordId, source.reportNo(),
 				servletRequest);
@@ -95,19 +108,20 @@ public class CostRecordWriter {
 						insert into mfg_cost_record (
 							record_no, work_order_id, product_material_id, cost_type, source_type,
 							source_document_type, source_document_no, source_document_id, source_line_id,
-							work_order_material_id, material_id, unit_id, quantity, basis_type, business_date,
+							work_order_material_id, material_id, unit_id, quantity, unit_price, amount,
+							basis_type, business_date,
 							status, remark, recorded_by, recorded_at, created_by, created_at, updated_by,
 							updated_at
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						returning id
 						""", Long.class, recordNo, record.workOrderId(), record.productMaterialId(),
 						record.costType().name(), CostSourceType.AUTO_PRODUCTION.name(),
 						record.sourceDocumentType().name(), record.sourceDocumentNo(), record.sourceDocumentId(),
 						record.sourceLineId(), record.workOrderMaterialId(), record.materialId(), record.unitId(),
-						record.quantity(), CostBasisType.SOURCE_QUANTITY_ONLY.name(), record.businessDate(),
-						CostRecordStatus.ACTIVE.name(), record.remark(), operatorName, now, operatorName, now,
-						operatorName, now);
+						record.quantity(), record.unitPrice(), record.amount(), record.basisType().name(),
+						record.businessDate(), CostRecordStatus.ACTIVE.name(), record.remark(), operatorName, now,
+						operatorName, now, operatorName, now);
 			}
 			catch (DuplicateKeyException exception) {
 				if (containsConstraint(exception, "uk_mfg_cost_record_no") && attempt < MAX_NO_ATTEMPTS) {
@@ -129,7 +143,7 @@ public class CostRecordWriter {
 				rs.getLong("work_order_id"), rs.getLong("product_material_id"),
 				rs.getObject("business_date", LocalDate.class), rs.getLong("line_id"),
 				rs.getLong("work_order_material_id"), rs.getLong("material_id"), rs.getLong("unit_id"),
-				rs.getBigDecimal("quantity"));
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("inventory_amount"));
 	}
 
 	private WorkReportCostSource mapWorkReportCostSource(ResultSet rs, int rowNum) throws SQLException {
@@ -152,12 +166,12 @@ public class CostRecordWriter {
 	private record AutoCostRecord(Long workOrderId, Long productMaterialId, CostType costType,
 			CostSourceDocumentType sourceDocumentType, String sourceDocumentNo, Long sourceDocumentId,
 			Long sourceLineId, Long workOrderMaterialId, Long materialId, Long unitId, BigDecimal quantity,
-			LocalDate businessDate, String remark) {
+			BigDecimal unitPrice, BigDecimal amount, CostBasisType basisType, LocalDate businessDate, String remark) {
 	}
 
 	private record MaterialIssueCostSource(Long issueId, String issueNo, Long workOrderId, Long productMaterialId,
 			LocalDate businessDate, Long lineId, Long workOrderMaterialId, Long materialId, Long unitId,
-			BigDecimal quantity) {
+			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount) {
 	}
 
 	private record WorkReportCostSource(Long reportId, String reportNo, Long workOrderId, Long productMaterialId,

@@ -52,6 +52,10 @@ export interface ProductionWorkOrderSummaryRecord {
   completedAt?: string | null
   cancelledByName?: string | null
   cancelledAt?: string | null
+  completionValuationState?: string | null
+  requiresManualProvisionalUnitCost?: boolean | null
+  currentAverageUnitCost?: string | null
+  costVisible?: boolean | null
 }
 
 export interface ProductionWorkOrderMaterialRecord {
@@ -96,6 +100,10 @@ export interface ProductionMaterialIssueLineRecord {
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null
+  valuationMethod?: string | null
+  valuationState?: string | null
+  unitCost?: string | null
+  amount?: string | null
   trackingMethod?: InventoryTrackingMethod | null
   trackingMethodName?: string | null
   trackingAllocations?: InventoryTrackingAllocationPayload[]
@@ -151,6 +159,10 @@ export interface ProductionCompletionReceiptRecord {
   quantity: number
   beforeQuantity?: number | null
   afterQuantity?: number | null
+  valuationMethod?: string | null
+  valuationState?: string | null
+  unitCost?: string | null
+  amount?: string | null
   trackingMethod?: InventoryTrackingMethod | null
   trackingMethodName?: string | null
   trackingAllocations?: InventoryTrackingAllocationPayload[]
@@ -234,6 +246,7 @@ export interface ProductionCompletionReceiptPayload {
   businessDate: string
   receiptWarehouseId: ResourceId
   quantity: string
+  provisionalUnitCost?: string
   trackingAllocations?: InventoryTrackingAllocationPayload[]
   remark?: string
 }

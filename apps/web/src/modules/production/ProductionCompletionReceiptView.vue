@@ -12,6 +12,7 @@ import {
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import { validateInboundTrackingAllocations } from '../inventory/tracking/trackingPayloadHelpers'
+import { formatInventoryAmount, validateInventoryMoney, valuationStateLabel } from '../inventory/inventoryPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
@@ -41,6 +42,7 @@ const form = reactive({
   businessDate: todayText(),
   receiptWarehouseId: '' as ResourceId | '',
   quantity: '',
+  provisionalUnitCost: '',
   remark: '',
 })
 
@@ -53,6 +55,8 @@ const remainingReceiptQuantity = computed(() => {
   }
   return Math.max(0, Number(workOrder.value.qualifiedQuantity) - Number(workOrder.value.receivedQuantity))
 })
+const requiresManualProvisionalUnitCost = computed(() => Boolean(workOrder.value?.requiresManualProvisionalUnitCost))
+const valuationStateText = computed(() => valuationStateLabel(workOrder.value?.completionValuationState))
 
 function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
   if (value === '' || value === null || value === undefined) {
@@ -94,6 +98,7 @@ async function loadWorkOrder() {
     const material = await masterDataApi.materials.get(detail.productMaterialId)
     workOrder.value = detail
     form.receiptWarehouseId = detail.receiptWarehouseId
+    form.provisionalUnitCost = ''
     productTracking.value = {
       trackingMethod: material.trackingMethod,
       trackingMethodName: material.trackingMethodName,
@@ -168,13 +173,26 @@ function validateForm(): ProductionCompletionReceiptPayload | null {
       return null
     }
   }
+  if (requiresManualProvisionalUnitCost.value) {
+    const provisionalResult = validateInventoryMoney(form.provisionalUnitCost, 6)
+    if (provisionalResult.payloadValue === null) {
+      formError.value = provisionalResult.message === '金额不能为空'
+        ? '请输入暂估单价'
+        : provisionalResult.message?.replace('金额', '暂估单价') ?? '暂估单价不正确'
+      return null
+    }
+  }
 
   formError.value = ''
   const trackingPayload = trackingAllocationsPayload(productTracking.value.trackingMethod)
+  const provisionalUnitCost = requiresManualProvisionalUnitCost.value
+    ? validateInventoryMoney(form.provisionalUnitCost, 6).payloadValue
+    : null
   return {
     businessDate: form.businessDate.trim(),
     receiptWarehouseId,
     quantity: quantityResult.payloadValue,
+    ...(provisionalUnitCost ? { provisionalUnitCost } : {}),
     ...(trackingPayload ? { trackingAllocations: trackingPayload } : {}),
     ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
   }
@@ -241,7 +259,25 @@ onMounted(() => {
           <span>剩余可入库</span>
           <strong>{{ formatProductionQuantity(remainingReceiptQuantity) }}</strong>
         </div>
+        <div>
+          <span>计价状态</span>
+          <strong>{{ valuationStateText }}</strong>
+        </div>
       </section>
+      <el-alert
+        v-if="requiresManualProvisionalUnitCost"
+        class="state-alert"
+        type="warning"
+        title="首次完工需要录入暂估单价，暂估库存后续出库价值不会被重写。"
+        :closable="false"
+      />
+      <el-alert
+        v-else-if="workOrder.currentAverageUnitCost"
+        class="state-alert"
+        type="info"
+        :title="`沿用当前公共平均价 ${formatInventoryAmount(workOrder.currentAverageUnitCost, 6)}，正式完工成本留待后续阶段处理。`"
+        :closable="false"
+      />
 
       <el-form label-position="top" class="execution-form">
         <div class="execution-form-grid">
@@ -255,6 +291,14 @@ onMounted(() => {
           </el-form-item>
           <el-form-item label="入库数量">
             <el-input v-model="form.quantity" name="production-receipt-quantity" placeholder="0.000000" :disabled="!canSubmitReceipt" />
+          </el-form-item>
+          <el-form-item v-if="requiresManualProvisionalUnitCost" label="暂估单价">
+            <el-input
+              v-model="form.provisionalUnitCost"
+              name="production-receipt-provisional-unit-cost"
+              placeholder="0.000000"
+              :disabled="!canSubmitReceipt"
+            />
           </el-form-item>
         </div>
         <el-form-item label="备注">

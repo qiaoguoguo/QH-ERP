@@ -10,6 +10,7 @@ import InventoryBalanceListView from '../modules/inventory/InventoryBalanceListV
 import InventoryDocumentDetailView from '../modules/inventory/InventoryDocumentDetailView.vue'
 import InventoryDocumentFormView from '../modules/inventory/InventoryDocumentFormView.vue'
 import InventoryDocumentListView from '../modules/inventory/InventoryDocumentListView.vue'
+import InventoryControlledDocumentView from '../modules/inventory/InventoryControlledDocumentView.vue'
 import InventoryMovementListView from '../modules/inventory/InventoryMovementListView.vue'
 import QualityInspectionListView from '../modules/quality/QualityInspectionListView.vue'
 import CustomerListView from '../modules/master/customers/CustomerListView.vue'
@@ -216,6 +217,22 @@ describe('账号权限路由守卫', () => {
       ['inventory-document-create', '/inventory/documents/create', 'inventory:document:create', InventoryDocumentFormView],
       ['inventory-document-detail', '/inventory/documents/:id', 'inventory:document:view', InventoryDocumentDetailView],
       ['inventory-document-edit', '/inventory/documents/:id/edit', 'inventory:document:update', InventoryDocumentFormView],
+      ['inventory-warehouse-transfers', '/inventory/warehouse-transfers', 'inventory:warehouse-transfer:view', InventoryControlledDocumentView],
+      ['inventory-warehouse-transfer-create', '/inventory/warehouse-transfers/create', 'inventory:warehouse-transfer:create', InventoryControlledDocumentView],
+      ['inventory-warehouse-transfer-detail', '/inventory/warehouse-transfers/:id', 'inventory:warehouse-transfer:view', InventoryControlledDocumentView],
+      ['inventory-warehouse-transfer-edit', '/inventory/warehouse-transfers/:id/edit', 'inventory:warehouse-transfer:update', InventoryControlledDocumentView],
+      ['inventory-ownership-conversions', '/inventory/ownership-conversions', 'inventory:ownership-conversion:view', InventoryControlledDocumentView],
+      ['inventory-ownership-conversion-create', '/inventory/ownership-conversions/create', 'inventory:ownership-conversion:create', InventoryControlledDocumentView],
+      ['inventory-ownership-conversion-detail', '/inventory/ownership-conversions/:id', 'inventory:ownership-conversion:view', InventoryControlledDocumentView],
+      ['inventory-ownership-conversion-edit', '/inventory/ownership-conversions/:id/edit', 'inventory:ownership-conversion:update', InventoryControlledDocumentView],
+      ['inventory-stocktakes', '/inventory/stocktakes', 'inventory:stocktake:view', InventoryControlledDocumentView],
+      ['inventory-stocktake-create', '/inventory/stocktakes/create', 'inventory:stocktake:create', InventoryControlledDocumentView],
+      ['inventory-stocktake-detail', '/inventory/stocktakes/:id', 'inventory:stocktake:view', InventoryControlledDocumentView],
+      ['inventory-stocktake-edit', '/inventory/stocktakes/:id/edit', 'inventory:stocktake:update', InventoryControlledDocumentView],
+      ['inventory-valuation-adjustments', '/inventory/valuation-adjustments', 'inventory:valuation-adjustment:view', InventoryControlledDocumentView],
+      ['inventory-valuation-adjustment-create', '/inventory/valuation-adjustments/create', 'inventory:valuation-adjustment:create', InventoryControlledDocumentView],
+      ['inventory-valuation-adjustment-detail', '/inventory/valuation-adjustments/:id', 'inventory:valuation-adjustment:view', InventoryControlledDocumentView],
+      ['inventory-valuation-adjustment-edit', '/inventory/valuation-adjustments/:id/edit', 'inventory:valuation-adjustment:update', InventoryControlledDocumentView],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of inventoryRoutes) {

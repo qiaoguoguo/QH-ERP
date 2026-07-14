@@ -12,6 +12,12 @@ import {
   type InventoryReservationStatus,
   type InventoryReservationType,
   type InventoryTrackingMethod,
+  type InventoryControlledDocumentActionPayload,
+  type InventoryCostLayerRecord,
+  type InventoryOwnershipConversionPayload,
+  type InventoryStocktakeLinePayload,
+  type InventoryValuationAdjustmentPayload,
+  type InventoryWarehouseTransferPayload,
 } from './inventoryApi'
 
 type AssertTrue<T extends true> = T
@@ -83,6 +89,42 @@ describe('库存 API', () => {
         disabledReason?: unknown
       } ? true : false
     >,
+    balanceHasValuationFields: true as AssertTrue<
+      InventoryBalanceRecord extends {
+        ownershipType?: unknown
+        projectId?: unknown
+        costVisible?: unknown
+        valuationState?: unknown
+        inventoryAmount?: unknown
+        averageUnitCost?: unknown
+        costLayerCount?: unknown
+      } ? true : false
+    >,
+    movementHasValuationFields: true as AssertTrue<
+      InventoryMovementRecord extends {
+        ownershipType?: unknown
+        projectId?: unknown
+        valuationMethod?: unknown
+        unitCost?: unknown
+        movementAmount?: unknown
+        valueFlowId?: unknown
+        costLayerId?: unknown
+      } ? true : false
+    >,
+    costLayerUsesDecimalStrings: true as AssertTrue<
+      InventoryCostLayerRecord extends {
+        originalQuantity: string
+        originalAmount?: string | null
+        remainingQuantity: string
+        remainingAmount?: string | null
+      } ? true : false
+    >,
+    controlledActionsUseVersionAndIdempotency: true as AssertTrue<
+      InventoryControlledDocumentActionPayload extends {
+        version: number
+        idempotencyKey: string
+      } ? true : false
+    >,
   }
 
   it('库存余额类型使用非负净需求缺口字段', () => {
@@ -94,6 +136,10 @@ describe('库存 API', () => {
       batchCandidateHasConsumableFields: true,
       batchCandidateQualityStatusAllowsNull: true,
       serialCandidateHasConsumableFields: true,
+      balanceHasValuationFields: true,
+      movementHasValuationFields: true,
+      costLayerUsesDecimalStrings: true,
+      controlledActionsUseVersionAndIdempotency: true,
     })
   })
 
@@ -121,6 +167,42 @@ describe('库存 API', () => {
         headers: { Accept: 'application/json' },
         method: 'GET',
       },
+    )
+  })
+
+  it('库存余额和流水查询支持所有权、项目、估值状态和成本层参数', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+    const api = createInventoryApi({ fetcher })
+
+    await api.balances.list({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      valuationState: 'LEGACY_UNVALUED',
+      includeZero: true,
+      page: 1,
+      pageSize: 20,
+    })
+    await api.movements.list({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      valuationMethod: 'PROJECT_ACTUAL_LAYER',
+      costLayerId: 9001,
+      page: 1,
+      pageSize: 20,
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/inventory/balances?ownershipType=PROJECT&projectId=501&valuationState=LEGACY_UNVALUED&includeZero=true&page=1&pageSize=20',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/inventory/movements?ownershipType=PROJECT&projectId=501&valuationMethod=PROJECT_ACTUAL_LAYER&costLayerId=9001&page=1&pageSize=20',
+      expect.objectContaining({ method: 'GET' }),
     )
   })
 
@@ -284,6 +366,133 @@ describe('库存 API', () => {
         method: 'GET',
       },
     )
+  })
+
+  it('成本层列表和详情按冻结路径读取且不使用前端金额计算', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))
+      .mockResolvedValueOnce(apiResponse({ id: 9001, layerNo: 'CL-001' }))
+    const api = createInventoryApi({ fetcher })
+
+    await api.costLayers.list({
+      ownershipType: 'PROJECT',
+      projectId: 501,
+      materialId: 2,
+      batchNo: 'B-001',
+      status: 'OPEN',
+      page: 1,
+      pageSize: 20,
+    })
+    await api.costLayers.get(9001)
+
+    expect(fetcher).toHaveBeenNthCalledWith(
+      1,
+      '/api/admin/inventory/cost-layers?ownershipType=PROJECT&projectId=501&materialId=2&batchNo=B-001&status=OPEN&page=1&pageSize=20',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(fetcher).toHaveBeenNthCalledWith(
+      2,
+      '/api/admin/inventory/cost-layers/9001',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
+  it('四类受控库存单据按路径发送十进制字符串、版本和幂等键', async () => {
+    const fetcher = vi.fn()
+    for (let index = 0; index < 18; index += 1) {
+      fetcher.mockResolvedValueOnce(apiResponse({
+        token: `csrf-${index}`,
+        headerName: 'X-CSRF-TOKEN',
+        parameterName: '_csrf',
+      }))
+      fetcher.mockResolvedValueOnce(apiResponse({ id: index + 1, version: index + 10 }))
+    }
+    const api = createInventoryApi({ fetcher })
+    const actionPayload: InventoryControlledDocumentActionPayload = { version: 3, idempotencyKey: 'action-key' }
+    const transferPayload: InventoryWarehouseTransferPayload = {
+      businessDate: '2026-07-14',
+      reason: '仓间补货',
+      lines: [{
+        lineNo: 10,
+        sourceWarehouseId: 1,
+        targetWarehouseId: 2,
+        materialId: 3,
+        quantity: '12.345678',
+        ownershipType: 'PUBLIC',
+      }],
+    }
+    const conversionPayload: InventoryOwnershipConversionPayload = {
+      businessDate: '2026-07-14',
+      reason: '项目领用',
+      lines: [{
+        lineNo: 10,
+        sourceOwnershipType: 'PUBLIC',
+        targetOwnershipType: 'PROJECT',
+        targetProjectId: 501,
+        warehouseId: 1,
+        materialId: 3,
+        quantity: '5.000000',
+      }],
+    }
+    const stocktakeLine: InventoryStocktakeLinePayload = {
+      id: 7001,
+      version: 4,
+      actualQuantity: '0.000000',
+    }
+    const valuationPayload: InventoryValuationAdjustmentPayload = {
+      adjustmentType: 'LEGACY_OPENING',
+      businessDate: '2026-07-14',
+      reason: '历史期初估值',
+      lines: [{
+        lineNo: 10,
+        materialId: 3,
+        quantity: '100.000000',
+        unitCost: '10.000000',
+        amount: '1000.00',
+      }],
+    }
+
+    await api.warehouseTransfers.create(transferPayload)
+    await api.warehouseTransfers.update(1, transferPayload)
+    await api.warehouseTransfers.post(1, actionPayload)
+    await api.warehouseTransfers.cancel(1, actionPayload)
+    await api.ownershipConversions.create(conversionPayload)
+    await api.ownershipConversions.update(2, conversionPayload)
+    await api.ownershipConversions.submitApproval(2, actionPayload)
+    await api.ownershipConversions.withdraw(2, actionPayload)
+    await api.ownershipConversions.cancel(2, actionPayload)
+    await api.stocktakes.create({ businessDate: '2026-07-14', scopeType: 'WAREHOUSE', warehouseId: 1, reason: '月度盘点' })
+    await api.stocktakes.start(3, actionPayload)
+    await api.stocktakes.updateLines(3, { lines: [stocktakeLine], idempotencyKey: 'stocktake-line-key' })
+    await api.stocktakes.reconcile(3, actionPayload)
+    await api.stocktakes.completeZeroVariance(3, actionPayload)
+    await api.stocktakes.cancel(3, actionPayload)
+    await api.valuationAdjustments.create(valuationPayload)
+    await api.valuationAdjustments.update(4, valuationPayload)
+    await api.valuationAdjustments.submitApproval(4, actionPayload)
+
+    const bodyForPath = (path: string) => {
+      const call = fetcher.mock.calls.find(([url]) => url === path)
+      expect(call).toBeDefined()
+      return JSON.parse(call?.[1].body as string)
+    }
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers').lines[0].quantity).toBe('12.345678')
+    expect(bodyForPath('/api/admin/inventory/warehouse-transfers/1/post')).toEqual(actionPayload)
+    expect(bodyForPath('/api/admin/inventory/stocktakes/3/lines').lines[0].actualQuantity).toBe('0.000000')
+    expect(bodyForPath('/api/admin/inventory/valuation-adjustments').lines[0].amount).toBe('1000.00')
+    expect(fetcher.mock.calls.map((call) => call[0])).toEqual(expect.arrayContaining([
+      '/api/admin/inventory/warehouse-transfers',
+      '/api/admin/inventory/warehouse-transfers/1',
+      '/api/admin/inventory/warehouse-transfers/1/post',
+      '/api/admin/inventory/warehouse-transfers/1/cancel',
+      '/api/admin/inventory/ownership-conversions/2/submit-approval',
+      '/api/admin/inventory/ownership-conversions/2/withdraw',
+      '/api/admin/inventory/stocktakes/3/start',
+      '/api/admin/inventory/stocktakes/3/lines',
+      '/api/admin/inventory/stocktakes/3/complete-zero-variance',
+      '/api/admin/inventory/valuation-adjustments/4/submit-approval',
+    ]))
   })
 
   it('批次、序列号和追溯接口按契约路径读取', async () => {
