@@ -55,15 +55,11 @@ public class InventoryPostingService {
 			}
 			throw new BusinessException(errorCode);
 		}
-		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED
-				&& !request.consumedReservation()) {
-			BigDecimal availableQuantity = beforeQuantity
-				.subtract(activeLockedQuantityForUpdate(request.warehouseId(), request.materialId(), request.batchId(),
-						request.serialId(), valuationContext.ownershipType(), valuationContext.projectId(),
-						balanceIdentityCostLayerId(valuationContext)));
-			if (availableQuantity.compareTo(request.quantity()) < 0) {
-				throw new BusinessException(ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
-			}
+		if (request.direction() == InventoryDirection.OUT && request.qualityStatus() == InventoryQualityStatus.QUALIFIED) {
+			assertQualifiedOutboundAvailable(request.warehouseId(), request.materialId(), request.quantity(),
+					request.batchId(), request.serialId(), valuationContext,
+					ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE, beforeQuantity,
+					request.consumedReservation(), request.reservationSourceType(), request.reservationSourceLineId());
 		}
 		Long movementId;
 		try {
@@ -154,6 +150,43 @@ public class InventoryPostingService {
 				toResult.beforeQuantity(), toResult.afterQuantity(), fromResult.movementId(), toResult.movementId());
 	}
 
+	@Transactional
+	public void assertQualifiedOutboundAvailable(Long warehouseId, Long materialId, BigDecimal quantity, Long batchId,
+			Long serialId, ValuationContext valuationContext, ApiErrorCode errorCode) {
+		ValuationContext context = valuationContext == null ? ValuationContext.publicStock(null) : valuationContext;
+		BigDecimal beforeQuantity = exactQualifiedQuantityForUpdate(warehouseId, materialId, batchId, serialId,
+				context.ownershipType(), context.projectId(), balanceIdentityCostLayerId(context));
+		assertQualifiedOutboundAvailable(warehouseId, materialId, quantity, batchId, serialId, context, errorCode,
+				beforeQuantity, false, null, null);
+	}
+
+	private void assertQualifiedOutboundAvailable(Long warehouseId, Long materialId, BigDecimal quantity, Long batchId,
+			Long serialId, ValuationContext valuationContext, ApiErrorCode errorCode, BigDecimal beforeQuantity,
+			boolean consumedReservation, String sourceType, Long sourceLineId) {
+		BigDecimal exactLockedQuantity = activeLockedQuantityForUpdate(warehouseId, materialId, batchId, serialId,
+				valuationContext.ownershipType(), valuationContext.projectId(),
+				balanceIdentityCostLayerId(valuationContext), consumedReservation, sourceType, sourceLineId);
+		if (beforeQuantity.subtract(exactLockedQuantity).compareTo(quantity) < 0) {
+			throw new BusinessException(errorCode);
+		}
+		if (consumedReservation) {
+			return;
+		}
+		if (trackingMethod(materialId) == InventoryTrackingMethod.NONE) {
+			return;
+		}
+		BigDecimal aggregateQuantity = aggregateQualifiedQuantityForUpdate(warehouseId, materialId,
+				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
+		BigDecimal exactTrackedLockedQuantity = activeTrackedExactLockedQuantityForUpdate(warehouseId, materialId,
+				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
+		BigDecimal parentUnallocatedQuantity = activeAggregateParentUnallocatedQuantityForUpdate(warehouseId, materialId,
+				valuationContext.ownershipType(), valuationContext.projectId(), balanceIdentityCostLayerId(valuationContext));
+		BigDecimal availableAfterThisOutbound = aggregateQuantity.subtract(quantity).subtract(exactTrackedLockedQuantity);
+		if (availableAfterThisOutbound.compareTo(parentUnallocatedQuantity) < 0) {
+			throw new BusinessException(errorCode);
+		}
+	}
+
 	private BalanceRow lockedBalance(Long warehouseId, Long materialId, Long unitId, InventoryQualityStatus qualityStatus,
 			Long batchId, Long serialId, String ownershipType, Long projectId, Long costLayerId, OffsetDateTime now) {
 		Optional<BalanceRow> balance = lockBalance(warehouseId, materialId, qualityStatus, batchId, serialId,
@@ -205,8 +238,54 @@ public class InventoryPostingService {
 			.findFirst();
 	}
 
+	private BigDecimal exactQualifiedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId,
+			String ownershipType, Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id is not distinct from ?
+				and serial_id is not distinct from ?
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId, batchId,
+				serialId, ownershipType, projectId, costLayerId)
+			.stream()
+			.findFirst()
+			.orElse(ZERO);
+	}
+
+	private BigDecimal aggregateQualifiedQuantityForUpdate(Long warehouseId, Long materialId, String ownershipType,
+			Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId, ownershipType,
+				projectId, costLayerId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+	}
+
 	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId,
 			String ownershipType, Long projectId, Long costLayerId) {
+		return activeLockedQuantityForUpdate(warehouseId, materialId, batchId, serialId, ownershipType, projectId,
+				costLayerId, false, null, null);
+	}
+
+	private BigDecimal activeLockedQuantityForUpdate(Long warehouseId, Long materialId, Long batchId, Long serialId,
+			String ownershipType, Long projectId, Long costLayerId, boolean excludeSource, String sourceType,
+			Long sourceLineId) {
 		return this.jdbcTemplate.query("""
 				select quantity, released_quantity, consumed_quantity
 				from inv_stock_reservation
@@ -219,13 +298,89 @@ public class InventoryPostingService {
 				and project_id is not distinct from ?
 				and cost_layer_id is not distinct from ?
 				and status = 'ACTIVE'
+				and (
+					? = false
+					or source_type <> ?
+					or source_line_id is distinct from ?
+				)
 				for update
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
 					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, batchId, serialId,
-				ownershipType, projectId, costLayerId)
+				ownershipType, projectId, costLayerId, excludeSource, sourceType, sourceLineId)
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
+	}
+
+	private BigDecimal activeTrackedExactLockedQuantityForUpdate(Long warehouseId, Long materialId, String ownershipType,
+			Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and (batch_id is not null or serial_id is not null)
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+				.subtract(rs.getBigDecimal("released_quantity"))
+				.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, ownershipType, projectId,
+				costLayerId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+	}
+
+	private BigDecimal activeAggregateParentUnallocatedQuantityForUpdate(Long warehouseId, Long materialId,
+			String ownershipType, Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.query("""
+				select id, quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id is null
+				and serial_id is null
+				and parent_reservation_id is null
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> parentUnallocatedQuantity(rs.getLong("id"), rs.getBigDecimal("quantity")
+				.subtract(rs.getBigDecimal("released_quantity"))
+				.subtract(rs.getBigDecimal("consumed_quantity"))), warehouseId, materialId, ownershipType, projectId,
+				costLayerId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+	}
+
+	private BigDecimal parentUnallocatedQuantity(Long parentReservationId, BigDecimal parentActiveQuantity) {
+		BigDecimal childActiveQuantity = this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where parent_reservation_id = ?
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+				.subtract(rs.getBigDecimal("released_quantity"))
+				.subtract(rs.getBigDecimal("consumed_quantity")), parentReservationId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal unallocatedQuantity = parentActiveQuantity.subtract(childActiveQuantity);
+		return unallocatedQuantity.compareTo(ZERO) < 0 ? ZERO : unallocatedQuantity;
+	}
+
+	private InventoryTrackingMethod trackingMethod(Long materialId) {
+		String trackingMethod = this.jdbcTemplate.queryForObject("""
+				select tracking_method
+				from mst_material
+				where id = ?
+				""", String.class, materialId);
+		return InventoryTrackingMethod.valueOf(trackingMethod);
 	}
 
 	private void validateRequest(PostingRequest request) {
@@ -503,12 +658,34 @@ public class InventoryPostingService {
 			Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus, String sourceType,
 			Long sourceId, Long sourceLineId, LocalDate businessDate, String reason, String remark,
 			String operatorName, boolean consumedReservation, Long batchId, Long serialId,
-			ValuationContext valuationContext) {
+			ValuationContext valuationContext, String consumedReservationSourceType,
+			Long consumedReservationSourceLineId) {
 
 		public PostingRequest {
 			if (valuationContext == null) {
 				valuationContext = ValuationContext.publicStock(null);
 			}
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, boolean consumedReservation, Long batchId, Long serialId,
+				ValuationContext valuationContext) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, consumedReservation, batchId,
+					serialId, valuationContext, null, null);
+		}
+
+		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
+				Long materialId, Long unitId, BigDecimal quantity, InventoryQualityStatus qualityStatus,
+				String sourceType, Long sourceId, Long sourceLineId, LocalDate businessDate, String reason,
+				String remark, String operatorName, boolean consumedReservation, Long batchId, Long serialId,
+				String consumedReservationSourceType, Long consumedReservationSourceLineId) {
+			this(movementType, direction, warehouseId, materialId, unitId, quantity, qualityStatus, sourceType,
+					sourceId, sourceLineId, businessDate, reason, remark, operatorName, consumedReservation, batchId,
+					serialId, ValuationContext.publicStock(null), consumedReservationSourceType,
+					consumedReservationSourceLineId);
 		}
 
 		public PostingRequest(InventoryMovementType movementType, InventoryDirection direction, Long warehouseId,
@@ -566,6 +743,14 @@ public class InventoryPostingService {
 
 		public ValuationContext valuationContextOrDefault() {
 			return this.valuationContext == null ? ValuationContext.publicStock(null) : this.valuationContext;
+		}
+
+		private String reservationSourceType() {
+			return hasText(this.consumedReservationSourceType) ? this.consumedReservationSourceType : this.sourceType;
+		}
+
+		private Long reservationSourceLineId() {
+			return this.consumedReservationSourceLineId == null ? this.sourceLineId : this.consumedReservationSourceLineId;
 		}
 	}
 

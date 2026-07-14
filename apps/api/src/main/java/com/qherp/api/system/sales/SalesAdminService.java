@@ -410,20 +410,20 @@ public class SalesAdminService {
 		if (line.quantity().compareTo(remainingQuantity) > 0) {
 			throw new BusinessException(ApiErrorCode.SALES_SHIPMENT_EXCEEDS_ORDER);
 		}
-		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
-				InventoryReservationType.RESERVATION, InventoryAvailabilityService.SALES_ORDER_SOURCE,
-				orderLine.id(), line.quantity(), operator, servletRequest);
 		List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
 			.resolveStoredOutboundAllocations(SHIPMENT_SOURCE_TYPE, shipment.id(), line.id(), shipment.warehouseId(),
 					line.materialId(), line.unitId(), line.quantity(), "trackingAllocations");
 		InventoryPostingService.PostingResult posting = null;
 		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+			boolean consumedReservation = consumeShipmentReservation(orderLine.id(), allocation, operator,
+					servletRequest);
 			InventoryPostingService.PostingResult current = this.inventoryPostingService.post(
 					new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_SHIPMENT,
 							InventoryDirection.OUT, shipment.warehouseId(), line.materialId(), line.unitId(),
 							allocation.quantity(), InventoryQualityStatus.QUALIFIED, SHIPMENT_SOURCE_TYPE,
 							shipment.id(), line.id(), shipment.businessDate(), "销售出库", line.remark(),
-							operator.username(), consumedReservation, allocation.batchId(), allocation.serialId()));
+							operator.username(), consumedReservation, allocation.batchId(), allocation.serialId(),
+							InventoryAvailabilityService.SALES_ORDER_SOURCE, orderLine.id()));
 			this.inventoryTrackingService.attachMovement(allocation.allocationId(), current.movementId());
 			this.inventoryTrackingService.markOutboundPosted(allocation, current.movementId(), operator.username());
 			if (posting == null) {
@@ -449,6 +449,19 @@ public class SalesAdminService {
 				set shipped_quantity = shipped_quantity + ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", line.quantity(), now, orderLine.id());
+	}
+
+	private boolean consumeShipmentReservation(Long orderLineId,
+			InventoryTrackingService.ResolvedTrackingAllocation allocation, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		if (allocation.batchId() != null || allocation.serialId() != null) {
+			return this.inventoryAvailabilityService.consumeTrackedBySourceLine(InventoryReservationType.RESERVATION,
+					InventoryAvailabilityService.SALES_ORDER_SOURCE, orderLineId, allocation.quantity(),
+					allocation.batchId(), allocation.serialId(), operator, servletRequest);
+		}
+		return this.inventoryAvailabilityService.consumeBySourceLine(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.SALES_ORDER_SOURCE, orderLineId, allocation.quantity(), operator,
+				servletRequest);
 	}
 
 	private ValidatedOrder validateOrderRequest(SalesOrderRequest request) {
@@ -521,7 +534,8 @@ public class SalesAdminService {
 					new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
 							line.reservationWarehouseId(), line.materialId(), line.unitId(), remainingQuantity,
 							InventoryAvailabilityService.SALES_ORDER_SOURCE, order.id(), line.id(), order.orderNo(),
-							order.orderDate(), "销售订单确认预留", null, "PUBLIC", null, null),
+							order.orderDate(), "销售订单确认预留", null, "PUBLIC", null, null,
+							InventoryQualityStatus.QUALIFIED, null, null, null),
 					operator, servletRequest);
 		}
 	}

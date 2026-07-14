@@ -1164,29 +1164,50 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private void setQualifiedStock(long warehouseId, long materialId, long unitId, String quantity) {
-		this.jdbcTemplate.update("""
-				insert into inv_stock_balance (warehouse_id, material_id, unit_id, quality_status, quantity_on_hand,
-					locked_quantity, created_at, updated_at)
-				values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
-				on conflict (warehouse_id, material_id, quality_status)
-					where batch_id is null and serial_id is null
-				do update set quantity_on_hand = excluded.quantity_on_hand, updated_at = now()
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity));
+		int updated = this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set unit_id = ?, quantity_on_hand = ?, updated_at = now(), version = version + 1
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and batch_id is null
+				and serial_id is null
+				and ownership_type = 'PUBLIC'
+				and project_id is null
+				and cost_layer_id is null
+				""", unitId, new BigDecimal(quantity), warehouseId, materialId);
+		if (updated == 0) {
+			this.jdbcTemplate.update("""
+					insert into inv_stock_balance (warehouse_id, material_id, unit_id, quality_status, quantity_on_hand,
+						locked_quantity, created_at, updated_at)
+					values (?, ?, ?, 'QUALIFIED', ?, 0, now(), now())
+					""", warehouseId, materialId, unitId, new BigDecimal(quantity));
+		}
 	}
 
 	private void seedStock(long warehouseId, long materialId, long unitId, String quantity,
 			InventoryQualityStatus qualityStatus) {
-		this.jdbcTemplate.update("""
-				insert into inv_stock_balance (
-					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
-					quality_status
-				)
-				values (?, ?, ?, ?, 0, now(), now(), ?)
-				on conflict (warehouse_id, material_id, quality_status)
-					where batch_id is null and serial_id is null
-				do update set unit_id = excluded.unit_id, quantity_on_hand = excluded.quantity_on_hand,
-					updated_at = now(), version = inv_stock_balance.version + 1
-				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+		int updated = this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set unit_id = ?, quantity_on_hand = ?, updated_at = now(), version = version + 1
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and batch_id is null
+				and serial_id is null
+				and ownership_type = 'PUBLIC'
+				and project_id is null
+				and cost_layer_id is null
+				""", unitId, new BigDecimal(quantity), warehouseId, materialId, qualityStatus.name());
+		if (updated == 0) {
+			this.jdbcTemplate.update("""
+					insert into inv_stock_balance (
+						warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, created_at, updated_at,
+						quality_status
+					)
+					values (?, ?, ?, ?, 0, now(), now(), ?)
+					""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name());
+		}
 	}
 
 	private void disableCustomer(long customerId) {

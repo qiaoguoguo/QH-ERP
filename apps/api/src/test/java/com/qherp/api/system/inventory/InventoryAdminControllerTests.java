@@ -962,6 +962,163 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void 批次追踪父级聚合预留不写具体批次锁但必须保护剩余总量() {
+		InventoryFixture fixture = fixture();
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",
+				fixture.rawMaterialId());
+		PurchaseReceiptSource source = insertPurchaseReceiptSource(fixture);
+		long batchA = insertTrackedBatchStock(fixture, source, "B-AGG-A-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "3.000000");
+		long batchB = insertTrackedBatchStock(fixture, source, "B-AGG-B-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "4.000000");
+		long parentId = reserveInventory(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(),
+				"5.000000", "PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, null, null, null);
+
+		assertReservationIdentity(parentId, null, null, null, "ACTIVE", "5.000000", "0.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchA), "0.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchB), "0.000000");
+
+		this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.SALES_SHIPMENT, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("2.000000"),
+				InventoryQualityStatus.QUALIFIED, "STAGE023_AGG_OUT", nextSourceId(), nextSourceLineId(),
+				LocalDate.now(), "聚合预留总量足够时允许批次出库", null, "tester", false, batchA, null));
+
+		assertThatThrownBy(() -> this.inventoryPostingService.post(new InventoryPostingService.PostingRequest(
+				InventoryMovementType.SALES_SHIPMENT, InventoryDirection.OUT, fixture.rawWarehouseId(),
+				fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal("1.000000"),
+				InventoryQualityStatus.QUALIFIED, "STAGE023_AGG_OUT", nextSourceId(), nextSourceLineId(),
+				LocalDate.now(), "聚合预留总量不足时拒绝批次出库", null, "tester", false, batchB, null)))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE);
+		assertThatThrownBy(() -> this.qualityAdminService.freeze(new QualityAdminService.QualityStatusTransferRequest(
+				fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), LocalDate.now(), "1.000000",
+				"聚合预留总量不足时拒绝批次冻结", null, "PUBLIC", null, null,
+				List.of(new InventoryTrackingService.TrackingAllocationRequest(batchB, null, null, null,
+						new BigDecimal("1.000000"), "FROZEN", null))),
+				backendOperator(), request()))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE);
+	}
+
+	@Test
+	void 销售批次发货必须创建并消费精确子预留且扣减父级聚合未分配量() {
+		InventoryFixture fixture = fixture();
+		markMaterialValued(fixture.finishedMaterialId());
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",
+				fixture.finishedMaterialId());
+		PurchaseReceiptSource source = insertPurchaseReceiptSource(fixture.finishedMaterialId(), fixture.eachUnitId(),
+				fixture.finishedWarehouseId());
+		long batchId = insertTrackedBatchStock(fixture.finishedWarehouseId(), fixture.finishedMaterialId(),
+				fixture.eachUnitId(), source, "B-SALES-CHILD-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "5.000000");
+		insertPublicValuationPool(fixture.finishedMaterialId(), "5.000000", "50.00", "10.000000");
+		long customerId = insertCustomer("023 批次父子预留客户");
+		SalesAdminService.SalesOrderDetailResponse order = this.salesAdminService.createOrder(
+				new SalesAdminService.SalesOrderRequest(customerId, LocalDate.now(), LocalDate.now().plusDays(3),
+						"023 批次父级预留销售订单", null, null, null,
+						List.of(new SalesAdminService.SalesOrderLineRequest(1, fixture.finishedMaterialId(),
+								fixture.eachUnitId(), new BigDecimal("5.000000"), new BigDecimal("3.000000"),
+								fixture.finishedWarehouseId(), LocalDate.now().plusDays(3), "批次父级预留行"))),
+				backendOperator(), request());
+		SalesAdminService.SalesOrderDetailResponse confirmed = this.salesAdminService.confirmOrder(order.id(),
+				backendOperator(), request());
+		Long orderLineId = confirmed.lines().getFirst().id();
+		long parentId = parentReservationId(InventoryAvailabilityService.SALES_ORDER_SOURCE, orderLineId);
+
+		assertReservationIdentity(parentId, null, null, null, "ACTIVE", "5.000000", "0.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.finishedWarehouseId(), fixture.finishedMaterialId(), batchId),
+				"0.000000");
+
+		SalesAdminService.SalesShipmentDetailResponse shipment = this.salesAdminService.createShipment(confirmed.id(),
+				new SalesAdminService.SalesShipmentRequest(fixture.finishedWarehouseId(), LocalDate.now(),
+						"023 批次子预留销售发货",
+						List.of(new SalesAdminService.SalesShipmentLineRequest(1, orderLineId,
+								fixture.finishedMaterialId(), fixture.eachUnitId(), new BigDecimal("2.000000"),
+								"批次子预留行",
+								List.of(new InventoryTrackingService.TrackingAllocationRequest(batchId, null, null,
+										null, new BigDecimal("2.000000"), null, null))))),
+				backendOperator(), request());
+		this.salesAdminService.postShipment(shipment.id(), backendOperator(), request());
+
+		long childId = childReservationId(parentId, batchId, null);
+		assertReservationIdentity(parentId, null, null, null, "ACTIVE", "5.000000", "2.000000");
+		assertReservationIdentity(childId, parentId, batchId, null, "CONSUMED", "2.000000", "2.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.finishedWarehouseId(), fixture.finishedMaterialId(), batchId),
+				"0.000000");
+	}
+
+	@Test
+	void 生产批次领料必须先释放父级聚合预留再按分配消费子预留() {
+		InventoryFixture fixture = fixture();
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'BATCH' where id = ?",
+				fixture.rawMaterialId());
+		PurchaseReceiptSource source = insertPurchaseReceiptSource(fixture);
+		long batchId = insertTrackedBatchStock(fixture, source, "B-MFG-CHILD-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "3.000000");
+		ProductionFixture production = productionFixture(fixture);
+		this.jdbcTemplate.update("update mfg_work_order set status = 'DRAFT', released_by = null, released_at = null where id = ?",
+				production.workOrderId());
+		CurrentUser operator = backendOperator();
+		ProductionAdminService.WorkOrderDetailResponse released = this.productionAdminService
+			.releaseWorkOrder(production.workOrderId(), operator, request());
+		Long workOrderMaterialId = released.materials().getFirst().id();
+		long parentId = parentReservationId(InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE,
+				workOrderMaterialId);
+
+		assertReservationIdentity(parentId, null, null, null, "ACTIVE", "3.000000", "0.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchId), "0.000000");
+
+		ProductionAdminService.MaterialIssueDetailResponse issue = this.productionAdminService.createMaterialIssue(
+				production.workOrderId(),
+				new ProductionAdminService.MaterialIssueRequest(LocalDate.now(), "023 批次子预留生产领料", null,
+						List.of(new ProductionAdminService.MaterialIssueLineRequest(1, workOrderMaterialId,
+								fixture.rawWarehouseId(), new BigDecimal("2.000000"), "生产批次子预留",
+								List.of(new InventoryTrackingService.TrackingAllocationRequest(batchId, null, null,
+										null, new BigDecimal("2.000000"), null, null))))),
+				operator, request());
+		this.productionAdminService.postMaterialIssue(production.workOrderId(), issue.id(), operator, request());
+
+		long childId = childReservationId(parentId, batchId, null);
+		assertReservationIdentity(parentId, null, null, null, "ACTIVE", "3.000000", "2.000000");
+		assertReservationIdentity(childId, parentId, batchId, null, "CONSUMED", "2.000000", "2.000000");
+		assertDecimal(lockedQuantityByBatch(fixture.rawWarehouseId(), fixture.rawMaterialId(), batchId), "0.000000");
+	}
+
+	@Test
+	void 序列精确子预留数量必须为一且公共项目聚合预留互相隔离() {
+		InventoryFixture fixture = fixture();
+		this.jdbcTemplate.update("update mst_material set tracking_method = 'SERIAL' where id = ?",
+				fixture.semiMaterialId());
+		PurchaseReceiptSource source = insertPurchaseReceiptSource(fixture.semiMaterialId(), fixture.eachUnitId(),
+				fixture.rawWarehouseId());
+		long serialId = insertTrackedSerial(fixture, source, "SN-CHILD-" + SEQUENCE.incrementAndGet(),
+				InventoryQualityStatus.QUALIFIED, "IN_STOCK", true);
+		long publicParentId = reserveInventory(fixture.rawWarehouseId(), fixture.semiMaterialId(),
+				fixture.eachUnitId(), "1.000000", "PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, null, null,
+				null);
+		long projectId = insertProject("023 序列项目预留隔离");
+		long layerId = insertProjectCostLayer(projectId, fixture.semiMaterialId(), "1.000000", "15.00",
+				"15.000000");
+		insertProjectBalance(fixture.rawWarehouseId(), fixture.semiMaterialId(), fixture.eachUnitId(), projectId,
+				layerId, "1.000000", "15.00", "15.000000");
+		long projectParentId = reserveInventory(fixture.rawWarehouseId(), fixture.semiMaterialId(),
+				fixture.eachUnitId(), "1.000000", "PROJECT", projectId, layerId, InventoryQualityStatus.QUALIFIED,
+				null, null, null);
+
+		assertThatThrownBy(() -> reserveInventory(fixture.rawWarehouseId(), fixture.semiMaterialId(),
+				fixture.eachUnitId(), "2.000000", "PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, null,
+				serialId, publicParentId))
+			.isInstanceOf(BusinessException.class)
+			.hasFieldOrPropertyWithValue("errorCode", ApiErrorCode.INVENTORY_QUANTITY_INVALID);
+		long childId = reserveInventory(fixture.rawWarehouseId(), fixture.semiMaterialId(), fixture.eachUnitId(),
+				"1.000000", "PUBLIC", null, null, InventoryQualityStatus.QUALIFIED, null, serialId,
+				publicParentId);
+		assertReservationIdentity(childId, publicParentId, null, serialId, "ACTIVE", "1.000000", "0.000000");
+		assertReservationIdentity(projectParentId, null, null, null, "ACTIVE", "1.000000", "0.000000");
+	}
+
+	@Test
 	void 项目质量转换显式成本层必须校验存在性和项目归属() throws Exception {
 		InventoryFixture fixture = fixture();
 		markMaterialValued(fixture.rawMaterialId());
@@ -2600,6 +2757,18 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				rs.getString("valuation_state")), materialId);
 	}
 
+	private void insertPublicValuationPool(long materialId, String quantity, String amount, String averageUnitCost) {
+		this.jdbcTemplate.update("""
+				insert into inv_public_valuation_pool (material_id, quantity, amount, average_unit_cost, valuation_state)
+				values (?, ?, ?, ?, 'VALUED')
+				on conflict (material_id) do update
+				set quantity = excluded.quantity,
+				    amount = excluded.amount,
+				    average_unit_cost = excluded.average_unit_cost,
+				    valuation_state = excluded.valuation_state
+				""", materialId, new BigDecimal(quantity), new BigDecimal(amount), new BigDecimal(averageUnitCost));
+	}
+
 	private ValueMovementFact valueMovement(String sourceType, long sourceId, long sourceLineId) {
 		return this.jdbcTemplate.queryForObject("""
 				select unit_cost, inventory_amount, valuation_method
@@ -2674,13 +2843,20 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 	private long reserveInventory(long warehouseId, long materialId, long unitId, String quantity, String ownershipType,
 			Long projectId, Long costLayerId) {
+		return reserveInventory(warehouseId, materialId, unitId, quantity, ownershipType, projectId, costLayerId,
+				InventoryQualityStatus.QUALIFIED, null, null, null);
+	}
+
+	private long reserveInventory(long warehouseId, long materialId, long unitId, String quantity, String ownershipType,
+			Long projectId, Long costLayerId, InventoryQualityStatus qualityStatus, Long batchId, Long serialId,
+			Long parentReservationId) {
 		long sourceId = 4_000_000L + SEQUENCE.incrementAndGet();
 		long sourceLineId = 4_100_000L + SEQUENCE.incrementAndGet();
 		return this.inventoryAvailabilityService.reserveFromWarehouse(
 				new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION, warehouseId,
 						materialId, unitId, new BigDecimal(quantity), "STAGE023_TEST", sourceId, sourceLineId,
 						"RSV-023-" + sourceLineId, LocalDate.now(), "023 成本层预留", null, ownershipType, projectId,
-						costLayerId),
+						costLayerId, qualityStatus, batchId, serialId, parentReservationId),
 				backendOperator(), request());
 	}
 
@@ -2700,6 +2876,43 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				""", Long.class, reservationId);
 	}
 
+	private long parentReservationId(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_stock_reservation
+				where source_type = ?
+				  and source_line_id = ?
+				  and parent_reservation_id is null
+				  and batch_id is null
+				  and serial_id is null
+				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long childReservationId(long parentReservationId, Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_stock_reservation
+				where parent_reservation_id = ?
+				  and batch_id is not distinct from ?
+				  and serial_id is not distinct from ?
+				""", Long.class, parentReservationId, batchId, serialId);
+	}
+
+	private void assertReservationIdentity(long reservationId, Long parentReservationId, Long batchId, Long serialId,
+			String status, String quantity, String consumedQuantity) {
+		Map<String, Object> row = this.jdbcTemplate.queryForMap("""
+				select parent_reservation_id, batch_id, serial_id, status, quantity, consumed_quantity
+				from inv_stock_reservation
+				where id = ?
+				""", reservationId);
+		assertThat(row.get("parent_reservation_id")).isEqualTo(parentReservationId);
+		assertThat(row.get("batch_id")).isEqualTo(batchId);
+		assertThat(row.get("serial_id")).isEqualTo(serialId);
+		assertThat(row.get("status")).isEqualTo(status);
+		assertDecimal((BigDecimal) row.get("quantity"), quantity);
+		assertDecimal((BigDecimal) row.get("consumed_quantity"), consumedQuantity);
+	}
+
 	private BigDecimal lockedQuantity(long warehouseId, long materialId, String ownershipType, Long projectId,
 			Long costLayerId) {
 		return this.jdbcTemplate.queryForObject("""
@@ -2712,6 +2925,25 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				  and project_id is not distinct from ?
 				  and cost_layer_id is not distinct from ?
 				""", BigDecimal.class, warehouseId, materialId, ownershipType, projectId, costLayerId);
+	}
+
+	private BigDecimal lockedQuantityByBatch(long warehouseId, long materialId, long batchId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(locked_quantity), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = 'QUALIFIED'
+				  and batch_id = ?
+				""", BigDecimal.class, warehouseId, materialId, batchId);
+	}
+
+	private long nextSourceId() {
+		return 7_000_000L + SEQUENCE.incrementAndGet();
+	}
+
+	private long nextSourceLineId() {
+		return 7_100_000L + SEQUENCE.incrementAndGet();
 	}
 
 	private Map<String, Object> projectWarehouseTransferBody(long sourceWarehouseId, long targetWarehouseId,
@@ -2942,6 +3174,10 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private PurchaseReceiptSource insertPurchaseReceiptSource(InventoryFixture fixture) {
+		return insertPurchaseReceiptSource(fixture.rawMaterialId(), fixture.kgUnitId(), fixture.rawWarehouseId());
+	}
+
+	private PurchaseReceiptSource insertPurchaseReceiptSource(long materialId, long unitId, long warehouseId) {
 		int suffix = SEQUENCE.incrementAndGet();
 		long supplierId = this.jdbcTemplate.queryForObject("""
 				insert into mst_supplier (code, name, status, created_by, created_at, updated_by, updated_at)
@@ -2962,7 +3198,7 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, 1, ?, ?, 5.000000, 5.000000, 10.000000, now(), now())
 				returning id
-				""", Long.class, orderId, fixture.rawMaterialId(), fixture.kgUnitId());
+				""", Long.class, orderId, materialId, unitId);
 		long receiptId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_receipt (
 					receipt_no, order_id, supplier_id, warehouse_id, business_date, status, created_by, created_at,
@@ -2970,7 +3206,7 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, ?, ?, ?, ?, 'POSTED', 'tester', now(), 'tester', now(), 'tester', now())
 				returning id
-				""", Long.class, "PR-TRACE-" + suffix, orderId, supplierId, fixture.rawWarehouseId(),
+				""", Long.class, "PR-TRACE-" + suffix, orderId, supplierId, warehouseId,
 				LocalDate.now());
 		long receiptLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_receipt_line (
@@ -2980,12 +3216,18 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, 1, ?, ?, ?, 5.000000, 0.000000, 5.000000, 5.000000, 0.000000, 5.000000, now(), now())
 				returning id
-				""", Long.class, receiptId, orderLineId, fixture.rawMaterialId(), fixture.kgUnitId());
+				""", Long.class, receiptId, orderLineId, materialId, unitId);
 		return new PurchaseReceiptSource(receiptId, receiptLineId, "PR-TRACE-" + suffix);
 	}
 
 	private long insertTrackedBatchStock(InventoryFixture fixture, PurchaseReceiptSource source, String batchNo,
 			InventoryQualityStatus qualityStatus, String quantity) {
+		return insertTrackedBatchStock(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), source,
+				batchNo, qualityStatus, quantity);
+	}
+
+	private long insertTrackedBatchStock(long warehouseId, long materialId, long unitId, PurchaseReceiptSource source,
+			String batchNo, InventoryQualityStatus qualityStatus, String quantity) {
 		long batchId = this.jdbcTemplate.queryForObject("""
 				insert into inv_batch (
 					material_id, batch_no, source_type, source_id, source_line_id, business_date, remark,
@@ -2993,18 +3235,17 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				)
 				values (?, ?, 'PURCHASE_RECEIPT', ?, ?, ?, '候选和追溯测试', 'tester', now(), 'tester', now())
 				returning id
-				""", Long.class, fixture.rawMaterialId(), batchNo, source.receiptId(), source.receiptLineId(),
+				""", Long.class, materialId, batchNo, source.receiptId(), source.receiptLineId(),
 				LocalDate.now());
-		insertTrackedMovement(fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), quantity,
-				batchId, null, "PURCHASE_RECEIPT", source.receiptId(), source.receiptLineId(), qualityStatus);
+		insertTrackedMovement(warehouseId, materialId, unitId, quantity, batchId, null, "PURCHASE_RECEIPT",
+				source.receiptId(), source.receiptLineId(), qualityStatus);
 		this.jdbcTemplate.update("""
 				insert into inv_stock_balance (
 					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
 					batch_id, created_at, updated_at
 				)
 				values (?, ?, ?, ?, 0, ?, ?, now(), now())
-				""", fixture.rawWarehouseId(), fixture.rawMaterialId(), fixture.kgUnitId(), new BigDecimal(quantity),
-				qualityStatus.name(), batchId);
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), qualityStatus.name(), batchId);
 		return batchId;
 	}
 

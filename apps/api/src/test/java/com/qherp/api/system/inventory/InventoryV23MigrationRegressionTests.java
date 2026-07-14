@@ -94,6 +94,41 @@ class InventoryV23MigrationRegressionTests {
 	}
 
 	@Test
+	void v22批次追踪空追踪活动预留升级到v23必须解释为父级聚合且不写批次行锁() {
+		migrate("22");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		ReservationSeed seed = insertReservationSeed(jdbcTemplate, "BAGG", "BATCH");
+		long batchA = insertBatchBalance(jdbcTemplate, seed, "V23-BAGG-A", "3.000000", "1.000000");
+		long batchB = insertBatchBalance(jdbcTemplate, seed, "V23-BAGG-B", "4.000000", "2.000000");
+		long reservationId = insertReservation(jdbcTemplate, seed, "PUBLIC", null, null, "ACTIVE");
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
+		assertThat(queryText(jdbcTemplate, """
+				select coalesce(parent_reservation_id::text, 'NULL') || ':' || coalesce(batch_id::text, 'NULL') || ':'
+					|| coalesce(serial_id::text, 'NULL') || ':' || coalesce(cost_layer_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", reservationId)).isEqualTo("NULL:NULL:NULL:NULL");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select locked_quantity
+				from inv_stock_balance
+				where batch_id = ?
+				""", batchA)).isEqualByComparingTo("0.000000");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select locked_quantity
+				from inv_stock_balance
+				where batch_id = ?
+				""", batchB)).isEqualByComparingTo("0.000000");
+		assertThat(queryDecimal(jdbcTemplate, """
+				select quantity - released_quantity - consumed_quantity
+				from inv_stock_reservation
+				where id = ?
+				""", reservationId)).isEqualByComparingTo("1.000000");
+	}
+
+	@Test
 	void v22唯一项目预留升级到v23必须回填唯一正余额成本层() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
@@ -131,6 +166,10 @@ class InventoryV23MigrationRegressionTests {
 	}
 
 	private ReservationSeed insertReservationSeed(JdbcTemplate jdbcTemplate, String prefix) {
+		return insertReservationSeed(jdbcTemplate, prefix, "NONE");
+	}
+
+	private ReservationSeed insertReservationSeed(JdbcTemplate jdbcTemplate, String prefix, String trackingMethod) {
 		int suffix = SEQUENCE.incrementAndGet();
 		long unitId = id(jdbcTemplate, """
 				insert into mst_unit (
@@ -160,10 +199,11 @@ class InventoryV23MigrationRegressionTests {
 					project_cost_enabled, cost_remark, created_by, created_at, updated_by, updated_at
 				)
 				values (?, ?, 'V23规格', 'RAW_MATERIAL', 'PURCHASED', ?, ?, 'ENABLED',
-					'NONE', 'DIRECT_MATERIAL', 'VALUATED_MATERIAL', true, true, 'V23迁移物料',
+					?, 'DIRECT_MATERIAL', 'VALUATED_MATERIAL', true, true, 'V23迁移物料',
 					'test', now(), 'test', now())
 				returning id
-				""", "V23_MAT_" + prefix + suffix, "V23迁移物料" + prefix + suffix, categoryId, unitId);
+				""", "V23_MAT_" + prefix + suffix, "V23迁移物料" + prefix + suffix, categoryId, unitId,
+				trackingMethod);
 		long customerId = id(jdbcTemplate, """
 				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
 				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
@@ -186,6 +226,29 @@ class InventoryV23MigrationRegressionTests {
 				""", "V23_PRJ_" + prefix + suffix, "V23迁移项目" + prefix + suffix, customerId, ownerId,
 				LocalDate.now(), LocalDate.now().plusDays(30));
 		return new ReservationSeed(warehouseId, materialId, unitId, projectId);
+	}
+
+	private long insertBatchBalance(JdbcTemplate jdbcTemplate, ReservationSeed seed, String batchNo, String quantity,
+			String lockedQuantity) {
+		long batchId = id(jdbcTemplate, """
+				insert into inv_batch (
+					material_id, batch_no, source_type, source_id, source_line_id, business_date, created_by,
+					created_at, updated_by, updated_at
+				)
+				values (?, ?, 'V23_MIGRATION_BATCH', ?, ?, ?, 'test', now(), 'test', now())
+				returning id
+				""", seed.materialId(), batchNo, 7_000_000L + SEQUENCE.incrementAndGet(),
+				7_100_000L + SEQUENCE.incrementAndGet(), LocalDate.now());
+		jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					ownership_type, valuation_state, inventory_amount, average_unit_cost, batch_id, created_at,
+					updated_at
+				)
+				values (?, ?, ?, ?, ?, 'QUALIFIED', 'PUBLIC', 'VALUED', 10.00, 10.000000, ?, now(), now())
+				""", seed.warehouseId(), seed.materialId(), seed.unitId(), new BigDecimal(quantity),
+				new BigDecimal(lockedQuantity), batchId);
+		return batchId;
 	}
 
 	private long insertProjectLayerAndBalance(JdbcTemplate jdbcTemplate, ReservationSeed seed, String quantity,

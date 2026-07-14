@@ -720,20 +720,20 @@ public class ProductionAdminService {
 		if (material.issuedQuantity().add(line.quantity()).compareTo(material.requiredQuantity()) > 0) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_EXCEEDS_REQUIRED);
 		}
-		boolean consumedReservation = this.inventoryAvailabilityService.consumeBySourceLine(
-				InventoryReservationType.RESERVATION, InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE,
-				material.id(), line.quantity(), operator, servletRequest);
 		List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
 			.resolveStoredOutboundAllocations(MATERIAL_ISSUE_SOURCE, issue.id(), line.id(), line.warehouseId(),
 					material.materialId(), material.unitId(), line.quantity(), "trackingAllocations");
 		InventoryPostingService.PostingResult posting = null;
 		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+			boolean consumedReservation = consumeMaterialReservation(material.id(), allocation, operator,
+					servletRequest);
 			InventoryPostingService.PostingResult current = this.inventoryPostingService.post(
 					new InventoryPostingService.PostingRequest(InventoryMovementType.PRODUCTION_ISSUE,
 							InventoryDirection.OUT, line.warehouseId(), material.materialId(), material.unitId(),
 							allocation.quantity(), InventoryQualityStatus.QUALIFIED, MATERIAL_ISSUE_SOURCE, issue.id(),
 							line.id(), issue.businessDate(), issue.reason(), line.remark(), operator.username(),
-							consumedReservation, allocation.batchId(), allocation.serialId()));
+							consumedReservation, allocation.batchId(), allocation.serialId(),
+							InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, material.id()));
 			this.inventoryTrackingService.attachMovement(allocation.allocationId(), current.movementId());
 			this.inventoryTrackingService.markOutboundPosted(allocation, current.movementId(), operator.username());
 			if (posting == null) {
@@ -757,6 +757,19 @@ public class ProductionAdminService {
 				set before_quantity = ?, after_quantity = ?, updated_at = ?
 				where id = ?
 				""", posting.beforeQuantity(), posting.afterQuantity(), now, line.id());
+	}
+
+	private boolean consumeMaterialReservation(Long workOrderMaterialId,
+			InventoryTrackingService.ResolvedTrackingAllocation allocation, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		if (allocation.batchId() != null || allocation.serialId() != null) {
+			return this.inventoryAvailabilityService.consumeTrackedBySourceLine(InventoryReservationType.RESERVATION,
+					InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, workOrderMaterialId,
+					allocation.quantity(), allocation.batchId(), allocation.serialId(), operator, servletRequest);
+		}
+		return this.inventoryAvailabilityService.consumeBySourceLine(InventoryReservationType.RESERVATION,
+				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, workOrderMaterialId, allocation.quantity(),
+				operator, servletRequest);
 	}
 
 	private ValidatedWorkOrder validateWorkOrderRequest(WorkOrderRequest request) {
@@ -823,7 +836,7 @@ public class ProductionAdminService {
 							workOrder.issueWarehouseId(), material.materialId(), material.unitId(), remainingQuantity,
 							InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, workOrder.id(), material.id(),
 							workOrder.workOrderNo(), workOrder.plannedStartDate(), "生产工单释放预留", null, "PUBLIC", null,
-							null),
+							null, InventoryQualityStatus.QUALIFIED, null, null, null),
 					operator, servletRequest);
 		}
 	}

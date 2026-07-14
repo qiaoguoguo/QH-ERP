@@ -884,6 +884,171 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	}
 
 	@Test
+	void 批次销售必须先建父级聚合预留再按发货分配建立精确子预留() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_BATCH_PARENT_RSV_");
+		markMaterialSellable(fixture.valuedMaterialId());
+		markMaterialTracking(fixture.valuedMaterialId(), "BATCH");
+		long batchAId = seedBatchStock(admin, fixture, "S23-BATCH-RSV-A-" + SEQUENCE.incrementAndGet(),
+				"4.000000", "10.000000");
+		long batchBId = seedBatchStock(admin, fixture, "S23-BATCH-RSV-B-" + SEQUENCE.incrementAndGet(),
+				"4.000000", "10.000000");
+		long customerId = insertCustomer("S23_BATCH_PARENT_RSV_C_");
+
+		JsonNode order = createSalesOrder(admin, customerId, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "3.000000");
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/confirm", null, admin));
+		long orderLineId = confirmed.get("lines").get(0).get("id").longValue();
+		long parentReservationId = parentReservationId("SALES_ORDER", orderLineId);
+		JsonNode shipment = data(exchange(HttpMethod.POST,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/shipments",
+				salesShipmentPayload(fixture.rawWarehouseId(), orderLineId, fixture.valuedMaterialId(),
+						fixture.unitId(), "2.000000", List.of(trackingByBatch(batchAId, "2.000000"))),
+				admin));
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(reservationIdentity(parentReservationId))
+				.as("父级聚合预留必须为空批次/序列且保持 PUBLIC 身份")
+				.isEqualTo("PARENT:PUBLIC:NULL:NULL:NULL:NULL");
+			softly.assertThat(reservationActiveQuantity(parentReservationId)).as("过账前父级未消费剩余量")
+				.isEqualByComparingTo("3.000000");
+			softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchAId,
+					null, "PUBLIC", null, null)).as("聚合父级不得锁定批次A余额").isEqualByComparingTo("0.000000");
+			softly.assertThat(balanceLockedQuantity(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchBId,
+					null, "PUBLIC", null, null)).as("聚合父级不得锁定批次B余额").isEqualByComparingTo("0.000000");
+			softly.assertThat(childReservationCount(parentReservationId)).as("发货草稿只保存追踪分配，过账前不创建子预留")
+				.isZero();
+		});
+
+		long transferTargetWarehouseId = createWarehouse(admin, "S23_BATCH_PARENT_RSV_TO_" + SEQUENCE.incrementAndGet());
+		JsonNode allowedTransfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(fixture.rawWarehouseId(), transferTargetWarehouseId,
+						fixture.valuedMaterialId(), fixture.unitId(), batchBId, "4.000000"),
+				admin));
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + allowedTransfer.get("id").longValue() + "/post",
+				actionBody(allowedTransfer, "源仓总量仍覆盖父级聚合预留"), admin));
+		JsonNode squeezedTransfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				warehouseTransferPayload(fixture.rawWarehouseId(), transferTargetWarehouseId,
+						fixture.valuedMaterialId(), fixture.unitId(), batchAId, "2.000000"),
+				admin));
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + squeezedTransfer.get("id").longValue() + "/post",
+				actionBody(squeezedTransfer, "父级聚合预留保护批次调拨"), admin), HttpStatus.CONFLICT,
+				"INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE");
+
+		data(exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipment.get("id").longValue() + "/post",
+				null, admin));
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(reservationActiveQuantity(parentReservationId)).as("发货过账后父级未消费剩余量")
+				.isEqualByComparingTo("1.000000");
+			softly.assertThat(childReservationCount(parentReservationId)).as("发货过账必须创建精确子预留").isEqualTo(1L);
+			softly.assertThat(childReservationIdentity(parentReservationId, batchAId, null))
+				.as("批次子级必须继承父级源单和身份")
+				.isEqualTo("CHILD:CONSUMED:SALES_ORDER:" + orderLineId + ":PUBLIC:NULL:NULL:" + batchAId
+						+ ":NULL:2.000000:2.000000");
+			softly.assertThat(activeChildQuantity(parentReservationId)).as("已消费子级不得残留活动锁定")
+				.isEqualByComparingTo("0.000000");
+		});
+		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?warehouseId=" + fixture.rawWarehouseId()
+				+ "&materialId=" + fixture.valuedMaterialId() + "&batchId=" + batchAId)), "quantityOnHand",
+				"2.000000");
+		assertDecimal(firstItem(get(admin, "/api/admin/inventory/balances?warehouseId=" + fixture.rawWarehouseId()
+				+ "&materialId=" + fixture.valuedMaterialId() + "&batchId=" + batchBId)), "quantityOnHand",
+				"0.000000");
+	}
+
+	@Test
+	void 序列销售父子预留必须要求显式序列且子预留数量固定为一() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_SERIAL_PARENT_RSV_");
+		markMaterialSellable(fixture.valuedMaterialId());
+		markMaterialTracking(fixture.valuedMaterialId(), "SERIAL");
+		long serialAId = seedSerialStock(admin, fixture, "S23-SERIAL-RSV-A-" + SEQUENCE.incrementAndGet(),
+				"10.000000");
+		long serialBId = seedSerialStock(admin, fixture, "S23-SERIAL-RSV-B-" + SEQUENCE.incrementAndGet(),
+				"10.000000");
+		long customerId = insertCustomer("S23_SERIAL_PARENT_RSV_C_");
+
+		JsonNode noAllocationOrder = createSalesOrder(admin, customerId, fixture.rawWarehouseId(),
+				fixture.valuedMaterialId(), fixture.unitId(), "1.000000");
+		JsonNode noAllocationConfirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + noAllocationOrder.get("id").longValue() + "/confirm", null, admin));
+		long noAllocationLineId = noAllocationConfirmed.get("lines").get(0).get("id").longValue();
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/sales/orders/" + noAllocationOrder.get("id").longValue() + "/shipments",
+				salesShipmentPayload(fixture.rawWarehouseId(), noAllocationLineId, fixture.valuedMaterialId(),
+						fixture.unitId(), "1.000000"),
+				admin), HttpStatus.BAD_REQUEST, "INVENTORY_SERIAL_REQUIRED");
+
+		JsonNode order = createSalesOrder(admin, customerId, fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "1.000000");
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/confirm", null, admin));
+		long orderLineId = confirmed.get("lines").get(0).get("id").longValue();
+		long parentReservationId = parentReservationId("SALES_ORDER", orderLineId);
+		JsonNode shipment = data(exchange(HttpMethod.POST,
+				"/api/admin/sales/orders/" + order.get("id").longValue() + "/shipments",
+				salesShipmentPayload(fixture.rawWarehouseId(), orderLineId, fixture.valuedMaterialId(),
+						fixture.unitId(), "1.000000", List.of(trackingBySerial(serialAId))),
+				admin));
+		data(exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipment.get("id").longValue() + "/post",
+				null, admin));
+
+		SoftAssertions.assertSoftly((softly) -> {
+			softly.assertThat(reservationIdentity(parentReservationId))
+				.as("序列父级聚合预留必须为空追踪身份")
+				.isEqualTo("PARENT:PUBLIC:NULL:NULL:NULL:NULL");
+			softly.assertThat(childReservationCount(parentReservationId)).as("序列发货必须创建精确子预留").isEqualTo(1L);
+			softly.assertThat(childReservationIdentity(parentReservationId, null, serialAId))
+				.as("序列子预留必须绑定唯一序列且数量为 1")
+				.isEqualTo("CHILD:CONSUMED:SALES_ORDER:" + orderLineId + ":PUBLIC:NULL:NULL:NULL:" + serialAId
+						+ ":1.000000:1.000000");
+			softly.assertThat(childReservationCountForSerial(serialBId)).as("未选择序列不得产生子预留").isZero();
+		});
+	}
+
+	@Test
+	void 项目批次父级聚合预留必须保护调拨和质量冻结的完整身份总量() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		InventoryFixture fixture = createFixture("S23_PROJECT_BATCH_PARENT_");
+		markMaterialTracking(fixture.valuedMaterialId(), "BATCH");
+		long projectId = insertProject("S23_PROJECT_BATCH_PARENT_P_");
+		long costLayerId = insertProjectCostLayer(projectId, fixture.valuedMaterialId(), "6.000000", "60.00",
+				"10.000000");
+		long batchAId = insertBatch(fixture.valuedMaterialId(), "S23-PROJ-BATCH-A-" + SEQUENCE.incrementAndGet());
+		long batchBId = insertBatch(fixture.valuedMaterialId(), "S23-PROJ-BATCH-B-" + SEQUENCE.incrementAndGet());
+		insertProjectBatchBalance(fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), projectId,
+				costLayerId, batchAId, "3.000000", "30.00", "10.000000");
+		insertProjectBatchBalance(fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(), projectId,
+				costLayerId, batchBId, "3.000000", "30.00", "10.000000");
+		insertActiveParentReservation("STAGE023_PROJECT_BATCH_PARENT", 9_100_000L + SEQUENCE.incrementAndGet(),
+				9_200_000L + SEQUENCE.incrementAndGet(), fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "5.000000", "PROJECT", projectId, costLayerId);
+		long targetWarehouseId = createWarehouse(admin, "S23_PROJECT_BATCH_PARENT_TO_" + SEQUENCE.incrementAndGet());
+
+		JsonNode transfer = data(exchange(HttpMethod.POST, "/api/admin/inventory/warehouse-transfers",
+				projectWarehouseTransferPayload(fixture.rawWarehouseId(), targetWarehouseId, projectId,
+						fixture.valuedMaterialId(), fixture.unitId(), batchAId, "2.000000", costLayerId),
+				admin));
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/inventory/warehouse-transfers/" + transfer.get("id").longValue() + "/post",
+				actionBody(transfer, "聚合预留保护调拨"), admin), HttpStatus.CONFLICT,
+				"INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE");
+
+		Map<String, Object> freeze = qualityTransferPayload(fixture.rawWarehouseId(), fixture.valuedMaterialId(),
+				fixture.unitId(), "2.000000", "聚合预留保护质量冻结");
+		freeze.put("ownershipType", "PROJECT");
+		freeze.put("projectId", projectId);
+		freeze.put("costLayerId", costLayerId);
+		freeze.put("trackingAllocations", List.of(trackingByBatch(batchAId, "2.000000")));
+		assertError(exchange(HttpMethod.POST, "/api/admin/inventory/quality-transfers/freeze", freeze, admin),
+				HttpStatus.CONFLICT, "INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE");
+	}
+
+	@Test
 	void 项目仓库调拨必须按指定成本层移动并保持项目层总价值() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		InventoryFixture fixture = createFixture("S23_LAYER_TRANSFER_");
@@ -1252,9 +1417,9 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 			assertOnlyAllowedActions(softly, adjustmentDetail, "估值调整详情");
 			assertLineIdentity(softly, transferLine, "仓库调拨行", fixture.valuedMaterialId(), fixture.unitId(),
 					projectId);
-			softly.assertThat(transferLine.has("sourceCostLayerId") || transferLine.has("costLayerId"))
-				.as("项目仓库调拨详情必须冻结展示所选成本层")
-				.isTrue();
+			softly.assertThat(transferLine.get("sourceCostLayerId").longValue())
+				.as("项目仓库调拨详情必须冻结展示 sourceCostLayerId")
+				.isEqualTo(costLayerId);
 			assertLineIdentity(softly, conversionLine, "所有权转换行", fixture.valuedMaterialId(), fixture.unitId(),
 					projectId);
 			softly.assertThat(conversionLine.get("sourceCostLayerId").longValue()).isEqualTo(costLayerId);
@@ -1618,6 +1783,51 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				+ "&materialId=" + fixture.valuedMaterialId()));
 	}
 
+	private long insertProjectCostLayer(long projectId, long materialId, String quantity, String amount,
+			String unitCost) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_project_cost_layer (
+					project_id, material_id, source_type, source_id, source_line_id, original_quantity,
+					original_amount, remaining_quantity, remaining_amount, unit_cost, status, created_at, updated_at
+				)
+				values (?, ?, 'STAGE023_PARENT_RESERVATION', ?, ?, ?, ?, ?, ?, ?, 'ACTIVE', now(), now())
+				returning id
+				""", Long.class, projectId, materialId, 7_100_000L + suffix, 7_200_000L + suffix,
+				new BigDecimal(quantity), new BigDecimal(amount), new BigDecimal(quantity), new BigDecimal(amount),
+				new BigDecimal(unitCost));
+	}
+
+	private void insertProjectBatchBalance(long warehouseId, long materialId, long unitId, long projectId,
+			long costLayerId, long batchId, String quantity, String amount, String unitCost) {
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quantity_on_hand, locked_quantity, quality_status,
+					batch_id, ownership_type, project_id, valuation_state, inventory_amount, average_unit_cost,
+					cost_layer_id, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 0, 'QUALIFIED', ?, 'PROJECT', ?, 'VALUED', ?, ?, ?, now(), now())
+				""", warehouseId, materialId, unitId, new BigDecimal(quantity), batchId, projectId,
+				new BigDecimal(amount), new BigDecimal(unitCost), costLayerId);
+	}
+
+	private long insertActiveParentReservation(String sourceType, long sourceId, long sourceLineId, long warehouseId,
+			long materialId, long unitId, String quantity, String ownershipType, Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_reservation (
+					reservation_no, reservation_type, status, warehouse_id, material_id, unit_id, quality_status,
+					quantity, released_quantity, consumed_quantity, source_type, source_id, source_line_id,
+					source_document_no, business_date, reason, created_by, created_at, updated_by, updated_at,
+					ownership_type, project_id, cost_layer_id, parent_reservation_id, batch_id, serial_id
+				)
+				values (?, 'RESERVATION', 'ACTIVE', ?, ?, ?, 'QUALIFIED', ?, 0, 0, ?, ?, ?, ?,
+					current_date, '023父级聚合预留夹具', 'test', now(), 'test', now(), ?, ?, ?, null, null, null)
+				returning id
+				""", Long.class, "S23-PARENT-RSV-" + SEQUENCE.incrementAndGet(), warehouseId, materialId, unitId,
+				new BigDecimal(quantity), sourceType, sourceId, sourceLineId, sourceType + "-" + sourceLineId,
+				ownershipType, projectId, costLayerId);
+	}
+
 	private Map<String, Object> actionBody(JsonNode document, String reason) {
 		Map<String, Object> body = new LinkedHashMap<>();
 		body.put("version", document.get("version").longValue());
@@ -1697,6 +1907,18 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 			long projectId, long materialId, long unitId, String quantity, long costLayerId) {
 		Map<String, Object> payload = warehouseTransferPayload(sourceWarehouseId, targetWarehouseId, materialId,
 				unitId, null, quantity);
+		return projectWarehouseTransferPayload(payload, projectId, costLayerId);
+	}
+
+	private Map<String, Object> projectWarehouseTransferPayload(long sourceWarehouseId, long targetWarehouseId,
+			long projectId, long materialId, long unitId, Long batchId, String quantity, long costLayerId) {
+		Map<String, Object> payload = warehouseTransferPayload(sourceWarehouseId, targetWarehouseId, materialId,
+				unitId, batchId, quantity);
+		return projectWarehouseTransferPayload(payload, projectId, costLayerId);
+	}
+
+	private Map<String, Object> projectWarehouseTransferPayload(Map<String, Object> payload, long projectId,
+			long costLayerId) {
 		@SuppressWarnings("unchecked")
 		Map<String, Object> line = (Map<String, Object>) ((List<?>) payload.get("lines")).get(0);
 		line.put("ownershipType", "PROJECT");
@@ -1896,22 +2118,36 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 
 	private Map<String, Object> salesShipmentPayload(long warehouseId, long orderLineId, long materialId, long unitId,
 			String quantity) {
+		return salesShipmentPayload(warehouseId, orderLineId, materialId, unitId, quantity, List.of());
+	}
+
+	private Map<String, Object> salesShipmentPayload(long warehouseId, long orderLineId, long materialId, long unitId,
+			String quantity, List<Map<String, Object>> trackingAllocations) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("warehouseId", warehouseId);
 		payload.put("businessDate", LocalDate.now().toString());
 		payload.put("remark", "023 公共预留出库隔离测试");
-		payload.put("lines", List.of(salesShipmentLine(1, orderLineId, materialId, unitId, quantity)));
+		payload.put("lines", List.of(salesShipmentLine(1, orderLineId, materialId, unitId, quantity,
+				trackingAllocations)));
 		return payload;
 	}
 
 	private Map<String, Object> salesShipmentLine(int lineNo, long orderLineId, long materialId, long unitId,
 			String quantity) {
+		return salesShipmentLine(lineNo, orderLineId, materialId, unitId, quantity, List.of());
+	}
+
+	private Map<String, Object> salesShipmentLine(int lineNo, long orderLineId, long materialId, long unitId,
+			String quantity, List<Map<String, Object>> trackingAllocations) {
 		Map<String, Object> line = new LinkedHashMap<>();
 		line.put("lineNo", lineNo);
 		line.put("orderLineId", orderLineId);
 		line.put("materialId", materialId);
 		line.put("unitId", unitId);
 		line.put("quantity", quantity);
+		if (trackingAllocations != null && !trackingAllocations.isEmpty()) {
+			line.put("trackingAllocations", trackingAllocations);
+		}
 		return line;
 	}
 
@@ -1924,6 +2160,106 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				order by id
 				limit 1
 				""", String.class, orderId);
+	}
+
+	private long parentReservationId(String sourceType, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_stock_reservation
+				where source_type = ?
+				  and source_line_id = ?
+				  and parent_reservation_id is null
+				  and batch_id is null
+				  and serial_id is null
+				order by id desc
+				limit 1
+				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private String reservationIdentity(long reservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select case when parent_reservation_id is null then 'PARENT' else 'CHILD' end
+					|| ':' || ownership_type
+					|| ':' || coalesce(project_id::text, 'NULL')
+					|| ':' || coalesce(cost_layer_id::text, 'NULL')
+					|| ':' || coalesce(batch_id::text, 'NULL')
+					|| ':' || coalesce(serial_id::text, 'NULL')
+				from inv_stock_reservation
+				where id = ?
+				""", String.class, reservationId);
+	}
+
+	private String childReservationIdentity(long parentReservationId, Long batchId, Long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select 'CHILD'
+					|| ':' || status
+					|| ':' || source_type
+					|| ':' || source_line_id::text
+					|| ':' || ownership_type
+					|| ':' || coalesce(project_id::text, 'NULL')
+					|| ':' || coalesce(cost_layer_id::text, 'NULL')
+					|| ':' || coalesce(batch_id::text, 'NULL')
+					|| ':' || coalesce(serial_id::text, 'NULL')
+					|| ':' || quantity::text
+					|| ':' || consumed_quantity::text
+				from inv_stock_reservation
+				where parent_reservation_id = ?
+				  and batch_id is not distinct from ?
+				  and serial_id is not distinct from ?
+				order by id desc
+				limit 1
+				""", String.class, parentReservationId, batchId, serialId);
+	}
+
+	private BigDecimal reservationActiveQuantity(long reservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select quantity - released_quantity - consumed_quantity
+				from inv_stock_reservation
+				where id = ?
+				""", BigDecimal.class, reservationId);
+	}
+
+	private long childReservationCount(long parentReservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_reservation
+				where parent_reservation_id = ?
+				""", Long.class, parentReservationId);
+	}
+
+	private long childReservationCountForSerial(long serialId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from inv_stock_reservation
+				where serial_id = ?
+				  and parent_reservation_id is not null
+				""", Long.class, serialId);
+	}
+
+	private BigDecimal activeChildQuantity(long parentReservationId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity - released_quantity - consumed_quantity), 0)
+				from inv_stock_reservation
+				where parent_reservation_id = ?
+				  and status = 'ACTIVE'
+				""", BigDecimal.class, parentReservationId);
+	}
+
+	private BigDecimal balanceLockedQuantity(long warehouseId, long materialId, Long batchId, Long serialId,
+			String ownershipType, Long projectId, Long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(locked_quantity), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = 'QUALIFIED'
+				  and batch_id is not distinct from ?
+				  and serial_id is not distinct from ?
+				  and ownership_type = ?
+				  and project_id is not distinct from ?
+				  and cost_layer_id is not distinct from ?
+				""", BigDecimal.class, warehouseId, materialId, batchId, serialId, ownershipType, projectId,
+				costLayerId);
 	}
 
 	private JsonNode reconciliationValue(long materialId) throws Exception {
@@ -1978,6 +2314,15 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 				""", Long.class, materialId, batchNo);
 	}
 
+	private long seedBatchStock(AuthenticatedSession admin, InventoryFixture fixture, String batchNo, String quantity,
+			String unitPrice) throws Exception {
+		long batchId = insertBatch(fixture.valuedMaterialId(), batchNo);
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				quantity, unitPrice);
+		assignLatestBalanceToBatch(fixture.rawWarehouseId(), fixture.valuedMaterialId(), batchId);
+		return batchId;
+	}
+
 	private void assignLatestBalanceToBatch(long warehouseId, long materialId, long batchId) {
 		this.jdbcTemplate.update("""
 				update inv_stock_balance
@@ -2003,6 +2348,86 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 					limit 1
 				)
 				""", batchId, warehouseId, materialId);
+	}
+
+	private long seedSerialStock(AuthenticatedSession admin, InventoryFixture fixture, String serialNo, String unitPrice)
+			throws Exception {
+		long serialId = insertSerial(fixture.valuedMaterialId(), serialNo, fixture.rawWarehouseId());
+		seedQuantityWithoutVersion(admin, fixture.rawWarehouseId(), fixture.valuedMaterialId(), fixture.unitId(),
+				"1.000000", unitPrice);
+		assignLatestBalanceToSerial(fixture.rawWarehouseId(), fixture.valuedMaterialId(), serialId);
+		return serialId;
+	}
+
+	private long insertSerial(long materialId, String serialNo, long warehouseId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into inv_serial (
+					material_id, serial_no, source_type, source_id, source_line_id, warehouse_id, quality_status,
+					stock_status, business_date, remark, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'STAGE023_TEST', 1, 1, ?, 'QUALIFIED', 'IN_STOCK', current_date,
+					'023 序列预留测试', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, materialId, serialNo, warehouseId);
+	}
+
+	private void assignLatestBalanceToSerial(long warehouseId, long materialId, long serialId) {
+		this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set serial_id = ?, updated_at = now()
+				where id = (
+					select id
+					from inv_stock_balance
+					where warehouse_id = ?
+					  and material_id = ?
+					  and batch_id is null
+					  and serial_id is null
+					order by id desc
+					limit 1
+				)
+				""", serialId, warehouseId, materialId);
+		this.jdbcTemplate.update("""
+				update inv_stock_movement
+				set serial_id = ?
+				where id = (
+					select id
+					from inv_stock_movement
+					where warehouse_id = ?
+					  and material_id = ?
+					  and batch_id is null
+					  and serial_id is null
+					order by id desc
+					limit 1
+				)
+				""", serialId, warehouseId, materialId);
+		this.jdbcTemplate.update("""
+				update inv_serial
+				set last_movement_id = (
+					select id
+					from inv_stock_movement
+					where warehouse_id = ?
+					  and material_id = ?
+					  and serial_id = ?
+					order by id desc
+					limit 1
+				),
+				updated_at = now()
+				where id = ?
+				""", warehouseId, materialId, serialId, serialId);
+	}
+
+	private Map<String, Object> trackingByBatch(long batchId, String quantity) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("batchId", batchId);
+		allocation.put("quantity", quantity);
+		return allocation;
+	}
+
+	private Map<String, Object> trackingBySerial(long serialId) {
+		Map<String, Object> allocation = new LinkedHashMap<>();
+		allocation.put("serialId", serialId);
+		allocation.put("quantity", "1.000000");
+		return allocation;
 	}
 
 	private void approveLatestTask(String approvePermission) throws Exception {
@@ -2113,6 +2538,15 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 					updated_at = now()
 				where id = ?
 				""", materialId);
+	}
+
+	private void markMaterialTracking(long materialId, String trackingMethod) {
+		this.jdbcTemplate.update("""
+				update mst_material
+				set tracking_method = ?,
+					updated_at = now()
+				where id = ?
+				""", trackingMethod, materialId);
 	}
 
 	private Map<String, Object> documentPayload(String documentType, String reason, List<Map<String, Object>> lines) {

@@ -5,14 +5,17 @@ do $$
 begin
 	if exists (
 		with candidates as (
-			select r.id, count(b.cost_layer_id) as candidate_count
+			select r.id, count(distinct b.cost_layer_id) as candidate_count
 			from inv_stock_reservation r
+			join mst_material m on m.id = r.material_id
 			left join inv_stock_balance b
 				on b.warehouse_id = r.warehouse_id
 				and b.material_id = r.material_id
 				and b.quality_status = r.quality_status
-				and b.batch_id is not distinct from r.batch_id
-				and b.serial_id is not distinct from r.serial_id
+				and (
+					(m.tracking_method in ('BATCH', 'SERIAL') and r.batch_id is null and r.serial_id is null)
+					or (b.batch_id is not distinct from r.batch_id and b.serial_id is not distinct from r.serial_id)
+				)
 				and b.ownership_type = 'PROJECT'
 				and b.project_id = r.project_id
 				and b.cost_layer_id is not null
@@ -35,12 +38,15 @@ set cost_layer_id = candidate.cost_layer_id
 from (
 	select r.id, min(b.cost_layer_id) as cost_layer_id
 	from inv_stock_reservation r
+	join mst_material m on m.id = r.material_id
 	join inv_stock_balance b
 		on b.warehouse_id = r.warehouse_id
 		and b.material_id = r.material_id
 		and b.quality_status = r.quality_status
-		and b.batch_id is not distinct from r.batch_id
-		and b.serial_id is not distinct from r.serial_id
+		and (
+			(m.tracking_method in ('BATCH', 'SERIAL') and r.batch_id is null and r.serial_id is null)
+			or (b.batch_id is not distinct from r.batch_id and b.serial_id is not distinct from r.serial_id)
+		)
 		and b.ownership_type = 'PROJECT'
 		and b.project_id = r.project_id
 		and b.cost_layer_id is not null
@@ -57,11 +63,19 @@ set locked_quantity = 0
 where quality_status = 'QUALIFIED';
 
 with active_locks as (
-	select warehouse_id, material_id, quality_status, batch_id, serial_id, ownership_type, project_id, cost_layer_id,
+	select r.warehouse_id, r.material_id, r.quality_status, r.batch_id, r.serial_id, r.ownership_type,
+	       r.project_id, r.cost_layer_id,
 	       sum(quantity - released_quantity - consumed_quantity) as locked_quantity
-	from inv_stock_reservation
-	where status = 'ACTIVE'
-	group by warehouse_id, material_id, quality_status, batch_id, serial_id, ownership_type, project_id, cost_layer_id
+	from inv_stock_reservation r
+	join mst_material m on m.id = r.material_id
+	where r.status = 'ACTIVE'
+	  and (
+		(m.tracking_method = 'NONE' and r.batch_id is null and r.serial_id is null)
+		or (m.tracking_method = 'BATCH' and r.batch_id is not null and r.serial_id is null)
+		or (m.tracking_method = 'SERIAL' and r.serial_id is not null)
+	  )
+	group by r.warehouse_id, r.material_id, r.quality_status, r.batch_id, r.serial_id, r.ownership_type,
+	         r.project_id, r.cost_layer_id
 )
 update inv_stock_balance b
 set locked_quantity = active_locks.locked_quantity

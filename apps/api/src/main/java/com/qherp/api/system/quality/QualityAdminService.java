@@ -235,20 +235,15 @@ public class QualityAdminService {
 		String remark = validateOptionalText(request.remark(), 500);
 		boolean useTracking = shouldUseTracking(request.materialId(), request.trackingAllocations());
 		InventoryPostingService.ValuationContext valuationContext = qualityTransferContext(request);
-		if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
-			if (useTracking) {
-				assertTrackedFreezeAvailable(request.warehouseId(), request.materialId(), quantity);
-			}
-			else {
-				assertQualityFreezeAvailable(request, quantity, valuationContext);
-			}
-		}
 		long sourceId = nextQualityStatusTransferSourceId();
 		if (useTracking) {
 			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
 				.resolveQualityAllocations(request.warehouseId(), request.materialId(), request.unitId(), fromStatus,
 						quantity, request.trackingAllocations(), toStatus, "trackingAllocations");
 			assertTrackedQualityQuantity(trackingAllocations, toStatus, quantity);
+			if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
+				assertTrackedFreezeAvailable(request, trackingAllocations, valuationContext);
+			}
 			TrackedTransferSummary trackedResult = transferTrackedQualityStatus(request.warehouseId(),
 					request.materialId(), request.unitId(), fromStatus, toStatus, trackingAllocations, sourceId,
 					request.businessDate(), hasText(reason) ? reason : defaultReason, remark, operator.username(),
@@ -259,6 +254,9 @@ public class QualityAdminService {
 					toStatus.displayName(), formatQuantity(quantity), formatQuantity(trackedResult.fromBeforeQuantity()),
 					formatQuantity(trackedResult.fromAfterQuantity()), formatQuantity(trackedResult.toBeforeQuantity()),
 					formatQuantity(trackedResult.toAfterQuantity()), trackedResult.trackingAllocations());
+		}
+		if (fromStatus == InventoryQualityStatus.QUALIFIED && toStatus == InventoryQualityStatus.FROZEN) {
+			assertQualityFreezeAvailable(request, quantity, valuationContext);
 		}
 		InventoryPostingService.QualityTransferResult result = this.inventoryPostingService.transferQualityStatus(
 				request.warehouseId(), request.materialId(), request.unitId(), fromStatus, toStatus, quantity,
@@ -427,30 +425,19 @@ public class QualityAdminService {
 		}
 	}
 
-	private void assertTrackedFreezeAvailable(Long warehouseId, Long materialId, BigDecimal quantity) {
-		BigDecimal quantityOnHand = this.jdbcTemplate.queryForObject("""
-				select coalesce(sum(quantity_on_hand), 0)
-				from inv_stock_balance
-				where warehouse_id = ?
-				and material_id = ?
-				and quality_status = 'QUALIFIED'
-				""", BigDecimal.class, warehouseId, materialId);
-		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
-				select quantity, released_quantity, consumed_quantity
-				from inv_stock_reservation
-				where warehouse_id = ?
-				and material_id = ?
-				and quality_status = 'QUALIFIED'
-				and status = 'ACTIVE'
-				for update
-				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
-				.subtract(rs.getBigDecimal("released_quantity"))
-				.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
-			.stream()
-			.reduce(ZERO, BigDecimal::add);
-		BigDecimal availableQuantity = (quantityOnHand == null ? ZERO : quantityOnHand).subtract(lockedQuantity);
-		if (availableQuantity.compareTo(quantity) < 0) {
-			throw new BusinessException(ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE);
+	private void assertTrackedFreezeAvailable(QualityStatusTransferRequest request,
+			List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations,
+			InventoryPostingService.ValuationContext valuationContext) {
+		if (valuationContext != null && "PROJECT".equals(valuationContext.ownershipType())) {
+			validateProjectQualityTransferLayer(request.materialId(), valuationContext.projectId(),
+					valuationContext.costLayerId());
+		}
+		ApiErrorCode errorCode = valuationContext != null && "PROJECT".equals(valuationContext.ownershipType())
+				? ApiErrorCode.INVENTORY_RESERVED_OR_OCCUPIED_NOT_AVAILABLE
+				: ApiErrorCode.INVENTORY_TRACKING_NOT_AVAILABLE;
+		for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+			this.inventoryPostingService.assertQualifiedOutboundAvailable(request.warehouseId(), request.materialId(),
+					allocation.quantity(), allocation.batchId(), allocation.serialId(), valuationContext, errorCode);
 		}
 	}
 
