@@ -10,12 +10,11 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
 import javax.sql.DataSource;
-import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers
-class InventoryV22MigrationRegressionTests {
+class InventoryV25MigrationRegressionTests {
 
 	@Container
 	static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
@@ -31,45 +30,41 @@ class InventoryV22MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库迁移到最新版本必须保留v22包含成本层的余额唯一索引() {
+	void v24升级到v25必须扩展价值流水类型长度() {
+		migrate("24");
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(columnLength(jdbcTemplate, "inv_value_movement", "movement_type")).isEqualTo(32);
+
+		migrate(null);
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
+		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
+	}
+
+	@Test
+	void 空库迁移到v25必须允许最长库存移动枚举写入价值流水() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
-		assertBalanceIndexesContainCostLayer(jdbcTemplate);
+		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
 	}
 
-	@Test
-	void v19v20v21升级到最新版本必须保留存量并保留成本层余额身份() {
-		for (String target : List.of("19", "20", "21")) {
-			Flyway.configure()
-				.dataSource(dataSource())
-				.locations("classpath:db/migration")
-				.cleanDisabled(false)
-				.load()
-				.clean();
-			migrate(target);
-			JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
-			long before = count(jdbcTemplate, "inv_stock_balance");
-
-			migrate(null);
-
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
-			assertThat(count(jdbcTemplate, "inv_stock_balance")).isEqualTo(before);
-			assertBalanceIndexesContainCostLayer(jdbcTemplate);
-		}
+	private void assertMovementTypeColumnsAllowLongEnums(JdbcTemplate jdbcTemplate) {
+		int longestMovementTypeLength = longestMovementTypeLength();
+		assertThat(columnLength(jdbcTemplate, "inv_stock_movement", "movement_type"))
+			.isGreaterThanOrEqualTo(longestMovementTypeLength);
+		assertThat(columnLength(jdbcTemplate, "inv_value_movement", "movement_type"))
+			.isGreaterThanOrEqualTo(longestMovementTypeLength);
 	}
 
-	private void assertBalanceIndexesContainCostLayer(JdbcTemplate jdbcTemplate) {
-		for (String indexName : List.of("uk_inv_stock_balance_untracked", "uk_inv_stock_balance_batch",
-				"uk_inv_stock_balance_serial")) {
-			String definition = jdbcTemplate.queryForObject("""
-					select pg_get_indexdef(indexrelid)
-					from pg_index
-					where indexrelid = ?::regclass
-					""", String.class, indexName);
-			assertThat(definition).contains("cost_layer_id");
+	private int longestMovementTypeLength() {
+		int max = 0;
+		for (InventoryMovementType type : InventoryMovementType.values()) {
+			max = Math.max(max, type.name().length());
 		}
+		return max;
 	}
 
 	private void migrate(String target) {
@@ -89,10 +84,6 @@ class InventoryV22MigrationRegressionTests {
 		return dataSource;
 	}
 
-	private long count(JdbcTemplate jdbcTemplate, String tableName) {
-		return jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
-	}
-
 	private String currentFlywayVersion(JdbcTemplate jdbcTemplate) {
 		return jdbcTemplate.queryForObject("""
 				select version
@@ -101,5 +92,15 @@ class InventoryV22MigrationRegressionTests {
 				order by installed_rank desc
 				limit 1
 				""", String.class);
+	}
+
+	private Integer columnLength(JdbcTemplate jdbcTemplate, String tableName, String columnName) {
+		return jdbcTemplate.queryForObject("""
+				select character_maximum_length
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = ?
+				  and column_name = ?
+				""", Integer.class, tableName, columnName);
 	}
 }

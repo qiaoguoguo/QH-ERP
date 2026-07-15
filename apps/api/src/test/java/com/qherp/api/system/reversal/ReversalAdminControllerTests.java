@@ -1242,7 +1242,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionReversalFixture fixture = productionReversalFixture();
 		PostedMaterialIssue issue = createPostedMaterialIssueWithCost(fixture, "12.000000", "10.000000");
-		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000");
+		seedValuedPublicStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "5.000000",
+				"10.000000");
 
 		ResponseEntity<String> sources = get("/api/admin/production/material-supplement-sources?keyword="
 				+ issue.workOrderNo() + "&warehouseId=" + fixture.warehouseId(), admin);
@@ -1291,6 +1292,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode postedData = data(posted);
 		JsonNode postedLine = postedData.get("lines").get(0);
 		long supplementLineId = postedLine.get("id").longValue();
+		long stockMovementId = postedLine.get("stockMovementId").longValue();
 		assertThat(postedData.get("status").asText()).isEqualTo("POSTED");
 		assertThat(postedLine.get("stockMovementId").isNumber()).isTrue();
 		assertThat(postedLine.get("costRecordId").isNumber()).isTrue();
@@ -1303,6 +1305,19 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(movement.beforeQuantity(), "5.000000");
 		assertDecimal(movement.afterQuantity(), "2.000000");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.materialId()), "2.000000");
+
+		ValueMovementRow valueMovement = valueMovementForSource("PRODUCTION_MATERIAL_SUPPLEMENT", supplementId,
+				supplementLineId);
+		assertThat(valueMovement.stockMovementId()).isEqualTo(stockMovementId);
+		assertThat(valueMovement.movementType()).isEqualTo("PRODUCTION_MATERIAL_SUPPLEMENT_OUT");
+		assertThat(valueMovement.direction()).isEqualTo("OUT");
+		assertDecimal(valueMovement.quantity(), "3.000000");
+		assertDecimal(valueMovement.unitCost(), "10.000000");
+		assertDecimal(valueMovement.inventoryAmount(), "30.00");
+		assertThat(valueMovement.valuationMethod()).isEqualTo("MOVING_WEIGHTED_AVERAGE");
+		assertThat(valueMovement.valuationState()).isEqualTo("VALUED");
+		assertThat(valueMovement.sourceId()).isEqualTo(supplementId);
+		assertThat(valueMovement.sourceLineId()).isEqualTo(supplementLineId);
 
 		CostRecordRow costRecord = costRecord("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId);
 		assertThat(costRecord.status()).isEqualTo("ACTIVE");
@@ -2196,6 +2211,56 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		}
 	}
 
+	private void seedValuedPublicStock(long warehouseId, long materialId, long unitId, String quantity,
+			String averageUnitCost) {
+		BigDecimal stockQuantity = new BigDecimal(quantity);
+		BigDecimal unitCost = new BigDecimal(averageUnitCost);
+		BigDecimal amount = money(stockQuantity.multiply(unitCost));
+		this.jdbcTemplate.update("""
+				update mst_material
+				set inventory_valuation_category = 'VALUATED_MATERIAL',
+				    inventory_value_enabled = true,
+				    updated_at = now()
+				where id = ?
+				""", materialId);
+		this.jdbcTemplate.update("""
+				insert into inv_public_valuation_pool (
+					material_id, quantity, amount, average_unit_cost, valuation_state, created_at, updated_at
+				)
+				values (?, ?, ?, ?, 'VALUED', now(), now())
+				on conflict (material_id) do update
+				set quantity = excluded.quantity,
+				    amount = excluded.amount,
+				    average_unit_cost = excluded.average_unit_cost,
+				    valuation_state = 'VALUED',
+				    updated_at = now(),
+				    version = inv_public_valuation_pool.version + 1
+				""", materialId, stockQuantity, amount, unitCost);
+		seedStock(warehouseId, materialId, unitId, quantity);
+		Long poolId = this.jdbcTemplate.queryForObject("""
+				select id
+				from inv_public_valuation_pool
+				where material_id = ?
+				""", Long.class, materialId);
+		this.jdbcTemplate.update("""
+				update inv_stock_balance
+				set valuation_state = 'VALUED',
+				    inventory_amount = ?,
+				    average_unit_cost = ?,
+				    public_pool_id = ?,
+				    updated_at = now(),
+				    version = version + 1
+				where warehouse_id = ?
+				  and material_id = ?
+				  and quality_status = ?
+				  and batch_id is null
+				  and serial_id is null
+				  and ownership_type = 'PUBLIC'
+				  and project_id is null
+				  and cost_layer_id is null
+				""", amount, unitCost, poolId, warehouseId, materialId, InventoryQualityStatus.QUALIFIED.name());
+	}
+
 	private void setTrackingMethod(long materialId, String trackingMethod) {
 		this.jdbcTemplate.update("update mst_material set tracking_method = ?, updated_at = now() where id = ?",
 				trackingMethod, materialId);
@@ -2848,6 +2913,21 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				sourceType, sourceLineId);
 	}
 
+	private ValueMovementRow valueMovementForSource(String sourceType, long sourceId, long sourceLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select stock_movement_id, movement_type, direction, source_id, source_line_id, quantity, unit_cost,
+				       inventory_amount, valuation_method, valuation_state
+				from inv_value_movement
+				where source_type = ?
+				and source_id = ?
+				and source_line_id = ?
+				""", (rs, rowNum) -> new ValueMovementRow(rs.getLong("stock_movement_id"),
+				rs.getString("movement_type"), rs.getString("direction"), rs.getLong("source_id"),
+				rs.getLong("source_line_id"), rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_cost"),
+				rs.getBigDecimal("inventory_amount"), rs.getString("valuation_method"),
+				rs.getString("valuation_state")), sourceType, sourceId, sourceLineId);
+	}
+
 	private ReceivableAmounts receivableAmounts(long receivableId) {
 		return this.jdbcTemplate.queryForObject("""
 				select adjusted_amount, unreceived_amount, status
@@ -3096,6 +3176,11 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 	private record MovementRow(String movementType, String direction, long sourceId, long sourceLineId,
 			BigDecimal quantity, BigDecimal beforeQuantity, BigDecimal afterQuantity) {
+	}
+
+	private record ValueMovementRow(long stockMovementId, String movementType, String direction, long sourceId,
+			long sourceLineId, BigDecimal quantity, BigDecimal unitCost, BigDecimal inventoryAmount,
+			String valuationMethod, String valuationState) {
 	}
 
 	private record ReceivableAmounts(BigDecimal adjustedAmount, BigDecimal unreceivedAmount, String status) {

@@ -9,7 +9,7 @@
 - Node.js 22 或更高版本。
 - npm 10 或更高版本。
 - Docker Desktop 可用。
-- 后端最低 JDK 21。当前本机 Java 8 不满足后端要求，因此后端测试优先使用 Docker 化 JDK 21。
+- 后端最低 JDK 21。当前系统默认 `java` 仍是 Java 8，不能直接用于本项目；本机另有项目可用 JDK 21：`C:\Users\14567\.codex\jdks\jdk-21.0.11+10`。运行 Maven 或后端前必须显式设置 `JAVA_HOME` 和 `Path`，也可以使用下文的 Docker 化 JDK 21 方式。
 
 ## 环境变量
 
@@ -56,7 +56,16 @@ http://127.0.0.1:5173
 
 ## 后端测试
 
-当前建议使用 Docker 化 Maven 和 JDK 21 运行测试，并挂载 Docker socket 供 Testcontainers 创建 PostgreSQL 容器。
+当前可直接使用本机项目 JDK 21 运行 Maven；后端集成测试仍会通过 Testcontainers 创建临时 PostgreSQL 等依赖容器。这种方式的测试执行器位于宿主机，不能表述为测试全程在隔离 Docker 容器中执行。
+
+```powershell
+$env:JAVA_HOME='C:\Users\14567\.codex\jdks\jdk-21.0.11+10'
+$env:Path="$env:JAVA_HOME\bin;$env:Path"
+cd apps/api
+.\mvnw.cmd test
+```
+
+如需把 Maven/JDK 执行器也放入容器，可使用以下方式，并挂载 Docker socket 供 Testcontainers 创建临时依赖：
 
 ```powershell
 $api=(Resolve-Path 'apps/api').Path.Replace('\','/')

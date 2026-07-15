@@ -5,7 +5,9 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接与后续规划（2026-07-12，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [项目交接与后续规划（2026-07-15 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [固定五角色阶段协作与交付流程](ops/stage-collaboration-delivery-process.md)
+- [电气制造业全量演示数据基线与重建验收单](data/electrical-manufacturing-demo-data.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)
 - [项目交接报告（2026-07-05，015 完成，后续方向待讨论）](handoffs/2026-07-05-project-handoff-015-complete-next-period-close.md)
 - [项目交接报告（2026-07-04，财务往来基础完成版）](handoffs/2026-07-04-project-handoff-financial-settlement-complete.md)
@@ -37,6 +39,8 @@
 - [成本财务主数据与 BOM 治理任务记录](tasks/021-cost-financial-master-data-bom-governance.md)
 - [固定审批与业务单据平台基础任务记录](tasks/022-fixed-approval-document-platform.md)
 - [库存计价与仓储账实一致任务记录](tasks/023-inventory-valuation-stock-integrity.md)
+
+021 至 023 采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护独立 API、设计或测试文档。
 
 ## 产品
 
@@ -101,6 +105,7 @@
 - [库存可用量、占用、冻结与预留基础实施计划](superpowers/plans/2026-07-11-inventory-availability-reservation-implementation-plan.md)
 - [批次、序列号与来源去向追溯基础实施计划](superpowers/plans/2026-07-11-batch-serial-trace-implementation-plan.md)
 - [销售项目与合同管理基础实施计划](superpowers/plans/2026-07-12-sales-project-contract-implementation-plan.md)
+- [电气制造业全量演示数据重建实施计划](superpowers/plans/2026-07-15-electrical-demo-data-rebuild-plan.md)
 
 ## 测试与验收
 

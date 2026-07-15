@@ -1,5 +1,6 @@
 package com.qherp.api.system.stage023;
 
+import com.qherp.api.system.inventory.InventoryMovementType;
 import org.flywaydb.core.Flyway;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.BeforeEach;
@@ -34,11 +35,11 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 空库必须从v1迁移到v24并建立计价结构权限审批种子和预留成本层身份() {
+	void 空库必须从v1迁移到v25并建立计价结构权限审批种子预留成本层身份和价值流水长度() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -84,6 +85,7 @@ class Stage023MigrationRegressionTests {
 				"fk_inv_warehouse_transfer_line_source_layer")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 
 		assertPermissionsExist(jdbcTemplate, List.of(
 				"inventory:valuation:view",
@@ -116,7 +118,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v19代表性存量升级到v24必须保留数量质量追踪预留并标记历史未估值() {
+	void v19代表性存量升级到v25必须保留数量质量追踪预留并标记历史未估值() {
 		migrate("19");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("19");
@@ -124,9 +126,10 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(count(jdbcTemplate, "platform_approval_instance")).isZero();
 		assertThat(count(jdbcTemplate, "platform_approval_task")).isZero();
 		assertThat(queryText(jdbcTemplate, """
@@ -169,7 +172,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v20代表性存量升级到v24必须保留既有计价状态并具备成本层和预留身份() {
+	void v20代表性存量升级到v25必须保留既有计价状态并具备成本层预留身份和价值流水长度() {
 		migrate("20");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("20");
@@ -178,10 +181,11 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
@@ -221,7 +225,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v21代表性存量升级到v24必须保留既有计价状态并补齐成本层余额和预留身份() {
+	void v21代表性存量升级到v25必须保留既有计价状态并补齐成本层余额预留身份和价值流水长度() {
 		migrate("21");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("21");
@@ -230,9 +234,10 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':' || valuation_state
@@ -265,7 +270,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v24必须为预留补齐成本层身份并兼容公共唯一项目和历史项目空层() {
+	void v22到v25必须为预留补齐成本层身份并兼容公共唯一项目历史项目空层和价值流水长度() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		ReservationLayerMigrationData data = insertV22ReservationLayerData(jdbcTemplate, false);
@@ -273,9 +278,10 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of("cost_layer_id"));
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
@@ -300,14 +306,15 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v24仅公共活动预留必须重建公共锁定且清除项目层旧污染锁定() {
+	void v22到v25仅公共活动预留必须重建公共锁定且清除项目层旧污染锁定() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		PublicReservationMigrationData data = insertV22PublicOnlyReservationData(jdbcTemplate);
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
 					|| coalesce(cost_layer_id::text, 'NULL')
@@ -327,14 +334,15 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void v22到v24追踪物料空批次活动预留必须保留父级聚合且不锁具体批次余额() {
+	void v22到v25追踪物料空批次活动预留必须保留父级聚合且不锁具体批次余额() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		TrackingAggregateReservationMigrationData data = insertV22TrackingAggregateReservationData(jdbcTemplate);
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':'
 					|| coalesce(batch_id::text, 'NULL') || ':' || coalesce(serial_id::text, 'NULL')
@@ -354,7 +362,7 @@ class Stage023MigrationRegressionTests {
 	}
 
 	@Test
-	void 旧v23升级到v24必须新增盘点估值字段且保留历史草稿为空() {
+	void 旧v23升级到v25必须经v24新增盘点估值字段并经v25扩展价值流水类型长度() {
 		migrate("23");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("23");
@@ -364,13 +372,14 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("24");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("25");
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
+		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
 	}
 
 	@Test
-	void v22到v24遇到活动项目预留空层且存在多个候选成本层必须迁移失败() {
+	void v22到v25遇到活动项目预留空层且存在多个候选成本层必须迁移失败() {
 		migrate("22");
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 		insertV22ReservationLayerData(jdbcTemplate, true);
@@ -918,6 +927,20 @@ class Stage023MigrationRegressionTests {
 		});
 	}
 
+	private void assertValueMovementTypeLengthAllowsAllEnums(JdbcTemplate jdbcTemplate) {
+		assertThat(columnLength(jdbcTemplate, "inv_value_movement", "movement_type"))
+			.as("价值流水 movement_type 必须容纳最长库存移动枚举")
+			.isGreaterThanOrEqualTo(longestMovementTypeLength());
+	}
+
+	private int longestMovementTypeLength() {
+		int max = 0;
+		for (InventoryMovementType type : InventoryMovementType.values()) {
+			max = Math.max(max, type.name().length());
+		}
+		return max;
+	}
+
 	private void assertStocktakeVarianceColumnsAbsent(JdbcTemplate jdbcTemplate) {
 		SoftAssertions.assertSoftly((softly) -> {
 			softly.assertThat(columnExists(jdbcTemplate, "inv_stocktake_line", "variance_unit_cost"))
@@ -1064,6 +1087,16 @@ class Stage023MigrationRegressionTests {
 				  and table_name = ?
 				  and column_name = ?
 				""", Boolean.class, tableName, columnName);
+	}
+
+	private Integer columnLength(JdbcTemplate jdbcTemplate, String tableName, String columnName) {
+		return jdbcTemplate.queryForObject("""
+				select character_maximum_length
+				from information_schema.columns
+				where table_schema = 'public'
+				  and table_name = ?
+				  and column_name = ?
+				""", Integer.class, tableName, columnName);
 	}
 
 	private boolean constraintExists(JdbcTemplate jdbcTemplate, String tableName, String constraintName) {
