@@ -48,6 +48,44 @@ $rebuildPath = Join-Path $Root "tools/demo-data/rebuild-acceptance.ps1"
 $rebuild = Get-Content -LiteralPath $rebuildPath -Raw
 $commonPath = Join-Path $Root "tools/demo-data/lib/demo-data-common.ps1"
 $common = Get-Content -LiteralPath $commonPath -Raw
+$validatorPath = Join-Path $Root "tools/demo-data/validate-demo-data.ps1"
+$validator = Get-Content -LiteralPath $validatorPath -Raw
+$apiPomPath = Join-Path $Root "apps/api/pom.xml"
+$apiPom = Get-Content -LiteralPath $apiPomPath -Raw
+$stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
+$stage023Integration = Get-Content -LiteralPath $stage023IntegrationPath -Raw
+
+Assert-True -Condition ($apiPom -match '<artifactId>maven-surefire-plugin</artifactId>' `
+        -and $apiPom -match '<qherp\.storage\.s3\.endpoint>http://127\.0\.0\.1:9</qherp\.storage\.s3\.endpoint>' `
+        -and $apiPom -match '<qherp\.storage\.s3\.bucket>qherp-test-storage-unconfigured</qherp\.storage\.s3\.bucket>' `
+        -and $apiPom -notmatch '<qherp\.storage\.s3\.bucket>qherp-private</qherp\.storage\.s3\.bucket>') `
+    -Message "Maven 测试必须通过 Surefire 系统属性把未配置对象存储导向不可用测试端点和测试 bucket，禁止默认命中 qherp-private。"
+Assert-True -Condition ($stage023Integration -match 'GenericContainer<\?> minio' `
+        -and $stage023Integration -match '@DynamicPropertySource' `
+        -and $stage023Integration -match 'qherp-test-private-stage023' `
+        -and $stage023Integration -match 'qherp\.storage\.s3\.endpoint') `
+    -Message "Stage023InventoryValuationIntegrationTests 必须注册专用 MinIO Testcontainer 和独立测试 bucket，不能继承正式默认对象存储配置。"
+Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
+        -and $validator -match 'databaseAvailable' `
+        -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
+        -and $validator -match 'bucket == database available and >= 8') `
+    -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+
+function Test-SelfTestMinioFileObjectConsistency {
+    param(
+        [int] $BucketCount,
+        [int] $DatabaseAvailableCount,
+        [int] $MinioExitCode = 0
+    )
+    return ($MinioExitCode -eq 0 -and $BucketCount -eq $DatabaseAvailableCount -and $BucketCount -ge 8)
+}
+
+Assert-True -Condition (Test-SelfTestMinioFileObjectConsistency -BucketCount 17 -DatabaseAvailableCount 17) `
+    -Message "MinIO 对象数与数据库 AVAILABLE 文件对象数一致且不少于 8 时应通过。"
+Assert-True -Condition (-not (Test-SelfTestMinioFileObjectConsistency -BucketCount 19 -DatabaseAvailableCount 17)) `
+    -Message "MinIO 对象数 19 但数据库 AVAILABLE 文件对象数 17 时必须失败。"
+Assert-True -Condition (-not (Test-SelfTestMinioFileObjectConsistency -BucketCount 7 -DatabaseAvailableCount 7)) `
+    -Message "MinIO 与数据库文件对象数即使一致，少于 8 也必须失败。"
 
 $authorizationTestDirectory = New-DemoDirectory -Path (Join-Path $Root "apps/api/target/demo-data/self-test-authorization")
 $authorizationChildPath = Join-Path $authorizationTestDirectory "assert-acceptance-authorization-child.ps1"

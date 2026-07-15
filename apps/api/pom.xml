@@ -158,6 +158,20 @@
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
 			</plugin>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-surefire-plugin</artifactId>
+				<configuration>
+					<systemPropertyVariables>
+						<qherp.storage.s3.endpoint>http://127.0.0.1:9</qherp.storage.s3.endpoint>
+						<qherp.storage.s3.region>us-east-1</qherp.storage.s3.region>
+						<qherp.storage.s3.bucket>qherp-test-storage-unconfigured</qherp.storage.s3.bucket>
+						<qherp.storage.s3.access-key>qherp-test</qherp.storage.s3.access-key>
+						<qherp.storage.s3.secret-key>qherp-test</qherp.storage.s3.secret-key>
+						<qherp.storage.s3.path-style>true</qherp.storage.s3.path-style>
+					</systemPropertyVariables>
+				</configuration>
+			</plugin>
 		</plugins>
 	</build>
 

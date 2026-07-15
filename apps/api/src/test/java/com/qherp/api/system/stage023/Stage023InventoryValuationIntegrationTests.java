@@ -24,14 +24,21 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.wait.strategy.Wait;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -63,6 +70,26 @@ class Stage023InventoryValuationIntegrationTests extends PostgresIntegrationTest
 	private static final long RESERVATION_ROOT_LOCK_OFFSET = 4_231_023_000_000_000_000L;
 
 	private static final AtomicInteger SEQUENCE = new AtomicInteger();
+
+	@Container
+	static final GenericContainer<?> minio = new GenericContainer<>(
+			DockerImageName.parse("minio/minio:RELEASE.2024-01-16T16-07-38Z"))
+		.withEnv("MINIO_ROOT_USER", "qherpminio")
+		.withEnv("MINIO_ROOT_PASSWORD", "qherpminio123")
+		.withCommand("server /data --console-address :9001")
+		.withExposedPorts(9000)
+		.waitingFor(Wait.forHttp("/minio/health/ready").forPort(9000).withStartupTimeout(Duration.ofSeconds(90)));
+
+	@DynamicPropertySource
+	static void storageProperties(DynamicPropertyRegistry registry) {
+		registry.add("qherp.storage.s3.endpoint", () -> "http://" + minio.getHost() + ":"
+				+ minio.getMappedPort(9000));
+		registry.add("qherp.storage.s3.region", () -> "us-east-1");
+		registry.add("qherp.storage.s3.bucket", () -> "qherp-test-private-stage023");
+		registry.add("qherp.storage.s3.access-key", () -> "qherpminio");
+		registry.add("qherp.storage.s3.secret-key", () -> "qherpminio123");
+		registry.add("qherp.storage.s3.path-style", () -> "true");
+	}
 
 	@Autowired
 	private TestRestTemplate restTemplate;

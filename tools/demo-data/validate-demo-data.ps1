@@ -64,6 +64,49 @@ function Get-ContainerHealth {
     return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue $health -ExpectedValue "healthy" -Passed:($health -eq "healthy") -Message "容器必须处于健康状态：$ContainerName"
 }
 
+function Get-SqlRuleActualInt {
+    param(
+        [Parameter(Mandatory = $true)] $Summary,
+        [Parameter(Mandatory = $true)][string] $RuleCode
+    )
+    $rule = @($Summary.rules | Where-Object { $_.ruleCode -eq $RuleCode } | Select-Object -First 1)
+    if ($rule.Count -eq 0) {
+        return $null
+    }
+    $parsedValue = 0
+    if (-not [int]::TryParse([string]$rule[0].actualValue, [ref]$parsedValue)) {
+        return $null
+    }
+    return $parsedValue
+}
+
+function New-MinioObjectConsistencyRule {
+    param(
+        [Parameter(Mandatory = $true)][int] $MinioExitCode,
+        [string] $MinioCountText,
+        [Parameter(Mandatory = $true)] $Summary
+    )
+    $minioCount = 0
+    $minioParsed = [int]::TryParse([string]$MinioCountText, [ref]$minioCount)
+    $databaseAvailableCount = Get-SqlRuleActualInt -Summary $Summary -RuleCode "FILE_OBJECTS_AVAILABLE_MIN_8"
+    $bucketActual = if ($MinioExitCode -eq 0 -and $minioParsed) {
+        $minioCount.ToString()
+    }
+    elseif ($MinioExitCode -eq 0) {
+        "unparseable"
+    }
+    else {
+        "check failed"
+    }
+    $databaseActual = if ($null -ne $databaseAvailableCount) { $databaseAvailableCount.ToString() } else { "unavailable" }
+    $passed = $MinioExitCode -eq 0 -and $minioParsed -and $null -ne $databaseAvailableCount `
+        -and $minioCount -eq $databaseAvailableCount -and $minioCount -ge 8
+    return New-Rule -RuleCode "MINIO_BUCKET_OBJECTS_MIN_8" -Category "attachment" `
+        -ActualValue ("bucket={0};databaseAvailable={1}" -f $bucketActual, $databaseActual) `
+        -ExpectedValue "bucket == database available and >= 8" -Passed:$passed `
+        -Message "MinIO 私有 bucket 对象总数必须等于数据库 AVAILABLE 文件对象数且不少于 8。"
+}
+
 if (-not (Test-Path -LiteralPath $SqlPath)) {
     throw "SQL 校验文件不存在：$SqlPath"
 }
@@ -101,9 +144,7 @@ if (-not $SkipMinio) {
     $minioOutput = docker exec $MinioContainer sh -c $minioCommand 2>&1
     $minioExitCode = $LASTEXITCODE
     $minioCountText = (($minioOutput | ForEach-Object { $_.ToString().Trim() }) | Where-Object { $_ } | Select-Object -Last 1)
-    $minioCount = 0
-    [void][int]::TryParse($minioCountText, [ref]$minioCount)
-    $environmentRules.Add((New-Rule -RuleCode "MINIO_BUCKET_OBJECTS_MIN_8" -Category "attachment" -ActualValue $(if ($minioExitCode -eq 0) { $minioCount.ToString() } else { "check failed" }) -ExpectedValue ">= 8" -Passed:($minioExitCode -eq 0 -and $minioCount -ge 8) -Message "MinIO 私有 bucket 必须可访问且至少包含 8 个演示对象。"))
+    $environmentRules.Add((New-MinioObjectConsistencyRule -MinioExitCode $minioExitCode -MinioCountText $minioCountText -Summary $summary))
 }
 
 if ($ApiBaseUrl -and -not $SkipApiHealth) {
