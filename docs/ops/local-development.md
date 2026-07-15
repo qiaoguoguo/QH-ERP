@@ -58,6 +58,8 @@ http://127.0.0.1:5173
 
 当前可直接使用本机项目 JDK 21 运行 Maven；后端集成测试仍会通过 Testcontainers 创建临时 PostgreSQL 等依赖容器。这种方式的测试执行器位于宿主机，不能表述为测试全程在隔离 Docker 容器中执行。
 
+Surefire 会把未显式配置的测试对象存储导向不可用测试端点和专用测试 bucket，避免本机验收环境变量使测试误写 `qherp-private`。需要真实对象存储的集成测试必须自行注册 MinIO Testcontainer；测试若因未配置对象存储而快速失败，应补齐测试隔离，不能改回正式 MinIO 默认值。
+
 ```powershell
 $env:JAVA_HOME='C:\Users\14567\.codex\jdks\jdk-21.0.11+10'
 $env:Path="$env:JAVA_HOME\bin;$env:Path"

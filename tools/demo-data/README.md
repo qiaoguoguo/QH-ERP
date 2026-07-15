@@ -93,7 +93,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\demo-data\validate-demo-da
 - 生产工单、BOM 快照、领料、退料、补料、报工、完工、成本记录。
 - 销售项目、合同、销售订单、出库、退货、财务往来和反向来源。
 - 固定审批、消息、附件、审批快照、打印模板、文档任务、导入失败明细和审计。
-- PostgreSQL/MinIO 容器健康、后端健康接口和 MinIO bucket 对象数量。
+- PostgreSQL/MinIO 容器健康、后端健康接口，以及 MinIO bucket 对象总数与数据库 `AVAILABLE` 文件对象数严格一致且不少于 8。
 
 ## 红色基线说明
 
