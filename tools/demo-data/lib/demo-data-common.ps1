@@ -41,6 +41,77 @@ function New-DemoDirectory {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Test-DemoSensitiveArgumentName {
+    param([string] $Name)
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $false
+    }
+    $normalized = $Name.TrimStart("-").ToLowerInvariant()
+    return $normalized -match '(password|token|secret)'
+}
+
+function Get-DemoSensitiveArgumentValues {
+    param([string[]] $ArgumentList = @())
+    $values = New-Object System.Collections.Generic.List[string]
+    $redactNext = $false
+    foreach ($argument in $ArgumentList) {
+        if ($redactNext) {
+            if (-not [string]::IsNullOrEmpty($argument)) {
+                [void] $values.Add($argument)
+            }
+            $redactNext = $false
+            continue
+        }
+        if ($argument -match '^(--?[^:=]+)([:=])(.+)$' -and (Test-DemoSensitiveArgumentName -Name $Matches[1])) {
+            [void] $values.Add($Matches[3])
+            continue
+        }
+        if (Test-DemoSensitiveArgumentName -Name $argument) {
+            $redactNext = $true
+        }
+    }
+    return $values.ToArray()
+}
+
+function ConvertTo-DemoSafeArgumentList {
+    param([string[]] $ArgumentList = @())
+    $safe = New-Object System.Collections.Generic.List[string]
+    $redactNext = $false
+    foreach ($argument in $ArgumentList) {
+        if ($redactNext) {
+            [void] $safe.Add("<已脱敏>")
+            $redactNext = $false
+            continue
+        }
+        if ($argument -match '^(--?[^:=]+)([:=])(.+)$' -and (Test-DemoSensitiveArgumentName -Name $Matches[1])) {
+            [void] $safe.Add("$($Matches[1])$($Matches[2])<已脱敏>")
+            continue
+        }
+        [void] $safe.Add($argument)
+        if (Test-DemoSensitiveArgumentName -Name $argument) {
+            $redactNext = $true
+        }
+    }
+    return $safe.ToArray()
+}
+
+function Protect-DemoSensitiveText {
+    param(
+        [string] $Text,
+        [string[]] $SensitiveValues = @()
+    )
+    if ([string]::IsNullOrEmpty($Text)) {
+        return $Text
+    }
+    $safeText = $Text
+    foreach ($value in $SensitiveValues) {
+        if (-not [string]::IsNullOrEmpty($value)) {
+            $safeText = $safeText.Replace($value, "<已脱敏>")
+        }
+    }
+    return $safeText
+}
+
 function Invoke-DemoProcess {
     param(
         [Parameter(Mandatory = $true)][string] $FilePath,
@@ -68,7 +139,11 @@ function Invoke-DemoProcess {
     $stderr = $process.StandardError.ReadToEnd()
     $process.WaitForExit()
     if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
-        throw "命令失败：$FilePath $($ArgumentList -join ' ')`n退出码：$($process.ExitCode)`n$stderr`n$stdout"
+        $sensitiveValues = Get-DemoSensitiveArgumentValues -ArgumentList $ArgumentList
+        $safeArgumentList = ConvertTo-DemoSafeArgumentList -ArgumentList $ArgumentList
+        $safeStderr = Protect-DemoSensitiveText -Text $stderr -SensitiveValues $sensitiveValues
+        $safeStdout = Protect-DemoSensitiveText -Text $stdout -SensitiveValues $sensitiveValues
+        throw "命令失败：$FilePath $($safeArgumentList -join ' ')`n退出码：$($process.ExitCode)`n$safeStderr`n$safeStdout"
     }
     return [pscustomobject]@{
         exitCode = $process.ExitCode
@@ -284,6 +359,8 @@ function New-AcceptanceAuthorization {
         [Parameter(Mandatory = $true)][string] $ExpectedGitCommit
     )
     $token = [guid]::NewGuid().ToString("N")
+    $issuedAt = [DateTimeOffset]::UtcNow
+    $expiresAt = $issuedAt.AddMinutes(20)
     $authorization = [ordered]@{
         database = $Database
         minioBucket = $MinioBucket
@@ -292,8 +369,10 @@ function New-AcceptanceAuthorization {
         repositoryRoot = $RepositoryRoot
         expectedGitCommit = $ExpectedGitCommit
         token = $token
-        issuedAt = (Get-Date).ToUniversalTime().ToString("o")
-        expiresAt = (Get-Date).ToUniversalTime().AddMinutes(20).ToString("o")
+        issuedAt = $issuedAt.ToString("o")
+        expiresAt = $expiresAt.ToString("o")
+        issuedAtEpochSeconds = $issuedAt.ToUnixTimeSeconds()
+        expiresAtEpochSeconds = $expiresAt.ToUnixTimeSeconds()
     }
     New-DemoDirectory -Path (Split-Path -Parent $Path) | Out-Null
     $authorization | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding UTF8
@@ -312,16 +391,21 @@ function Assert-DemoAcceptanceAuthorization {
     if (-not (Test-Path -LiteralPath $Path)) {
         throw "Acceptance 模式缺少重建入口创建的一次性授权材料。"
     }
-    $authorization = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $authorization = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
     try {
-        if ($authorization.token -ne $Token) {
+        if ($authorization["token"] -ne $Token) {
             throw "授权令牌不匹配。"
         }
-        if ($authorization.database -ne $Database -or $authorization.minioBucket -ne $MinioBucket `
-                -or $authorization.apiBaseUrl -ne $ApiBaseUrl -or $authorization.runId -ne $RunId) {
+        if ($authorization["database"] -ne $Database -or $authorization["minioBucket"] -ne $MinioBucket `
+                -or $authorization["apiBaseUrl"] -ne $ApiBaseUrl -or $authorization["runId"] -ne $RunId) {
             throw "授权材料与当前目标不一致。"
         }
-        if ([datetime]::Parse($authorization.expiresAt).ToUniversalTime() -lt (Get-Date).ToUniversalTime()) {
+        $expiresAtEpochSeconds = 0L
+        $expiresAtRaw = $authorization["expiresAtEpochSeconds"]
+        if ($null -eq $expiresAtRaw -or -not [long]::TryParse([string]$expiresAtRaw, [ref]$expiresAtEpochSeconds)) {
+            throw "授权材料缺少有效的 UTC Unix 过期秒。"
+        }
+        if ($expiresAtEpochSeconds -lt [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()) {
             throw "授权材料已过期。"
         }
     }

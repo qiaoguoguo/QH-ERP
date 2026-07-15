@@ -48,6 +48,104 @@ $rebuildPath = Join-Path $Root "tools/demo-data/rebuild-acceptance.ps1"
 $rebuild = Get-Content -LiteralPath $rebuildPath -Raw
 $commonPath = Join-Path $Root "tools/demo-data/lib/demo-data-common.ps1"
 $common = Get-Content -LiteralPath $commonPath -Raw
+
+$authorizationTestDirectory = New-DemoDirectory -Path (Join-Path $Root "apps/api/target/demo-data/self-test-authorization")
+$authorizationChildPath = Join-Path $authorizationTestDirectory "assert-acceptance-authorization-child.ps1"
+@'
+param(
+    [Parameter(Mandatory = $true)][string] $CommonPath,
+    [Parameter(Mandatory = $true)][string] $AuthorizationPath
+)
+$ErrorActionPreference = "Stop"
+. $CommonPath
+Assert-DemoAcceptanceAuthorization -Path $AuthorizationPath -Token $env:DEMO_ACCEPTANCE_AUTH_TOKEN `
+    -Database "qherp" -MinioBucket "qherp-private" -ApiBaseUrl "http://127.0.0.1:18080" `
+    -RunId "DEMO-ELEC-SELFTEST"
+if (Test-Path -LiteralPath $AuthorizationPath) {
+    throw "授权材料校验后必须删除。"
+}
+'@ | Set-Content -LiteralPath $authorizationChildPath -Encoding UTF8
+$validAuthorizationPath = Join-Path $authorizationTestDirectory "valid-authorization.json"
+$validAuthorizationToken = New-AcceptanceAuthorization -Path $validAuthorizationPath -Database "qherp" `
+    -MinioBucket "qherp-private" -ApiBaseUrl "http://127.0.0.1:18080" -RunId "DEMO-ELEC-SELFTEST" `
+    -RepositoryRoot $Root -ExpectedGitCommit "self-test"
+$previousAuthorizationToken = [Environment]::GetEnvironmentVariable("DEMO_ACCEPTANCE_AUTH_TOKEN", "Process")
+try {
+    [Environment]::SetEnvironmentVariable("DEMO_ACCEPTANCE_AUTH_TOKEN", $validAuthorizationToken, "Process")
+    Invoke-DemoProcess -FilePath "pwsh" -ArgumentList @("-NoLogo", "-NoProfile", "-File", $authorizationChildPath,
+        "-CommonPath", $commonPath, "-AuthorizationPath", $validAuthorizationPath) | Out-Null
+}
+finally {
+    [Environment]::SetEnvironmentVariable("DEMO_ACCEPTANCE_AUTH_TOKEN", $previousAuthorizationToken, "Process")
+}
+Assert-True -Condition (-not (Test-Path -LiteralPath $validAuthorizationPath)) `
+    -Message "有效 Acceptance 授权跨 pwsh 子进程校验后必须删除授权文件。"
+
+function New-SelfTestAuthorizationFile {
+    param(
+        [Parameter(Mandatory = $true)][string] $Path,
+        $ExpiresAtEpochSeconds
+    )
+    $now = [DateTimeOffset]::UtcNow
+    $authorization = [ordered]@{
+        database = "qherp"
+        minioBucket = "qherp-private"
+        apiBaseUrl = "http://127.0.0.1:18080"
+        runId = "DEMO-ELEC-SELFTEST"
+        repositoryRoot = $Root
+        expectedGitCommit = "self-test"
+        token = "self-test-token"
+        issuedAt = $now.ToString("o")
+        expiresAt = $now.AddMinutes(20).ToString("o")
+        issuedAtEpochSeconds = $now.ToUnixTimeSeconds()
+    }
+    if ($null -ne $ExpiresAtEpochSeconds) {
+        $authorization.expiresAtEpochSeconds = $ExpiresAtEpochSeconds
+    }
+    $authorization | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+foreach ($case in @(
+        @{ name = "expired"; value = ([DateTimeOffset]::UtcNow.AddSeconds(-1).ToUnixTimeSeconds()) },
+        @{ name = "missing"; value = $null },
+        @{ name = "non-numeric"; value = "not-a-number" }
+    )) {
+    $path = Join-Path $authorizationTestDirectory "$($case.name)-authorization.json"
+    New-SelfTestAuthorizationFile -Path $path -ExpiresAtEpochSeconds $case.value
+    $rejected = $false
+    try {
+        Assert-DemoAcceptanceAuthorization -Path $path -Token "self-test-token" -Database "qherp" `
+            -MinioBucket "qherp-private" -ApiBaseUrl "http://127.0.0.1:18080" -RunId "DEMO-ELEC-SELFTEST"
+    }
+    catch {
+        $rejected = $true
+    }
+    Assert-True -Condition $rejected -Message "Acceptance 授权 $($case.name) expiresAtEpochSeconds 必须被拒绝。"
+    Assert-True -Condition (-not (Test-Path -LiteralPath $path)) `
+        -Message "被拒绝的 Acceptance 授权 $($case.name) 校验后必须删除授权文件。"
+}
+
+$sensitiveSentinel = "SELFTEST-SENSITIVE-" + ([guid]::NewGuid().ToString("N"))
+$processFailureMessage = $null
+try {
+    Invoke-DemoProcess -FilePath "pwsh" -ArgumentList @("-NoLogo", "-NoProfile", "-Command", "exit 9",
+        "-AcceptanceAuthorizationToken", $sensitiveSentinel, "-AdminPassword", $sensitiveSentinel,
+        "-DemoSecret", $sensitiveSentinel, "-VisibleMode", "Temporary") | Out-Null
+}
+catch {
+    $processFailureMessage = $_.Exception.Message
+}
+Assert-True -Condition (-not [string]::IsNullOrWhiteSpace($processFailureMessage)) `
+    -Message "敏感参数脱敏测试必须触发一个子进程失败。"
+Assert-True -Condition (-not $processFailureMessage.Contains($sensitiveSentinel)) `
+    -Message "Invoke-DemoProcess 失败异常不得包含令牌、密码或 secret 参数值。"
+Assert-True -Condition ($processFailureMessage -match '-AcceptanceAuthorizationToken <已脱敏>' `
+        -and $processFailureMessage -match '-AdminPassword <已脱敏>' `
+        -and $processFailureMessage -match '-DemoSecret <已脱敏>') `
+    -Message "Invoke-DemoProcess 失败异常应只脱敏敏感参数值，保留敏感参数名便于定位。"
+Assert-True -Condition ($processFailureMessage -match '-VisibleMode Temporary') `
+    -Message "Invoke-DemoProcess 失败异常不得整体隐藏非敏感参数。"
+
 Assert-True -Condition ($generator -match 'Get-ItemByField -Path "/api/admin/system/business-periods" -FieldName "periodCode" -FieldValue \$Code -Query @\{ periodCode = \$Code \}') `
     -Message "业务期间幂等查询必须使用真实 periodCode 参数，不能依赖 keyword。"
 Assert-True -Condition ($generator -match 'contactPhone = "021-60000000"') `
