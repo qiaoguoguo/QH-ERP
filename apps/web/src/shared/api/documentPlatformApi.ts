@@ -18,6 +18,15 @@ export type DocumentTaskType =
   | 'BOM_DRAFT_IMPORT'
   | 'BOM_DRAFT_EXPORT'
   | 'APPROVAL_PRINT'
+  | 'PROCUREMENT_REQUISITION_EXPORT'
+  | 'PROCUREMENT_INQUIRY_EXPORT'
+  | 'PROCUREMENT_QUOTE_IMPORT'
+  | 'PROCUREMENT_QUOTE_EXPORT'
+  | 'PROCUREMENT_PRICE_AGREEMENT_EXPORT'
+  | 'PROCUREMENT_ORDER_EXPORT'
+  | 'PROCUREMENT_ORDER_PRINT'
+  | 'PROCUREMENT_SCHEDULE_EXPORT'
+  | 'PROCUREMENT_SUPPLY_EXPORT'
 export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStatus =
@@ -233,6 +242,77 @@ export interface MaterialExportPayload {
   idempotencyKey: string
 }
 
+export interface ProcurementInquiryExportPayload {
+  keyword?: string
+  procurementMode?: string
+  projectId?: ResourceId
+  status?: string
+  idempotencyKey: string
+}
+
+export interface ProcurementRequisitionExportPayload extends ProcurementInquiryExportPayload {
+  approvalStatus?: string
+  requiredDateFrom?: string
+  requiredDateTo?: string
+}
+
+export interface ProcurementQuoteExportPayload {
+  supplierId?: ResourceId
+  status?: string
+  idempotencyKey: string
+}
+
+export interface ProcurementPriceAgreementExportPayload {
+  keyword?: string
+  supplierId?: ResourceId
+  materialId?: ResourceId
+  procurementMode?: string
+  projectId?: ResourceId
+  status?: string
+  idempotencyKey: string
+}
+
+export interface ProcurementOrderExportPayload {
+  keyword?: string
+  supplierId?: ResourceId
+  status?: string
+  procurementMode?: string
+  projectId?: ResourceId
+  dateFrom?: string
+  dateTo?: string
+  expectedDateFrom?: string
+  expectedDateTo?: string
+  idempotencyKey: string
+}
+
+export interface ProcurementScheduleExportPayload {
+  status?: string
+  expectedDateFrom?: string
+  expectedDateTo?: string
+  idempotencyKey: string
+}
+
+export interface ProcurementEffectiveSupplyExportPayload {
+  projectId?: ResourceId
+  materialId?: ResourceId
+  supplierId?: ResourceId
+  procurementMode?: string
+  status?: string
+  expectedDateFrom?: string
+  expectedDateTo?: string
+  countedOnly?: boolean
+  idempotencyKey: string
+}
+
+export type ProcurementExportTaskType =
+  | 'PROCUREMENT_REQUISITION_EXPORT'
+  | 'PROCUREMENT_INQUIRY_EXPORT'
+  | 'PROCUREMENT_QUOTE_EXPORT'
+  | 'PROCUREMENT_PRICE_AGREEMENT_EXPORT'
+  | 'PROCUREMENT_ORDER_EXPORT'
+  | 'PROCUREMENT_SCHEDULE_EXPORT'
+  | 'PROCUREMENT_SUPPLY_EXPORT'
+
 export interface ImportFailureRecord {
   rowNo: number
   columnName?: string | null
@@ -268,6 +348,14 @@ export interface PrintPreviewRecord {
   templateCode: string
   templateVersion: number
   sections: Array<{ title: string; fields: Array<{ label: string; value: string | null }> }>
+}
+
+export interface PrintTaskCreatePayload {
+  approvalInstanceId?: ResourceId
+  objectType?: string
+  objectId?: ResourceId
+  templateCode: string
+  idempotencyKey: string
 }
 
 export interface DocumentPlatformApiOptions {
@@ -306,11 +394,19 @@ export interface DocumentPlatformApi {
   imports: {
     uploadMaterials(payload: { file: File; idempotencyKey: string }): Promise<DocumentTaskRecord>
     uploadBomDraft(payload: BomDraftImportPayload): Promise<DocumentTaskRecord>
+    uploadProcurementQuotes(inquiryId: ResourceId, payload: { file: File; idempotencyKey: string }): Promise<DocumentTaskRecord>
     confirm(taskId: ResourceId, payload: ConfirmImportPayload): Promise<DocumentTaskRecord>
   }
   exports: {
     createMaterials(payload: MaterialExportPayload): Promise<DocumentTaskRecord>
     createBomDraft(bomId: ResourceId, payload: { idempotencyKey: string }): Promise<DocumentTaskRecord>
+    createProcurementRequisitions(payload: ProcurementRequisitionExportPayload): Promise<DocumentTaskRecord>
+    createProcurementInquiries(payload: ProcurementInquiryExportPayload): Promise<DocumentTaskRecord>
+    createProcurementQuotes(inquiryId: ResourceId, payload: ProcurementQuoteExportPayload): Promise<DocumentTaskRecord>
+    createProcurementPriceAgreements(payload: ProcurementPriceAgreementExportPayload): Promise<DocumentTaskRecord>
+    createProcurementOrders(payload: ProcurementOrderExportPayload): Promise<DocumentTaskRecord>
+    createProcurementSchedules(orderId: ResourceId, payload: ProcurementScheduleExportPayload): Promise<DocumentTaskRecord>
+    createProcurementEffectiveSupplies(payload: ProcurementEffectiveSupplyExportPayload): Promise<DocumentTaskRecord>
   }
   printTemplates: {
     list(query: { sceneCode: string }): Promise<PrintTemplateRecord[]>
@@ -319,7 +415,7 @@ export interface DocumentPlatformApi {
     get(approvalInstanceId: ResourceId): Promise<PrintPreviewRecord>
   }
   printTasks: {
-    create(payload: { approvalInstanceId: ResourceId; templateCode: string; idempotencyKey: string }): Promise<DocumentTaskRecord>
+    create(payload: PrintTaskCreatePayload): Promise<DocumentTaskRecord>
   }
   documentTasks: {
     list(query: DocumentTaskListQuery): Promise<PageResult<DocumentTaskRecord>>
@@ -421,6 +517,24 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
     }
   }
 
+  const createExportTask = (
+    taskType: ProcurementExportTaskType,
+    filters: Record<string, unknown>,
+    idempotencyKey: string,
+    context?: { objectType?: string; objectId?: ResourceId },
+  ) =>
+    writeJson<DocumentTaskRecord>(
+      'POST',
+      '/api/admin/export-tasks',
+      {
+        taskType,
+        ...(context?.objectType ? { objectType: context.objectType } : {}),
+        ...(context?.objectId !== undefined ? { objectId: context.objectId } : {}),
+        filters,
+      },
+      { 'Idempotency-Key': idempotencyKey },
+    )
+
   return {
     approvals: {
       submitSalesProjectContractActivation: (contractId, payload) =>
@@ -492,6 +606,15 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
         formData.append('file', payload.file)
         return writeForm<DocumentTaskRecord>('/api/admin/imports/bom-drafts', formData, payload.idempotencyKey)
       },
+      uploadProcurementQuotes: (inquiryId, payload) => {
+        const formData = new FormData()
+        formData.append('file', payload.file)
+        return writeForm<DocumentTaskRecord>(
+          `/api/admin/procurement/inquiries/${encodeURIComponent(String(inquiryId))}/quote-imports`,
+          formData,
+          payload.idempotencyKey,
+        )
+      },
       confirm: (taskId, payload) =>
         writeJson<DocumentTaskRecord>(
           'POST',
@@ -517,6 +640,40 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
           undefined,
           { 'Idempotency-Key': payload.idempotencyKey },
         ),
+      createProcurementInquiries: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_INQUIRY_EXPORT', filters, idempotencyKey)
+      },
+      createProcurementRequisitions: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_REQUISITION_EXPORT', filters, idempotencyKey)
+      },
+      createProcurementQuotes: (inquiryId, payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_QUOTE_EXPORT', filters, idempotencyKey, {
+          objectType: 'PROCUREMENT_INQUIRY',
+          objectId: inquiryId,
+        })
+      },
+      createProcurementPriceAgreements: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_PRICE_AGREEMENT_EXPORT', filters, idempotencyKey)
+      },
+      createProcurementOrders: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_ORDER_EXPORT', filters, idempotencyKey)
+      },
+      createProcurementSchedules: (orderId, payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_SCHEDULE_EXPORT', { orderId, ...filters }, idempotencyKey, {
+          objectType: 'PROCUREMENT_ORDER',
+          objectId: orderId,
+        })
+      },
+      createProcurementEffectiveSupplies: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('PROCUREMENT_SUPPLY_EXPORT', filters, idempotencyKey)
+      },
     },
     printTemplates: {
       list: (query) => get<PrintTemplateRecord[]>('/api/admin/print-templates', query),
@@ -530,7 +687,12 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
         writeJson<DocumentTaskRecord>(
           'POST',
           '/api/admin/print-tasks',
-          { approvalInstanceId: payload.approvalInstanceId, templateCode: payload.templateCode },
+          {
+            approvalInstanceId: payload.approvalInstanceId,
+            objectType: payload.objectType,
+            objectId: payload.objectId,
+            templateCode: payload.templateCode,
+          },
           { 'Idempotency-Key': payload.idempotencyKey },
         ),
     },

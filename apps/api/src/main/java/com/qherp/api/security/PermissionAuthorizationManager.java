@@ -252,6 +252,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("POST".equals(method) && matchesBasePath(path, "/api/admin/exports/bom-drafts")) {
 			return "material:bom:export";
 		}
+		if ("POST".equals(method) && "/api/admin/export-tasks".equals(path)) {
+			return "platform:document-task:create";
+		}
 		if (matchesBasePath(path, "/api/admin/document-tasks")) {
 			if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/document-tasks") + "/\\d+/download")) {
 				return "platform:document-task:download";
@@ -507,6 +510,84 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
+		String requisitionPath = "/api/admin/procurement/requisitions";
+		if ("GET".equals(method) && matchesBasePath(path, requisitionPath)) {
+			return "procurement:requisition:view";
+		}
+		if ("POST".equals(method) && requisitionPath.equals(path)) {
+			return "procurement:requisition:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, requisitionPath)) {
+			return "procurement:requisition:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(requisitionPath) + "/\\d+/submit-approval")) {
+			return "procurement:requisition:submit";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(requisitionPath) + "/\\d+/cancel")) {
+			return "procurement:requisition:cancel";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(requisitionPath) + "/\\d+/close")) {
+			return "procurement:requisition:close";
+		}
+		if ("GET".equals(method) && "/api/admin/procurement/effective-supplies".equals(path)) {
+			return "procurement:supply:view";
+		}
+		String inquiryPath = "/api/admin/procurement/inquiries";
+		if ("GET".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quotes(/\\d+)?")) {
+			return "procurement:quote:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quotes")) {
+			return "procurement:quote:create";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quotes/\\d+")) {
+			return "procurement:quote:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quotes/\\d+/select")) {
+			return "procurement:quote:select";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quotes/\\d+/cancel")) {
+			return "procurement:quote:cancel";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/quote-imports")) {
+			return "procurement:quote:import";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, inquiryPath)) {
+			return "procurement:inquiry:view";
+		}
+		if ("POST".equals(method) && inquiryPath.equals(path)) {
+			return "procurement:inquiry:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, inquiryPath)) {
+			return "procurement:inquiry:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/release")) {
+			return "procurement:inquiry:release";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/complete")) {
+			return "procurement:inquiry:complete";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(inquiryPath) + "/\\d+/cancel")) {
+			return "procurement:inquiry:cancel";
+		}
+		String agreementPath = "/api/admin/procurement/price-agreements";
+		if ("GET".equals(method) && matchesBasePath(path, agreementPath)) {
+			return "procurement:price-agreement:view";
+		}
+		if ("POST".equals(method) && agreementPath.equals(path)) {
+			return "procurement:price-agreement:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, agreementPath)) {
+			return "procurement:price-agreement:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(agreementPath) + "/\\d+/submit-activation")) {
+			return "procurement:price-agreement:submit";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(agreementPath) + "/\\d+/disable")) {
+			return "procurement:price-agreement:disable";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(agreementPath) + "/\\d+/cancel")) {
+			return "procurement:price-agreement:cancel";
+		}
 		String orderPath = "/api/admin/procurement/orders";
 		if ("GET".equals(method) && (orderPath.equals(path) || matchesIdPath(path, orderPath))) {
 			return "procurement:order:view";
@@ -524,6 +605,21 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "procurement:order:cancel";
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/close")) {
+			return "procurement:order:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/submit-exception")) {
+			return "procurement:order:exception-submit";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/schedules")) {
+			return "procurement:order:view";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/schedules")) {
+			return "procurement:order:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/schedules/\\d+")) {
+			return "procurement:order:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/schedules/\\d+/close")) {
 			return "procurement:order:close";
 		}
 		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/receipts")) {

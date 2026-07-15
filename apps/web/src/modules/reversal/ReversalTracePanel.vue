@@ -91,7 +91,7 @@ function traceImpactType(row: ReversalTraceRecord) {
     return '成本影响'
   }
   if (row.settlementAdjustmentId) {
-    return isPurchaseTrace(row) ? '应付冲减' : '应收冲减'
+    return isPurchaseTrace(row) ? '原入库成本反冲' : '应收冲减'
   }
   if (row.source.sourceType === 'SALES_SHIPMENT' || row.source.sourceType === 'SALES_SHIPMENT_LINE') {
     return '销售出库来源'
@@ -143,7 +143,7 @@ function viewImpactResource(resource: ImpactResourceItem) {
 
 function settlementImpactLabel(row: ReversalTraceRecord) {
   if (isPurchaseTrace(row)) {
-    return '应付冲减'
+    return '成本反冲'
   }
   if (row.source.sourceType?.startsWith('SALES_') || row.reverse.sourceType?.startsWith('SALES_')) {
     return '应收冲减'

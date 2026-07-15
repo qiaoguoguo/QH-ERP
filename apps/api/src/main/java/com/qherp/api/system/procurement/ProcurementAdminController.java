@@ -40,8 +40,9 @@ public class ProcurementAdminController {
 	}
 
 	@GetMapping("/orders/{id}")
-	public ApiResponse<ProcurementAdminService.PurchaseOrderDetailResponse> order(@PathVariable Long id) {
-		return ApiResponse.ok(this.procurementAdminService.order(id));
+	public ApiResponse<ProcurementAdminService.PurchaseOrderDetailResponse> order(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.procurementAdminService.order(id, currentUser));
 	}
 
 	@PostMapping("/orders")
@@ -60,20 +61,65 @@ public class ProcurementAdminController {
 
 	@PutMapping("/orders/{id}/confirm")
 	public ApiResponse<ProcurementAdminService.PurchaseOrderDetailResponse> confirmOrder(@PathVariable Long id,
+			@Valid @RequestBody ProcurementAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.procurementAdminService.confirmOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.procurementAdminService.confirmOrder(id, request, currentUser, servletRequest));
+	}
+
+	@PostMapping("/orders/{id}/submit-exception")
+	public ApiResponse<com.qherp.api.system.platform.PlatformApprovalService.ApprovalInstanceRecord> submitException(@PathVariable Long id,
+			@Valid @RequestBody com.qherp.api.system.platform.PlatformApprovalService.ApprovalSubmitRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.procurementAdminService.submitException(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/orders/{id}/cancel")
 	public ApiResponse<ProcurementAdminService.PurchaseOrderDetailResponse> cancelOrder(@PathVariable Long id,
+			@Valid @RequestBody ProcurementAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.procurementAdminService.cancelOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.procurementAdminService.cancelOrder(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/orders/{id}/close")
 	public ApiResponse<ProcurementAdminService.PurchaseOrderDetailResponse> closeOrder(@PathVariable Long id,
+			@Valid @RequestBody ProcurementAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.procurementAdminService.closeOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.procurementAdminService.closeOrder(id, request, currentUser, servletRequest));
+	}
+
+	@GetMapping("/orders/{id}/schedules")
+	public ApiResponse<ProcurementAdminService.PurchaseOrderScheduleListResponse> orderSchedules(
+			@PathVariable Long id, @RequestParam(required = false) String status,
+			@RequestParam(required = false) LocalDate expectedDateFrom,
+			@RequestParam(required = false) LocalDate expectedDateTo, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.procurementAdminService.orderSchedules(id, status, expectedDateFrom,
+				expectedDateTo, page, pageSize));
+	}
+
+	@PutMapping("/orders/{id}/schedules")
+	public ApiResponse<ProcurementAdminService.PurchaseOrderScheduleListResponse> updateOrderSchedules(
+			@PathVariable Long id, @Valid @RequestBody ProcurementAdminService.PurchaseOrderScheduleUpdateRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.procurementAdminService.updateOrderSchedules(id, request, currentUser,
+				servletRequest));
+	}
+
+	@PutMapping("/orders/{id}/schedules/{scheduleId}")
+	public ApiResponse<ProcurementAdminService.PurchaseOrderScheduleResponse> updateOrderSchedule(
+			@PathVariable Long id, @PathVariable Long scheduleId,
+			@Valid @RequestBody ProcurementAdminService.PurchaseOrderScheduleSingleUpdateRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.procurementAdminService.updateOrderSchedule(id, scheduleId, request,
+				currentUser, servletRequest));
+	}
+
+	@PutMapping("/orders/{id}/schedules/{scheduleId}/close")
+	public ApiResponse<ProcurementAdminService.PurchaseOrderScheduleResponse> closeOrderSchedule(@PathVariable Long id,
+			@PathVariable Long scheduleId, @Valid @RequestBody ProcurementAdminService.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.procurementAdminService.closeOrderSchedule(id, scheduleId, request, currentUser,
+				servletRequest));
 	}
 
 	@GetMapping("/receipts")
@@ -82,9 +128,10 @@ public class ProcurementAdminController {
 			@RequestParam(required = false) Long warehouseId, @RequestParam(required = false) String status,
 			@RequestParam(required = false) LocalDate dateFrom, @RequestParam(required = false) LocalDate dateTo,
 			@RequestParam(required = false) Long orderId, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
+			@RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.procurementAdminService.receipts(keyword, supplierId, warehouseId, status, dateFrom,
-				dateTo, orderId, page, pageSize));
+				dateTo, orderId, page, pageSize, currentUser));
 	}
 
 	@PostMapping("/orders/{id}/receipts")
@@ -95,8 +142,9 @@ public class ProcurementAdminController {
 	}
 
 	@GetMapping("/receipts/{id}")
-	public ApiResponse<ProcurementAdminService.PurchaseReceiptDetailResponse> receipt(@PathVariable Long id) {
-		return ApiResponse.ok(this.procurementAdminService.receipt(id));
+	public ApiResponse<ProcurementAdminService.PurchaseReceiptDetailResponse> receipt(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.procurementAdminService.receipt(id, currentUser));
 	}
 
 	@PutMapping("/receipts/{id}")
@@ -108,8 +156,9 @@ public class ProcurementAdminController {
 
 	@PutMapping("/receipts/{id}/post")
 	public ApiResponse<ProcurementAdminService.PurchaseReceiptDetailResponse> postReceipt(@PathVariable Long id,
+			@Valid @RequestBody ProcurementAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.procurementAdminService.postReceipt(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.procurementAdminService.postReceipt(id, request, currentUser, servletRequest));
 	}
 
 }

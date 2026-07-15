@@ -413,7 +413,7 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(contractColumns).contains("contract_no", "external_contract_no", "project_id", "contract_type",
 				"main_contract_id", "amount", "status", "version");
 		assertThat(orderColumns).contains("project_id", "contract_id");
-		assertThat(columns("proc_purchase_order")).doesNotContain("project_id", "contract_id");
+		assertThat(columns("proc_purchase_order")).contains("project_id").doesNotContain("contract_id");
 		assertThat(columns("mfg_work_order")).doesNotContain("project_id", "contract_id");
 		assertThat(indexes("sal_project_contract")).contains("uk_sal_project_contract_main_active");
 		assertThat(constraint("sal_sales_order", "ck_sal_sales_order_project_pair")).contains("project_id");

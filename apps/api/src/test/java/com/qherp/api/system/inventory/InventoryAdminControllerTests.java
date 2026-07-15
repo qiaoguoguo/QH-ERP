@@ -3066,19 +3066,12 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 	private PurchaseReceiptFact createPostedPurchaseReceipt(InventoryFixture fixture, long supplierId, String quantity,
 			String unitPrice, String remark) {
 		CurrentUser operator = backendOperator();
-		ProcurementAdminService.PurchaseOrderDetailResponse order = this.procurementAdminService.createOrder(
-				new ProcurementAdminService.PurchaseOrderRequest(supplierId, LocalDate.now(), LocalDate.now(),
-						remark,
-						List.of(new ProcurementAdminService.PurchaseOrderLineRequest(1, fixture.rawMaterialId(),
-								fixture.kgUnitId(), new BigDecimal(quantity), new BigDecimal(unitPrice),
-								LocalDate.now(), remark))),
-				operator, request());
-		this.procurementAdminService.confirmOrder(order.id(), operator, request());
+		long orderId = insertConfirmedPurchaseOrder(fixture, supplierId, quantity, unitPrice, remark);
 		ProcurementAdminService.PurchaseReceiptDetailResponse receipt = this.procurementAdminService.createReceipt(
-				order.id(),
+				orderId,
 				new ProcurementAdminService.PurchaseReceiptRequest(fixture.rawWarehouseId(), LocalDate.now(), remark,
 						List.of(new ProcurementAdminService.PurchaseReceiptLineRequest(1,
-								order.lines().getFirst().id(), fixture.rawMaterialId(), fixture.kgUnitId(),
+								purchaseOrderLineId(orderId), fixture.rawMaterialId(), fixture.kgUnitId(),
 								new BigDecimal(quantity), remark, List.of()))),
 				operator, request());
 		ProcurementAdminService.PurchaseReceiptDetailResponse posted = this.procurementAdminService
@@ -3086,6 +3079,48 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		return new PurchaseReceiptFact(posted.id(), posted.receiptNo(), posted.supplierId(),
 				posted.lines().getFirst().id(), posted.lines().getFirst().orderLineId(), new BigDecimal(quantity),
 				new BigDecimal(unitPrice));
+	}
+
+	private long insertConfirmedPurchaseOrder(InventoryFixture fixture, long supplierId, String quantity,
+			String unitPrice, String remark) {
+		int suffix = SEQUENCE.incrementAndGet();
+		BigDecimal orderQuantity = new BigDecimal(quantity);
+		BigDecimal price = new BigDecimal(unitPrice);
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order (
+					order_no, supplier_id, order_date, expected_arrival_date, status, remark,
+					created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at
+				)
+				values (?, ?, ?, ?, 'CONFIRMED', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "INV-PO-" + suffix, supplierId, LocalDate.now(), LocalDate.now(), remark);
+		long orderLineId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order_line (
+					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
+				)
+				values (?, 1, ?, ?, ?, 0, ?, 0, ?, ?, ?, ?, ?, ?, now(), now())
+				returning id
+				""", Long.class, orderId, fixture.rawMaterialId(), fixture.kgUnitId(), orderQuantity, price, price, price,
+				orderQuantity.multiply(price), orderQuantity.multiply(price), LocalDate.now(), remark);
+		this.jdbcTemplate.update("""
+				insert into proc_purchase_order_schedule (
+					order_line_id, line_no, planned_date, planned_quantity, received_quantity, status,
+					created_at, updated_at
+				)
+				values (?, 1, ?, ?, 0, 'PLANNED', now(), now())
+				""", orderLineId, LocalDate.now(), orderQuantity);
+		return orderId;
+	}
+
+	private long purchaseOrderLineId(long orderId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from proc_purchase_order_line
+				where order_id = ?
+				and line_no = 1
+				""", Long.class, orderId);
 	}
 
 	private void insertConfirmedPayable(PurchaseReceiptFact receipt, String totalAmount) {
@@ -3817,10 +3852,12 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				""", Long.class, "PO-TRACE-" + suffix, supplierId, LocalDate.now());
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
-					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price, created_at,
-					updated_at
+					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, created_at, updated_at
 				)
-				values (?, 1, ?, ?, 5.000000, 5.000000, 10.000000, now(), now())
+				values (?, 1, ?, ?, 5.000000, 5.000000, 10.000000, 0, 10.000000, 10.000000, 50.00, 50.00,
+					now(), now())
 				returning id
 				""", Long.class, orderId, materialId, unitId);
 		long receiptId = this.jdbcTemplate.queryForObject("""

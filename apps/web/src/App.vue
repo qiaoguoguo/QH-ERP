@@ -39,9 +39,13 @@ const inventoryWarehouseTransferPath = '/inventory/warehouse-transfers'
 const inventoryOwnershipConversionPath = '/inventory/ownership-conversions'
 const inventoryStocktakePath = '/inventory/stocktakes'
 const inventoryValuationAdjustmentPath = '/inventory/valuation-adjustments'
+const procurementRequisitionPath = '/procurement/requisitions'
+const procurementInquiryPath = '/procurement/inquiries'
+const procurementPriceAgreementPath = '/procurement/price-agreements'
 const procurementOrderPath = '/procurement/orders'
 const procurementReceiptPath = '/procurement/receipts'
 const procurementReturnPath = '/procurement/returns'
+const procurementEffectiveSupplyPath = '/procurement/effective-supplies'
 const salesProjectPath = '/sales/projects'
 const salesOrderPath = '/sales/orders'
 const salesShipmentPath = '/sales/shipments'
@@ -91,9 +95,13 @@ const supportedMenuPaths = new Set([
   inventoryOwnershipConversionPath,
   inventoryStocktakePath,
   inventoryValuationAdjustmentPath,
+  procurementRequisitionPath,
+  procurementInquiryPath,
+  procurementPriceAgreementPath,
   procurementOrderPath,
   procurementReceiptPath,
   procurementReturnPath,
+  procurementEffectiveSupplyPath,
   salesProjectPath,
   salesOrderPath,
   salesShipmentPath,
@@ -227,6 +235,24 @@ const inventoryChildren: MenuNode[] = [
 const inventoryMenuPaths = new Set(inventoryChildren.map((child) => child.routePath))
 const procurementChildren: MenuNode[] = [
   {
+    id: 'procurement-requisitions',
+    code: 'procurement:requisition:view',
+    name: '采购请购',
+    routePath: procurementRequisitionPath,
+  },
+  {
+    id: 'procurement-inquiries',
+    code: 'procurement:inquiry:view',
+    name: '询价比价',
+    routePath: procurementInquiryPath,
+  },
+  {
+    id: 'procurement-price-agreements',
+    code: 'procurement:price-agreement:view',
+    name: '价格协议',
+    routePath: procurementPriceAgreementPath,
+  },
+  {
     id: 'procurement-orders',
     code: 'procurement:order:view',
     name: '采购订单',
@@ -243,6 +269,12 @@ const procurementChildren: MenuNode[] = [
     code: 'procurement:return:view',
     name: '采购退货',
     routePath: procurementReturnPath,
+  },
+  {
+    id: 'procurement-effective-supplies',
+    code: 'procurement:supply:view',
+    name: '有效采购供给',
+    routePath: procurementEffectiveSupplyPath,
   },
 ]
 const procurementMenuPaths = new Set(procurementChildren.map((child) => child.routePath))

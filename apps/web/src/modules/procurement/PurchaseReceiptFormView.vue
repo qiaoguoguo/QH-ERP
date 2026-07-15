@@ -21,6 +21,7 @@ import PurchaseReceiptStatusTag from './PurchaseReceiptStatusTag.vue'
 import {
   type PurchaseReceiptLineDraft,
   type PurchaseReceiptSourceLine,
+  decimalCompare,
   formatProcurementQuantity,
   newPurchaseReceiptLine,
   normalizeRequiredId,
@@ -96,7 +97,7 @@ async function loadSourceOrder() {
     const detail = await procurementApi.orders.get(route.params.orderId as ResourceId)
     sourceOrder.value = detail
     sourceLines.value = await enrichSourceLineTracking(detail.lines
-      .filter((line) => Number(line.remainingQuantity) > 0)
+      .filter((line) => decimalCompare(line.remainingQuantity, '0') > 0)
       .map((line) => purchaseReceiptSourceFromOrderLine(line)))
     if (!allowedSourceStatuses.includes(detail.status)) {
       formError.value = '仅已确认或部分入库采购订单可创建采购入库'
@@ -119,9 +120,9 @@ function draftFromReceiptLine(line: PurchaseReceiptLineRecord): PurchaseReceiptL
     trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
-    orderedQuantity: Number(line.orderedQuantity) || 0,
-    receivedQuantityBefore: Number(line.receivedQuantityBefore) || 0,
-    remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    orderedQuantity: line.orderedQuantity,
+    receivedQuantityBefore: line.receivedQuantityBefore,
+    remainingQuantityBefore: line.remainingQuantityBefore,
     inTransitQuantity: line.inTransitQuantity ?? null,
     inTransitStatus: line.inTransitStatus ?? null,
     inTransitStatusName: line.inTransitStatusName ?? null,
@@ -181,7 +182,7 @@ function mergeSourceLines(
     .map((line) => currentSourceLineById.get(String(line.id)) ?? line)
     .forEach(appendLine)
   currentSourceLines
-    .filter((line) => Number(line.remainingQuantityBefore) > 0)
+    .filter((line) => decimalCompare(line.remainingQuantityBefore, '0') > 0)
     .forEach(appendLine)
 
   return mergedLines
@@ -272,7 +273,7 @@ function validateForm(): PurchaseReceiptPayload | null {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${quantityResult.message ?? '数量不正确'}`
       continue
     }
-    if (quantityResult.value > Number(line.remainingQuantityBefore)) {
+    if (decimalCompare(quantityResult.value, line.remainingQuantityBefore) > 0) {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行本次入库数量不能超过未入库数量`
       continue
     }
@@ -361,7 +362,10 @@ async function saveReceipt() {
   try {
     let result: PurchaseReceiptDetailRecord
     if (isEdit.value) {
-      result = await procurementApi.receipts.update(editingRecord.value!.id, payload)
+      result = await procurementApi.receipts.update(editingRecord.value!.id, {
+        ...payload,
+        version: editingRecord.value!.version,
+      })
     } else {
       result = await procurementApi.receipts.create(route.params.orderId as ResourceId, payload)
     }

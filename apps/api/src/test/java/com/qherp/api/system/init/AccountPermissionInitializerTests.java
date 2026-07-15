@@ -588,21 +588,27 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 		assertThat(orderColumns).contains("id", "order_no", "supplier_id", "order_date", "expected_arrival_date",
 				"status", "remark", "created_by", "created_at", "updated_by", "updated_at", "confirmed_by",
-				"confirmed_at", "cancelled_by", "cancelled_at", "closed_by", "closed_at", "version");
+				"confirmed_at", "cancelled_by", "cancelled_at", "closed_by", "closed_at", "version",
+				"purchase_mode", "project_id", "currency", "public_direct_reason", "exception_reason",
+				"exception_approval_instance_id", "close_reason");
 		assertThat(orderLineColumns).contains("id", "order_id", "line_no", "material_id", "unit_id", "quantity",
 				"received_quantity", "unit_price", "expected_arrival_date", "remark", "created_at", "updated_at",
-				"version");
+				"version", "source_requisition_line_id", "source_quote_line_id", "price_agreement_line_id",
+				"price_source_type", "tax_rate", "tax_excluded_unit_price", "tax_included_unit_price",
+				"tax_excluded_amount", "tax_included_amount");
 		assertThat(receiptColumns).contains("id", "receipt_no", "order_id", "supplier_id", "warehouse_id",
 				"business_date", "status", "remark", "created_by", "created_at", "updated_by", "updated_at",
 				"posted_by", "posted_at", "version");
 		assertThat(receiptLineColumns).contains("id", "receipt_id", "line_no", "order_line_id", "material_id",
 				"unit_id", "ordered_quantity", "received_quantity_before", "remaining_quantity_before",
-				"quantity", "before_quantity", "after_quantity", "remark", "created_at", "updated_at");
+				"quantity", "before_quantity", "after_quantity", "remark", "created_at", "updated_at",
+				"purchase_mode", "project_id", "schedule_id", "cost_layer_id", "value_movement_id");
 
 		assertThat(indexes("proc_purchase_order")).contains("uk_proc_purchase_order_no",
 				"idx_proc_purchase_order_supplier", "idx_proc_purchase_order_status_date");
 		assertThat(indexes("proc_purchase_order_line")).contains("uk_proc_purchase_order_line_no",
-				"uk_proc_purchase_order_line_material", "idx_proc_purchase_order_line_order");
+				"idx_proc_purchase_order_line_material", "idx_proc_purchase_order_line_order",
+				"idx_proc_purchase_order_line_requisition", "uk_proc_purchase_order_line_source_combo");
 		assertThat(indexes("proc_purchase_receipt")).contains("uk_proc_purchase_receipt_no",
 				"idx_proc_purchase_receipt_order", "idx_proc_purchase_receipt_status_date");
 		assertThat(indexes("proc_purchase_receipt_line")).contains("uk_proc_purchase_receipt_line_no",

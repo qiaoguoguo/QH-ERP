@@ -53,12 +53,18 @@ function updateSourceLine(index: number, value: ResourceId) {
     trackingMethodName: sourceLine?.trackingMethodName ?? '不追踪',
     unitId: sourceLine?.unitId ?? '',
     unitName: sourceLine?.unitName ?? '',
-    orderedQuantity: sourceLine?.orderedQuantity ?? 0,
-    receivedQuantityBefore: sourceLine?.receivedQuantityBefore ?? 0,
-    remainingQuantityBefore: sourceLine?.remainingQuantityBefore ?? 0,
-    inTransitQuantity: sourceLine?.inTransitQuantity ?? null,
-    inTransitStatus: sourceLine?.inTransitStatus ?? null,
-    inTransitStatusName: sourceLine?.inTransitStatusName ?? null,
+    orderedQuantity: sourceLine?.orderedQuantity ?? '',
+    receivedQuantityBefore: sourceLine?.receivedQuantityBefore ?? '',
+    remainingQuantityBefore: sourceLine?.remainingQuantityBefore ?? '',
+    inTransitQuantity: sourceLine?.inTransitQuantity === undefined || sourceLine.inTransitQuantity === null
+      ? null
+      : String(sourceLine.inTransitQuantity),
+    inTransitStatus: sourceLine?.inTransitStatus === undefined || sourceLine.inTransitStatus === null
+      ? null
+      : String(sourceLine.inTransitStatus),
+    inTransitStatusName: sourceLine?.inTransitStatusName === undefined || sourceLine.inTransitStatusName === null
+      ? null
+      : String(sourceLine.inTransitStatusName),
     trackingAllocations: [],
   })
 }

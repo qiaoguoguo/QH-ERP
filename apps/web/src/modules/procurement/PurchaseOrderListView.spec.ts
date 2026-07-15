@@ -24,12 +24,33 @@ const masterDataApiMock = vi.hoisted(() => ({
   },
 }))
 
+const documentPlatformApiMock = vi.hoisted(() => ({
+  documentTasks: {
+    get: vi.fn(),
+    errors: vi.fn(),
+    download: vi.fn(),
+    cancel: vi.fn(),
+  },
+  imports: {
+    confirm: vi.fn(),
+  },
+  exports: {
+    createProcurementOrders: vi.fn(),
+  },
+}))
+
 vi.mock('../../shared/api/procurementApi', () => ({
   procurementApi: procurementApiMock,
 }))
 
 vi.mock('../../shared/api/masterDataApi', () => ({
   masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/documentPlatformApi')>()),
+  documentPlatformApi: documentPlatformApiMock,
+  createIdempotencyKey: () => 'order-export-key',
 }))
 
 const supplierA: PartnerRecord = {
@@ -48,13 +69,35 @@ const draftOrder: PurchaseOrderSummaryRecord = {
   orderDate: '2026-07-04',
   expectedArrivalDate: '2026-07-10',
   status: 'DRAFT',
+  procurementMode: 'PROJECT',
+  projectId: 30,
+  projectCode: 'PRJ-024',
+  projectName: '华东产线改造',
+  requisitionNo: 'REQ-024-001',
+  inquiryNo: 'INQ-024-001',
+  quoteNo: 'SQ-024-001',
+  agreementNo: 'PA-024-001',
+  approvalStatusName: '待提交',
+  exceptionApprovalStatus: 'NOT_REQUIRED',
+  exceptionReason: null,
+  priceSourceType: 'QUOTE',
+  priceSourceTypeName: '供应商报价',
+  priceSourceNo: 'SQ-024-001',
+  priceSourceReason: '最低有效报价',
+  taxExcludedUnitPrice: '10.000000',
+  taxIncludedUnitPrice: '11.300000',
+  taxRate: '0.130000',
   lineCount: 2,
-  totalQuantity: 100,
-  receivedQuantity: 0,
-  remainingQuantity: 100,
+  totalQuantity: '100.000000',
+  receivedQuantity: '0.000000',
+  remainingQuantity: '100.000000',
   inTransitQuantity: '0.000000',
   inTransitStatus: 'NOT_COUNTED',
   inTransitStatusName: '不计入在途',
+  nextArrivalDate: '2026-07-09',
+  currency: 'CNY',
+  allowedActions: ['UPDATE', 'CONFIRM', 'CANCEL'],
+  version: 11,
   remark: '首批采购',
   createdByName: '采购员',
   createdAt: '2026-07-04T08:00:00+08:00',
@@ -66,12 +109,14 @@ const confirmedOrder: PurchaseOrderSummaryRecord = {
   id: 2,
   orderNo: 'PO-CONF-001',
   status: 'CONFIRMED',
-  totalQuantity: 50,
-  receivedQuantity: 0,
-  remainingQuantity: 50,
+  totalQuantity: '50.000000',
+  receivedQuantity: '0.000000',
+  remainingQuantity: '50.000000',
   inTransitQuantity: '50.000000',
   inTransitStatus: 'NORMAL',
   inTransitStatusName: '正常在途',
+  allowedActions: ['CREATE_RECEIPT'],
+  version: 12,
 }
 
 const partialOrder: PurchaseOrderSummaryRecord = {
@@ -79,12 +124,15 @@ const partialOrder: PurchaseOrderSummaryRecord = {
   id: 3,
   orderNo: 'PO-PART-001',
   status: 'PARTIALLY_RECEIVED',
-  totalQuantity: 80,
-  receivedQuantity: 30,
-  remainingQuantity: 50,
+  totalQuantity: '80.000000',
+  receivedQuantity: '30.000000',
+  remainingQuantity: '50.000000',
   inTransitQuantity: '50.000000',
   inTransitStatus: 'DUE_SOON',
   inTransitStatusName: '临近到货',
+  closeReason: '供应商延期，转补采',
+  allowedActions: ['CLOSE'],
+  version: 13,
 }
 
 const receivedOrder: PurchaseOrderSummaryRecord = {
@@ -92,12 +140,14 @@ const receivedOrder: PurchaseOrderSummaryRecord = {
   id: 4,
   orderNo: 'PO-RECV-001',
   status: 'RECEIVED',
-  totalQuantity: 40,
-  receivedQuantity: 40,
-  remainingQuantity: 0,
+  totalQuantity: '40.000000',
+  receivedQuantity: '40.000000',
+  remainingQuantity: '0.000000',
   inTransitQuantity: '0.000000',
   inTransitStatus: 'NOT_COUNTED',
   inTransitStatusName: '不计入在途',
+  allowedActions: [],
+  version: 14,
 }
 
 const orderPage: PageResult<PurchaseOrderSummaryRecord> = {
@@ -135,6 +185,8 @@ async function mountList(permissions = [
   'procurement:order:cancel',
   'procurement:order:close',
   'procurement:receipt:create',
+  'platform:document-task:create',
+  'procurement:document:export',
 ]) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -182,6 +234,16 @@ describe('采购订单列表页', () => {
       total: 1,
       totalPages: 1,
     })
+    documentPlatformApiMock.exports.createProcurementOrders.mockResolvedValue({
+      id: 908,
+      taskNo: 'TASK-ORDER-EXPORT',
+      taskType: 'PROCUREMENT_ORDER_EXPORT',
+      direction: 'EXPORT',
+      stage: 'EXPORT',
+      status: 'QUEUED',
+      availableActions: ['CANCEL'],
+      version: 1,
+    })
   })
 
   afterEach(() => {
@@ -211,12 +273,118 @@ describe('采购订单列表页', () => {
     expect(wrapper.text()).toContain('PO-DRAFT-001')
     expect(wrapper.text()).toContain('华东五金')
     expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('请购 REQ-024-001')
+    expect(wrapper.text()).toContain('供应商报价 SQ-024-001')
+    expect(wrapper.text()).toContain('协议 PA-024-001')
+    expect(wrapper.text()).toContain('审批状态：待提交')
+    expect(wrapper.text()).toContain('例外审批：不需要')
+    expect(wrapper.text()).toContain('未税单价 10')
+    expect(wrapper.text()).toContain('含税单价 11.3')
+    expect(wrapper.text()).toContain('税率 0.13')
+    expect(wrapper.text()).toContain('CNY')
     expect(wrapper.text()).toContain('采购在途参考')
     expect(wrapper.text()).toContain('在途状态')
     expect(wrapper.text()).toContain('正常在途')
+    expect(wrapper.text()).toContain('下一到货：2026-07-09')
+    expect(wrapper.text()).toContain('结案原因：供应商延期，转补采')
     expect(wrapper.text()).toContain('100')
     expect(wrapper.text()).toContain('采购员')
     expect(wrapper.find('[data-test="create-purchase-order"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="export-purchase-orders"]').trigger('click')
+    await flushPromises()
+    expect(documentPlatformApiMock.exports.createProcurementOrders).toHaveBeenCalledWith({
+      keyword: '',
+      supplierId: undefined,
+      status: undefined,
+      dateFrom: '',
+      dateTo: '',
+      expectedDateFrom: '',
+      expectedDateTo: '',
+      idempotencyKey: 'order-export-key',
+    })
+    expect(wrapper.text()).toContain('TASK-ORDER-EXPORT')
+  })
+
+  it('订单列表从可用行快照展示税价摘要，没有头级税价时不显示横线伪值', async () => {
+    procurementApiMock.orders.list.mockResolvedValueOnce({
+      items: [{
+        ...draftOrder,
+        taxRate: undefined,
+        taxExcludedUnitPrice: undefined,
+        taxIncludedUnitPrice: undefined,
+        lines: [
+          {
+            id: 501,
+            lineNo: 10,
+            materialId: 10,
+            materialCode: 'RM-001',
+            materialName: '冷轧钢板',
+            unitId: 2,
+            unitName: '千克',
+            quantity: '12.500000',
+            receivedQuantity: '0.000000',
+            remainingQuantity: '12.500000',
+            unitPrice: '100.000000',
+            taxRate: '0.130000',
+            taxExcludedUnitPrice: '100.000000',
+            taxIncludedUnitPrice: '113.000000',
+            currency: 'CNY',
+          },
+          {
+            id: 502,
+            lineNo: 20,
+            materialId: 11,
+            materialCode: 'RM-002',
+            materialName: '铜排',
+            unitId: 2,
+            unitName: '千克',
+            quantity: '2.000000',
+            receivedQuantity: '0.000000',
+            remainingQuantity: '2.000000',
+            unitPrice: '200.000000',
+            taxRate: '0.060000',
+            taxExcludedUnitPrice: '200.000000',
+            taxIncludedUnitPrice: '212.000000',
+            currency: 'CNY',
+          },
+        ],
+      }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+
+    const { wrapper } = await mountList()
+
+    expect(wrapper.text()).toContain('2 行税价见明细')
+    expect(wrapper.text()).not.toContain('未税单价 -')
+    expect(wrapper.text()).not.toContain('含税单价 -')
+    expect(wrapper.text()).not.toContain('税率 -')
+  })
+
+  it('订单列表价格来源使用后端 type-matched sourceNo，不回退到错误来源编号', async () => {
+    procurementApiMock.orders.list.mockResolvedValueOnce({
+      items: [{
+        ...draftOrder,
+        priceSourceType: 'QUOTE',
+        priceSourceTypeName: '供应商报价',
+        priceSourceNo: null,
+        sourceNo: 'PQT-024-001',
+        quoteNo: 'PRQ-024-001',
+      } as PurchaseOrderSummaryRecord & { sourceNo: string }],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+
+    const { wrapper } = await mountList()
+
+    expect(wrapper.text()).toContain('供应商报价 PQT-024-001')
+    expect(wrapper.text()).not.toContain('供应商报价 PRQ-024-001')
   })
 
   it('支持按关键词、供应商、状态和日期范围筛选并重置', async () => {
@@ -279,9 +447,9 @@ describe('采购订单列表页', () => {
     expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
     expect(buttonsByText(wrapper, '确认')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '关闭')).toHaveLength(3)
-    expect(buttonsByText(wrapper, '创建入库')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '取消')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '关闭')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '创建入库')).toHaveLength(1)
 
     await wrapper.find('[data-test="create-purchase-receipt"]').trigger('click')
     await flushPromises()
@@ -299,6 +467,23 @@ describe('采购订单列表页', () => {
     expect(buttonsByText(wrapper, '取消')).toHaveLength(0)
     expect(buttonsByText(wrapper, '关闭')).toHaveLength(0)
     expect(buttonsByText(wrapper, '创建入库')).toHaveLength(0)
+    expect(wrapper.find('[data-test="export-purchase-orders"]').exists()).toBe(false)
+  })
+
+  it('状态允许但 allowedActions 未授权时不展示复杂动作', async () => {
+    procurementApiMock.orders.list.mockResolvedValueOnce({
+      ...orderPage,
+      items: [{ ...draftOrder, allowedActions: [] }],
+      total: 1,
+    })
+    const { wrapper } = await mountList()
+
+    expect(buttonsByText(wrapper, '详情')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '编辑')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '确认')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '取消')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '关闭')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '创建入库')).toHaveLength(0)
   })
 
   it('确认、取消和关闭动作成功后刷新列表，失败时显示错误', async () => {
@@ -306,21 +491,33 @@ describe('采购订单列表页', () => {
 
     await wrapper.find('[data-test="confirm-purchase-order"]').trigger('click')
     await flushPromises()
-    expect(procurementApiMock.orders.confirm).toHaveBeenCalledWith(1)
+    expect(procurementApiMock.orders.confirm).toHaveBeenCalledWith(1, expect.objectContaining({
+      version: 11,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(procurementApiMock.orders.confirm.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
     await wrapper.find('[data-test="cancel-purchase-order"]').trigger('click')
     await flushPromises()
-    expect(procurementApiMock.orders.cancel).toHaveBeenCalledWith(1)
+    expect(procurementApiMock.orders.cancel).toHaveBeenCalledWith(1, expect.objectContaining({
+      version: 11,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(procurementApiMock.orders.cancel.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
     await wrapper.find('[data-test="close-purchase-order"]').trigger('click')
     await flushPromises()
-    expect(procurementApiMock.orders.close).toHaveBeenCalledWith(2)
+    expect(procurementApiMock.orders.close).toHaveBeenCalledWith(3, expect.objectContaining({
+      version: 13,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(procurementApiMock.orders.close.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
     procurementApiMock.orders.close.mockRejectedValueOnce(new Error('采购订单状态不允许关闭'))
     await wrapper.find('[data-test="close-purchase-order"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.text()).toContain('采购订单状态不允许关闭')
-    expect(procurementApiMock.orders.list).toHaveBeenCalledTimes(4)
+    expect(procurementApiMock.orders.list).toHaveBeenCalledTimes(5)
   })
 })

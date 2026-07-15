@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   returnRefundReversalApi,
+  type PurchaseReturnCreatePayloadLine,
   type PurchaseReturnDetail,
   type PurchaseReturnPayload,
   type PurchaseReturnSource,
@@ -31,10 +32,14 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import {
-  formatSalesAmount,
-  formatSalesQuantity,
+  decimalCompare,
+  formatProcurementAmount,
+  formatProcurementQuantity,
+  procurementModeDisplay,
+  validatePurchaseQuantity,
+} from '../procurement/procurementPageHelpers'
+import {
   salesErrorMessage,
-  validateSalesQuantity,
 } from '../sales/salesPageHelpers'
 
 interface PurchaseReturnLineDraft {
@@ -59,6 +64,12 @@ interface PurchaseReturnLineDraft {
   maxSelectableQuantity?: string | null
   unitPrice: string
   returnableAmount: string
+  procurementMode?: string | null
+  projectCode?: string | null
+  projectName?: string | null
+  originalCostLayerNo?: string | null
+  originalValueMovementNo?: string | null
+  costVisible?: boolean | null
   trackingMethod: InventoryTrackingMethod
   trackingMethodName: string
   trackingAllocations: InventoryTrackingAllocationPayload[]
@@ -160,6 +171,12 @@ async function lineDraftFromSource(line: PurchaseReturnSourceLine): Promise<Purc
     maxSelectableQuantity: line.maxSelectableQuantity ?? null,
     unitPrice: line.unitPrice,
     returnableAmount: line.returnableAmount,
+    procurementMode: line.procurementMode ?? null,
+    projectCode: line.projectCode ?? null,
+    projectName: line.projectName ?? null,
+    originalCostLayerNo: line.originalCostLayerNo ?? null,
+    originalValueMovementNo: line.originalValueMovementNo ?? null,
+    costVisible: line.costVisible ?? null,
     trackingMethod: tracking.trackingMethod,
     trackingMethodName: tracking.trackingMethodName,
     trackingAllocations: [],
@@ -192,6 +209,12 @@ function lineDraftFromDetail(line: ReversalDocumentLine): PurchaseReturnLineDraf
     maxSelectableQuantity: null,
     unitPrice: line.unitPrice ?? '',
     returnableAmount: line.amount ?? '',
+    procurementMode: line.procurementMode ?? null,
+    projectCode: line.projectCode ?? null,
+    projectName: line.projectName ?? null,
+    originalCostLayerNo: line.originalCostLayerNo ?? null,
+    originalValueMovementNo: line.originalValueMovementNo ?? null,
+    costVisible: line.costVisible ?? null,
     trackingMethod: inferTrackingMethodFromAllocations(line.trackingAllocations),
     trackingMethodName: inferTrackingMethodFromAllocations(line.trackingAllocations) === 'SERIAL' ? '序列号管理' : '批次管理',
     trackingAllocations: line.trackingAllocations ?? [],
@@ -200,13 +223,13 @@ function lineDraftFromDetail(line: ReversalDocumentLine): PurchaseReturnLineDraf
   }
 }
 
-function numericLineValue(line: PurchaseReturnLineDraft, key: 'maxSelectableQuantity'): number | null {
+function lineDecimalValue(line: PurchaseReturnLineDraft, key: 'maxSelectableQuantity'): string | null {
   const value = line[key]
   if (value === null || value === undefined || value === '') {
     return null
   }
-  const numberValue = Number(value)
-  return Number.isFinite(numberValue) ? numberValue : null
+  const normalizedValue = String(value).trim()
+  return /^\d+(?:\.\d+)?$/.test(normalizedValue) ? normalizedValue : null
 }
 
 function lineDisabledReason(line: PurchaseReturnLineDraft): string {
@@ -214,8 +237,31 @@ function lineDisabledReason(line: PurchaseReturnLineDraft): string {
 }
 
 function lineUnavailable(line: PurchaseReturnLineDraft): boolean {
-  const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
-  return line.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
+  const maxSelectableQuantity = lineDecimalValue(line, 'maxSelectableQuantity')
+  return line.selectable === false || (maxSelectableQuantity !== null && decimalCompare(maxSelectableQuantity, '0') <= 0)
+}
+
+function ownershipText(value?: {
+  procurementMode?: string | null
+  projectCode?: string | null
+  projectName?: string | null
+} | null) {
+  return procurementModeDisplay(
+    value?.procurementMode === 'PROJECT' ? 'PROJECT' : value?.procurementMode === 'PUBLIC' ? 'PUBLIC' : undefined,
+    value?.projectCode,
+    value?.projectName,
+  )
+}
+
+function costSourceText(value?: {
+  originalCostLayerNo?: string | null
+  originalValueMovementNo?: string | null
+  costVisible?: boolean | null
+} | null) {
+  if (value?.costVisible === false) {
+    return '成本无权限'
+  }
+  return `原成本层 ${value?.originalCostLayerNo || '-'} / 原价值流水 ${value?.originalValueMovementNo || '-'}`
 }
 
 async function loadSources() {
@@ -366,7 +412,7 @@ function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayl
   trackingPickerVisible.value = false
 }
 
-function buildPayload(): PurchaseReturnUpdatePayload | null {
+function buildPayload(): PurchaseReturnPayload | PurchaseReturnUpdatePayload | null {
   if (!canEditForm.value) {
     submitError.value = `当前采购退货${nonEditableStatusText.value}，不可编辑`
     return null
@@ -385,13 +431,13 @@ function buildPayload(): PurchaseReturnUpdatePayload | null {
     if (!line.quantity) {
       continue
     }
-    const quantity = validateSalesQuantity(line.quantity)
+    const quantity = validatePurchaseQuantity(line.quantity)
     if (quantity.message || !quantity.payloadValue) {
       submitError.value = `${line.materialName}：${quantity.message}`
       return null
     }
-    const maxSelectableQuantity = numericLineValue(line, 'maxSelectableQuantity')
-    if (maxSelectableQuantity !== null && quantity.value !== null && quantity.value > maxSelectableQuantity) {
+    const maxSelectableQuantity = lineDecimalValue(line, 'maxSelectableQuantity')
+    if (maxSelectableQuantity !== null && decimalCompare(quantity.payloadValue, maxSelectableQuantity) > 0) {
       submitError.value = `${line.materialName}：退货数量不能超过最大可选数量`
       return null
     }
@@ -446,14 +492,36 @@ function buildPayload(): PurchaseReturnUpdatePayload | null {
     return null
   }
 
-  const payload: PurchaseReturnUpdatePayload = {
+  if (isEdit.value) {
+    if (!editDetail.value) {
+      submitError.value = '采购退货加载失败，不能保存'
+      return null
+    }
+    const payload: PurchaseReturnUpdatePayload = {
+      businessDate: form.businessDate,
+      clientRequestId: form.clientRequestId || `purchase-return-${Date.now()}`,
+      remark: form.remark,
+      lines: payloadLines,
+      version: editDetail.value.version,
+    }
+    if (form.sourceReceiptId) {
+      payload.sourceReceiptId = form.sourceReceiptId
+    }
+    return payload
+  }
+  const createPayloadLines = payloadLines.map((line): PurchaseReturnCreatePayloadLine => ({
+    sourceReceiptLineId: line.sourceReceiptLineId!,
+    qualityStatus: line.qualityStatus,
+    quantity: line.quantity,
+    trackingAllocations: line.trackingAllocations,
+    reason: line.reason,
+  }))
+  const payload: PurchaseReturnPayload = {
+    sourceReceiptId: form.sourceReceiptId,
     businessDate: form.businessDate,
     clientRequestId: form.clientRequestId || `purchase-return-${Date.now()}`,
     remark: form.remark,
-    lines: payloadLines,
-  }
-  if (form.sourceReceiptId) {
-    payload.sourceReceiptId = form.sourceReceiptId
+    lines: createPayloadLines,
   }
   return payload
 }
@@ -471,7 +539,7 @@ async function submit() {
   submitting.value = true
   try {
     const detail = isEdit.value && routeId.value
-      ? await returnRefundReversalApi.purchaseReturns.update(routeId.value, payload)
+      ? await returnRefundReversalApi.purchaseReturns.update(routeId.value, payload as PurchaseReturnUpdatePayload)
       : await returnRefundReversalApi.purchaseReturns.create(payload as PurchaseReturnPayload)
     await router.push({
       name: 'procurement-return-detail',
@@ -562,6 +630,18 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="receiptNo" label="入库单号" min-width="170" show-overflow-tooltip />
+            <el-table-column label="原采购模式/项目" min-width="210" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ ownershipText(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="原成本来源" min-width="260" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="stacked-cell">
+                  <span>{{ costSourceText(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
             <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
             <el-table-column prop="businessDate" label="业务日期" min-width="110" />
@@ -574,6 +654,12 @@ onMounted(() => {
         <el-form class="document-form" label-width="96px">
           <el-form-item label="来源入库">
             <span>{{ sourceDisplayText }}</span>
+          </el-form-item>
+          <el-form-item label="原采购模式">
+            <span>{{ ownershipText(selectedSource ?? editDetail) }}</span>
+          </el-form-item>
+          <el-form-item label="原成本来源">
+            <span>{{ costSourceText(selectedSource ?? editDetail) }}</span>
           </el-form-item>
           <el-form-item label="业务日期">
             <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD"
@@ -605,25 +691,37 @@ onMounted(() => {
                 {{ row.materialCode }} {{ row.materialName }}
               </template>
             </el-table-column>
+            <el-table-column label="原采购模式/项目" min-width="210" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ ownershipText(row) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="原成本来源" min-width="260" show-overflow-tooltip>
+              <template #default="{ row }">
+                <div class="stacked-cell">
+                  <span>{{ costSourceText(row) }}</span>
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column prop="unitName" label="单位" width="80" />
             <el-table-column label="入库数量" min-width="110" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.receivedQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.receivedQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="已退数量" min-width="110" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.returnedQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.returnedQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="可退数量" min-width="110" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.returnableQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.returnableQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="可用库存" min-width="110" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.availableStockQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.availableStockQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="质量状态" min-width="110">
@@ -633,17 +731,17 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="现存数量" min-width="120" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.quantityOnHand) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.quantityOnHand) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="合格可用" min-width="120" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.availableQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.availableQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="最大可选" min-width="120" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesQuantity(row.maxSelectableQuantity) }}</span>
+                <span class="numeric-cell">{{ formatProcurementQuantity(row.maxSelectableQuantity) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
@@ -653,7 +751,7 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="可退金额" min-width="110" align="right">
               <template #default="{ row }">
-                <span class="numeric-cell">{{ formatSalesAmount(row.returnableAmount) }}</span>
+                <span class="numeric-cell">{{ formatProcurementAmount(row.returnableAmount) }}</span>
               </template>
             </el-table-column>
             <el-table-column label="批次/序列" min-width="260">
@@ -760,6 +858,12 @@ onMounted(() => {
 
 .line-tracking-readonly {
   margin-top: 8px;
+}
+
+.stacked-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
 }
 
 .tracking-empty-text {

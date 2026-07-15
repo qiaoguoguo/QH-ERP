@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import {
   procurementApi,
   type PurchaseReceiptStatus,
@@ -12,10 +13,12 @@ import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import {
+  formatProcurementAmount,
   formatProcurementDateTime,
   formatProcurementQuantity,
   normalizeOptionalId,
   procurementErrorMessage,
+  procurementModeDisplay,
 } from './procurementPageHelpers'
 import PurchaseReceiptStatusTag from './PurchaseReceiptStatusTag.vue'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -143,6 +146,10 @@ function editReceipt(record: PurchaseReceiptSummaryRecord) {
   void router.push({ name: 'procurement-receipt-edit', params: { id: String(record.id) } })
 }
 
+function allowed(record: PurchaseReceiptSummaryRecord, action: string) {
+  return (record.allowedActions ?? []).includes(action)
+}
+
 async function postReceipt(record: PurchaseReceiptSummaryRecord) {
   if (actionLoading.value) {
     return
@@ -154,10 +161,14 @@ async function postReceipt(record: PurchaseReceiptSummaryRecord) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await procurementApi.receipts.post(record.id)
+    await procurementApi.receipts.post(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('purchase-receipt-post'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = procurementErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -264,12 +275,26 @@ onMounted(() => {
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无采购入库'" stripe>
         <el-table-column prop="receiptNo" label="入库单号" min-width="170" show-overflow-tooltip />
         <el-table-column prop="orderNo" label="来源订单号" min-width="170" show-overflow-tooltip />
+        <el-table-column label="采购模式/项目" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ procurementModeDisplay(row.procurementMode, row.projectCode, row.projectName) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="supplierName" label="供应商" min-width="160" show-overflow-tooltip />
         <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column label="状态" min-width="95">
           <template #default="{ row }">
             <PurchaseReceiptStatusTag :status="row.status" />
+          </template>
+        </el-table-column>
+        <el-table-column label="估值/成本" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span>估值状态：{{ row.valuationStateName || row.valuationState || '未返回' }}</span>
+              <span v-if="row.costVisible === false">成本无权限</span>
+              <span v-else>未税金额 {{ formatProcurementAmount(row.taxExcludedAmount) }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="总数量" min-width="100" align="right">
@@ -289,7 +314,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button size="small" text data-test="view-purchase-receipt" @click="viewReceipt(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && allowed(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-purchase-receipt"
@@ -298,7 +323,7 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canPostPermission && row.status === 'DRAFT'"
+              v-if="canPostPermission && allowed(row, 'POST')"
               size="small"
               text
               type="success"
@@ -329,5 +354,11 @@ onMounted(() => {
   min-width: 72px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.stacked-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
 }
 </style>

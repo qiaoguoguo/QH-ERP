@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import {
   returnRefundReversalApi,
   type PurchaseReturnSummary,
@@ -9,8 +10,9 @@ import {
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import { formatProcurementAmount, formatProcurementQuantity, procurementModeDisplay } from '../procurement/procurementPageHelpers'
 import { pageItems } from '../system/shared/pageHelpers'
-import { formatSalesAmount, formatSalesQuantity, normalizeOptionalId, salesErrorMessage } from '../sales/salesPageHelpers'
+import { normalizeOptionalId, salesErrorMessage } from '../sales/salesPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -116,6 +118,40 @@ function editPurchaseReturn(record: PurchaseReturnSummary) {
   void router.push({ name: 'procurement-return-edit', params: { id: String(record.id) } })
 }
 
+function allowed(record: PurchaseReturnSummary, action: string) {
+  return (record.allowedActions ?? []).includes(action)
+}
+
+function ownershipText(value?: {
+  procurementMode?: string | null
+  projectCode?: string | null
+  projectName?: string | null
+} | null) {
+  return procurementModeDisplay(
+    value?.procurementMode === 'PROJECT' ? 'PROJECT' : value?.procurementMode === 'PUBLIC' ? 'PUBLIC' : undefined,
+    value?.projectCode,
+    value?.projectName,
+  )
+}
+
+function costSourceText(value?: {
+  originalCostLayerNo?: string | null
+  originalValueMovementNo?: string | null
+  costVisible?: boolean | null
+} | null) {
+  if (value?.costVisible === false) {
+    return '成本无权限'
+  }
+  return `原成本层 ${value?.originalCostLayerNo || '-'} / 原价值流水 ${value?.originalValueMovementNo || '-'}`
+}
+
+function returnAmountText(value: PurchaseReturnSummary) {
+  if (value.costVisible === false) {
+    return '成本无权限'
+  }
+  return formatProcurementAmount(value.totalAmount)
+}
+
 async function postPurchaseReturn(record: PurchaseReturnSummary) {
   if (actionLoading.value || !(await confirmAction(`确认过账采购退货“${record.returnNo}”？`))) {
     return
@@ -123,10 +159,14 @@ async function postPurchaseReturn(record: PurchaseReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.purchaseReturns.post(record.id)
+    await returnRefundReversalApi.purchaseReturns.post(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('purchase-return-post'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -139,10 +179,14 @@ async function cancelPurchaseReturn(record: PurchaseReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.purchaseReturns.cancel(record.id)
+    await returnRefundReversalApi.purchaseReturns.cancel(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('purchase-return-cancel'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -154,7 +198,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="采购退货" description="维护采购入库退货草稿，过账后形成库存出库并冲减应付。">
+  <MasterDataTableView title="采购退货" description="维护采购入库退货草稿，过账后反冲原入库库存与成本，不直接处理应付。">
     <template #actions>
       <el-button
         v-if="canCreate"
@@ -227,6 +271,18 @@ onMounted(() => {
             {{ row.source.restricted || !row.source.canViewSource ? row.source.restrictedMessage || '来源无查看权限' : row.source.sourceNo }}
           </template>
         </el-table-column>
+        <el-table-column label="原采购模式/项目" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ ownershipText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="原成本来源" min-width="260" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span>{{ costSourceText(row) }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="supplierName" label="供应商" min-width="160" show-overflow-tooltip />
         <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
@@ -237,19 +293,19 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="退货数量" min-width="110" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ formatSalesQuantity(row.totalQuantity) }}</span>
+            <span class="numeric-cell">{{ formatProcurementQuantity(row.totalQuantity) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="退货金额" min-width="120" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ formatSalesAmount(row.totalAmount) }}</span>
+            <span class="numeric-cell">{{ returnAmountText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" min-width="220">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-purchase-return" @click="viewPurchaseReturn(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && allowed(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-purchase-return"
@@ -258,7 +314,7 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canPost && row.status === 'DRAFT'"
+              v-if="canPost && allowed(row, 'POST')"
               size="small"
               text
               type="success"
@@ -269,7 +325,7 @@ onMounted(() => {
               过账
             </el-button>
             <el-button
-              v-if="canCancel && row.status === 'DRAFT'"
+              v-if="canCancel && allowed(row, 'CANCEL')"
               size="small"
               text
               type="danger"
@@ -304,5 +360,11 @@ onMounted(() => {
 
 .table-scroll {
   overflow-x: auto;
+}
+
+.stacked-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
 }
 </style>

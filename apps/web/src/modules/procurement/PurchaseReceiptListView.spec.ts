@@ -52,6 +52,10 @@ const draftReceipt: PurchaseReceiptSummaryRecord = {
   receiptNo: 'PR-20260705-001',
   orderId: 99,
   orderNo: 'PO-20260704-001',
+  procurementMode: 'PROJECT',
+  projectId: 30,
+  projectCode: 'PRJ-024',
+  projectName: '华东产线改造',
   supplierId: 100,
   supplierName: '华东五金',
   warehouseId: 30,
@@ -59,7 +63,13 @@ const draftReceipt: PurchaseReceiptSummaryRecord = {
   businessDate: '2026-07-05',
   status: 'DRAFT',
   lineCount: 1,
-  totalQuantity: 2.5,
+  totalQuantity: '2.500000',
+  valuationState: 'VALUED',
+  valuationStateName: '已估值',
+  costVisible: false,
+  taxExcludedAmount: null,
+  allowedActions: ['UPDATE', 'POST'],
+  version: 21,
   remark: '首批入库',
   createdByName: '仓管员',
   createdAt: '2026-07-05T08:00:00+08:00',
@@ -73,7 +83,16 @@ const postedReceipt: PurchaseReceiptSummaryRecord = {
   id: 701,
   receiptNo: 'PR-20260705-002',
   status: 'POSTED',
-  totalQuantity: 5,
+  procurementMode: 'PUBLIC',
+  projectId: null,
+  projectCode: null,
+  projectName: null,
+  totalQuantity: '5.000000',
+  valuationStateName: '已过账估值',
+  costVisible: true,
+  taxExcludedAmount: '500.000000',
+  allowedActions: [],
+  version: 22,
   postedByName: '仓管员',
   postedAt: '2026-07-05T09:00:00+08:00',
 }
@@ -190,6 +209,11 @@ describe('采购入库列表页', () => {
     expect(wrapper.text()).toContain('采购入库')
     expect(wrapper.text()).toContain('PR-20260705-001')
     expect(wrapper.text()).toContain('PO-20260704-001')
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('公共采购')
+    expect(wrapper.text()).toContain('估值状态：已估值')
+    expect(wrapper.text()).toContain('成本无权限')
+    expect(wrapper.text()).toContain('未税金额 500')
     expect(wrapper.text()).toContain('华东五金')
     expect(wrapper.text()).toContain('原料仓')
     expect(wrapper.text()).toContain('草稿')
@@ -273,12 +297,29 @@ describe('采购入库列表页', () => {
     expect(buttonsByText(wrapper, '过账')).toHaveLength(0)
   })
 
+  it('状态允许但 allowedActions 未授权时不展示编辑和过账动作', async () => {
+    procurementApiMock.receipts.list.mockResolvedValueOnce({
+      ...receiptPage,
+      items: [{ ...draftReceipt, allowedActions: [] }],
+      total: 1,
+    })
+    const { wrapper } = await mountList()
+
+    expect(buttonsByText(wrapper, '详情')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '编辑')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '过账')).toHaveLength(0)
+  })
+
   it('过账动作成功后刷新列表，失败时显示错误', async () => {
     const { wrapper } = await mountList()
 
     await wrapper.find('[data-test="post-purchase-receipt"]').trigger('click')
     await flushPromises()
-    expect(procurementApiMock.receipts.post).toHaveBeenCalledWith(700)
+    expect(procurementApiMock.receipts.post).toHaveBeenCalledWith(700, expect.objectContaining({
+      version: 21,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(procurementApiMock.receipts.post.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
     expect(procurementApiMock.receipts.list).toHaveBeenCalledTimes(2)
 
     procurementApiMock.receipts.post.mockRejectedValueOnce(new Error('采购入库已过账，不能重复过账'))
@@ -286,6 +327,6 @@ describe('采购入库列表页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('采购入库已过账，不能重复过账')
-    expect(procurementApiMock.receipts.list).toHaveBeenCalledTimes(2)
+    expect(procurementApiMock.receipts.list).toHaveBeenCalledTimes(3)
   })
 })

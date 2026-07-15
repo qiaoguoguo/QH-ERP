@@ -604,12 +604,15 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, orderId, fixture.materialId(), fixture.unitId(), orderedQuantity, receivedQuantity,
-				new BigDecimal(unitPrice), LocalDate.now().plusDays(3), remark);
+				new BigDecimal(unitPrice), new BigDecimal(unitPrice), new BigDecimal(unitPrice),
+				orderedQuantity.multiply(new BigDecimal(unitPrice)), orderedQuantity.multiply(new BigDecimal(unitPrice)),
+				LocalDate.now().plusDays(3), remark);
 		long receiptId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_receipt (
 					receipt_no, order_id, supplier_id, warehouse_id, business_date, status, remark,

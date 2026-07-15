@@ -55,9 +55,11 @@ const sourceOrder: PurchaseOrderDetailRecord = {
   expectedArrivalDate: '2026-07-12',
   status: 'CONFIRMED',
   lineCount: 2,
-  totalQuantity: 15.5,
-  receivedQuantity: 5,
-  remainingQuantity: 10.5,
+  totalQuantity: '15.500000',
+  receivedQuantity: '5.000000',
+  remainingQuantity: '10.500000',
+  currency: 'CNY',
+  version: 7,
   remark: '首批采购',
   createdByName: '采购员',
   createdAt: '2026-07-04T08:00:00+08:00',
@@ -72,13 +74,14 @@ const sourceOrder: PurchaseOrderDetailRecord = {
       materialSpec: '1.5mm',
       unitId: 2,
       unitName: '千克',
-      quantity: 12.5,
-      receivedQuantity: 5,
-      remainingQuantity: 7.5,
+      quantity: '12.500000',
+      receivedQuantity: '5.000000',
+      remainingQuantity: '7.500000',
       inTransitQuantity: '7.500000',
       inTransitStatus: 'NORMAL',
       inTransitStatusName: '正常在途',
-      unitPrice: 3.1,
+      currency: 'CNY',
+      unitPrice: '3.100000',
       expectedArrivalDate: '2026-07-12',
       remark: '按周到货',
     },
@@ -90,13 +93,14 @@ const sourceOrder: PurchaseOrderDetailRecord = {
       materialName: '紧固件',
       unitId: 3,
       unitName: '件',
-      quantity: 3,
-      receivedQuantity: 0,
-      remainingQuantity: 3,
+      quantity: '3.000000',
+      receivedQuantity: '0.000000',
+      remainingQuantity: '3.000000',
       inTransitQuantity: '3.000000',
       inTransitStatus: 'DUE_SOON',
       inTransitStatusName: '临近到货',
-      unitPrice: 1.2,
+      currency: 'CNY',
+      unitPrice: '1.200000',
       expectedArrivalDate: '2026-07-12',
       remark: null,
     },
@@ -116,7 +120,8 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
   businessDate: '2026-07-05',
   status: 'DRAFT',
   lineCount: 1,
-  totalQuantity: 2.5,
+  totalQuantity: '2.500000',
+  version: 21,
   remark: '首批入库',
   createdByName: '仓管员',
   createdAt: '2026-07-05T08:00:00+08:00',
@@ -134,10 +139,10 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
       materialName: '冷轧钢板',
       unitId: 2,
       unitName: '千克',
-      orderedQuantity: 12.5,
-      receivedQuantityBefore: 5,
-      remainingQuantityBefore: 7.5,
-      quantity: 2.5,
+      orderedQuantity: '12.500000',
+      receivedQuantityBefore: '5.000000',
+      remainingQuantityBefore: '7.500000',
+      quantity: '2.500000',
       beforeQuantity: null,
       afterQuantity: null,
       remark: '按单入库',
@@ -374,7 +379,7 @@ describe('采购入库表单页', () => {
     expect(procurementApiMock.receipts.get).toHaveBeenCalledWith('700')
     expect(wrapper.text()).toContain('PR-20260705-001')
     expect((wrapper.find('input[name="purchase-receipt-business-date"]').element as HTMLInputElement).value).toBe('2026-07-05')
-    expect((wrapper.find('input[name="purchase-receipt-line-quantity-0"]').element as HTMLInputElement).value).toBe('2.5')
+    expect((wrapper.find('input[name="purchase-receipt-line-quantity-0"]').element as HTMLInputElement).value).toBe('2.500000')
 
     await wrapper.find('input[name="purchase-receipt-line-quantity-0"]').setValue('3.000000')
     await wrapper.find('[data-test="save-purchase-receipt"]').trigger('click')
@@ -407,7 +412,7 @@ describe('采购入库表单页', () => {
     expect(wrapper.text()).not.toContain('同一采购入库内来源订单行不能重复')
     expect(procurementApiMock.receipts.update).toHaveBeenCalledWith(700, expect.objectContaining({
       lines: [
-        expect.objectContaining({ orderLineId: 501, quantity: '2.5' }),
+        expect.objectContaining({ orderLineId: 501, quantity: '2.500000' }),
         expect.objectContaining({
           lineNo: 20,
           orderLineId: 502,
@@ -422,11 +427,11 @@ describe('采购入库表单页', () => {
   it('编辑草稿时按当前来源订单剩余量校验已有行，避免使用旧快照超入库', async () => {
     procurementApiMock.orders.get.mockResolvedValueOnce({
       ...sourceOrder,
-      receivedQuantity: 14.5,
-      remainingQuantity: 1,
+      receivedQuantity: '14.500000',
+      remainingQuantity: '1.000000',
       lines: sourceOrder.lines.map((line) => (
         line.id === 501
-          ? { ...line, receivedQuantity: 11.5, remainingQuantity: 1 }
+          ? { ...line, receivedQuantity: '11.500000', remainingQuantity: '1.000000' }
           : line
       )),
     })

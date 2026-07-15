@@ -392,9 +392,9 @@ describe('账号权限路由守卫', () => {
     }
 
     const rootRoute = router.getRoutes().find((item) => item.path === '/procurement')
-    expect(rootRoute?.redirect).toBe('/procurement/orders')
+    expect(rootRoute?.name).toBe('procurement-root')
     expect(rootRoute?.meta.requiresAuth).toBe(true)
-    expect(rootRoute?.meta.requiredPermission).toBe('procurement:order:view')
+    expect(rootRoute?.meta.requiredPermission).toBeUndefined()
   })
 
   it('销售订单、销售出库和销售退货路由加载真实页面，并配置对应权限', async () => {
@@ -834,6 +834,58 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('procurement-orders')
+  })
+
+  it('024 采购深化路由加载真实页面并配置固定采购权限', async () => {
+    const router = createQhErpRouter()
+    const procurementRoutes = [
+      ['procurement-requisitions', '/procurement/requisitions', 'procurement:requisition:view'],
+      ['procurement-requisition-create', '/procurement/requisitions/create', 'procurement:requisition:create'],
+      ['procurement-requisition-detail', '/procurement/requisitions/:id', 'procurement:requisition:view'],
+      ['procurement-requisition-edit', '/procurement/requisitions/:id/edit', 'procurement:requisition:update'],
+      ['procurement-inquiries', '/procurement/inquiries', 'procurement:inquiry:view'],
+      ['procurement-inquiry-create', '/procurement/inquiries/create', 'procurement:inquiry:create'],
+      ['procurement-inquiry-detail', '/procurement/inquiries/:id', 'procurement:inquiry:view'],
+      ['procurement-inquiry-edit', '/procurement/inquiries/:id/edit', 'procurement:inquiry:update'],
+      ['procurement-price-agreements', '/procurement/price-agreements', 'procurement:price-agreement:view'],
+      ['procurement-price-agreement-create', '/procurement/price-agreements/create', 'procurement:price-agreement:create'],
+      ['procurement-price-agreement-detail', '/procurement/price-agreements/:id', 'procurement:price-agreement:view'],
+      ['procurement-price-agreement-edit', '/procurement/price-agreements/:id/edit', 'procurement:price-agreement:update'],
+      ['procurement-effective-supplies', '/procurement/effective-supplies', 'procurement:supply:view'],
+    ] as const
+
+    for (const [routeName, path, permission] of procurementRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+    }
+  })
+
+  it('访问采购根路径时按首个可用采购子资源权限动态重定向', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:requisition:view'] })
+
+    await router.push('/procurement')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('procurement-requisitions')
+
+    const inquiryRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['procurement:inquiry:view'] })
+    await inquiryRouter.push('/procurement')
+    await inquiryRouter.isReady()
+    expect(inquiryRouter.currentRoute.value.name).toBe('procurement-inquiries')
+
+    const forbiddenRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+    await forbiddenRouter.push('/procurement')
+    await forbiddenRouter.isReady()
+    expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
+    expect(forbiddenRouter.currentRoute.value.query.from).toBe('/procurement')
   })
 
   it('已登录但缺少采购入库查看权限时跳转无权限页', async () => {

@@ -70,6 +70,15 @@ public class PlatformDocumentTaskWorker {
 						"exports/bom-drafts/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_BOM_DRAFT");
 				return true;
 			}
+			if (this.documentTaskService.isProcurementExportTaskType(task.taskType())) {
+				PlatformDocumentTaskService.ProcurementExportRequest request = this.documentTaskService
+					.parseProcurementExportRequest(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.procurementExportFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"exports/procurement/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_PROCUREMENT");
+				return true;
+			}
 			if ("APPROVAL_PRINT".equals(task.taskType())) {
 				PlatformDocumentTaskService.PrintTaskPayload request = this.documentTaskService
 					.parsePrintTaskPayload(task.requestPayload());
@@ -77,6 +86,15 @@ public class PlatformDocumentTaskWorker {
 					.printApprovalFile(request);
 				this.documentTaskService.completeResult(task, exportedFile, operator,
 						"prints/approvals/" + UUID.randomUUID() + ".pdf", "PRINT_GENERATE");
+				return true;
+			}
+			if ("PROCUREMENT_ORDER_PRINT".equals(task.taskType())) {
+				PlatformDocumentTaskService.ProcurementOrderPrintPayload request = this.documentTaskService
+					.parseProcurementOrderPrintPayload(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.printProcurementOrderFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"prints/procurement-orders/" + UUID.randomUUID() + ".pdf", "PROCUREMENT_ORDER_PRINT_GENERATE");
 				return true;
 			}
 			throw new IllegalStateException("不支持的任务类型：" + task.taskType());

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { procurementApi, type PurchaseReceiptDetailRecord, type ResourceId } from '../../shared/api/procurementApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
@@ -10,7 +11,9 @@ import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import PurchaseReceiptStatusTag from './PurchaseReceiptStatusTag.vue'
 import {
   formatProcurementDateTime,
+  formatProcurementAmount,
   formatProcurementQuantity,
+  procurementModeDisplay,
   procurementErrorMessage,
 } from './procurementPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -25,13 +28,30 @@ const actionError = ref('')
 const actionLoading = ref(false)
 
 const canEdit = computed(() => (
-  record.value?.status === 'DRAFT' && authStore.hasPermission('procurement:receipt:update')
+  allowed('UPDATE') && authStore.hasPermission('procurement:receipt:update')
 ))
 const canPost = computed(() => (
-  record.value?.status === 'DRAFT' && authStore.hasPermission('procurement:receipt:post')
+  allowed('POST') && authStore.hasPermission('procurement:receipt:post')
 ))
 const canViewSourceOrder = computed(() => authStore.hasPermission('procurement:order:view'))
+const movementTraceRestricted = computed(() => record.value?.costVisible === false)
 const movements = computed(() => record.value?.inventoryMovements ?? [])
+
+function receiptLineCostText(row: {
+  costVisible?: boolean | null
+  costLayerNo?: string | null
+  valueMovementNo?: string | null
+  taxExcludedAmount?: string | null
+}) {
+  if (row.costVisible === false) {
+    return '成本无权限'
+  }
+  return `成本层 ${row.costLayerNo || '-'} / 价值流水 ${row.valueMovementNo || '-'} / 未税金额 ${formatProcurementAmount(row.taxExcludedAmount)}`
+}
+
+function allowed(action: string) {
+  return (record.value?.allowedActions ?? []).includes(action)
+}
 
 function movementTypeLabel(value: string): string {
   const labels: Record<string, string> = {
@@ -105,10 +125,14 @@ async function postReceipt() {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await procurementApi.receipts.post(record.value.id)
+    await procurementApi.receipts.post(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: createIdempotencyKey('purchase-receipt-post'),
+    })
     await loadRecord()
   } catch (caught) {
     actionError.value = procurementErrorMessage(caught)
+    await loadRecord()
   } finally {
     actionLoading.value = false
   }
@@ -165,6 +189,18 @@ onMounted(loadRecord)
           <span>状态</span>
           <PurchaseReceiptStatusTag :status="record.status" />
         </div>
+        <div>
+          <span>采购模式</span>
+          <strong>{{ procurementModeDisplay(record.procurementMode, record.projectCode, record.projectName) }}</strong>
+        </div>
+        <div>
+          <span>估值状态</span>
+          <strong>估值状态：{{ record.valuationStateName || record.valuationState || '未返回' }}</strong>
+        </div>
+        <div>
+          <span>成本</span>
+          <strong>{{ record.costVisible === false ? '成本无权限' : `未税金额 ${formatProcurementAmount(record.taxExcludedAmount)}` }}</strong>
+        </div>
       </section>
 
       <dl class="purchase-receipt-detail-list">
@@ -199,6 +235,10 @@ onMounted(loadRecord)
           <dd>{{ record.orderSummary.orderDate }}</dd>
           <dt>订单状态</dt>
           <dd><PurchaseOrderStatusTag :status="record.orderSummary.status" /></dd>
+          <dt>采购模式</dt>
+          <dd>{{ procurementModeDisplay(record.orderSummary.procurementMode ?? record.procurementMode, record.orderSummary.projectCode ?? record.projectCode, record.orderSummary.projectName ?? record.projectName) }}</dd>
+          <dt>价格来源</dt>
+          <dd>价格来源：{{ record.orderSummary.priceSourceTypeName || record.orderSummary.priceSourceType || '未返回' }}</dd>
           <dt>订单总数量</dt>
           <dd>{{ formatProcurementQuantity(record.orderSummary.totalQuantity) }}</dd>
           <dt>订单未入库</dt>
@@ -217,6 +257,11 @@ onMounted(loadRecord)
               </template>
             </el-table-column>
             <el-table-column prop="unitName" label="单位" min-width="90" />
+            <el-table-column label="到货计划" min-width="120">
+              <template #default="{ row }">
+                {{ row.scheduleSeq ? `到货计划 ${row.scheduleSeq}` : '-' }}
+              </template>
+            </el-table-column>
             <el-table-column label="订单数量" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatProcurementQuantity(row.orderedQuantity) }}</span>
@@ -247,6 +292,11 @@ onMounted(loadRecord)
                 <span class="numeric-cell">{{ formatProcurementQuantity(row.afterQuantity) }}</span>
               </template>
             </el-table-column>
+            <el-table-column label="成本来源" min-width="240">
+              <template #default="{ row }">
+                <span>{{ receiptLineCostText(row) }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="批次/序列" min-width="240">
               <template #default="{ row }">
                 <TrackingAllocationReadonlyTable
@@ -264,10 +314,24 @@ onMounted(loadRecord)
 
       <section class="section-block">
         <div class="section-title">库存流水追溯</div>
+        <el-alert
+          v-if="movementTraceRestricted"
+          class="state-alert"
+          type="info"
+          title="内部估值编号已隐藏"
+          description="成本无权限，仅显示方向、仓库、物料、数量等普通库存追溯字段。"
+          :closable="false"
+        />
         <el-empty v-if="movements.length === 0" description="暂无库存流水追溯" />
         <div v-else class="table-scroll">
           <el-table :data="movements" empty-text="暂无库存流水追溯" stripe>
-            <el-table-column prop="movementNo" label="流水号" min-width="170" show-overflow-tooltip />
+            <el-table-column
+              v-if="!movementTraceRestricted"
+              prop="movementNo"
+              label="流水号"
+              min-width="170"
+              show-overflow-tooltip
+            />
             <el-table-column label="类型" min-width="100">
               <template #default="{ row }">
                 {{ movementTypeLabel(row.movementType) }}

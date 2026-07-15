@@ -313,4 +313,163 @@ describe('022 文档平台 API', () => {
       method: 'GET',
     }))
   })
+
+  it('024 采购报价导入、筛选导出和采购订单打印复用文档任务冻结路径', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_QUOTE_IMPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_INQUIRY_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_REQUISITION_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_PRICE_AGREEMENT_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_ORDER_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_SCHEDULE_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_SUPPLY_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'PROCUREMENT_ORDER_PRINT' }))
+    const api = createDocumentPlatformApi({ fetcher })
+    const file = new File(['quotes'], '供应商报价.xlsx', {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+
+    await api.imports.uploadProcurementQuotes(201, { file, idempotencyKey: 'quote-import-key' })
+    await api.exports.createProcurementInquiries({
+      keyword: '电机',
+      procurementMode: 'PROJECT',
+      projectId: 30,
+      status: 'COMPLETED',
+      idempotencyKey: 'inquiry-export-key',
+    })
+    await api.exports.createProcurementRequisitions({
+      keyword: '电机',
+      procurementMode: 'PROJECT',
+      projectId: 30,
+      status: 'APPROVED',
+      idempotencyKey: 'requisition-export-key',
+    })
+    await api.exports.createProcurementPriceAgreements({
+      keyword: '协议',
+      procurementMode: 'PROJECT',
+      projectId: 30,
+      status: 'ACTIVE',
+      idempotencyKey: 'agreement-export-key',
+    })
+    await api.exports.createProcurementOrders({
+      keyword: 'PO',
+      procurementMode: 'PROJECT',
+      projectId: 30,
+      status: 'CONFIRMED',
+      idempotencyKey: 'order-export-key',
+    })
+    await api.exports.createProcurementSchedules(99, {
+      status: 'PLANNED',
+      expectedDateFrom: '2026-07-20',
+      idempotencyKey: 'schedule-export-key',
+    })
+    await api.exports.createProcurementEffectiveSupplies({
+      projectId: 30,
+      procurementMode: 'PROJECT',
+      countedOnly: true,
+      idempotencyKey: 'supply-export-key',
+    })
+    await api.printTasks.create({
+      objectType: 'PROCUREMENT_ORDER',
+      objectId: 99,
+      templateCode: 'PROCUREMENT_ORDER_V1',
+      idempotencyKey: 'order-print-key',
+    })
+
+    expect(fetcher.mock.calls[1][0]).toBe('/api/admin/procurement/inquiries/201/quote-imports')
+    expect(fetcher.mock.calls[1][1]).toEqual(expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ 'Idempotency-Key': 'quote-import-key' }),
+    }))
+    expect(fetcher.mock.calls[1][1].body).toBeInstanceOf(FormData)
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_INQUIRY_EXPORT',
+        filters: {
+          keyword: '电机',
+          procurementMode: 'PROJECT',
+          projectId: 30,
+          status: 'COMPLETED',
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_REQUISITION_EXPORT',
+        filters: {
+          keyword: '电机',
+          procurementMode: 'PROJECT',
+          projectId: 30,
+          status: 'APPROVED',
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_PRICE_AGREEMENT_EXPORT',
+        filters: {
+          keyword: '协议',
+          procurementMode: 'PROJECT',
+          projectId: 30,
+          status: 'ACTIVE',
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_ORDER_EXPORT',
+        filters: {
+          keyword: 'PO',
+          procurementMode: 'PROJECT',
+          projectId: 30,
+          status: 'CONFIRMED',
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(12, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_SCHEDULE_EXPORT',
+        objectType: 'PROCUREMENT_ORDER',
+        objectId: 99,
+        filters: {
+          orderId: 99,
+          status: 'PLANNED',
+          expectedDateFrom: '2026-07-20',
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'PROCUREMENT_SUPPLY_EXPORT',
+        filters: {
+          projectId: 30,
+          procurementMode: 'PROJECT',
+          countedOnly: true,
+        },
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/print-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        objectType: 'PROCUREMENT_ORDER',
+        objectId: 99,
+        templateCode: 'PROCUREMENT_ORDER_V1',
+      }),
+    }))
+  })
 })

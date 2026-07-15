@@ -64,6 +64,15 @@ export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
     BOM_DRAFT_IMPORT: 'BOM 草稿导入',
     BOM_DRAFT_EXPORT: 'BOM 草稿导出',
     APPROVAL_PRINT: '审批单打印',
+    PROCUREMENT_REQUISITION_EXPORT: '采购请购导出',
+    PROCUREMENT_INQUIRY_EXPORT: '采购询价导出',
+    PROCUREMENT_QUOTE_IMPORT: '采购报价导入',
+    PROCUREMENT_QUOTE_EXPORT: '采购报价导出',
+    PROCUREMENT_PRICE_AGREEMENT_EXPORT: '价格协议导出',
+    PROCUREMENT_ORDER_EXPORT: '采购订单导出',
+    PROCUREMENT_SCHEDULE_EXPORT: '到货计划导出',
+    PROCUREMENT_ORDER_PRINT: '采购订单打印',
+    PROCUREMENT_SUPPLY_EXPORT: '有效采购供给导出',
   }
   return labels[type] ?? type
 }

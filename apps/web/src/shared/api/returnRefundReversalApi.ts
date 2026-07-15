@@ -11,8 +11,19 @@ export type ReversalTraceDirection = 'SOURCE_TO_REVERSE' | 'REVERSE_TO_SOURCE'
 export type SettlementSide = 'RECEIVABLE' | 'PAYABLE'
 export type SettlementAdjustmentType = 'RETURN_OFFSET' | 'REFUND' | 'PAYMENT_OFFSET'
 export type SettlementAdjustmentSourceType = 'SALES_RETURN' | 'PURCHASE_RETURN' | 'RECEIPT' | 'PAYMENT' | 'SETTLEMENT_ADJUSTMENT'
+export type ReversalProcurementMode = 'PUBLIC' | 'PROJECT'
 
-export interface ReversalSourceView {
+export interface PurchaseReturnCostSourceFields {
+  procurementMode?: ReversalProcurementMode | string | null
+  projectId?: ResourceId | null
+  projectCode?: string | null
+  projectName?: string | null
+  originalCostLayerNo?: string | null
+  originalValueMovementNo?: string | null
+  costVisible?: boolean | null
+}
+
+export interface ReversalSourceView extends PurchaseReturnCostSourceFields {
   sourceType: string
   sourceId?: ResourceId
   sourceLineId?: ResourceId
@@ -35,9 +46,16 @@ export interface ReversalTraceRecord {
   direction: ReversalTraceDirection
   source: ReversalSourceView
   reverse: ReversalSourceView
-  inventoryMovementId?: ResourceId
-  settlementAdjustmentId?: ResourceId
-  costRecordId?: ResourceId
+  effectType?: string | null
+  resourceType?: string | null
+  inventoryMovementId?: ResourceId | null
+  movementNo?: string | null
+  movementType?: string | null
+  warehouseName?: string | null
+  materialCode?: string | null
+  materialName?: string | null
+  settlementAdjustmentId?: ResourceId | null
+  costRecordId?: ResourceId | null
   businessDate?: string
   quantity?: ReversalDecimal
   amount?: ReversalMoney
@@ -50,7 +68,7 @@ export interface ReversalTraceRecord {
   resourceRouteQuery?: Record<string, ReversalRouteValue>
 }
 
-export interface ReversalDocumentLine {
+export interface ReversalDocumentLine extends PurchaseReturnCostSourceFields {
   id: ResourceId
   lineNo: number
   sourceLineId?: ResourceId
@@ -67,8 +85,8 @@ export interface ReversalDocumentLine {
   qualityStatus?: InventoryQualityStatus | null
   qualityStatusName?: string | null
   reason?: string
-  stockMovementId?: ResourceId
-  costRecordId?: ResourceId
+  stockMovementId?: ResourceId | null
+  costRecordId?: ResourceId | null
   trackingAllocations?: InventoryTrackingAllocationPayload[]
   source: ReversalSourceView
 }
@@ -96,7 +114,7 @@ export interface SalesReturnDetail extends SalesReturnSummary {
   traces: ReversalTraceRecord[]
 }
 
-export interface PurchaseReturnSummary {
+export interface PurchaseReturnSummary extends PurchaseReturnCostSourceFields {
   id: ResourceId
   returnNo: string
   supplierId: ResourceId
@@ -108,8 +126,10 @@ export interface PurchaseReturnSummary {
   totalQuantity: ReversalDecimal
   totalAmount: ReversalMoney
   source: ReversalSourceView
+  allowedActions?: string[]
   createdAt: string
   updatedAt: string
+  version: number
 }
 
 export interface PurchaseReturnDetail extends PurchaseReturnSummary {
@@ -220,7 +240,7 @@ export interface SalesReturnSource {
   lines: SalesReturnSourceLine[]
 }
 
-export interface PurchaseReturnSourceLine {
+export interface PurchaseReturnSourceLine extends PurchaseReturnCostSourceFields {
   receiptLineId: ResourceId
   purchaseOrderLineId?: ResourceId
   lineNo: number
@@ -245,7 +265,7 @@ export interface PurchaseReturnSourceLine {
   returnableAmount: ReversalMoney
 }
 
-export interface PurchaseReturnSource {
+export interface PurchaseReturnSource extends PurchaseReturnCostSourceFields {
   receiptId: ResourceId
   receiptNo: string
   supplierId: ResourceId
@@ -511,10 +531,16 @@ export interface PurchaseReturnUpdatePayload {
   clientRequestId: string
   remark?: string
   lines: PurchaseReturnUpdatePayloadLine[]
+  version: number
 }
 
 export type PurchaseReturnPayloadLine = PurchaseReturnCreatePayloadLine
 export type PurchaseReturnPayload = PurchaseReturnCreatePayload
+
+export interface ReversalVersionPayload {
+  version: number
+  idempotencyKey: string
+}
 
 export interface ProductionMaterialReturnCreatePayloadLine {
   sourceIssueLineId: ResourceId
@@ -627,8 +653,8 @@ export interface ReturnRefundReversalApi {
     get(id: ResourceId): Promise<PurchaseReturnDetail>
     create(payload: PurchaseReturnPayload): Promise<PurchaseReturnDetail>
     update(id: ResourceId, payload: PurchaseReturnUpdatePayload): Promise<PurchaseReturnDetail>
-    post(id: ResourceId): Promise<PurchaseReturnDetail>
-    cancel(id: ResourceId): Promise<PurchaseReturnDetail>
+    post(id: ResourceId, payload: ReversalVersionPayload): Promise<PurchaseReturnDetail>
+    cancel(id: ResourceId, payload: ReversalVersionPayload): Promise<PurchaseReturnDetail>
   }
   purchaseReturnSources: {
     list(params: PurchaseReturnSourceListParams): Promise<PageResult<PurchaseReturnSource>>
@@ -839,6 +865,15 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
     }
     return request<T>(path, init)
   }
+  const assertIdempotencyKey = (payload: { idempotencyKey?: string }) => {
+    if (typeof payload.idempotencyKey !== 'string' || payload.idempotencyKey.trim() === '') {
+      throw new Error('幂等键不能为空')
+    }
+  }
+  const writeAction = async <T>(method: 'POST' | 'PUT', path: string, payload: { idempotencyKey?: string }) => {
+    assertIdempotencyKey(payload)
+    return write<T>(method, path, payload)
+  }
 
   const salesReturnPath = (id?: ResourceId) =>
     `/api/admin/sales/returns${id === undefined ? '' : `/${encodeURIComponent(String(id))}`}`
@@ -871,8 +906,8 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
       get: (id) => get<PurchaseReturnDetail>(purchaseReturnPath(id)),
       create: (payload) => write<PurchaseReturnDetail>('POST', purchaseReturnPath(), payload),
       update: (id, payload) => write<PurchaseReturnDetail>('PUT', purchaseReturnPath(id), payload),
-      post: (id) => write<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/post`),
-      cancel: (id) => write<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/cancel`),
+      post: (id, payload) => writeAction<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/post`, payload),
+      cancel: (id, payload) => writeAction<PurchaseReturnDetail>('PUT', `${purchaseReturnPath(id)}/cancel`, payload),
     },
     purchaseReturnSources: {
       list: (params) =>

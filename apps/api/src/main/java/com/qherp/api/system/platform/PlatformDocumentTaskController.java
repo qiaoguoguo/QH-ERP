@@ -99,6 +99,24 @@ public class PlatformDocumentTaskController {
 		return ApiResponse.ok(this.documentTaskService.exportBomDraft(id, idempotencyKey, currentUser, servletRequest));
 	}
 
+	@PostMapping("/export-tasks")
+	public ApiResponse<PlatformDocumentTaskService.DocumentTaskRecord> createExportTask(
+			@Valid @RequestBody PlatformDocumentTaskService.ProcurementExportRequest request,
+			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.documentTaskService.createExportTask(request, idempotencyKey, currentUser,
+				servletRequest));
+	}
+
+	@PostMapping("/procurement/inquiries/{id}/quote-imports")
+	public ApiResponse<PlatformDocumentTaskService.DocumentTaskRecord> importSupplierQuotes(@PathVariable Long id,
+			@RequestParam("file") MultipartFile file,
+			@RequestHeader(name = "Idempotency-Key", required = false) String idempotencyKey,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.documentTaskService.importSupplierQuotes(id, file, idempotencyKey, currentUser,
+				servletRequest));
+	}
+
 	@GetMapping("/print-templates")
 	public ApiResponse<List<PlatformDocumentTaskService.PrintTemplateRecord>> printTemplates(
 			@RequestParam(required = false) String sceneCode) {

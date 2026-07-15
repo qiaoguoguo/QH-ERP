@@ -400,8 +400,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimalText(draft, "totalAmount", "20.00");
 
 		ResponseEntity<String> updated = put("/api/admin/procurement/returns/" + returnId,
-				purchaseReturnPayload(receipt.receiptId(), null,
-						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "3.000000", "退货调整"))),
+				withPurchaseReturnVersion(admin, returnId, purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "3.000000", "退货调整")))),
 				admin);
 		assertOk(updated);
 		JsonNode updatedLine = data(updated).get("lines").get(0);
@@ -414,13 +414,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				admin);
 		assertOk(cancelDraft);
 		long cancelledId = data(cancelDraft).get("id").longValue();
-		assertOk(put("/api/admin/procurement/returns/" + cancelledId + "/cancel", Map.of(), admin));
+		assertOk(cancelPurchaseReturn(admin, cancelledId));
 		assertThat(data(get("/api/admin/procurement/returns/" + cancelledId, admin)).get("status").asText())
 			.isEqualTo("CANCELLED");
 		assertDecimal(balanceQuantity(fixture.warehouseId(), fixture.secondMaterialId()), "2.000000");
 
-		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
-				admin);
+		ResponseEntity<String> posted = postPurchaseReturn(admin, returnId);
 		assertOk(posted);
 		JsonNode postedData = data(posted);
 		JsonNode postedLine = postedData.get("lines").get(0);
@@ -480,8 +479,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(created);
 		long returnId = data(created).get("id").longValue();
 
-		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
-				admin);
+		ResponseEntity<String> posted = postPurchaseReturn(admin, returnId);
 		assertOk(posted);
 		JsonNode postedLine = data(posted).get("lines").get(0);
 		long returnLineId = postedLine.get("id").longValue();
@@ -533,8 +531,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(created);
 		long returnId = data(created).get("id").longValue();
 
-		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
-				admin);
+		ResponseEntity<String> posted = postPurchaseReturn(admin, returnId);
 		assertOk(posted);
 		long returnLineId = data(posted).get("lines").get(0).get("id").longValue();
 		assertDecimal(trackingBalanceQuantity(fixture.warehouseId(), fixture.materialId(), firstBatch.batchId()),
@@ -565,8 +562,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertOk(created);
 		long returnId = data(created).get("id").longValue();
 
-		ResponseEntity<String> posted = put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(),
-				admin);
+		ResponseEntity<String> posted = postPurchaseReturn(admin, returnId);
 		assertOk(posted);
 		long returnLineId = data(posted).get("lines").get(0).get("id").longValue();
 		assertThat(movementQualityStatus("PURCHASE_RETURN", returnLineId))
@@ -853,7 +849,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 		long firstReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
 				"2.000000");
-		assertOk(put("/api/admin/procurement/returns/" + firstReturnId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, firstReturnId));
 		JsonNode sourceAfterPartial = data(get("/api/admin/procurement/return-sources?keyword=" + receipt.receiptNo(),
 				admin)).get("items").get(0);
 		assertDecimalText(sourceAfterPartial.get("lines").get(0), "returnedQuantity", "2.000000");
@@ -871,14 +867,14 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		long stockBlockedId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
 				"3.000000");
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "1.000000");
-		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin),
+		assertError(postPurchaseReturn(admin, stockBlockedId),
 				HttpStatus.CONFLICT, "REVERSAL_STOCK_INSUFFICIENT");
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "3.000000");
-		assertOk(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, stockBlockedId));
 
 		long secondLineReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.secondReceiptLineId(),
 				"3.000000");
-		assertOk(put("/api/admin/procurement/returns/" + secondLineReturnId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, secondLineReturnId));
 		PayableAmounts payable = payableAmounts(receipt.payableId());
 		assertDecimal(payable.adjustedAmount(), "110.00");
 		assertDecimal(payable.unpaidAmount(), "0.00");
@@ -887,13 +883,13 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 			.get("items")
 			.size()).isZero();
 
-		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/post", Map.of(), admin),
+		assertError(postPurchaseReturn(admin, stockBlockedId),
 				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
 		assertError(put("/api/admin/procurement/returns/" + stockBlockedId,
-				purchaseReturnPayload(receipt.receiptId(), null,
-						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "1.000000", "已过账不可改"))),
+				withPurchaseReturnVersion(admin, stockBlockedId, purchaseReturnPayload(receipt.receiptId(), null,
+						List.of(purchaseReturnLine(receipt.firstReceiptLineId(), "1.000000", "已过账不可改")))),
 				admin), HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
-		assertError(put("/api/admin/procurement/returns/" + stockBlockedId + "/cancel", Map.of(), admin),
+		assertError(cancelPurchaseReturn(admin, stockBlockedId),
 				HttpStatus.CONFLICT, "REVERSAL_POSTED_IMMUTABLE");
 
 		PostedPurchaseReceipt draftReceipt = createReceiptWithoutPayable(fixture, "DRAFT");
@@ -981,7 +977,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 		long pendingReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
 				"2.000000", InventoryQualityStatus.PENDING_INSPECTION);
-		assertOk(put("/api/admin/procurement/returns/" + pendingReturnId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, pendingReturnId));
 		long pendingReturnLineId = firstPurchaseReturnLineId(pendingReturnId);
 		assertThat(movementQualityStatus("PURCHASE_RETURN", pendingReturnLineId))
 			.isEqualTo(InventoryQualityStatus.PENDING_INSPECTION.name());
@@ -992,7 +988,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 
 		long rejectedReturnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(),
 				"3.000000", InventoryQualityStatus.REJECTED);
-		assertOk(put("/api/admin/procurement/returns/" + rejectedReturnId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, rejectedReturnId));
 		long rejectedReturnLineId = firstPurchaseReturnLineId(rejectedReturnId);
 		assertThat(movementQualityStatus("PURCHASE_RETURN", rejectedReturnLineId))
 			.isEqualTo(InventoryQualityStatus.REJECTED.name());
@@ -1018,7 +1014,7 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 				"1.000000", "20.000000", "CONFIRMED", "50.00", "0.00", "50.00");
 		seedStock(fixture.warehouseId(), fixture.materialId(), fixture.unitId(), "2.000000");
 		long returnId = createPurchaseReturn(admin, receipt.receiptId(), receipt.firstReceiptLineId(), "1.000000");
-		assertOk(put("/api/admin/procurement/returns/" + returnId + "/post", Map.of(), admin));
+		assertOk(postPurchaseReturn(admin, returnId));
 
 		AuthenticatedSession restricted = createUserAndLoginWithPermissions("purchase-return-restricted",
 				List.of("procurement:return:view", "business:reversal:view"));
@@ -1063,8 +1059,8 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession restricted = createUserAndLoginWithPermissions("purchase-return-update-restricted",
 				List.of("procurement:return:view", "procurement:return:update"));
 		ResponseEntity<String> updated = put("/api/admin/procurement/returns/" + returnId,
-				purchaseReturnUpdatePayload(
-						List.of(purchaseReturnLineById(returnLineId, "2.000000", "受限来源编辑保存"))),
+				withPurchaseReturnVersion(restricted, returnId, purchaseReturnUpdatePayload(
+						List.of(purchaseReturnLineById(returnLineId, "2.000000", "受限来源编辑保存")))),
 				restricted);
 		assertOk(updated);
 		JsonNode updatedData = data(updated);
@@ -1072,11 +1068,12 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertRestrictedDocumentLine(updatedData.get("lines").get(0));
 		assertRestrictedSource(updatedData.get("lines").get(0).get("source"), "PURCHASE_RECEIPT_LINE");
 		assertDecimalText(updatedData.get("lines").get(0), "quantity", "2.000000");
-		assertDecimalText(updatedData.get("lines").get(0), "amount", "20.00");
+		assertThat(!updatedData.get("lines").get(0).has("amount")
+				|| updatedData.get("lines").get(0).get("amount").isNull()).isTrue();
 
 		assertError(put("/api/admin/procurement/returns/" + returnId,
-				purchaseReturnUpdatePayload(
-						List.of(purchaseReturnLineById(otherReturnLineId, "1.000000", "其他草稿行"))),
+				withPurchaseReturnVersion(restricted, returnId, purchaseReturnUpdatePayload(
+						List.of(purchaseReturnLineById(otherReturnLineId, "1.000000", "其他草稿行")))),
 				restricted), HttpStatus.CONFLICT, "REVERSAL_SOURCE_STATUS_INVALID");
 	}
 
@@ -1749,8 +1746,9 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		assertError(post("/api/admin/sales/returns",
 				salesReturnPayload(999999999L, null, List.of(returnLine(1L, "1.000000", "来源不存在"))), admin),
 				HttpStatus.NOT_FOUND, "REVERSAL_SOURCE_NOT_FOUND");
-		assertError(put("/api/admin/procurement/returns/999/post", Map.of(), admin), HttpStatus.NOT_FOUND,
-				"REVERSAL_SOURCE_NOT_FOUND");
+		assertError(put("/api/admin/procurement/returns/999/post",
+				purchaseReturnActionBody(0L, "采购退货不存在"), admin), HttpStatus.NOT_FOUND,
+						"REVERSAL_SOURCE_NOT_FOUND");
 		assertError(get("/api/admin/production/material-returns/999", admin), HttpStatus.NOT_FOUND,
 				"REVERSAL_SOURCE_NOT_FOUND");
 		assertError(put("/api/admin/production/material-supplements/999/cancel", Map.of(), admin),
@@ -2108,12 +2106,15 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		return this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, '采购退货测试订单行', now(), now())
+				values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, '采购退货测试订单行', now(), now())
 				returning id
 				""", Long.class, orderId, lineNo, materialId, unitId, quantity, receivedQuantity,
-				new BigDecimal(unitPrice), LocalDate.now().plusDays(3));
+				new BigDecimal(unitPrice), new BigDecimal(unitPrice), new BigDecimal(unitPrice),
+				quantity.multiply(new BigDecimal(unitPrice)), quantity.multiply(new BigDecimal(unitPrice)),
+				LocalDate.now().plusDays(3));
 	}
 
 	private long insertPurchaseReceiptLine(long receiptId, int lineNo, long orderLineId, long materialId, long unitId,
@@ -2491,6 +2492,40 @@ class ReversalAdminControllerTests extends PostgresIntegrationTest {
 		payload.put("remark", "采购退货测试");
 		payload.put("lines", lines);
 		return payload;
+	}
+
+	private ResponseEntity<String> postPurchaseReturn(AuthenticatedSession session, long returnId) throws Exception {
+		return put("/api/admin/procurement/returns/" + returnId + "/post",
+				purchaseReturnActionBody(session, returnId, "过账采购退货"), session);
+	}
+
+	private ResponseEntity<String> cancelPurchaseReturn(AuthenticatedSession session, long returnId) throws Exception {
+		return put("/api/admin/procurement/returns/" + returnId + "/cancel",
+				purchaseReturnActionBody(session, returnId, "取消采购退货"), session);
+	}
+
+	private Map<String, Object> purchaseReturnActionBody(AuthenticatedSession session, long returnId, String reason)
+			throws Exception {
+		return purchaseReturnActionBody(currentPurchaseReturnVersion(session, returnId), reason);
+	}
+
+	private Map<String, Object> purchaseReturnActionBody(long version, String reason) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("version", version);
+		payload.put("reason", reason);
+		payload.put("idempotencyKey", "purchase-return-action-" + SEQUENCE.incrementAndGet());
+		return payload;
+	}
+
+	private Map<String, Object> withPurchaseReturnVersion(AuthenticatedSession session, long returnId,
+			Map<String, Object> payload) throws Exception {
+		Map<String, Object> versioned = new LinkedHashMap<>(payload);
+		versioned.put("version", currentPurchaseReturnVersion(session, returnId));
+		return versioned;
+	}
+
+	private long currentPurchaseReturnVersion(AuthenticatedSession session, long returnId) throws Exception {
+		return data(get("/api/admin/procurement/returns/" + returnId, session)).get("version").longValue();
 	}
 
 	private Map<String, Object> purchaseReturnLine(long sourceReceiptLineId, String quantity, String reason) {

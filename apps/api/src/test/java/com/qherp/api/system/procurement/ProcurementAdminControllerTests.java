@@ -78,7 +78,8 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		assertDecimal(updatedLine, "quantity", "6.000000");
 		assertDecimal(updatedLine, "remainingQuantity", "6.000000");
 
-		ResponseEntity<String> confirmed = confirmOrder(admin, orderId);
+		assertOk(approveOrderException(admin, orderId));
+		ResponseEntity<String> confirmed = getOrder(admin, orderId);
 		assertOk(confirmed);
 		assertThat(data(confirmed).get("status").asText()).isEqualTo("CONFIRMED");
 
@@ -506,9 +507,7 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		assertError(createOrder(admin, orderPayload(fixture.supplierId(), "空明细", List.of())),
 				HttpStatus.BAD_REQUEST, "PROCUREMENT_ORDER_EMPTY_LINES");
 
-		long confirmSupplierOrderId = createOrderId(admin,
-				orderPayload(fixture.supplierId(), "确认时供应商停用",
-						List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1.000000", "1.000000", null))));
+		long confirmSupplierOrderId = insertDraftOrderForConfirmation(fixture, "确认时供应商停用");
 		disableSupplier(fixture.supplierId());
 		assertError(confirmOrder(admin, confirmSupplierOrderId), HttpStatus.BAD_REQUEST,
 				"PROCUREMENT_SUPPLIER_INVALID");
@@ -722,18 +721,12 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = fixture();
 		LocalDate date = LocalDate.of(2091, 7, 10);
-		Map<String, Object> confirmPayload = new LinkedHashMap<>(orderPayload(fixture.supplierId(), "期间锁定确认测试",
-				List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1", "1", null))));
-		confirmPayload.put("orderDate", date.toString());
-		long confirmId = createOrderId(admin, confirmPayload);
+		long confirmId = insertDraftOrderForConfirmation(fixture, "期间锁定确认测试", date);
 		Map<String, Object> cancelPayload = new LinkedHashMap<>(orderPayload(fixture.supplierId(), "期间锁定取消测试",
 				List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1", "1", null))));
 		cancelPayload.put("orderDate", date.toString());
 		long cancelId = createOrderId(admin, cancelPayload);
-		Map<String, Object> closePayload = new LinkedHashMap<>(orderPayload(fixture.supplierId(), "期间锁定关闭测试",
-				List.of(orderLine(1, fixture.materialId(), fixture.unitId(), "1", "1", null))));
-		closePayload.put("orderDate", date.toString());
-		long closeId = createOrderId(admin, closePayload);
+		long closeId = insertDraftOrderForConfirmation(fixture, "期间锁定关闭测试", date);
 		assertOk(confirmOrder(admin, closeId));
 		lockPeriod(date);
 		assertError(confirmOrder(admin, confirmId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
@@ -751,7 +744,7 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		long orderId = createOrderId(session,
 				orderPayload(fixture.supplierId(), remark,
 						List.of(orderLine(1, fixture.materialId(), fixture.unitId(), quantity, "1.000000", null))));
-		assertOk(confirmOrder(session, orderId));
+		assertOk(approveOrderException(session, orderId));
 		return orderId;
 	}
 
@@ -759,6 +752,70 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		ResponseEntity<String> response = createOrder(session, payload);
 		assertOk(response);
 		return data(response).get("id").longValue();
+	}
+
+	private ResponseEntity<String> approveOrderException(AuthenticatedSession submitter, long orderId)
+			throws Exception {
+		JsonNode order = data(getOrder(submitter, orderId));
+		ResponseEntity<String> submitted = exchange(HttpMethod.POST,
+				"/api/admin/procurement/orders/" + orderId + "/submit-exception",
+				Map.of("version", order.get("version").longValue(), "reason", "公共直采例外确认",
+						"idempotencyKey", "PROC-EXCEPTION-SUBMIT-" + orderId + "-" + SEQUENCE.incrementAndGet()),
+				submitter);
+		assertOk(submitted);
+		JsonNode approval = data(submitted);
+		AuthenticatedSession approver = createProcurementUserAndLogin("proc-order-exception-approver-",
+				"PROC_ORDER_EXCEPTION_APPROVER_", List.of("platform:approval:view", "platform:todo:view",
+						"platform:message:view", "procurement:order:view", "procurement:order:exception-approve"));
+		long taskId = pendingTaskId(approval.get("id").longValue());
+		return exchange(HttpMethod.POST,
+				"/api/admin/approval-tasks/" + taskId + "/approve",
+				Map.of("version", taskVersion(taskId), "comment", "同意公共直采确认",
+						"idempotencyKey", "PROC-EXCEPTION-APPROVE-" + approval.get("id").longValue()),
+				approver);
+	}
+
+	private long pendingTaskId(long approvalId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from platform_approval_task
+				where instance_id = ?
+				  and status = 'PENDING'
+				order by id
+				limit 1
+				""", Long.class, approvalId);
+	}
+
+	private long taskVersion(long taskId) {
+		return this.jdbcTemplate.queryForObject("select version from platform_approval_task where id = ?",
+				Long.class, taskId);
+	}
+
+	private long insertDraftOrderForConfirmation(ProcurementFixture fixture, String remark) {
+		return insertDraftOrderForConfirmation(fixture, remark, LocalDate.now());
+	}
+
+	private long insertDraftOrderForConfirmation(ProcurementFixture fixture, String remark, LocalDate orderDate) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into proc_purchase_order (
+					order_no, supplier_id, order_date, expected_arrival_date, status, remark,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, 'DRAFT', ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "PROC-DRAFT-" + suffix, fixture.supplierId(), orderDate, orderDate.plusDays(3),
+				remark);
+		this.jdbcTemplate.update("""
+				insert into proc_purchase_order_line (
+					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
+				)
+				values (?, 1, ?, ?, 1.000000, 0.000000, 1.000000, 0, 1.000000, 1.000000, 1.00, 1.00,
+					?, ?, now(), now())
+				""", orderId, fixture.materialId(), fixture.unitId(), orderDate.plusDays(3), remark);
+		return orderId;
 	}
 
 	private long createReceiptId(AuthenticatedSession session, long orderId, Map<String, Object> payload)
@@ -773,6 +830,14 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		payload.put("supplierId", supplierId);
 		payload.put("orderDate", LocalDate.now().toString());
 		payload.put("expectedArrivalDate", LocalDate.now().plusDays(3).toString());
+		payload.put("purchaseMode", "PUBLIC");
+		payload.put("procurementMode", "PUBLIC");
+		payload.put("ownershipType", "PUBLIC");
+		payload.put("currency", "CNY");
+		payload.put("publicDirectReason", remark + "公共直采");
+		payload.put("directPurchaseReason", remark + "公共直采");
+		payload.put("priceSourceType", "PUBLIC_DIRECT");
+		payload.put("idempotencyKey", "PROC-ORDER-" + SEQUENCE.incrementAndGet());
 		payload.put("remark", remark);
 		payload.put("lines", lines);
 		return payload;
@@ -788,7 +853,13 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 		}
 		line.put("quantity", quantity);
 		line.put("unitPrice", unitPrice);
+		line.put("priceSourceType", "PUBLIC_DIRECT");
+		line.put("taxRate", "0.000000");
+		line.put("taxExcludedUnitPrice", unitPrice);
+		line.put("taxIncludedUnitPrice", unitPrice);
 		line.put("expectedArrivalDate", LocalDate.now().plusDays(3).toString());
+		line.put("schedules", List.of(Map.of("scheduleNo", 1, "plannedDate",
+				LocalDate.now().plusDays(3).toString(), "plannedQuantity", quantity)));
 		if (remark != null) {
 			line.put("remark", remark);
 		}
@@ -1153,7 +1224,8 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private ResponseEntity<String> updateOrder(AuthenticatedSession session, long orderId, Map<String, Object> body) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId, body, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId,
+				withOrderVersion(session, orderId, body), session);
 	}
 
 	private ResponseEntity<String> getOrder(AuthenticatedSession session, long orderId) {
@@ -1161,15 +1233,18 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private ResponseEntity<String> confirmOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/confirm", null, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/confirm",
+				orderActionBody(session, orderId, "确认采购订单"), session);
 	}
 
 	private ResponseEntity<String> cancelOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/cancel", null, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/cancel",
+				orderActionBody(session, orderId, "取消采购订单"), session);
 	}
 
 	private ResponseEntity<String> closeOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/close", null, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/orders/" + orderId + "/close",
+				orderActionBody(session, orderId, "关闭采购订单"), session);
 	}
 
 	private ResponseEntity<String> createReceipt(AuthenticatedSession session, long orderId, Map<String, Object> body) {
@@ -1182,11 +1257,60 @@ class ProcurementAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> updateReceipt(AuthenticatedSession session, long receiptId,
 			Map<String, Object> body) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/receipts/" + receiptId, body, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/receipts/" + receiptId,
+				withReceiptVersion(session, receiptId, body), session);
 	}
 
 	private ResponseEntity<String> postReceipt(AuthenticatedSession session, long receiptId) {
-		return exchange(HttpMethod.PUT, "/api/admin/procurement/receipts/" + receiptId + "/post", null, session);
+		return exchange(HttpMethod.PUT, "/api/admin/procurement/receipts/" + receiptId + "/post",
+				receiptActionBody(session, receiptId, "过账采购入库"), session);
+	}
+
+	private Map<String, Object> withOrderVersion(AuthenticatedSession session, long orderId, Map<String, Object> body) {
+		Map<String, Object> result = new LinkedHashMap<>(body);
+		if (!result.containsKey("version")) {
+			try {
+				result.put("version", data(getOrder(session, orderId)).get("version").longValue());
+			}
+			catch (Exception exception) {
+				throw new AssertionError(exception);
+			}
+		}
+		return result;
+	}
+
+	private Map<String, Object> withReceiptVersion(AuthenticatedSession session, long receiptId,
+			Map<String, Object> body) {
+		Map<String, Object> result = new LinkedHashMap<>(body);
+		if (!result.containsKey("version")) {
+			try {
+				result.put("version", data(getReceipt(session, receiptId)).get("version").longValue());
+			}
+			catch (Exception exception) {
+				throw new AssertionError(exception);
+			}
+		}
+		return result;
+	}
+
+	private Map<String, Object> orderActionBody(AuthenticatedSession session, long orderId, String reason) {
+		try {
+			return Map.of("version", data(getOrder(session, orderId)).get("version").longValue(), "reason", reason,
+					"idempotencyKey", "PROC-ORDER-ACTION-" + orderId + "-" + SEQUENCE.incrementAndGet());
+		}
+		catch (Exception exception) {
+			throw new AssertionError(exception);
+		}
+	}
+
+	private Map<String, Object> receiptActionBody(AuthenticatedSession session, long receiptId, String reason) {
+		try {
+			return Map.of("version", data(getReceipt(session, receiptId)).get("version").longValue(), "reason", reason,
+					"idempotencyKey", "PROC-RECEIPT-ACTION-" + receiptId + "-" + SEQUENCE.incrementAndGet());
+		}
+		catch (Exception exception) {
+			throw new AssertionError(exception);
+		}
 	}
 
 	private AuthenticatedSession login(String username, String password) {

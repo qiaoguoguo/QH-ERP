@@ -132,14 +132,16 @@ public class ReversalAdminController {
 
 	@PutMapping("/procurement/returns/{id}/post")
 	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> postProcurementReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.postPurchaseReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.postPurchaseReturn(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/procurement/returns/{id}/cancel")
 	public ApiResponse<ReversalAdminService.PurchaseReturnDetailResponse> cancelProcurementReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.cancelPurchaseReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.cancelPurchaseReturn(id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/production/material-return-sources")

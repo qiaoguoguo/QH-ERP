@@ -3,6 +3,11 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
 import {
+  createIdempotencyKey,
+  documentPlatformApi,
+  type DocumentTaskRecord,
+} from '../../shared/api/documentPlatformApi'
+import {
   procurementApi,
   type PurchaseOrderStatus,
   type PurchaseOrderSummaryRecord,
@@ -13,12 +18,16 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import {
+  formatProcurementAmount,
   formatProcurementDateTime,
   formatProcurementQuantity,
   normalizeOptionalId,
   procurementErrorMessage,
+  procurementOwnershipDisplay,
+  procurementPriceSourceDisplay,
 } from './procurementPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
+import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -53,6 +62,7 @@ const error = ref('')
 const referenceError = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
+const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
 
 const canCreate = computed(() => authStore.hasPermission('procurement:order:create'))
 const canUpdate = computed(() => authStore.hasPermission('procurement:order:update'))
@@ -60,6 +70,11 @@ const canConfirm = computed(() => authStore.hasPermission('procurement:order:con
 const canCancelPermission = computed(() => authStore.hasPermission('procurement:order:cancel'))
 const canClosePermission = computed(() => authStore.hasPermission('procurement:order:close'))
 const canCreateReceiptPermission = computed(() => authStore.hasPermission('procurement:receipt:create'))
+const canExport = computed(() => (
+  authStore.hasPermission('procurement:order:view')
+  && authStore.hasPermission('platform:document-task:create')
+  && authStore.hasPermission('procurement:document:export')
+))
 
 async function loadSuppliers() {
   referenceLoading.value = true
@@ -138,6 +153,31 @@ function createOrder() {
   void router.push({ name: 'procurement-order-create' })
 }
 
+async function exportOrders() {
+  if (actionLoading.value) {
+    return
+  }
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    latestDocumentTask.value = await documentPlatformApi.exports.createProcurementOrders({
+      keyword: filters.keyword,
+      supplierId: normalizeOptionalId(filters.supplierId),
+      status: filters.status,
+      dateFrom: filters.dateFrom,
+      dateTo: filters.dateTo,
+      expectedDateFrom: filters.expectedDateFrom,
+      expectedDateTo: filters.expectedDateTo,
+      idempotencyKey: createIdempotencyKey('procurement-order-export'),
+    })
+  } catch (caught) {
+    actionError.value = procurementErrorMessage(caught)
+    await loadRecords()
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 function viewOrder(record: PurchaseOrderSummaryRecord) {
   void router.push({
     name: 'procurement-order-detail',
@@ -154,16 +194,59 @@ function createReceipt(record: PurchaseOrderSummaryRecord) {
   void router.push({ name: 'procurement-receipt-create', params: { orderId: String(record.id) } })
 }
 
-function canCancel(record: PurchaseOrderSummaryRecord) {
-  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && Number(record.receivedQuantity) <= 0)
+function allowed(record: PurchaseOrderSummaryRecord, action: string) {
+  return (record.allowedActions ?? []).includes(action)
 }
 
-function canClose(record: PurchaseOrderSummaryRecord) {
-  return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_RECEIVED' || record.status === 'RECEIVED'
+function exceptionApprovalText(record: PurchaseOrderSummaryRecord) {
+  if (record.exceptionApprovalStatus === 'NOT_REQUIRED') {
+    return '不需要'
+  }
+  return record.exceptionApprovalStatus || record.exceptionReason || '未提交'
 }
 
-function canCreateReceipt(record: PurchaseOrderSummaryRecord) {
-  return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_RECEIVED'
+function sourceText(record: PurchaseOrderSummaryRecord) {
+  return [
+    `请购 ${record.requisitionNo || '-'}`,
+    `报价 ${record.quoteNo || '-'}`,
+    `协议 ${record.agreementNo || '-'}`,
+  ].join(' / ')
+}
+
+function priceSourceText(record: PurchaseOrderSummaryRecord) {
+  return procurementPriceSourceDisplay(record)
+}
+
+function orderLineTaxText(
+  line: NonNullable<PurchaseOrderSummaryRecord['lines']>[number],
+  fallbackCurrency?: string | null,
+) {
+  if (!line.taxExcludedUnitPrice && !line.taxIncludedUnitPrice && !line.taxRate) {
+    return ['税价未返回']
+  }
+  return [
+    `未税单价 ${formatProcurementAmount(line.taxExcludedUnitPrice)}`,
+    `含税单价 ${formatProcurementAmount(line.taxIncludedUnitPrice)}`,
+    `税率 ${formatProcurementAmount(line.taxRate)} / ${line.currency || fallbackCurrency || 'CNY'}`,
+  ]
+}
+
+function taxSummaryLines(record: PurchaseOrderSummaryRecord): string[] {
+  const lines = record.lines ?? []
+  if (lines.length === 1) {
+    return orderLineTaxText(lines[0], record.currency)
+  }
+  if (lines.length > 1) {
+    return [`${lines.length} 行税价见明细`]
+  }
+  if (!record.taxExcludedUnitPrice && !record.taxIncludedUnitPrice && !record.taxRate) {
+    return ['税价见明细']
+  }
+  return [
+    `未税单价 ${formatProcurementAmount(record.taxExcludedUnitPrice)}`,
+    `含税单价 ${formatProcurementAmount(record.taxIncludedUnitPrice)}`,
+    `税率 ${formatProcurementAmount(record.taxRate)} / ${record.currency || 'CNY'}`,
+  ]
 }
 
 async function runOrderAction(record: PurchaseOrderSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -182,16 +265,21 @@ async function runOrderAction(record: PurchaseOrderSummaryRecord, action: 'confi
   actionError.value = ''
   actionLoading.value = true
   try {
+    const actionPayload = {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey(`purchase-order-${action}`),
+    }
     if (action === 'confirm') {
-      await procurementApi.orders.confirm(record.id)
+      await procurementApi.orders.confirm(record.id, actionPayload)
     } else if (action === 'cancel') {
-      await procurementApi.orders.cancel(record.id)
+      await procurementApi.orders.cancel(record.id, actionPayload)
     } else {
-      await procurementApi.orders.close(record.id)
+      await procurementApi.orders.close(record.id, actionPayload)
     }
     await loadRecords()
   } catch (caught) {
     actionError.value = procurementErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -208,6 +296,9 @@ onMounted(() => {
     <template #actions>
       <el-button v-if="canCreate" data-test="create-purchase-order" type="primary" @click="createOrder">
         新建采购订单
+      </el-button>
+      <el-button v-if="canExport" data-test="export-purchase-orders" :loading="actionLoading" @click="exportOrders">
+        当前筛选导出
       </el-button>
     </template>
 
@@ -275,6 +366,8 @@ onMounted(() => {
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="采购订单加载中" :closable="false" />
     </template>
 
+    <ProcurementDocumentTaskPanel :task="latestDocumentTask" />
+
     <el-empty v-if="!loading && records.length === 0" description="暂无采购订单" />
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无采购订单'" stripe>
@@ -282,6 +375,35 @@ onMounted(() => {
         <el-table-column label="供应商" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.supplierCode }} {{ row.supplierName }}
+          </template>
+        </el-table-column>
+        <el-table-column label="采购模式/项目" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ procurementOwnershipDisplay(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="来源/价格" min-width="320" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span>{{ sourceText(row) }}</span>
+              <span>价格来源：{{ priceSourceText(row) }}</span>
+              <span>价格原因：{{ row.priceSourceReason || '-' }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="审批/例外" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span>审批状态：{{ row.approvalStatusName || row.approvalStatus || '未提交' }}</span>
+              <span>例外审批：{{ exceptionApprovalText(row) }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="税价" min-width="230" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span v-for="line in taxSummaryLines(row)" :key="line">{{ line }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="orderDate" label="订单日期" min-width="110" />
@@ -320,6 +442,14 @@ onMounted(() => {
             {{ row.inTransitStatusName || '-' }}
           </template>
         </el-table-column>
+        <el-table-column label="到货/结案" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <span>下一到货：{{ row.nextArrivalDate || row.expectedArrivalDate || '-' }}</span>
+              <span>结案原因：{{ row.closeReason || '未结案' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column prop="lineCount" label="行数" min-width="80" />
         <el-table-column prop="createdByName" label="创建人" min-width="100" />
         <el-table-column label="更新时间" min-width="150">
@@ -331,7 +461,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button size="small" text data-test="view-purchase-order" @click="viewOrder(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && allowed(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-purchase-order"
@@ -340,7 +470,7 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canConfirm && row.status === 'DRAFT'"
+              v-if="canConfirm && allowed(row, 'CONFIRM')"
               size="small"
               text
               type="success"
@@ -351,7 +481,7 @@ onMounted(() => {
               确认
             </el-button>
             <el-button
-              v-if="canCancelPermission && canCancel(row)"
+              v-if="canCancelPermission && allowed(row, 'CANCEL')"
               size="small"
               text
               type="danger"
@@ -362,7 +492,7 @@ onMounted(() => {
               取消
             </el-button>
             <el-button
-              v-if="canClosePermission && canClose(row)"
+              v-if="canClosePermission && allowed(row, 'CLOSE')"
               size="small"
               text
               type="warning"
@@ -373,7 +503,7 @@ onMounted(() => {
               关闭
             </el-button>
             <el-button
-              v-if="canCreateReceiptPermission && canCreateReceipt(row)"
+              v-if="canCreateReceiptPermission && allowed(row, 'CREATE_RECEIPT')"
               size="small"
               text
               data-test="create-purchase-receipt"
@@ -402,5 +532,11 @@ onMounted(() => {
   min-width: 76px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.stacked-cell {
+  display: grid;
+  gap: 2px;
+  line-height: 1.35;
 }
 </style>

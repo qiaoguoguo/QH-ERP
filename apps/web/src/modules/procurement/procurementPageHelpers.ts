@@ -1,6 +1,7 @@
 import type {
   ResourceId,
   PurchaseOrderLineRecord,
+  ProcurementMode,
   PurchaseOrderStatus,
   PurchaseReceiptLineRecord,
   PurchaseReceiptStatus,
@@ -8,7 +9,7 @@ import type {
 import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
 
 export interface ProcurementDecimalValidationResult {
-  value: number | null
+  value: string | null
   payloadValue: string | null
   message: string | null
 }
@@ -20,8 +21,42 @@ export interface PurchaseOrderLineDraft {
   unitName: string
   quantity: string
   unitPrice: string
+  procurementMode?: ProcurementMode | null
+  projectId?: ResourceId | null
+  projectCode?: string | null
+  projectName?: string | null
+  requisitionLineId?: ResourceId | null
+  requisitionSourceLabel?: string
+  quoteLineId?: ResourceId | null
+  quoteSourceLabel?: string
+  priceAgreementLineId?: ResourceId | null
+  priceAgreementSourceLabel?: string
+  taxRate: string
+  taxIncludedUnitPrice: string
+  taxExcludedUnitPrice: string
+  currency: string
   expectedArrivalDate: string
   remark: string
+}
+
+export interface PurchaseOrderSourceOption {
+  id: ResourceId
+  label: string
+  materialId?: ResourceId | null
+  materialCode?: string | null
+  materialName?: string | null
+  unitId?: ResourceId | null
+  unitName?: string | null
+  quantity?: string | null
+  supplierId?: ResourceId | null
+  procurementMode?: ProcurementMode | null
+  projectId?: ResourceId | null
+  projectCode?: string | null
+  projectName?: string | null
+  taxRate?: string | null
+  taxIncludedUnitPrice?: string | null
+  taxExcludedUnitPrice?: string | null
+  currency?: string | null
 }
 
 export interface PurchaseReceiptSourceLine {
@@ -34,9 +69,9 @@ export interface PurchaseReceiptSourceLine {
   trackingMethodName?: string | null
   unitId: ResourceId
   unitName: string
-  orderedQuantity: number
-  receivedQuantityBefore: number
-  remainingQuantityBefore: number
+  orderedQuantity: string
+  receivedQuantityBefore: string
+  remainingQuantityBefore: string
   inTransitQuantity?: string | number | null
   inTransitStatus?: string | null
   inTransitStatusName?: string | null
@@ -52,9 +87,9 @@ export interface PurchaseReceiptLineDraft {
   trackingMethodName?: string | null
   unitId: ResourceId | ''
   unitName: string
-  orderedQuantity: number
-  receivedQuantityBefore: number
-  remainingQuantityBefore: number
+  orderedQuantity: string
+  receivedQuantityBefore: string
+  remainingQuantityBefore: string
   inTransitQuantity?: string | number | null
   inTransitStatus?: string | null
   inTransitStatusName?: string | null
@@ -91,6 +126,16 @@ const purchaseReceiptStatusTypes: Record<PurchaseReceiptStatus, 'info' | 'succes
   POSTED: 'success',
 }
 
+const procurementModeLabels: Record<ProcurementMode, string> = {
+  PUBLIC: '公共采购',
+  PROJECT: '项目专采',
+}
+
+const procurementOwnershipTagTypes: Record<ProcurementMode, 'info' | 'success'> = {
+  PUBLIC: 'info',
+  PROJECT: 'success',
+}
+
 export function purchaseOrderStatusLabel(status: PurchaseOrderStatus): string {
   return purchaseOrderStatusLabels[status]
 }
@@ -115,19 +160,19 @@ export function procurementErrorMessage(error: unknown): string {
 }
 
 export function formatProcurementQuantity(value: unknown): string {
-  const numberValue = Number(value)
-  if (!Number.isFinite(numberValue)) {
+  const normalizedValue = normalizeDecimalString(value)
+  if (normalizedValue === null) {
     return '-'
   }
-  return numberValue.toFixed(6).replace(/\.?0+$/, '')
+  return trimDecimalZeros(normalizedValue)
 }
 
 export function formatProcurementAmount(value: unknown): string {
-  const numberValue = Number(value)
-  if (!Number.isFinite(numberValue)) {
+  const normalizedValue = normalizeDecimalString(value)
+  if (normalizedValue === null) {
     return '-'
   }
-  return numberValue.toFixed(2)
+  return trimDecimalZeros(normalizedValue)
 }
 
 export function formatProcurementDateTime(value?: string | null): string {
@@ -164,9 +209,8 @@ export function validateProcurementDecimal(
     return { value: null, payloadValue: null, message: `${options.label}最多 6 位小数` }
   }
 
-  const numberValue = Number(normalizedValue)
-  const validZero = options.allowZero && numberValue === 0
-  if (!Number.isFinite(numberValue) || (!validZero && numberValue <= 0)) {
+  const zero = isZeroDecimal(normalizedValue)
+  if ((!options.allowZero && zero) || decimalCompare(normalizedValue, '0') < 0) {
     return {
       value: null,
       payloadValue: null,
@@ -174,7 +218,115 @@ export function validateProcurementDecimal(
     }
   }
 
-  return { value: numberValue, payloadValue: normalizedValue, message: null }
+  return { value: normalizedValue, payloadValue: normalizedValue, message: null }
+}
+
+export function procurementModeLabel(mode: ProcurementMode): string {
+  return procurementModeLabels[mode]
+}
+
+export interface ProcurementOwnershipDisplaySource {
+  purchaseMode?: ProcurementMode | string | null
+  procurementMode?: ProcurementMode | string | null
+  ownershipType?: ProcurementMode | string | null
+  projectId?: ResourceId | null
+  projectCode?: string | null
+  projectName?: string | null
+}
+
+export interface ProcurementPriceSourceDisplaySource {
+  priceSourceType?: string | null
+  priceSourceTypeName?: string | null
+  priceSourceNo?: string | null
+  sourceNo?: string | null
+  quoteNo?: string | null
+  agreementNo?: string | null
+}
+
+export function normalizeProcurementMode(value?: string | null): ProcurementMode | undefined {
+  return value === 'PROJECT' || value === 'PUBLIC' ? value : undefined
+}
+
+export function procurementModeFrom(source?: ProcurementOwnershipDisplaySource | null): ProcurementMode | undefined {
+  return normalizeProcurementMode(source?.procurementMode)
+    ?? normalizeProcurementMode(source?.purchaseMode)
+    ?? normalizeProcurementMode(source?.ownershipType)
+}
+
+export function procurementModeDisplay(
+  mode?: ProcurementMode | string | null,
+  projectCode?: string | null,
+  projectName?: string | null,
+  projectId?: ResourceId | null,
+): string {
+  const normalizedMode = normalizeProcurementMode(mode)
+  if (normalizedMode === 'PROJECT') {
+    const projectText = [projectCode, projectName].filter(Boolean).join('/')
+    if (projectText) {
+      return `项目专采 · ${projectText}`
+    }
+    return projectId === null || projectId === undefined ? '项目专采 · 项目未返回' : `项目专采 · 项目ID ${projectId}`
+  }
+  if (normalizedMode === 'PUBLIC') {
+    return '公共采购'
+  }
+  return '采购模式未返回'
+}
+
+export function procurementOwnershipDisplay(source?: ProcurementOwnershipDisplaySource | null): string {
+  return procurementModeDisplay(
+    procurementModeFrom(source),
+    source?.projectCode,
+    source?.projectName,
+    source?.projectId,
+  )
+}
+
+export function procurementPriceSourceDisplay(
+  source?: ProcurementPriceSourceDisplaySource | null,
+  fallback = '价格来源未返回',
+): string {
+  const sourceName = source?.priceSourceTypeName
+    || (source?.priceSourceType === 'QUOTE' ? '供应商报价'
+      : source?.priceSourceType === 'QUOTE_SELECTION' ? '供应商报价'
+        : source?.priceSourceType === 'AGREEMENT' ? '价格协议'
+          : source?.priceSourceType === 'PUBLIC_DIRECT' ? '公共直采例外'
+            : source?.priceSourceType === 'MIXED' ? '混合来源'
+              : source?.priceSourceType)
+  const sourceNo = source?.priceSourceNo || source?.sourceNo
+  if (!sourceName) {
+    return sourceNo ? `${fallback} ${sourceNo}` : fallback
+  }
+  return sourceNo ? `${sourceName} ${sourceNo}` : sourceName
+}
+
+export function procurementOwnershipTagType(mode: ProcurementMode): 'info' | 'success' {
+  return procurementOwnershipTagTypes[mode]
+}
+
+export function decimalCompare(left: unknown, right: unknown): -1 | 0 | 1 {
+  const leftValue = normalizeDecimalString(left)
+  const rightValue = normalizeDecimalString(right)
+  if (leftValue === null || rightValue === null) {
+    return 0
+  }
+  const leftParts = splitDecimal(leftValue)
+  const rightParts = splitDecimal(rightValue)
+  const leftInteger = leftParts.integer.replace(/^0+(?=\d)/, '')
+  const rightInteger = rightParts.integer.replace(/^0+(?=\d)/, '')
+  if (leftInteger.length !== rightInteger.length) {
+    return leftInteger.length > rightInteger.length ? 1 : -1
+  }
+  if (leftInteger !== rightInteger) {
+    return leftInteger > rightInteger ? 1 : -1
+  }
+  const decimalLength = Math.max(leftParts.decimal.length, rightParts.decimal.length)
+  const leftDecimal = leftParts.decimal.padEnd(decimalLength, '0')
+  const rightDecimal = rightParts.decimal.padEnd(decimalLength, '0')
+  if (leftDecimal === rightDecimal) {
+    return 0
+  }
+  return leftDecimal > rightDecimal ? 1 : -1
 }
 
 export function validatePurchaseQuantity(value: unknown): ProcurementDecimalValidationResult {
@@ -198,6 +350,20 @@ export function newPurchaseOrderLine(lineNo = 10): PurchaseOrderLineDraft {
     unitName: '',
     quantity: '',
     unitPrice: '',
+    procurementMode: null,
+    projectId: null,
+    projectCode: null,
+    projectName: null,
+    requisitionLineId: null,
+    requisitionSourceLabel: '',
+    quoteLineId: null,
+    quoteSourceLabel: '',
+    priceAgreementLineId: null,
+    priceAgreementSourceLabel: '',
+    taxRate: '',
+    taxIncludedUnitPrice: '',
+    taxExcludedUnitPrice: '',
+    currency: 'CNY',
     expectedArrivalDate: '',
     remark: '',
   }
@@ -219,9 +385,9 @@ export function newPurchaseReceiptLine(lineNo = 10): PurchaseReceiptLineDraft {
     trackingMethodName: '不追踪',
     unitId: '',
     unitName: '',
-    orderedQuantity: 0,
-    receivedQuantityBefore: 0,
-    remainingQuantityBefore: 0,
+    orderedQuantity: '0',
+    receivedQuantityBefore: '0',
+    remainingQuantityBefore: '0',
     inTransitQuantity: null,
     inTransitStatus: null,
     inTransitStatusName: null,
@@ -242,9 +408,9 @@ export function purchaseReceiptSourceFromOrderLine(line: PurchaseOrderLineRecord
     trackingMethodName: undefined,
     unitId: line.unitId,
     unitName: line.unitName,
-    orderedQuantity: Number(line.quantity) || 0,
-    receivedQuantityBefore: Number(line.receivedQuantity) || 0,
-    remainingQuantityBefore: Number(line.remainingQuantity) || 0,
+    orderedQuantity: normalizeDecimalString(line.quantity) ?? '0',
+    receivedQuantityBefore: normalizeDecimalString(line.receivedQuantity) ?? '0',
+    remainingQuantityBefore: normalizeDecimalString(line.remainingQuantity) ?? '0',
     inTransitQuantity: line.inTransitQuantity ?? null,
     inTransitStatus: line.inTransitStatus ?? null,
     inTransitStatusName: line.inTransitStatusName ?? null,
@@ -262,13 +428,40 @@ export function purchaseReceiptSourceFromReceiptLine(line: PurchaseReceiptLineRe
     trackingMethodName: line.trackingMethodName ?? '不追踪',
     unitId: line.unitId,
     unitName: line.unitName,
-    orderedQuantity: Number(line.orderedQuantity) || 0,
-    receivedQuantityBefore: Number(line.receivedQuantityBefore) || 0,
-    remainingQuantityBefore: Number(line.remainingQuantityBefore) || 0,
+    orderedQuantity: normalizeDecimalString(line.orderedQuantity) ?? '0',
+    receivedQuantityBefore: normalizeDecimalString(line.receivedQuantityBefore) ?? '0',
+    remainingQuantityBefore: normalizeDecimalString(line.remainingQuantityBefore) ?? '0',
     inTransitQuantity: line.inTransitQuantity ?? null,
     inTransitStatus: line.inTransitStatus ?? null,
     inTransitStatusName: line.inTransitStatusName ?? null,
   }
+}
+
+function normalizeDecimalString(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const normalizedValue = String(value).trim()
+  if (!/^\d+(?:\.\d+)?$/.test(normalizedValue)) {
+    return null
+  }
+  return normalizedValue
+}
+
+function trimDecimalZeros(value: string): string {
+  if (!value.includes('.')) {
+    return value
+  }
+  return value.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+}
+
+function splitDecimal(value: string): { integer: string; decimal: string } {
+  const [integer, decimal = ''] = value.split('.')
+  return { integer, decimal }
+}
+
+function isZeroDecimal(value: string): boolean {
+  return /^0+(?:\.0+)?$/.test(value)
 }
 
 export function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {

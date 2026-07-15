@@ -15,6 +15,7 @@ import com.qherp.api.system.inventory.InventoryTrackingMethod;
 import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
+import com.qherp.api.system.procurement.ProcurementActionIdempotencyService;
 import com.qherp.api.system.quality.QualityAdminService;
 import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,6 +44,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 @Service
 public class ReversalAdminService {
@@ -115,15 +117,19 @@ public class ReversalAdminService {
 
 	private final QualityAdminService qualityAdminService;
 
+	private final ProcurementActionIdempotencyService actionIdempotencyService;
+
 	public ReversalAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
-			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService) {
+			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService,
+			ProcurementActionIdempotencyService actionIdempotencyService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
 		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
+		this.actionIdempotencyService = actionIdempotencyService;
 	}
 
 	public PageResponse<Object> emptyPage(int page, int pageSize) {
@@ -382,14 +388,31 @@ public class ReversalAdminService {
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
 		List<PurchaseReturnSourceResponse> sources = this.jdbcTemplate.query("""
 				select pr.id, pr.receipt_no, pr.supplier_id, s.name as supplier_name, pr.warehouse_id,
-				       w.name as warehouse_name, pr.business_date, pr.status
+				       w.name as warehouse_name, pr.business_date, pr.status, o.purchase_mode, o.project_id,
+				       p.project_no as project_code, p.name as project_name,
+				       (
+				           select min(prl.cost_layer_id)
+				           from proc_purchase_receipt_line prl
+				           where prl.receipt_id = pr.id
+				           and prl.cost_layer_id is not null
+				       ) as original_cost_layer_id,
+				       (
+				           select vm.movement_no
+				           from proc_purchase_receipt_line prl
+				           join inv_value_movement vm on vm.id = prl.value_movement_id
+				           where prl.receipt_id = pr.id
+				           order by prl.line_no asc, prl.id asc
+				           limit 1
+				       ) as original_value_movement_no
 				from proc_purchase_receipt pr
+				join proc_purchase_order o on o.id = pr.order_id
 				join mst_supplier s on s.id = pr.supplier_id
 				join mst_warehouse w on w.id = pr.warehouse_id
+				left join sal_project p on p.id = o.project_id
 				%s
 				order by pr.business_date desc, pr.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), (rs, rowNum) -> mapPurchaseReturnSource(rs), args.toArray());
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapPurchaseReturnSource(rs, currentUser), args.toArray());
 		return PageResponse.of(sources, page, limit(pageSize), total);
 	}
 
@@ -411,11 +434,28 @@ public class ReversalAdminService {
 				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
 				       pr.business_date as source_date, pr.status as source_status, r.business_date, r.status,
 				       coalesce((select sum(l.quantity) from proc_purchase_return_line l where l.return_id = r.id), 0) as total_quantity,
-				       r.total_amount, r.created_at, r.updated_at
+				       r.total_amount, r.purchase_mode, r.project_id, p.project_no as project_code,
+				       p.name as project_name,
+				       (
+				           select min(l.source_cost_layer_id)
+				           from proc_purchase_return_line l
+				           where l.return_id = r.id
+				           and l.source_cost_layer_id is not null
+				       ) as original_cost_layer_id,
+				       (
+				           select vm.movement_no
+				           from proc_purchase_return_line l
+				           join inv_value_movement vm on vm.id = l.source_value_movement_id
+				           where l.return_id = r.id
+				           order by l.line_no asc, l.id asc
+				           limit 1
+				       ) as original_value_movement_no,
+				       r.created_at, r.updated_at
 				from proc_purchase_return r
 				join mst_supplier s on s.id = r.supplier_id
 				join mst_warehouse w on w.id = r.warehouse_id
 				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				left join sal_project p on p.id = r.project_id
 				%s
 				order by r.updated_at desc, r.id desc
 				limit ? offset ?
@@ -465,6 +505,7 @@ public class ReversalAdminService {
 	public PurchaseReturnDetailResponse updatePurchaseReturn(Long id, PurchaseReturnRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		PurchaseReturnRow current = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(current.version(), request == null ? null : request.version());
 		if (current.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -501,109 +542,139 @@ public class ReversalAdminService {
 	}
 
 	@Transactional
+	public PurchaseReturnDetailResponse postPurchaseReturn(Long id, VersionedActionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		return idempotentPurchaseReturnAction("POST", id, request, operator, () -> {
+			PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+			requireVersion(purchaseReturn.version(), request.version());
+			if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+			}
+			requireDraft(purchaseReturn);
+			ReceiptRow receipt = lockReceipt(purchaseReturn.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
+			if (!"POSTED".equals(receipt.status())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			List<PurchaseReturnLineRow> lines = lockPurchaseReturnLines(id);
+			if (lines.isEmpty()) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
+			}
+			this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.REVERSE,
+					PURCHASE_RETURN_SOURCE, id);
+			BigDecimal totalAmount = totalPurchaseAmountFromRows(lines);
+			Optional<PayableRow> payable = lockPayableForReceipt(receipt.id());
+			if (payable.isPresent()) {
+				requireAdjustablePayable(payable.get());
+				if (totalAmount.compareTo(payable.get().unpaidAmount()) > 0) {
+					throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
+				}
+			}
+			OffsetDateTime now = OffsetDateTime.now();
+			try {
+				for (PurchaseReturnLineRow line : lines) {
+					ReceiptLineRow sourceLine = lockReceiptLine(receipt.id(), line.sourceReceiptLineId())
+						.orElseThrow(this::sourceNotFoundException);
+					validatePurchaseLineStillReturnable(sourceLine, line);
+					InventoryPostingService.ValuationContext valuationContext = purchaseReturnValuationContext(
+							sourceLine, line.quantity());
+					if (line.qualityStatus() == InventoryQualityStatus.FROZEN) {
+						throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
+					}
+					if (this.inventoryTrackingService.trackingMethod(line.materialId()) == InventoryTrackingMethod.NONE
+							&& lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId(), line.qualityStatus(),
+									line.purchaseMode(), line.projectId(), line.sourceCostLayerId())
+								.compareTo(line.quantity()) < 0) {
+						throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
+					}
+					List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
+						.resolveStoredOutboundAllocations(PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
+								purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
+								line.qualityStatus(), "trackingAllocations");
+					Long movementId = null;
+					Long valueMovementId = null;
+					for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
+						InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+								new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RETURN_OUT,
+										InventoryDirection.OUT, purchaseReturn.warehouseId(), line.materialId(),
+										line.unitId(), allocation.quantity(), line.qualityStatus(),
+										PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
+										purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username(),
+										false, allocation.batchId(), allocation.serialId(), valuationContext));
+						this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
+						this.inventoryTrackingService.markOutboundPosted(allocation, posting.movementId(),
+								operator.username());
+						movementId = posting.movementId();
+						valueMovementId = posting.valueMovementId();
+					}
+					this.jdbcTemplate.update("""
+							update proc_purchase_return_line
+							set stock_movement_id = ?, value_movement_id = ?, updated_at = ?
+							where id = ?
+							""", movementId, valueMovementId, now, line.id());
+					insertPurchaseReversalLink(receipt, sourceLine, purchaseReturn, line, operator.username(), now);
+				}
+				Long adjustmentId = null;
+				if (payable.isPresent()) {
+					adjustmentId = insertPostedPayableAdjustment(purchaseReturn, payable.get(), totalAmount,
+							operator.username(), now);
+					applyPayableAdjustment(payable.get(), totalAmount, operator.username(), now);
+				}
+				this.jdbcTemplate.update("""
+						update proc_purchase_return
+						set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+						    version = version + 1
+						where id = ?
+						""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
+				this.auditService.record(operator, "PURCHASE_RETURN_POST", PURCHASE_RETURN_TARGET, id,
+						purchaseReturn.returnNo(), servletRequest);
+				return purchaseReturn(id, operator).withSettlementAdjustmentId(adjustmentId);
+			}
+			catch (DuplicateKeyException exception) {
+				throw duplicateReversalException(exception);
+			}
+		});
+	}
+
+	@Transactional
 	public PurchaseReturnDetailResponse postPurchaseReturn(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
-		if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
-		}
-		requireDraft(purchaseReturn);
-		ReceiptRow receipt = lockReceipt(purchaseReturn.sourceReceiptId()).orElseThrow(this::sourceNotFoundException);
-		if (!"POSTED".equals(receipt.status())) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
-		}
-		List<PurchaseReturnLineRow> lines = lockPurchaseReturnLines(id);
-		if (lines.isEmpty()) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
-		}
-		this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.REVERSE,
-				PURCHASE_RETURN_SOURCE, id);
-		PayableRow payable = lockPayableForReceipt(receipt.id()).orElseThrow(this::sourceNotFoundException);
-		requireAdjustablePayable(payable);
-		BigDecimal totalAmount = totalPurchaseAmountFromRows(lines);
-		if (totalAmount.compareTo(payable.unpaidAmount()) > 0) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
-		}
-		OffsetDateTime now = OffsetDateTime.now();
-		try {
-			for (PurchaseReturnLineRow line : lines) {
-				ReceiptLineRow sourceLine = lockReceiptLine(receipt.id(), line.sourceReceiptLineId())
-					.orElseThrow(this::sourceNotFoundException);
-				validatePurchaseLineStillReturnable(sourceLine, line);
-				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
-						PURCHASE_RECEIPT_SOURCE, receipt.id(), line.sourceReceiptLineId(), line.quantity(),
-						sourceLine.unitPrice());
-				if (line.qualityStatus() == InventoryQualityStatus.FROZEN) {
-					throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
-				}
-				if (this.inventoryTrackingService.trackingMethod(line.materialId()) == InventoryTrackingMethod.NONE
-						&& lockedStockQuantity(purchaseReturn.warehouseId(), line.materialId(), line.qualityStatus())
-							.compareTo(line.quantity()) < 0) {
-					throw new BusinessException(ApiErrorCode.REVERSAL_STOCK_INSUFFICIENT);
-				}
-				List<InventoryTrackingService.ResolvedTrackingAllocation> allocations = this.inventoryTrackingService
-					.resolveStoredOutboundAllocations(PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
-							purchaseReturn.warehouseId(), line.materialId(), line.unitId(), line.quantity(),
-							line.qualityStatus(), "trackingAllocations");
-				Long movementId = null;
-				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : allocations) {
-					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-							new InventoryPostingService.PostingRequest(InventoryMovementType.PURCHASE_RETURN_OUT,
-									InventoryDirection.OUT, purchaseReturn.warehouseId(), line.materialId(),
-									line.unitId(), allocation.quantity(), line.qualityStatus(),
-									PURCHASE_RETURN_SOURCE, purchaseReturn.id(), line.id(),
-									purchaseReturn.businessDate(), "采购退货出库", line.reason(), operator.username(),
-									false, allocation.batchId(), allocation.serialId(), valuationContext));
-					this.inventoryTrackingService.attachMovement(allocation.allocationId(), posting.movementId());
-					this.inventoryTrackingService.markOutboundPosted(allocation, posting.movementId(),
-							operator.username());
-					movementId = posting.movementId();
-				}
-				this.jdbcTemplate.update("""
-						update proc_purchase_return_line
-						set stock_movement_id = ?, updated_at = ?
-						where id = ?
-						""", movementId, now, line.id());
-				insertPurchaseReversalLink(receipt, sourceLine, purchaseReturn, line, operator.username(), now);
+		return postPurchaseReturn(id, new VersionedActionRequest(purchaseReturn.version(), "内部兼容过账",
+				"internal-purchase-return-post-" + id + "-" + purchaseReturn.version()), operator, servletRequest);
+	}
+
+	@Transactional
+	public PurchaseReturnDetailResponse cancelPurchaseReturn(Long id, VersionedActionRequest request,
+			CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		return idempotentPurchaseReturnAction("CANCEL", id, request, operator, () -> {
+			PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
+			requireVersion(purchaseReturn.version(), request.version());
+			if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 			}
-			Long adjustmentId = insertPostedPayableAdjustment(purchaseReturn, payable, totalAmount, operator.username(),
-					now);
-			applyPayableAdjustment(payable, totalAmount, operator.username(), now);
+			requireDraft(purchaseReturn);
+			this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.CANCEL,
+					PURCHASE_RETURN_SOURCE, id);
+			OffsetDateTime now = OffsetDateTime.now();
 			this.jdbcTemplate.update("""
 					update proc_purchase_return
-					set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+					set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
 					    version = version + 1
 					where id = ?
-					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
-			this.auditService.record(operator, "PURCHASE_RETURN_POST", PURCHASE_RETURN_TARGET, id,
+					""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
+			this.auditService.record(operator, "PURCHASE_RETURN_CANCEL", PURCHASE_RETURN_TARGET, id,
 					purchaseReturn.returnNo(), servletRequest);
-			return purchaseReturn(id, operator).withSettlementAdjustmentId(adjustmentId);
-		}
-		catch (DuplicateKeyException exception) {
-			throw duplicateReversalException(exception);
-		}
+			return purchaseReturn(id, operator);
+		});
 	}
 
 	@Transactional
 	public PurchaseReturnDetailResponse cancelPurchaseReturn(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		PurchaseReturnRow purchaseReturn = lockPurchaseReturn(id).orElseThrow(this::sourceNotFoundException);
-		if (purchaseReturn.status() == ReversalDocumentStatus.POSTED) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
-		}
-		requireDraft(purchaseReturn);
-		this.businessPeriodGuard.assertWritable(purchaseReturn.businessDate(), BusinessPeriodOperation.CANCEL,
-				PURCHASE_RETURN_SOURCE, id);
-		OffsetDateTime now = OffsetDateTime.now();
-		this.jdbcTemplate.update("""
-				update proc_purchase_return
-				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
-				    version = version + 1
-				where id = ?
-				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
-		this.auditService.record(operator, "PURCHASE_RETURN_CANCEL", PURCHASE_RETURN_TARGET, id,
-				purchaseReturn.returnNo(), servletRequest);
-		return purchaseReturn(id, operator);
+		return cancelPurchaseReturn(id, new VersionedActionRequest(purchaseReturn.version(), "内部兼容取消",
+				"internal-purchase-return-cancel-" + id + "-" + purchaseReturn.version()), operator, servletRequest);
 	}
 
 	@Transactional(readOnly = true)
@@ -1393,16 +1464,22 @@ public class ReversalAdminService {
 
 	private PurchaseReturnDetailResponse purchaseReturnDetail(PurchaseReturnRow row, CurrentUser currentUser) {
 		boolean canViewSource = canViewPurchaseReceipt(currentUser);
+		boolean costVisible = canViewValuation(currentUser);
 		List<ReversalDocumentLine> lines = purchaseReturnLines(row.id(), row.sourceReceiptId(), row.sourceReceiptNo(),
-				canViewSource);
+				canViewSource, costVisible);
 		List<ReversalTraceRecord> traces = purchaseTraceRecords(
 				purchaseReverseTraceLinks(PURCHASE_RETURN_SOURCE, row.id(), null), currentUser, "SOURCE_TO_REVERSE");
+		String originalCostLayerNo = costVisible ? costLayerNo(row.originalCostLayerId()) : null;
+		String originalValueMovementNo = costVisible ? row.originalValueMovementNo() : null;
 		return new PurchaseReturnDetailResponse(row.id(), row.returnNo(), row.supplierId(), row.supplierName(),
 				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
-				quantity(totalQuantity(lines)), amount(row.totalAmount()), sourceView(PURCHASE_RECEIPT_SOURCE,
+				row.version(), row.purchaseMode(), row.purchaseMode(), row.projectId(), row.projectCode(),
+				row.projectName(), originalCostLayerNo, originalValueMovementNo, costVisible, quantity(totalQuantity(lines)),
+				costAmount(row.totalAmount(), costVisible), purchaseSourceView(PURCHASE_RECEIPT_SOURCE,
 						row.sourceReceiptId(), null, row.sourceReceiptNo(), null, row.sourceBusinessDate(),
-						row.sourceStatus(), null, null, canViewSource, "procurement-receipt-detail",
-						Map.of("id", row.sourceReceiptId()), null),
+						row.sourceStatus(), null, costAmount(row.totalAmount(), costVisible), canViewSource, "procurement-receipt-detail",
+						Map.of("id", row.sourceReceiptId()), null, row.purchaseMode(), row.projectId(),
+						row.projectCode(), row.projectName(), originalCostLayerNo, originalValueMovementNo, costVisible),
 				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), lines, traces);
 	}
 
@@ -1476,12 +1553,18 @@ public class ReversalAdminService {
 				rs.getObject("business_date", LocalDate.class), rs.getString("status"), lines);
 	}
 
-	private PurchaseReturnSourceResponse mapPurchaseReturnSource(ResultSet rs) throws SQLException {
+	private PurchaseReturnSourceResponse mapPurchaseReturnSource(ResultSet rs, CurrentUser currentUser)
+			throws SQLException {
 		Long receiptId = rs.getLong("id");
-		List<PurchaseReturnSourceLineResponse> lines = purchaseReturnSourceLines(receiptId);
+		boolean costVisible = canViewValuation(currentUser);
+		Long originalCostLayerId = nullableLong(rs, "original_cost_layer_id");
+		List<PurchaseReturnSourceLineResponse> lines = purchaseReturnSourceLines(receiptId, costVisible);
 		return new PurchaseReturnSourceResponse(receiptId, rs.getString("receipt_no"), rs.getLong("supplier_id"),
 				rs.getString("supplier_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
-				rs.getObject("business_date", LocalDate.class), rs.getString("status"), lines);
+				rs.getObject("business_date", LocalDate.class), rs.getString("status"), rs.getString("purchase_mode"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getString("project_code"),
+				rs.getString("project_name"), costVisible ? costLayerNo(originalCostLayerId) : null,
+				costVisible ? rs.getString("original_value_movement_no") : null, costVisible, lines);
 	}
 
 	private ProductionMaterialReturnSourceResponse mapMaterialReturnSource(ResultSet rs) throws SQLException {
@@ -1550,14 +1633,24 @@ public class ReversalAdminService {
 	private PurchaseReturnSummaryResponse mapPurchaseReturnSummary(ResultSet rs, CurrentUser currentUser)
 			throws SQLException {
 		boolean canViewSource = canViewPurchaseReceipt(currentUser);
+		boolean costVisible = canViewValuation(currentUser);
 		Long sourceReceiptId = rs.getLong("source_receipt_id");
+		Long projectId = nullableLong(rs, "project_id");
+		Long originalCostLayerId = nullableLong(rs, "original_cost_layer_id");
+		String originalCostLayerNo = costVisible ? costLayerNo(originalCostLayerId) : null;
+		String originalValueMovementNo = costVisible ? rs.getString("original_value_movement_no") : null;
 		return new PurchaseReturnSummaryResponse(rs.getLong("id"), rs.getString("return_no"), rs.getLong("supplier_id"),
 				rs.getString("supplier_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("status"),
-				quantity(rs.getBigDecimal("total_quantity")), amount(rs.getBigDecimal("total_amount")),
-				sourceView(PURCHASE_RECEIPT_SOURCE, sourceReceiptId, null, rs.getString("source_receipt_no"), null,
-						rs.getObject("source_date", LocalDate.class), rs.getString("source_status"), null, null,
-						canViewSource, "procurement-receipt-detail", Map.of("id", sourceReceiptId), null),
+				quantity(rs.getBigDecimal("total_quantity")), costAmount(rs.getBigDecimal("total_amount"), costVisible),
+				rs.getString("purchase_mode"), rs.getString("purchase_mode"), projectId, rs.getString("project_code"),
+				rs.getString("project_name"), originalCostLayerNo, originalValueMovementNo, costVisible,
+				purchaseSourceView(PURCHASE_RECEIPT_SOURCE, sourceReceiptId, null, rs.getString("source_receipt_no"), null,
+						rs.getObject("source_date", LocalDate.class), rs.getString("source_status"), null,
+						costAmount(rs.getBigDecimal("total_amount"), costVisible),
+						canViewSource, "procurement-receipt-detail", Map.of("id", sourceReceiptId), null,
+						rs.getString("purchase_mode"), projectId, rs.getString("project_code"),
+						rs.getString("project_name"), originalCostLayerNo, originalValueMovementNo, costVisible),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
@@ -1597,7 +1690,7 @@ public class ReversalAdminService {
 			.toList();
 	}
 
-	private List<PurchaseReturnSourceLineResponse> purchaseReturnSourceLines(Long receiptId) {
+	private List<PurchaseReturnSourceLineResponse> purchaseReturnSourceLines(Long receiptId, boolean costVisible) {
 		return this.jdbcTemplate.query("""
 				select prl.id, prl.order_line_id, prl.line_no, prl.material_id, m.code as material_code,
 				       m.name as material_name, prl.unit_id, u.name as unit_name, prl.quantity,
@@ -1616,10 +1709,13 @@ public class ReversalAdminService {
 				           - case when sb.quality_status = 'QUALIFIED' then coalesce(locked.locked_quantity, 0) else 0 end
 				           as current_available_quantity,
 				       coalesce(sb.quality_status, 'QUALIFIED') as quality_status,
-				       pol.unit_price
+				       pol.unit_price, prl.purchase_mode, prl.project_id, p.project_no as project_code,
+				       p.name as project_name, prl.cost_layer_id, vm.movement_no as original_value_movement_no
 				from proc_purchase_receipt_line prl
 				join proc_purchase_order_line pol on pol.id = prl.order_line_id
 				join proc_purchase_receipt pr on pr.id = prl.receipt_id
+				left join sal_project p on p.id = prl.project_id
+				left join inv_value_movement vm on vm.id = prl.value_movement_id
 				join mst_material m on m.id = prl.material_id
 				join mst_unit u on u.id = prl.unit_id
 				left join (
@@ -1668,9 +1764,14 @@ public class ReversalAdminService {
 					rs.getString("material_name"), rs.getLong("unit_id"), rs.getString("unit_name"),
 					quantity(received), quantity(returned), quantity(returnable),
 					quantity(availableStockQuantity), quantity(quantityOnHand),
-					quantity(rs.getBigDecimal("unit_price")), amount(returnable.multiply(rs.getBigDecimal("unit_price"))),
+					costDecimal(rs.getBigDecimal("unit_price"), costVisible),
+					costAmount(returnable.multiply(rs.getBigDecimal("unit_price")), costVisible),
 					qualityStatus.name(), qualityStatus.displayName(), quantity(availableQuantity), selectable,
-					disabledReasonCode, disabledReason, quantity(maxSelectableQuantity));
+					disabledReasonCode, disabledReason, quantity(maxSelectableQuantity), rs.getString("purchase_mode"),
+					rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getString("project_code"),
+					rs.getString("project_name"),
+					costVisible ? costLayerNo(nullableLong(rs, "cost_layer_id")) : null,
+					costVisible ? rs.getString("original_value_movement_no") : null, costVisible);
 		}, receiptId).stream().filter((line) -> new BigDecimal(line.returnableQuantity()).compareTo(ZERO) > 0)
 			.toList();
 	}
@@ -1808,7 +1909,8 @@ public class ReversalAdminService {
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
 						"sales-shipment-detail", Map.of("id", sourceShipmentId),
-						Map.of("lineId", rs.getLong("source_shipment_line_id")))),
+						Map.of("lineId", rs.getLong("source_shipment_line_id"))),
+				null, null, null, null, null, null, null, null),
 				returnId);
 	}
 
@@ -1855,7 +1957,8 @@ public class ReversalAdminService {
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
 						"production-work-order-material-issues", Map.of("id", workOrderId),
-						Map.of("issueId", sourceIssueId, "lineId", rs.getLong("source_issue_line_id")))),
+						Map.of("issueId", sourceIssueId, "lineId", rs.getLong("source_issue_line_id"))),
+				null, null, null, null, null, null, null, null),
 				returnId);
 	}
 
@@ -1903,21 +2006,26 @@ public class ReversalAdminService {
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
 						"production-work-order-detail", Map.of("id", workOrderId),
-						Map.of("lineId", rs.getLong("work_order_material_id")))),
+						Map.of("lineId", rs.getLong("work_order_material_id"))),
+				null, null, null, null, null, null, null, null),
 				supplementId);
 	}
 
 	private List<ReversalDocumentLine> purchaseReturnLines(Long returnId, Long sourceReceiptId, String sourceReceiptNo,
-			boolean canViewSource) {
+			boolean canViewSource, boolean costVisible) {
 		return this.jdbcTemplate.query("""
 				select l.id, l.line_no, l.source_receipt_line_id, l.purchase_order_line_id, l.material_id,
 				       m.code as material_code, m.name as material_name, l.unit_id, u.name as unit_name,
 				       l.returned_quantity_before, l.returnable_quantity_before, l.quantity, l.unit_price,
 				       l.amount, l.reason, l.stock_movement_id, prl.line_no as source_line_no,
-				       pr.business_date as source_business_date, pr.status as source_status
+				       pr.business_date as source_business_date, pr.status as source_status, l.purchase_mode,
+				       l.project_id, p.project_no as project_code, p.name as project_name,
+				       l.source_cost_layer_id, vm.movement_no as original_value_movement_no
 				from proc_purchase_return_line l
 				join proc_purchase_receipt_line prl on prl.id = l.source_receipt_line_id
 				join proc_purchase_receipt pr on pr.id = prl.receipt_id
+				left join sal_project p on p.id = l.project_id
+				left join inv_value_movement vm on vm.id = l.source_value_movement_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
 				where l.return_id = ?
@@ -1928,15 +2036,23 @@ public class ReversalAdminService {
 				rs.getString("unit_name"),
 				quantity(rs.getBigDecimal("returned_quantity_before")),
 				quantity(rs.getBigDecimal("returnable_quantity_before")), quantity(rs.getBigDecimal("quantity")),
-				quantity(rs.getBigDecimal("unit_price")), amount(rs.getBigDecimal("amount")), rs.getString("reason"),
-				nullableLong(rs, "stock_movement_id"), null,
+				costDecimal(rs.getBigDecimal("unit_price"), costVisible),
+				costAmount(rs.getBigDecimal("amount"), costVisible), rs.getString("reason"),
+				costVisible ? nullableLong(rs, "stock_movement_id") : null, null,
 				this.inventoryTrackingService.allocationResponses(PURCHASE_RETURN_SOURCE, returnId, rs.getLong("id")),
-				sourceView(PURCHASE_RECEIPT_LINE_SOURCE, sourceReceiptId, rs.getLong("source_receipt_line_id"),
+				purchaseSourceView(PURCHASE_RECEIPT_LINE_SOURCE, sourceReceiptId, rs.getLong("source_receipt_line_id"),
 						sourceReceiptNo, rs.getInt("source_line_no"),
 						rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
-						quantity(rs.getBigDecimal("quantity")), amount(rs.getBigDecimal("amount")), canViewSource,
+						quantity(rs.getBigDecimal("quantity")), costAmount(rs.getBigDecimal("amount"), costVisible), canViewSource,
 						"procurement-receipt-detail", Map.of("id", sourceReceiptId),
-						Map.of("lineId", rs.getLong("source_receipt_line_id")))),
+						Map.of("lineId", rs.getLong("source_receipt_line_id")), rs.getString("purchase_mode"),
+						nullableLong(rs, "project_id"), rs.getString("project_code"), rs.getString("project_name"),
+						costVisible ? costLayerNo(nullableLong(rs, "source_cost_layer_id")) : null,
+						costVisible ? rs.getString("original_value_movement_no") : null, costVisible),
+				rs.getString("purchase_mode"), rs.getString("purchase_mode"), nullableLong(rs, "project_id"),
+				rs.getString("project_code"), rs.getString("project_name"),
+				costVisible ? costLayerNo(nullableLong(rs, "source_cost_layer_id")) : null,
+				costVisible ? rs.getString("original_value_movement_no") : null, costVisible),
 				returnId);
 	}
 
@@ -2623,6 +2739,8 @@ public class ReversalAdminService {
 			lines.add(new ValidatedPurchaseReturnLine(lineNo++, sourceLine.id(), sourceLine.orderLineId(),
 					sourceLine.materialId(), sourceLine.unitId(), returnedQuantity, returnableQuantity, quantity,
 					sourceLine.unitPrice(), amount, blankToNull(reason), qualityStatus,
+					sourceLine.purchaseMode(), sourceLine.projectId(), sourceLine.costLayerId(),
+					sourceLine.valueMovementId(),
 					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
@@ -2630,7 +2748,7 @@ public class ReversalAdminService {
 
 	private InventoryQualityStatus validatePurchaseReturnQualityStatus(String qualityStatus) {
 		if (qualityStatus == null || qualityStatus.isBlank()) {
-			throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_REQUIRED);
+			return InventoryQualityStatus.PENDING_INSPECTION;
 		}
 		InventoryQualityStatus parsed;
 		try {
@@ -2643,6 +2761,36 @@ public class ReversalAdminService {
 			throw new BusinessException(ApiErrorCode.QUALITY_STATUS_TRANSITION_INVALID);
 		}
 		return parsed;
+	}
+
+	private void requireVersion(Long actual, Long expected) {
+		if (expected == null || actual == null || !actual.equals(expected)) {
+			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
+		}
+	}
+
+	private PurchaseReturnDetailResponse idempotentPurchaseReturnAction(String action, Long id,
+			VersionedActionRequest request, CurrentUser operator, Supplier<PurchaseReturnDetailResponse> callback) {
+		VersionedActionRequest actionRequest = requireActionRequest(request);
+		String fingerprint = this.actionIdempotencyService.fingerprint(action, PURCHASE_RETURN_TARGET, id,
+				actionRequest.version(), actionRequest.reason());
+		Optional<ProcurementActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService
+			.existing(action, PURCHASE_RETURN_TARGET, id, actionRequest.idempotencyKey(), fingerprint, operator);
+		if (existing.isPresent()) {
+			return purchaseReturn(existing.get().resultResourceId(), operator);
+		}
+		PurchaseReturnDetailResponse result = callback.get();
+		this.actionIdempotencyService.record(action, PURCHASE_RETURN_TARGET, id, actionRequest.version(),
+				actionRequest.idempotencyKey(), fingerprint, PURCHASE_RETURN_TARGET, result.id(), result.version(),
+				operator);
+		return result;
+	}
+
+	private VersionedActionRequest requireActionRequest(VersionedActionRequest request) {
+		if (request == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return request;
 	}
 
 	private Long resolvePurchaseSourceReceiptLineId(PurchaseReturnLineRequest request,
@@ -2683,15 +2831,15 @@ public class ReversalAdminService {
 				Long id = this.jdbcTemplate.queryForObject("""
 						insert into proc_purchase_return (
 							return_no, supplier_id, source_receipt_id, source_receipt_no, warehouse_id,
-							business_date, status, total_amount, client_request_id, remark, created_by, created_at,
-							updated_by, updated_at
+							business_date, status, total_amount, client_request_id, remark, purchase_mode, project_id,
+							created_by, created_at, updated_by, updated_at
 						)
-						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 						returning id
 						""", Long.class, returnNo, receipt.supplierId(), receipt.id(), receipt.receiptNo(),
 						receipt.warehouseId(), purchaseReturn.businessDate(), ReversalDocumentStatus.DRAFT.name(),
 						totalAmount, blankToNull(purchaseReturn.clientRequestId()), blankToNull(purchaseReturn.remark()),
-						operator, now, operator, now);
+						receipt.purchaseMode(), receipt.projectId(), operator, now, operator, now);
 				return new CreatedDocument(id, returnNo);
 			}
 			catch (DuplicateKeyException exception) {
@@ -2710,13 +2858,15 @@ public class ReversalAdminService {
 					insert into proc_purchase_return_line (
 						return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
 						returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
-						quality_status, created_at, updated_at
+						quality_status, purchase_mode, project_id, source_cost_layer_id, source_value_movement_id,
+						created_at, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", returnId, line.sourceReceiptLineId(), line.purchaseOrderLineId(), line.materialId(),
 					line.unitId(), line.lineNo(), line.returnedQuantityBefore(), line.returnableQuantityBefore(),
 					line.quantity(), line.unitPrice(), line.amount(), blankToNull(line.reason()),
-					line.qualityStatus().name(), now, now);
+					line.qualityStatus().name(), line.purchaseMode(), line.projectId(), line.sourceCostLayerId(),
+					line.sourceValueMovementId(), now, now);
 		}
 	}
 
@@ -3336,11 +3486,28 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
 				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.purchase_mode, r.project_id,
+				       p.project_no as project_code, p.name as project_name,
+				       (
+				           select min(l.source_cost_layer_id)
+				           from proc_purchase_return_line l
+				           where l.return_id = r.id
+				           and l.source_cost_layer_id is not null
+				       ) as original_cost_layer_id,
+				       (
+				           select vm.movement_no
+				           from proc_purchase_return_line l
+				           join inv_value_movement vm on vm.id = l.source_value_movement_id
+				           where l.return_id = r.id
+				           order by l.line_no asc, l.id asc
+				           limit 1
+				       ) as original_value_movement_no,
+				       r.version, r.created_at, r.updated_at
 				from proc_purchase_return r
 				join mst_supplier s on s.id = r.supplier_id
 				join mst_warehouse w on w.id = r.warehouse_id
 				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				left join sal_project p on p.id = r.project_id
 				where r.source_receipt_id = ?
 				and r.client_request_id = ?
 				for update of r
@@ -3402,11 +3569,28 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
 				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.purchase_mode, r.project_id,
+				       p.project_no as project_code, p.name as project_name,
+				       (
+				           select min(l.source_cost_layer_id)
+				           from proc_purchase_return_line l
+				           where l.return_id = r.id
+				           and l.source_cost_layer_id is not null
+				       ) as original_cost_layer_id,
+				       (
+				           select vm.movement_no
+				           from proc_purchase_return_line l
+				           join inv_value_movement vm on vm.id = l.source_value_movement_id
+				           where l.return_id = r.id
+				           order by l.line_no asc, l.id asc
+				           limit 1
+				       ) as original_value_movement_no,
+				       r.version, r.created_at, r.updated_at
 				from proc_purchase_return r
 				join mst_supplier s on s.id = r.supplier_id
 				join mst_warehouse w on w.id = r.warehouse_id
 				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				left join sal_project p on p.id = r.project_id
 				where r.id = ?
 				""", this::mapPurchaseReturnRow, id).stream().findFirst();
 	}
@@ -3457,13 +3641,30 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.supplier_id, s.name as supplier_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_receipt_id, r.source_receipt_no,
 				       pr.business_date as source_business_date, pr.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.purchase_mode, r.project_id,
+				       p.project_no as project_code, p.name as project_name,
+				       (
+				           select min(l.source_cost_layer_id)
+				           from proc_purchase_return_line l
+				           where l.return_id = r.id
+				           and l.source_cost_layer_id is not null
+				       ) as original_cost_layer_id,
+				       (
+				           select vm.movement_no
+				           from proc_purchase_return_line l
+				           join inv_value_movement vm on vm.id = l.source_value_movement_id
+				           where l.return_id = r.id
+				           order by l.line_no asc, l.id asc
+				           limit 1
+				       ) as original_value_movement_no,
+				       r.version, r.created_at, r.updated_at
 				from proc_purchase_return r
 				join mst_supplier s on s.id = r.supplier_id
 				join mst_warehouse w on w.id = r.warehouse_id
 				join proc_purchase_receipt pr on pr.id = r.source_receipt_id
+				left join sal_project p on p.id = r.project_id
 				where r.id = ?
-				for update
+				for update of r
 				""", this::mapPurchaseReturnRow, id).stream().findFirst();
 	}
 
@@ -3511,7 +3712,8 @@ public class ReversalAdminService {
 		return this.jdbcTemplate.query("""
 				select id, return_id, source_receipt_line_id, purchase_order_line_id, material_id, unit_id, line_no,
 				       returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount, reason,
-				       quality_status, stock_movement_id
+				       quality_status, purchase_mode, project_id, source_cost_layer_id, source_value_movement_id,
+				       stock_movement_id
 				from proc_purchase_return_line
 				where return_id = ?
 				order by line_no asc, id asc
@@ -3584,9 +3786,11 @@ public class ReversalAdminService {
 
 	private Optional<ReceiptRow> lockReceipt(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, receipt_no, order_id, supplier_id, warehouse_id, business_date, status
-				from proc_purchase_receipt
-				where id = ?
+				select pr.id, pr.receipt_no, pr.order_id, pr.supplier_id, pr.warehouse_id, pr.business_date,
+				       pr.status, o.purchase_mode, o.project_id
+				from proc_purchase_receipt pr
+				join proc_purchase_order o on o.id = pr.order_id
+				where pr.id = ?
 				for update
 				""", this::mapReceiptRow, id).stream().findFirst();
 	}
@@ -3630,10 +3834,21 @@ public class ReversalAdminService {
 			.orElse(InventoryPostingService.ValuationContext.publicStock(fallbackUnitCost));
 	}
 
+	private InventoryPostingService.ValuationContext purchaseReturnValuationContext(ReceiptLineRow sourceLine,
+			BigDecimal quantity) {
+		if ("PROJECT".equals(sourceLine.purchaseMode())) {
+			return new InventoryPostingService.ValuationContext("PROJECT", sourceLine.projectId(),
+					sourceLine.unitPrice(), sourceLine.costLayerId(), sourceLine.valueMovementId());
+		}
+		return originalPublicValueContext(PURCHASE_RECEIPT_SOURCE, sourceLine.receiptId(), sourceLine.id(), quantity,
+				sourceLine.unitPrice());
+	}
+
 	private Optional<ReceiptLineRow> receiptLine(Long receiptId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select prl.id, prl.receipt_id, prl.line_no, prl.order_line_id, prl.material_id, prl.unit_id,
-				       prl.quantity, pol.unit_price
+				       prl.quantity, pol.unit_price, prl.purchase_mode, prl.project_id, prl.cost_layer_id,
+				       prl.value_movement_id
 				from proc_purchase_receipt_line prl
 				join proc_purchase_order_line pol on pol.id = prl.order_line_id
 				where prl.receipt_id = ?
@@ -3656,7 +3871,8 @@ public class ReversalAdminService {
 	private Optional<ReceiptLineRow> lockReceiptLine(Long receiptId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select prl.id, prl.receipt_id, prl.line_no, prl.order_line_id, prl.material_id, prl.unit_id,
-				       prl.quantity, pol.unit_price
+				       prl.quantity, pol.unit_price, prl.purchase_mode, prl.project_id, prl.cost_layer_id,
+				       prl.value_movement_id
 				from proc_purchase_receipt_line prl
 				join proc_purchase_order_line pol on pol.id = prl.order_line_id
 				where prl.receipt_id = ?
@@ -3828,6 +4044,46 @@ public class ReversalAdminService {
 				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
 					.subtract(rs.getBigDecimal("released_quantity"))
 					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		BigDecimal availableQuantity = quantityOnHand.subtract(lockedQuantity);
+		return availableQuantity.compareTo(ZERO) < 0 ? ZERO : availableQuantity;
+	}
+
+	private BigDecimal lockedStockQuantity(Long warehouseId, Long materialId, InventoryQualityStatus qualityStatus,
+			String ownershipType, Long projectId, Long costLayerId) {
+		BigDecimal quantityOnHand = this.jdbcTemplate.query("""
+				select quantity_on_hand
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = ?
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity_on_hand"), warehouseId, materialId,
+				qualityStatus.name(), ownershipType, projectId, costLayerId)
+			.stream()
+			.reduce(ZERO, BigDecimal::add);
+		if (qualityStatus != InventoryQualityStatus.QUALIFIED) {
+			return quantityOnHand;
+		}
+		BigDecimal lockedQuantity = this.jdbcTemplate.query("""
+				select quantity, released_quantity, consumed_quantity
+				from inv_stock_reservation
+				where warehouse_id = ?
+				and material_id = ?
+				and quality_status = 'QUALIFIED'
+				and ownership_type = ?
+				and project_id is not distinct from ?
+				and cost_layer_id is not distinct from ?
+				and status = 'ACTIVE'
+				for update
+				""", (rs, rowNum) -> rs.getBigDecimal("quantity")
+					.subtract(rs.getBigDecimal("released_quantity"))
+					.subtract(rs.getBigDecimal("consumed_quantity")), warehouseId, materialId, ownershipType,
+				projectId, costLayerId)
 			.stream()
 			.reduce(ZERO, BigDecimal::add);
 		BigDecimal availableQuantity = quantityOnHand.subtract(lockedQuantity);
@@ -4025,12 +4281,16 @@ public class ReversalAdminService {
 				       prl.line_no as receipt_line_no,
 				       rr.return_no, rr.business_date as return_date, rr.status as return_status,
 				       rrl.line_no as return_line_no, rrl.stock_movement_id,
+				       rr.warehouse_id, w.name as warehouse_name,
+				       rrl.material_id, m.code as material_code, m.name as material_name,
 				       fsa.id as settlement_adjustment_id
 				from biz_reversal_link bl
 				join proc_purchase_receipt pr on pr.id = bl.source_id
 				join proc_purchase_receipt_line prl on prl.id = bl.source_line_id
 				join proc_purchase_return rr on rr.id = bl.reverse_id
 				join proc_purchase_return_line rrl on rrl.id = bl.reverse_line_id
+				join mst_warehouse w on w.id = rr.warehouse_id
+				join mst_material m on m.id = rrl.material_id
 				left join fin_settlement_adjustment fsa on fsa.source_type = 'PURCHASE_RETURN'
 					and fsa.source_id = rr.id
 					and fsa.status = 'POSTED'
@@ -4043,28 +4303,41 @@ public class ReversalAdminService {
 			String direction) {
 		boolean canViewReceipt = canViewPurchaseReceipt(currentUser);
 		boolean canViewReturn = canViewPurchaseReturn(currentUser);
+		boolean costVisible = canViewValuation(currentUser);
 		return links.stream()
 			.map((link) -> {
+				String traceAmount = costAmount(link.amount(), costVisible);
 				Map<String, Object> source = sourceView(PURCHASE_RECEIPT_LINE_SOURCE, link.sourceId(),
 						link.sourceLineId(), link.receiptNo(), link.receiptLineNo(), link.receiptDate(),
-						link.receiptStatus(), quantity(link.quantity()), amount(link.amount()), canViewReceipt,
+						link.receiptStatus(), quantity(link.quantity()), traceAmount, canViewReceipt,
 						"procurement-receipt-detail", Map.of("id", link.sourceId()),
 						Map.of("lineId", link.sourceLineId()));
 				Map<String, Object> reverse = sourceView(PURCHASE_RETURN_SOURCE, link.reverseId(),
 						link.reverseLineId(), link.returnNo(), link.returnLineNo(), link.returnDate(),
-						link.returnStatus(), quantity(link.quantity()), amount(link.amount()), canViewReturn,
+						link.returnStatus(), quantity(link.quantity()), traceAmount, canViewReturn,
 						"procurement-return-detail", Map.of("id", link.reverseId()),
 						Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewReceipt || !canViewReturn;
-				return new ReversalTraceRecord(traceKey(link, canViewReceipt, canViewReturn), direction, source,
+				ReversalTraceRecord record = new ReversalTraceRecord(traceKey(link, canViewReceipt, canViewReturn), direction, source,
 						reverse,
-						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
+						restricted || !costVisible ? null : link.stockMovementId(),
+						restricted ? null : link.settlementAdjustmentId(),
 						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
-						restricted ? null : amount(link.amount()), restricted ? null : link.returnStatus(),
+						restricted ? null : traceAmount, restricted ? null : link.returnStatus(),
 						!restricted, restricted, restricted ? RESTRICTED_MESSAGE : null,
 						restricted ? null : "procurement-return-detail",
 						restricted ? null : Map.of("id", link.reverseId()),
 						restricted ? null : Map.of("lineId", link.reverseLineId()));
+				if (!restricted) {
+					record.put("effectType", "PURCHASE_RETURN_OUTBOUND");
+					record.put("resourceType", "PURCHASE_RETURN_LINE");
+					record.put("warehouseId", link.warehouseId());
+					record.put("warehouseName", link.warehouseName());
+					record.put("materialId", link.materialId());
+					record.put("materialCode", link.materialCode());
+					record.put("materialName", link.materialName());
+				}
+				return record;
 			})
 			.toList();
 	}
@@ -4349,6 +4622,28 @@ public class ReversalAdminService {
 		return source;
 	}
 
+	private Map<String, Object> purchaseSourceView(String sourceType, Long sourceId, Long sourceLineId, String sourceNo,
+			Integer lineNo, LocalDate businessDate, String status, String quantity, String amount, boolean canViewSource,
+			String resourceRouteName, Map<String, Object> resourceRouteParams, Map<String, Object> resourceRouteQuery,
+			String procurementMode, Long projectId, String projectCode, String projectName, String originalCostLayerNo,
+			String originalValueMovementNo, boolean costVisible) {
+		Map<String, Object> source = sourceView(sourceType, sourceId, sourceLineId, sourceNo, lineNo, businessDate,
+				status, quantity, costVisible ? amount : null, canViewSource, resourceRouteName, resourceRouteParams,
+				resourceRouteQuery);
+		if (!canViewSource) {
+			return source;
+		}
+		source.put("procurementMode", procurementMode);
+		source.put("ownershipType", procurementMode);
+		source.put("projectId", projectId);
+		source.put("projectCode", projectCode);
+		source.put("projectName", projectName);
+		source.put("costVisible", costVisible);
+		source.put("originalCostLayerNo", originalCostLayerNo);
+		source.put("originalValueMovementNo", originalValueMovementNo);
+		return source;
+	}
+
 	private SalesReturnRow mapSalesReturnRow(ResultSet rs, int rowNum) throws SQLException {
 		return new SalesReturnRow(rs.getLong("id"), rs.getString("return_no"), rs.getLong("customer_id"),
 				rs.getString("customer_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
@@ -4375,6 +4670,9 @@ public class ReversalAdminService {
 				rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 				rs.getObject("business_date", LocalDate.class), ReversalDocumentStatus.valueOf(rs.getString("status")),
 				rs.getBigDecimal("total_amount"), rs.getString("client_request_id"), rs.getString("remark"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getString("project_code"),
+				rs.getString("project_name"), nullableLong(rs, "original_cost_layer_id"),
+				rs.getString("original_value_movement_no"), rs.getLong("version"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
@@ -4385,6 +4683,8 @@ public class ReversalAdminService {
 				rs.getBigDecimal("returned_quantity_before"), rs.getBigDecimal("returnable_quantity_before"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("amount"),
 				rs.getString("reason"), InventoryQualityStatus.valueOf(rs.getString("quality_status")),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"),
+				nullableLong(rs, "source_cost_layer_id"), nullableLong(rs, "source_value_movement_id"),
 				nullableLong(rs, "stock_movement_id"));
 	}
 
@@ -4434,7 +4734,7 @@ public class ReversalAdminService {
 	private ReceiptRow mapReceiptRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ReceiptRow(rs.getLong("id"), rs.getString("receipt_no"), rs.getLong("order_id"),
 				rs.getLong("supplier_id"), rs.getLong("warehouse_id"), rs.getObject("business_date", LocalDate.class),
-				rs.getString("status"));
+				rs.getString("status"), rs.getString("purchase_mode"), nullableLong(rs, "project_id"));
 	}
 
 	private ShipmentLineRow mapShipmentLineRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4446,7 +4746,9 @@ public class ReversalAdminService {
 	private ReceiptLineRow mapReceiptLineRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ReceiptLineRow(rs.getLong("id"), rs.getLong("receipt_id"), rs.getInt("line_no"),
 				rs.getLong("order_line_id"), rs.getLong("material_id"), rs.getLong("unit_id"),
-				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"));
+				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), rs.getString("purchase_mode"),
+				nullableLong(rs, "project_id"), nullableLong(rs, "cost_layer_id"),
+				nullableLong(rs, "value_movement_id"));
 	}
 
 	private ReceivableRow mapReceivableRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4505,7 +4807,9 @@ public class ReversalAdminService {
 				rs.getObject("receipt_date", LocalDate.class), rs.getString("receipt_status"),
 				rs.getInt("receipt_line_no"), rs.getString("return_no"), rs.getObject("return_date", LocalDate.class),
 				rs.getString("return_status"), rs.getInt("return_line_no"), nullableLong(rs, "stock_movement_id"),
-				nullableLong(rs, "settlement_adjustment_id"));
+				nullableLong(rs, "settlement_adjustment_id"), rs.getLong("warehouse_id"),
+				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
+				rs.getString("material_name"));
 	}
 
 	private ProductionTraceLinkRow mapProductionTraceLinkRow(ResultSet rs, int rowNum) throws SQLException {
@@ -5298,6 +5602,22 @@ public class ReversalAdminService {
 		return currentUser != null && currentUser.permissions().contains("procurement:return:view");
 	}
 
+	private boolean canViewValuation(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
+	}
+
+	private String costDecimal(BigDecimal value, boolean costVisible) {
+		return costVisible ? quantity(value) : null;
+	}
+
+	private String costAmount(BigDecimal value, boolean costVisible) {
+		return costVisible ? amount(value) : null;
+	}
+
+	private String costLayerNo(Long costLayerId) {
+		return costLayerId == null ? null : "PCL-" + costLayerId;
+	}
+
 	private boolean canViewProductionIssue(CurrentUser currentUser) {
 		return currentUser != null && currentUser.permissions().contains("production:issue:view");
 	}
@@ -5401,7 +5721,12 @@ public class ReversalAdminService {
 	}
 
 	public record PurchaseReturnRequest(Long sourceReceiptId, @NotNull LocalDate businessDate,
-			String clientRequestId, String remark, @Valid List<PurchaseReturnLineRequest> lines) {
+			String clientRequestId, String remark, @Valid List<PurchaseReturnLineRequest> lines, Long version) {
+
+		public PurchaseReturnRequest(Long sourceReceiptId, LocalDate businessDate, String clientRequestId,
+				String remark, List<PurchaseReturnLineRequest> lines) {
+			this(sourceReceiptId, businessDate, clientRequestId, remark, lines, null);
+		}
 	}
 
 	public record PurchaseReturnLineRequest(Long id, Long sourceReceiptLineId, @NotNull BigDecimal quantity,
@@ -5433,6 +5758,9 @@ public class ReversalAdminService {
 			String clientRequestId, String remark) {
 	}
 
+	public record VersionedActionRequest(Long version, String reason, String idempotencyKey) {
+	}
+
 	public record SalesReturnSourceResponse(Long shipmentId, String shipmentNo, Long customerId, String customerName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status,
 			List<SalesReturnSourceLineResponse> lines) {
@@ -5440,6 +5768,8 @@ public class ReversalAdminService {
 
 	public record PurchaseReturnSourceResponse(Long receiptId, String receiptNo, Long supplierId, String supplierName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status,
+			String procurementMode, String ownershipType, Long projectId, String projectCode, String projectName,
+			String originalCostLayerNo, String originalValueMovementNo, Boolean costVisible,
 			List<PurchaseReturnSourceLineResponse> lines) {
 	}
 
@@ -5469,7 +5799,9 @@ public class ReversalAdminService {
 			String receivedQuantity, String returnedQuantity, String returnableQuantity, String availableStockQuantity,
 			String quantityOnHand, String unitPrice, String returnableAmount, String qualityStatus,
 			String qualityStatusName, String availableQuantity, boolean selectable, String disabledReasonCode,
-			String disabledReason, String maxSelectableQuantity) {
+			String disabledReason, String maxSelectableQuantity, String procurementMode, String ownershipType,
+			Long projectId, String projectCode, String projectName, String originalCostLayerNo,
+			String originalValueMovementNo, Boolean costVisible) {
 	}
 
 	public record ProductionMaterialReturnSourceLineResponse(Long issueLineId, Long workOrderMaterialId,
@@ -5494,7 +5826,9 @@ public class ReversalAdminService {
 
 	public record PurchaseReturnSummaryResponse(Long id, String returnNo, Long supplierId, String supplierName,
 			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
-			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String totalAmount, String procurementMode, String ownershipType, Long projectId, String projectCode,
+			String projectName, String originalCostLayerNo, String originalValueMovementNo, Boolean costVisible,
+			Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
 	public record ProductionMaterialReturnSummaryResponse(Long id, String returnNo, Long workOrderId,
@@ -5542,9 +5876,12 @@ public class ReversalAdminService {
 	}
 
 	public record PurchaseReturnDetailResponse(Long id, String returnNo, Long supplierId, String supplierName,
-			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
-			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt,
-			String clientRequestId, String remark, List<ReversalDocumentLine> lines,
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status, Long version,
+			String procurementMode, String ownershipType, Long projectId, String projectCode, String projectName,
+			String originalCostLayerNo, String originalValueMovementNo, Boolean costVisible, String totalQuantity,
+			String totalAmount, Map<String, Object> source,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, String clientRequestId, String remark,
+			List<ReversalDocumentLine> lines,
 			List<ReversalTraceRecord> traces) {
 
 		private PurchaseReturnDetailResponse withSettlementAdjustmentId(Long settlementAdjustmentId) {
@@ -5560,7 +5897,9 @@ public class ReversalAdminService {
 						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
 				.toList();
 			return new PurchaseReturnDetailResponse(this.id, this.returnNo, this.supplierId, this.supplierName,
-					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.totalQuantity,
+					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.version,
+					this.procurementMode, this.ownershipType, this.projectId, this.projectCode, this.projectName,
+					this.originalCostLayerNo, this.originalValueMovementNo, this.costVisible, this.totalQuantity,
 					this.totalAmount, this.source, this.createdAt, this.updatedAt, this.clientRequestId, this.remark,
 					this.lines, updatedTraces);
 		}
@@ -5592,7 +5931,9 @@ public class ReversalAdminService {
 			String materialCode, String materialName, Long unitId, String unitName, String returnedQuantityBefore,
 			String returnableQuantityBefore, String quantity, String unitPrice, String amount, String reason,
 			Long stockMovementId, Long costRecordId,
-			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations, Map<String, Object> source) {
+			List<InventoryTrackingService.TrackingAllocationResponse> trackingAllocations, Map<String, Object> source,
+			String procurementMode, String ownershipType, Long projectId, String projectCode, String projectName,
+			String originalCostLayerNo, String originalValueMovementNo, Boolean costVisible) {
 	}
 
 	public static final class ReversalTraceRecord extends LinkedHashMap<String, Object> {
@@ -5777,7 +6118,8 @@ public class ReversalAdminService {
 	private record ValidatedPurchaseReturnLine(Integer lineNo, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
 			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason,
-			InventoryQualityStatus qualityStatus,
+			InventoryQualityStatus qualityStatus, String purchaseMode, Long projectId, Long sourceCostLayerId,
+			Long sourceValueMovementId,
 			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
@@ -5802,7 +6144,9 @@ public class ReversalAdminService {
 	private record PurchaseReturnRow(Long id, String returnNo, Long supplierId, String supplierName, Long warehouseId,
 			String warehouseName, Long sourceReceiptId, String sourceReceiptNo, LocalDate sourceBusinessDate,
 			String sourceStatus, LocalDate businessDate, ReversalDocumentStatus status, BigDecimal totalAmount,
-			String clientRequestId, String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String clientRequestId, String remark, String purchaseMode, Long projectId, String projectCode,
+			String projectName, Long originalCostLayerId, String originalValueMovementNo, Long version,
+			OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
 	private record MaterialReturnRow(Long id, String returnNo, Long workOrderId, String workOrderNo,
@@ -5849,7 +6193,8 @@ public class ReversalAdminService {
 	private record PurchaseReturnLineRow(Long id, Long returnId, Long sourceReceiptLineId, Long purchaseOrderLineId,
 			Long materialId, Long unitId, Integer lineNo, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, InventoryQualityStatus qualityStatus, Long stockMovementId) {
+			String reason, InventoryQualityStatus qualityStatus, String purchaseMode, Long projectId,
+			Long sourceCostLayerId, Long sourceValueMovementId, Long stockMovementId) {
 	}
 
 	private record MaterialReturnLineRow(Long id, Long returnId, Long sourceIssueLineId, Long workOrderMaterialId,
@@ -5869,7 +6214,7 @@ public class ReversalAdminService {
 	}
 
 	private record ReceiptRow(Long id, String receiptNo, Long orderId, Long supplierId, Long warehouseId,
-			LocalDate businessDate, String status) {
+			LocalDate businessDate, String status, String purchaseMode, Long projectId) {
 	}
 
 	private record ShipmentLineRow(Long id, Long shipmentId, Integer lineNo, Long orderLineId, Long materialId,
@@ -5877,7 +6222,8 @@ public class ReversalAdminService {
 	}
 
 	private record ReceiptLineRow(Long id, Long receiptId, Integer lineNo, Long orderLineId, Long materialId,
-			Long unitId, BigDecimal quantity, BigDecimal unitPrice) {
+			Long unitId, BigDecimal quantity, BigDecimal unitPrice, String purchaseMode, Long projectId,
+			Long costLayerId, Long valueMovementId) {
 	}
 
 	private record ProductionIssueRow(Long id, String issueNo, Long workOrderId, String workOrderNo,
@@ -5928,7 +6274,8 @@ public class ReversalAdminService {
 			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal quantity, BigDecimal amount,
 			String receiptNo, LocalDate receiptDate, String receiptStatus, Integer receiptLineNo, String returnNo,
 			LocalDate returnDate, String returnStatus, Integer returnLineNo, Long stockMovementId,
-			Long settlementAdjustmentId) {
+			Long settlementAdjustmentId, Long warehouseId, String warehouseName, Long materialId, String materialCode,
+			String materialName) {
 	}
 
 	private record ProductionTraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,

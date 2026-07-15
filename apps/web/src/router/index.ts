@@ -49,6 +49,16 @@ const salesRouteOrder = [
   { name: 'sales-returns', permission: 'sales:return:view' },
 ] as const
 
+const procurementRouteOrder = [
+  { name: 'procurement-requisitions', permission: 'procurement:requisition:view' },
+  { name: 'procurement-inquiries', permission: 'procurement:inquiry:view' },
+  { name: 'procurement-price-agreements', permission: 'procurement:price-agreement:view' },
+  { name: 'procurement-orders', permission: 'procurement:order:view' },
+  { name: 'procurement-receipts', permission: 'procurement:receipt:view' },
+  { name: 'procurement-returns', permission: 'procurement:return:view' },
+  { name: 'procurement-effective-supplies', permission: 'procurement:supply:view' },
+] as const
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -317,8 +327,81 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/procurement',
-    redirect: '/procurement/orders',
-    meta: { requiresAuth: true, requiredPermission: 'procurement:order:view' },
+    name: 'procurement-root',
+    meta: { requiresAuth: true },
+    component: placeholder('采购管理', '采购请购、询价比价、价格协议、采购订单、入库、退货和有效供给入口。'),
+  },
+  {
+    path: '/procurement/requisitions',
+    name: 'procurement-requisitions',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:requisition:view' },
+    component: () => import('../modules/procurement/PurchaseRequisitionListView.vue'),
+  },
+  {
+    path: '/procurement/requisitions/create',
+    name: 'procurement-requisition-create',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:requisition:create' },
+    component: () => import('../modules/procurement/PurchaseRequisitionFormView.vue'),
+  },
+  {
+    path: '/procurement/requisitions/:id/edit',
+    name: 'procurement-requisition-edit',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:requisition:update' },
+    component: () => import('../modules/procurement/PurchaseRequisitionFormView.vue'),
+  },
+  {
+    path: '/procurement/requisitions/:id',
+    name: 'procurement-requisition-detail',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:requisition:view' },
+    component: () => import('../modules/procurement/PurchaseRequisitionDetailView.vue'),
+  },
+  {
+    path: '/procurement/inquiries',
+    name: 'procurement-inquiries',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:inquiry:view' },
+    component: () => import('../modules/procurement/PurchaseInquiryListView.vue'),
+  },
+  {
+    path: '/procurement/inquiries/create',
+    name: 'procurement-inquiry-create',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:inquiry:create' },
+    component: () => import('../modules/procurement/PurchaseInquiryFormView.vue'),
+  },
+  {
+    path: '/procurement/inquiries/:id/edit',
+    name: 'procurement-inquiry-edit',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:inquiry:update' },
+    component: () => import('../modules/procurement/PurchaseInquiryFormView.vue'),
+  },
+  {
+    path: '/procurement/inquiries/:id',
+    name: 'procurement-inquiry-detail',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:inquiry:view' },
+    component: () => import('../modules/procurement/PurchaseInquiryDetailView.vue'),
+  },
+  {
+    path: '/procurement/price-agreements',
+    name: 'procurement-price-agreements',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:price-agreement:view' },
+    component: () => import('../modules/procurement/PriceAgreementListView.vue'),
+  },
+  {
+    path: '/procurement/price-agreements/create',
+    name: 'procurement-price-agreement-create',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:price-agreement:create' },
+    component: () => import('../modules/procurement/PriceAgreementFormView.vue'),
+  },
+  {
+    path: '/procurement/price-agreements/:id/edit',
+    name: 'procurement-price-agreement-edit',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:price-agreement:update' },
+    component: () => import('../modules/procurement/PriceAgreementFormView.vue'),
+  },
+  {
+    path: '/procurement/price-agreements/:id',
+    name: 'procurement-price-agreement-detail',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:price-agreement:view' },
+    component: () => import('../modules/procurement/PriceAgreementDetailView.vue'),
   },
   {
     path: '/procurement/orders',
@@ -343,6 +426,12 @@ const routes: RouteRecordRaw[] = [
     name: 'procurement-order-edit',
     meta: { requiresAuth: true, requiredPermission: 'procurement:order:update' },
     component: () => import('../modules/procurement/PurchaseOrderFormView.vue'),
+  },
+  {
+    path: '/procurement/orders/:id/schedules',
+    name: 'procurement-order-schedules',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:order:view' },
+    component: () => import('../modules/procurement/PurchaseScheduleView.vue'),
   },
   {
     path: '/procurement/receipts',
@@ -391,6 +480,12 @@ const routes: RouteRecordRaw[] = [
     name: 'procurement-return-edit',
     meta: { requiresAuth: true, requiredPermission: 'procurement:return:update' },
     component: () => import('../modules/reversal/PurchaseReturnFormView.vue'),
+  },
+  {
+    path: '/procurement/effective-supplies',
+    name: 'procurement-effective-supplies',
+    meta: { requiresAuth: true, requiredPermission: 'procurement:supply:view' },
+    component: () => import('../modules/procurement/EffectivePurchaseSupplyListView.vue'),
   },
   {
     path: '/sales',
@@ -818,6 +913,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return { name: salesRoute.name }
+    }
+
+    if (to.name === 'procurement-root') {
+      const procurementRoute = procurementRouteOrder.find((item) => authStore.hasPermission(item.permission))
+      if (!procurementRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return { name: procurementRoute.name }
     }
 
     if (to.name === 'reports-root') {

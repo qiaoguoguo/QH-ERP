@@ -678,6 +678,45 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/procurement')
   })
 
+  it('024 采购深化权限补齐请购、询价、价格协议和有效供给入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'procurement_project_user', displayName: '项目采购员', status: 'ENABLED' },
+      menus: [],
+      permissions: [
+        'procurement:requisition:view',
+        'procurement:inquiry:view',
+        'procurement:price-agreement:view',
+        'procurement:supply:view',
+      ],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('采购管理')
+    expect(wrapper.text()).toContain('采购请购')
+    expect(wrapper.text()).toContain('询价比价')
+    expect(wrapper.text()).toContain('价格协议')
+    expect(wrapper.text()).toContain('有效采购供给')
+    expect(wrapper.text()).not.toContain('采购订单')
+    expect(wrapper.text()).not.toContain('采购入库')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining([
+        '/procurement/requisitions',
+        '/procurement/inquiries',
+        '/procurement/price-agreements',
+        '/procurement/effective-supplies',
+      ]))
+  })
+
   it('只有采购退货查看权限且后端菜单缺失时补齐采购退货入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

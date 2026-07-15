@@ -64,6 +64,12 @@ const unrestrictedSource = {
   status: 'POSTED',
   quantity: '8.000000',
   amount: '640.00',
+  procurementMode: 'PROJECT',
+  projectCode: 'PRJ-024',
+  projectName: '华东产线改造',
+  originalCostLayerNo: 'PCL-PRJ-024-001',
+  originalValueMovementNo: 'VAL-PR-001',
+  costVisible: false,
   canViewSource: true,
   restricted: false,
   resourceRouteName: 'procurement-receipt-detail',
@@ -99,6 +105,14 @@ const purchaseReturnDetail = {
   status: 'DRAFT',
   totalQuantity: '1.500000',
   totalAmount: '120.00',
+  procurementMode: 'PROJECT',
+  projectCode: 'PRJ-024',
+  projectName: '华东产线改造',
+  originalCostLayerNo: 'PCL-PRJ-024-001',
+  originalValueMovementNo: 'VAL-PR-001',
+  costVisible: false,
+  allowedActions: ['UPDATE', 'POST', 'CANCEL'],
+  version: 41,
   source: unrestrictedSource,
   createdAt: '2026-07-05T11:00:00+08:00',
   updatedAt: '2026-07-05T11:00:00+08:00',
@@ -119,6 +133,12 @@ const purchaseReturnDetail = {
       quantity: '1.500000',
       unitPrice: '80.00',
       amount: '120.00',
+      procurementMode: 'PROJECT',
+      projectCode: 'PRJ-024',
+      projectName: '华东产线改造',
+      originalCostLayerNo: 'PCL-PRJ-024-001',
+      originalValueMovementNo: 'VAL-PR-001',
+      costVisible: false,
       reason: '来料退回',
       source: receiptLineSource,
     },
@@ -147,6 +167,10 @@ const inventoryMovementTrace = {
   source: receiptLineSource,
   reverse: purchaseReturnSourceView,
   inventoryMovementId: 702,
+  movementNo: 'INV-702',
+  warehouseName: '原料仓',
+  materialCode: 'RM-001',
+  materialName: '示例原料',
   businessDate: '2026-07-05',
   quantity: '1.500000',
   amount: '120.00',
@@ -155,6 +179,17 @@ const inventoryMovementTrace = {
   restricted: false,
   resourceRouteName: 'inventory-movements',
   resourceRouteQuery: { sourceId: 702 },
+}
+
+const sanitizedInventoryImpactTrace = {
+  ...inventoryMovementTrace,
+  traceKey: 'PURCHASE_RECEIPT_LINE:20:201:PURCHASE_RETURN:2:0:INVENTORY_MOVEMENT:HIDDEN',
+  effectType: 'INVENTORY_OUTBOUND',
+  resourceType: 'INVENTORY_MOVEMENT',
+  inventoryMovementId: null,
+  movementNo: null,
+  amount: null,
+  resourceRouteQuery: undefined,
 }
 
 const payableAdjustmentTrace = {
@@ -212,6 +247,12 @@ const purchaseReturnSource = {
   warehouseName: '原料仓',
   businessDate: '2026-07-05',
   status: 'POSTED',
+  procurementMode: 'PROJECT',
+  projectCode: 'PRJ-024',
+  projectName: '华东产线改造',
+  originalCostLayerNo: 'PCL-PRJ-024-001',
+  originalValueMovementNo: 'VAL-PR-001',
+  costVisible: false,
   lines: [
     {
       receiptLineId: 201,
@@ -236,6 +277,12 @@ const purchaseReturnSource = {
       maxSelectableQuantity: '8.000000',
       unitPrice: '80.00',
       returnableAmount: '640.00',
+      procurementMode: 'PROJECT',
+      projectCode: 'PRJ-024',
+      projectName: '华东产线改造',
+      originalCostLayerNo: 'PCL-PRJ-024-001',
+      originalValueMovementNo: 'VAL-PR-001',
+      costVisible: false,
     },
   ],
 }
@@ -334,6 +381,12 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).toContain('PR202607050001')
     expect(wrapper.text()).toContain('示例供应商')
     expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('成本无权限')
+    expect(wrapper.text()).not.toContain('PCL-PRJ-024-001')
+    expect(wrapper.text()).not.toContain('VAL-PR-001')
+    expect(wrapper.text()).toContain('反冲原入库库存与成本，不直接处理应付')
+    expect(wrapper.text()).not.toContain('冲减应付')
     expect(wrapper.find('[data-test="create-purchase-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-purchase-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="post-purchase-return"]').exists()).toBe(true)
@@ -364,11 +417,32 @@ describe('采购退货前端页面', () => {
     expect(wrapper.find('[data-test="cancel-purchase-return"]').exists()).toBe(false)
   })
 
+  it('采购退货列表状态允许但 allowedActions 未授权时隐藏复杂动作', async () => {
+    returnRefundReversalApiMock.purchaseReturns.list.mockResolvedValueOnce(page([
+      { ...purchaseReturnDetail, allowedActions: [] },
+    ]))
+    const { wrapper } = await mountReversalView(PurchaseReturnListView, '/procurement/returns', [
+      'procurement:return:view',
+      'procurement:return:update',
+      'procurement:return:post',
+      'procurement:return:cancel',
+    ])
+
+    expect(wrapper.find('[data-test="view-purchase-return"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="edit-purchase-return"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-purchase-return"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cancel-purchase-return"]').exists()).toBe(false)
+  })
+
   it('采购退货表单加载候选采购入库并以字符串数量提交创建请求', async () => {
     const { wrapper, router } = await mountReversalView(PurchaseReturnFormView, '/procurement/returns/create', ['procurement:return:create'])
 
     expect(wrapper.text()).toContain('新建采购退货')
     expect(wrapper.text()).toContain('RC202607050001')
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('成本无权限')
+    expect(wrapper.text()).not.toContain('PCL-PRJ-024-001')
+    expect(wrapper.text()).not.toContain('VAL-PR-001')
     expect(wrapper.text()).toContain('可用库存')
     expect(returnRefundReversalApiMock.purchaseReturnSources.list).toHaveBeenCalledWith({
       keyword: '',
@@ -536,6 +610,7 @@ describe('采购退货前端页面', () => {
     expect(returnRefundReversalApiMock.purchaseReturns.update).toHaveBeenCalledWith('2', expect.objectContaining({
       businessDate: '2026-07-05',
       remark: '来料退回',
+      version: 41,
       lines: [{ id: 21, quantity: '2.000000', reason: '受限来源更新' }],
     }))
     const payload = returnRefundReversalApiMock.purchaseReturns.update.mock.calls[0][1]
@@ -598,22 +673,156 @@ describe('采购退货前端页面', () => {
 
     await wrapper.find('[data-test="post-purchase-return-detail"]').trigger('click')
     await flushPromises()
-    expect(returnRefundReversalApiMock.purchaseReturns.post).toHaveBeenCalledWith(2)
+    expect(returnRefundReversalApiMock.purchaseReturns.post).toHaveBeenCalledWith(2, expect.objectContaining({
+      version: 41,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(returnRefundReversalApiMock.purchaseReturns.post.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
   })
 
-  it('采购退货详情明确展示库存出库影响和应付冲减影响', async () => {
+  it('采购退货详情状态允许但 allowedActions 未授权时隐藏复杂动作', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...purchaseReturnDetail,
+      allowedActions: [],
+    })
+    const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', [
+      'procurement:return:view',
+      'procurement:return:update',
+      'procurement:return:post',
+      'procurement:return:cancel',
+    ])
+
+    expect(wrapper.find('[data-test="edit-purchase-return-detail"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-purchase-return-detail"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cancel-purchase-return-detail"]').exists()).toBe(false)
+  })
+
+  it('采购退货详情明确展示库存出库影响和原入库成本反冲影响', async () => {
     returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce(impactedPurchaseReturnDetail)
     const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view', 'business:reversal:view'])
 
     expect(wrapper.text()).toContain('库存出库影响')
     expect(wrapper.text()).toContain('库存流水')
-    expect(wrapper.text()).toContain('库存流水 #702')
-    expect(wrapper.text()).toContain('应付冲减影响')
-    expect(wrapper.text()).toContain('应付冲减')
-    expect(wrapper.text()).toContain('应付冲减 #802')
+    expect(wrapper.text()).toContain('内部库存流水编号已隐藏')
+    expect(wrapper.text()).toContain('原入库到退货')
+    expect(wrapper.text()).toContain('原料仓')
+    expect(wrapper.text()).toContain('RM-001 / 示例原料')
+    expect(wrapper.text()).toContain('出库数量')
+    expect(wrapper.text()).toContain('1.5')
+    expect(wrapper.text()).not.toContain('库存流水 #702')
+    expect(wrapper.text()).not.toContain('INV-702')
+    expect(wrapper.text()).toContain('原入库库存与成本反冲')
+    expect(wrapper.text()).toContain('原入库成本反冲')
+    expect(wrapper.text()).not.toContain('成本反冲 #802')
+    expect(wrapper.text()).not.toContain('应付冲减')
   })
 
-  it('采购退货追溯面板能区分采购入库来源、采购退货、库存流水和应付冲减', async () => {
+  it('采购退货详情在无成本且内部流水 ID 为空时仍展示普通库存影响行', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...impactedPurchaseReturnDetail,
+      costVisible: false,
+      traces: [
+        purchaseReturnDetail.traces[0],
+        sanitizedInventoryImpactTrace,
+      ],
+    })
+    const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view', 'business:reversal:view'])
+
+    expect(wrapper.text()).toContain('库存出库影响')
+    expect(wrapper.text()).not.toContain('暂无库存出库影响')
+    expect(wrapper.text()).toContain('内部库存流水编号已隐藏')
+    expect(wrapper.text()).toContain('原入库到退货')
+    expect(wrapper.text()).toContain('原料仓')
+    expect(wrapper.text()).toContain('RM-001 / 示例原料')
+    expect(wrapper.text()).toContain('出库数量')
+    expect(wrapper.text()).toContain('1.5')
+    expect(wrapper.text()).not.toContain('库存流水 #')
+    expect(wrapper.text()).not.toContain('INV-702')
+    expect(wrapper.text()).not.toContain('120.00')
+  })
+
+  it('采购退货详情在真实无成本响应仅有退货行且 stockMovementId 为空时保留库存出库影响', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...purchaseReturnDetail,
+      status: 'POSTED',
+      costVisible: false,
+      lines: purchaseReturnDetail.lines.map((line) => ({
+        ...line,
+        stockMovementId: null,
+        costRecordId: null,
+        quantity: '1.500000',
+        materialCode: 'RM-001',
+        materialName: '示例原料',
+      })),
+      traces: [],
+    })
+    const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view', 'business:reversal:view'])
+
+    expect(wrapper.text()).toContain('库存出库影响')
+    expect(wrapper.text()).not.toContain('暂无库存出库影响')
+    expect(wrapper.text()).toContain('内部库存流水编号已隐藏')
+    expect(wrapper.text()).toContain('反向出库')
+    expect(wrapper.text()).toContain('原料仓')
+    expect(wrapper.text()).toContain('RM-001 / 示例原料')
+    expect(wrapper.text()).toContain('出库数量')
+    expect(wrapper.text()).toContain('1.5')
+    expect(wrapper.text()).not.toContain('库存流水 #')
+    expect(wrapper.text()).not.toContain('成本反冲 #')
+  })
+
+  it('采购退货详情成本可见时保留库存流水和成本反冲编号', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...impactedPurchaseReturnDetail,
+      costVisible: true,
+      source: { ...impactedPurchaseReturnDetail.source, costVisible: true },
+      lines: impactedPurchaseReturnDetail.lines.map((line) => ({
+        ...line,
+        costVisible: true,
+        source: { ...line.source, costVisible: true },
+      })),
+    })
+    const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view', 'business:reversal:view'])
+
+    expect(wrapper.text()).toContain('库存流水 #702')
+    expect(wrapper.text()).toContain('成本反冲 #802')
+  })
+
+  it('024 采购退货详情展示原所有权、原项目、原成本层和值流水反冲来源', async () => {
+    returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce({
+      ...purchaseReturnDetail,
+      procurementMode: 'PROJECT',
+      projectCode: 'PRJ-024',
+      projectName: '华东产线改造',
+      originalCostLayerNo: 'PCL-PRJ-024-001',
+      originalValueMovementNo: 'VAL-PR-001',
+      costVisible: false,
+      source: {
+        ...purchaseReturnDetail.source,
+        procurementMode: 'PROJECT',
+        projectCode: 'PRJ-024',
+        projectName: '华东产线改造',
+        originalCostLayerNo: 'PCL-PRJ-024-001',
+        originalValueMovementNo: 'VAL-PR-001',
+      },
+      lines: purchaseReturnDetail.lines.map((line) => ({
+        ...line,
+        procurementMode: 'PROJECT',
+        projectCode: 'PRJ-024',
+        projectName: '华东产线改造',
+        originalCostLayerNo: 'PCL-PRJ-024-001',
+        originalValueMovementNo: 'VAL-PR-001',
+        costVisible: false,
+      })),
+    })
+    const { wrapper } = await mountReversalView(PurchaseReturnDetailView, '/procurement/returns/2', ['procurement:return:view'])
+
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('成本无权限')
+    expect(wrapper.text()).not.toContain('PCL-PRJ-024-001')
+    expect(wrapper.text()).not.toContain('VAL-PR-001')
+  })
+
+  it('采购退货追溯面板能区分采购入库来源、采购退货、库存流水和原入库成本反冲', async () => {
     returnRefundReversalApiMock.purchaseReturns.get.mockResolvedValueOnce(impactedPurchaseReturnDetail)
     returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([
       purchaseReturnDetail.traces[0],
@@ -628,7 +837,8 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).toContain('采购入库行')
     expect(wrapper.text()).toContain('采购退货')
     expect(wrapper.text()).toContain('库存出库影响')
-    expect(wrapper.text()).toContain('应付冲减')
+    expect(wrapper.text()).toContain('原入库成本反冲')
+    expect(wrapper.text()).not.toContain('应付冲减')
 
     const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
     expect(impactButtons).toHaveLength(2)

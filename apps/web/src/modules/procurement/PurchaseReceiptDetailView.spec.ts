@@ -30,7 +30,9 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
   businessDate: '2026-07-05',
   status: 'DRAFT',
   lineCount: 1,
-  totalQuantity: 2.5,
+  totalQuantity: '2.500000',
+  allowedActions: ['UPDATE', 'POST'],
+  version: 31,
   remark: '首批入库',
   createdByName: '仓管员',
   createdAt: '2026-07-05T08:00:00+08:00',
@@ -47,13 +49,15 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
     expectedArrivalDate: '2026-07-12',
     status: 'CONFIRMED',
     lineCount: 1,
-    totalQuantity: 12.5,
-    receivedQuantity: 5,
-    remainingQuantity: 7.5,
+    totalQuantity: '12.500000',
+    receivedQuantity: '5.000000',
+    remainingQuantity: '7.500000',
+    currency: 'CNY',
     remark: '首批采购',
     createdByName: '采购员',
     createdAt: '2026-07-04T08:00:00+08:00',
     updatedAt: '2026-07-04T09:00:00+08:00',
+    version: 7,
   },
   lines: [
     {
@@ -65,10 +69,10 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
       materialName: '冷轧钢板',
       unitId: 2,
       unitName: '千克',
-      orderedQuantity: 12.5,
-      receivedQuantityBefore: 5,
-      remainingQuantityBefore: 7.5,
-      quantity: 2.5,
+      orderedQuantity: '12.500000',
+      receivedQuantityBefore: '5.000000',
+      remainingQuantityBefore: '7.500000',
+      quantity: '2.500000',
       beforeQuantity: null,
       afterQuantity: null,
       trackingMethod: 'BATCH',
@@ -91,6 +95,7 @@ const draftReceipt: PurchaseReceiptDetailRecord = {
 const postedReceipt: PurchaseReceiptDetailRecord = {
   ...draftReceipt,
   status: 'POSTED',
+  allowedActions: [],
   postedByName: '仓管员',
   postedAt: '2026-07-05T09:00:00+08:00',
   inventoryMovements: [
@@ -102,9 +107,9 @@ const postedReceipt: PurchaseReceiptDetailRecord = {
       warehouseName: '原料仓',
       materialCode: 'RM-001',
       materialName: '冷轧钢板',
-      quantity: 2.5,
-      beforeQuantity: 5,
-      afterQuantity: 7.5,
+      quantity: '2.500000',
+      beforeQuantity: '5.000000',
+      afterQuantity: '7.500000',
       businessDate: '2026-07-05',
       operatorName: '仓管员',
       occurredAt: '2026-07-05T09:00:00+08:00',
@@ -209,12 +214,23 @@ describe('采购入库详情页', () => {
     expect(buttonsByText(posted.wrapper, '过账')).toHaveLength(0)
   })
 
+  it('状态允许但 allowedActions 未授权时不展示编辑和过账动作', async () => {
+    const { wrapper } = await mountDetail({ ...draftReceipt, allowedActions: [] })
+
+    expect(buttonsByText(wrapper, '编辑')).toHaveLength(0)
+    expect(buttonsByText(wrapper, '过账')).toHaveLength(0)
+  })
+
   it('过账成功后刷新详情，失败时显示错误', async () => {
     const { wrapper } = await mountDetail()
 
     await wrapper.find('[data-test="post-purchase-receipt-detail"]').trigger('click')
     await flushPromises()
-    expect(procurementApiMock.receipts.post).toHaveBeenCalledWith(700)
+    expect(procurementApiMock.receipts.post).toHaveBeenCalledWith(700, expect.objectContaining({
+      version: 31,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(procurementApiMock.receipts.post.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
     expect(procurementApiMock.receipts.get).toHaveBeenCalledTimes(2)
 
     vi.clearAllMocks()
@@ -224,7 +240,7 @@ describe('采购入库详情页', () => {
     await flushPromises()
 
     expect(failed.wrapper.text()).toContain('采购入库明细数量无效')
-    expect(procurementApiMock.receipts.get).toHaveBeenCalledTimes(1)
+    expect(procurementApiMock.receipts.get).toHaveBeenCalledTimes(2)
   })
 
   it('展示库存流水追溯摘要', async () => {
@@ -237,6 +253,58 @@ describe('采购入库详情页', () => {
     expect(wrapper.text()).toContain('5')
     expect(wrapper.text()).toContain('7.5')
     expect(wrapper.text()).not.toContain('暂无库存流水追溯')
+  })
+
+  it('024 入库详情无成本权限时保留普通库存追溯但隐藏内部估值编号', async () => {
+    const projectReceipt: PurchaseReceiptDetailRecord = {
+      ...postedReceipt,
+      procurementMode: 'PROJECT',
+      projectId: 30,
+      projectCode: 'PRJ-024',
+      projectName: '华东产线改造',
+      valuationStateName: '已估值',
+      costVisible: false,
+      taxExcludedAmount: null,
+      inventoryMovements: (postedReceipt.inventoryMovements ?? []).map((movement) => ({
+        ...movement,
+        movementNo: 'MOV-INTERNAL-001',
+      })),
+      orderSummary: {
+        ...postedReceipt.orderSummary,
+        procurementMode: 'PROJECT',
+        projectId: 30,
+        projectCode: 'PRJ-024',
+        projectName: '华东产线改造',
+        priceSourceTypeName: '最低有效报价',
+        currency: 'CNY',
+      },
+      lines: postedReceipt.lines.map((line) => ({
+        ...line,
+        scheduleSeq: 10,
+        costLayerNo: 'PCL-PRJ-024-001',
+        valueMovementNo: 'VAL-PR-001',
+        costVisible: false,
+        taxExcludedAmount: null,
+      })),
+    }
+
+    const { wrapper } = await mountDetail(projectReceipt)
+
+    expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
+    expect(wrapper.text()).toContain('价格来源：最低有效报价')
+    expect(wrapper.text()).toContain('估值状态：已估值')
+    expect(wrapper.text()).toContain('成本无权限')
+    expect(wrapper.text()).toContain('到货计划 10')
+    expect(wrapper.text()).toContain('内部估值编号已隐藏')
+    expect(wrapper.text()).toContain('采购入库')
+    expect(wrapper.text()).toContain('入库')
+    expect(wrapper.text()).toContain('原料仓')
+    expect(wrapper.text()).toContain('RM-001 冷轧钢板')
+    expect(wrapper.text()).toContain('5')
+    expect(wrapper.text()).toContain('7.5')
+    expect(wrapper.text()).not.toContain('PCL-PRJ-024-001')
+    expect(wrapper.text()).not.toContain('VAL-PR-001')
+    expect(wrapper.text()).not.toContain('MOV-INTERNAL-001')
   })
 
   it('详情加载失败时显示错误状态', async () => {

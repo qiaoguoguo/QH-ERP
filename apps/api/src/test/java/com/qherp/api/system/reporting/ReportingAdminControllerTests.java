@@ -1574,12 +1574,15 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, orderId, fixture.rawMaterialId(), fixture.unitId(), quantityValue,
-				receivedQuantity, new BigDecimal(unitPrice), businessDate.plusDays(3), remark);
+				receivedQuantity, new BigDecimal(unitPrice), new BigDecimal(unitPrice), new BigDecimal(unitPrice),
+				quantityValue.multiply(new BigDecimal(unitPrice)), quantityValue.multiply(new BigDecimal(unitPrice)),
+				businessDate.plusDays(3), remark);
 		String receiptNo = "RPT-PR-" + suffix;
 		long receiptId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_receipt (
@@ -1627,12 +1630,15 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, orderId, materialId, fixture.unitId(), new BigDecimal(quantity),
-				new BigDecimal(receivedQuantity), new BigDecimal(unitPrice), expectedArrivalDate, remark);
+				new BigDecimal(receivedQuantity), new BigDecimal(unitPrice), new BigDecimal(unitPrice),
+				new BigDecimal(unitPrice), new BigDecimal(quantity).multiply(new BigDecimal(unitPrice)),
+				new BigDecimal(quantity).multiply(new BigDecimal(unitPrice)), expectedArrivalDate, remark);
 		return new PurchaseOrderFixture(orderId, orderNo, orderLineId);
 	}
 
@@ -1642,12 +1648,15 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, now(), now())
 				returning id
 				""", Long.class, receipt.orderId(), lineNo, materialId, fixture.unitId(), quantityValue,
-				quantityValue, new BigDecimal(unitPrice), receipt.businessDate().plusDays(3), remark);
+				quantityValue, new BigDecimal(unitPrice), new BigDecimal(unitPrice), new BigDecimal(unitPrice),
+				quantityValue.multiply(new BigDecimal(unitPrice)), quantityValue.multiply(new BigDecimal(unitPrice)),
+				receipt.businessDate().plusDays(3), remark);
 		long receiptLineId = this.jdbcTemplate.queryForObject("""
 				insert into proc_purchase_receipt_line (
 					receipt_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,

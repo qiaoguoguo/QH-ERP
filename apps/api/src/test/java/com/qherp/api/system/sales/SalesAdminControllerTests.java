@@ -1108,11 +1108,12 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		this.jdbcTemplate.update("""
 				insert into proc_purchase_order_line (
 					order_id, line_no, material_id, unit_id, quantity, received_quantity, unit_price,
-					expected_arrival_date, remark, created_at, updated_at
+					tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
+					tax_included_amount, expected_arrival_date, remark, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, 0, 1, ?, ?, now(), now())
-				""", orderId, materialId, unitId, new BigDecimal(quantity), LocalDate.now().plusDays(5),
-				"销售确认在途参考");
+				values (?, 1, ?, ?, ?, 0, 1, 0, 1, 1, ?, ?, ?, ?, now(), now())
+				""", orderId, materialId, unitId, new BigDecimal(quantity), new BigDecimal(quantity),
+				new BigDecimal(quantity), LocalDate.now().plusDays(5), "销售确认在途参考");
 	}
 
 	private long insertCustomer(String code, String name, String status) {

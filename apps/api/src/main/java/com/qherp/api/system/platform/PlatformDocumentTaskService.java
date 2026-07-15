@@ -41,8 +41,10 @@ import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
@@ -54,6 +56,13 @@ public class PlatformDocumentTaskService {
 	private static final AtomicInteger TASK_SEQUENCE = new AtomicInteger();
 
 	private static final DateTimeFormatter TASK_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+
+	private static final Set<String> PROCUREMENT_EXPORT_TASK_TYPES = Set.of("PROCUREMENT_REQUISITION_EXPORT",
+			"PROCUREMENT_INQUIRY_EXPORT", "PROCUREMENT_QUOTE_EXPORT", "PROCUREMENT_PRICE_AGREEMENT_EXPORT",
+			"PROCUREMENT_ORDER_EXPORT", "PROCUREMENT_SCHEDULE_EXPORT", "PROCUREMENT_SUPPLY_EXPORT");
+
+	private static final Set<String> PROCUREMENT_ORDER_PRINT_STATUSES = Set.of("CONFIRMED", "PARTIALLY_RECEIVED",
+			"RECEIVED", "CLOSED");
 
 	static {
 		ZipSecureFile.setMinInflateRatio(0.01d);
@@ -140,6 +149,56 @@ public class PlatformDocumentTaskService {
 	}
 
 	@Transactional
+	public DocumentTaskRecord importSupplierQuotes(Long inquiryId, MultipartFile file, String idempotencyKey,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		validateIdempotencyKey(idempotencyKey);
+		requirePermission(operator, "platform:document-task:create");
+		requirePermission(operator, "procurement:inquiry:view");
+		requirePermission(operator, "procurement:quote:import");
+		ProcurementInquiryTaskSnapshot inquiry = procurementInquiryTaskSnapshot(inquiryId);
+		if (!"RELEASED".equals(inquiry.status())) {
+			throw new BusinessException(ApiErrorCode.PROCUREMENT_INQUIRY_STATUS_INVALID);
+		}
+		byte[] content = readXlsx(file, "PROCUREMENT_QUOTE_IMPORT");
+		String payloadJson = json(new SupplierQuoteImportPayload(null, file.getOriginalFilename(), sha256(content),
+				inquiryId));
+		List<ExistingTask> existing = existingTask(operator.id(), "PROCUREMENT_QUOTE_IMPORT", idempotencyKey);
+		if (!existing.isEmpty()) {
+			ExistingTask existingTask = existing.getFirst();
+			if (!supplierQuoteImportPayloadEquivalent(payloadJson, existingTask.requestPayload())) {
+				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+			}
+			return get(existingTask.id(), operator);
+		}
+		PlatformStorageService.StoredObject storedObject = this.storageService.put(
+				"imports/procurement-quotes/" + UUID.randomUUID() + ".xlsx", content,
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+		Long fileId = insertFile(storedObject, safeFilename(file.getOriginalFilename()),
+				"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", content, "IMPORT_SOURCE",
+				operator);
+		payloadJson = json(new SupplierQuoteImportPayload(fileId, file.getOriginalFilename(), sha256(content),
+				inquiryId));
+		try {
+			Long taskId = insertQueuedTask("PROCUREMENT_QUOTE_IMPORT", "VALIDATE", payloadJson, idempotencyKey,
+					fileId, operator);
+			this.jdbcTemplate.update("""
+					insert into platform_import_batch (
+						task_id, import_type, source_file_id, source_sha256, status, target_object_id,
+						created_at, updated_at
+					)
+					values (?, 'PROCUREMENT_QUOTE_IMPORT', ?, ?, 'QUEUED', ?, now(), now())
+					""", taskId, fileId, sha256(content), inquiryId);
+			this.auditService.record(operator, "IMPORT_UPLOAD", "DOCUMENT_TASK", taskId,
+					"PROCUREMENT_QUOTE_IMPORT", servletRequest);
+			return get(taskId, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			this.storageService.deleteQuietly(storedObject.objectKey());
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	@Transactional
 	public DocumentTaskRecord confirmImport(Long taskId, ConfirmImportRequest request, String idempotencyKey,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
@@ -214,6 +273,39 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	@Transactional
+	public DocumentTaskRecord createExportTask(ProcurementExportRequest request, String idempotencyKey,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		validateIdempotencyKey(idempotencyKey);
+		if (request == null || !PROCUREMENT_EXPORT_TASK_TYPES.contains(request.taskType())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requirePermission(operator, "platform:document-task:create");
+		requireProcurementExportPermissions(request.taskType(), operator);
+		ProcurementExportRequest payload = new ProcurementExportRequest(request.taskType(),
+				trimToNull(request.objectType()), request.objectId(),
+				request.filters() == null ? Map.of() : new LinkedHashMap<>(request.filters()));
+		String payloadJson = json(payload);
+		List<ExistingTask> existing = existingTask(operator.id(), request.taskType(), idempotencyKey);
+		if (!existing.isEmpty()) {
+			ExistingTask existingTask = existing.getFirst();
+			if (!jsonEquivalent(payloadJson, existingTask.requestPayload())) {
+				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+			}
+			return get(existingTask.id(), operator);
+		}
+		try {
+			Long taskId = insertQueuedTask(request.taskType(), "EXPORT", payloadJson, idempotencyKey, null,
+					operator);
+			this.auditService.record(operator, "DOCUMENT_TASK_CREATE", "DOCUMENT_TASK", taskId, request.taskType(),
+					servletRequest);
+			return get(taskId, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
 	@Transactional(readOnly = true)
 	public List<PrintTemplateRecord> printTemplates(String sceneCode) {
 		String where = hasText(sceneCode) ? "where scene_code = ? and status = 'ENABLED'" : "where status = 'ENABLED'";
@@ -251,6 +343,9 @@ public class PlatformDocumentTaskService {
 	public DocumentTaskRecord createPrintTask(PrintTaskRequest request, String idempotencyKey, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
+		if (request != null && "PROCUREMENT_ORDER".equals(request.objectType())) {
+			return createProcurementOrderPrintTask(request, idempotencyKey, operator, servletRequest);
+		}
 		if (request == null || request.approvalInstanceId() == null || !hasText(request.templateCode())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
@@ -274,6 +369,40 @@ public class PlatformDocumentTaskService {
 			Long taskId = insertQueuedTask("APPROVAL_PRINT", "PRINT", payloadJson, idempotencyKey, null, operator);
 			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId, request.templateCode(),
 					servletRequest);
+			return get(taskId, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private DocumentTaskRecord createProcurementOrderPrintTask(PrintTaskRequest request, String idempotencyKey,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		if (request.objectId() == null || !"PROCUREMENT_ORDER_V1".equals(request.templateCode())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requireProcurementOrderPrintAccess(request.objectId(), operator);
+		ProcurementOrderPrintSnapshot snapshot = procurementOrderPrintSnapshot(request.objectId());
+		if (!PROCUREMENT_ORDER_PRINT_STATUSES.contains(snapshot.status())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
+		int templateVersion = printTemplateVersion(request.templateCode(), "PROCUREMENT_ORDER_PRINT",
+				"PROCUREMENT_ORDER");
+		String payloadJson = json(new ProcurementOrderPrintPayload(request.objectId(), request.templateCode(),
+				snapshot.version(), templateVersion));
+		List<ExistingTask> existing = existingTask(operator.id(), "PROCUREMENT_ORDER_PRINT", idempotencyKey);
+		if (!existing.isEmpty()) {
+			ExistingTask existingTask = existing.getFirst();
+			if (!jsonEquivalent(payloadJson, existingTask.requestPayload())) {
+				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+			}
+			return get(existingTask.id(), operator);
+		}
+		try {
+			Long taskId = insertQueuedTask("PROCUREMENT_ORDER_PRINT", "PRINT", payloadJson, idempotencyKey, null,
+					operator);
+			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId,
+					request.templateCode(), servletRequest);
 			return get(taskId, operator);
 		}
 		catch (DuplicateKeyException exception) {
@@ -501,6 +630,10 @@ public class PlatformDocumentTaskService {
 			validateBomDraftImport(task);
 			return;
 		}
+		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
+			validateSupplierQuoteImport(task, operator);
+			return;
+		}
 		throw new IllegalStateException("不支持的导入任务：" + task.taskType());
 	}
 
@@ -512,6 +645,10 @@ public class PlatformDocumentTaskService {
 		}
 		if ("BOM_DRAFT_IMPORT".equals(task.taskType())) {
 			commitBomDraftImport(task, operator);
+			return;
+		}
+		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
+			commitSupplierQuoteImport(task, operator);
 			return;
 		}
 		throw new IllegalStateException("不支持的导入提交任务：" + task.taskType());
@@ -600,6 +737,7 @@ public class PlatformDocumentTaskService {
 		return switch (templateCode) {
 			case "CONTRACT_ACTIVATION_APPROVAL_V1" -> "合同生效审批单";
 			case "BOM_ECO_APPLICATION_APPROVAL_V1" -> "BOM ECO 应用审批单";
+			case "PROCUREMENT_ORDER_V1" -> "采购订单";
 			default -> throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
 		};
 	}
@@ -727,6 +865,276 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	public boolean isProcurementExportTaskType(String taskType) {
+		return PROCUREMENT_EXPORT_TASK_TYPES.contains(taskType);
+	}
+
+	public ProcurementExportRequest parseProcurementExportRequest(String payload) {
+		return parse(payload, ProcurementExportRequest.class);
+	}
+
+	public ExportedFile procurementExportFile(ProcurementExportRequest request, CurrentUser operator) {
+		if (request == null || !PROCUREMENT_EXPORT_TASK_TYPES.contains(request.taskType())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requireProcurementExportPermissions(request.taskType(), operator);
+		ProcurementExportDataset dataset = procurementExportDataset(request);
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet(dataset.sheetName());
+			writeRow(sheet.createRow(0), dataset.headers().toArray(String[]::new));
+			for (int i = 0; i < dataset.rows().size(); i++) {
+				Row excelRow = sheet.createRow(i + 1);
+				List<String> row = dataset.rows().get(i);
+				for (int j = 0; j < row.size(); j++) {
+					excelRow.createCell(j).setCellValue(nullToBlank(row.get(j)));
+				}
+			}
+			workbook.write(output);
+			return new ExportedFile(procurementExportFilename(request.taskType()),
+					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", output.toByteArray(),
+					dataset.rows().size());
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	public ProcurementOrderPrintPayload parseProcurementOrderPrintPayload(String payload) {
+		return parse(payload, ProcurementOrderPrintPayload.class);
+	}
+
+	public ExportedFile printProcurementOrderFile(ProcurementOrderPrintPayload payload, CurrentUser operator) {
+		requireProcurementOrderPrintAccess(payload.orderId(), operator);
+		ProcurementOrderPrintSnapshot snapshot = procurementOrderPrintSnapshot(payload.orderId());
+		if (!snapshot.version().equals(payload.orderVersion())
+				|| printTemplateVersion(payload.templateCode(), "PROCUREMENT_ORDER_PRINT", "PROCUREMENT_ORDER")
+						!= payload.templateVersion()) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_BUSINESS_OBJECT_CHANGED);
+		}
+		if (!PROCUREMENT_ORDER_PRINT_STATUSES.contains(snapshot.status())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
+		List<ProcurementOrderPrintLine> lines = procurementOrderPrintLines(payload.orderId());
+		try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			PDPage page = new PDPage();
+			document.addPage(page);
+			document.getDocumentInformation().setTitle("采购订单");
+			document.getDocumentInformation().setSubject(payload.templateCode());
+			document.getDocumentInformation().setCustomMetadataValue("templateVersion",
+					Integer.toString(payload.templateVersion()));
+			document.getDocumentInformation().setCustomMetadataValue("orderId", Long.toString(payload.orderId()));
+			document.getDocumentInformation().setCustomMetadataValue("orderVersion",
+					Long.toString(payload.orderVersion()));
+			PDType0Font font = PDType0Font.load(document,
+					new ClassPathResource("fonts/NotoSansSC-wght.ttf").getInputStream());
+			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+				content.beginText();
+				content.setFont(font, 12);
+				content.setLeading(18);
+				content.newLineAtOffset(50, 760);
+				for (String line : List.of("采购订单", "订单号：" + snapshot.orderNo(), "供应商："
+						+ nullToBlank(snapshot.supplierName()), "状态：" + snapshot.status(), "采购模式："
+						+ snapshot.purchaseMode(), "项目ID：" + (snapshot.projectId() == null ? "" : snapshot.projectId()),
+						"订单日期：" + stringDate(snapshot.orderDate()), "模板版本：" + payload.templateVersion())) {
+					content.showText(line);
+					content.newLine();
+				}
+				content.newLine();
+				content.showText("明细");
+				content.newLine();
+				for (ProcurementOrderPrintLine line : lines) {
+					content.showText(line.lineNo() + ". " + line.materialCode() + " "
+							+ nullToBlank(line.materialName()) + " 数量 " + line.quantity() + " 单价 "
+							+ line.taxIncludedUnitPrice());
+					content.newLine();
+				}
+				content.endText();
+			}
+			document.save(output);
+			return new ExportedFile("procurement-order-" + snapshot.orderNo() + ".pdf", "application/pdf",
+					output.toByteArray(), 1);
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	private ProcurementExportDataset procurementExportDataset(ProcurementExportRequest request) {
+		String keyword = filterString(request.filters(), "keyword");
+		return switch (request.taskType()) {
+			case "PROCUREMENT_REQUISITION_EXPORT" -> new ProcurementExportDataset("采购请购",
+					List.of("ID", "请购号", "采购模式", "项目ID", "状态", "需求日期", "用途"),
+					procurementRows("""
+							select id, requisition_no, purchase_mode, project_id, status, required_date, purpose
+							from proc_purchase_requisition
+							where (? is null or requisition_no ilike ? or coalesce(purpose, '') ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_REQUISITION' or id = ?)
+							order by id desc
+							""", keyword, request.objectType(), request.objectId()));
+			case "PROCUREMENT_INQUIRY_EXPORT" -> new ProcurementExportDataset("采购询价",
+					List.of("ID", "询价号", "标题", "采购模式", "项目ID", "状态"),
+					procurementRows("""
+							select id, inquiry_no, title, purchase_mode, project_id, status
+							from proc_purchase_inquiry
+							where (? is null or inquiry_no ilike ? or coalesce(title, '') ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_INQUIRY' or id = ?)
+							order by id desc
+							""", keyword, request.objectType(), request.objectId()));
+			case "PROCUREMENT_QUOTE_EXPORT" -> new ProcurementExportDataset("供应商报价",
+					List.of("ID", "报价号", "询价号", "供应商", "状态", "有效期起", "有效期止", "币种"),
+					procurementRows("""
+							select q.id, q.quote_no, i.inquiry_no, s.name as supplier_name, q.status,
+							       q.valid_from, q.valid_to, q.currency
+							from proc_supplier_quote q
+							join proc_purchase_inquiry i on i.id = q.inquiry_id
+							join mst_supplier s on s.id = q.supplier_id
+							where (? is null or q.quote_no ilike ? or i.inquiry_no ilike ? or s.name ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_QUOTE' or q.id = ?)
+							order by q.id desc
+							""", keyword, request.objectType(), request.objectId()));
+			case "PROCUREMENT_PRICE_AGREEMENT_EXPORT" -> new ProcurementExportDataset("采购价格协议",
+					List.of("ID", "协议号", "供应商", "采购模式", "项目ID", "状态", "有效期起", "有效期止"),
+					procurementRows("""
+							select a.id, a.agreement_no, s.name as supplier_name, a.purchase_mode, a.project_id,
+							       a.status, a.valid_from, a.valid_to
+							from proc_price_agreement a
+							join mst_supplier s on s.id = a.supplier_id
+							where (? is null or a.agreement_no ilike ? or s.name ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_PRICE_AGREEMENT' or a.id = ?)
+							order by a.id desc
+							""", keyword, request.objectType(), request.objectId()));
+			case "PROCUREMENT_ORDER_EXPORT" -> new ProcurementExportDataset("采购订单",
+					List.of("ID", "订单号", "供应商", "采购模式", "项目ID", "状态", "订单日期", "预计到货日"),
+					procurementRows("""
+							select o.id, o.order_no, s.name as supplier_name, o.purchase_mode, o.project_id,
+							       o.status, o.order_date, o.expected_arrival_date
+							from proc_purchase_order o
+							join mst_supplier s on s.id = o.supplier_id
+							where (? is null or o.order_no ilike ? or s.name ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_ORDER' or o.id = ?)
+							order by o.id desc
+							""", keyword, request.objectType(), request.objectId()));
+			case "PROCUREMENT_SCHEDULE_EXPORT" -> new ProcurementExportDataset("到货计划",
+					List.of("ID", "订单号", "订单行", "计划序号", "计划日期", "计划数量", "已收数量", "状态"),
+					procurementScheduleRows(request, keyword));
+			case "PROCUREMENT_SUPPLY_EXPORT" -> new ProcurementExportDataset("有效供给",
+					List.of("订单号", "订单行ID", "计划ID", "采购模式", "项目ID", "物料", "预计到货日", "剩余数量",
+							"订单状态", "计划状态"),
+					procurementRows("""
+							select s.order_no, s.order_line_id, s.schedule_id, s.purchase_mode, s.project_id,
+							       m.code as material_code, s.expected_arrival_date, s.remaining_quantity,
+							       s.order_status, s.schedule_status
+							from proc_effective_purchase_supply s
+							join mst_material m on m.id = s.material_id
+							where (? is null or s.order_no ilike ? or m.code ilike ? or m.name ilike ?)
+							and (? is null or ? <> 'PROCUREMENT_ORDER' or s.order_id = ?)
+							order by s.expected_arrival_date, s.order_no
+							""", keyword, request.objectType(), request.objectId()));
+			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		};
+	}
+
+	private List<List<String>> procurementRows(String sql, String keyword, String objectType, Long objectId) {
+		String pattern = keyword == null ? null : "%" + keyword + "%";
+		int keywordPlaceholders = placeholderCountBeforeObjectFilter(sql);
+		List<Object> args = new ArrayList<>();
+		args.add(keyword);
+		for (int i = 1; i < keywordPlaceholders; i++) {
+			args.add(pattern);
+		}
+		args.add(objectId);
+		args.add(objectType);
+		args.add(objectId);
+		return this.jdbcTemplate.queryForList(sql, args.toArray())
+			.stream()
+			.map((row) -> row.values().stream().map(this::exportCell).toList())
+			.toList();
+	}
+
+	private List<List<String>> procurementScheduleRows(ProcurementExportRequest request, String keyword) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (keyword != null) {
+			conditions.add("o.order_no ilike ?");
+			args.add("%" + keyword + "%");
+		}
+		if (request.objectId() != null && "PROCUREMENT_ORDER".equals(request.objectType())) {
+			conditions.add("o.id = ?");
+			args.add(request.objectId());
+		}
+		if (request.objectId() != null && "PROCUREMENT_SCHEDULE".equals(request.objectType())) {
+			conditions.add("sch.id = ?");
+			args.add(request.objectId());
+		}
+		String status = filterString(request.filters(), "status");
+		if (status != null) {
+			conditions.add("sch.status = ?");
+			args.add(status);
+		}
+		LocalDate expectedDateFrom = filterDate(request.filters(), "expectedDateFrom");
+		if (expectedDateFrom != null) {
+			conditions.add("sch.planned_date >= ?");
+			args.add(expectedDateFrom);
+		}
+		LocalDate expectedDateTo = filterDate(request.filters(), "expectedDateTo");
+		if (expectedDateTo != null) {
+			conditions.add("sch.planned_date <= ?");
+			args.add(expectedDateTo);
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
+		return this.jdbcTemplate.queryForList("""
+				select sch.id, o.order_no, ol.line_no as order_line_no, sch.line_no as schedule_no,
+				       sch.planned_date, sch.planned_quantity, sch.received_quantity, sch.status
+				from proc_purchase_order_schedule sch
+				join proc_purchase_order_line ol on ol.id = sch.order_line_id
+				join proc_purchase_order o on o.id = ol.order_id
+				%s
+				order by sch.planned_date, sch.line_no, sch.id
+				""".formatted(where), args.toArray())
+			.stream()
+			.map((row) -> row.values().stream().map(this::exportCell).toList())
+			.toList();
+	}
+
+	private int placeholderCountBeforeObjectFilter(String sql) {
+		int objectFilter = sql.indexOf("and (? is null or ? <>");
+		String keywordPart = objectFilter < 0 ? sql : sql.substring(0, objectFilter);
+		int count = 0;
+		for (int i = 0; i < keywordPart.length(); i++) {
+			if (keywordPart.charAt(i) == '?') {
+				count++;
+			}
+		}
+		return count;
+	}
+
+	private String exportCell(Object value) {
+		if (value == null) {
+			return "";
+		}
+		if (value instanceof BigDecimal decimal) {
+			return decimal.stripTrailingZeros().toPlainString();
+		}
+		return value.toString();
+	}
+
+	private String procurementExportFilename(String taskType) {
+		return taskType.toLowerCase().replace('_', '-') + "-" + OffsetDateTime.now().format(TASK_NO_FORMATTER)
+				+ ".xlsx";
+	}
+
+	private String filterString(Map<String, Object> filters, String key) {
+		if (filters == null || !filters.containsKey(key) || filters.get(key) == null) {
+			return null;
+		}
+		return trimToNull(String.valueOf(filters.get(key)));
+	}
+
+	private LocalDate filterDate(Map<String, Object> filters, String key) {
+		String value = filterString(filters, key);
+		return value == null ? null : LocalDate.parse(value);
+	}
+
 	private void validateMaterialImport(ClaimedTask task) {
 		ImportTaskPayload payload = parseImportTaskPayload(task.requestPayload());
 		byte[] content = sourceFileContent(payload.sourceFileId());
@@ -835,6 +1243,56 @@ public class PlatformDocumentTaskService {
 		markReadyToCommit(task.id(), batchId, 1);
 	}
 
+	private void validateSupplierQuoteImport(ClaimedTask task, CurrentUser operator) {
+		SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(task.requestPayload());
+		requireSupplierQuoteImportAccess(payload.inquiryId(), operator);
+		byte[] content = sourceFileContent(payload.sourceFileId());
+		Long batchId = batchId(task.id());
+		clearImportRowsAndErrors(task.id(), batchId);
+		List<ImportError> errors = new ArrayList<>();
+		int rowCount = 0;
+		try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(content))) {
+			validateWorkbookSheets(workbook, List.of("quotes"));
+			Sheet sheet = workbook.getSheet("quotes");
+			validateHeader(sheet, new String[] { "supplierId", "validFrom", "validTo", "inquiryLineId",
+					"quantity", "taxRate", "taxExcludedUnitPrice", "taxIncludedUnitPrice", "deliveryDate",
+					"remark" });
+			validateVisibleColumns(sheet, 10);
+			validateVisibleRows(sheet, 1);
+			for (int i = 1; i <= sheet.getLastRowNum(); i++) {
+				Row row = sheet.getRow(i);
+				if (row == null || rowIsBlank(row)) {
+					continue;
+				}
+				rowCount++;
+				SupplierQuoteImportRow importRow = new SupplierQuoteImportRow(longCell(row, 0), dateCell(row, 1),
+						dateCell(row, 2), longCell(row, 3), decimalCell(row, 4),
+						decimalCell(row, 5) == null ? BigDecimal.ZERO : decimalCell(row, 5), decimalCell(row, 6),
+						decimalCell(row, 7), dateCell(row, 8), cellString(row, 9));
+				validateSupplierQuoteImportRow(payload.inquiryId(), i + 1, importRow, errors);
+				insertImportRow(batchId, i + 1, importRow);
+			}
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		catch (BusinessException exception) {
+			recordImportErrors(task.id(), batchId, List.of(new ImportError(null, "file",
+					exception.errorCode().name(), exception.getMessage())));
+			markValidationFailed(task.id(), batchId, rowCount, 1);
+			return;
+		}
+		if (rowCount == 0) {
+			errors.add(new ImportError(null, "file", ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "供应商报价导入不能为空"));
+		}
+		if (!errors.isEmpty()) {
+			recordImportErrors(task.id(), batchId, errors);
+			markValidationFailed(task.id(), batchId, rowCount, errors.size());
+			return;
+		}
+		markReadyToCommit(task.id(), batchId, rowCount);
+	}
+
 	private void commitMaterialImport(ClaimedTask task, CurrentUser operator) {
 		Long batchId = batchId(task.id());
 		List<MaterialImportRow> rows = this.jdbcTemplate.query("""
@@ -898,6 +1356,50 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private void commitSupplierQuoteImport(ClaimedTask task, CurrentUser operator) {
+		SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(task.requestPayload());
+		requireSupplierQuoteImportAccess(payload.inquiryId(), operator);
+		Long batchId = batchId(task.id());
+		List<SupplierQuoteImportRow> rows = this.jdbcTemplate.query("""
+				select payload::text
+				from platform_import_row
+				where batch_id = ?
+				order by row_no
+				""", (rs, rowNum) -> parse(rs.getString("payload"), SupplierQuoteImportRow.class), batchId);
+		try {
+			for (SupplierQuoteImportRow row : rows) {
+				Long quoteId = this.jdbcTemplate.queryForObject("""
+						insert into proc_supplier_quote (
+							quote_no, inquiry_id, supplier_id, status, valid_from, valid_to, currency, remark,
+							created_by, created_at, updated_by, updated_at
+						)
+						values (?, ?, ?, 'VALID', ?, ?, 'CNY', ?, ?, now(), ?, now())
+						returning id
+						""", Long.class, nextTaskNo("PQT"), payload.inquiryId(), row.supplierId(),
+						row.validFrom(), row.validTo(), blankToNull(row.remark()), operator.username(),
+						operator.username());
+				InquiryLineImportSnapshot line = inquiryLineImportSnapshot(row.inquiryLineId());
+				this.jdbcTemplate.update("""
+						insert into proc_supplier_quote_line (
+							quote_id, inquiry_line_id, line_no, material_id, unit_id, min_purchase_quantity,
+							quantity, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+							tax_excluded_amount, tax_included_amount, delivery_date, created_at, updated_at
+						)
+						values (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, round(? * ?, 2), round(? * ?, 2), ?, now(), now())
+						""", quoteId, row.inquiryLineId(), line.materialId(), line.unitId(), row.quantity(),
+						row.quantity(), row.taxRate(), row.taxExcludedUnitPrice(), row.taxIncludedUnitPrice(),
+						row.quantity(), row.taxExcludedUnitPrice(), row.quantity(), row.taxIncludedUnitPrice(),
+						row.deliveryDate());
+			}
+			markImportSucceeded(task.id(), batchId, rows.size());
+		}
+		catch (RuntimeException exception) {
+			recordImportErrors(task.id(), batchId, List.of(new ImportError(null, null,
+					ApiErrorCode.IMPORT_APPLY_FAILED.name(), safeError(exception))));
+			throw exception;
+		}
+	}
+
 	private BomDraftImportPayload parseBomDraftImportFromSource(ClaimedTask task) {
 		ImportTaskPayload payload = parseImportTaskPayload(task.requestPayload());
 		List<ImportError> errors = new ArrayList<>();
@@ -935,6 +1437,31 @@ public class PlatformDocumentTaskService {
 		if (unitId(row.unitCode()) == null) {
 			errors.add(new ImportError(rowNo, "unitCode", ApiErrorCode.MASTER_DATA_REFERENCE_INVALID.name(),
 					"单位不存在或未启用"));
+		}
+	}
+
+	private void validateSupplierQuoteImportRow(Long inquiryId, int rowNo, SupplierQuoteImportRow row,
+			List<ImportError> errors) {
+		if (row.supplierId() == null || supplierCount(row.supplierId()) == 0) {
+			errors.add(new ImportError(rowNo, "supplierId", ApiErrorCode.MASTER_DATA_REFERENCE_INVALID.name(),
+					"供应商不存在或未启用"));
+		}
+		if (row.validFrom() == null || row.validTo() == null || row.validFrom().isAfter(row.validTo())) {
+			errors.add(new ImportError(rowNo, "validFrom", ApiErrorCode.IMPORT_VALIDATION_FAILED.name(),
+					"有效期不合法"));
+		}
+		InquiryLineImportSnapshot line = row.inquiryLineId() == null ? null
+				: inquiryLineImportSnapshotOrNull(row.inquiryLineId());
+		if (line == null || !line.inquiryId().equals(inquiryId)) {
+			errors.add(new ImportError(rowNo, "inquiryLineId", ApiErrorCode.PROCUREMENT_QUOTE_INVALID.name(),
+					"报价行必须属于当前询价"));
+		}
+		if (row.quantity() == null || row.quantity().compareTo(BigDecimal.ZERO) <= 0
+				|| row.taxExcludedUnitPrice() == null || row.taxExcludedUnitPrice().compareTo(BigDecimal.ZERO) < 0
+				|| row.taxIncludedUnitPrice() == null || row.taxIncludedUnitPrice().compareTo(BigDecimal.ZERO) < 0
+				|| row.taxRate() == null || row.taxRate().compareTo(BigDecimal.ZERO) < 0) {
+			errors.add(new ImportError(rowNo, "quantity", ApiErrorCode.IMPORT_VALIDATION_FAILED.name(),
+					"数量、税率和价格不合法"));
 		}
 	}
 
@@ -1180,6 +1707,10 @@ public class PlatformDocumentTaskService {
 		return parse(payload, PrintTaskPayload.class);
 	}
 
+	public SupplierQuoteImportPayload parseSupplierQuoteImportPayload(String payload) {
+		return parse(payload, SupplierQuoteImportPayload.class);
+	}
+
 	private <T> T parse(String payload, Class<T> type) {
 		try {
 			return this.objectMapper.readValue(payload, type);
@@ -1247,6 +1778,134 @@ public class PlatformDocumentTaskService {
 				where object_type = ?
 				and status = 'ENABLED'
 				""", Long.class, objectType);
+	}
+
+	private long supplierCount(Long supplierId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from mst_supplier
+				where id = ?
+				and status = 'ENABLED'
+				""", Long.class, supplierId);
+	}
+
+	private ProcurementInquiryTaskSnapshot procurementInquiryTaskSnapshot(Long inquiryId) {
+		return this.jdbcTemplate.query("""
+				select id, inquiry_no, status, version
+				from proc_purchase_inquiry
+				where id = ?
+				""", (rs, rowNum) -> new ProcurementInquiryTaskSnapshot(rs.getLong("id"),
+				rs.getString("inquiry_no"), rs.getString("status"), rs.getLong("version")), inquiryId)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_INQUIRY_NOT_FOUND));
+	}
+
+	private InquiryLineImportSnapshot inquiryLineImportSnapshot(Long inquiryLineId) {
+		InquiryLineImportSnapshot line = inquiryLineImportSnapshotOrNull(inquiryLineId);
+		if (line == null) {
+			throw new BusinessException(ApiErrorCode.PROCUREMENT_QUOTE_INVALID);
+		}
+		return line;
+	}
+
+	private InquiryLineImportSnapshot inquiryLineImportSnapshotOrNull(Long inquiryLineId) {
+		return this.jdbcTemplate.query("""
+				select id, inquiry_id, material_id, unit_id
+				from proc_purchase_inquiry_line
+				where id = ?
+				""", (rs, rowNum) -> new InquiryLineImportSnapshot(rs.getLong("id"), rs.getLong("inquiry_id"),
+				rs.getLong("material_id"), rs.getLong("unit_id")), inquiryLineId).stream().findFirst().orElse(null);
+	}
+
+	private ProcurementOrderPrintSnapshot procurementOrderPrintSnapshot(Long orderId) {
+		return this.jdbcTemplate.query("""
+				select o.id, o.order_no, o.purchase_mode, o.project_id, o.status, o.order_date,
+				       s.name as supplier_name, o.version
+				from proc_purchase_order o
+				join mst_supplier s on s.id = o.supplier_id
+				where o.id = ?
+				""", (rs, rowNum) -> new ProcurementOrderPrintSnapshot(rs.getLong("id"), rs.getString("order_no"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getString("status"),
+				rs.getObject("order_date", LocalDate.class), rs.getString("supplier_name"), rs.getLong("version")),
+				orderId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_NOT_FOUND));
+	}
+
+	private List<ProcurementOrderPrintLine> procurementOrderPrintLines(Long orderId) {
+		return this.jdbcTemplate.query("""
+				select ol.line_no, m.code as material_code, m.name as material_name, ol.quantity,
+				       ol.tax_included_unit_price
+				from proc_purchase_order_line ol
+				join mst_material m on m.id = ol.material_id
+				where ol.order_id = ?
+				order by ol.line_no
+				""", (rs, rowNum) -> new ProcurementOrderPrintLine(rs.getInt("line_no"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getBigDecimal("quantity"),
+				rs.getBigDecimal("tax_included_unit_price")), orderId);
+	}
+
+	private int printTemplateVersion(String templateCode, String sceneCode, String objectType) {
+		return this.jdbcTemplate.query("""
+				select template_version
+				from platform_print_template
+				where template_code = ?
+				and scene_code = ?
+				and object_type = ?
+				and status = 'ENABLED'
+				""", (rs, rowNum) -> rs.getInt("template_version"), templateCode, sceneCode, objectType)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED));
+	}
+
+	private void requirePermission(CurrentUser operator, String permissionCode) {
+		if (!operator.permissions().contains(permissionCode)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private void requireProcurementOrderPrintAccess(Long orderId, CurrentUser operator) {
+		requirePermission(operator, "platform:print:generate");
+		requirePermission(operator, "procurement:order:view");
+		requirePermission(operator, "procurement:order:print");
+		procurementOrderPrintSnapshot(orderId);
+	}
+
+	private void requireSupplierQuoteImportAccess(Long inquiryId, CurrentUser operator) {
+		requirePermission(operator, "procurement:inquiry:view");
+		requirePermission(operator, "procurement:quote:import");
+		procurementInquiryTaskSnapshot(inquiryId);
+	}
+
+	private void requireProcurementExportPermissions(String taskType, CurrentUser operator) {
+		switch (taskType) {
+			case "PROCUREMENT_REQUISITION_EXPORT" -> {
+				requirePermission(operator, "procurement:requisition:view");
+				requirePermission(operator, "procurement:document:export");
+			}
+			case "PROCUREMENT_INQUIRY_EXPORT" -> {
+				requirePermission(operator, "procurement:inquiry:view");
+				requirePermission(operator, "procurement:document:export");
+			}
+			case "PROCUREMENT_QUOTE_EXPORT" -> {
+				requirePermission(operator, "procurement:quote:view");
+				requirePermission(operator, "procurement:quote:export");
+			}
+			case "PROCUREMENT_PRICE_AGREEMENT_EXPORT" -> {
+				requirePermission(operator, "procurement:price-agreement:view");
+				requirePermission(operator, "procurement:document:export");
+			}
+			case "PROCUREMENT_ORDER_EXPORT", "PROCUREMENT_SCHEDULE_EXPORT" -> {
+				requirePermission(operator, "procurement:order:view");
+				requirePermission(operator, "procurement:document:export");
+			}
+			case "PROCUREMENT_SUPPLY_EXPORT" -> {
+				requirePermission(operator, "procurement:supply:view");
+				requirePermission(operator, "procurement:supply:export");
+			}
+			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
 	}
 
 	private ApprovalPrintSnapshot approvalPrintSnapshot(Long approvalInstanceId) {
@@ -1327,6 +1986,22 @@ public class PlatformDocumentTaskService {
 				return new TaskObjectInfo(snapshot.businessObjectType(), snapshot.businessObjectId(),
 						snapshot.businessObjectNo(), snapshot.businessObjectSummary());
 			}
+			if ("PROCUREMENT_ORDER_PRINT".equals(task.taskType())) {
+				ProcurementOrderPrintPayload payload = parseProcurementOrderPrintPayload(taskRequestPayload(task.id()));
+				ProcurementOrderPrintSnapshot snapshot = procurementOrderPrintSnapshot(payload.orderId());
+				return new TaskObjectInfo("PROCUREMENT_ORDER", payload.orderId(), snapshot.orderNo(),
+						snapshot.supplierName());
+			}
+			if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
+				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
+			}
+			if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
+				SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(taskRequestPayload(task.id()));
+				ProcurementInquiryTaskSnapshot snapshot = procurementInquiryTaskSnapshot(payload.inquiryId());
+				return new TaskObjectInfo("PROCUREMENT_INQUIRY", payload.inquiryId(), snapshot.inquiryNo(),
+						snapshot.status());
+			}
 			if ("BOM_DRAFT_EXPORT".equals(task.taskType())) {
 				BomDraftExportRequest payload = parseBomDraftExportRequest(taskRequestPayload(task.id()));
 				return new TaskObjectInfo("BOM", payload.bomId(), null, null);
@@ -1352,6 +2027,9 @@ public class PlatformDocumentTaskService {
 			return "EXPORT";
 		}
 		if ("APPROVAL_PRINT".equals(taskType)) {
+			return "PRINT";
+		}
+		if (taskType.endsWith("_PRINT")) {
 			return "PRINT";
 		}
 		return null;
@@ -1416,6 +2094,15 @@ public class PlatformDocumentTaskService {
 		if ("APPROVAL_PRINT".equals(task.taskType())) {
 			return canViewApprovalPrintTask(task, currentUser);
 		}
+		if ("PROCUREMENT_ORDER_PRINT".equals(task.taskType())) {
+			return canViewProcurementOrderPrintTask(task, currentUser);
+		}
+		if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
+			return canAccessProcurementExportTask(task, currentUser);
+		}
+		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
+			return canViewSupplierQuoteImportTask(task, currentUser);
+		}
 		return true;
 	}
 
@@ -1424,6 +2111,39 @@ public class PlatformDocumentTaskService {
 			PrintTaskPayload payload = parsePrintTaskPayload(taskRequestPayload(task.id()));
 			ApprovalPrintSnapshot snapshot = approvalPrintSnapshot(payload.approvalInstanceId());
 			requireApprovalBusinessView(snapshot.sceneCode(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private boolean canViewProcurementOrderPrintTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			ProcurementOrderPrintPayload payload = parseProcurementOrderPrintPayload(taskRequestPayload(task.id()));
+			requireProcurementOrderPrintAccess(payload.orderId(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private boolean canAccessProcurementExportTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+			requireProcurementExportPermissions(payload.taskType(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private boolean canViewSupplierQuoteImportTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(taskRequestPayload(task.id()));
+			requireSupplierQuoteImportAccess(payload.inquiryId(), currentUser);
 			return true;
 		}
 		catch (RuntimeException exception) {
@@ -1446,6 +2166,13 @@ public class PlatformDocumentTaskService {
 			case "BOM_DRAFT_IMPORT" -> "material:bom:import";
 			case "BOM_DRAFT_EXPORT" -> "material:bom:export";
 			case "APPROVAL_PRINT" -> "platform:print:generate";
+			case "PROCUREMENT_ORDER_PRINT" -> "procurement:order:print";
+			case "PROCUREMENT_QUOTE_IMPORT" -> "procurement:quote:import";
+			case "PROCUREMENT_QUOTE_EXPORT" -> "procurement:quote:export";
+			case "PROCUREMENT_SUPPLY_EXPORT" -> "procurement:supply:export";
+			case "PROCUREMENT_REQUISITION_EXPORT", "PROCUREMENT_INQUIRY_EXPORT",
+					"PROCUREMENT_PRICE_AGREEMENT_EXPORT", "PROCUREMENT_ORDER_EXPORT",
+					"PROCUREMENT_SCHEDULE_EXPORT" -> "procurement:document:export";
 			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		};
 	}
@@ -1498,6 +2225,19 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private boolean supplierQuoteImportPayloadEquivalent(String left, String right) {
+		try {
+			SupplierQuoteImportPayload leftPayload = parseSupplierQuoteImportPayload(left);
+			SupplierQuoteImportPayload rightPayload = parseSupplierQuoteImportPayload(right);
+			return leftPayload.inquiryId().equals(rightPayload.inquiryId())
+					&& nullToBlank(leftPayload.filename()).equals(nullToBlank(rightPayload.filename()))
+					&& nullToBlank(leftPayload.sha256()).equals(nullToBlank(rightPayload.sha256()));
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
 	private void recordWorkerAudit(ClaimedTask task, String action, String workerId) {
 		this.jdbcTemplate.update("""
 				insert into sys_audit_log (
@@ -1539,6 +2279,15 @@ public class PlatformDocumentTaskService {
 			case "BOM_DRAFT_IMPORT" -> "BIMP";
 			case "BOM_DRAFT_EXPORT" -> "BEXP";
 			case "APPROVAL_PRINT" -> "PRNT";
+			case "PROCUREMENT_QUOTE_IMPORT" -> "PQIM";
+			case "PROCUREMENT_ORDER_PRINT" -> "POPR";
+			case "PROCUREMENT_REQUISITION_EXPORT" -> "PREX";
+			case "PROCUREMENT_INQUIRY_EXPORT" -> "PIEX";
+			case "PROCUREMENT_QUOTE_EXPORT" -> "PQEX";
+			case "PROCUREMENT_PRICE_AGREEMENT_EXPORT" -> "PAEX";
+			case "PROCUREMENT_ORDER_EXPORT" -> "POEX";
+			case "PROCUREMENT_SCHEDULE_EXPORT" -> "PSEX";
+			case "PROCUREMENT_SUPPLY_EXPORT" -> "PUEX";
 			default -> "TASK";
 		};
 	}
@@ -1557,6 +2306,10 @@ public class PlatformDocumentTaskService {
 
 	private static String trimToNull(String value) {
 		return hasText(value) ? value.trim() : null;
+	}
+
+	private static String blankToNull(String value) {
+		return trimToNull(value);
 	}
 
 	private static String nullToBlank(String value) {
@@ -1726,7 +2479,11 @@ public class PlatformDocumentTaskService {
 	public record BomDraftExportRequest(Long bomId, Long version) {
 	}
 
-	public record PrintTaskRequest(Long approvalInstanceId, String templateCode) {
+	public record PrintTaskRequest(Long approvalInstanceId, String objectType, Long objectId, String templateCode) {
+	}
+
+	public record ProcurementExportRequest(String taskType, String objectType, Long objectId,
+			Map<String, Object> filters) {
 	}
 
 	public record ImportTemplateRecord(String filename, String contentType, byte[] content) {
@@ -1797,13 +2554,39 @@ public class PlatformDocumentTaskService {
 			Long businessObjectVersion) {
 	}
 
+	public record ProcurementOrderPrintPayload(Long orderId, String templateCode, Long orderVersion,
+			int templateVersion) {
+	}
+
 	private record ImportTaskPayload(Long sourceFileId, String filename, String sha256) {
+	}
+
+	public record SupplierQuoteImportPayload(Long sourceFileId, String filename, String sha256, Long inquiryId) {
+	}
+
+	private record ProcurementExportDataset(String sheetName, List<String> headers, List<List<String>> rows) {
+	}
+
+	private record ProcurementInquiryTaskSnapshot(Long id, String inquiryNo, String status, Long version) {
+	}
+
+	private record ProcurementOrderPrintSnapshot(Long id, String orderNo, String purchaseMode, Long projectId,
+			String status, LocalDate orderDate, String supplierName, Long version) {
+	}
+
+	private record ProcurementOrderPrintLine(Integer lineNo, String materialCode, String materialName,
+			BigDecimal quantity, BigDecimal taxIncludedUnitPrice) {
 	}
 
 	private record MaterialImportRow(String code, String name, String specification, String materialType,
 			String sourceType, String trackingMethod, String categoryCode, String unitCode, String status,
 			String costCategory, String inventoryValuationCategory, String inventoryValueEnabled,
 			String projectCostEnabled, String costRemark, String remark) {
+	}
+
+	private record SupplierQuoteImportRow(Long supplierId, LocalDate validFrom, LocalDate validTo,
+			Long inquiryLineId, BigDecimal quantity, BigDecimal taxRate, BigDecimal taxExcludedUnitPrice,
+			BigDecimal taxIncludedUnitPrice, LocalDate deliveryDate, String remark) {
 	}
 
 	private record BomDraftImportPayload(String mode, Long bomId, Long version, String bomCode,
@@ -1814,6 +2597,9 @@ public class PlatformDocumentTaskService {
 
 	private record BomDraftImportItem(Integer lineNo, String childMaterialCode, String businessUnitCode,
 			BigDecimal businessQuantity, BigDecimal lossRate, String warehouse, String remark) {
+	}
+
+	private record InquiryLineImportSnapshot(Long id, Long inquiryId, Long materialId, Long unitId) {
 	}
 
 	private record ImportError(Integer rowNo, String columnName, String errorCode, String message) {

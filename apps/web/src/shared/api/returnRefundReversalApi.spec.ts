@@ -120,6 +120,7 @@ const purchaseReturnDetail: PurchaseReturnDetail = {
   status: 'DRAFT',
   totalQuantity: '1.500000',
   totalAmount: '120.00',
+  version: 6,
   source: {
     sourceType: 'PURCHASE_RECEIPT',
     sourceId: 20,
@@ -540,9 +541,9 @@ describe('退货退款与反冲 API', () => {
     }
 
     await api.purchaseReturns.create(payload)
-    await api.purchaseReturns.update(2, payload)
-    await api.purchaseReturns.post(2)
-    await api.purchaseReturns.cancel(2)
+    await api.purchaseReturns.update(2, { ...payload, version: 6 })
+    await api.purchaseReturns.post(2, { version: 7, idempotencyKey: 'purchase-return-post-2' })
+    await api.purchaseReturns.cancel(2, { version: 8, idempotencyKey: 'purchase-return-cancel-2' })
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).sourceReceiptId).toBe(20)
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].quantity).toBe('1.500000')
@@ -552,22 +553,26 @@ describe('退货退款与反冲 API', () => {
       method: 'POST',
     }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/procurement/returns/2', expect.objectContaining({
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, version: 6 }),
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-update' }),
       method: 'PUT',
     }))
     expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/procurement/returns/2/post', {
+      body: JSON.stringify({ version: 7, idempotencyKey: 'purchase-return-post-2' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-post',
       },
       method: 'PUT',
     })
     expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/procurement/returns/2/cancel', {
+      body: JSON.stringify({ version: 8, idempotencyKey: 'purchase-return-cancel-2' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-cancel',
       },
       method: 'PUT',

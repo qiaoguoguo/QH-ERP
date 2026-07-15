@@ -1,23 +1,42 @@
 <script setup lang="ts">
-import type { ResourceId } from '../../shared/api/procurementApi'
+import type { ProcurementMode, ResourceId } from '../../shared/api/procurementApi'
 import type { MaterialRecord } from '../../shared/api/masterDataApi'
-import { type PurchaseOrderLineDraft, newPurchaseOrderLine, nextPurchaseOrderLineNo } from './procurementPageHelpers'
+import {
+  type PurchaseOrderLineDraft,
+  type PurchaseOrderSourceOption,
+  newPurchaseOrderLine,
+  nextPurchaseOrderLineNo,
+  procurementModeDisplay,
+} from './procurementPageHelpers'
 
 const props = withDefaults(defineProps<{
   lines: PurchaseOrderLineDraft[]
   materials: MaterialRecord[]
+  procurementMode?: ProcurementMode | null
+  projectCode?: string | null
+  projectName?: string | null
+  requisitionLineOptions?: PurchaseOrderSourceOption[]
+  quoteLineOptions?: PurchaseOrderSourceOption[]
+  priceAgreementLineOptions?: PurchaseOrderSourceOption[]
   readOnly?: boolean
   errors?: Record<number, string>
 }>(), {
+  procurementMode: null,
+  projectCode: null,
+  projectName: null,
+  requisitionLineOptions: () => [],
+  quoteLineOptions: () => [],
+  priceAgreementLineOptions: () => [],
   readOnly: false,
   errors: () => ({}),
 })
 
 const emit = defineEmits<{
   'update:lines': [lines: PurchaseOrderLineDraft[]]
+  'source-selected': [option: PurchaseOrderSourceOption]
 }>()
 
-function valueOrEmpty(value: ResourceId | '') {
+function valueOrEmpty(value: ResourceId | '' | null | undefined) {
   return value === null || value === undefined ? '' : value
 }
 
@@ -38,6 +57,84 @@ function updateMaterial(index: number, value: ResourceId) {
 
 function updateText(index: number, key: 'quantity' | 'unitPrice' | 'expectedArrivalDate' | 'remark', value: string | number) {
   updateLine(index, { [key]: String(value) })
+}
+
+function updateDecimalText(
+  index: number,
+  key: 'taxRate' | 'taxExcludedUnitPrice' | 'taxIncludedUnitPrice',
+  value: string | number,
+) {
+  updateLine(index, { [key]: String(value) })
+}
+
+function patchFromSource(option: PurchaseOrderSourceOption) {
+  const patch: Partial<PurchaseOrderLineDraft> = {
+    procurementMode: option.procurementMode ?? null,
+    projectId: option.projectId ?? null,
+    projectCode: option.projectCode ?? null,
+    projectName: option.projectName ?? null,
+    taxRate: option.taxRate ?? '',
+    taxExcludedUnitPrice: option.taxExcludedUnitPrice ?? '',
+    taxIncludedUnitPrice: option.taxIncludedUnitPrice ?? '',
+    currency: option.currency ?? 'CNY',
+  }
+  if (option.materialId !== undefined && option.materialId !== null) {
+    patch.materialId = option.materialId
+  }
+  if (option.unitId !== undefined && option.unitId !== null) {
+    patch.unitId = option.unitId
+  }
+  if (option.unitName !== undefined && option.unitName !== null) {
+    patch.unitName = option.unitName
+  }
+  if (option.quantity !== undefined && option.quantity !== null) {
+    patch.quantity = option.quantity
+  }
+  return patch
+}
+
+function selectRequisitionLine(index: number, value: ResourceId | '') {
+  const option = props.requisitionLineOptions.find((item) => String(item.id) === String(value))
+  updateLine(index, {
+    requisitionLineId: value === '' ? null : value,
+    requisitionSourceLabel: option?.label ?? '',
+    ...(option ? patchFromSource(option) : {}),
+  })
+  if (option) {
+    emit('source-selected', option)
+  }
+}
+
+function selectQuoteLine(index: number, value: ResourceId | '') {
+  const option = props.quoteLineOptions.find((item) => String(item.id) === String(value))
+  updateLine(index, {
+    quoteLineId: value === '' ? null : value,
+    quoteSourceLabel: option?.label ?? '',
+    ...(option ? patchFromSource(option) : {}),
+  })
+  if (option) {
+    emit('source-selected', option)
+  }
+}
+
+function selectPriceAgreementLine(index: number, value: ResourceId | '') {
+  const option = props.priceAgreementLineOptions.find((item) => String(item.id) === String(value))
+  updateLine(index, {
+    priceAgreementLineId: value === '' ? null : value,
+    priceAgreementSourceLabel: option?.label ?? '',
+    ...(option ? patchFromSource(option) : {}),
+  })
+  if (option) {
+    emit('source-selected', option)
+  }
+}
+
+function lineModeText(line: PurchaseOrderLineDraft) {
+  return procurementModeDisplay(
+    line.procurementMode ?? props.procurementMode,
+    line.projectCode ?? props.projectCode,
+    line.projectName ?? props.projectName,
+  )
 }
 
 function addLine() {
@@ -81,6 +178,71 @@ function removeLine(index: number) {
             </el-select>
           </template>
         </el-table-column>
+        <el-table-column label="模式/项目" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ lineModeText(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" min-width="360">
+          <template #default="{ row, $index }">
+            <div class="source-cell">
+              <el-select
+                :model-value="valueOrEmpty(row.requisitionLineId)"
+                :data-test="`purchase-order-line-requisition-line-id-${$index}`"
+                clearable
+                filterable
+                placeholder="选择请购行"
+                style="width: 100%"
+                :disabled="readOnly"
+                @update:model-value="selectRequisitionLine($index, $event)"
+              >
+                <el-option
+                  v-for="option in requisitionLineOptions"
+                  :key="option.id"
+                  :label="option.label"
+                  :value="option.id"
+                />
+              </el-select>
+              <span>请购来源：{{ row.requisitionSourceLabel || '未选择' }}</span>
+              <el-select
+                :model-value="valueOrEmpty(row.quoteLineId)"
+                :data-test="`purchase-order-line-quote-line-id-${$index}`"
+                clearable
+                filterable
+                placeholder="选择报价行"
+                style="width: 100%"
+                :disabled="readOnly"
+                @update:model-value="selectQuoteLine($index, $event)"
+              >
+                <el-option
+                  v-for="option in quoteLineOptions"
+                  :key="option.id"
+                  :label="option.label"
+                  :value="option.id"
+                />
+              </el-select>
+              <span>报价来源：{{ row.quoteSourceLabel || quoteLineOptions[0]?.label || '未选择' }}</span>
+              <el-select
+                :model-value="valueOrEmpty(row.priceAgreementLineId)"
+                :data-test="`purchase-order-line-price-agreement-line-id-${$index}`"
+                clearable
+                filterable
+                placeholder="选择协议行"
+                style="width: 100%"
+                :disabled="readOnly"
+                @update:model-value="selectPriceAgreementLine($index, $event)"
+              >
+                <el-option
+                  v-for="option in priceAgreementLineOptions"
+                  :key="option.id"
+                  :label="option.label"
+                  :value="option.id"
+                />
+              </el-select>
+              <span>协议来源：{{ row.priceAgreementSourceLabel || priceAgreementLineOptions[0]?.label || '未选择' }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column label="单位" width="100">
           <template #default="{ row }">
             {{ row.unitName || '基本单位' }}
@@ -108,6 +270,37 @@ function removeLine(index: number) {
               :disabled="readOnly"
               @update:model-value="updateText($index, 'unitPrice', $event)"
             />
+          </template>
+        </el-table-column>
+        <el-table-column label="税价" min-width="300" align="right">
+          <template #default="{ row, $index }">
+            <div class="tax-cell">
+              <el-input
+                :model-value="row.taxExcludedUnitPrice"
+                :name="`purchase-order-line-tax-excluded-unit-price-${$index}`"
+                inputmode="decimal"
+                placeholder="未税单价"
+                :disabled="readOnly"
+                @update:model-value="updateDecimalText($index, 'taxExcludedUnitPrice', $event)"
+              />
+              <el-input
+                :model-value="row.taxIncludedUnitPrice"
+                :name="`purchase-order-line-tax-included-unit-price-${$index}`"
+                inputmode="decimal"
+                placeholder="含税单价"
+                :disabled="readOnly"
+                @update:model-value="updateDecimalText($index, 'taxIncludedUnitPrice', $event)"
+              />
+              <el-input
+                :model-value="row.taxRate"
+                :name="`purchase-order-line-tax-rate-${$index}`"
+                inputmode="decimal"
+                placeholder="税率"
+                :disabled="readOnly"
+                @update:model-value="updateDecimalText($index, 'taxRate', $event)"
+              />
+              <span>{{ row.currency || 'CNY' }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="预计到货" width="140">
@@ -168,5 +361,18 @@ function removeLine(index: number) {
   float: right;
   font-size: 12px;
   margin-left: 12px;
+}
+
+.source-cell,
+.tax-cell {
+  display: grid;
+  gap: 6px;
+}
+
+.source-cell span,
+.tax-cell span {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  text-align: left;
 }
 </style>

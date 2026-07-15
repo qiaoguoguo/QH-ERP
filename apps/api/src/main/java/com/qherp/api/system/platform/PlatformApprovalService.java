@@ -7,6 +7,9 @@ import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.bom.BomEngineeringChangeAdminService;
 import com.qherp.api.system.inventory.InventoryStage023AdminService;
+import com.qherp.api.system.procurement.ProcurementRequisitionService;
+import com.qherp.api.system.procurement.ProcurementSourcingService;
+import com.qherp.api.system.procurement.ProcurementAdminService;
 import com.qherp.api.system.salesproject.SalesProjectContractService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
@@ -41,15 +44,27 @@ public class PlatformApprovalService {
 
 	private final InventoryStage023AdminService inventoryStage023AdminService;
 
+	private final ProcurementRequisitionService procurementRequisitionService;
+
+	private final ProcurementSourcingService procurementSourcingService;
+
+	private final ProcurementAdminService procurementAdminService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
 			BomEngineeringChangeAdminService engineeringChangeService,
-			@Lazy InventoryStage023AdminService inventoryStage023AdminService) {
+			@Lazy InventoryStage023AdminService inventoryStage023AdminService,
+			@Lazy ProcurementRequisitionService procurementRequisitionService,
+			@Lazy ProcurementSourcingService procurementSourcingService,
+			@Lazy ProcurementAdminService procurementAdminService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
 		this.engineeringChangeService = engineeringChangeService;
 		this.inventoryStage023AdminService = inventoryStage023AdminService;
+		this.procurementRequisitionService = procurementRequisitionService;
+		this.procurementSourcingService = procurementSourcingService;
+		this.procurementAdminService = procurementAdminService;
 	}
 
 	@Transactional
@@ -80,6 +95,51 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitInventoryValuationAdjustment(Long adjustmentId, ApprovalSubmitRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		return submit("INVENTORY_VALUATION_ADJUSTMENT_POST", adjustmentId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitProcurementRequisition(Long requisitionId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("PROCUREMENT_REQUISITION_APPROVAL", requisitionId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitProcurementPriceAgreementActivation(Long agreementId,
+			ApprovalSubmitRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION", agreementId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitProcurementOrderException(Long orderId,
+			ApprovalSubmitRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("PROCUREMENT_ORDER_EXCEPTION_CONFIRM", orderId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
+			ApprovalSubmitRequest request, CurrentUser operator) {
+		validateSubmitRequest(request);
+		String fingerprint = approvalFingerprint(sceneCode, objectId, request);
+		List<ExistingApproval> existing = this.jdbcTemplate.query("""
+				select id, request_fingerprint
+				from platform_approval_instance
+				where submitted_by_user_id = ?
+				and scene_code = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new ExistingApproval(rs.getLong("id"), rs.getString("request_fingerprint")),
+				operator.id(), sceneCode, request.idempotencyKey());
+		if (existing.isEmpty()) {
+			return null;
+		}
+		ExistingApproval approval = existing.getFirst();
+		if (!fingerprint.equals(approval.requestFingerprint())) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_IDEMPOTENCY_CONFLICT);
+		}
+		return toInstanceRecord(instanceBase(approval.id()), operator);
+	}
+
+	public void updateBusinessObjectVersion(Long instanceId, Long version) {
+		this.jdbcTemplate.update("""
+				update platform_approval_instance
+				set business_object_version = ?, updated_at = ?
+				where id = ?
+				""", version, OffsetDateTime.now(), instanceId);
 	}
 
 	@Transactional(readOnly = true)
@@ -376,6 +436,21 @@ public class PlatformApprovalService {
 			this.inventoryStage023AdminService.postValuationAdjustmentFromApproval(task.businessObjectId(), operator);
 			return;
 		}
+		if ("PROCUREMENT_REQUISITION_APPROVAL".equals(task.sceneCode())) {
+			this.procurementRequisitionService.approveFromApproval(task.businessObjectId(),
+					task.businessObjectVersion(), operator);
+			return;
+		}
+		if ("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION".equals(task.sceneCode())) {
+			this.procurementSourcingService.activatePriceAgreementFromApproval(task.businessObjectId(),
+					task.businessObjectVersion(), operator);
+			return;
+		}
+		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(task.sceneCode())) {
+			this.procurementAdminService.confirmOrderFromExceptionApproval(task.businessObjectId(),
+					task.businessObjectVersion(), operator, servletRequest);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -384,6 +459,15 @@ public class PlatformApprovalService {
 				|| "INVENTORY_STOCKTAKE_VARIANCE_POST".equals(sceneCode)
 				|| "INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
 			this.inventoryStage023AdminService.reopenAfterApprovalTerminal(sceneCode, objectId, operator);
+		}
+		if ("PROCUREMENT_REQUISITION_APPROVAL".equals(sceneCode)) {
+			this.procurementRequisitionService.reopenAfterApprovalTerminal(objectId, operator);
+		}
+		if ("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION".equals(sceneCode)) {
+			this.procurementSourcingService.reopenPriceAgreementAfterApprovalTerminal(objectId, operator);
+		}
+		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
+			this.procurementAdminService.reopenOrderAfterExceptionApprovalTerminal(objectId, operator);
 		}
 	}
 
@@ -538,6 +622,48 @@ public class PlatformApprovalService {
 				.stream()
 				.findFirst()
 				.orElseThrow(() -> new BusinessException(ApiErrorCode.INVENTORY_DOCUMENT_NOT_FOUND));
+		}
+		if ("PROCUREMENT_REQUISITION_APPROVAL".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, requisition_no, purpose,
+					       case when status in ('DRAFT', 'SUBMITTED') then 'DRAFT' else status end as approval_status,
+					       version
+					from proc_purchase_requisition
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("requisition_no"), rs.getString("purpose"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_REQUISITION_NOT_FOUND));
+		}
+		if ("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, agreement_no, agreement_no as summary,
+					       case when status in ('DRAFT', 'SUBMITTED') then 'DRAFT' else status end as approval_status,
+					       version
+					from proc_price_agreement
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("agreement_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_AGREEMENT_NOT_FOUND));
+		}
+		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, order_no, coalesce(exception_reason, public_direct_reason, remark, order_no) as summary,
+					       case when status in ('DRAFT') then 'DRAFT' else status end as approval_status,
+					       version
+					from proc_purchase_order
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("order_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_NOT_FOUND));
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -882,6 +1008,15 @@ public class PlatformApprovalService {
 		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
 			return operator.permissions().contains("inventory:valuation:view");
 		}
+		if ("PROCUREMENT_REQUISITION_APPROVAL".equals(sceneCode)) {
+			return operator.permissions().contains("procurement:requisition:view");
+		}
+		if ("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION".equals(sceneCode)) {
+			return operator.permissions().contains("procurement:price-agreement:view");
+		}
+		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
+			return operator.permissions().contains("procurement:order:view");
+		}
 		return false;
 	}
 
@@ -935,6 +1070,15 @@ public class PlatformApprovalService {
 		}
 		if ("INVENTORY_VALUATION_ADJUSTMENT_POST".equals(sceneCode)) {
 			return "inventory:valuation:view";
+		}
+		if ("PROCUREMENT_REQUISITION_APPROVAL".equals(sceneCode)) {
+			return "procurement:requisition:view";
+		}
+		if ("PROCUREMENT_PRICE_AGREEMENT_ACTIVATION".equals(sceneCode)) {
+			return "procurement:price-agreement:view";
+		}
+		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
+			return "procurement:order:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
