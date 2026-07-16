@@ -10,6 +10,8 @@ import {
   formatProcurementQuantity,
   procurementErrorMessage,
   procurementOwnershipDisplay,
+  procurementRequisitionStatusLabel,
+  procurementRequisitionStatusTagType,
 } from './procurementPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
@@ -22,25 +24,7 @@ const actionError = ref('')
 const actionLoading = ref(false)
 const record = ref<ProcurementRequisitionDetailRecord | null>(null)
 const pageTitle = computed(() => record.value?.requisitionNo ?? '采购请购详情')
-const pageDescription = computed(() => record.value ? procurementOwnershipDisplay(record.value) : '查看请购来源、明细、审批状态和后续动作。')
-const requisitionStatusLabels: Record<string, string> = {
-  DRAFT: '草稿',
-  SUBMITTED: '已提交',
-  APPROVED: '已批准',
-  PARTIALLY_ORDERED: '部分转单',
-  ORDERED: '已转单',
-  CLOSED: '已结案',
-  CANCELLED: '已取消',
-}
-const requisitionStatusTagTypes: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
-  DRAFT: 'info',
-  SUBMITTED: 'warning',
-  APPROVED: 'success',
-  PARTIALLY_ORDERED: 'warning',
-  ORDERED: 'success',
-  CLOSED: 'info',
-  CANCELLED: 'danger',
-}
+const pageDescription = '查看采购请购的状态、来源、明细、审批与转化进度。'
 const approvalStatusLabels: Record<string, string> = {
   NONE: '未提交',
   NOT_SUBMITTED: '未提交',
@@ -91,8 +75,8 @@ const sourceSummary = computed(() => {
     .map((source) => [source.sourceNo, source.summary].filter(Boolean).join(' '))
     .join('；')
 })
-const businessStatusText = computed(() => statusLabel(record.value?.status, record.value?.statusName, requisitionStatusLabels, '未知状态'))
-const businessStatusTagType = computed(() => statusTagType(record.value?.status, requisitionStatusTagTypes))
+const businessStatusText = computed(() => procurementRequisitionStatusLabel(record.value?.status, record.value?.statusName))
+const businessStatusTagType = computed(() => procurementRequisitionStatusTagType(record.value?.status))
 const approvalStatusText = computed(() => statusLabel(record.value?.approvalStatus, record.value?.approvalStatusName, approvalStatusLabels, '未提交'))
 const approvalStatusTagType = computed(() => statusTagType(record.value?.approvalStatus, approvalStatusTagTypes))
 const closeStateText = computed(() => record.value?.closeReason ? '已结案' : '未结案')

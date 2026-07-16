@@ -14,6 +14,8 @@ import {
   normalizeOptionalId,
   procurementErrorMessage,
   procurementOwnershipDisplay,
+  procurementRequisitionStatusLabel,
+  procurementRequisitionStatusTagType,
 } from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 import { useAuthStore } from '../../stores/authStore'
@@ -266,7 +268,16 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="业务/审批状态" min-width="190" show-overflow-tooltip>
           <template #default="{ row }">
-            <div>业务状态：{{ row.statusName || row.status }}</div>
+            <div>
+              <span>业务状态：</span>
+              <el-tag
+                data-test="requisition-row-business-status"
+                size="small"
+                :type="procurementRequisitionStatusTagType(row.status)"
+              >
+                {{ procurementRequisitionStatusLabel(row.status, row.statusName) }}
+              </el-tag>
+            </div>
             <div>审批状态：{{ row.approvalStatusName || row.approvalStatus || '未提交' }}</div>
           </template>
         </el-table-column>

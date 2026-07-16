@@ -2,6 +2,7 @@ import type {
   ResourceId,
   PurchaseOrderLineRecord,
   ProcurementMode,
+  ProcurementRequisitionStatus,
   PurchaseOrderStatus,
   PurchaseReceiptLineRecord,
   PurchaseReceiptStatus,
@@ -126,6 +127,26 @@ const purchaseReceiptStatusTypes: Record<PurchaseReceiptStatus, 'info' | 'succes
   POSTED: 'success',
 }
 
+const procurementRequisitionStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  APPROVED: '已批准',
+  PARTIALLY_ORDERED: '部分转单',
+  ORDERED: '已转单',
+  CLOSED: '已结案',
+  CANCELLED: '已取消',
+}
+
+const procurementRequisitionStatusTypes: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
+  DRAFT: 'info',
+  SUBMITTED: 'warning',
+  APPROVED: 'success',
+  PARTIALLY_ORDERED: 'warning',
+  ORDERED: 'success',
+  CLOSED: 'info',
+  CANCELLED: 'danger',
+}
+
 const procurementModeLabels: Record<ProcurementMode, string> = {
   PUBLIC: '公共采购',
   PROJECT: '项目专采',
@@ -150,6 +171,27 @@ export function purchaseReceiptStatusLabel(status: PurchaseReceiptStatus): strin
 
 export function purchaseReceiptStatusTagType(status: PurchaseReceiptStatus): 'info' | 'success' {
   return purchaseReceiptStatusTypes[status]
+}
+
+export function procurementRequisitionStatusLabel(
+  status?: ProcurementRequisitionStatus | string | null,
+  statusName?: string | null,
+): string {
+  const code = normalizeStatusCode(status)
+  const displayName = String(statusName ?? '').trim()
+  if (displayName && displayName !== code && !isRawStatusCode(displayName)) {
+    return displayName
+  }
+  if (!code) {
+    return '未知状态'
+  }
+  return procurementRequisitionStatusLabels[code] ?? '未知状态'
+}
+
+export function procurementRequisitionStatusTagType(
+  status?: ProcurementRequisitionStatus | string | null,
+): 'info' | 'success' | 'warning' | 'danger' {
+  return procurementRequisitionStatusTypes[normalizeStatusCode(status)] ?? 'info'
 }
 
 export function procurementErrorMessage(error: unknown): string {
@@ -462,6 +504,14 @@ function splitDecimal(value: string): { integer: string; decimal: string } {
 
 function isZeroDecimal(value: string): boolean {
   return /^0+(?:\.0+)?$/.test(value)
+}
+
+function normalizeStatusCode(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase()
+}
+
+function isRawStatusCode(value: string): boolean {
+  return /^[A-Z][A-Z0-9_]*$/.test(value)
 }
 
 export function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {

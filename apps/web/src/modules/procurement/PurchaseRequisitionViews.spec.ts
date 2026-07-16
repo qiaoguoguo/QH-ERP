@@ -295,7 +295,8 @@ describe('采购请购页面', () => {
     })
     expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
     expect(wrapper.text()).toContain('公共采购')
-    expect(wrapper.text()).toContain('业务状态：APPROVED')
+    expect(wrapper.text()).toContain('业务状态：已批准')
+    expect(wrapper.text()).not.toContain('业务状态：APPROVED')
     expect(wrapper.text()).toContain('审批状态：审批通过')
     expect(wrapper.text()).toContain('M-100 电机')
     expect(wrapper.text()).toContain('计划/已转/剩余：100/40/60')
@@ -317,6 +318,46 @@ describe('采购请购页面', () => {
       idempotencyKey: 'requisition-export-key',
     })
     expect(wrapper.text()).toContain('TASK-REQ-EXPORT')
+  })
+
+  it('列表业务状态使用统一中文标签，不泄露 DRAFT 等内部码', async () => {
+    procurementApiMock.requisitions.list.mockResolvedValueOnce({
+      items: [
+        {
+          ...projectRequisition,
+          id: 101,
+          requisitionNo: 'REQ-OPEN-001',
+          status: 'DRAFT',
+          statusName: null,
+          approvalStatus: 'NOT_SUBMITTED',
+          approvalStatusName: null,
+          allowedActions: [],
+        },
+        {
+          ...projectRequisition,
+          id: 102,
+          requisitionNo: 'REQ-PART-001',
+          status: 'PARTIALLY_ORDERED',
+          statusName: null,
+          approvalStatus: 'APPROVED',
+          approvalStatusName: null,
+          allowedActions: [],
+        },
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    })
+    const pinia = setupAuth(['procurement:requisition:view'])
+    const router = await createTestRouter('/procurement/requisitions')
+    const wrapper = mount(PurchaseRequisitionListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    const businessStatuses = wrapper.findAll('[data-test="requisition-row-business-status"]').map((tag) => tag.text())
+    expect(businessStatuses).toEqual(expect.arrayContaining(['草稿', '部分转单']))
+    expect(wrapper.text()).not.toContain('DRAFT')
+    expect(wrapper.text()).not.toContain('PARTIALLY_ORDERED')
   })
 
   it('列表和详情按真实后端字段回填请购采购模式与项目标识', async () => {
@@ -492,6 +533,10 @@ describe('采购请购页面', () => {
 
     expectStandardDetailPage(wrapper)
     expect(procurementApiMock.requisitions.get).toHaveBeenCalledWith('1')
+    const pageDescription = wrapper.find('.page-heading p').text()
+    expect(pageDescription).toBe('查看采购请购的状态、来源、明细、审批与转化进度。')
+    expect(pageDescription).not.toContain('REQ-PRJ-001')
+    expect(pageDescription).not.toContain('项目专采 · PRJ-024/华东产线改造')
     expect(wrapper.find('.summary-strip').exists()).toBe(true)
     expect(wrapper.find('.summary-grid').exists()).toBe(false)
     expect(wrapper.find('.state-box').exists()).toBe(false)
