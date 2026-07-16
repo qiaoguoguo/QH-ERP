@@ -18,6 +18,22 @@ function Assert-True {
     }
 }
 
+function Assert-ContainsInOrder {
+    param(
+        [string] $Text,
+        [string[]] $Needles,
+        [string] $Message
+    )
+    $position = -1
+    foreach ($needle in $Needles) {
+        $next = $Text.IndexOf($needle, $position + 1, [System.StringComparison]::Ordinal)
+        if ($next -lt 0) {
+            throw "$Message 缺少片段：$needle"
+        }
+        $position = $next
+    }
+}
+
 $safe = Test-DemoResourceName -Value "qherp_demo_build_20260715" -Prefix "qherp_demo_build_"
 Assert-True -Condition $safe -Message "临时数据库名称应被识别为安全资源。"
 $unsafe = Test-DemoResourceName -Value "qherp" -Prefix "qherp_demo_build_"
@@ -207,6 +223,23 @@ $purchaseOrderFunction = $generator.Substring($purchaseOrderStart, $purchaseOrde
 Assert-True -Condition ($purchaseOrderFunction -match 'publicDirectReason\s*=\s*"验收演示公共直采[^"]+"' `
         -and $purchaseOrderFunction -notmatch 'directPurchaseReason\s*=') `
     -Message "公共直采采购订单必须按 024 后端主契约发送 publicDirectReason 中文审计原因，不能遗漏或使用旧别名。"
+Assert-ContainsInOrder -Text $purchaseOrderFunction -Needles @(
+    'Path "/api/admin/procurement/orders/$($existing.id)/confirm" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示确认采购订单"',
+    'idempotencyKey = "$RunId-PO-$Key-CONFIRM"'
+) -Message "采购订单确认必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+$purchaseReceiptStart = $generator.IndexOf("function Ensure-PurchaseReceipt")
+$purchaseReceiptEnd = $generator.IndexOf("function Process-PendingQualityInspections", $purchaseReceiptStart)
+Assert-True -Condition ($purchaseReceiptStart -ge 0 -and $purchaseReceiptEnd -gt $purchaseReceiptStart) `
+    -Message "自测无法定位 Ensure-PurchaseReceipt 函数边界。"
+$purchaseReceiptFunction = $generator.Substring($purchaseReceiptStart, $purchaseReceiptEnd - $purchaseReceiptStart)
+Assert-ContainsInOrder -Text $purchaseReceiptFunction -Needles @(
+    'Path "/api/admin/procurement/receipts/$($existing.id)/post" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示采购入库过账"',
+    'idempotencyKey = "$RunId-PR-$Key-POST"'
+) -Message "采购入库过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
 Assert-True -Condition ($generator -match '\$script:DemoPurchaseReceiptIds\.Add\(\[long\]\$existing\.id\)') `
     -Message "质检处理必须限定本次演示采购入库来源，避免误处理非演示 PENDING。"
 Assert-True -Condition ($generator -match 'BATCH-CU-Q' -and $generator -match 'BATCH-CU-R' -and $generator -match 'BATCH-CU-F' -and $generator -notmatch 'BATCH-CU-01') `
@@ -270,6 +303,28 @@ Assert-True -Condition ($generator -match 'function Ensure-SalesOrderConfirmed' 
     -Message "销售订单必须通过真实销售 API 创建并确认，形成库存预留。"
 Assert-True -Condition ($generator -match 'function Ensure-SalesShipmentPosted' -and $generator -match '/api/admin/sales/shipments/\$\(\$existing\.id\)/post') `
     -Message "销售出库必须通过真实发货单过账生成。"
+$salesOrderStart = $generator.IndexOf("function Ensure-SalesOrderConfirmed")
+$salesOrderEnd = $generator.IndexOf("function Ensure-SalesShipmentPosted", $salesOrderStart)
+Assert-True -Condition ($salesOrderStart -ge 0 -and $salesOrderEnd -gt $salesOrderStart) `
+    -Message "自测无法定位 Ensure-SalesOrderConfirmed 函数边界。"
+$salesOrderFunction = $generator.Substring($salesOrderStart, $salesOrderEnd - $salesOrderStart)
+Assert-ContainsInOrder -Text $salesOrderFunction -Needles @(
+    'Path "/api/admin/sales/orders/$($existing.id)/confirm" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示确认销售订单"',
+    'idempotencyKey = "$RunId-SALES-ORDER-$Key-CONFIRM"'
+) -Message "销售订单确认必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+$salesShipmentStart = $generator.IndexOf("function Ensure-SalesShipmentPosted")
+$salesShipmentEnd = $generator.IndexOf("function Ensure-WorkOrderReleased", $salesShipmentStart)
+Assert-True -Condition ($salesShipmentStart -ge 0 -and $salesShipmentEnd -gt $salesShipmentStart) `
+    -Message "自测无法定位 Ensure-SalesShipmentPosted 函数边界。"
+$salesShipmentFunction = $generator.Substring($salesShipmentStart, $salesShipmentEnd - $salesShipmentStart)
+Assert-ContainsInOrder -Text $salesShipmentFunction -Needles @(
+    'Path "/api/admin/sales/shipments/$($existing.id)/post" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示销售出库过账"',
+    'idempotencyKey = "$RunId-SALES-SHIPMENT-$Key-POST"'
+) -Message "销售出库过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
 Assert-True -Condition ($generator -match 'Ensure-SalesOrderConfirmed -Key "SEMI-B-' -and $generator -notmatch 'Ensure-SalesOrderConfirmed -Key "(SCREW|RAIL|CABLE-RESERVED)"') `
     -Message "销售服务只允许成品/半成品，演示销售链不得用原料或辅料绕过真实可售物料约束。"
 Assert-True -Condition ($generator -match 'Ensure-SalesOrderConfirmed -Key "SEMI-B-A" -Customer \$customers\[0\] -Project \$projectA -Contract \$mainContract') `
@@ -290,6 +345,23 @@ Assert-True -Condition ($generator -notmatch 'foreach \(\$[rp] in @\(\$(receivab
     -Message "财务 helper 不得用 @() 包装泛型列表遍历，避免 pwsh binder 类型错误。"
 Assert-True -Condition ($generator -match 'function Ensure-ReversalDocumentsPosted' -and $generator -match '/api/admin/sales/returns' -and $generator -match '/api/admin/procurement/returns' -and $generator -match '/api/admin/production/material-returns' -and $generator -match '/api/admin/production/material-supplements') `
     -Message "销售退货、采购退货、生产退料和补料必须通过真实冲销 API 生成。"
+$reversalStart = $generator.IndexOf("function Ensure-ReversalDocumentsPosted")
+$reversalEnd = $generator.IndexOf("function Ensure-StocktakeDocuments", $reversalStart)
+Assert-True -Condition ($reversalStart -ge 0 -and $reversalEnd -gt $reversalStart) `
+    -Message "自测无法定位 Ensure-ReversalDocumentsPosted 函数边界。"
+$reversalFunction = $generator.Substring($reversalStart, $reversalEnd - $reversalStart)
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/sales/returns/$($salesReturn.id)/post" -Body ([ordered]@{',
+    'version = $salesReturn.version',
+    'reason = "验收演示销售退货过账"',
+    'idempotencyKey = "$RunId-SALES-RETURN-POST"'
+) -Message "销售退货过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/procurement/returns/$($purchaseReturn.id)/post" -Body ([ordered]@{',
+    'version = $purchaseReturn.version',
+    'reason = "验收演示采购退货过账"',
+    'idempotencyKey = "$RunId-PURCHASE-RETURN-POST"'
+) -Message "采购退货过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
 Assert-True -Condition ($generator -match 'function Get-SalesReturnBySourceShipment' -and $generator -match 'source\.sourceId -eq \$Shipment\.id') `
     -Message "销售退货列表摘要不返回 remark，同库复跑必须按源发货单定位既有退货单。"
 Assert-True -Condition ($generator -match '/api/admin/sales/return-sources' -and $generator -match 'sourceAllocationId = \$returnAllocation\.sourceAllocationId') `

@@ -707,7 +707,11 @@ function Ensure-PurchaseOrder {
         })
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/orders/$($existing.id)/confirm"
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/orders/$($existing.id)/confirm" -Body ([ordered]@{
+            version = $existing.version
+            reason = "验收演示确认采购订单"
+            idempotencyKey = "$RunId-PO-$Key-CONFIRM"
+        })
     }
     $Manifest.AddObject("purchaseOrder", $Key, $existing.id)
     return Get-ItemById -Path "/api/admin/procurement/orders" -Id $existing.id
@@ -726,7 +730,11 @@ function Ensure-PurchaseReceipt {
         })
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/receipts/$($existing.id)/post"
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/receipts/$($existing.id)/post" -Body ([ordered]@{
+            version = $existing.version
+            reason = "验收演示采购入库过账"
+            idempotencyKey = "$RunId-PR-$Key-POST"
+        })
     }
     $Manifest.AddObject("purchaseReceipt", $Key, $existing.id)
     $script:DemoPurchaseReceiptIds.Add([long]$existing.id) | Out-Null
@@ -1098,7 +1106,11 @@ function Ensure-SalesOrderConfirmed {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/orders" -Body $body
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/orders/$($existing.id)/confirm"
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/orders/$($existing.id)/confirm" -Body ([ordered]@{
+            version = $existing.version
+            reason = "验收演示确认销售订单"
+            idempotencyKey = "$RunId-SALES-ORDER-$Key-CONFIRM"
+        })
     }
     $detail = Get-ItemById -Path "/api/admin/sales/orders" -Id $existing.id
     $Manifest.AddObject("salesOrder", $Key, $detail.id)
@@ -1118,7 +1130,11 @@ function Ensure-SalesShipmentPosted {
         })
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/shipments/$($existing.id)/post"
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/shipments/$($existing.id)/post" -Body ([ordered]@{
+            version = $existing.version
+            reason = "验收演示销售出库过账"
+            idempotencyKey = "$RunId-SALES-SHIPMENT-$Key-POST"
+        })
     }
     $detail = Get-ItemById -Path "/api/admin/sales/shipments" -Id $existing.id
     $Manifest.AddObject("salesShipment", $Key, $detail.id)
@@ -1472,7 +1488,11 @@ function Ensure-ReversalDocumentsPosted {
         })
     }
     if ($salesReturn.status -eq "DRAFT") {
-        $salesReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/returns/$($salesReturn.id)/post"
+        $salesReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/returns/$($salesReturn.id)/post" -Body ([ordered]@{
+            version = $salesReturn.version
+            reason = "验收演示销售退货过账"
+            idempotencyKey = "$RunId-SALES-RETURN-POST"
+        })
     }
 
     $purchaseReturnRemark = "验收演示采购退货"
@@ -1495,7 +1515,11 @@ function Ensure-ReversalDocumentsPosted {
         })
     }
     if ($purchaseReturn.status -eq "DRAFT") {
-        $purchaseReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/returns/$($purchaseReturn.id)/post"
+        $purchaseReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/procurement/returns/$($purchaseReturn.id)/post" -Body ([ordered]@{
+            version = $purchaseReturn.version
+            reason = "验收演示采购退货过账"
+            idempotencyKey = "$RunId-PURCHASE-RETURN-POST"
+        })
     }
 
     $materialReturnRemark = "验收演示生产退料"
