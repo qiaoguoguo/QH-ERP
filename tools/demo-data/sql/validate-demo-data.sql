@@ -3,11 +3,11 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V25'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V27'::text, 'migration'::text,
         coalesce(max(version::int)::text, 'none'),
-        'latest successful version = 25'::text,
-        (coalesce(max(version::int), 0) = 25 and bool_and(success)),
-        'Flyway 最新成功版本必须为 V25。'::text
+        'latest successful version = 27'::text,
+        (coalesce(max(version::int), 0) = 27 and bool_and(success)),
+        'Flyway 最新成功版本必须为 V27。'::text
     from flyway_schema_history where version ~ '^[0-9]+$'
     union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) = 0,
         'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success
