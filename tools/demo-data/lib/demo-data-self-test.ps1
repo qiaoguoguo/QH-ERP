@@ -224,11 +224,33 @@ Assert-True -Condition ($purchaseOrderFunction -match 'publicDirectReason\s*=\s*
         -and $purchaseOrderFunction -notmatch 'directPurchaseReason\s*=') `
     -Message "公共直采采购订单必须按 024 后端主契约发送 publicDirectReason 中文审计原因，不能遗漏或使用旧别名。"
 Assert-ContainsInOrder -Text $purchaseOrderFunction -Needles @(
+    'if ($PublicDirect) {',
+    'Path "/api/admin/procurement/orders/$($existing.id)/submit-exception" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示公共直采例外审批"',
+    'idempotencyKey = "$RunId-PO-$Key-EXCEPTION-SUBMIT"',
+    'Invoke-ApprovalTaskAction -Approval $approval -Action "approve"',
+    'Comment "同意验收演示公共直采确认"',
+    'Key "$RunId-PO-$Key-EXCEPTION-APPROVE"',
+    '$existing = Get-ItemById -Path "/api/admin/procurement/orders" -Id $existing.id',
+    'if ($existing.status -ne "CONFIRMED")'
+) -Message "公共直采采购订单必须先提交例外审批，审批通过后由回调确认并重新 GET 校验。"
+$publicBranchStart = $purchaseOrderFunction.IndexOf('if ($PublicDirect) {')
+$publicBranchElse = $purchaseOrderFunction.IndexOf('else {', $publicBranchStart)
+Assert-True -Condition ($publicBranchStart -ge 0 -and $publicBranchElse -gt $publicBranchStart) `
+    -Message "采购订单 helper 必须保留公共直采与非公共订单的清晰条件分支。"
+$publicDirectBranch = $purchaseOrderFunction.Substring($publicBranchStart, $publicBranchElse - $publicBranchStart)
+Assert-True -Condition ($publicDirectBranch -notmatch '/confirm') `
+    -Message "公共直采分支不得直接调用普通 confirm，必须由例外审批回调自动确认。"
+Assert-ContainsInOrder -Text $purchaseOrderFunction -Needles @(
+    'else {',
     'Path "/api/admin/procurement/orders/$($existing.id)/confirm" -Body ([ordered]@{',
     'version = $existing.version',
     'reason = "验收演示确认采购订单"',
     'idempotencyKey = "$RunId-PO-$Key-CONFIRM"'
-) -Message "采购订单确认必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+) -Message "非公共采购订单仍应保留普通确认动作请求契约。"
+Assert-True -Condition (([regex]::Matches($generator, 'Ensure-PurchaseOrder -Key "\$DemoPrefix-PO-')).Count -eq 3) `
+    -Message "三张采购订单样例必须统一走 Ensure-PurchaseOrder，避免公共直采审批链漏项。"
 $purchaseReceiptStart = $generator.IndexOf("function Ensure-PurchaseReceipt")
 $purchaseReceiptEnd = $generator.IndexOf("function Process-PendingQualityInspections", $purchaseReceiptStart)
 Assert-True -Condition ($purchaseReceiptStart -ge 0 -and $purchaseReceiptEnd -gt $purchaseReceiptStart) `
@@ -248,6 +270,8 @@ Assert-True -Condition ($generator -match 'Submit-And-ActSalesContractApproval')
     -Message "合同生效必须通过 022 固定审批提交和审批任务处理，不能直接调用业务 activate。"
 Assert-True -Condition ($generator -notmatch '/api/admin/sales-project-contracts/[^`"]+/activate') `
     -Message "演示生成器不得直接调用合同 activate 绕过固定审批。"
+Assert-True -Condition ($generator -match '\$approvalRole = Ensure-Role[\s\S]*procurement:order:view[\s\S]*procurement:order:exception-approve') `
+    -Message "演示审批角色必须包含采购订单查看和公共直采例外审批权限，否则无法看到并审批 TODO。"
 $mainApprovalIndex = $generator.IndexOf('$mainContract = Submit-And-ActSalesContractApproval -Contract $mainContract -Action "approve" -Key "MAIN"')
 $projectActivationIndex = $generator.IndexOf('/api/admin/sales-projects/$($projectA.id)/activate')
 $supplementCreateIndex = $generator.IndexOf('$supplementContract = Ensure-SalesContract')
