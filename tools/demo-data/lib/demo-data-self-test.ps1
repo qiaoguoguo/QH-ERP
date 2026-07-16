@@ -327,6 +327,35 @@ Assert-True -Condition ($generator -match 'function Ensure-SalesOrderConfirmed' 
     -Message "销售订单必须通过真实销售 API 创建并确认，形成库存预留。"
 Assert-True -Condition ($generator -match 'function Ensure-SalesShipmentPosted' -and $generator -match '/api/admin/sales/shipments/\$\(\$existing\.id\)/post') `
     -Message "销售出库必须通过真实发货单过账生成。"
+Assert-True -Condition ($generator -match 'function Ensure-SalesCreditProfile') `
+    -Message "销售订单确认前必须通过真实信用档案 API 确保客户信用档案，不能依赖确认失败后补救。"
+Assert-ContainsInOrder -Text $generator -Needles @(
+    'Write-Step "创建销售订单、预留和销售发货。"',
+    'Ensure-SalesCreditProfile -Customer $customers[0] -CreditLimit "200000.00" -Remark "025A演示正常信用：项目订单额度内确认"',
+    'Ensure-SalesCreditProfile -Customer $customers[3] -CreditLimit "50000.00" -Remark "025A演示正常信用：普通订单出库应收链路"',
+    'Ensure-SalesCreditProfile -Customer $customers[4] -CreditLimit "100.00" -Remark "025A演示信用例外：超额经审批确认并保留有效需求"',
+    '$salesOrderSemiA = Ensure-SalesOrderConfirmed',
+    '$salesOrderSemiB = Ensure-SalesOrderConfirmed',
+    '$salesOrderSemiReserved = Ensure-SalesOrderConfirmed'
+) -Message "三张销售订单必须先按产品冻结额度创建或更新信用档案，再创建/确认订单。"
+$creditProfileStart = $generator.IndexOf("function Ensure-SalesCreditProfile")
+$creditProfileEnd = $generator.IndexOf("function Ensure-SalesOrderConfirmed", $creditProfileStart)
+Assert-True -Condition ($creditProfileStart -ge 0 -and $creditProfileEnd -gt $creditProfileStart) `
+    -Message "自测无法定位 Ensure-SalesCreditProfile 函数边界。"
+$creditProfileFunction = $generator.Substring($creditProfileStart, $creditProfileEnd - $creditProfileStart)
+Assert-True -Condition ($creditProfileFunction -match 'Invoke-DemoApiPage -Session \$Session -Path "/api/admin/sales/credit-profiles" -Parameters @\{' `
+        -and $creditProfileFunction -match 'customerId = \$Customer\.id' `
+        -and $creditProfileFunction -match '/api/admin/sales/credit-profiles' `
+        -and $creditProfileFunction -match 'customerId = \$Customer\.id' `
+        -and $creditProfileFunction -match 'creditLimit = \$CreditLimit' `
+        -and $creditProfileFunction -match 'frozen = \$false' `
+        -and $creditProfileFunction -match 'blockOverdue = \$false' `
+        -and $creditProfileFunction -match 'reviewDate = "2026-07-10"' `
+        -and $creditProfileFunction -match 'remark = \$Remark' `
+        -and $creditProfileFunction -match 'version = \$current\.version') `
+    -Message "信用档案 helper 必须消费 GET/POST/PUT 真实契约，更新时携带当前 version，且不得新增生产 DTO 不存在的字段。"
+Assert-True -Condition ($generator -match '\$approvalRole = Ensure-Role[\s\S]*sales:order:view[\s\S]*sales:credit:view[\s\S]*sales:credit:override-approve') `
+    -Message "演示审批角色必须包含销售订单查看、信用查看和信用覆盖审批权限，否则无法看到并审批 SALES_ORDER_CREDIT_OVERRIDE TODO。"
 $salesOrderStart = $generator.IndexOf("function Ensure-SalesOrderConfirmed")
 $salesOrderEnd = $generator.IndexOf("function Ensure-SalesShipmentPosted", $salesOrderStart)
 Assert-True -Condition ($salesOrderStart -ge 0 -and $salesOrderEnd -gt $salesOrderStart) `
@@ -338,11 +367,33 @@ Assert-ContainsInOrder -Text $salesOrderFunction -Needles @(
     'reason = "验收演示确认销售订单"',
     'idempotencyKey = "$RunId-SALES-ORDER-$Key-CONFIRM"'
 ) -Message "销售订单确认必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+Assert-ContainsInOrder -Text $salesOrderFunction -Needles @(
+    'if ($CreditOverride) {',
+    'Path "/api/admin/sales/orders/$($existing.id)/submit-credit-override" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示销售订单信用例外审批"',
+    'idempotencyKey = "$RunId-SALES-ORDER-$Key-CREDIT-OVERRIDE-SUBMIT"',
+    'Invoke-ApprovalTaskAction -Approval $approval -Action "approve"',
+    'Comment "同意验收演示销售订单信用例外"',
+    'Key "$RunId-SALES-ORDER-$Key-CREDIT-OVERRIDE-APPROVE"',
+    '$existing = Get-ItemById -Path "/api/admin/sales/orders" -Id $existing.id',
+    'if ($existing.status -ne "CONFIRMED")'
+) -Message "超额销售订单必须走 SALES_ORDER_CREDIT_OVERRIDE 审批并由回调自动确认，不能直接普通 confirm。"
+Assert-True -Condition ($salesOrderFunction -match 'else\s*\{\s*\$existing = Invoke-DemoApi -Session \$Session -Method Put -Path "/api/admin/sales/orders/\$\(\$existing\.id\)/confirm"') `
+    -Message "额度内销售订单仍应保留普通确认动作请求契约。"
+Assert-True -Condition ($generator -match 'Ensure-SalesOrderConfirmed -Key "SEMI-B-RESERVED"[\s\S]*-CreditOverride') `
+    -Message "保留未发货订单必须作为唯一信用覆盖审批样例，不能抬高额度或删除样例。"
 $salesShipmentStart = $generator.IndexOf("function Ensure-SalesShipmentPosted")
 $salesShipmentEnd = $generator.IndexOf("function Ensure-WorkOrderReleased", $salesShipmentStart)
 Assert-True -Condition ($salesShipmentStart -ge 0 -and $salesShipmentEnd -gt $salesShipmentStart) `
     -Message "自测无法定位 Ensure-SalesShipmentPosted 函数边界。"
 $salesShipmentFunction = $generator.Substring($salesShipmentStart, $salesShipmentEnd - $salesShipmentStart)
+Assert-ContainsInOrder -Text $salesShipmentFunction -Needles @(
+    'Path "/api/admin/sales/orders/$($Order.id)/delivery-plans" -Parameters @{',
+    'orderLineId -eq $line.orderLineId',
+    '$line["deliveryPlanId"] = $plan.id',
+    'Path "/api/admin/sales/orders/$($Order.id)/shipments"'
+) -Message "销售出库创建前必须读取订单交付计划，按 orderLineId 匹配开放计划并把真实 deliveryPlanId 写入出库行。"
 Assert-ContainsInOrder -Text $salesShipmentFunction -Needles @(
     'Path "/api/admin/sales/shipments/$($existing.id)/post" -Body ([ordered]@{',
     'version = $existing.version',

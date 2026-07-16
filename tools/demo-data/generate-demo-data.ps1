@@ -1098,13 +1098,49 @@ function Submit-And-ApproveBomEco {
     return Get-ItemById -Path "/api/admin/bom-engineering-changes" -Id $Eco.id
 }
 
+function Ensure-SalesCreditProfile {
+    param(
+        [Parameter(Mandatory = $true)] $Customer,
+        [Parameter(Mandatory = $true)][string] $CreditLimit,
+        [Parameter(Mandatory = $true)][string] $Remark
+    )
+    $current = Invoke-DemoApiPage -Session $Session -Path "/api/admin/sales/credit-profiles" -Parameters @{
+        customerId = $Customer.id
+    } | Select-Object -First 1
+    if ($null -eq $current) {
+        $current = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/credit-profiles" -Body ([ordered]@{
+            customerId = $Customer.id
+            creditLimit = $CreditLimit
+            frozen = $false
+            blockOverdue = $false
+            reviewDate = "2026-07-10"
+            remark = $Remark
+        })
+    }
+    elseif ([decimal]$current.creditLimit -ne [decimal]$CreditLimit -or $current.frozen -ne $false `
+            -or $current.blockOverdue -ne $false -or $current.remark -ne $Remark) {
+        $current = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/credit-profiles/$($Customer.id)" -Body ([ordered]@{
+            customerId = $Customer.id
+            creditLimit = $CreditLimit
+            frozen = $false
+            blockOverdue = $false
+            reviewDate = "2026-07-10"
+            remark = $Remark
+            version = $current.version
+        })
+    }
+    $Manifest.AddObject("creditProfile", $Customer.code, $current.id)
+    return $current
+}
+
 function Ensure-SalesOrderConfirmed {
     param(
         [string] $Key,
         $Customer,
         [object[]] $Lines,
         $Project = $null,
-        $Contract = $null
+        $Contract = $null,
+        [switch] $CreditOverride
     )
     $remark = "验收演示销售订单 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/sales/orders" -Remark $remark
@@ -1125,11 +1161,27 @@ function Ensure-SalesOrderConfirmed {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/orders" -Body $body
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/orders/$($existing.id)/confirm" -Body ([ordered]@{
-            version = $existing.version
-            reason = "验收演示确认销售订单"
-            idempotencyKey = "$RunId-SALES-ORDER-$Key-CONFIRM"
-        })
+        if ($CreditOverride) {
+            $approval = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/orders/$($existing.id)/submit-credit-override" -Body ([ordered]@{
+                version = $existing.version
+                reason = "验收演示销售订单信用例外审批"
+                idempotencyKey = "$RunId-SALES-ORDER-$Key-CREDIT-OVERRIDE-SUBMIT"
+            })
+            $approved = Invoke-ApprovalTaskAction -Approval $approval -Action "approve" `
+                -Comment "同意验收演示销售订单信用例外" -Key "$RunId-SALES-ORDER-$Key-CREDIT-OVERRIDE-APPROVE"
+            $Manifest.AddObject("approval", "SALES-CREDIT-$Key", $approved.id)
+            $existing = Get-ItemById -Path "/api/admin/sales/orders" -Id $existing.id
+            if ($existing.status -ne "CONFIRMED") {
+                throw "销售订单 $Key 信用例外审批通过后未自动确认，当前状态：$($existing.status)。"
+            }
+        }
+        else {
+            $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/orders/$($existing.id)/confirm" -Body ([ordered]@{
+                version = $existing.version
+                reason = "验收演示确认销售订单"
+                idempotencyKey = "$RunId-SALES-ORDER-$Key-CONFIRM"
+            })
+        }
     }
     $detail = Get-ItemById -Path "/api/admin/sales/orders" -Id $existing.id
     $Manifest.AddObject("salesOrder", $Key, $detail.id)
@@ -1141,6 +1193,18 @@ function Ensure-SalesShipmentPosted {
     $remark = "验收演示销售发货 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/sales/shipments" -Remark $remark -Query @{ orderId = $Order.id }
     if ($null -eq $existing) {
+        $plans = Invoke-DemoApiPage -Session $Session -Path "/api/admin/sales/orders/$($Order.id)/delivery-plans" -Parameters @{}
+        foreach ($line in @($Lines)) {
+            $plan = @($plans | Where-Object {
+                    $_.orderLineId -eq $line.orderLineId `
+                        -and $_.status -in @("PLANNED", "PARTIALLY_SHIPPED") `
+                        -and [decimal]$_.remainingQuantity -ge [decimal]$line.quantity
+                } | Sort-Object plannedDate, lineNo, id | Select-Object -First 1)
+            if ($plan.Count -eq 0 -or $null -eq $plan[0]) {
+                throw "销售出库 $Key 的订单行 $($line.orderLineId) 没有可用开放交付计划，无法提交真实 deliveryPlanId。"
+            }
+            $line["deliveryPlanId"] = $plan.id
+        }
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/orders/$($Order.id)/shipments" -Body ([ordered]@{
             warehouseId = $Warehouse.id
             businessDate = "2026-07-11"
@@ -2119,7 +2183,7 @@ $adminLikeRole = Ensure-Role -Code "$DemoPrefix-ROLE-ADMIN" -Name "桥合演示�
 $warehouseRole = Ensure-Role -Code "$DemoPrefix-ROLE-WAREHOUSE" -Name "桥合仓储角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "inventory:*" -or $_ -like "master:*" -or $_ -like "platform:*" -or $_ -like "system:business-period:*" }) -PermissionMap $permissionMap
 $productionRole = Ensure-Role -Code "$DemoPrefix-ROLE-PRODUCTION" -Name "桥合生产角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "production:*" -or $_ -like "material:*" -or $_ -like "inventory:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
 $financeRole = Ensure-Role -Code "$DemoPrefix-ROLE-FINANCE" -Name "桥合财务角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "finance:*" -or $_ -like "sales:*" -or $_ -like "procurement:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
-$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" }) -PermissionMap $permissionMap
+$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" -or $_ -eq "sales:order:view" -or $_ -eq "sales:credit:view" -or $_ -eq "sales:credit:override-approve" }) -PermissionMap $permissionMap
 $readonlyRole = Ensure-Role -Code "$DemoPrefix-ROLE-READONLY" -Name "桥合只读角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "*:view" -or $_ -like "*:export" }) -PermissionMap $permissionMap
 
 $demoAdmin = Ensure-User -Username "$DemoPrefix-admin" -DisplayName "桥合演示管理员" -RoleIds @($adminLikeRole.id)
@@ -2578,6 +2642,9 @@ $supplementSourceIssue = Ensure-ProductionIssuePosted -Key "SUPPLEMENT-SOURCE" -
 
 Write-Step "创建销售订单、预留和销售发货。"
 $semiBBatch = Get-InventoryBatch -BatchNo "$DemoPrefix-BATCH-SEMI-B-001"
+Ensure-SalesCreditProfile -Customer $customers[0] -CreditLimit "200000.00" -Remark "025A演示正常信用：项目订单额度内确认" | Out-Null
+Ensure-SalesCreditProfile -Customer $customers[3] -CreditLimit "50000.00" -Remark "025A演示正常信用：普通订单出库应收链路" | Out-Null
+Ensure-SalesCreditProfile -Customer $customers[4] -CreditLimit "100.00" -Remark "025A演示信用例外：超额经审批确认并保留有效需求" | Out-Null
 $salesOrderSemiA = Ensure-SalesOrderConfirmed -Key "SEMI-B-A" -Customer $customers[0] -Project $projectA -Contract $mainContract -Lines @(
     [ordered]@{
         lineNo = 1
@@ -2613,7 +2680,7 @@ $salesOrderSemiReserved = Ensure-SalesOrderConfirmed -Key "SEMI-B-RESERVED" -Cus
         expectedShipDate = "2026-07-14"
         remark = "保留未发货预留演示"
     }
-)
+) -CreditOverride
 $shipmentSemiA = Ensure-SalesShipmentPosted -Key "SEMI-B-A" -Order $salesOrderSemiA -Warehouse $whFinished -Lines @(
     [ordered]@{
         lineNo = 1
