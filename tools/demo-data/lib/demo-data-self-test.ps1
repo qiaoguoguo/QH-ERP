@@ -199,6 +199,14 @@ Assert-True -Condition ($warehouseFunction -notmatch 'sortOrder\s*=') `
     -Message "仓库 DTO 不消费 sortOrder，演示生成器不得发送或依赖该字段。"
 Assert-True -Condition ($generator -notmatch 'Get-Date') `
     -Message "演示业务日期必须由 2026-07-15 固定锚点派生，不得使用运行时 Get-Date。"
+$purchaseOrderStart = $generator.IndexOf("function Ensure-PurchaseOrder")
+$purchaseOrderEnd = $generator.IndexOf("function Ensure-PurchaseReceipt", $purchaseOrderStart)
+Assert-True -Condition ($purchaseOrderStart -ge 0 -and $purchaseOrderEnd -gt $purchaseOrderStart) `
+    -Message "自测无法定位 Ensure-PurchaseOrder 函数边界。"
+$purchaseOrderFunction = $generator.Substring($purchaseOrderStart, $purchaseOrderEnd - $purchaseOrderStart)
+Assert-True -Condition ($purchaseOrderFunction -match 'publicDirectReason\s*=\s*"验收演示公共直采[^"]+"' `
+        -and $purchaseOrderFunction -notmatch 'directPurchaseReason\s*=') `
+    -Message "公共直采采购订单必须按 024 后端主契约发送 publicDirectReason 中文审计原因，不能遗漏或使用旧别名。"
 Assert-True -Condition ($generator -match '\$script:DemoPurchaseReceiptIds\.Add\(\[long\]\$existing\.id\)') `
     -Message "质检处理必须限定本次演示采购入库来源，避免误处理非演示 PENDING。"
 Assert-True -Condition ($generator -match 'BATCH-CU-Q' -and $generator -match 'BATCH-CU-R' -and $generator -match 'BATCH-CU-F' -and $generator -notmatch 'BATCH-CU-01') `

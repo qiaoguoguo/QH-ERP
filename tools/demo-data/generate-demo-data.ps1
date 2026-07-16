@@ -701,6 +701,7 @@ function Ensure-PurchaseOrder {
             supplierId = $Supplier.id
             orderDate = "2026-07-02"
             expectedArrivalDate = "2026-07-06"
+            publicDirectReason = "验收演示公共直采：生产备料与质量追溯样例需要"
             remark = $remark
             lines = $Lines
         })
