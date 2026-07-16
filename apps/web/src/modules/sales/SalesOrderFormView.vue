@@ -241,10 +241,16 @@ function validateForm(): SalesOrderCreatePayload | null {
   }
 
   const nextLineErrors: Record<number, string> = {}
-  const duplicateMaterials = new Set<string>()
+  const seenLineNos = new Set<number>()
   const payloadLines = []
 
   for (const line of lines.value) {
+    if (seenLineNos.has(line.lineNo)) {
+      formError.value = '销售订单明细行号不能重复'
+      lineErrors.value = {}
+      return null
+    }
+    seenLineNos.add(line.lineNo)
     const materialId = normalizeRequiredId(line.materialId)
     if (materialId === null) {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择物料`
@@ -265,17 +271,25 @@ function validateForm(): SalesOrderCreatePayload | null {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${unitPriceResult.message ?? '单价不正确'}`
       continue
     }
-    const duplicateKey = String(materialId)
-    if (duplicateMaterials.has(duplicateKey)) {
-      formError.value = '同一销售订单内物料不能重复'
-      lineErrors.value = {}
-      return null
-    }
-    duplicateMaterials.add(duplicateKey)
     const unitId = normalizeRequiredId(line.unitId)
     const reservationWarehouseId = normalizeRequiredId(line.reservationWarehouseId)
     if (reservationWarehouseId === null) {
       nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择预留仓库，销售订单确认会按该仓库预留现货库存`
+      continue
+    }
+    const untaxedUnitPriceResult = validateSalesUnitPrice(line.untaxedUnitPrice)
+    if (untaxedUnitPriceResult.payloadValue === null) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${untaxedUnitPriceResult.message ?? '未税单价不正确'}`
+      continue
+    }
+    const taxIncludedUnitPriceResult = validateSalesUnitPrice(line.taxIncludedUnitPrice)
+    if (taxIncludedUnitPriceResult.payloadValue === null) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${taxIncludedUnitPriceResult.message ?? '含税单价不正确'}`
+      continue
+    }
+    const taxRateResult = validateSalesUnitPrice(line.taxRate)
+    if (taxRateResult.payloadValue === null) {
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行${taxRateResult.message ?? '税率不正确'}`
       continue
     }
     payloadLines.push({
@@ -285,6 +299,12 @@ function validateForm(): SalesOrderCreatePayload | null {
       reservationWarehouseId,
       quantity: quantityResult.payloadValue,
       unitPrice: unitPriceResult.payloadValue,
+      priceSourceType: line.priceSourceType,
+      ...(line.quoteLineId !== undefined ? { quoteLineId: line.quoteLineId } : {}),
+      ...(line.contractLineId !== undefined ? { contractLineId: line.contractLineId } : {}),
+      untaxedUnitPrice: untaxedUnitPriceResult.payloadValue,
+      taxIncludedUnitPrice: taxIncludedUnitPriceResult.payloadValue,
+      taxRate: taxRateResult.payloadValue,
       ...(line.expectedShipDate.trim() ? { expectedShipDate: line.expectedShipDate.trim() } : {}),
       ...(line.remark.trim() ? { remark: line.remark.trim() } : {}),
     })

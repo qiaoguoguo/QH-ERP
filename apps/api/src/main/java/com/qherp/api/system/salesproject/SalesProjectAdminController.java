@@ -41,6 +41,21 @@ public class SalesProjectAdminController {
 		return ApiResponse.ok(this.salesProjectAdminService.get(id, currentUser));
 	}
 
+	@GetMapping("/{id}/fulfillment")
+	public ApiResponse<SalesProjectAdminService.SalesFulfillmentResponse> salesFulfillment(@PathVariable Long id,
+			@RequestParam(defaultValue = "false") boolean includeLegacy,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.salesProjectAdminService.salesFulfillment(id, includeLegacy, currentUser));
+	}
+
+	@PostMapping("/{id}/close-sales-fulfillment")
+	public ApiResponse<SalesProjectAdminService.SalesFulfillmentResponse> closeSalesFulfillment(@PathVariable Long id,
+			@Valid @RequestBody SalesProjectAdminService.FulfillmentCloseRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.salesProjectAdminService.closeSalesFulfillment(id, request, currentUser,
+				servletRequest));
+	}
+
 	@PostMapping
 	public ApiResponse<SalesProjectAdminService.ProjectResponse> createProject(
 			@Valid @RequestBody SalesProjectAdminService.ProjectCreateRequest request,

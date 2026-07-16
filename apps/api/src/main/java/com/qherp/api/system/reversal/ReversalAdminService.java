@@ -29,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -38,6 +40,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -181,7 +184,7 @@ public class ReversalAdminService {
 				       w.name as warehouse_name, r.source_shipment_id, r.source_shipment_no, sh.business_date as source_date,
 				       sh.status as source_status, r.business_date, r.status,
 				       coalesce((select sum(l.quantity) from sal_sales_return_line l where l.return_id = r.id), 0) as total_quantity,
-				       r.total_amount, r.created_at, r.updated_at
+				       r.total_amount, r.version, r.created_at, r.updated_at
 				from sal_sales_return r
 				join mst_customer c on c.id = r.customer_id
 				join mst_warehouse w on w.id = r.warehouse_id
@@ -272,103 +275,125 @@ public class ReversalAdminService {
 	}
 
 	@Transactional
+	public SalesReturnDetailResponse postSalesReturn(Long id, VersionedActionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		return idempotentSalesReturnAction("POST", id, request, operator, () -> {
+			SalesReturnRow salesReturn = lockSalesReturn(id).orElseThrow(this::sourceNotFoundException);
+			requireVersion(salesReturn.version(), request.version());
+			if (salesReturn.status() == ReversalDocumentStatus.POSTED) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
+			}
+			requireDraft(salesReturn);
+			ShipmentRow shipment = lockShipment(salesReturn.sourceShipmentId()).orElseThrow(this::sourceNotFoundException);
+			if (!"POSTED".equals(shipment.status())) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+			}
+			List<SalesReturnLineRow> lines = lockSalesReturnLines(id);
+			if (lines.isEmpty()) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
+			}
+			this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.REVERSE,
+					SALES_RETURN_SOURCE, id);
+			ReceivableRow receivable = lockReceivableForShipment(shipment.id()).orElseThrow(this::sourceNotFoundException);
+			requireAdjustableReceivable(receivable);
+			BigDecimal totalAmount = totalAmountFromRows(lines);
+			if (totalAmount.compareTo(receivable.unreceivedAmount()) > 0) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
+			}
+			OffsetDateTime now = OffsetDateTime.now();
+			try {
+				for (SalesReturnLineRow line : lines) {
+					ShipmentLineRow sourceLine = lockShipmentLine(shipment.id(), line.sourceShipmentLineId())
+						.orElseThrow(this::sourceNotFoundException);
+					validateLineStillReturnable(sourceLine, line);
+					InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
+							SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(), line.quantity(),
+							sourceLine.unitPrice());
+					List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
+						.resolveStoredSourceInheritedInboundAllocations(SALES_RETURN_SOURCE, salesReturn.id(), line.id(),
+								line.materialId(), line.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
+								SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(),
+								"trackingAllocations");
+					Long movementId = null;
+					for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
+						InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
+								new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_RETURN_IN,
+										InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(),
+										line.unitId(), allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
+										SALES_RETURN_SOURCE, salesReturn.id(), line.id(), salesReturn.businessDate(),
+										"销售退货入库", line.reason(), operator.username(), false, allocation.batchId(),
+										allocation.serialId(), valuationContext));
+						movementId = posting.movementId();
+						this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
+						this.inventoryTrackingService.markInboundPosted(allocation, salesReturn.warehouseId(),
+								InventoryQualityStatus.PENDING_INSPECTION, movementId, operator.username());
+					}
+					this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.SALES_RETURN,
+							salesReturn.id(), line.id(), salesReturn.warehouseId(), line.materialId(), line.unitId(),
+							salesReturn.businessDate(), line.quantity(), operator.username());
+					this.jdbcTemplate.update("""
+							update sal_sales_return_line
+							set stock_movement_id = ?, updated_at = ?
+							where id = ?
+							""", movementId, now, line.id());
+					insertReversalLink(shipment, sourceLine, salesReturn, line, operator.username(), now);
+				}
+				Long adjustmentId = insertPostedReceivableAdjustment(salesReturn, receivable, totalAmount,
+						operator.username(), now);
+				applyReceivableAdjustment(receivable, totalAmount, operator.username(), now);
+				this.jdbcTemplate.update("""
+						update sal_sales_return
+						set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+						    version = version + 1
+						where id = ?
+						""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
+				this.auditService.record(operator, "SALES_RETURN_POST", SALES_RETURN_TARGET, id, salesReturn.returnNo(),
+						servletRequest);
+				return salesReturn(id, operator).withSettlementAdjustmentId(adjustmentId);
+			}
+			catch (DuplicateKeyException exception) {
+				throw duplicateReversalException(exception);
+			}
+		});
+	}
+
+	@Transactional
 	public SalesReturnDetailResponse postSalesReturn(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
 		SalesReturnRow salesReturn = lockSalesReturn(id).orElseThrow(this::sourceNotFoundException);
-		if (salesReturn.status() == ReversalDocumentStatus.POSTED) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
-		}
-		requireDraft(salesReturn);
-		ShipmentRow shipment = lockShipment(salesReturn.sourceShipmentId()).orElseThrow(this::sourceNotFoundException);
-		if (!"POSTED".equals(shipment.status())) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
-		}
-		List<SalesReturnLineRow> lines = lockSalesReturnLines(id);
-		if (lines.isEmpty()) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_QUANTITY_INVALID);
-		}
-		this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.REVERSE,
-				SALES_RETURN_SOURCE, id);
-		ReceivableRow receivable = lockReceivableForShipment(shipment.id()).orElseThrow(this::sourceNotFoundException);
-		requireAdjustableReceivable(receivable);
-		BigDecimal totalAmount = totalAmountFromRows(lines);
-		if (totalAmount.compareTo(receivable.unreceivedAmount()) > 0) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_AMOUNT_EXCEEDS_AVAILABLE);
-		}
-		OffsetDateTime now = OffsetDateTime.now();
-		try {
-			for (SalesReturnLineRow line : lines) {
-				ShipmentLineRow sourceLine = lockShipmentLine(shipment.id(), line.sourceShipmentLineId())
-					.orElseThrow(this::sourceNotFoundException);
-				validateLineStillReturnable(sourceLine, line);
-				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
-						SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(), line.quantity(),
-						sourceLine.unitPrice());
-				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
-					.resolveStoredSourceInheritedInboundAllocations(SALES_RETURN_SOURCE, salesReturn.id(), line.id(),
-							line.materialId(), line.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
-							SALES_SHIPMENT_SOURCE, shipment.id(), line.sourceShipmentLineId(),
-							"trackingAllocations");
-				Long movementId = null;
-				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
-					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-							new InventoryPostingService.PostingRequest(InventoryMovementType.SALES_RETURN_IN,
-									InventoryDirection.IN, salesReturn.warehouseId(), line.materialId(),
-									line.unitId(), allocation.quantity(), InventoryQualityStatus.PENDING_INSPECTION,
-									SALES_RETURN_SOURCE, salesReturn.id(), line.id(), salesReturn.businessDate(),
-									"销售退货入库", line.reason(), operator.username(), false, allocation.batchId(),
-									allocation.serialId(), valuationContext));
-					movementId = posting.movementId();
-					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
-					this.inventoryTrackingService.markInboundPosted(allocation, salesReturn.warehouseId(),
-							InventoryQualityStatus.PENDING_INSPECTION, movementId, operator.username());
-				}
-				this.qualityAdminService.createPendingInspection(QualityInspectionSourceType.SALES_RETURN,
-						salesReturn.id(), line.id(), salesReturn.warehouseId(), line.materialId(), line.unitId(),
-						salesReturn.businessDate(), line.quantity(), operator.username());
-				this.jdbcTemplate.update("""
-						update sal_sales_return_line
-						set stock_movement_id = ?, updated_at = ?
-						where id = ?
-						""", movementId, now, line.id());
-				insertReversalLink(shipment, sourceLine, salesReturn, line, operator.username(), now);
+		return postSalesReturn(id, new VersionedActionRequest(salesReturn.version(), "内部兼容过账",
+				"internal-sales-return-post-" + id + "-" + salesReturn.version()), operator, servletRequest);
+	}
+
+	@Transactional
+	public SalesReturnDetailResponse cancelSalesReturn(Long id, VersionedActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return idempotentSalesReturnAction("CANCEL", id, request, operator, () -> {
+			SalesReturnRow salesReturn = lockSalesReturn(id).orElseThrow(this::sourceNotFoundException);
+			requireVersion(salesReturn.version(), request.version());
+			if (salesReturn.status() == ReversalDocumentStatus.POSTED) {
+				throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 			}
-			Long adjustmentId = insertPostedReceivableAdjustment(salesReturn, receivable, totalAmount, operator.username(),
-					now);
-			applyReceivableAdjustment(receivable, totalAmount, operator.username(), now);
+			requireDraft(salesReturn);
+			this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.CANCEL,
+					SALES_RETURN_SOURCE, id);
+			OffsetDateTime now = OffsetDateTime.now();
 			this.jdbcTemplate.update("""
 					update sal_sales_return
-					set status = ?, posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
+					set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
 					    version = version + 1
 					where id = ?
-					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
-			this.auditService.record(operator, "SALES_RETURN_POST", SALES_RETURN_TARGET, id, salesReturn.returnNo(),
+					""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
+			this.auditService.record(operator, "SALES_RETURN_CANCEL", SALES_RETURN_TARGET, id, salesReturn.returnNo(),
 					servletRequest);
-			return salesReturn(id, operator).withSettlementAdjustmentId(adjustmentId);
-		}
-		catch (DuplicateKeyException exception) {
-			throw duplicateReversalException(exception);
-		}
+			return salesReturn(id, operator);
+		});
 	}
 
 	@Transactional
 	public SalesReturnDetailResponse cancelSalesReturn(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
 		SalesReturnRow salesReturn = lockSalesReturn(id).orElseThrow(this::sourceNotFoundException);
-		if (salesReturn.status() == ReversalDocumentStatus.POSTED) {
-			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
-		}
-		requireDraft(salesReturn);
-		this.businessPeriodGuard.assertWritable(salesReturn.businessDate(), BusinessPeriodOperation.CANCEL,
-				SALES_RETURN_SOURCE, id);
-		OffsetDateTime now = OffsetDateTime.now();
-		this.jdbcTemplate.update("""
-				update sal_sales_return
-				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?,
-				    version = version + 1
-				where id = ?
-				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
-		this.auditService.record(operator, "SALES_RETURN_CANCEL", SALES_RETURN_TARGET, id, salesReturn.returnNo(),
-				servletRequest);
-		return salesReturn(id, operator);
+		return cancelSalesReturn(id, new VersionedActionRequest(salesReturn.version(), "内部兼容取消",
+				"internal-sales-return-cancel-" + id + "-" + salesReturn.version()), operator, servletRequest);
 	}
 
 	@Transactional(readOnly = true)
@@ -1455,11 +1480,12 @@ public class ReversalAdminService {
 				currentUser, "SOURCE_TO_REVERSE");
 		return new SalesReturnDetailResponse(row.id(), row.returnNo(), row.customerId(), row.customerName(),
 				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
-				quantity(totalQuantity(lines)), amount(row.totalAmount()), sourceView(SALES_SHIPMENT_SOURCE,
+				row.version(), quantity(totalQuantity(lines)), amount(row.totalAmount()), sourceView(SALES_SHIPMENT_SOURCE,
 						row.sourceShipmentId(), null, row.sourceShipmentNo(), null, row.sourceBusinessDate(),
 						row.sourceStatus(), null, null, canViewSource, "sales-shipment-detail",
 						Map.of("id", row.sourceShipmentId()), null),
-				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(), lines, traces);
+				row.createdAt(), row.updatedAt(), row.clientRequestId(), row.remark(),
+				salesReturnAllowedActions(row.status()), salesReturnActionDisabledReason(row.status()), lines, traces);
 	}
 
 	private PurchaseReturnDetailResponse purchaseReturnDetail(PurchaseReturnRow row, CurrentUser currentUser) {
@@ -1591,11 +1617,14 @@ public class ReversalAdminService {
 		return new SalesReturnSummaryResponse(rs.getLong("id"), rs.getString("return_no"), rs.getLong("customer_id"),
 				rs.getString("customer_name"), rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
 				rs.getObject("business_date", LocalDate.class), rs.getString("status"),
-				quantity(rs.getBigDecimal("total_quantity")), amount(rs.getBigDecimal("total_amount")),
+				rs.getLong("version"), quantity(rs.getBigDecimal("total_quantity")),
+				amount(rs.getBigDecimal("total_amount")),
 				sourceView(SALES_SHIPMENT_SOURCE, sourceShipmentId, null, rs.getString("source_shipment_no"), null,
 						rs.getObject("source_date", LocalDate.class), rs.getString("source_status"), null, null,
 						canViewSource, "sales-shipment-detail", Map.of("id", sourceShipmentId), null),
-				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
+				salesReturnAllowedActions(ReversalDocumentStatus.valueOf(rs.getString("status"))),
+				salesReturnActionDisabledReason(ReversalDocumentStatus.valueOf(rs.getString("status"))));
 	}
 
 	private ProductionMaterialReturnSummaryResponse mapMaterialReturnSummary(ResultSet rs, CurrentUser currentUser)
@@ -1665,9 +1694,8 @@ public class ReversalAdminService {
 				           where rl.source_shipment_line_id = sl.id
 				           and r.status = 'POSTED'
 				       ), 0) as returned_quantity,
-				       ol.unit_price
+				       sl.tax_included_unit_price as unit_price
 				from sal_sales_shipment_line sl
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				join mst_material m on m.id = sl.material_id
 				join mst_unit u on u.id = sl.unit_id
 				where sl.shipment_id = ?
@@ -2769,6 +2797,73 @@ public class ReversalAdminService {
 		}
 	}
 
+	private SalesReturnDetailResponse idempotentSalesReturnAction(String action, Long id,
+			VersionedActionRequest request, CurrentUser operator, Supplier<SalesReturnDetailResponse> callback) {
+		VersionedActionRequest actionRequest = requireActionRequest(request);
+		String fingerprint = salesActionFingerprint(action, SALES_RETURN_TARGET, id, actionRequest.version(),
+				actionRequest.reason());
+		Optional<SalesActionRecord> existing = existingSalesAction(action, SALES_RETURN_TARGET, id,
+				actionRequest.idempotencyKey(), fingerprint, operator);
+		if (existing.isPresent()) {
+			return salesReturn(existing.get().resultResourceId(), operator);
+		}
+		SalesReturnDetailResponse result = callback.get();
+		recordSalesAction(action, SALES_RETURN_TARGET, id, actionRequest.version(), actionRequest.idempotencyKey(),
+				fingerprint, SALES_RETURN_TARGET, result.id(), result.version(), operator);
+		return result;
+	}
+
+	private Optional<SalesActionRecord> existingSalesAction(String action, String resourceType, Long resourceId,
+			String idempotencyKey, String fingerprint, CurrentUser operator) {
+		validateSalesActionIdempotencyKey(idempotencyKey);
+		return this.jdbcTemplate.query("""
+				select result_resource_type, result_resource_id, result_version, request_fingerprint
+				from sal_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and resource_id = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new SalesActionRecord(rs.getString("result_resource_type"),
+				rs.getLong("result_resource_id"), rs.getLong("result_version"), rs.getString("request_fingerprint")),
+				operator.id(), action, resourceType, resourceId, idempotencyKey.trim()).stream().findFirst().map((record) -> {
+					if (!record.requestFingerprint().equals(fingerprint)) {
+						throw new BusinessException(ApiErrorCode.SALES_ACTION_IDEMPOTENCY_CONFLICT);
+					}
+					return record;
+				});
+	}
+
+	private void recordSalesAction(String action, String resourceType, Long resourceId, Long resourceVersion,
+			String idempotencyKey, String fingerprint, String resultResourceType, Long resultResourceId,
+			Long resultVersion, CurrentUser operator) {
+		validateSalesActionIdempotencyKey(idempotencyKey);
+		try {
+			this.jdbcTemplate.update("""
+					insert into sal_action_idempotency (
+						operator_user_id, action, resource_type, resource_id, resource_version, idempotency_key,
+						request_fingerprint, result_resource_type, result_resource_id, result_version
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), action, resourceType, resourceId, resourceVersion, idempotencyKey.trim(),
+					fingerprint, resultResourceType, resultResourceId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.SALES_ACTION_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private String salesActionFingerprint(String action, String resourceType, Long resourceId, Long version,
+			String reason) {
+		return sha256(action + "|" + resourceType + "|" + resourceId + "|" + version + "|" + nullToBlank(reason));
+	}
+
+	private void validateSalesActionIdempotencyKey(String idempotencyKey) {
+		if (!hasText(idempotencyKey) || idempotencyKey.length() > 120) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
 	private PurchaseReturnDetailResponse idempotentPurchaseReturnAction(String action, Long id,
 			VersionedActionRequest request, CurrentUser operator, Supplier<PurchaseReturnDetailResponse> callback) {
 		VersionedActionRequest actionRequest = requireActionRequest(request);
@@ -2787,7 +2882,8 @@ public class ReversalAdminService {
 	}
 
 	private VersionedActionRequest requireActionRequest(VersionedActionRequest request) {
-		if (request == null) {
+		if (request == null || request.version() == null || !hasText(request.idempotencyKey())
+				|| request.idempotencyKey().length() > 120) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		return request;
@@ -3467,7 +3563,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.customer_id, c.name as customer_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_shipment_id, r.source_shipment_no,
 				       sh.business_date as source_business_date, sh.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.version, r.created_at, r.updated_at
 				from sal_sales_return r
 				join mst_customer c on c.id = r.customer_id
 				join mst_warehouse w on w.id = r.warehouse_id
@@ -3555,7 +3651,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.customer_id, c.name as customer_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_shipment_id, r.source_shipment_no,
 				       sh.business_date as source_business_date, sh.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.version, r.created_at, r.updated_at
 				from sal_sales_return r
 				join mst_customer c on c.id = r.customer_id
 				join mst_warehouse w on w.id = r.warehouse_id
@@ -3626,7 +3722,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.customer_id, c.name as customer_name, r.warehouse_id,
 				       w.name as warehouse_name, r.source_shipment_id, r.source_shipment_no,
 				       sh.business_date as source_business_date, sh.status as source_status, r.business_date,
-				       r.status, r.total_amount, r.client_request_id, r.remark, r.created_at, r.updated_at
+				       r.status, r.total_amount, r.client_request_id, r.remark, r.version, r.created_at, r.updated_at
 				from sal_sales_return r
 				join mst_customer c on c.id = r.customer_id
 				join mst_warehouse w on w.id = r.warehouse_id
@@ -3798,9 +3894,8 @@ public class ReversalAdminService {
 	private Optional<ShipmentLineRow> shipmentLine(Long shipmentId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select sl.id, sl.shipment_id, sl.line_no, sl.order_line_id, sl.material_id, sl.unit_id,
-				       sl.quantity, ol.unit_price
+				       sl.quantity, sl.tax_included_unit_price as unit_price
 				from sal_sales_shipment_line sl
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				where sl.shipment_id = ?
 				and sl.id = ?
 				""", this::mapShipmentLineRow, shipmentId, lineId).stream().findFirst();
@@ -3859,9 +3954,8 @@ public class ReversalAdminService {
 	private Optional<ShipmentLineRow> lockShipmentLine(Long shipmentId, Long lineId) {
 		return this.jdbcTemplate.query("""
 				select sl.id, sl.shipment_id, sl.line_no, sl.order_line_id, sl.material_id, sl.unit_id,
-				       sl.quantity, ol.unit_price
+				       sl.quantity, sl.tax_included_unit_price as unit_price
 				from sal_sales_shipment_line sl
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				where sl.shipment_id = ?
 				and sl.id = ?
 				for update
@@ -4197,10 +4291,14 @@ public class ReversalAdminService {
 				       ssl.line_no as shipment_line_no,
 				       sr.return_no, sr.business_date as return_date, sr.status as return_status,
 				       srl.line_no as return_line_no, srl.stock_movement_id,
-				       fsa.id as settlement_adjustment_id
+				       fsa.id as settlement_adjustment_id,
+				       sh.warehouse_id, w.name as warehouse_name,
+				       ssl.material_id, m.code as material_code, m.name as material_name
 				from biz_reversal_link bl
 				join sal_sales_shipment sh on sh.id = bl.source_id
 				join sal_sales_shipment_line ssl on ssl.id = bl.source_line_id
+				join mst_warehouse w on w.id = sh.warehouse_id
+				join mst_material m on m.id = ssl.material_id
 				join sal_sales_return sr on sr.id = bl.reverse_id
 				join sal_sales_return_line srl on srl.id = bl.reverse_line_id
 				left join fin_settlement_adjustment fsa on fsa.source_type = 'SALES_RETURN'
@@ -4226,7 +4324,8 @@ public class ReversalAdminService {
 						quantity(link.quantity()), amount(link.amount()), canViewReturn, "sales-return-detail",
 						Map.of("id", link.reverseId()), Map.of("lineId", link.reverseLineId()));
 				boolean restricted = !canViewShipment || !canViewReturn;
-				return new ReversalTraceRecord(traceKey(link, canViewShipment, canViewReturn), direction, source,
+				ReversalTraceRecord record = new ReversalTraceRecord(
+						traceKey(link, canViewShipment, canViewReturn), direction, source,
 						reverse,
 						restricted ? null : link.stockMovementId(), restricted ? null : link.settlementAdjustmentId(),
 						null, restricted ? null : link.businessDate(), restricted ? null : quantity(link.quantity()),
@@ -4235,6 +4334,16 @@ public class ReversalAdminService {
 						restricted ? null : "sales-return-detail",
 						restricted ? null : Map.of("id", link.reverseId()),
 						restricted ? null : Map.of("lineId", link.reverseLineId()));
+				if (!restricted) {
+					record.put("effectType", "SALES_RETURN_INBOUND");
+					record.put("resourceType", "SALES_RETURN_LINE");
+					record.put("warehouseId", link.warehouseId());
+					record.put("warehouseName", link.warehouseName());
+					record.put("materialId", link.materialId());
+					record.put("materialCode", link.materialCode());
+					record.put("materialName", link.materialName());
+				}
+				return record;
 			})
 			.toList();
 	}
@@ -4651,7 +4760,8 @@ public class ReversalAdminService {
 				rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 				rs.getObject("business_date", LocalDate.class), ReversalDocumentStatus.valueOf(rs.getString("status")),
 				rs.getBigDecimal("total_amount"), rs.getString("client_request_id"), rs.getString("remark"),
-				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
+				rs.getLong("version"), rs.getObject("created_at", OffsetDateTime.class),
+				rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
 	private SalesReturnLineRow mapSalesReturnLineRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4796,7 +4906,9 @@ public class ReversalAdminService {
 				rs.getObject("shipment_date", LocalDate.class), rs.getString("shipment_status"),
 				rs.getInt("shipment_line_no"), rs.getString("return_no"), rs.getObject("return_date", LocalDate.class),
 				rs.getString("return_status"), rs.getInt("return_line_no"), nullableLong(rs, "stock_movement_id"),
-				nullableLong(rs, "settlement_adjustment_id"));
+				nullableLong(rs, "settlement_adjustment_id"), rs.getLong("warehouse_id"),
+				rs.getString("warehouse_name"), rs.getLong("material_id"), rs.getString("material_code"),
+				rs.getString("material_name"));
 	}
 
 	private PurchaseTraceLinkRow mapPurchaseTraceLinkRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4835,6 +4947,14 @@ public class ReversalAdminService {
 		if (salesReturn.status() != ReversalDocumentStatus.DRAFT) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED);
 		}
+	}
+
+	private List<String> salesReturnAllowedActions(ReversalDocumentStatus status) {
+		return status == ReversalDocumentStatus.DRAFT ? List.of("UPDATE", "POST", "CANCEL") : List.of();
+	}
+
+	private String salesReturnActionDisabledReason(ReversalDocumentStatus status) {
+		return salesReturnAllowedActions(status).isEmpty() ? ApiErrorCode.REVERSAL_STATUS_NOT_ALLOWED.message() : null;
 	}
 
 	private void requireDraft(PurchaseReturnRow purchaseReturn) {
@@ -5573,6 +5693,16 @@ public class ReversalAdminService {
 		return value == null ? null : value.toPlainString();
 	}
 
+	private String sha256(String value) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(value.getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException(exception);
+		}
+	}
+
 	private long integerDigits(BigDecimal value) {
 		return Math.max(0L, (long) value.precision() - value.scale());
 	}
@@ -5708,6 +5838,10 @@ public class ReversalAdminService {
 		return hasText(value) ? value : null;
 	}
 
+	private static String nullToBlank(String value) {
+		return value == null ? "" : value.trim();
+	}
+
 	private static boolean hasText(String value) {
 		return value != null && !value.isBlank();
 	}
@@ -5820,8 +5954,9 @@ public class ReversalAdminService {
 	}
 
 	public record SalesReturnSummaryResponse(Long id, String returnNo, Long customerId, String customerName,
-			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
-			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status, Long version,
+			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
+			OffsetDateTime updatedAt, List<String> allowedActions, String actionDisabledReason) {
 	}
 
 	public record PurchaseReturnSummaryResponse(Long id, String returnNo, Long supplierId, String supplierName,
@@ -5851,9 +5986,10 @@ public class ReversalAdminService {
 	}
 
 	public record SalesReturnDetailResponse(Long id, String returnNo, Long customerId, String customerName,
-			Long warehouseId, String warehouseName, LocalDate businessDate, String status, String totalQuantity,
-			String totalAmount, Map<String, Object> source, OffsetDateTime createdAt, OffsetDateTime updatedAt,
-			String clientRequestId, String remark, List<ReversalDocumentLine> lines,
+			Long warehouseId, String warehouseName, LocalDate businessDate, String status, Long version,
+			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
+			OffsetDateTime updatedAt, String clientRequestId, String remark, List<String> allowedActions,
+			String actionDisabledReason, List<ReversalDocumentLine> lines,
 			List<ReversalTraceRecord> traces) {
 
 		private SalesReturnDetailResponse withSettlementAdjustmentId(Long settlementAdjustmentId) {
@@ -5861,17 +5997,22 @@ public class ReversalAdminService {
 				return this;
 			}
 			List<ReversalTraceRecord> updatedTraces = this.traces.stream()
-				.map((trace) -> new ReversalTraceRecord(trace.traceKey(), trace.direction(), trace.source(),
-						trace.reverse(), trace.inventoryMovementId(),
-						trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
-						trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(), trace.status(),
-						trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
-						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
+				.map((trace) -> {
+					ReversalTraceRecord updated = new ReversalTraceRecord(trace.traceKey(), trace.direction(),
+							trace.source(), trace.reverse(), trace.inventoryMovementId(),
+							trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
+							trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(),
+							trace.status(), trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
+							trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery());
+					trace.forEach(updated::putIfAbsent);
+					return updated;
+				})
 				.toList();
 			return new SalesReturnDetailResponse(this.id, this.returnNo, this.customerId, this.customerName,
-					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.totalQuantity,
-					this.totalAmount, this.source, this.createdAt, this.updatedAt, this.clientRequestId, this.remark,
-					this.lines, updatedTraces);
+					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.version,
+					this.totalQuantity, this.totalAmount, this.source, this.createdAt, this.updatedAt,
+					this.clientRequestId, this.remark, this.allowedActions, this.actionDisabledReason, this.lines,
+					updatedTraces);
 		}
 	}
 
@@ -5889,12 +6030,16 @@ public class ReversalAdminService {
 				return this;
 			}
 			List<ReversalTraceRecord> updatedTraces = this.traces.stream()
-				.map((trace) -> new ReversalTraceRecord(trace.traceKey(), trace.direction(), trace.source(),
-						trace.reverse(), trace.inventoryMovementId(),
-						trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
-						trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(), trace.status(),
-						trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
-						trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery()))
+				.map((trace) -> {
+					ReversalTraceRecord updated = new ReversalTraceRecord(trace.traceKey(), trace.direction(),
+							trace.source(), trace.reverse(), trace.inventoryMovementId(),
+							trace.restricted() ? trace.settlementAdjustmentId() : settlementAdjustmentId,
+							trace.costRecordId(), trace.businessDate(), trace.quantity(), trace.amount(),
+							trace.status(), trace.canViewResource(), trace.restricted(), trace.restrictedMessage(),
+							trace.resourceRouteName(), trace.resourceRouteParams(), trace.resourceRouteQuery());
+					trace.forEach(updated::putIfAbsent);
+					return updated;
+				})
 				.toList();
 			return new PurchaseReturnDetailResponse(this.id, this.returnNo, this.supplierId, this.supplierName,
 					this.warehouseId, this.warehouseName, this.businessDate, this.status, this.version,
@@ -6109,6 +6254,10 @@ public class ReversalAdminService {
 			String remark) {
 	}
 
+	private record SalesActionRecord(String resultResourceType, Long resultResourceId, Long resultVersion,
+			String requestFingerprint) {
+	}
+
 	private record ValidatedSalesReturnLine(Integer lineNo, Long sourceShipmentLineId, Long salesOrderLineId,
 			Long materialId, Long unitId, BigDecimal returnedQuantityBefore, BigDecimal returnableQuantityBefore,
 			BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount, String reason,
@@ -6138,7 +6287,7 @@ public class ReversalAdminService {
 	private record SalesReturnRow(Long id, String returnNo, Long customerId, String customerName, Long warehouseId,
 			String warehouseName, Long sourceShipmentId, String sourceShipmentNo, LocalDate sourceBusinessDate,
 			String sourceStatus, LocalDate businessDate, ReversalDocumentStatus status, BigDecimal totalAmount,
-			String clientRequestId, String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String clientRequestId, String remark, Long version, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
 	private record PurchaseReturnRow(Long id, String returnNo, Long supplierId, String supplierName, Long warehouseId,
@@ -6267,7 +6416,8 @@ public class ReversalAdminService {
 			Long reverseId, Long reverseLineId, LocalDate businessDate, BigDecimal quantity, BigDecimal amount,
 			String shipmentNo, LocalDate shipmentDate, String shipmentStatus, Integer shipmentLineNo, String returnNo,
 			LocalDate returnDate, String returnStatus, Integer returnLineNo, Long stockMovementId,
-			Long settlementAdjustmentId) {
+			Long settlementAdjustmentId, Long warehouseId, String warehouseName, Long materialId, String materialCode,
+			String materialName) {
 	}
 
 	private record PurchaseTraceLinkRow(String sourceType, Long sourceId, Long sourceLineId, String reverseType,

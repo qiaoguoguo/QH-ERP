@@ -32,6 +32,11 @@ vi.mock('../../shared/api/returnRefundReversalApi', async (importOriginal) => ({
   returnRefundReversalApi: returnRefundReversalApiMock,
 }))
 
+vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/documentPlatformApi')>()),
+  createIdempotencyKey: () => 'sales-return-key',
+}))
+
 const unrestrictedSource = {
   sourceType: 'SALES_SHIPMENT',
   sourceId: 10,
@@ -75,6 +80,9 @@ const salesReturnDetail = {
   status: 'DRAFT',
   totalQuantity: '2.000000',
   totalAmount: '100.00',
+  version: 5,
+  allowedActions: ['UPDATE', 'POST', 'CANCEL'],
+  actionDisabledReason: null,
   source: unrestrictedSource,
   createdAt: '2026-07-05T10:00:00+08:00',
   updatedAt: '2026-07-05T10:00:00+08:00',
@@ -278,6 +286,21 @@ describe('销售退货前端页面', () => {
     expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(true)
 
+    await wrapper.find('[data-test="post-sales-return"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1, {
+      version: 5,
+      idempotencyKey: 'sales-return-key',
+    })
+
+    await wrapper.find('[data-test="cancel-sales-return"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.salesReturns.cancel).toHaveBeenCalledWith(1, {
+      version: 5,
+      reason: '用户取消销售退货',
+      idempotencyKey: 'sales-return-key',
+    })
+
     await wrapper.find('input[name="sales-return-keyword"]').setValue('SR')
     await wrapper.find('input[name="sales-return-customer-id"]').setValue('8')
     await wrapper.find('[data-test="search-sales-returns"]').trigger('click')
@@ -300,6 +323,26 @@ describe('销售退货前端页面', () => {
     expect(wrapper.find('[data-test="create-sales-return"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="edit-sales-return"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(false)
+  })
+
+  it('销售退货列表仅按 allowedActions 和权限展示公开状态动作', async () => {
+    returnRefundReversalApiMock.salesReturns.list.mockResolvedValueOnce(page([
+      {
+        ...salesReturnDetail,
+        allowedActions: ['POST'],
+        actionDisabledReason: '当前只能过账',
+      },
+    ]))
+    const { wrapper } = await mountReversalView(SalesReturnListView, '/sales/returns', [
+      'sales:return:view',
+      'sales:return:update',
+      'sales:return:post',
+      'sales:return:cancel',
+    ])
+
+    expect(wrapper.find('[data-test="edit-sales-return"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(false)
   })
 
@@ -511,7 +554,36 @@ describe('销售退货前端页面', () => {
 
     await wrapper.find('[data-test="post-sales-return-detail"]').trigger('click')
     await flushPromises()
-    expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1)
+    expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1, {
+      version: 5,
+      idempotencyKey: 'sales-return-key',
+    })
+
+    await wrapper.find('[data-test="cancel-sales-return-detail"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.salesReturns.cancel).toHaveBeenCalledWith(1, {
+      version: 5,
+      reason: '用户取消销售退货',
+      idempotencyKey: 'sales-return-key',
+    })
+  })
+
+  it('销售退货详情仅按 allowedActions 和权限展示公开状态动作', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      allowedActions: ['CANCEL'],
+      actionDisabledReason: '当前只能取消',
+    })
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', [
+      'sales:return:view',
+      'sales:return:update',
+      'sales:return:post',
+      'sales:return:cancel',
+    ])
+
+    expect(wrapper.find('[data-test="edit-sales-return-detail"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="post-sales-return-detail"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="cancel-sales-return-detail"]').exists()).toBe(true)
   })
 
   it('销售退货详情只读展示来源继承的批次或序列身份', async () => {
@@ -550,6 +622,63 @@ describe('销售退货前端页面', () => {
     expect(wrapper.text()).toContain('应收冲减影响')
     expect(wrapper.text()).toContain('应收冲减')
     expect(wrapper.text()).toContain('应收冲减 #801')
+  })
+
+  it('销售退货详情用退货行普通字段补齐缺物料的库存入库影响 trace', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      status: 'POSTED',
+      lines: salesReturnDetail.lines.map((line) => ({
+        ...line,
+        stockMovementId: 701,
+      })),
+      traces: [
+        salesReturnDetail.traces[0],
+        {
+          ...inventoryMovementTrace,
+          materialCode: null,
+          materialName: null,
+          warehouseName: null,
+          quantity: undefined,
+        },
+      ],
+    })
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view', 'business:reversal:view'])
+
+    const inventoryTable = wrapper.findAllComponents({ name: 'ElTable' })
+      .find((table) => {
+        const rows = table.props('data') as Array<Record<string, unknown>>
+        return rows.some((row) => row.inventoryMovementId === 701)
+      })
+    expect(inventoryTable?.props('data')).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        inventoryMovementId: 701,
+        materialCode: 'FG-001',
+        materialName: '示例成品',
+        warehouseName: '成品仓',
+        quantity: '2.000000',
+      }),
+    ]))
+  })
+
+  it('销售退货详情在无内部库存流水 ID 时仍按退货行普通字段展示库存影响', async () => {
+    returnRefundReversalApiMock.salesReturns.get.mockResolvedValueOnce({
+      ...salesReturnDetail,
+      status: 'POSTED',
+      lines: salesReturnDetail.lines.map((line) => ({
+        ...line,
+        stockMovementId: null,
+      })),
+      traces: [],
+    })
+    const { wrapper } = await mountReversalView(SalesReturnDetailView, '/sales/returns/1', ['sales:return:view'])
+
+    expect(wrapper.text()).toContain('库存入库影响')
+    expect(wrapper.text()).toContain('FG-001 示例成品')
+    expect(wrapper.text()).toContain('2')
+    expect(wrapper.text()).toContain('内部库存流水编号已隐藏')
+    expect(wrapper.text()).not.toContain('暂无库存入库影响')
+    expect(wrapper.text()).not.toContain('库存流水 #')
   })
 
   it('反向追溯面板按来源、反向单据和影响资源分别跳转', async () => {

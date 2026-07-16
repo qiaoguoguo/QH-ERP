@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import {
   returnRefundReversalApi,
   type ReversalStatus,
+  type SalesReturnAction,
   type SalesReturnSummary,
 } from '../../shared/api/returnRefundReversalApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
@@ -116,6 +118,10 @@ function editSalesReturn(record: SalesReturnSummary) {
   void router.push({ name: 'sales-return-edit', params: { id: String(record.id) } })
 }
 
+function allowed(record: SalesReturnSummary, action: SalesReturnAction) {
+  return (record.allowedActions ?? []).includes(action)
+}
+
 async function postSalesReturn(record: SalesReturnSummary) {
   if (actionLoading.value || !(await confirmAction(`确认过账销售退货“${record.returnNo}”？`))) {
     return
@@ -123,10 +129,14 @@ async function postSalesReturn(record: SalesReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.salesReturns.post(record.id)
+    await returnRefundReversalApi.salesReturns.post(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('sales-return-post'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -139,10 +149,15 @@ async function cancelSalesReturn(record: SalesReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.salesReturns.cancel(record.id)
+    await returnRefundReversalApi.salesReturns.cancel(record.id, {
+      version: record.version,
+      reason: '用户取消销售退货',
+      idempotencyKey: createIdempotencyKey('sales-return-cancel'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadRecords()
   } finally {
     actionLoading.value = false
   }
@@ -249,7 +264,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-return" @click="viewSalesReturn(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && allowed(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-sales-return"
@@ -258,7 +273,7 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canPost && row.status === 'DRAFT'"
+              v-if="canPost && allowed(row, 'POST')"
               size="small"
               text
               type="success"
@@ -269,7 +284,7 @@ onMounted(() => {
               过账
             </el-button>
             <el-button
-              v-if="canCancel && row.status === 'DRAFT'"
+              v-if="canCancel && allowed(row, 'CANCEL')"
               size="small"
               text
               type="danger"

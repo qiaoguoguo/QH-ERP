@@ -64,20 +64,23 @@ public class SalesAdminController {
 
 	@PutMapping("/orders/{id}/confirm")
 	public ApiResponse<SalesAdminService.SalesOrderDetailResponse> confirmOrder(@PathVariable Long id,
+			@Valid @RequestBody SalesAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.salesAdminService.confirmOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.salesAdminService.confirmOrder(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/orders/{id}/cancel")
 	public ApiResponse<SalesAdminService.SalesOrderDetailResponse> cancelOrder(@PathVariable Long id,
+			@Valid @RequestBody SalesAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.salesAdminService.cancelOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.salesAdminService.cancelOrder(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/orders/{id}/close")
 	public ApiResponse<SalesAdminService.SalesOrderDetailResponse> closeOrder(@PathVariable Long id,
+			@Valid @RequestBody SalesAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.salesAdminService.closeOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.salesAdminService.closeOrder(id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/shipments")
@@ -113,8 +116,9 @@ public class SalesAdminController {
 
 	@PutMapping("/shipments/{id}/post")
 	public ApiResponse<SalesAdminService.SalesShipmentDetailResponse> postShipment(@PathVariable Long id,
+			@Valid @RequestBody SalesAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.salesAdminService.postShipment(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.salesAdminService.postShipment(id, request, currentUser, servletRequest));
 	}
 
 }

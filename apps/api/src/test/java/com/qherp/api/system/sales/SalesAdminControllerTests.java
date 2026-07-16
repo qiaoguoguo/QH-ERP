@@ -62,7 +62,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void adminCanRunSalesOrderAndShipmentLifecycle() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 
 		ResponseEntity<String> created = createOrder(admin,
 				orderPayload(fixture.customerId(), "销售订单创建",
@@ -183,7 +183,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesOrderConfirmationReservesAndShipmentConsumesQualifiedStock() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "10.000000");
 
 		ResponseEntity<String> created = createOrder(admin,
@@ -233,7 +233,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesOrderLinesAggregateTrackedBalancesWithoutDuplicatingSourceLine() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		setTrackingMethod(fixture.finishedMaterialId(), "BATCH");
 		seedBatchStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
 				"SAL-AGG-A-" + SEQUENCE.incrementAndGet(), "2.000000");
@@ -258,7 +258,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesShipmentBatchAllocationPostsTrackingMovementAndConsumesReservation() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		setTrackingMethod(fixture.finishedMaterialId(), "BATCH");
 		TrackedBatch batch = seedBatchStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
 				"SAL-BATCH-" + SEQUENCE.incrementAndGet(), "5.000000");
@@ -297,7 +297,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	void concurrentSalesShipmentsSelectingSameSerialAllowOnlyOnePostWithoutPartialSideEffects() throws Exception {
 		AuthenticatedSession firstAdmin = login("admin", ADMIN_PASSWORD);
 		AuthenticatedSession secondAdmin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(firstAdmin);
 		setTrackingMethod(fixture.finishedMaterialId(), "SERIAL");
 		TrackedSerial targetSerial = seedSerialStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(),
 				"SAL-SN-RACE-" + SEQUENCE.incrementAndGet());
@@ -359,7 +359,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void confirmedSalesOrderCancellationReleasesReservation() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "10.000000");
 		long orderId = createAndConfirmOrder(admin, fixture, "018 销售取消释放预留", "5.000000");
 
@@ -379,7 +379,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesOrderConfirmationRequiresReservationWarehouseAndSelectedWarehouseStock() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		seedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "6.000000");
 
 		long missingWarehouseOrderId = createOrderId(admin,
@@ -401,7 +401,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesShipmentWarehouseMustMatchReservedWarehouse() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long otherWarehouseId = insertWarehouse("SAL_OTHER_WH_" + SEQUENCE.incrementAndGet(), "销售其他仓", "ENABLED");
 		long orderId = createAndConfirmOrder(admin, fixture, "出库仓库必须等于预留仓库", "2.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
@@ -416,7 +416,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void invalidOrderPayloadsReturnControlledSalesErrors() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 
 		assertError(createOrder(admin,
 				orderPayload(fixture.disabledCustomerId(), "停用客户",
@@ -443,13 +443,14 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.otherUnitId(), "1.000000",
 								"1.000000", null)))),
 				HttpStatus.BAD_REQUEST, "SALES_UNIT_INVALID");
-		assertError(createOrder(admin,
-				orderPayload(fixture.customerId(), "重复物料",
+		ResponseEntity<String> sameMaterialOrder = createOrder(admin,
+				orderPayload(fixture.customerId(), "同物料多行",
 						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
-								"1.000000", null),
+								"1.000000", "同物料第一行"),
 								orderLine(2, fixture.finishedMaterialId(), fixture.unitId(), "2.000000",
-										"1.000000", null)))),
-				HttpStatus.CONFLICT, "SALES_ORDER_DUPLICATE_LINE");
+										"1.000000", "同物料第二行"))));
+		assertOk(sameMaterialOrder);
+		assertThat(data(sameMaterialOrder).get("lines").size()).isEqualTo(2);
 		assertError(createOrder(admin,
 				orderPayload(fixture.customerId(), "空明细", List.of())), HttpStatus.BAD_REQUEST,
 				"SALES_ORDER_EMPTY_LINES");
@@ -498,7 +499,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void shipmentErrorsKeepSalesAndInventoryConsistent() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 
 		long draftOrderId = createOrderId(admin,
 				orderPayload(fixture.customerId(), "草稿不可出库",
@@ -563,7 +564,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void shipmentRejectsWhenOnlyNonQualifiedStockCanCoverRequestedQuantity() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long orderId = createAndConfirmOrder(admin, fixture, "合格库存不足", "4.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
 		long shipmentId = createShipmentId(admin, orderId,
@@ -588,7 +589,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesShipmentSourceLinesExposeQualifiedCandidateFieldsWhenOnlyPendingStockExists() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long orderId = createAndConfirmOrder(admin, fixture, "候选字段合格不足", "4.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
 		setQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "0.000000");
@@ -612,7 +613,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 			throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
-		SalesFixture customerFixture = fixture();
+		SalesFixture customerFixture = fixtureWithCredit(admin);
 		long customerOrderId = createAndConfirmOrder(admin, customerFixture, "客户后续停用", "1.000000");
 		long customerOrderLineId = firstLine(data(getOrder(admin, customerOrderId))).get("id").longValue();
 		disableCustomer(customerFixture.customerId());
@@ -624,7 +625,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 								customerFixture.unitId(), "1.000000", null))));
 		assertOk(postShipment(admin, customerShipmentId));
 
-		SalesFixture warehouseFixture = fixture();
+		SalesFixture warehouseFixture = fixtureWithCredit(admin);
 		long warehouseOrderId = createAndConfirmOrder(admin, warehouseFixture, "仓库停用", "1.000000");
 		long warehouseOrderLineId = firstLine(data(getOrder(admin, warehouseOrderId))).get("id").longValue();
 		assertError(createShipment(admin, warehouseOrderId,
@@ -633,7 +634,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 								warehouseFixture.unitId(), "1.000000", null)))),
 				HttpStatus.BAD_REQUEST, "SALES_WAREHOUSE_INVALID");
 
-		SalesFixture materialFixture = fixture();
+		SalesFixture materialFixture = fixtureWithCredit(admin);
 		long materialOrderId = createAndConfirmOrder(admin, materialFixture, "物料停用", "1.000000");
 		long materialOrderLineId = firstLine(data(getOrder(admin, materialOrderId))).get("id").longValue();
 		disableMaterial(materialFixture.finishedMaterialId());
@@ -643,7 +644,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 								materialFixture.unitId(), "1.000000", null)))),
 				HttpStatus.BAD_REQUEST, "SALES_MATERIAL_INVALID");
 
-		SalesFixture unitFixture = fixture();
+		SalesFixture unitFixture = fixtureWithCredit(admin);
 		long unitOrderId = createAndConfirmOrder(admin, unitFixture, "单位停用", "1.000000");
 		long unitOrderLineId = firstLine(data(getOrder(admin, unitOrderId))).get("id").longValue();
 		long unitShipmentId = createShipmentId(admin, unitOrderId,
@@ -661,7 +662,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void listKeywordsMatchMaterialAndCustomerFields() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long orderId = createAndConfirmOrder(admin, fixture, "列表关键词", "2.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
 		long shipmentId = createShipmentId(admin, orderId,
@@ -684,7 +685,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesOrderProjectContractLinkIsPersistedFilteredAuditedAndHistoricalOrdersRemainNull() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long projectId = insertActiveProject(fixture.customerId(), "销售订单关联项目");
 		long contractId = insertEffectiveMainContract(projectId, "销售订单关联合同");
 
@@ -759,7 +760,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void salesOrderProjectContractPairAndConfirmRevalidationRejectWithoutPartialWrites() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long projectId = insertActiveProject(fixture.customerId(), "确认再校验项目");
 		long contractId = insertEffectiveMainContract(projectId, "确认再校验合同");
 
@@ -791,7 +792,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	void concurrentDraftOrderProjectAssociationAllowsOnlyOneVersionedUpdateWithoutPartialWrites() throws Exception {
 		AuthenticatedSession firstAdmin = login("admin", ADMIN_PASSWORD);
 		AuthenticatedSession secondAdmin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(firstAdmin);
 		long firstProjectId = insertActiveProject(fixture.customerId(), "并发关联项目一");
 		long firstContractId = insertEffectiveMainContract(firstProjectId, "并发关联合同一");
 		long secondProjectId = insertActiveProject(fixture.customerId(), "并发关联项目二");
@@ -839,7 +840,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 	@Test
 	void authenticationAuthorizationAndCsrfAreEnforced() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		long orderId = createAndConfirmOrder(admin, fixture, "权限订单", "2.000000");
 		long orderLineId = firstLine(data(getOrder(admin, orderId))).get("id").longValue();
 		long shipmentId = createShipmentId(admin, orderId,
@@ -903,7 +904,8 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 						List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000",
 								"1.000000", null))),
 				admin));
-		assertForbidden(exchangeWithoutCsrf(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/confirm", null,
+		assertForbidden(exchangeWithoutCsrf(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/confirm",
+				actionBody(data(getOrder(admin, orderId)), "无 CSRF 确认", "sales-no-csrf-confirm-" + orderId),
 				admin));
 		assertForbidden(exchangeWithoutCsrf(HttpMethod.POST, "/api/admin/sales/orders/" + orderId + "/shipments",
 				shipmentPayload(fixture.warehouseId(), "无 CSRF 出库",
@@ -911,13 +913,15 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 								"1.000000", null))),
 				admin));
 		assertForbidden(exchangeWithoutCsrf(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipmentId + "/post",
-				null, admin));
+				actionBody(data(getShipment(admin, shipmentId)), "无 CSRF 过账",
+						"sales-no-csrf-shipment-post-" + shipmentId),
+				admin));
 	}
 
 	@Test
 	void lockedPeriodRejectsSalesOrderConfirmationCancellationAndClosing() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
-		SalesFixture fixture = fixture();
+		SalesFixture fixture = fixtureWithCredit(admin);
 		LocalDate date = LocalDate.of(2092, 7, 10);
 		Map<String, Object> confirmPayload = new LinkedHashMap<>(orderPayload(fixture.customerId(), "期间锁定确认测试",
 				List.of(orderLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1", "1", null))));
@@ -933,6 +937,7 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		long closeId = createOrderId(admin, closePayload);
 		ensureQualifiedStock(fixture.warehouseId(), fixture.finishedMaterialId(), fixture.unitId(), "1.000000");
 		assertOk(confirmOrder(admin, closeId));
+		closeFirstDeliveryPlan(admin, closeId);
 		lockPeriod(date);
 		assertError(confirmOrder(admin, confirmId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
 		assertError(cancelOrder(admin, cancelId), HttpStatus.CONFLICT, "BUSINESS_PERIOD_LOCKED");
@@ -1006,6 +1011,13 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		}
 		line.put("quantity", quantity);
 		line.put("unitPrice", unitPrice);
+		line.put("taxRate", "0.000000");
+		line.put("taxExcludedUnitPrice", unitPrice);
+		line.put("taxIncludedUnitPrice", unitPrice);
+		line.put("taxExcludedAmount", amount(quantity, unitPrice));
+		line.put("taxAmount", "0.00");
+		line.put("taxIncludedAmount", amount(quantity, unitPrice));
+		line.put("priceSourceType", "MANUAL");
 		if (this.defaultReservationWarehouseId != null) {
 			line.put("reservationWarehouseId", this.defaultReservationWarehouseId);
 		}
@@ -1044,6 +1056,12 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 			line.put("remark", remark);
 		}
 		return line;
+	}
+
+	private SalesFixture fixtureWithCredit(AuthenticatedSession admin) throws Exception {
+		SalesFixture fixture = fixture();
+		ensureCreditProfile(admin, fixture.customerId());
+		return fixture;
 	}
 
 	private SalesFixture fixture() {
@@ -1598,21 +1616,41 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 		return get("/api/admin/sales/orders/" + orderId, session);
 	}
 
-	private ResponseEntity<String> confirmOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/confirm", null, session);
+	private ResponseEntity<String> confirmOrder(AuthenticatedSession session, long orderId) throws Exception {
+		JsonNode order = data(getOrder(session, orderId));
+		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/confirm",
+				actionBody(order, "销售订单确认", "sales-order-confirm-" + orderId), session);
 	}
 
-	private ResponseEntity<String> cancelOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/cancel", null, session);
+	private ResponseEntity<String> cancelOrder(AuthenticatedSession session, long orderId) throws Exception {
+		JsonNode order = data(getOrder(session, orderId));
+		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/cancel",
+				actionBody(order, "销售订单取消", "sales-order-cancel-" + orderId), session);
 	}
 
-	private ResponseEntity<String> closeOrder(AuthenticatedSession session, long orderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/close", null, session);
+	private ResponseEntity<String> closeOrder(AuthenticatedSession session, long orderId) throws Exception {
+		JsonNode order = data(getOrder(session, orderId));
+		return exchange(HttpMethod.PUT, "/api/admin/sales/orders/" + orderId + "/close",
+				actionBody(order, "销售订单关闭", "sales-order-close-" + orderId), session);
+	}
+
+	private void closeFirstDeliveryPlan(AuthenticatedSession session, long orderId) throws Exception {
+		JsonNode plan = data(get("/api/admin/sales/orders/" + orderId + "/delivery-plans", session))
+			.get("items")
+			.get(0);
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("version", plan.get("version").longValue());
+		body.put("reason", "期间锁定关闭测试先关闭交付计划");
+		body.put("idempotencyKey", "sales-delivery-plan-close-" + orderId + "-" + plan.get("id").longValue());
+		assertOk(exchange(HttpMethod.PUT,
+				"/api/admin/sales/orders/" + orderId + "/delivery-plans/" + plan.get("id").longValue() + "/close",
+				body, session));
 	}
 
 	private ResponseEntity<String> createShipment(AuthenticatedSession session, long orderId,
 			Map<String, Object> body) {
-		return exchange(HttpMethod.POST, "/api/admin/sales/orders/" + orderId + "/shipments", body, session);
+		return exchange(HttpMethod.POST, "/api/admin/sales/orders/" + orderId + "/shipments",
+				withDeliveryPlanIds(orderId, body), session);
 	}
 
 	private ResponseEntity<String> getShipment(AuthenticatedSession session, long shipmentId) {
@@ -1621,11 +1659,83 @@ class SalesAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> updateShipment(AuthenticatedSession session, long shipmentId,
 			Map<String, Object> body) {
-		return exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipmentId, body, session);
+		Long orderId = this.jdbcTemplate.queryForObject("""
+				select order_id
+				from sal_sales_shipment
+				where id = ?
+				""", Long.class, shipmentId);
+		return exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipmentId,
+				withDeliveryPlanIds(orderId, body), session);
 	}
 
-	private ResponseEntity<String> postShipment(AuthenticatedSession session, long shipmentId) {
-		return exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipmentId + "/post", null, session);
+	private ResponseEntity<String> postShipment(AuthenticatedSession session, long shipmentId) throws Exception {
+		JsonNode shipment = data(getShipment(session, shipmentId));
+		return exchange(HttpMethod.PUT, "/api/admin/sales/shipments/" + shipmentId + "/post",
+				actionBody(shipment, "销售出库过账", "sales-shipment-post-" + shipmentId), session);
+	}
+
+	private void ensureCreditProfile(AuthenticatedSession admin, long customerId) throws Exception {
+		ResponseEntity<String> existing = get("/api/admin/sales/credit-profiles/" + customerId, admin);
+		if (existing.getStatusCode().isSameCodeAs(HttpStatus.OK)) {
+			return;
+		}
+		assertThat(existing.getStatusCode()).as(existing.getBody()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(code(existing)).as(existing.getBody()).isEqualTo("SALES_CREDIT_BLOCKED");
+		assertOk(exchange(HttpMethod.POST, "/api/admin/sales/credit-profiles",
+				creditProfilePayload(customerId), admin));
+	}
+
+	private Map<String, Object> creditProfilePayload(long customerId) {
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("customerId", customerId);
+		payload.put("creditLimit", "1000000.00");
+		payload.put("frozen", false);
+		payload.put("blockOverdue", false);
+		payload.put("reviewDate", LocalDate.now().toString());
+		payload.put("remark", "025 销售旧测试信用档案");
+		return payload;
+	}
+
+	private Map<String, Object> actionBody(JsonNode object, String reason, String keyPrefix) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("version", object.get("version").longValue());
+		body.put("reason", reason);
+		body.put("idempotencyKey", keyPrefix + "-" + object.get("version").longValue());
+		return body;
+	}
+
+	private String amount(String quantity, String unitPrice) {
+		return new BigDecimal(quantity).multiply(new BigDecimal(unitPrice))
+			.setScale(2, java.math.RoundingMode.HALF_UP)
+			.toPlainString();
+	}
+
+	private Map<String, Object> withDeliveryPlanIds(Long orderId, Map<String, Object> body) {
+		if (body == null || orderId == null || !(body.get("lines") instanceof List<?> lines)) {
+			return body;
+		}
+		for (Object item : lines) {
+			if (item instanceof Map<?, ?> rawLine) {
+				@SuppressWarnings("unchecked")
+				Map<String, Object> line = (Map<String, Object>) rawLine;
+				if (line.get("deliveryPlanId") == null && line.get("orderLineId") != null) {
+					deliveryPlanId(orderId, ((Number) line.get("orderLineId")).longValue())
+						.ifPresent((planId) -> line.put("deliveryPlanId", planId));
+				}
+			}
+		}
+		return body;
+	}
+
+	private java.util.Optional<Long> deliveryPlanId(Long orderId, Long orderLineId) {
+		return this.jdbcTemplate.query("""
+				select id
+				from sal_sales_delivery_plan
+				where order_id = ?
+				  and order_line_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", (rs, rowNum) -> rs.getLong("id"), orderId, orderLineId).stream().findFirst();
 	}
 
 	private AuthenticatedSession login(String username, String password) {

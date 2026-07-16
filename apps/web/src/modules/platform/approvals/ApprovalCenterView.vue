@@ -64,6 +64,14 @@ const businessObjectPaths: Record<string, string> = {
   INVENTORY_STOCKTAKE: '/inventory/stocktakes',
   INVENTORY_OWNERSHIP_CONVERSION: '/inventory/ownership-conversions',
   INVENTORY_VALUATION_ADJUSTMENT: '/inventory/valuation-adjustments',
+  SALES_QUOTE: '/sales/quotes',
+}
+
+const businessObjectLabels: Record<string, string> = {
+  INVENTORY_STOCKTAKE: '库存盘点',
+  INVENTORY_OWNERSHIP_CONVERSION: '库存权属转换',
+  INVENTORY_VALUATION_ADJUSTMENT: '库存估值调整',
+  SALES_QUOTE: '销售报价',
 }
 
 function businessObjectRoute(record: { objectType?: string | null, objectId?: string | number | null }) {
@@ -72,6 +80,10 @@ function businessObjectRoute(record: { objectType?: string | null, objectId?: st
   }
   const basePath = businessObjectPaths[record.objectType]
   return basePath ? `${basePath}/${encodeURIComponent(String(record.objectId))}` : null
+}
+
+function businessObjectLabel(objectType?: string | null) {
+  return objectType ? businessObjectLabels[objectType] : null
 }
 
 function isStaleActionError(caught: unknown): boolean {
@@ -287,7 +299,7 @@ onMounted(() => {
               data-test="approval-business-link"
               :to="businessObjectRoute(row) || ''"
             >
-              查看业务单据
+              查看业务单据<span v-if="businessObjectLabel(row.objectType)">（{{ businessObjectLabel(row.objectType) }}）</span>
             </RouterLink>
           </template>
         </el-table-column>
@@ -338,7 +350,7 @@ onMounted(() => {
             data-test="approval-detail-business-link"
             :to="businessObjectRoute(detail) || ''"
           >
-            查看业务单据
+            查看业务单据<span v-if="businessObjectLabel(detail.objectType)">（{{ businessObjectLabel(detail.objectType) }}）</span>
           </RouterLink>
           <span v-else>无可跳转业务单据</span>
         </dd>

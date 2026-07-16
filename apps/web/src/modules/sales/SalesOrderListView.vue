@@ -4,19 +4,23 @@ import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
 import {
   salesApi,
+  type SalesOrderAction,
   type SalesOrderStatus,
   type SalesOrderSummaryRecord,
 } from '../../shared/api/salesApi'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import SalesOrderStatusTag from './SalesOrderStatusTag.vue'
+import { formatSalesDecimal, salesSourceChainLabel } from './salesFulfillmentPageHelpers'
 import {
   formatSalesDateTime,
   formatSalesQuantity,
   normalizeOptionalId,
   salesErrorMessage,
+  salesOrderTaxIncludedAmount,
 } from './salesPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -172,16 +176,54 @@ function createShipment(record: SalesOrderSummaryRecord) {
   void router.push({ name: 'sales-shipment-create', params: { orderId: String(record.id) } })
 }
 
+function hasAllowedAction(record: SalesOrderSummaryRecord, action: SalesOrderAction) {
+  return (record.allowedActions ?? []).includes(action)
+}
+
 function canCancel(record: SalesOrderSummaryRecord) {
-  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && Number(record.shippedQuantity) <= 0)
+  return hasAllowedAction(record, 'CANCEL')
 }
 
 function canClose(record: SalesOrderSummaryRecord) {
-  return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_SHIPPED' || record.status === 'SHIPPED'
+  return hasAllowedAction(record, 'CLOSE')
 }
 
 function canCreateShipment(record: SalesOrderSummaryRecord) {
-  return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_SHIPPED'
+  return hasAllowedAction(record, 'CREATE_SHIPMENT')
+}
+
+function sourceSummary(record: SalesOrderSummaryRecord) {
+  if (record.priceSourceType === 'QUOTE') {
+    return `报价 ${record.priceSourceNo ?? record.sourceQuoteNo ?? '来源未返回'}`
+  }
+  if (record.priceSourceType === 'LEGACY_MANUAL') {
+    return '历史手工订单'
+  }
+  return '手工订单'
+}
+
+function projectSummary(record: SalesOrderSummaryRecord) {
+  if (record.contractRestricted) {
+    return '合同信息受限'
+  }
+  if (record.projectId) {
+    return `${record.projectNo ?? '项目未返回'} ${record.projectName ?? ''}`.trim()
+  }
+  return '未关联项目'
+}
+
+function amountSummary(record: SalesOrderSummaryRecord) {
+  if (record.amountRestricted) {
+    return '金额受限'
+  }
+  return `含税 ${formatSalesDecimal(salesOrderTaxIncludedAmount(record))} ${record.currency ?? 'CNY'}`
+}
+
+function creditSummary(record: SalesOrderSummaryRecord) {
+  if (record.creditRestricted) {
+    return '信用信息受限'
+  }
+  return record.creditStatusName ?? '信用状态未返回'
 }
 
 async function runOrderAction(record: SalesOrderSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -199,13 +241,19 @@ async function runOrderAction(record: SalesOrderSummaryRecord, action: 'confirm'
 
   actionError.value = ''
   actionLoading.value = true
+  const payload = {
+    version: record.version,
+    idempotencyKey: createIdempotencyKey(`sales-order-${action}`),
+    ...(action === 'cancel' ? { reason: '客户取消' } : {}),
+    ...(action === 'close' ? { reason: '履约完成' } : {}),
+  }
   try {
     if (action === 'confirm') {
-      await salesApi.orders.confirm(record.id)
+      await salesApi.orders.confirm(record.id, payload)
     } else if (action === 'cancel') {
-      await salesApi.orders.cancel(record.id)
+      await salesApi.orders.cancel(record.id, payload)
     } else {
-      await salesApi.orders.close(record.id)
+      await salesApi.orders.close(record.id, payload)
     }
     await loadRecords()
   } catch (caught) {
@@ -325,6 +373,27 @@ onMounted(() => {
             <SalesOrderStatusTag :status="row.status" />
           </template>
         </el-table-column>
+        <el-table-column label="来源链" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div>{{ salesSourceChainLabel(Boolean(row.sourceQuoteId)) }}</div>
+            <small>{{ sourceSummary(row) }}</small>
+          </template>
+        </el-table-column>
+        <el-table-column label="项目/合同" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ projectSummary(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="税价" min-width="130" align="right">
+          <template #default="{ row }">
+            <span class="numeric-cell">{{ amountSummary(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="信用" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ creditSummary(row) }}
+          </template>
+        </el-table-column>
         <el-table-column label="总数量" min-width="100" align="right">
           <template #default="{ row }">
             <span class="numeric-cell">{{ formatSalesQuantity(row.totalQuantity) }}</span>
@@ -351,7 +420,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-order" @click="viewOrder(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && hasAllowedAction(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-sales-order"
@@ -360,7 +429,7 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canConfirm && row.status === 'DRAFT'"
+              v-if="canConfirm && hasAllowedAction(row, 'CONFIRM')"
               size="small"
               text
               type="success"

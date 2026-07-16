@@ -34,6 +34,9 @@ const draftShipment: SalesShipmentDetailRecord = {
   status: 'DRAFT',
   lineCount: 1,
   totalQuantity: 2.5,
+  allowedActions: ['UPDATE', 'POST'],
+  actionDisabledReason: null,
+  version: 5,
   remark: '首批销售出库',
   createdByName: '仓管员',
   createdAt: '2026-07-05T08:00:00+08:00',
@@ -95,6 +98,7 @@ const draftShipment: SalesShipmentDetailRecord = {
 const postedShipment: SalesShipmentDetailRecord = {
   ...draftShipment,
   status: 'POSTED',
+  allowedActions: [],
   postedByName: '仓管员',
   postedAt: '2026-07-05T09:00:00+08:00',
   inventoryMovements: [
@@ -115,6 +119,16 @@ const postedShipment: SalesShipmentDetailRecord = {
     },
   ],
 }
+
+const earlyShipment = {
+  ...draftShipment,
+  lines: draftShipment.lines.map((line) => ({
+    ...line,
+    deliveryPlanId: 910,
+    deliveryPlanNo: 'SDP-001',
+    deliveryPlanDate: '2026-07-12',
+  })),
+} as SalesShipmentDetailRecord
 
 function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
@@ -232,7 +246,11 @@ describe('销售出库详情页', () => {
     await wrapper.find('[data-test="post-sales-shipment-detail"]').trigger('click')
     await flushPromises()
     expect(confirmActionMock).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
-    expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700)
+    expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700, expect.objectContaining({
+      version: 5,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(salesApiMock.shipments.post.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
     expect(salesApiMock.shipments.get).toHaveBeenCalledTimes(2)
 
     vi.clearAllMocks()
@@ -243,6 +261,25 @@ describe('销售出库详情页', () => {
 
     expect(failed.wrapper.text()).toContain('库存不足，不能过账销售出库')
     expect(salesApiMock.shipments.get).toHaveBeenCalledTimes(1)
+  })
+
+  it('销售出库早于交付计划日期时要求填写提前交付原因并随过账请求发送', async () => {
+    const { wrapper } = await mountDetail(earlyShipment)
+
+    await wrapper.find('[data-test="post-sales-shipment-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('提前交付原因')
+    expect(salesApiMock.shipments.post).not.toHaveBeenCalled()
+
+    await wrapper.find('textarea[name="sales-shipment-early-reason"]').setValue('客户要求提前交付')
+    await wrapper.find('[data-test="confirm-sales-shipment-early-post"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700, {
+      version: 5,
+      reason: '客户要求提前交付',
+      idempotencyKey: expect.any(String),
+    })
   })
 
   it('展示销售出库库存流水追溯摘要', async () => {

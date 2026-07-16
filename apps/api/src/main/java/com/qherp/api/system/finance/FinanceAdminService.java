@@ -82,7 +82,7 @@ public class FinanceAdminService {
 				select sh.id as source_id, sh.shipment_no as source_no, o.id as sales_order_id,
 				       o.order_no as sales_order_no, sh.customer_id, c.code as customer_code, c.name as customer_name,
 				       sh.business_date,
-				       coalesce(sum(sl.quantity * ol.unit_price), 0) as total_amount,
+				       coalesce(sum(sl.tax_included_amount), 0) as total_amount,
 				       count(sl.id) as line_count,
 				       exists (
 				       	select 1
@@ -94,7 +94,6 @@ public class FinanceAdminService {
 				join sal_sales_order o on o.id = sh.order_id
 				join mst_customer c on c.id = sh.customer_id
 				join sal_sales_shipment_line sl on sl.shipment_id = sh.id
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				%s
 				group by sh.id, sh.shipment_no, o.id, o.order_no, sh.customer_id, c.code, c.name, sh.business_date
 				order by sh.business_date desc, sh.id desc
@@ -145,6 +144,16 @@ public class FinanceAdminService {
 				summary.status(), summary.remark(), summary.createdByName(), summary.createdAt(), summary.updatedAt(),
 				summary.confirmedByName(), summary.confirmedAt(), summary.cancelledByName(), summary.cancelledAt(),
 				summary.closedByName(), summary.closedAt(), receivableSources(id), receivableReceipts(id), List.of());
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<ReceivableSourceRecord> receivableSources(Long id, int page, int pageSize) {
+		receivableSummary(id).orElseThrow(this::receivableNotFound);
+		List<ReceivableSourceRecord> all = receivableSources(id);
+		int safePageSize = limit(pageSize);
+		int from = Math.min(offset(page, safePageSize), all.size());
+		int to = Math.min(from + safePageSize, all.size());
+		return PageResponse.of(all.subList(from, to), page, safePageSize, all.size());
 	}
 
 	@Transactional
@@ -1227,10 +1236,9 @@ public class FinanceAdminService {
 	private List<ShipmentSourceLine> shipmentSourceLines(Long shipmentId) {
 		return this.jdbcTemplate.query("""
 				select sl.id, sl.line_no, sl.order_line_id, sl.material_id, m.code as material_code,
-				       m.name as material_name, sl.unit_id, u.name as unit_name, sl.quantity, ol.unit_price,
-				       (sl.quantity * ol.unit_price) as source_amount
+				       m.name as material_name, sl.unit_id, u.name as unit_name, sl.quantity,
+				       sl.tax_included_unit_price as unit_price, sl.tax_included_amount as source_amount
 				from sal_sales_shipment_line sl
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				join mst_material m on m.id = sl.material_id
 				join mst_unit u on u.id = sl.unit_id
 				where sl.shipment_id = ?
@@ -1313,13 +1321,13 @@ public class FinanceAdminService {
 		return this.jdbcTemplate.query("""
 				select s.id, s.source_type, s.source_id, s.source_no, s.source_line_id, s.source_line_no,
 				       sh.business_date as source_business_date, so.id as sales_order_id, so.order_no as sales_order_no,
-				       ol.id as sales_order_line_id, sl.material_id, m.code as material_code, m.name as material_name,
-				       u.name as unit_name, sl.quantity, ol.unit_price, s.source_amount
+				       sl.order_line_id as sales_order_line_id, sl.material_id, m.code as material_code,
+				       m.name as material_name,
+				       u.name as unit_name, sl.quantity, sl.tax_included_unit_price as unit_price, s.source_amount
 				from fin_receivable_source s
 				join sal_sales_shipment sh on sh.id = s.source_id
 				join sal_sales_order so on so.id = sh.order_id
 				join sal_sales_shipment_line sl on sl.id = s.source_line_id
-				join sal_sales_order_line ol on ol.id = sl.order_line_id
 				join mst_material m on m.id = sl.material_id
 				join mst_unit u on u.id = sl.unit_id
 				where s.receivable_id = ?

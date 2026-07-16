@@ -14,6 +14,18 @@ export type SalesShipmentStatus = 'DRAFT' | 'POSTED'
 export type SalesOrderContractType = 'MAIN' | 'SUPPLEMENT'
 export type SalesQuantityPayload = string
 export type SalesUnitPricePayload = string
+export type SalesPriceSourceType = 'MANUAL' | 'QUOTE' | 'LEGACY_MANUAL'
+export type SalesOrderAction =
+  | 'UPDATE'
+  | 'CONFIRM'
+  | 'CANCEL'
+  | 'CLOSE'
+  | 'CREATE_CHANGE'
+  | 'UPDATE_DELIVERY_PLAN'
+  | 'SUBMIT_SHORT_CLOSE'
+  | 'SUBMIT_CREDIT_OVERRIDE'
+  | 'CREATE_SHIPMENT'
+export type SalesShipmentAction = 'UPDATE' | 'POST'
 
 export interface SalesOrderListParams {
   keyword?: string | null
@@ -60,9 +72,26 @@ export interface SalesOrderSummaryRecord {
   externalContractNo?: string | null
   status: SalesOrderStatus
   lineCount: number
-  totalQuantity: number
-  shippedQuantity: number
-  remainingQuantity: number
+  totalQuantity: string | number
+  shippedQuantity: string | number
+  remainingQuantity: string | number
+  totalUntaxedAmount?: string | null
+  totalTaxAmount?: string | null
+  totalTaxIncludedAmount?: string | null
+  taxExcludedAmount?: string | null
+  taxAmount?: string | null
+  taxIncludedAmount?: string | null
+  currency?: 'CNY' | string | null
+  sourceQuoteId?: ResourceId | null
+  sourceQuoteNo?: string | null
+  priceSourceType?: SalesPriceSourceType | null
+  priceSourceNo?: string | null
+  creditRestricted?: boolean
+  contractRestricted?: boolean
+  amountRestricted?: boolean
+  creditStatusName?: string | null
+  allowedActions?: SalesOrderAction[]
+  actionDisabledReason?: string | null
   remark?: string | null
   createdByName: string
   createdAt: string
@@ -105,6 +134,16 @@ export interface SalesOrderLineRecord {
   disabledReason?: string | null
   maxSelectableQuantity?: string | number | null
   unitPrice: string
+  priceSourceType?: SalesPriceSourceType | null
+  priceSourceNo?: string | null
+  quoteLineId?: ResourceId | null
+  contractLineId?: ResourceId | null
+  untaxedUnitPrice?: string | null
+  taxIncludedUnitPrice?: string | null
+  taxRate?: string | null
+  untaxedAmount?: string | null
+  taxAmount?: string | null
+  taxIncludedAmount?: string | null
   expectedShipDate?: string | null
   remark?: string | null
 }
@@ -121,7 +160,10 @@ export interface SalesShipmentSummaryRecord {
   businessDate: string
   status: SalesShipmentStatus
   lineCount: number
-  totalQuantity: number
+  totalQuantity: string | number
+  allowedActions?: SalesShipmentAction[]
+  actionDisabledReason?: string | null
+  version?: number
   remark?: string | null
   createdByName: string
   createdAt: string
@@ -139,6 +181,9 @@ export interface SalesOrderDetailRecord extends SalesOrderSummaryRecord {
 export interface SalesShipmentLineRecord {
   id: ResourceId
   lineNo: number
+  deliveryPlanId?: ResourceId | null
+  deliveryPlanNo?: string | null
+  deliveryPlanDate?: string | null
   orderLineId: ResourceId
   materialId: ResourceId
   materialCode: string
@@ -199,6 +244,15 @@ export interface SalesOrderLinePayload {
   reservationWarehouseId: ResourceId
   quantity: SalesQuantityPayload
   unitPrice: SalesUnitPricePayload
+  priceSourceType?: SalesPriceSourceType
+  quoteLineId?: ResourceId | null
+  contractLineId?: ResourceId | null
+  untaxedUnitPrice?: string
+  taxIncludedUnitPrice?: string
+  taxRate?: string
+  untaxedAmount?: string
+  taxAmount?: string
+  taxIncludedAmount?: string
   expectedShipDate?: string
   remark?: string
 }
@@ -221,9 +275,16 @@ export interface SalesOrderUpdatePayload extends SalesOrderBasePayload {
 
 export type SalesOrderPayload = SalesOrderCreatePayload
 
+export interface SalesOrderActionPayload {
+  version: number
+  reason?: string
+  idempotencyKey: string
+}
+
 export interface SalesShipmentLinePayload {
   lineNo: number
   orderLineId: ResourceId
+  deliveryPlanId?: ResourceId | null
   materialId?: ResourceId
   unitId?: ResourceId
   quantity: SalesQuantityPayload
@@ -238,22 +299,28 @@ export interface SalesShipmentPayload {
   lines: SalesShipmentLinePayload[]
 }
 
+export interface SalesShipmentPostPayload {
+  version: number
+  idempotencyKey: string
+  reason?: string
+}
+
 export interface SalesApi {
   orders: {
     list(params: SalesOrderListParams): Promise<PageResult<SalesOrderSummaryRecord>>
     get(id: ResourceId): Promise<SalesOrderDetailRecord>
     create(payload: SalesOrderCreatePayload): Promise<SalesOrderDetailRecord>
     update(id: ResourceId, payload: SalesOrderUpdatePayload): Promise<SalesOrderDetailRecord>
-    confirm(id: ResourceId): Promise<SalesOrderDetailRecord>
-    cancel(id: ResourceId): Promise<SalesOrderDetailRecord>
-    close(id: ResourceId): Promise<SalesOrderDetailRecord>
+    confirm(id: ResourceId, payload: SalesOrderActionPayload): Promise<SalesOrderDetailRecord>
+    cancel(id: ResourceId, payload: SalesOrderActionPayload): Promise<SalesOrderDetailRecord>
+    close(id: ResourceId, payload: SalesOrderActionPayload): Promise<SalesOrderDetailRecord>
   }
   shipments: {
     list(params: SalesShipmentListParams): Promise<PageResult<SalesShipmentSummaryRecord>>
     get(id: ResourceId): Promise<SalesShipmentDetailRecord>
     create(orderId: ResourceId, payload: SalesShipmentPayload): Promise<SalesShipmentDetailRecord>
     update(id: ResourceId, payload: SalesShipmentPayload): Promise<SalesShipmentDetailRecord>
-    post(id: ResourceId): Promise<SalesShipmentDetailRecord>
+    post(id: ResourceId, payload: SalesShipmentPostPayload): Promise<SalesShipmentDetailRecord>
   }
 }
 
@@ -367,9 +434,9 @@ export function createSalesApi(options: SalesApiOptions = {}): SalesApi {
       get: (id) => get<SalesOrderDetailRecord>(orderPath(id)),
       create: (payload) => write<SalesOrderDetailRecord>('POST', orderPath(), payload),
       update: (id, payload) => write<SalesOrderDetailRecord>('PUT', orderPath(id), payload),
-      confirm: (id) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/confirm`),
-      cancel: (id) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/cancel`),
-      close: (id) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/close`),
+      confirm: (id, payload) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/confirm`, payload),
+      cancel: (id, payload) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/cancel`, payload),
+      close: (id, payload) => write<SalesOrderDetailRecord>('PUT', `${orderPath(id)}/close`, payload),
     },
     shipments: {
       list: (params) =>
@@ -380,7 +447,7 @@ export function createSalesApi(options: SalesApiOptions = {}): SalesApi {
       get: (id) => get<SalesShipmentDetailRecord>(shipmentPath(id)),
       create: (orderId, payload) => write<SalesShipmentDetailRecord>('POST', `${orderPath(orderId)}/shipments`, payload),
       update: (id, payload) => write<SalesShipmentDetailRecord>('PUT', shipmentPath(id), payload),
-      post: (id) => write<SalesShipmentDetailRecord>('PUT', `${shipmentPath(id)}/post`),
+      post: (id, payload) => write<SalesShipmentDetailRecord>('PUT', `${shipmentPath(id)}/post`, payload),
     },
   }
 }

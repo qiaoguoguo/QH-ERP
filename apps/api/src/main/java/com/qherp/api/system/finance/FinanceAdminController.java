@@ -58,6 +58,13 @@ public class FinanceAdminController {
 		return ApiResponse.ok(this.financeAdminService.receivable(id));
 	}
 
+	@GetMapping("/receivables/{id}/sources")
+	public ApiResponse<PageResponse<FinanceAdminService.ReceivableSourceRecord>> receivableSources(
+			@PathVariable Long id, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.financeAdminService.receivableSources(id, page, pageSize));
+	}
+
 	@PostMapping("/receivables")
 	public ApiResponse<FinanceAdminService.ReceivableDetailResponse> createReceivable(
 			@Valid @RequestBody FinanceAdminService.ReceivableCreateRequest request,

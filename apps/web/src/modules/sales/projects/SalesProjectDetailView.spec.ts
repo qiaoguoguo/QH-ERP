@@ -3,9 +3,17 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import type { SalesProjectFulfillmentRecord } from '../../../shared/api/salesFulfillmentApi'
 import type { ProjectSalesOrderSummary, SalesProjectDetail } from '../../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../../stores/authStore'
 import SalesProjectDetailView from './SalesProjectDetailView.vue'
+
+const salesFulfillmentApiMock = vi.hoisted(() => ({
+  projectFulfillment: {
+    get: vi.fn(),
+    close: vi.fn(),
+  },
+}))
 
 const salesProjectApiMock = vi.hoisted(() => ({
   projects: {
@@ -20,6 +28,16 @@ const salesProjectApiMock = vi.hoisted(() => ({
 vi.mock('../../../shared/api/salesProjectApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../shared/api/salesProjectApi')>()),
   salesProjectApi: salesProjectApiMock,
+}))
+
+vi.mock('../../../shared/api/salesFulfillmentApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/salesFulfillmentApi')>()),
+  salesFulfillmentApi: salesFulfillmentApiMock,
+}))
+
+vi.mock('../../../shared/api/documentPlatformApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/documentPlatformApi')>()),
+  createIdempotencyKey: () => 'sales-fulfillment-key',
 }))
 
 const project: SalesProjectDetail = {
@@ -110,6 +128,29 @@ const projectOrder: ProjectSalesOrderSummary = {
   updatedAt: '2026-07-10T09:00:00+08:00',
 }
 
+const fulfillment: SalesProjectFulfillmentRecord = {
+  projectId: 12,
+  projectNo: 'SP-202607-001',
+  projectName: '华东扩产项目',
+  status: 'OPEN',
+  contractRestricted: false,
+  creditRestricted: false,
+  contractEffectiveAmount: '100000.000000',
+  orderTaxIncludedAmount: '88000.000000',
+  plannedQuantity: '20.000000',
+  shippedQuantity: '12.000000',
+  returnedQuantity: '2.000000',
+  netDeliveredQuantity: '10.000000',
+  openDemandQuantity: '8.000000',
+  overduePlanCount: 1,
+  creditRiskSummary: '信用通过',
+  legacyDeliveryPlanCompatible: false,
+  blockReasons: ['存在开放交付计划'],
+  allowedActions: ['CLOSE'],
+  actionDisabledReason: null,
+  version: 6,
+}
+
 async function mountDetail(record: SalesProjectDetail = project, permissions = [
   'sales:project:view',
   'sales:project:update',
@@ -119,7 +160,9 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
   'sales:contract:view',
   'sales:contract:create',
   'sales:order:view',
-]) {
+  'sales:fulfillment:view',
+  'sales:fulfillment:close',
+], fulfillmentRecord: SalesProjectFulfillmentRecord = fulfillment) {
   salesProjectApiMock.projects.get.mockResolvedValue(record)
   salesProjectApiMock.projects.activate.mockResolvedValue({ ...record, status: 'ACTIVE', version: record.version + 1 })
   salesProjectApiMock.projects.close.mockResolvedValue({ ...record, status: 'CLOSED', version: record.version + 1 })
@@ -130,6 +173,14 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
     pageSize: 5,
     total: 1,
     totalPages: 1,
+  })
+  salesFulfillmentApiMock.projectFulfillment.get.mockResolvedValue(fulfillmentRecord)
+  salesFulfillmentApiMock.projectFulfillment.close.mockResolvedValue({
+    ...fulfillmentRecord,
+    status: 'CLOSED',
+    blockReasons: [],
+    allowedActions: [],
+    version: fulfillmentRecord.version + 1,
   })
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -343,6 +394,74 @@ describe('销售项目详情页', () => {
     await flushPromises()
 
     expect(salesProjectApiMock.projects.close).toHaveBeenCalledWith(12, { version: 5, reason: '合同履约完成' })
+  })
+
+  it('展示 025 销售履约汇总并按权限关闭销售履约', async () => {
+    const { wrapper } = await mountDetail()
+
+    expect(salesFulfillmentApiMock.projectFulfillment.get).toHaveBeenCalledWith(12)
+    expect(wrapper.text()).toContain('销售履约')
+    expect(wrapper.text()).toContain('合同有效金额')
+    expect(wrapper.text()).toContain('100000')
+    expect(wrapper.text()).toContain('订单含税金额')
+    expect(wrapper.text()).toContain('88000')
+    expect(wrapper.text()).toContain('开放需求')
+    expect(wrapper.text()).toContain('8')
+    expect(wrapper.text()).toContain('信用通过')
+    expect(wrapper.text()).toContain('存在开放交付计划')
+
+    await buttonsByText(wrapper, '关闭销售履约')[0].trigger('click')
+    await flushPromises()
+    await wrapper.find('textarea[name="sales-project-fulfillment-close-reason"]').setValue('项目销售履约完成')
+    await wrapper.find('[data-test="confirm-sales-fulfillment-close"]').trigger('click')
+    await flushPromises()
+
+    expect(salesFulfillmentApiMock.projectFulfillment.close).toHaveBeenCalledWith(12, {
+      version: 6,
+      reason: '项目销售履约完成',
+      idempotencyKey: 'sales-fulfillment-key',
+    })
+    expect(salesFulfillmentApiMock.projectFulfillment.get).toHaveBeenCalledTimes(2)
+  })
+
+  it('仅当后端标记历史交付计划兼容时显示履约提示', async () => {
+    const compatible = await mountDetail(project, [
+      'sales:project:view',
+      'sales:fulfillment:view',
+    ], {
+      ...fulfillment,
+      legacyDeliveryPlanCompatible: true,
+    })
+    expect(compatible.wrapper.text()).toContain('历史交付计划兼容')
+
+    const notCompatible = await mountDetail(project, [
+      'sales:project:view',
+      'sales:fulfillment:view',
+    ], {
+      ...fulfillment,
+      legacyDeliveryPlanCompatible: false,
+    })
+    expect(notCompatible.wrapper.text()).not.toContain('历史交付计划兼容')
+  })
+
+  it('无履约或信用权限时显示受限态且不展示关闭入口', async () => {
+    salesFulfillmentApiMock.projectFulfillment.get.mockResolvedValueOnce({
+      ...fulfillment,
+      contractRestricted: true,
+      creditRestricted: true,
+      contractEffectiveAmount: null,
+      orderTaxIncludedAmount: null,
+      creditRiskSummary: null,
+      allowedActions: [],
+    })
+    const { wrapper } = await mountDetail(project, ['sales:project:view', 'sales:fulfillment:view'])
+
+    expect(wrapper.text()).toContain('合同信息受限')
+    expect(wrapper.text()).toContain('信用信息受限')
+    expect(wrapper.text()).toContain('合同有效金额合同信息受限')
+    expect(wrapper.text()).toContain('订单含税金额合同信息受限')
+    expect(wrapper.text()).not.toContain('信用通过')
+    expect(buttonsByText(wrapper, '关闭销售履约')).toHaveLength(0)
   })
 
   it('项目取消确认按钮使用危险语义', async () => {

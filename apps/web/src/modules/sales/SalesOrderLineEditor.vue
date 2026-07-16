@@ -45,8 +45,22 @@ function updateWarehouse(index: number, value: ResourceId) {
   })
 }
 
-function updateText(index: number, key: 'quantity' | 'unitPrice' | 'expectedShipDate' | 'remark', value: string | number) {
+function updateText(
+  index: number,
+  key: 'quantity' | 'unitPrice' | 'untaxedUnitPrice' | 'taxIncludedUnitPrice' | 'taxRate' | 'expectedShipDate' | 'remark',
+  value: string | number,
+) {
   updateLine(index, { [key]: String(value) })
+}
+
+function priceSourceLabel(line: SalesOrderLineDraft) {
+  if (line.priceSourceType === 'QUOTE') {
+    return `报价 ${line.priceSourceNo || '来源未返回'}`
+  }
+  if (line.priceSourceType === 'LEGACY_MANUAL') {
+    return '历史手工订单'
+  }
+  return '手工订单'
 }
 
 function addLine() {
@@ -136,6 +150,47 @@ function removeLine(index: number) {
               placeholder=">= 0"
               :disabled="readOnly"
               @update:model-value="updateText($index, 'unitPrice', $event)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="价格来源" min-width="130">
+          <template #default="{ row }">
+            {{ priceSourceLabel(row) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="未税单价" width="140" align="right">
+          <template #default="{ row, $index }">
+            <el-input
+              :model-value="row.untaxedUnitPrice"
+              :name="`sales-order-line-untaxed-unit-price-${$index}`"
+              inputmode="decimal"
+              placeholder=">= 0"
+              :disabled="readOnly"
+              @update:model-value="updateText($index, 'untaxedUnitPrice', $event)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="含税单价" width="140" align="right">
+          <template #default="{ row, $index }">
+            <el-input
+              :model-value="row.taxIncludedUnitPrice"
+              :name="`sales-order-line-tax-included-unit-price-${$index}`"
+              inputmode="decimal"
+              placeholder=">= 0"
+              :disabled="readOnly"
+              @update:model-value="updateText($index, 'taxIncludedUnitPrice', $event)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="税率" width="120" align="right">
+          <template #default="{ row, $index }">
+            <el-input
+              :model-value="row.taxRate"
+              :name="`sales-order-line-tax-rate-${$index}`"
+              inputmode="decimal"
+              placeholder="0.13"
+              :disabled="readOnly"
+              @update:model-value="updateText($index, 'taxRate', $event)"
             />
           </template>
         </el-table-column>

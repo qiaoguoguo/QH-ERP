@@ -7,6 +7,7 @@ export type ReversalDecimal = string
 export type ReversalMoney = string
 export type ReversalRouteValue = string | number | boolean
 export type ReversalStatus = 'DRAFT' | 'POSTED' | 'CANCELLED'
+export type SalesReturnAction = 'UPDATE' | 'POST' | 'CANCEL'
 export type ReversalTraceDirection = 'SOURCE_TO_REVERSE' | 'REVERSE_TO_SOURCE'
 export type SettlementSide = 'RECEIVABLE' | 'PAYABLE'
 export type SettlementAdjustmentType = 'RETURN_OFFSET' | 'REFUND' | 'PAYMENT_OFFSET'
@@ -103,8 +104,11 @@ export interface SalesReturnSummary {
   totalQuantity: ReversalDecimal
   totalAmount: ReversalMoney
   source: ReversalSourceView
+  allowedActions: SalesReturnAction[]
+  actionDisabledReason?: string | null
   createdAt: string
   updatedAt: string
+  version: number
 }
 
 export interface SalesReturnDetail extends SalesReturnSummary {
@@ -540,6 +544,7 @@ export type PurchaseReturnPayload = PurchaseReturnCreatePayload
 export interface ReversalVersionPayload {
   version: number
   idempotencyKey: string
+  reason?: string
 }
 
 export interface ProductionMaterialReturnCreatePayloadLine {
@@ -642,8 +647,8 @@ export interface ReturnRefundReversalApi {
     get(id: ResourceId): Promise<SalesReturnDetail>
     create(payload: ReversalDocumentPayload): Promise<SalesReturnDetail>
     update(id: ResourceId, payload: SalesReturnUpdatePayload): Promise<SalesReturnDetail>
-    post(id: ResourceId): Promise<SalesReturnDetail>
-    cancel(id: ResourceId): Promise<SalesReturnDetail>
+    post(id: ResourceId, payload: ReversalVersionPayload): Promise<SalesReturnDetail>
+    cancel(id: ResourceId, payload: ReversalVersionPayload): Promise<SalesReturnDetail>
   }
   salesReturnSources: {
     list(params: SalesReturnSourceListParams): Promise<PageResult<SalesReturnSource>>
@@ -893,8 +898,8 @@ export function createReturnRefundReversalApi(options: ReturnRefundReversalApiOp
       get: (id) => get<SalesReturnDetail>(salesReturnPath(id)),
       create: (payload) => write<SalesReturnDetail>('POST', salesReturnPath(), payload),
       update: (id, payload) => write<SalesReturnDetail>('PUT', salesReturnPath(id), payload),
-      post: (id) => write<SalesReturnDetail>('PUT', `${salesReturnPath(id)}/post`),
-      cancel: (id) => write<SalesReturnDetail>('PUT', `${salesReturnPath(id)}/cancel`),
+      post: (id, payload) => writeAction<SalesReturnDetail>('POST', `${salesReturnPath(id)}/post`, payload),
+      cancel: (id, payload) => writeAction<SalesReturnDetail>('POST', `${salesReturnPath(id)}/cancel`, payload),
     },
     salesReturnSources: {
       list: (params) =>

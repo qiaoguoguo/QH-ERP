@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { salesApi, type ResourceId, type SalesShipmentDetailRecord } from '../../shared/api/salesApi'
+import { salesApi, type ResourceId, type SalesShipmentAction, type SalesShipmentDetailRecord } from '../../shared/api/salesApi'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
@@ -25,16 +26,25 @@ const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
+const earlyPostDialog = ref({
+  visible: false,
+  reason: '',
+  error: '',
+})
 
 const canEdit = computed(() => (
-  record.value?.status === 'DRAFT' && authStore.hasPermission('sales:shipment:update')
+  hasAllowedAction('UPDATE') && authStore.hasPermission('sales:shipment:update')
 ))
 const canPost = computed(() => (
-  record.value?.status === 'DRAFT' && authStore.hasPermission('sales:shipment:post')
+  hasAllowedAction('POST') && authStore.hasPermission('sales:shipment:post')
 ))
 const canViewSourceOrder = computed(() => authStore.hasPermission('sales:order:view'))
 const canViewInventoryMovements = computed(() => authStore.hasPermission('inventory:movement:view'))
 const movements = computed(() => record.value?.inventoryMovements ?? [])
+
+function hasAllowedAction(action: SalesShipmentAction) {
+  return (record.value?.allowedActions ?? []).includes(action)
+}
 
 async function loadRecord() {
   loading.value = true
@@ -88,24 +98,74 @@ function viewInventoryMovements() {
   })
 }
 
-async function postShipment() {
+function requiresEarlyDeliveryReason() {
+  if (!record.value) {
+    return false
+  }
+  return record.value.lines.some((line) => (
+    Boolean(line.deliveryPlanId)
+    && Boolean(line.deliveryPlanDate)
+    && record.value
+    && record.value.businessDate < String(line.deliveryPlanDate)
+  ))
+}
+
+function validateEarlyReason(reason: string) {
+  const text = reason.trim()
+  if (text.length < 1 || text.length > 200) {
+    return '请填写 1-200 字提前交付原因'
+  }
+  return ''
+}
+
+async function submitShipmentPost(reason?: string) {
   if (!record.value || actionLoading.value) {
     return
   }
-  if (!(await confirmAction(`确认过账销售出库“${record.value.shipmentNo}”？`))) {
-    return
-  }
-
   actionError.value = ''
   actionLoading.value = true
   try {
-    await salesApi.shipments.post(record.value.id)
+    if (record.value.version === undefined) {
+      actionError.value = '销售出库版本未返回，不能过账'
+      return
+    }
+    await salesApi.shipments.post(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: createIdempotencyKey('sales-shipment-post'),
+      ...(reason ? { reason } : {}),
+    })
+    earlyPostDialog.value.visible = false
     await loadRecord()
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
   } finally {
     actionLoading.value = false
   }
+}
+
+async function postShipment() {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  if (requiresEarlyDeliveryReason()) {
+    earlyPostDialog.value = { visible: true, reason: '', error: '' }
+    return
+  }
+  if (!(await confirmAction(`确认过账销售出库“${record.value.shipmentNo}”？`))) {
+    return
+  }
+
+  await submitShipmentPost()
+}
+
+async function confirmEarlyPost() {
+  const reasonError = validateEarlyReason(earlyPostDialog.value.reason)
+  if (reasonError) {
+    earlyPostDialog.value.error = reasonError
+    return
+  }
+  earlyPostDialog.value.error = ''
+  await submitShipmentPost(earlyPostDialog.value.reason.trim())
 }
 
 onMounted(loadRecord)
@@ -310,6 +370,36 @@ onMounted(loadRecord)
           </el-table>
         </div>
       </section>
+
+      <el-dialog v-model="earlyPostDialog.visible" title="提前交付原因" :teleported="false" width="420px">
+        <el-alert
+          v-if="earlyPostDialog.error"
+          class="state-alert"
+          type="error"
+          :title="earlyPostDialog.error"
+          :closable="false"
+        />
+        <el-input
+          v-model="earlyPostDialog.reason"
+          name="sales-shipment-early-reason"
+          type="textarea"
+          :rows="4"
+          maxlength="200"
+          show-word-limit
+          placeholder="请输入 1-200 字提前交付原因"
+        />
+        <template #footer>
+          <el-button @click="earlyPostDialog.visible = false">取消</el-button>
+          <el-button
+            data-test="confirm-sales-shipment-early-post"
+            type="success"
+            :loading="actionLoading"
+            @click="confirmEarlyPost"
+          >
+            确认过账
+          </el-button>
+        </template>
+      </el-dialog>
     </div>
   </MasterDataTableView>
 </template>

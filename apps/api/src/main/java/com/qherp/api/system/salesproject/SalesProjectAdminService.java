@@ -13,12 +13,16 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -99,6 +103,48 @@ public class SalesProjectAdminService {
 			.stream()
 			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
+	}
+
+	@Transactional(readOnly = true)
+	public SalesFulfillmentResponse salesFulfillment(Long id, boolean includeLegacy, CurrentUser currentUser) {
+		FulfillmentProjectRow project = fulfillmentProject(id);
+		return salesFulfillmentResponse(project, includeLegacy, currentUser);
+	}
+
+	@Transactional
+	public SalesFulfillmentResponse closeSalesFulfillment(Long id, FulfillmentCloseRequest request,
+			CurrentUser operator, HttpServletRequest requestContext) {
+		validateFulfillmentCloseRequest(request);
+		SalesFulfillmentResponse idempotent = idempotentFulfillmentCloseResult(id, request, operator);
+		if (idempotent != null) {
+			return idempotent;
+		}
+		FulfillmentProjectRow project = lockFulfillmentProject(id);
+		requireVersion(project.version(), request.version());
+		if ("CLOSED".equals(project.salesFulfillmentStatus())) {
+			throw new BusinessException(ApiErrorCode.PROJECT_STATUS_INVALID);
+		}
+		if (!fulfillmentBlockReasons(id).isEmpty()) {
+			throw new BusinessException(ApiErrorCode.PROJECT_HAS_OPEN_BUSINESS);
+		}
+		OffsetDateTime now = OffsetDateTime.now();
+		Long newVersion = this.jdbcTemplate.queryForObject("""
+				update sal_project
+				set sales_fulfillment_status = 'CLOSED',
+				    sales_fulfillment_closed_by = ?,
+				    sales_fulfillment_closed_at = ?,
+				    sales_fulfillment_close_reason = ?,
+				    updated_by = ?,
+				    updated_at = ?,
+				    version = version + 1
+				where id = ?
+				returning version
+				""", Long.class, operator.username(), now, validateReason(request.reason()), operator.username(),
+				now, id);
+		recordFulfillmentCloseIdempotency(id, request, newVersion, operator);
+		this.auditService.record(operator, "SALES_PROJECT_FULFILLMENT_CLOSE", PROJECT_TARGET, id,
+				"销售履约关闭：" + request.reason(), requestContext);
+		return salesFulfillment(id, false, operator);
 	}
 
 	@Transactional
@@ -383,6 +429,360 @@ public class SalesProjectAdminService {
 		return targetSummary.substring(0, marker) + " 项目合同关联已变更";
 	}
 
+	private SalesFulfillmentResponse salesFulfillmentResponse(FulfillmentProjectRow project, boolean includeLegacy,
+			CurrentUser currentUser) {
+		boolean contractVisible = currentUser.permissions().contains("sales:contract:view");
+		boolean creditVisible = currentUser.permissions().contains("sales:credit:view");
+		List<String> blockReasons = fulfillmentBlockReasons(project.id());
+		boolean closeBlocked = !blockReasons.isEmpty();
+		String actionDisabledReason = closeBlocked ? String.join(",", blockReasons) : null;
+		List<String> allowedActions = "OPEN".equals(project.salesFulfillmentStatus()) && !closeBlocked
+				&& currentUser.permissions().contains("sales:fulfillment:close") ? List.of("CLOSE") : List.of();
+		BigDecimal orderAmount = moneyValue("""
+				select coalesce(sum(l.tax_included_amount), 0)
+				from sal_sales_order o
+				join sal_sales_order_line l on l.order_id = o.id
+				where o.project_id = ?
+				and o.status <> 'CANCELLED'
+				""", project.id());
+		BigDecimal shippedAmount = moneyValue("""
+				select coalesce(sum(sl.tax_included_amount), 0)
+				from sal_sales_shipment_line sl
+				join sal_sales_shipment sh on sh.id = sl.shipment_id
+				join sal_sales_order o on o.id = sh.order_id
+				where o.project_id = ?
+				and sh.status = 'POSTED'
+				""", project.id());
+		BigDecimal returnedAmount = moneyValue("""
+				select coalesce(sum(rl.amount), 0)
+				from sal_sales_return_line rl
+				join sal_sales_return r on r.id = rl.return_id
+				join sal_sales_shipment sh on sh.id = r.source_shipment_id
+				join sal_sales_order o on o.id = sh.order_id
+				where o.project_id = ?
+				and r.status = 'POSTED'
+				""", project.id());
+		BigDecimal contractAmount = moneyValue("""
+				select coalesce(sum(amount), 0)
+				from sal_project_contract
+				where project_id = ?
+				and status = 'EFFECTIVE'
+				""", project.id());
+		BigDecimal plannedQuantity = projectOrderQuantity(project.id());
+		BigDecimal shippedQuantity = projectShippedQuantity(project.id());
+		BigDecimal returnedQuantity = projectReturnedQuantity(project.id());
+		BigDecimal netDeliveredQuantity = shippedQuantity.subtract(returnedQuantity);
+		List<FulfillmentOrderResponse> legacyCompatibleOrders = legacyFulfillmentOrders(project.id());
+		List<FulfillmentOrderResponse> visibleLegacyOrders = includeLegacy ? legacyCompatibleOrders : List.of();
+		return new SalesFulfillmentResponse(project.id(), project.projectNo(), project.name(),
+				project.customerId(), project.customerCode(), project.customerName(),
+				project.salesFulfillmentStatus(), closeBlocked, actionDisabledReason,
+				contractVisible ? moneyString(contractAmount) : null, moneyString(orderAmount), moneyString(shippedAmount),
+				moneyString(returnedAmount), moneyString(shippedAmount.subtract(returnedAmount)),
+				quantityString(openDemandQuantity(project.id())), !creditVisible,
+				creditVisible ? moneyString(customerCreditLimit(project.customerId())) : null,
+				creditVisible ? moneyString(customerUsedCredit(project.customerId())) : null,
+				salesFulfillmentOrders(project.id()), effectiveDemandSummaries(project.id()),
+				visibleLegacyOrders, !legacyCompatibleOrders.isEmpty(), project.version(),
+				project.salesFulfillmentStatus(), !contractVisible,
+				contractVisible ? moneyString(contractAmount) : null, moneyString(orderAmount),
+				quantityString(plannedQuantity), quantityString(shippedQuantity), quantityString(returnedQuantity),
+				quantityString(netDeliveredQuantity), overduePlanCount(project.id()),
+				creditVisible ? null : "信用信息无权限查看", blockReasons, allowedActions, actionDisabledReason);
+	}
+
+	private FulfillmentProjectRow fulfillmentProject(Long id) {
+		return this.jdbcTemplate.query("""
+				select p.id, p.project_no, p.name, p.customer_id, c.code as customer_code, c.name as customer_name,
+				       p.sales_fulfillment_status, p.version
+				from sal_project p
+				join mst_customer c on c.id = p.customer_id
+				where p.id = ?
+				""", this::mapFulfillmentProject, id).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
+	}
+
+	private FulfillmentProjectRow lockFulfillmentProject(Long id) {
+		return this.jdbcTemplate.query("""
+				select p.id, p.project_no, p.name, p.customer_id, c.code as customer_code, c.name as customer_name,
+				       p.sales_fulfillment_status, p.version
+				from sal_project p
+				join mst_customer c on c.id = p.customer_id
+				where p.id = ?
+				for update of p
+				""", this::mapFulfillmentProject, id).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND));
+	}
+
+	private FulfillmentProjectRow mapFulfillmentProject(ResultSet rs, int rowNum) throws SQLException {
+		return new FulfillmentProjectRow(rs.getLong("id"), rs.getString("project_no"), rs.getString("name"),
+				rs.getLong("customer_id"), rs.getString("customer_code"), rs.getString("customer_name"),
+				rs.getString("sales_fulfillment_status"), rs.getLong("version"));
+	}
+
+	private List<FulfillmentOrderResponse> salesFulfillmentOrders(Long projectId) {
+		return this.jdbcTemplate.query("""
+				select o.id, o.order_no, o.status, coalesce(sum(l.tax_included_amount), 0) as tax_included_amount,
+				       o.version
+				from sal_sales_order o
+				left join sal_sales_order_line l on l.order_id = o.id
+				where o.project_id = ?
+				group by o.id, o.order_no, o.status, o.version
+				order by o.id asc
+				""", (rs, rowNum) -> new FulfillmentOrderResponse(rs.getLong("id"), rs.getString("order_no"),
+				rs.getString("status"), moneyString(rs.getBigDecimal("tax_included_amount")), rs.getLong("version")),
+				projectId);
+	}
+
+	private List<EffectiveDemandSummaryResponse> effectiveDemandSummaries(Long projectId) {
+		return this.jdbcTemplate.query("""
+				select order_id, order_no, order_line_id, material_id, material_code, material_name,
+				       open_demand_quantity, counted_as_effective_demand, excluded_reason_code
+				from sal_effective_sales_demand
+				where project_id = ?
+				order by order_id asc, order_line_id asc
+				""", (rs, rowNum) -> new EffectiveDemandSummaryResponse(rs.getLong("order_id"),
+				rs.getString("order_no"), rs.getLong("order_line_id"), rs.getLong("material_id"),
+				rs.getString("material_code"), rs.getString("material_name"),
+				quantityString(rs.getBigDecimal("open_demand_quantity")),
+				rs.getBoolean("counted_as_effective_demand"), rs.getString("excluded_reason_code")), projectId);
+	}
+
+	private List<FulfillmentOrderResponse> legacyFulfillmentOrders(Long projectId) {
+		return this.jdbcTemplate.query("""
+				select o.id, o.order_no, o.status, coalesce(sum(l.tax_included_amount), 0) as tax_included_amount,
+				       o.version
+				from sal_sales_order o
+				left join sal_sales_order_line l on l.order_id = o.id
+				where o.project_id = ?
+				and o.status = 'SHIPPED'
+				and o.sales_fulfillment_compatible = true
+				group by o.id, o.order_no, o.status, o.version
+				order by o.id asc
+				""", (rs, rowNum) -> new FulfillmentOrderResponse(rs.getLong("id"), rs.getString("order_no"),
+				rs.getString("status"), moneyString(rs.getBigDecimal("tax_included_amount")), rs.getLong("version")),
+				projectId);
+	}
+
+	private List<String> fulfillmentBlockReasons(Long projectId) {
+		List<String> reasons = new ArrayList<>();
+		if (openDemandCount(projectId) > 0) {
+			reasons.add("OPEN_DEMAND");
+		}
+		if (exists("""
+				select count(*)
+				from sal_sales_order
+				where project_id = ?
+				and not (
+					status in ('CLOSED', 'CANCELLED')
+					or (status = 'SHIPPED' and sales_fulfillment_compatible = true)
+				)
+				""", projectId)) {
+			reasons.add("NON_TERMINAL_ORDER");
+		}
+		if (exists("""
+				select count(*)
+				from sal_sales_delivery_plan p
+				join sal_sales_order o on o.id = p.order_id
+				where o.project_id = ?
+				and p.status in ('PLANNED', 'PARTIALLY_SHIPPED')
+				and p.planned_quantity > p.shipped_quantity
+				""", projectId)) {
+			reasons.add("OPEN_DELIVERY_PLAN");
+		}
+		if (exists("""
+				select count(*)
+				from sal_sales_quote
+				where project_id = ?
+				and status in ('DRAFT', 'APPROVED')
+				and converted_order_id is null
+				and converted_contract_id is null
+				""", projectId)) {
+			reasons.add("PENDING_QUOTE_CONVERSION");
+		}
+		if (exists("""
+				select count(*)
+				from sal_sales_order_change c
+				join sal_sales_order o on o.id = c.order_id
+				left join platform_approval_instance ai on ai.id = c.approval_instance_id
+				where o.project_id = ?
+				and (
+					c.status = 'DRAFT'
+					or ai.status = 'SUBMITTED'
+				)
+				""", projectId)) {
+			reasons.add("PENDING_ORDER_CHANGE");
+		}
+		if (exists("""
+				select count(*)
+				from platform_approval_instance ai
+				where ai.status = 'SUBMITTED'
+				and (
+					(ai.scene_code = 'SALES_QUOTE_APPROVAL'
+					 and exists (select 1 from sal_sales_quote q where q.project_id = ? and q.id = ai.business_object_id))
+					or (ai.scene_code in ('SALES_ORDER_CREDIT_OVERRIDE', 'SALES_ORDER_SHORT_CLOSE')
+					 and exists (select 1 from sal_sales_order o where o.project_id = ? and o.id = ai.business_object_id))
+					or (ai.scene_code in ('SALES_ORDER_CHANGE_APPROVAL', 'SALES_ORDER_CHANGE_CREDIT_OVERRIDE')
+					 and exists (
+						select 1
+						from sal_sales_order_change c
+						join sal_sales_order o on o.id = c.order_id
+						where o.project_id = ?
+						and c.id = ai.business_object_id
+					 ))
+				)
+				""", projectId, projectId, projectId)) {
+			reasons.add("PENDING_APPROVAL");
+		}
+		return reasons;
+	}
+
+	private boolean exists(String sql, Object... args) {
+		Long count = this.jdbcTemplate.queryForObject(sql, Long.class, args);
+		return count != null && count > 0;
+	}
+
+	private long openDemandCount(Long projectId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sal_effective_sales_demand
+				where project_id = ?
+				and counted_as_effective_demand = true
+				and open_demand_quantity > 0
+				""", Long.class, projectId);
+		return count == null ? 0 : count;
+	}
+
+	private BigDecimal openDemandQuantity(Long projectId) {
+		return moneyValue("""
+				select coalesce(sum(open_demand_quantity), 0)
+				from sal_effective_sales_demand
+				where project_id = ?
+				and counted_as_effective_demand = true
+				""", projectId);
+	}
+
+	private BigDecimal projectOrderQuantity(Long projectId) {
+		return moneyValue("""
+				select coalesce(sum(l.quantity), 0)
+				from sal_sales_order_line l
+				join sal_sales_order o on o.id = l.order_id
+				where o.project_id = ?
+				and o.status <> 'CANCELLED'
+				""", projectId);
+	}
+
+	private BigDecimal projectShippedQuantity(Long projectId) {
+		return moneyValue("""
+				select coalesce(sum(sl.quantity), 0)
+				from sal_sales_shipment_line sl
+				join sal_sales_shipment sh on sh.id = sl.shipment_id
+				join sal_sales_order o on o.id = sh.order_id
+				where o.project_id = ?
+				and sh.status = 'POSTED'
+				""", projectId);
+	}
+
+	private BigDecimal projectReturnedQuantity(Long projectId) {
+		return moneyValue("""
+				select coalesce(sum(rl.quantity), 0)
+				from sal_sales_return_line rl
+				join sal_sales_return r on r.id = rl.return_id
+				join sal_sales_shipment sh on sh.id = r.source_shipment_id
+				join sal_sales_order o on o.id = sh.order_id
+				where o.project_id = ?
+				and r.status = 'POSTED'
+				""", projectId);
+	}
+
+	private long overduePlanCount(Long projectId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from sal_sales_delivery_plan p
+				join sal_sales_order o on o.id = p.order_id
+				where o.project_id = ?
+				and p.status in ('PLANNED', 'PARTIALLY_SHIPPED')
+				and p.planned_quantity > p.shipped_quantity
+				and p.planned_date < current_date
+				""", Long.class, projectId);
+		return count == null ? 0 : count;
+	}
+
+	private BigDecimal customerCreditLimit(Long customerId) {
+		return moneyValue("""
+				select coalesce(max(credit_limit), 0)
+				from sal_customer_credit_profile
+				where customer_id = ?
+				and status = 'ACTIVE'
+				""", customerId);
+	}
+
+	private BigDecimal customerUsedCredit(Long customerId) {
+		return moneyValue("""
+				select coalesce(sum(o.tax_included_amount), 0)
+				from sal_sales_order o
+				where o.customer_id = ?
+				and o.status in ('CONFIRMED', 'PARTIALLY_SHIPPED')
+				""", customerId);
+	}
+
+	private BigDecimal moneyValue(String sql, Object... args) {
+		BigDecimal value = this.jdbcTemplate.queryForObject(sql, BigDecimal.class, args);
+		return value == null ? ZERO : value;
+	}
+
+	private SalesFulfillmentResponse idempotentFulfillmentCloseResult(Long projectId, FulfillmentCloseRequest request,
+			CurrentUser operator) {
+		List<ExistingAction> existing = this.jdbcTemplate.query("""
+				select result_resource_id, request_fingerprint
+				from sal_action_idempotency
+				where operator_user_id = ?
+				and action = 'CLOSE_SALES_FULFILLMENT'
+				and resource_type = 'SALES_PROJECT'
+				and resource_id = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new ExistingAction(rs.getLong("result_resource_id"),
+				rs.getString("request_fingerprint")), operator.id(), projectId, request.idempotencyKey().trim());
+		if (existing.isEmpty()) {
+			return null;
+		}
+		ExistingAction action = existing.getFirst();
+		if (!action.requestFingerprint().equals(fulfillmentCloseFingerprint(projectId, request))) {
+			throw new BusinessException(ApiErrorCode.SALES_ACTION_IDEMPOTENCY_CONFLICT);
+		}
+		return salesFulfillment(action.resultResourceId(), false, operator);
+	}
+
+	private void recordFulfillmentCloseIdempotency(Long projectId, FulfillmentCloseRequest request, Long resultVersion,
+			CurrentUser operator) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into sal_action_idempotency (
+						operator_user_id, action, resource_type, resource_id, resource_version, idempotency_key,
+						request_fingerprint, result_resource_type, result_resource_id, result_version
+					)
+					values (?, 'CLOSE_SALES_FULFILLMENT', 'SALES_PROJECT', ?, ?, ?, ?, 'SALES_PROJECT', ?, ?)
+					""", operator.id(), projectId, request.version(), request.idempotencyKey().trim(),
+					fulfillmentCloseFingerprint(projectId, request), projectId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.SALES_ACTION_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private void validateFulfillmentCloseRequest(FulfillmentCloseRequest request) {
+		if (request == null || request.version() == null || !hasText(request.idempotencyKey())
+				|| request.idempotencyKey().length() > 120) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		validateReason(request.reason());
+	}
+
+	private String fulfillmentCloseFingerprint(Long projectId, FulfillmentCloseRequest request) {
+		return sha256("CLOSE_SALES_FULFILLMENT|SALES_PROJECT|" + projectId + "|" + request.version() + "|"
+				+ blankToNull(request.reason()));
+	}
+
 	private QueryParts projectQueryParts(String keyword, Long customerId, String status, Long ownerUserId) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
@@ -587,6 +987,24 @@ public class SalesProjectAdminService {
 		return rs.wasNull() ? null : value;
 	}
 
+	private static String moneyString(BigDecimal value) {
+		return value == null ? null : value.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString();
+	}
+
+	private static String quantityString(BigDecimal value) {
+		return value == null ? null : value.setScale(6, java.math.RoundingMode.HALF_UP).toPlainString();
+	}
+
+	private static String sha256(String value) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(value.getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (NoSuchAlgorithmException exception) {
+			throw new IllegalStateException(exception);
+		}
+	}
+
 	public record ProjectCreateRequest(@NotNull String name, @NotNull Long customerId, @NotNull Long ownerUserId,
 			LocalDate plannedStartDate, LocalDate plannedFinishDate, BigDecimal targetRevenue, BigDecimal targetCost,
 			String remark) {
@@ -597,6 +1015,9 @@ public class SalesProjectAdminService {
 	}
 
 	public record VersionedActionRequest(@NotNull Long version, String reason) {
+	}
+
+	public record FulfillmentCloseRequest(@NotNull Long version, String reason, @NotNull String idempotencyKey) {
 	}
 
 	public record ProjectResponse(Long id, String projectNo, String name, Long customerId, String customerCode,
@@ -614,6 +1035,28 @@ public class SalesProjectAdminService {
 	}
 
 	public record OwnerCandidateResponse(Long userId, String username, String displayName) {
+	}
+
+	public record SalesFulfillmentResponse(Long projectId, String projectNo, String projectName, Long customerId,
+			String customerCode, String customerName, String salesFulfillmentStatus, boolean closeBlocked,
+			String closeBlockedReason, String contractAmount, String orderAmount, String shippedAmount,
+			String returnedAmount, String netFulfilledAmount, String openDemandQuantity, boolean creditRestricted,
+			String creditLimit, String usedCredit, List<FulfillmentOrderResponse> salesOrders,
+			List<EffectiveDemandSummaryResponse> effectiveDemands,
+			List<FulfillmentOrderResponse> legacyDeliveryPlanCompatibleOrders,
+			boolean legacyDeliveryPlanCompatible, Long version, String status, boolean contractRestricted,
+			String contractEffectiveAmount, String orderTaxIncludedAmount, String plannedQuantity,
+			String shippedQuantity, String returnedQuantity, String netDeliveredQuantity, Long overduePlanCount,
+			String creditRiskSummary, List<String> blockReasons, List<String> allowedActions, String actionDisabledReason) {
+	}
+
+	public record FulfillmentOrderResponse(Long orderId, String orderNo, String status, String taxIncludedAmount,
+			Long version) {
+	}
+
+	public record EffectiveDemandSummaryResponse(Long orderId, String orderNo, Long orderLineId, Long materialId,
+			String materialCode, String materialName, String openDemandQuantity, boolean countedAsEffectiveDemand,
+			String excludedReasonCode) {
 	}
 
 	public record OperationResponse(Long id, String operatorUsername, String action, String targetType,
@@ -651,6 +1094,13 @@ public class SalesProjectAdminService {
 	}
 
 	private record QueryParts(String where, List<Object> args) {
+	}
+
+	private record FulfillmentProjectRow(Long id, String projectNo, String name, Long customerId, String customerCode,
+			String customerName, String salesFulfillmentStatus, Long version) {
+	}
+
+	private record ExistingAction(Long resultResourceId, String requestFingerprint) {
 	}
 
 }

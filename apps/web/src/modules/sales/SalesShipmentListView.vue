@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { masterDataApi, type PartnerRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
   salesApi,
+  type SalesShipmentAction,
   type SalesShipmentStatus,
   type SalesShipmentSummaryRecord,
 } from '../../shared/api/salesApi'
@@ -18,7 +19,6 @@ import {
   salesErrorMessage,
 } from './salesPageHelpers'
 import SalesShipmentStatusTag from './SalesShipmentStatusTag.vue'
-import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
 const route = useRoute()
@@ -52,8 +52,6 @@ const loading = ref(true)
 const referenceLoading = ref(true)
 const error = ref('')
 const referenceError = ref('')
-const actionError = ref('')
-const actionLoading = ref(false)
 
 const canUpdate = computed(() => authStore.hasPermission('sales:shipment:update'))
 const canPostPermission = computed(() => authStore.hasPermission('sales:shipment:post'))
@@ -143,24 +141,12 @@ function editShipment(record: SalesShipmentSummaryRecord) {
   void router.push({ name: 'sales-shipment-edit', params: { id: String(record.id) } })
 }
 
-async function postShipment(record: SalesShipmentSummaryRecord) {
-  if (actionLoading.value) {
-    return
-  }
-  if (!(await confirmAction(`确认过账销售出库“${record.shipmentNo}”？`))) {
-    return
-  }
+function hasAllowedAction(record: SalesShipmentSummaryRecord, action: SalesShipmentAction) {
+  return (record.allowedActions ?? []).includes(action)
+}
 
-  actionError.value = ''
-  actionLoading.value = true
-  try {
-    await salesApi.shipments.post(record.id)
-    await loadRecords()
-  } catch (caught) {
-    actionError.value = salesErrorMessage(caught)
-  } finally {
-    actionLoading.value = false
-  }
+function postShipment(record: SalesShipmentSummaryRecord) {
+  viewShipment(record)
 }
 
 onMounted(() => {
@@ -249,7 +235,6 @@ onMounted(() => {
     <template #alerts>
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
-      <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
       <el-alert
         v-if="loading || referenceLoading"
         class="state-alert"
@@ -289,7 +274,7 @@ onMounted(() => {
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-shipment" @click="viewShipment(row)">详情</el-button>
             <el-button
-              v-if="canUpdate && row.status === 'DRAFT'"
+              v-if="canUpdate && hasAllowedAction(row, 'UPDATE')"
               size="small"
               text
               data-test="edit-sales-shipment"
@@ -298,12 +283,11 @@ onMounted(() => {
               编辑
             </el-button>
             <el-button
-              v-if="canPostPermission && row.status === 'DRAFT'"
+              v-if="canPostPermission && hasAllowedAction(row, 'POST')"
               size="small"
               text
               type="success"
               data-test="post-sales-shipment"
-              :disabled="actionLoading"
               @click="postShipment(row)"
             >
               过账

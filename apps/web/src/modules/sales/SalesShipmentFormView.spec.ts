@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import type { SalesDeliveryPlanRecord } from '../../shared/api/salesFulfillmentApi'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { SalesOrderDetailRecord, SalesShipmentDetailRecord } from '../../shared/api/salesApi'
 import { useAuthStore } from '../../stores/authStore'
@@ -18,6 +19,12 @@ const salesApiMock = vi.hoisted(() => ({
     get: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
+  },
+}))
+
+const salesFulfillmentApiMock = vi.hoisted(() => ({
+  deliveryPlans: {
+    listByOrder: vi.fn(),
   },
 }))
 
@@ -41,6 +48,11 @@ const inventoryApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/salesApi', () => ({
   salesApi: salesApiMock,
+}))
+
+vi.mock('../../shared/api/salesFulfillmentApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/salesFulfillmentApi')>()),
+  salesFulfillmentApi: salesFulfillmentApiMock,
 }))
 
 vi.mock('../../shared/api/masterDataApi', () => ({
@@ -171,6 +183,7 @@ const draftShipment: SalesShipmentDetailRecord = {
     {
       id: 900,
       lineNo: 10,
+      deliveryPlanId: 910,
       orderLineId: 501,
       materialId: 10,
       materialCode: 'FG-001',
@@ -187,6 +200,55 @@ const draftShipment: SalesShipmentDetailRecord = {
     },
   ],
 }
+
+const deliveryPlans = [
+  {
+    id: 910,
+    planNo: 'SDP-001',
+    orderId: 99,
+    orderNo: 'SO-20260704-001',
+    orderLineId: 501,
+    lineNo: 10,
+    customerId: 100,
+    customerName: '华东客户',
+    materialId: 10,
+    materialCode: 'FG-001',
+    materialName: '标准成品',
+    unitName: '件',
+    planDate: '2026-07-12',
+    plannedQuantity: '8.000000',
+    shippedQuantity: '3.000000',
+    remainingQuantity: '5.000000',
+    status: 'PARTIALLY_SHIPPED',
+    closeReason: null,
+    allowedActions: ['CREATE_SHIPMENT'],
+    actionDisabledReason: null,
+    version: 2,
+  },
+  {
+    id: 911,
+    planNo: 'SDP-002',
+    orderId: 99,
+    orderNo: 'SO-20260704-001',
+    orderLineId: 502,
+    lineNo: 20,
+    customerId: 100,
+    customerName: '华东客户',
+    materialId: 11,
+    materialCode: 'SF-001',
+    materialName: '半成品组件',
+    unitName: '套',
+    planDate: '2026-07-12',
+    plannedQuantity: '3.000000',
+    shippedQuantity: '0.000000',
+    remainingQuantity: '3.000000',
+    status: 'PLANNED',
+    closeReason: null,
+    allowedActions: ['CREATE_SHIPMENT'],
+    actionDisabledReason: null,
+    version: 1,
+  },
+] satisfies SalesDeliveryPlanRecord[]
 
 const postedShipment: SalesShipmentDetailRecord = {
   ...draftShipment,
@@ -224,6 +286,7 @@ async function mountForm(path = '/sales/orders/99/shipments/create') {
         name: 'sales-shipment-create',
         component: SalesShipmentFormView,
       },
+      { path: '/sales/orders/:id', name: 'sales-order-detail', component: { render: () => null } },
       { path: '/sales/shipments/:id/edit', name: 'sales-shipment-edit', component: SalesShipmentFormView },
       { path: '/sales/shipments', name: 'sales-shipments', component: { render: () => null } },
     ],
@@ -250,6 +313,7 @@ describe('销售出库表单页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     salesApiMock.orders.get.mockResolvedValue(sourceOrder)
+    salesFulfillmentApiMock.deliveryPlans.listByOrder.mockResolvedValue({ lines: deliveryPlans })
     salesApiMock.shipments.get.mockResolvedValue(draftShipment)
     salesApiMock.shipments.create.mockResolvedValue(draftShipment)
     salesApiMock.shipments.update.mockResolvedValue(draftShipment)
@@ -306,6 +370,7 @@ describe('销售出库表单页', () => {
     const { wrapper } = await mountForm()
 
     expect(salesApiMock.orders.get).toHaveBeenCalledWith('99')
+    expect(salesFulfillmentApiMock.deliveryPlans.listByOrder).toHaveBeenCalledWith(99)
     expect(masterDataApiMock.warehouses.list).toHaveBeenCalledWith({
       keyword: '',
       status: 'ENABLED',
@@ -321,12 +386,56 @@ describe('销售出库表单页', () => {
     await setSelectValue(wrapper, 1, 501)
 
     expect(wrapper.text()).toContain('FG-001 标准成品')
+    expect(wrapper.text()).toContain('交付计划 SDP-001')
     expect(wrapper.text()).toContain('7.5')
     expect((wrapper.find('input[data-test="sales-shipment-warehouse-id"]').exists())).toBe(false)
     expect((wrapper.find('input[name="sales-shipment-business-date"]').element as HTMLInputElement).value).toBe('')
     expect(wrapper.findComponent(SalesShipmentLineEditor).props('sourceLines')).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 501, reservationWarehouseId: 30, reservationWarehouseName: '成品仓' }),
     ]))
+  })
+
+  it('新建时按订单计划分页 items 读取来源行，不再把分页响应误当 lines', async () => {
+    salesFulfillmentApiMock.deliveryPlans.listByOrder.mockResolvedValueOnce({
+      items: deliveryPlans,
+      page: 1,
+      pageSize: 20,
+      total: 1,
+      totalPages: 1,
+    })
+
+    const { wrapper } = await mountForm()
+
+    expect(wrapper.text()).not.toContain('Cannot read properties of undefined')
+    expect(salesFulfillmentApiMock.deliveryPlans.listByOrder).toHaveBeenCalledWith(99)
+
+    await setSelectValue(wrapper, 1, 501)
+
+    expect(wrapper.text()).toContain('FG-001 标准成品')
+    expect(wrapper.text()).toContain('交付计划 SDP-001')
+    expect(wrapper.findComponent(SalesShipmentLineEditor).props('sourceLines')).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 501, deliveryPlanId: 910, deliveryPlanNo: 'SDP-001' }),
+    ]))
+  })
+
+  it('新建时无实体交付计划不绕过计划创建出库，并提示返回订单详情初始化', async () => {
+    salesFulfillmentApiMock.deliveryPlans.listByOrder.mockResolvedValueOnce({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+      totalPages: 0,
+    })
+    const { wrapper, router } = await mountForm()
+
+    expect(wrapper.text()).toContain('该订单尚未初始化交付计划，请返回订单详情初始化/拆分交付计划后再创建出库')
+    expect(wrapper.findComponent(SalesShipmentLineEditor).props('sourceLines')).toEqual([])
+    expect(wrapper.find('[data-test="save-sales-shipment"]').attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-test="return-sales-order-detail"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('sales-order-detail')
+    expect(router.currentRoute.value.params.id).toBe('99')
   })
 
   it('销售出库候选行展示质量状态、现存、占用预留、可承诺、本次最多出库和禁用原因', async () => {
@@ -450,6 +559,7 @@ describe('销售出库表单页', () => {
         {
           lineNo: 10,
           orderLineId: 501,
+          deliveryPlanId: 910,
           materialId: 10,
           unitId: 2,
           quantity: '2.500000',

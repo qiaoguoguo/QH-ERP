@@ -10,6 +10,9 @@ import com.qherp.api.system.inventory.InventoryStage023AdminService;
 import com.qherp.api.system.procurement.ProcurementRequisitionService;
 import com.qherp.api.system.procurement.ProcurementSourcingService;
 import com.qherp.api.system.procurement.ProcurementAdminService;
+import com.qherp.api.system.sales.SalesAdminService;
+import com.qherp.api.system.sales.SalesFulfillmentService;
+import com.qherp.api.system.sales.SalesQuoteService;
 import com.qherp.api.system.salesproject.SalesProjectContractService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotNull;
@@ -50,13 +53,22 @@ public class PlatformApprovalService {
 
 	private final ProcurementAdminService procurementAdminService;
 
+	private final SalesAdminService salesAdminService;
+
+	private final SalesQuoteService salesQuoteService;
+
+	private final SalesFulfillmentService salesFulfillmentService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
 			BomEngineeringChangeAdminService engineeringChangeService,
 			@Lazy InventoryStage023AdminService inventoryStage023AdminService,
 			@Lazy ProcurementRequisitionService procurementRequisitionService,
 			@Lazy ProcurementSourcingService procurementSourcingService,
-			@Lazy ProcurementAdminService procurementAdminService) {
+			@Lazy ProcurementAdminService procurementAdminService,
+			@Lazy SalesAdminService salesAdminService,
+			@Lazy SalesQuoteService salesQuoteService,
+			@Lazy SalesFulfillmentService salesFulfillmentService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
@@ -65,6 +77,9 @@ public class PlatformApprovalService {
 		this.procurementRequisitionService = procurementRequisitionService;
 		this.procurementSourcingService = procurementSourcingService;
 		this.procurementAdminService = procurementAdminService;
+		this.salesAdminService = salesAdminService;
+		this.salesQuoteService = salesQuoteService;
+		this.salesFulfillmentService = salesFulfillmentService;
 	}
 
 	@Transactional
@@ -110,6 +125,31 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitProcurementOrderException(Long orderId,
 			ApprovalSubmitRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
 		return submit("PROCUREMENT_ORDER_EXCEPTION_CONFIRM", orderId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitSalesQuoteApproval(Long quoteId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("SALES_QUOTE_APPROVAL", quoteId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitSalesOrderCreditOverride(Long orderId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("SALES_ORDER_CREDIT_OVERRIDE", orderId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitSalesOrderChangeApproval(Long changeId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("SALES_ORDER_CHANGE_APPROVAL", changeId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitSalesOrderChangeCreditOverride(Long changeId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("SALES_ORDER_CHANGE_CREDIT_OVERRIDE", changeId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitSalesOrderShortClose(Long orderId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("SALES_ORDER_SHORT_CLOSE", orderId, request, operator, servletRequest);
 	}
 
 	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
@@ -451,6 +491,27 @@ public class PlatformApprovalService {
 					task.businessObjectVersion(), operator, servletRequest);
 			return;
 		}
+		if ("SALES_QUOTE_APPROVAL".equals(task.sceneCode())) {
+			this.salesQuoteService.approveFromApproval(task.businessObjectId(), task.businessObjectVersion(),
+					operator, servletRequest);
+			return;
+		}
+		if ("SALES_ORDER_CREDIT_OVERRIDE".equals(task.sceneCode())) {
+			this.salesAdminService.confirmOrderFromCreditOverride(task.businessObjectId(), task.businessObjectVersion(),
+					task.instanceId(), operator, servletRequest);
+			return;
+		}
+		if ("SALES_ORDER_CHANGE_APPROVAL".equals(task.sceneCode())
+				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(task.sceneCode())) {
+			this.salesFulfillmentService.applyOrderChangeFromApproval(task.businessObjectId(),
+					task.businessObjectVersion(), task.sceneCode(), operator, servletRequest);
+			return;
+		}
+		if ("SALES_ORDER_SHORT_CLOSE".equals(task.sceneCode())) {
+			this.salesAdminService.closeOrderFromShortCloseApproval(task.businessObjectId(),
+					task.businessObjectVersion(), operator, servletRequest);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -468,6 +529,13 @@ public class PlatformApprovalService {
 		}
 		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
 			this.procurementAdminService.reopenOrderAfterExceptionApprovalTerminal(objectId, operator);
+		}
+		if ("SALES_QUOTE_APPROVAL".equals(sceneCode)) {
+			this.salesQuoteService.reopenAfterApprovalTerminal(objectId, operator);
+		}
+		if ("SALES_ORDER_CHANGE_APPROVAL".equals(sceneCode)
+				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(sceneCode)) {
+			this.salesFulfillmentService.reopenOrderChangeAfterApprovalTerminal(objectId, operator);
 		}
 	}
 
@@ -664,6 +732,64 @@ public class PlatformApprovalService {
 				.stream()
 				.findFirst()
 				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_NOT_FOUND));
+		}
+		if ("SALES_QUOTE_APPROVAL".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, quote_no, coalesce(remark, quote_no) as summary,
+					       case when status = 'DRAFT' then 'DRAFT' else status end as approval_status,
+					       version
+					from sal_sales_quote
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("quote_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_QUOTE_NOT_FOUND));
+		}
+		if ("SALES_ORDER_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, order_no, coalesce(remark, order_no) as summary,
+					       case when status = 'DRAFT' then 'DRAFT' else status end as approval_status,
+					       version
+					from sal_sales_order
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("order_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_ORDER_NOT_FOUND));
+		}
+		if ("SALES_ORDER_CHANGE_APPROVAL".equals(sceneCode)
+				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, change_no, reason as summary,
+					       case when status = 'DRAFT' then 'DRAFT' else status end as approval_status,
+					       version
+					from sal_sales_order_change
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("change_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_ORDER_CHANGE_NOT_FOUND));
+		}
+		if ("SALES_ORDER_SHORT_CLOSE".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, order_no, coalesce(close_reason, remark, order_no) as summary,
+					       case when status in ('CONFIRMED', 'PARTIALLY_SHIPPED', 'SHIPPED')
+					            then 'DRAFT' else status end as approval_status,
+					       version
+					from sal_sales_order
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("order_no"), rs.getString("summary"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_ORDER_NOT_FOUND));
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -1017,6 +1143,19 @@ public class PlatformApprovalService {
 		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
 			return operator.permissions().contains("procurement:order:view");
 		}
+		if ("SALES_QUOTE_APPROVAL".equals(sceneCode)) {
+			return operator.permissions().contains("sales:quote:view");
+		}
+		if ("SALES_ORDER_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return operator.permissions().contains("sales:order:view");
+		}
+		if ("SALES_ORDER_CHANGE_APPROVAL".equals(sceneCode)
+				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return operator.permissions().contains("sales:order-change:view");
+		}
+		if ("SALES_ORDER_SHORT_CLOSE".equals(sceneCode)) {
+			return operator.permissions().contains("sales:order:view");
+		}
 		return false;
 	}
 
@@ -1079,6 +1218,19 @@ public class PlatformApprovalService {
 		}
 		if ("PROCUREMENT_ORDER_EXCEPTION_CONFIRM".equals(sceneCode)) {
 			return "procurement:order:view";
+		}
+		if ("SALES_QUOTE_APPROVAL".equals(sceneCode)) {
+			return "sales:quote:view";
+		}
+		if ("SALES_ORDER_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return "sales:order:view";
+		}
+		if ("SALES_ORDER_CHANGE_APPROVAL".equals(sceneCode)
+				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(sceneCode)) {
+			return "sales:order-change:view";
+		}
+		if ("SALES_ORDER_SHORT_CLOSE".equals(sceneCode)) {
+			return "sales:order:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

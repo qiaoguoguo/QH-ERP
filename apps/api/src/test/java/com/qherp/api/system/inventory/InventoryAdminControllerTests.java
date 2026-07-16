@@ -383,11 +383,12 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				operator, request());
 		SalesAdminService.SalesOrderDetailResponse confirmed = this.salesAdminService.confirmOrder(order.id(),
 				operator, request());
+		Long orderLineId = confirmed.lines().getFirst().id();
 		SalesAdminService.SalesShipmentDetailResponse shipment = this.salesAdminService.createShipment(confirmed.id(),
 				new SalesAdminService.SalesShipmentRequest(fixture.finishedWarehouseId(), LocalDate.now(), "023 销售出库估值",
 						List.of(new SalesAdminService.SalesShipmentLineRequest(1,
-								confirmed.lines().getFirst().id(), fixture.finishedMaterialId(), fixture.eachUnitId(),
-								new BigDecimal("4.000000"), "销售出库估值", List.of()))),
+								orderLineId, firstDeliveryPlanId(orderLineId), fixture.finishedMaterialId(),
+								fixture.eachUnitId(), new BigDecimal("4.000000"), null, "销售出库估值", List.of()))),
 				operator, request());
 		SalesAdminService.SalesShipmentDetailResponse posted = this.salesAdminService.postShipment(shipment.id(),
 				operator, request());
@@ -1178,8 +1179,8 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 				new SalesAdminService.SalesShipmentRequest(fixture.finishedWarehouseId(), LocalDate.now(),
 						"023 批次子预留销售发货",
 						List.of(new SalesAdminService.SalesShipmentLineRequest(1, orderLineId,
-								fixture.finishedMaterialId(), fixture.eachUnitId(), new BigDecimal("2.000000"),
-								"批次子预留行",
+								firstDeliveryPlanId(orderLineId), fixture.finishedMaterialId(), fixture.eachUnitId(),
+								new BigDecimal("2.000000"), null, "批次子预留行",
 								List.of(new InventoryTrackingService.TrackingAllocationRequest(batchId, null, null,
 										null, new BigDecimal("2.000000"), null, null))))),
 				backendOperator(), request());
@@ -3229,11 +3230,34 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 
 	private long insertCustomer(String name) {
 		int suffix = SEQUENCE.incrementAndGet();
-		return this.jdbcTemplate.queryForObject("""
+		long customerId = this.jdbcTemplate.queryForObject("""
 				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
 				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
 				returning id
 				""", Long.class, "CUS-023-" + suffix, name + suffix);
+		insertCreditProfile(customerId);
+		return customerId;
+	}
+
+	private void insertCreditProfile(long customerId) {
+		this.jdbcTemplate.update("""
+				insert into sal_customer_credit_profile (
+					customer_id, credit_limit, status, frozen, overdue_blocked, remark,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, 1000000.00, 'ACTIVE', false, false, '023 估值销售夹具信用档案',
+					'test', now(), 'test', now())
+				""", customerId);
+	}
+
+	private Long firstDeliveryPlanId(Long orderLineId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from sal_sales_delivery_plan
+				where order_line_id = ?
+				order by line_no asc, id asc
+				limit 1
+				""", Long.class, orderLineId);
 	}
 
 	private long insertProject(String name) {

@@ -52,6 +52,18 @@ const draftOrder: SalesOrderSummaryRecord = {
   totalQuantity: 100,
   shippedQuantity: 0,
   remainingQuantity: 100,
+  totalUntaxedAmount: '10000.000000',
+  totalTaxAmount: '1300.000000',
+  totalTaxIncludedAmount: '11300.000000',
+  currency: 'CNY',
+  priceSourceType: 'MANUAL',
+  priceSourceNo: null,
+  creditRestricted: false,
+  contractRestricted: false,
+  amountRestricted: false,
+  creditStatusName: '信用通过',
+  allowedActions: ['UPDATE', 'CONFIRM', 'CANCEL'],
+  actionDisabledReason: null,
   remark: '首批销售',
   createdByName: '销售员',
   createdAt: '2026-07-04T08:00:00+08:00',
@@ -67,6 +79,11 @@ const confirmedOrder: SalesOrderSummaryRecord = {
   totalQuantity: 50,
   shippedQuantity: 0,
   remainingQuantity: 50,
+  sourceQuoteId: 9,
+  sourceQuoteNo: 'SQ-001',
+  priceSourceType: 'QUOTE',
+  priceSourceNo: 'SQ-001',
+  allowedActions: ['CANCEL', 'CLOSE', 'CREATE_SHIPMENT'],
 }
 
 const partialOrder: SalesOrderSummaryRecord = {
@@ -77,6 +94,7 @@ const partialOrder: SalesOrderSummaryRecord = {
   totalQuantity: 80,
   shippedQuantity: 30,
   remainingQuantity: 50,
+  allowedActions: ['CLOSE', 'CREATE_SHIPMENT'],
 }
 
 const shippedOrder: SalesOrderSummaryRecord = {
@@ -87,6 +105,7 @@ const shippedOrder: SalesOrderSummaryRecord = {
   totalQuantity: 40,
   shippedQuantity: 40,
   remainingQuantity: 0,
+  allowedActions: ['CLOSE'],
 }
 
 const orderPage: PageResult<SalesOrderSummaryRecord> = {
@@ -204,8 +223,33 @@ describe('销售订单列表页', () => {
     expect(wrapper.text()).toContain('华东客户')
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).toContain('100')
+    expect(wrapper.text()).toContain('手工订单')
+    expect(wrapper.text()).toContain('报价 SQ-001')
+    expect(wrapper.text()).toContain('含税 11300')
+    expect(wrapper.text()).toContain('信用通过')
     expect(wrapper.text()).toContain('销售员')
     expect(wrapper.find('[data-test="create-sales-order"]').exists()).toBe(true)
+  })
+
+  it('订单列表头部税价消费后端 canonical taxIncludedAmount 字段', async () => {
+    const canonicalOrder = {
+      ...draftOrder,
+      totalTaxIncludedAmount: '0.000000',
+      taxIncludedAmount: '3350.000000',
+    } as unknown as SalesOrderSummaryRecord
+    salesApiMock.orders.list.mockResolvedValueOnce({
+      items: [canonicalOrder],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+
+    const { wrapper } = await mountList()
+
+    expect(wrapper.text()).toContain('含税 3350 CNY')
+    expect(wrapper.text()).not.toContain('含税 - CNY')
+    expect(wrapper.text()).not.toContain('含税 0 CNY')
   })
 
   it('支持按关键词、客户、状态和日期范围筛选并重置', async () => {
@@ -324,15 +368,27 @@ describe('销售订单列表页', () => {
 
     await wrapper.find('[data-test="confirm-sales-order"]').trigger('click')
     await flushPromises()
-    expect(salesApiMock.orders.confirm).toHaveBeenCalledWith(1)
+    expect(salesApiMock.orders.confirm).toHaveBeenCalledWith(1, expect.objectContaining({
+      version: 4,
+      idempotencyKey: expect.any(String),
+    }))
+    expect(salesApiMock.orders.confirm.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
     await wrapper.find('[data-test="cancel-sales-order"]').trigger('click')
     await flushPromises()
-    expect(salesApiMock.orders.cancel).toHaveBeenCalledWith(1)
+    expect(salesApiMock.orders.cancel).toHaveBeenCalledWith(1, expect.objectContaining({
+      version: 4,
+      reason: '客户取消',
+      idempotencyKey: expect.any(String),
+    }))
 
     await wrapper.find('[data-test="close-sales-order"]').trigger('click')
     await flushPromises()
-    expect(salesApiMock.orders.close).toHaveBeenCalledWith(2)
+    expect(salesApiMock.orders.close).toHaveBeenCalledWith(2, expect.objectContaining({
+      version: 4,
+      reason: '履约完成',
+      idempotencyKey: expect.any(String),
+    }))
 
     salesApiMock.orders.close.mockRejectedValueOnce(new Error('销售订单状态不允许关闭'))
     await wrapper.find('[data-test="close-sales-order"]').trigger('click')

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -74,16 +75,18 @@ public class ReversalAdminController {
 		return ApiResponse.ok(this.reversalAdminService.updateSalesReturn(id, request, currentUser, servletRequest));
 	}
 
-	@PutMapping("/sales/returns/{id}/post")
+	@RequestMapping(path = "/sales/returns/{id}/post", method = { RequestMethod.PUT, RequestMethod.POST })
 	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> postSalesReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.postSalesReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.postSalesReturn(id, request, currentUser, servletRequest));
 	}
 
-	@PutMapping("/sales/returns/{id}/cancel")
+	@RequestMapping(path = "/sales/returns/{id}/cancel", method = { RequestMethod.PUT, RequestMethod.POST })
 	public ApiResponse<ReversalAdminService.SalesReturnDetailResponse> cancelSalesReturn(@PathVariable Long id,
+			@Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.cancelSalesReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.cancelSalesReturn(id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/procurement/return-sources")

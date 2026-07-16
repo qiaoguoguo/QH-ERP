@@ -371,6 +371,7 @@ describe('022 平台页面', () => {
     ['INVENTORY_STOCKTAKE', 1, '/inventory/stocktakes/1'],
     ['INVENTORY_OWNERSHIP_CONVERSION', 2, '/inventory/ownership-conversions/2'],
     ['INVENTORY_VALUATION_ADJUSTMENT', 3, '/inventory/valuation-adjustments/3'],
+    ['SALES_QUOTE', 9, '/sales/quotes/9'],
   ])('审批详情为 %s 提供业务单据入口', async (objectType, objectId, expectedPath) => {
     documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
       items: [{
@@ -420,6 +421,9 @@ describe('022 平台页面', () => {
     const link = wrapper.find('[data-test="approval-detail-business-link"]')
     expect(link.exists()).toBe(true)
     expect(link.text()).toContain('查看业务单据')
+    if (objectType === 'SALES_QUOTE') {
+      expect(link.text()).toContain('销售报价')
+    }
     expect(link.attributes('data-to')).toBe(expectedPath)
   })
 

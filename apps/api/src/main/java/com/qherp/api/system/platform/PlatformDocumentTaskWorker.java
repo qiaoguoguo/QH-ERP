@@ -79,6 +79,15 @@ public class PlatformDocumentTaskWorker {
 						"exports/procurement/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_PROCUREMENT");
 				return true;
 			}
+			if (this.documentTaskService.isSalesExportTaskType(task.taskType())) {
+				PlatformDocumentTaskService.ProcurementExportRequest request = this.documentTaskService
+					.parseProcurementExportRequest(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.salesExportFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"exports/sales/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_SALES");
+				return true;
+			}
 			if ("APPROVAL_PRINT".equals(task.taskType())) {
 				PlatformDocumentTaskService.PrintTaskPayload request = this.documentTaskService
 					.parsePrintTaskPayload(task.requestPayload());
@@ -95,6 +104,15 @@ public class PlatformDocumentTaskWorker {
 					.printProcurementOrderFile(request, operator);
 				this.documentTaskService.completeResult(task, exportedFile, operator,
 						"prints/procurement-orders/" + UUID.randomUUID() + ".pdf", "PROCUREMENT_ORDER_PRINT_GENERATE");
+				return true;
+			}
+			if ("SALES_QUOTE_PRINT".equals(task.taskType())) {
+				PlatformDocumentTaskService.SalesQuotePrintPayload request = this.documentTaskService
+					.parseSalesQuotePrintPayload(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.printSalesQuoteFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"prints/sales-quotes/" + UUID.randomUUID() + ".pdf", "SALES_QUOTE_PRINT_GENERATE");
 				return true;
 			}
 			throw new IllegalStateException("不支持的任务类型：" + task.taskType());

@@ -39,6 +39,9 @@ function updateSourceLine(index: number, value: ResourceId) {
   const sourceLine = props.sourceLines.find((line) => String(line.id) === String(value))
   updateLine(index, {
     orderLineId: value,
+    deliveryPlanId: sourceLine?.deliveryPlanId ?? '',
+    deliveryPlanNo: sourceLine?.deliveryPlanNo ?? '',
+    deliveryPlanDate: sourceLine?.deliveryPlanDate ?? '',
     materialId: sourceLine?.materialId ?? '',
     materialCode: sourceLine?.materialCode ?? '',
     materialName: sourceLine?.materialName ?? '',
@@ -172,6 +175,15 @@ function openTrackingPicker(index: number) {
         <el-table-column label="单位" width="90">
           <template #default="{ row }">
             {{ row.unitName || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="交付计划" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.deliveryPlanId">
+              交付计划 {{ row.deliveryPlanNo || row.deliveryPlanId }}
+              <span v-if="row.deliveryPlanDate"> · {{ row.deliveryPlanDate }}</span>
+            </span>
+            <span v-else>未选择交付计划</span>
           </template>
         </el-table-column>
         <el-table-column label="订单数量" width="110" align="right">

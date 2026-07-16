@@ -7,9 +7,22 @@ export type ApprovalScope = 'TODO' | 'DONE' | 'STARTED'
 export type ApprovalInstanceStatus = 'SUBMITTED' | 'APPROVED' | 'REJECTED' | 'WITHDRAWN' | 'CANCELLED'
 export type ApprovalTaskStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED'
 export type ApprovalAction = 'APPROVE' | 'REJECT' | 'WITHDRAW' | 'CANCEL'
-export type ApprovalSceneCode = 'SALES_PROJECT_CONTRACT_ACTIVATION' | 'BOM_ECO_APPLICATION'
+export type ApprovalSceneCode =
+  | 'SALES_PROJECT_CONTRACT_ACTIVATION'
+  | 'SALES_QUOTE_APPROVAL'
+  | 'SALES_ORDER_CHANGE_APPROVAL'
+  | 'SALES_ORDER_CHANGE_CREDIT_OVERRIDE'
+  | 'SALES_ORDER_CREDIT_OVERRIDE'
+  | 'SALES_ORDER_SHORT_CLOSE'
+  | 'BOM_ECO_APPLICATION'
 export type MessageStatus = 'UNREAD' | 'READ'
-export type AttachmentObjectType = 'SALES_PROJECT_CONTRACT' | 'BOM_ENGINEERING_CHANGE' | 'INVENTORY_STOCKTAKE'
+export type AttachmentObjectType =
+  | 'SALES_PROJECT'
+  | 'SALES_PROJECT_CONTRACT'
+  | 'SALES_QUOTE'
+  | 'SALES_ORDER_CHANGE'
+  | 'BOM_ENGINEERING_CHANGE'
+  | 'INVENTORY_STOCKTAKE'
 export type AttachmentStatus = 'AVAILABLE' | 'DELETED'
 export type AttachmentAction = 'DOWNLOAD' | 'DELETE'
 export type DocumentTaskType =
@@ -27,6 +40,10 @@ export type DocumentTaskType =
   | 'PROCUREMENT_ORDER_PRINT'
   | 'PROCUREMENT_SCHEDULE_EXPORT'
   | 'PROCUREMENT_SUPPLY_EXPORT'
+  | 'SALES_QUOTE_PRINT'
+  | 'SALES_QUOTE_EXPORT'
+  | 'SALES_DELIVERY_PLAN_EXPORT'
+  | 'SALES_EFFECTIVE_DEMAND_EXPORT'
 export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStatus =
@@ -304,7 +321,44 @@ export interface ProcurementEffectiveSupplyExportPayload {
   idempotencyKey: string
 }
 
-export type ProcurementExportTaskType =
+export interface SalesQuoteExportPayload {
+  keyword?: string
+  customerId?: ResourceId
+  projectId?: ResourceId
+  status?: string
+  approvalStatus?: string
+  validFrom?: string
+  validTo?: string
+  idempotencyKey: string
+}
+
+export interface SalesDeliveryPlanExportPayload {
+  keyword?: string
+  customerId?: ResourceId
+  projectId?: ResourceId
+  contractId?: ResourceId
+  orderId?: ResourceId
+  materialId?: ResourceId
+  status?: string
+  expectedDateFrom?: string
+  expectedDateTo?: string
+  countedOnly?: boolean
+  idempotencyKey: string
+}
+
+export interface SalesEffectiveDemandExportPayload {
+  projectId?: ResourceId
+  customerId?: ResourceId
+  contractId?: ResourceId
+  materialId?: ResourceId
+  status?: string
+  expectedDateFrom?: string
+  expectedDateTo?: string
+  countedOnly?: boolean
+  idempotencyKey: string
+}
+
+export type ExportTaskType =
   | 'PROCUREMENT_REQUISITION_EXPORT'
   | 'PROCUREMENT_INQUIRY_EXPORT'
   | 'PROCUREMENT_QUOTE_EXPORT'
@@ -312,6 +366,19 @@ export type ProcurementExportTaskType =
   | 'PROCUREMENT_ORDER_EXPORT'
   | 'PROCUREMENT_SCHEDULE_EXPORT'
   | 'PROCUREMENT_SUPPLY_EXPORT'
+  | 'SALES_QUOTE_EXPORT'
+  | 'SALES_DELIVERY_PLAN_EXPORT'
+  | 'SALES_EFFECTIVE_DEMAND_EXPORT'
+
+export type ProcurementExportTaskType = Extract<ExportTaskType,
+  | 'PROCUREMENT_REQUISITION_EXPORT'
+  | 'PROCUREMENT_INQUIRY_EXPORT'
+  | 'PROCUREMENT_QUOTE_EXPORT'
+  | 'PROCUREMENT_PRICE_AGREEMENT_EXPORT'
+  | 'PROCUREMENT_ORDER_EXPORT'
+  | 'PROCUREMENT_SCHEDULE_EXPORT'
+  | 'PROCUREMENT_SUPPLY_EXPORT'
+>
 
 export interface ImportFailureRecord {
   rowNo: number
@@ -407,6 +474,9 @@ export interface DocumentPlatformApi {
     createProcurementOrders(payload: ProcurementOrderExportPayload): Promise<DocumentTaskRecord>
     createProcurementSchedules(orderId: ResourceId, payload: ProcurementScheduleExportPayload): Promise<DocumentTaskRecord>
     createProcurementEffectiveSupplies(payload: ProcurementEffectiveSupplyExportPayload): Promise<DocumentTaskRecord>
+    createSalesQuotes(payload: SalesQuoteExportPayload): Promise<DocumentTaskRecord>
+    createSalesDeliveryPlans(payload: SalesDeliveryPlanExportPayload): Promise<DocumentTaskRecord>
+    createSalesEffectiveDemands(payload: SalesEffectiveDemandExportPayload): Promise<DocumentTaskRecord>
   }
   printTemplates: {
     list(query: { sceneCode: string }): Promise<PrintTemplateRecord[]>
@@ -416,6 +486,7 @@ export interface DocumentPlatformApi {
   }
   printTasks: {
     create(payload: PrintTaskCreatePayload): Promise<DocumentTaskRecord>
+    createSalesQuote(quoteId: ResourceId, payload: { idempotencyKey: string }): Promise<DocumentTaskRecord>
   }
   documentTasks: {
     list(query: DocumentTaskListQuery): Promise<PageResult<DocumentTaskRecord>>
@@ -518,7 +589,7 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
   }
 
   const createExportTask = (
-    taskType: ProcurementExportTaskType,
+    taskType: ExportTaskType,
     filters: Record<string, unknown>,
     idempotencyKey: string,
     context?: { objectType?: string; objectId?: ResourceId },
@@ -674,6 +745,18 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
         const { idempotencyKey, ...filters } = payload
         return createExportTask('PROCUREMENT_SUPPLY_EXPORT', filters, idempotencyKey)
       },
+      createSalesQuotes: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('SALES_QUOTE_EXPORT', filters, idempotencyKey)
+      },
+      createSalesDeliveryPlans: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('SALES_DELIVERY_PLAN_EXPORT', filters, idempotencyKey)
+      },
+      createSalesEffectiveDemands: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('SALES_EFFECTIVE_DEMAND_EXPORT', filters, idempotencyKey)
+      },
     },
     printTemplates: {
       list: (query) => get<PrintTemplateRecord[]>('/api/admin/print-templates', query),
@@ -692,6 +775,17 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
             objectType: payload.objectType,
             objectId: payload.objectId,
             templateCode: payload.templateCode,
+          },
+          { 'Idempotency-Key': payload.idempotencyKey },
+        ),
+      createSalesQuote: (quoteId, payload) =>
+        writeJson<DocumentTaskRecord>(
+          'POST',
+          '/api/admin/print-tasks',
+          {
+            objectType: 'SALES_QUOTE',
+            objectId: quoteId,
+            templateCode: 'SALES_QUOTE_V1',
           },
           { 'Idempotency-Key': payload.idempotencyKey },
         ),

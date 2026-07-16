@@ -342,6 +342,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && "/api/admin/finance/receivable-sources".equals(path)) {
 			return "finance:receivable:create";
 		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(receivablePath) + "/\\d+/sources")) {
+			return "finance:receivable:view";
+		}
 		if ("GET".equals(method) && (receivablePath.equals(path) || matchesIdPath(path, receivablePath))) {
 			return "finance:receivable:view";
 		}
@@ -652,7 +655,65 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
+		String quotePath = "/api/admin/sales/quotes";
+		if ("GET".equals(method) && matchesBasePath(path, quotePath)) {
+			return "sales:quote:view";
+		}
+		if ("POST".equals(method) && quotePath.equals(path)) {
+			return "sales:quote:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, quotePath)) {
+			return "sales:quote:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(quotePath) + "/\\d+/submit-approval")) {
+			return "sales:quote:submit";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(quotePath) + "/\\d+/cancel")) {
+			return "sales:quote:cancel";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(quotePath) + "/\\d+/convert-order")) {
+			return "sales:quote:convert";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(quotePath) + "/\\d+/convert-contract")) {
+			return "sales:quote:convert";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(basePath) + "/customers/\\d+/credit-exposure")) {
+			return "sales:credit:view";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/sales/credit-profiles")) {
+			return "sales:credit:view";
+		}
+		if (("POST".equals(method) && "/api/admin/sales/credit-profiles".equals(path))
+				|| ("PUT".equals(method)
+						&& path.matches(Pattern.quote("/api/admin/sales/credit-profiles") + "/\\d+"))) {
+			return "sales:credit:manage";
+		}
+		if ("GET".equals(method) && "/api/admin/sales/delivery-plans".equals(path)) {
+			return "sales:delivery-plan:view";
+		}
+		if ("GET".equals(method) && "/api/admin/sales/effective-demands".equals(path)) {
+			return "sales:effective-demand:view";
+		}
 		String orderPath = "/api/admin/sales/orders";
+		if ("GET".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/delivery-plans")) {
+			return "sales:delivery-plan:view";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(orderPath)
+				+ "/\\d+/delivery-plans(/\\d+)?(/close)?")) {
+			return "sales:delivery-plan:manage";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/changes")) {
+			return "sales:order-change:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/changes")) {
+			return "sales:order-change:create";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/submit-credit-override")) {
+			return "sales:credit:override-submit";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/submit-short-close")) {
+			return "sales:order:short-close-submit";
+		}
 		if ("GET".equals(method) && matchesBasePath(path, orderPath)) {
 			return "sales:order:view";
 		}
@@ -673,6 +734,20 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("POST".equals(method) && path.matches(Pattern.quote(orderPath) + "/\\d+/shipments")) {
 			return "sales:shipment:create";
+		}
+
+		String changePath = "/api/admin/sales/order-changes";
+		if ("GET".equals(method) && matchesBasePath(path, changePath)) {
+			return "sales:order-change:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(changePath) + "/\\d+/submit-approval")) {
+			return "sales:order-change:submit";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, changePath)) {
+			return "sales:order-change:update";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(changePath) + "/\\d+/cancel")) {
+			return "sales:order-change:cancel";
 		}
 
 		String shipmentPath = "/api/admin/sales/shipments";
@@ -716,6 +791,13 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/sales-orders")) {
 			return "sales:project:view";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/fulfillment")) {
+			return "sales:fulfillment:view";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote(projectPath) + "/\\d+/close-sales-fulfillment")) {
+			return "sales:fulfillment:close";
 		}
 		if ("GET".equals(method) && (projectPath.equals(path) || matchesIdPath(path, projectPath))) {
 			return "sales:project:view";
@@ -766,10 +848,12 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("PUT".equals(method) && matchesIdPath(path, basePath)) {
 			return permissionPrefix + ":update";
 		}
-		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/post")) {
+		if (("PUT".equals(method) || "POST".equals(method))
+				&& path.matches(Pattern.quote(basePath) + "/\\d+/post")) {
 			return permissionPrefix + ":post";
 		}
-		if ("PUT".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/cancel")) {
+		if (("PUT".equals(method) || "POST".equals(method))
+				&& path.matches(Pattern.quote(basePath) + "/\\d+/cancel")) {
 			return permissionPrefix + ":cancel";
 		}
 		return null;

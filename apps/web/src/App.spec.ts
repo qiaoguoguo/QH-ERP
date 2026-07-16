@@ -852,13 +852,20 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/sales')
   })
 
-  it('有销售项目查看权限时在销售菜单补齐销售项目入口并优先显示', async () => {
+  it('有销售项目和 025 销售深化权限时在销售菜单补齐固定入口并优先显示', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     useAuthStore().setSession({
       user: { id: 1, username: 'sales_project_user', displayName: '项目用户', status: 'ENABLED' },
       menus: [],
-      permissions: ['sales:project:view', 'sales:order:view'],
+      permissions: [
+        'sales:project:view',
+        'sales:quote:view',
+        'sales:order:view',
+        'sales:delivery-plan:view',
+        'sales:credit:view',
+        'sales:effective-demand:view',
+      ],
     })
     const router = createQhErpRouter()
     router.push('/')
@@ -872,9 +879,45 @@ describe('ERP 应用骨架', () => {
 
     expect(wrapper.text()).toContain('销售管理')
     expect(wrapper.text()).toContain('销售项目')
+    expect(wrapper.text()).toContain('销售报价')
     expect(wrapper.text()).toContain('销售订单')
+    expect(wrapper.text()).toContain('交付计划')
+    expect(wrapper.text()).toContain('信用档案')
+    expect(wrapper.text()).toContain('有效销售需求')
     expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
-      .toEqual(expect.arrayContaining(['/sales/projects', '/sales/orders']))
+      .toEqual(expect.arrayContaining([
+        '/sales/projects',
+        '/sales/quotes',
+        '/sales/orders',
+        '/sales/delivery-plans',
+        '/sales/credit-profiles',
+        '/sales/effective-demands',
+      ]))
+  })
+
+  it('系统管理员无显式信用查看权限时仍补齐信用档案入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: [],
+      roles: [{ id: 1, code: 'SYSTEM_ADMIN', name: '系统管理员', status: 'ENABLED' }],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('销售管理')
+    expect(wrapper.text()).toContain('信用档案')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toContain('/sales/credit-profiles')
   })
 
   it('有销售查看权限但后端菜单缺失时补齐销售管理入口', async () => {

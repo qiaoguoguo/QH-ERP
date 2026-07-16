@@ -44,9 +44,13 @@ const reportPageComponent = (routeName: string) => {
 
 const salesRouteOrder = [
   { name: 'sales-projects', permission: 'sales:project:view' },
+  { name: 'sales-quotes', permission: 'sales:quote:view' },
   { name: 'sales-orders', permission: 'sales:order:view' },
+  { name: 'sales-delivery-plans', permission: 'sales:delivery-plan:view' },
   { name: 'sales-shipments', permission: 'sales:shipment:view' },
   { name: 'sales-returns', permission: 'sales:return:view' },
+  { name: 'sales-credit-profiles', permission: 'sales:credit:view' },
+  { name: 'sales-effective-demands', permission: 'sales:effective-demand:view' },
 ] as const
 
 const procurementRouteOrder = [
@@ -518,6 +522,30 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/sales/projects/SalesProjectFormView.vue'),
   },
   {
+    path: '/sales/quotes',
+    name: 'sales-quotes',
+    meta: { requiresAuth: true, requiredPermission: 'sales:quote:view' },
+    component: () => import('../modules/sales/quotes/SalesQuoteListView.vue'),
+  },
+  {
+    path: '/sales/quotes/create',
+    name: 'sales-quote-create',
+    meta: { requiresAuth: true, requiredPermission: 'sales:quote:create' },
+    component: () => import('../modules/sales/quotes/SalesQuoteFormView.vue'),
+  },
+  {
+    path: '/sales/quotes/:id',
+    name: 'sales-quote-detail',
+    meta: { requiresAuth: true, requiredPermission: 'sales:quote:view' },
+    component: () => import('../modules/sales/quotes/SalesQuoteDetailView.vue'),
+  },
+  {
+    path: '/sales/quotes/:id/edit',
+    name: 'sales-quote-edit',
+    meta: { requiresAuth: true, requiredPermission: 'sales:quote:update' },
+    component: () => import('../modules/sales/quotes/SalesQuoteFormView.vue'),
+  },
+  {
     path: '/sales/orders',
     name: 'sales-orders',
     meta: { requiresAuth: true, requiredPermission: 'sales:order:view' },
@@ -540,6 +568,12 @@ const routes: RouteRecordRaw[] = [
     name: 'sales-order-edit',
     meta: { requiresAuth: true, requiredPermission: 'sales:order:update' },
     component: () => import('../modules/sales/SalesOrderFormView.vue'),
+  },
+  {
+    path: '/sales/delivery-plans',
+    name: 'sales-delivery-plans',
+    meta: { requiresAuth: true, requiredPermission: 'sales:delivery-plan:view' },
+    component: () => import('../modules/sales/delivery/SalesDeliveryPlanListView.vue'),
   },
   {
     path: '/sales/orders/:orderId/shipments/create',
@@ -588,6 +622,18 @@ const routes: RouteRecordRaw[] = [
     name: 'sales-return-edit',
     meta: { requiresAuth: true, requiredPermission: 'sales:return:update' },
     component: () => import('../modules/reversal/SalesReturnFormView.vue'),
+  },
+  {
+    path: '/sales/credit-profiles',
+    name: 'sales-credit-profiles',
+    meta: { requiresAuth: true, requiredPermission: 'sales:credit:view' },
+    component: () => import('../modules/sales/credit/SalesCreditProfileListView.vue'),
+  },
+  {
+    path: '/sales/effective-demands',
+    name: 'sales-effective-demands',
+    meta: { requiresAuth: true, requiredPermission: 'sales:effective-demand:view' },
+    component: () => import('../modules/sales/effective-demand/EffectiveSalesDemandListView.vue'),
   },
   {
     path: '/production',
@@ -899,6 +945,12 @@ export function createQhErpRouter() {
       return { name: 'login', query: { redirect: to.fullPath } }
     }
 
+    const hasSystemAdminRole = authStore.roles.some((role) => role.code === 'SYSTEM_ADMIN')
+    const hasRoutePermission = (permission: string) => (
+      authStore.hasPermission(permission)
+      || (permission === 'sales:credit:view' && hasSystemAdminRole)
+    )
+
     if (to.name === 'finance-root') {
       const financeRoute = firstFinanceRouteByPermission((permission) => authStore.hasPermission(permission))
       if (!financeRoute) {
@@ -908,7 +960,7 @@ export function createQhErpRouter() {
     }
 
     if (to.name === 'sales-root') {
-      const salesRoute = salesRouteOrder.find((item) => authStore.hasPermission(item.permission))
+      const salesRoute = salesRouteOrder.find((item) => hasRoutePermission(item.permission))
       if (!salesRoute) {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
@@ -935,7 +987,7 @@ export function createQhErpRouter() {
       ...(to.meta.requiredPermission ? [to.meta.requiredPermission] : []),
       ...(to.meta.requiredPermissions ?? []),
     ]
-    if (requiredPermissions.some((permission) => !authStore.hasPermission(permission))) {
+    if (requiredPermissions.some((permission) => !hasRoutePermission(permission))) {
       return { name: 'forbidden', query: { from: to.fullPath } }
     }
 

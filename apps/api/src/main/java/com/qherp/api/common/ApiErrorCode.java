@@ -458,6 +458,8 @@ public enum ApiErrorCode {
 
 	SALES_SHIPMENT_RESERVATION_WAREHOUSE_MISMATCH(HttpStatus.CONFLICT, "销售出库仓库必须与订单行预留仓库一致"),
 
+	SALES_SHIPMENT_EARLY_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "提前交付原因必填"),
+
 	SALES_STOCK_NOT_ENOUGH(HttpStatus.CONFLICT, "销售出库库存不足"),
 
 	SALES_SHIPMENT_POSTED_IMMUTABLE(HttpStatus.CONFLICT, "已过账销售出库单不可编辑"),
@@ -465,6 +467,52 @@ public enum ApiErrorCode {
 	SALES_DUPLICATE_POST(HttpStatus.CONFLICT, "销售出库单已过账或重复过账"),
 
 	SALES_MOVEMENT_SOURCE_DUPLICATED(HttpStatus.CONFLICT, "销售来源明细已生成库存变动"),
+
+	SALES_QUOTE_NOT_FOUND(HttpStatus.NOT_FOUND, "销售报价不存在"),
+
+	SALES_QUOTE_STATUS_INVALID(HttpStatus.CONFLICT, "销售报价状态不允许当前操作"),
+
+	SALES_QUOTE_EMPTY_LINES(HttpStatus.BAD_REQUEST, "销售报价明细不能为空"),
+
+	SALES_QUOTE_DUPLICATE_LINE(HttpStatus.CONFLICT, "销售报价明细行号重复"),
+
+	SALES_CURRENCY_UNSUPPORTED(HttpStatus.BAD_REQUEST, "销售首版仅支持 CNY"),
+
+	SALES_TAX_PRICE_INVALID(HttpStatus.BAD_REQUEST, "销售税价不合法"),
+
+	SALES_ACTION_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "销售业务动作幂等键冲突"),
+
+	SALES_CREDIT_BLOCKED(HttpStatus.CONFLICT, "客户信用检查未通过"),
+
+	SALES_CREDIT_PROFILE_MISSING(HttpStatus.CONFLICT, "客户信用档案缺失"),
+
+	SALES_CREDIT_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "客户信用额度不足"),
+
+	SALES_CREDIT_FROZEN(HttpStatus.CONFLICT, "客户信用已冻结"),
+
+	SALES_CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "销售对象版本已变化"),
+
+	SALES_ORDER_SNAPSHOT_INVALID(HttpStatus.CONFLICT, "销售订单商业快照不完整"),
+
+	SALES_ORDER_CHANGE_NOT_FOUND(HttpStatus.NOT_FOUND, "销售订单变更不存在"),
+
+	SALES_ORDER_CHANGE_STATUS_INVALID(HttpStatus.CONFLICT, "销售订单变更状态不允许当前操作"),
+
+	SALES_ORDER_CHANGE_BELOW_SHIPPED(HttpStatus.CONFLICT, "订单变更目标数量不能小于已出库数量"),
+
+	SALES_ORDER_CHANGE_SOURCE_IMMUTABLE(HttpStatus.CONFLICT, "订单变更不得改变来源、物料或单位"),
+
+	SALES_DELIVERY_PLAN_NOT_FOUND(HttpStatus.NOT_FOUND, "销售交付计划不存在"),
+
+	SALES_DELIVERY_PLAN_TOTAL_MISMATCH(HttpStatus.CONFLICT, "销售交付计划总量与订单行不一致"),
+
+	SALES_DELIVERY_PLAN_BELOW_SHIPPED(HttpStatus.CONFLICT, "销售交付计划数量不能小于已出库数量"),
+
+	SALES_DELIVERY_PLAN_STATUS_INVALID(HttpStatus.CONFLICT, "销售交付计划状态不允许当前操作"),
+
+	SALES_ORDER_CLOSE_BLOCKED(HttpStatus.CONFLICT, "销售订单关闭条件不满足"),
+
+	SALES_ORDER_SHORT_CLOSE_APPROVAL_REQUIRED(HttpStatus.CONFLICT, "销售订单短交关闭必须先通过审批"),
 
 	PROJECT_NOT_FOUND(HttpStatus.NOT_FOUND, "销售项目不存在"),
 

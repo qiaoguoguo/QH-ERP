@@ -47,9 +47,13 @@ const procurementReceiptPath = '/procurement/receipts'
 const procurementReturnPath = '/procurement/returns'
 const procurementEffectiveSupplyPath = '/procurement/effective-supplies'
 const salesProjectPath = '/sales/projects'
+const salesQuotePath = '/sales/quotes'
 const salesOrderPath = '/sales/orders'
+const salesDeliveryPlanPath = '/sales/delivery-plans'
 const salesShipmentPath = '/sales/shipments'
 const salesReturnPath = '/sales/returns'
+const salesCreditProfilePath = '/sales/credit-profiles'
+const salesEffectiveDemandPath = '/sales/effective-demands'
 const productionWorkOrderPath = '/production/work-orders'
 const productionMaterialReturnPath = '/production/material-returns'
 const productionMaterialSupplementPath = '/production/material-supplements'
@@ -103,9 +107,13 @@ const supportedMenuPaths = new Set([
   procurementReturnPath,
   procurementEffectiveSupplyPath,
   salesProjectPath,
+  salesQuotePath,
   salesOrderPath,
+  salesDeliveryPlanPath,
   salesShipmentPath,
   salesReturnPath,
+  salesCreditProfilePath,
+  salesEffectiveDemandPath,
   productionWorkOrderPath,
   productionMaterialReturnPath,
   productionMaterialSupplementPath,
@@ -286,10 +294,22 @@ const salesChildren: MenuNode[] = [
     routePath: salesProjectPath,
   },
   {
+    id: 'sales-quotes',
+    code: 'sales:quote:view',
+    name: '销售报价',
+    routePath: salesQuotePath,
+  },
+  {
     id: 'sales-orders',
     code: 'sales:order:view',
     name: '销售订单',
     routePath: salesOrderPath,
+  },
+  {
+    id: 'sales-delivery-plans',
+    code: 'sales:delivery-plan:view',
+    name: '交付计划',
+    routePath: salesDeliveryPlanPath,
   },
   {
     id: 'sales-shipments',
@@ -302,6 +322,18 @@ const salesChildren: MenuNode[] = [
     code: 'sales:return:view',
     name: '销售退货',
     routePath: salesReturnPath,
+  },
+  {
+    id: 'sales-credit-profiles',
+    code: 'sales:credit:view',
+    name: '信用档案',
+    routePath: salesCreditProfilePath,
+  },
+  {
+    id: 'sales-effective-demands',
+    code: 'sales:effective-demand:view',
+    name: '有效销售需求',
+    routePath: salesEffectiveDemandPath,
   },
 ]
 const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
@@ -650,7 +682,10 @@ function removeProcurementMenus(menus: MenuNode[]): MenuNode[] {
 }
 
 function ensureSalesMenu(menus: MenuNode[]): MenuNode[] {
-  const allowedChildren = salesChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const allowedChildren = salesChildren.filter((child) => (
+    authStore.hasPermission(String(child.code))
+    || (child.routePath === salesCreditProfilePath && hasSystemAdminRole())
+  ))
   const cleanedMenus = removeSalesMenus(menus)
   if (!allowedChildren.length) {
     return cleanedMenus
@@ -666,6 +701,10 @@ function ensureSalesMenu(menus: MenuNode[]): MenuNode[] {
       children: allowedChildren,
     },
   ]
+}
+
+function hasSystemAdminRole() {
+  return authStore.roles.some((role) => role.code === 'SYSTEM_ADMIN')
 }
 
 function isSalesMenu(menu: MenuNode): boolean {

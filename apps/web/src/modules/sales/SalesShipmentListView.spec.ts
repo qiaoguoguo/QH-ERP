@@ -63,6 +63,9 @@ const draftShipment: SalesShipmentSummaryRecord = {
   status: 'DRAFT',
   lineCount: 1,
   totalQuantity: 2.5,
+  allowedActions: ['UPDATE', 'POST'],
+  actionDisabledReason: null,
+  version: 5,
   remark: '首批销售出库',
   createdByName: '仓管员',
   createdAt: '2026-07-05T08:00:00+08:00',
@@ -77,6 +80,7 @@ const postedShipment: SalesShipmentSummaryRecord = {
   shipmentNo: 'SS-20260705-002',
   status: 'POSTED',
   totalQuantity: 5,
+  allowedActions: [],
   postedByName: '仓管员',
   postedAt: '2026-07-05T09:00:00+08:00',
 }
@@ -276,20 +280,15 @@ describe('销售出库列表页', () => {
     expect(buttonsByText(wrapper, '过账')).toHaveLength(0)
   })
 
-  it('过账动作使用二次确认，成功后刷新列表，库存不足失败时显示错误', async () => {
-    const { wrapper } = await mountList()
+  it('列表过账入口进入详情处理提前交付原因，不直接调用无原因过账', async () => {
+    const { wrapper, router } = await mountList()
 
     await wrapper.find('[data-test="post-sales-shipment"]').trigger('click')
     await flushPromises()
-    expect(confirmActionMock).toHaveBeenCalledWith('确认过账销售出库“SS-20260705-001”？')
-    expect(salesApiMock.shipments.post).toHaveBeenCalledWith(700)
-    expect(salesApiMock.shipments.list).toHaveBeenCalledTimes(2)
 
-    salesApiMock.shipments.post.mockRejectedValueOnce(new Error('库存不足，不能过账销售出库'))
-    await wrapper.find('[data-test="post-sales-shipment"]').trigger('click')
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('库存不足，不能过账销售出库')
-    expect(salesApiMock.shipments.list).toHaveBeenCalledTimes(2)
+    expect(confirmActionMock).not.toHaveBeenCalled()
+    expect(salesApiMock.shipments.post).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.name).toBe('sales-shipment-detail')
+    expect(router.currentRoute.value.params.id).toBe('700')
   })
 })

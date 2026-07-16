@@ -55,7 +55,7 @@ public class PlatformAttachmentService {
 	@Transactional(readOnly = true)
 	public PageResponse<AttachmentRecord> list(String objectType, Long objectId, int page, int pageSize,
 			CurrentUser currentUser) {
-		requireBusinessPermission(objectType, objectId, currentUser);
+		requireBusinessPermission(objectType, objectId, currentUser, AttachmentAccessMode.VIEW);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from platform_business_attachment a
@@ -82,7 +82,7 @@ public class PlatformAttachmentService {
 	@Transactional
 	public AttachmentRecord upload(AttachmentUpload upload, CurrentUser operator, HttpServletRequest servletRequest) {
 		validateUpload(upload);
-		requireBusinessPermission(upload.objectType(), upload.objectId(), operator);
+		requireBusinessPermission(upload.objectType(), upload.objectId(), operator, AttachmentAccessMode.MANAGE);
 		requireApprovalUnlocked(upload.objectType(), upload.objectId());
 		String actualContentType = actualContentType(upload.originalFilename(), upload.content());
 		String sha256 = sha256(upload.content());
@@ -150,7 +150,7 @@ public class PlatformAttachmentService {
 	@Transactional(readOnly = true)
 	public DownloadedFile download(Long attachmentId, CurrentUser operator) {
 		AttachmentFile file = attachmentFile(attachmentId);
-		requireBusinessPermission(file.objectType(), file.objectId(), operator);
+		requireBusinessPermission(file.objectType(), file.objectId(), operator, AttachmentAccessMode.VIEW);
 		byte[] content = this.storageService.get(file.objectKey());
 		return new DownloadedFile(file.originalFilename(), file.contentType(), content);
 	}
@@ -162,7 +162,7 @@ public class PlatformAttachmentService {
 		if (request == null || request.version() == null || !file.version().equals(request.version())) {
 			throw new BusinessException(ApiErrorCode.VERSION_CONFLICT);
 		}
-		requireBusinessPermission(file.objectType(), file.objectId(), operator);
+		requireBusinessPermission(file.objectType(), file.objectId(), operator, AttachmentAccessMode.MANAGE);
 		requireApprovalUnlocked(file.objectType(), file.objectId());
 		this.storageService.delete(file.objectKey());
 		OffsetDateTime now = OffsetDateTime.now();
@@ -236,7 +236,10 @@ public class PlatformAttachmentService {
 				&& !"BOM_ENGINEERING_CHANGE".equals(upload.objectType())
 				&& !"INVENTORY_OWNERSHIP_CONVERSION".equals(upload.objectType())
 				&& !"INVENTORY_STOCKTAKE".equals(upload.objectType())
-				&& !"INVENTORY_VALUATION_ADJUSTMENT".equals(upload.objectType())) {
+				&& !"INVENTORY_VALUATION_ADJUSTMENT".equals(upload.objectType())
+				&& !"SALES_QUOTE".equals(upload.objectType())
+				&& !"SALES_ORDER_CHANGE".equals(upload.objectType())
+				&& !"SALES_PROJECT".equals(upload.objectType())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 		}
 		String extension = extension(upload.originalFilename());
@@ -368,7 +371,7 @@ public class PlatformAttachmentService {
 
 	private List<String> attachmentAvailableActions(AttachmentRecord record, CurrentUser currentUser) {
 		if (!"AVAILABLE".equals(record.status()) || !hasBusinessPermission(record.objectType(), record.objectId(),
-				currentUser)) {
+				currentUser, AttachmentAccessMode.VIEW)) {
 			return List.of();
 		}
 		List<String> actions = new ArrayList<>();
@@ -376,16 +379,37 @@ public class PlatformAttachmentService {
 			actions.add("DOWNLOAD");
 		}
 		if (currentUser.permissions().contains("platform:attachment:delete")
+				&& hasBusinessPermission(record.objectType(), record.objectId(), currentUser,
+						AttachmentAccessMode.MANAGE)
 				&& !approvalOpen(record.objectType(), record.objectId())) {
 			actions.add("DELETE");
 		}
 		return actions;
 	}
 
-	private void requireBusinessPermission(String objectType, Long objectId, CurrentUser currentUser) {
+	private void requireBusinessPermission(String objectType, Long objectId, CurrentUser currentUser,
+			AttachmentAccessMode mode) {
 		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
 			requirePermission(currentUser, "sales:contract:view");
 			requireExists("select count(*) from sal_project_contract where id = ?", objectId);
+			return;
+		}
+		if ("SALES_QUOTE".equals(objectType)) {
+			requirePermission(currentUser, mode == AttachmentAccessMode.MANAGE ? "sales:quote:update"
+					: "sales:quote:view");
+			requireExists("select count(*) from sal_sales_quote where id = ?", objectId);
+			return;
+		}
+		if ("SALES_ORDER_CHANGE".equals(objectType)) {
+			requirePermission(currentUser, mode == AttachmentAccessMode.MANAGE ? "sales:order-change:update"
+					: "sales:order-change:view");
+			requireExists("select count(*) from sal_sales_order_change where id = ?", objectId);
+			return;
+		}
+		if ("SALES_PROJECT".equals(objectType)) {
+			requirePermission(currentUser, mode == AttachmentAccessMode.MANAGE ? "sales:project:update"
+					: "sales:project:view");
+			requireExists("select count(*) from sal_project where id = ?", objectId);
 			return;
 		}
 		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
@@ -411,10 +435,27 @@ public class PlatformAttachmentService {
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
-	private boolean hasBusinessPermission(String objectType, Long objectId, CurrentUser currentUser) {
+	private boolean hasBusinessPermission(String objectType, Long objectId, CurrentUser currentUser,
+			AttachmentAccessMode mode) {
 		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
 			return currentUser.permissions().contains("sales:contract:view")
 					&& exists("select count(*) from sal_project_contract where id = ?", objectId);
+		}
+		if ("SALES_QUOTE".equals(objectType)) {
+			String permission = mode == AttachmentAccessMode.MANAGE ? "sales:quote:update" : "sales:quote:view";
+			return currentUser.permissions().contains(permission)
+					&& exists("select count(*) from sal_sales_quote where id = ?", objectId);
+		}
+		if ("SALES_ORDER_CHANGE".equals(objectType)) {
+			String permission = mode == AttachmentAccessMode.MANAGE ? "sales:order-change:update"
+					: "sales:order-change:view";
+			return currentUser.permissions().contains(permission)
+					&& exists("select count(*) from sal_sales_order_change where id = ?", objectId);
+		}
+		if ("SALES_PROJECT".equals(objectType)) {
+			String permission = mode == AttachmentAccessMode.MANAGE ? "sales:project:update" : "sales:project:view";
+			return currentUser.permissions().contains(permission)
+					&& exists("select count(*) from sal_project where id = ?", objectId);
 		}
 		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
 			return currentUser.permissions().contains("material:bom-eco:view")
@@ -525,6 +566,12 @@ public class PlatformAttachmentService {
 
 	private record AttachmentFile(Long id, String objectType, Long objectId, Long fileId, String objectKey,
 			String originalFilename, String contentType, Long version) {
+	}
+
+	private enum AttachmentAccessMode {
+
+		VIEW, MANAGE
+
 	}
 
 }

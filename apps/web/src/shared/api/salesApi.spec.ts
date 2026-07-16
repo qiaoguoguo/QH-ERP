@@ -7,9 +7,11 @@ import {
   type SalesOrderPayload,
   type SalesOrderSummaryRecord,
   type SalesOrderUpdatePayload,
+  type SalesOrderActionPayload,
   type SalesShipmentLineRecord,
   type SalesShipmentLinePayload,
   type SalesShipmentPayload,
+  type SalesShipmentPostPayload,
 } from './salesApi'
 import type { InventoryTrackingAllocationPayload } from './inventoryApi'
 
@@ -104,6 +106,23 @@ describe('销售 API', () => {
     orderSummaryReturnsVersion: true as AssertTrue<
       SalesOrderSummaryRecord extends { version: number } ? true : false
     >,
+    orderSummaryReturnsAllowedActions: true as AssertTrue<
+      SalesOrderSummaryRecord extends { allowedActions?: unknown; actionDisabledReason?: unknown } ? true : false
+    >,
+    orderLineReturnsCommercialSnapshot: true as AssertTrue<
+      SalesOrderLineRecord extends {
+        priceSourceType?: unknown
+        taxIncludedUnitPrice?: unknown
+        taxRate?: unknown
+        taxIncludedAmount?: unknown
+      } ? true : false
+    >,
+    orderActionPayloadRequiresVersionAndKey: true as AssertTrue<
+      SalesOrderActionPayload extends { version: number; idempotencyKey: string } ? true : false
+    >,
+    shipmentPostPayloadRequiresVersionAndKey: true as AssertTrue<
+      SalesShipmentPostPayload extends { version: number; idempotencyKey: string } ? true : false
+    >,
   }
 
   it('声明销售候选库存占用预留字段类型契约', () => {
@@ -120,6 +139,10 @@ describe('销售 API', () => {
       orderUpdatePayloadRequiresVersion: true,
       orderSummaryReturnsProjectContractFields: true,
       orderSummaryReturnsVersion: true,
+      orderSummaryReturnsAllowedActions: true,
+      orderLineReturnsCommercialSnapshot: true,
+      orderActionPayloadRequiresVersionAndKey: true,
+      shipmentPostPayloadRequiresVersionAndKey: true,
     })
   })
 
@@ -200,7 +223,7 @@ describe('销售 API', () => {
     })
   })
 
-  it('写操作先获取 CSRF，业务数量和单价使用字符串，无 body 操作不发送空 JSON', async () => {
+  it('写操作先获取 CSRF，业务数量税价使用字符串，状态动作携带 version 与幂等键', async () => {
     const fetcher = vi.fn()
     const csrfTokens = [
       'csrf-create-order',
@@ -232,6 +255,13 @@ describe('销售 API', () => {
           reservationWarehouseId: 4,
           quantity: '999999999999.999999',
           unitPrice: '123456789012.123456',
+          priceSourceType: 'MANUAL',
+          untaxedUnitPrice: '109253795586.000000',
+          taxIncludedUnitPrice: '123456789012.123456',
+          taxRate: '0.130000',
+          untaxedAmount: '109253795586000000000000.000000',
+          taxAmount: '14203093426123456789012.123456',
+          taxIncludedAmount: '123456789012000000000000.123456',
           expectedShipDate: '2026-07-10',
           remark: '销售订单行',
         },
@@ -257,17 +287,20 @@ describe('销售 API', () => {
 
     await api.orders.create(orderPayload)
     await api.orders.update(11, orderUpdatePayload)
-    await api.orders.confirm(11)
-    await api.orders.cancel(11)
-    await api.orders.close(11)
+    await api.orders.confirm(11, { version: 7, idempotencyKey: 'confirm-key' })
+    await api.orders.cancel(11, { version: 8, reason: '客户取消', idempotencyKey: 'cancel-key' })
+    await api.orders.close(11, { version: 9, reason: '履约完成', idempotencyKey: 'close-key' })
     await api.shipments.create(11, shipmentPayload)
     await api.shipments.update(12, shipmentPayload)
-    await api.shipments.post(12)
+    await api.shipments.post(12, { version: 6, idempotencyKey: 'shipment-post-key', reason: '客户要求提前交付' })
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0]).toMatchObject({
       reservationWarehouseId: 4,
       quantity: '999999999999.999999',
       unitPrice: '123456789012.123456',
+      taxIncludedUnitPrice: '123456789012.123456',
+      taxRate: '0.130000',
+      priceSourceType: 'MANUAL',
     })
     expect(JSON.parse(fetcher.mock.calls[11][1].body as string).lines[0]).toMatchObject({
       quantity: '1.500000',
@@ -295,25 +328,31 @@ describe('销售 API', () => {
       method: 'PUT',
     })
     expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/sales/orders/11/confirm', {
+      body: JSON.stringify({ version: 7, idempotencyKey: 'confirm-key' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-confirm-order',
       },
       method: 'PUT',
     })
     expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/sales/orders/11/cancel', {
+      body: JSON.stringify({ version: 8, reason: '客户取消', idempotencyKey: 'cancel-key' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-cancel-order',
       },
       method: 'PUT',
     })
     expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/sales/orders/11/close', {
+      body: JSON.stringify({ version: 9, reason: '履约完成', idempotencyKey: 'close-key' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-close-order',
       },
       method: 'PUT',
@@ -339,9 +378,11 @@ describe('销售 API', () => {
       method: 'PUT',
     })
     expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/sales/shipments/12/post', {
+      body: JSON.stringify({ version: 6, idempotencyKey: 'shipment-post-key', reason: '客户要求提前交付' }),
       credentials: 'include',
       headers: {
         Accept: 'application/json',
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-post-shipment',
       },
       method: 'PUT',

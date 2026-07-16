@@ -64,6 +64,9 @@ const salesReturnDetail: SalesReturnDetail = {
   status: 'DRAFT',
   totalQuantity: '2.000000',
   totalAmount: '100.00',
+  version: 5,
+  allowedActions: ['UPDATE', 'POST', 'CANCEL'],
+  actionDisabledReason: null,
   source: {
     sourceType: 'SALES_SHIPMENT',
     sourceId: 10,
@@ -423,7 +426,7 @@ describe('退货退款与反冲 API', () => {
     )
   })
 
-  it('销售退货写操作先获取 CSRF，数量金额保持字符串，无 body 操作不发送空 JSON', async () => {
+  it('销售退货写操作先获取 CSRF，数量金额保持字符串，公开动作发送版本和幂等键 body', async () => {
     const fetcher = vi.fn()
     const csrfTokens = ['create', 'update', 'post', 'cancel']
     csrfTokens.forEach((token) => {
@@ -446,8 +449,8 @@ describe('退货退款与反冲 API', () => {
 
     await api.salesReturns.create(payload)
     await api.salesReturns.update(1, payload)
-    await api.salesReturns.post(1)
-    await api.salesReturns.cancel(1)
+    await api.salesReturns.post(1, { version: 7, idempotencyKey: 'sales-return-post-1' })
+    await api.salesReturns.cancel(1, { version: 8, reason: '客户取消退货', idempotencyKey: 'sales-return-cancel-1' })
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].quantity).toBe('2.000000')
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].trackingAllocations).toEqual([
@@ -463,22 +466,31 @@ describe('退货退款与反冲 API', () => {
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-update' }),
       method: 'PUT',
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/sales/returns/1/post', {
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/sales/returns/1/post', expect.objectContaining({
+      body: JSON.stringify({ version: 7, idempotencyKey: 'sales-return-post-1' }),
+      headers: expect.objectContaining({
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-post',
-      },
-      method: 'PUT',
-    })
-    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/sales/returns/1/cancel', {
-      credentials: 'include',
-      headers: {
-        Accept: 'application/json',
+      }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/sales/returns/1/cancel', expect.objectContaining({
+      body: JSON.stringify({ version: 8, reason: '客户取消退货', idempotencyKey: 'sales-return-cancel-1' }),
+      headers: expect.objectContaining({
+        'Content-Type': 'application/json',
         'X-CSRF-TOKEN': 'csrf-cancel',
-      },
-      method: 'PUT',
-    })
+      }),
+      method: 'POST',
+    }))
+  })
+
+  it('销售退货公开动作拒绝空幂等键', async () => {
+    const fetcher = vi.fn()
+    const api = createReturnRefundReversalApi({ fetcher })
+
+    await expect(api.salesReturns.post(1, { version: 7, idempotencyKey: '' })).rejects.toThrow('幂等键不能为空')
+    await expect(api.salesReturns.cancel(1, { version: 8, idempotencyKey: '' })).rejects.toThrow('幂等键不能为空')
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   it('按查询条件获取采购退货和候选采购入库，并过滤空查询值', async () => {

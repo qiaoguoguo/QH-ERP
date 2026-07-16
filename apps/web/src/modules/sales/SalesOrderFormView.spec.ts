@@ -142,6 +142,12 @@ const draftOrder: SalesOrderDetailRecord = {
       reservationWarehouseId: 30,
       reservationWarehouseName: '成品仓',
       unitPrice: '88.100000',
+      priceSourceType: 'MANUAL',
+      priceSourceNo: null,
+      untaxedUnitPrice: '78.000000',
+      taxIncludedUnitPrice: '88.100000',
+      taxRate: '0.130000',
+      taxIncludedAmount: '1101.250000',
       expectedShipDate: '2026-07-12',
       remark: '按周发货',
     },
@@ -201,6 +207,9 @@ async function fillValidOrder(wrapper: VueWrapper, quantity = '12.500000', unitP
   await setSelectValue(wrapper, 2, 30)
   await wrapper.find('input[name="sales-order-line-quantity-0"]').setValue(quantity)
   await wrapper.find('input[name="sales-order-line-unit-price-0"]').setValue(unitPrice)
+  await wrapper.find('input[name="sales-order-line-untaxed-unit-price-0"]').setValue('78.000000')
+  await wrapper.find('input[name="sales-order-line-tax-included-unit-price-0"]').setValue('88.100000')
+  await wrapper.find('input[name="sales-order-line-tax-rate-0"]').setValue('0.130000')
   await wrapper.find('input[name="sales-order-line-expected-date-0"]').setValue('2026-07-12')
 }
 
@@ -285,7 +294,7 @@ describe('销售订单表单页', () => {
     expect(salesApiMock.orders.create).not.toHaveBeenCalled()
   })
 
-  it('校验明细数量、销售单价格式和重复物料', async () => {
+  it('校验明细数量和销售单价格式，并允许同物料多行按独立行提交', async () => {
     const { wrapper } = await mountForm()
 
     await fillValidOrder(wrapper, '1.1234567')
@@ -306,11 +315,19 @@ describe('销售订单表单页', () => {
     await setSelectValue(wrapper, 4, 30)
     await wrapper.find('input[name="sales-order-line-quantity-1"]').setValue('2')
     await wrapper.find('input[name="sales-order-line-unit-price-1"]').setValue('1')
+    await wrapper.find('input[name="sales-order-line-untaxed-unit-price-1"]').setValue('0.884956')
+    await wrapper.find('input[name="sales-order-line-tax-included-unit-price-1"]').setValue('1.000000')
+    await wrapper.find('input[name="sales-order-line-tax-rate-1"]').setValue('0.130000')
     await wrapper.find('[data-test="save-sales-order"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('同一销售订单内物料不能重复')
-    expect(salesApiMock.orders.create).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('同一销售订单内物料不能重复')
+    expect(salesApiMock.orders.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        expect.objectContaining({ lineNo: 10, materialId: 10 }),
+        expect.objectContaining({ lineNo: 20, materialId: 10 }),
+      ],
+    }))
   })
 
   it('销售明细必须选择预留仓库，确认预留口径使用清晰中文提示', async () => {
@@ -358,6 +375,10 @@ describe('销售订单表单页', () => {
           reservationWarehouseId: 30,
           quantity: '12.500000',
           unitPrice: '88.100000',
+          priceSourceType: 'MANUAL',
+          untaxedUnitPrice: '78.000000',
+          taxIncludedUnitPrice: '88.100000',
+          taxRate: '0.130000',
           expectedShipDate: '2026-07-12',
           remark: '按周发货',
         },
@@ -383,6 +404,29 @@ describe('销售订单表单页', () => {
     expect(salesApiMock.orders.create).toHaveBeenCalledWith(expect.objectContaining({
       projectId: 12,
       contractId: 55,
+    }))
+  })
+
+  it('新建态可见并提交手工订单价格来源和税价字符串', async () => {
+    const { wrapper } = await mountForm()
+
+    await fillValidOrder(wrapper)
+    expect(wrapper.text()).toContain('价格来源')
+    expect(wrapper.text()).toContain('手工订单')
+    expect(wrapper.text()).toContain('未税单价')
+    expect(wrapper.text()).toContain('含税单价')
+    expect(wrapper.text()).toContain('税率')
+
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.orders.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [expect.objectContaining({
+        priceSourceType: 'MANUAL',
+        untaxedUnitPrice: '78.000000',
+        taxIncludedUnitPrice: '88.100000',
+        taxRate: '0.130000',
+      })],
     }))
   })
 
@@ -480,6 +524,57 @@ describe('销售订单表单页', () => {
       lines: [expect.objectContaining({ reservationWarehouseId: 30, unitPrice: '99.200000' })],
     }))
     expect(router.currentRoute.value.name).toBe('sales-order-detail')
+  })
+
+  it('编辑草稿时保留报价行、合同行和价格来源字段，保存不丢失来源链', async () => {
+    salesApiMock.orders.get.mockResolvedValueOnce({
+      ...draftOrder,
+      lines: [
+        {
+          ...draftOrder.lines[0],
+          id: 501,
+          lineNo: 10,
+          materialId: 10,
+          priceSourceType: 'QUOTE',
+          priceSourceNo: 'SQ-001',
+          quoteLineId: 901,
+          contractLineId: null,
+        },
+        {
+          ...draftOrder.lines[0],
+          id: 502,
+          lineNo: 20,
+          materialId: 10,
+          priceSourceType: 'QUOTE',
+          priceSourceNo: 'SQ-002',
+          quoteLineId: 902,
+          contractLineId: 702,
+        },
+      ],
+    })
+    const { wrapper } = await mountForm('/sales/orders/99/edit')
+
+    await wrapper.find('[data-test="save-sales-order"]').trigger('click')
+    await flushPromises()
+
+    expect(salesApiMock.orders.update).toHaveBeenCalledWith(99, expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          lineNo: 10,
+          materialId: 10,
+          priceSourceType: 'QUOTE',
+          quoteLineId: 901,
+          contractLineId: null,
+        }),
+        expect.objectContaining({
+          lineNo: 20,
+          materialId: 10,
+          priceSourceType: 'QUOTE',
+          quoteLineId: 902,
+          contractLineId: 702,
+        }),
+      ],
+    }))
   })
 
   it('非草稿销售订单不可提交', async () => {

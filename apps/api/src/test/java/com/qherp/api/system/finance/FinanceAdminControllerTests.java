@@ -546,6 +546,10 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 	private long createShipment(SalesFixture fixture, String remark, String quantity, String unitPrice,
 			String shipmentStatus) {
 		int suffix = SEQUENCE.incrementAndGet();
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal shippedQuantity = "POSTED".equals(shipmentStatus) ? quantityValue : BigDecimal.ZERO;
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
 		long orderId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order (
 					order_no, customer_id, order_date, expected_ship_date, status, remark,
@@ -558,13 +562,13 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, created_at, updated_at
+					expected_ship_date, remark, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
-				""", Long.class, orderId, fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
-				"POSTED".equals(shipmentStatus) ? new BigDecimal(quantity) : BigDecimal.ZERO,
-				new BigDecimal(unitPrice), LocalDate.now().plusDays(3), remark);
+				""", Long.class, orderId, fixture.materialId(), fixture.unitId(), quantityValue, shippedQuantity,
+				unitPriceValue, LocalDate.now().plusDays(3), remark, unitPriceValue, unitPriceValue, amount, amount);
 		long shipmentId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_shipment (
 					shipment_no, order_id, customer_id, warehouse_id, business_date, status, remark,
@@ -579,11 +583,12 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 				insert into sal_sales_shipment_line (
 					shipment_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
 					shipped_quantity_before, remaining_quantity_before, quantity, before_quantity,
-					after_quantity, remark, created_at, updated_at
+					after_quantity, remark, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, 0, ?, ?, null, null, ?, now(), now())
-				""", shipmentId, orderLineId, fixture.materialId(), fixture.unitId(), new BigDecimal(quantity),
-				new BigDecimal(quantity), new BigDecimal(quantity), remark);
+				values (?, 1, ?, ?, ?, ?, 0, ?, ?, null, null, ?, 0, ?, ?, ?, 0, ?, now(), now())
+				""", shipmentId, orderLineId, fixture.materialId(), fixture.unitId(), quantityValue,
+				quantityValue, quantityValue, remark, unitPriceValue, unitPriceValue, amount, amount);
 		return shipmentId;
 	}
 

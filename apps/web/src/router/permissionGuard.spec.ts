@@ -46,12 +46,18 @@ import PurchaseReceiptListView from '../modules/procurement/PurchaseReceiptListV
 import PurchaseReturnDetailView from '../modules/reversal/PurchaseReturnDetailView.vue'
 import PurchaseReturnFormView from '../modules/reversal/PurchaseReturnFormView.vue'
 import PurchaseReturnListView from '../modules/reversal/PurchaseReturnListView.vue'
+import SalesCreditProfileListView from '../modules/sales/credit/SalesCreditProfileListView.vue'
+import SalesDeliveryPlanListView from '../modules/sales/delivery/SalesDeliveryPlanListView.vue'
+import EffectiveSalesDemandListView from '../modules/sales/effective-demand/EffectiveSalesDemandListView.vue'
 import SalesOrderDetailView from '../modules/sales/SalesOrderDetailView.vue'
 import SalesOrderFormView from '../modules/sales/SalesOrderFormView.vue'
 import SalesOrderListView from '../modules/sales/SalesOrderListView.vue'
 import SalesProjectDetailView from '../modules/sales/projects/SalesProjectDetailView.vue'
 import SalesProjectFormView from '../modules/sales/projects/SalesProjectFormView.vue'
 import SalesProjectListView from '../modules/sales/projects/SalesProjectListView.vue'
+import SalesQuoteDetailView from '../modules/sales/quotes/SalesQuoteDetailView.vue'
+import SalesQuoteFormView from '../modules/sales/quotes/SalesQuoteFormView.vue'
+import SalesQuoteListView from '../modules/sales/quotes/SalesQuoteListView.vue'
 import SalesShipmentDetailView from '../modules/sales/SalesShipmentDetailView.vue'
 import SalesShipmentFormView from '../modules/sales/SalesShipmentFormView.vue'
 import SalesShipmentListView from '../modules/sales/SalesShipmentListView.vue'
@@ -404,6 +410,11 @@ describe('账号权限路由守卫', () => {
       ['sales-order-create', '/sales/orders/create', 'sales:order:create', SalesOrderFormView],
       ['sales-order-detail', '/sales/orders/:id', 'sales:order:view', SalesOrderDetailView],
       ['sales-order-edit', '/sales/orders/:id/edit', 'sales:order:update', SalesOrderFormView],
+      ['sales-quotes', '/sales/quotes', 'sales:quote:view', SalesQuoteListView],
+      ['sales-quote-create', '/sales/quotes/create', 'sales:quote:create', SalesQuoteFormView],
+      ['sales-quote-detail', '/sales/quotes/:id', 'sales:quote:view', SalesQuoteDetailView],
+      ['sales-quote-edit', '/sales/quotes/:id/edit', 'sales:quote:update', SalesQuoteFormView],
+      ['sales-delivery-plans', '/sales/delivery-plans', 'sales:delivery-plan:view', SalesDeliveryPlanListView],
       ['sales-shipment-create', '/sales/orders/:orderId/shipments/create', 'sales:shipment:create', SalesShipmentFormView],
       ['sales-shipments', '/sales/shipments', 'sales:shipment:view', SalesShipmentListView],
       ['sales-shipment-detail', '/sales/shipments/:id', 'sales:shipment:view', SalesShipmentDetailView],
@@ -412,6 +423,8 @@ describe('账号权限路由守卫', () => {
       ['sales-return-create', '/sales/returns/create', 'sales:return:create', SalesReturnFormView],
       ['sales-return-detail', '/sales/returns/:id', 'sales:return:view', SalesReturnDetailView],
       ['sales-return-edit', '/sales/returns/:id/edit', 'sales:return:update', SalesReturnFormView],
+      ['sales-credit-profiles', '/sales/credit-profiles', 'sales:credit:view', SalesCreditProfileListView],
+      ['sales-effective-demands', '/sales/effective-demands', 'sales:effective-demand:view', EffectiveSalesDemandListView],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of salesRoutes) {
@@ -920,7 +933,7 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('sales-orders')
   })
 
-  it('销售项目路由加载真实页面，销售根路径按项目、订单、出库、退货顺序进入首个可见页', async () => {
+  it('销售项目路由加载真实页面，销售根路径按项目、报价、订单、计划、出库、退货、信用、有效需求顺序进入首个可见页', async () => {
     const router = createQhErpRouter()
     const projectRoutes = [
       ['sales-projects', '/sales/projects', 'sales:project:view', SalesProjectListView],
@@ -948,6 +961,33 @@ describe('账号权限路由守卫', () => {
     await orderOnlyRouter.push('/sales')
     await orderOnlyRouter.isReady()
     expect(orderOnlyRouter.currentRoute.value.name).toBe('sales-orders')
+
+    const quoteOnlyRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:quote:view', 'sales:order:view'] })
+    await quoteOnlyRouter.push('/sales')
+    await quoteOnlyRouter.isReady()
+    expect(quoteOnlyRouter.currentRoute.value.name).toBe('sales-quotes')
+
+    const effectiveDemandOnlyRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['sales:effective-demand:view'] })
+    await effectiveDemandOnlyRouter.push('/sales')
+    await effectiveDemandOnlyRouter.isReady()
+    expect(effectiveDemandOnlyRouter.currentRoute.value.name).toBe('sales-effective-demands')
+  })
+
+  it('系统管理员无显式信用查看权限时允许访问信用档案', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({
+      user,
+      menus: [],
+      permissions: [],
+      roles: [{ id: 'role-1', code: 'SYSTEM_ADMIN', name: '系统管理员', status: 'ENABLED' }],
+    })
+
+    await router.push('/sales/credit-profiles')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('sales-credit-profiles')
   })
 
   it('已登录但缺少销售出库查看权限时跳转无权限页', async () => {

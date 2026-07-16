@@ -1449,6 +1449,8 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		int suffix = SEQUENCE.incrementAndGet();
 		BigDecimal quantityValue = new BigDecimal(quantity);
 		BigDecimal shippedQuantity = "POSTED".equals(status) ? quantityValue : BigDecimal.ZERO;
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
 		long orderId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order (
 					order_no, customer_id, order_date, expected_ship_date, status, remark,
@@ -1461,12 +1463,15 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, tax_rate, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount,
+					created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
 				""", Long.class, orderId, fixture.finishedMaterialId(), fixture.unitId(), quantityValue,
-				shippedQuantity, new BigDecimal(unitPrice), businessDate.plusDays(3), remark, fixture.warehouseId());
+				shippedQuantity, unitPriceValue, businessDate.plusDays(3), remark, fixture.warehouseId(),
+				unitPriceValue, unitPriceValue, amount, amount);
 		String shipmentNo = "RPT-SH-" + suffix;
 		long shipmentId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_shipment (
@@ -1481,12 +1486,13 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 				insert into sal_sales_shipment_line (
 					shipment_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
 					shipped_quantity_before, remaining_quantity_before, quantity, before_quantity,
-					after_quantity, remark, created_at, updated_at
+					after_quantity, remark, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, 0, ?, ?, null, null, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, 0, ?, ?, null, null, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
 				""", Long.class, shipmentId, orderLineId, fixture.finishedMaterialId(), fixture.unitId(),
-				quantityValue, quantityValue, quantityValue, remark);
+				quantityValue, quantityValue, quantityValue, remark, unitPriceValue, unitPriceValue, amount, amount);
 		return new SalesShipmentFixture(shipmentId, shipmentNo, shipmentLineId, orderId, orderLineId,
 				fixture.customerId(), fixture.finishedMaterialId(), businessDate);
 	}
@@ -1510,6 +1516,9 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 			String remark, Long reservationWarehouseId) {
 		int suffix = SEQUENCE.incrementAndGet();
 		String orderNo = "RPT-SO-" + suffix;
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
 		long orderId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order (
 					order_no, customer_id, order_date, expected_ship_date, status, remark,
@@ -1521,39 +1530,46 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, tax_rate, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount,
+					created_at, updated_at
 				)
-				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
-				""", Long.class, orderId, fixture.finishedMaterialId(), fixture.unitId(), new BigDecimal(quantity),
-				new BigDecimal(shippedQuantity), new BigDecimal(unitPrice), expectedShipDate, remark,
-				reservationWarehouseId);
+				""", Long.class, orderId, fixture.finishedMaterialId(), fixture.unitId(), quantityValue,
+				new BigDecimal(shippedQuantity), unitPriceValue, expectedShipDate, remark,
+				reservationWarehouseId, unitPriceValue, unitPriceValue, amount, amount);
 		return new SalesOrderFixture(orderId, orderNo, orderLineId);
 	}
 
 	private SalesShipmentLineFixture addSalesShipmentLine(ReportingFixture fixture, SalesShipmentFixture shipment,
 			int lineNo, long materialId, String quantity, String unitPrice, String remark) {
 		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue);
 		long orderLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_order_line (
 					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-					expected_ship_date, remark, reservation_warehouse_id, created_at, updated_at
+					expected_ship_date, remark, reservation_warehouse_id, tax_rate, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount,
+					created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
 				""", Long.class, shipment.orderId(), lineNo, materialId, fixture.unitId(), quantityValue,
-				quantityValue, new BigDecimal(unitPrice), shipment.businessDate().plusDays(3), remark,
-				fixture.warehouseId());
+				quantityValue, unitPriceValue, shipment.businessDate().plusDays(3), remark,
+				fixture.warehouseId(), unitPriceValue, unitPriceValue, amount, amount);
 		long shipmentLineId = this.jdbcTemplate.queryForObject("""
 				insert into sal_sales_shipment_line (
 					shipment_id, line_no, order_line_id, material_id, unit_id, ordered_quantity,
 					shipped_quantity_before, remaining_quantity_before, quantity, before_quantity,
-					after_quantity, remark, created_at, updated_at
+					after_quantity, remark, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, 0, ?, ?, null, null, ?, now(), now())
+				values (?, ?, ?, ?, ?, ?, 0, ?, ?, null, null, ?, 0, ?, ?, ?, 0, ?, now(), now())
 				returning id
 				""", Long.class, shipment.shipmentId(), lineNo, orderLineId, materialId, fixture.unitId(),
-				quantityValue, quantityValue, quantityValue, remark);
+				quantityValue, quantityValue, quantityValue, remark, unitPriceValue, unitPriceValue, amount, amount);
 		return new SalesShipmentLineFixture(shipmentLineId, orderLineId);
 	}
 

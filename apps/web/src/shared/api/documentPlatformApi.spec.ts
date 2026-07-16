@@ -472,4 +472,82 @@ describe('022 文档平台 API', () => {
       }),
     }))
   })
+
+  it('025 销售报价打印与销售筛选导出使用固定任务类型和统一任务入口', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'SALES_QUOTE_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'SALES_DELIVERY_PLAN_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'SALES_EFFECTIVE_DEMAND_EXPORT' }))
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'SALES_QUOTE_PRINT' }))
+    const api = createDocumentPlatformApi({ fetcher })
+
+    await api.exports.createSalesQuotes({
+      keyword: 'SQ',
+      customerId: 8,
+      status: 'APPROVED',
+      idempotencyKey: 'quote-export-key',
+    })
+    await api.exports.createSalesDeliveryPlans({
+      projectId: 20,
+      status: 'PLANNED',
+      expectedDateFrom: '2026-08-01',
+      idempotencyKey: 'delivery-plan-export-key',
+    })
+    await api.exports.createSalesEffectiveDemands({
+      projectId: 20,
+      countedOnly: true,
+      idempotencyKey: 'demand-export-key',
+    })
+    await api.printTasks.createSalesQuote(9, { idempotencyKey: 'quote-print-key' })
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'SALES_QUOTE_EXPORT',
+        filters: {
+          keyword: 'SQ',
+          customerId: 8,
+          status: 'APPROVED',
+        },
+      }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'quote-export-key' }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'SALES_DELIVERY_PLAN_EXPORT',
+        filters: {
+          projectId: 20,
+          status: 'PLANNED',
+          expectedDateFrom: '2026-08-01',
+        },
+      }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'delivery-plan-export-key' }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'SALES_EFFECTIVE_DEMAND_EXPORT',
+        filters: {
+          projectId: 20,
+          countedOnly: true,
+        },
+      }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'demand-export-key' }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/print-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        objectType: 'SALES_QUOTE',
+        objectId: 9,
+        templateCode: 'SALES_QUOTE_V1',
+      }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'quote-print-key' }),
+    }))
+  })
 })

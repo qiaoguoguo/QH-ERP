@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import {
   returnRefundReversalApi,
   type ReversalDocumentLine,
   type ReversalSourceView,
   type ReversalTraceRecord,
+  type SalesReturnAction,
   type SalesReturnDetail,
 } from '../../shared/api/returnRefundReversalApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
@@ -32,13 +34,42 @@ const traceLoading = ref(false)
 const traceError = ref('')
 
 const routeId = computed(() => route.params.id as string)
-const canUpdate = computed(() => authStore.hasPermission('sales:return:update'))
-const canPost = computed(() => authStore.hasPermission('sales:return:post'))
-const canCancel = computed(() => authStore.hasPermission('sales:return:cancel'))
+const canUpdate = computed(() => authStore.hasPermission('sales:return:update') && allowed('UPDATE'))
+const canPost = computed(() => authStore.hasPermission('sales:return:post') && allowed('POST'))
+const canCancel = computed(() => authStore.hasPermission('sales:return:cancel') && allowed('CANCEL'))
 const canTrace = computed(() => authStore.hasPermission('business:reversal:view'))
-const isDraft = computed(() => record.value?.status === 'DRAFT')
-const inventoryImpactRows = computed(() => (record.value?.traces ?? []).filter(isInventoryImpact))
+const inventoryImpactRows = computed(() => {
+  const traceRows = (record.value?.traces ?? []).filter(isInventoryImpact).map(enrichInventoryImpactTrace)
+  if (traceRows.length > 0 || !record.value) {
+    return traceRows
+  }
+  if (record.value.status !== 'POSTED') {
+    return []
+  }
+  return record.value.lines.map((line): ReversalTraceRecord => ({
+    traceKey: `SALES_RETURN_LINE:${record.value?.id}:${line.id}:INVENTORY_IMPACT`,
+    direction: 'SOURCE_TO_REVERSE',
+    source: line.source,
+    reverse: record.value?.source ?? line.source,
+    effectType: 'INVENTORY_IN',
+    resourceType: 'INVENTORY_MOVEMENT',
+    inventoryMovementId: line.stockMovementId ?? null,
+    warehouseName: record.value?.warehouseName,
+    materialCode: line.materialCode,
+    materialName: line.materialName,
+    businessDate: record.value?.businessDate,
+    quantity: line.quantity,
+    amount: line.amount,
+    status: record.value?.status,
+    canViewResource: true,
+    restricted: false,
+  }))
+})
 const receivableImpactRows = computed(() => (record.value?.traces ?? []).filter(isReceivableImpact))
+
+function allowed(action: SalesReturnAction) {
+  return (record.value?.allowedActions ?? []).includes(action)
+}
 
 function sourceRestricted(source?: ReversalSourceView | null) {
   return !source || source.restricted || !source.canViewSource
@@ -49,11 +80,61 @@ function routeValues(values?: Record<string, string | number | boolean>) {
 }
 
 function isInventoryImpact(trace: ReversalTraceRecord) {
-  return Boolean(trace.inventoryMovementId)
+  return Boolean(
+    trace.inventoryMovementId
+    || trace.movementNo
+    || trace.resourceType === 'INVENTORY_MOVEMENT'
+    || trace.effectType?.includes('INVENTORY')
+    || trace.warehouseName
+    || trace.materialCode
+  )
+}
+
+function lineMatchesTrace(line: ReversalDocumentLine, trace: ReversalTraceRecord) {
+  const sourceLineIds = [
+    trace.source?.sourceLineId,
+    trace.reverse?.sourceLineId,
+  ].filter((value) => value !== null && value !== undefined).map(String)
+  if (sourceLineIds.includes(String(line.sourceLineId)) || sourceLineIds.includes(String(line.id))) {
+    return true
+  }
+  const lineNos = [
+    trace.source?.lineNo,
+    trace.reverse?.lineNo,
+  ].filter((value) => value !== null && value !== undefined).map(String)
+  return lineNos.includes(String(line.lineNo))
+}
+
+function matchingLineForTrace(trace: ReversalTraceRecord) {
+  const lines = record.value?.lines ?? []
+  return lines.find((line) => lineMatchesTrace(line, trace)) ?? (lines.length === 1 ? lines[0] : undefined)
+}
+
+function enrichInventoryImpactTrace(trace: ReversalTraceRecord): ReversalTraceRecord {
+  if (!record.value || impactRestricted(trace)) {
+    return trace
+  }
+  const line = matchingLineForTrace(trace)
+  if (!line) {
+    return {
+      ...trace,
+      warehouseName: trace.warehouseName ?? record.value.warehouseName,
+      businessDate: trace.businessDate ?? record.value.businessDate,
+    }
+  }
+  return {
+    ...trace,
+    warehouseName: trace.warehouseName ?? record.value.warehouseName,
+    materialCode: trace.materialCode ?? line.materialCode,
+    materialName: trace.materialName ?? line.materialName,
+    businessDate: trace.businessDate ?? record.value.businessDate,
+    quantity: trace.quantity ?? line.quantity,
+    amount: trace.amount ?? line.amount,
+  }
 }
 
 function isReceivableImpact(trace: ReversalTraceRecord) {
-  return Boolean(trace.settlementAdjustmentId)
+  return Boolean(trace.settlementAdjustmentId || trace.resourceType === 'SETTLEMENT_ADJUSTMENT' || trace.effectType?.includes('RECEIVABLE'))
 }
 
 function impactSourceNo(trace: ReversalTraceRecord, type: 'inventory' | 'receivable') {
@@ -61,7 +142,13 @@ function impactSourceNo(trace: ReversalTraceRecord, type: 'inventory' | 'receiva
     return trace.restrictedMessage || '来源无查看权限'
   }
   if (type === 'inventory') {
-    return trace.inventoryMovementId ? `库存流水 #${trace.inventoryMovementId}` : '-'
+    if (trace.inventoryMovementId) {
+      return `库存流水 #${trace.inventoryMovementId}`
+    }
+    if (trace.movementNo) {
+      return trace.movementNo
+    }
+    return '内部库存流水编号已隐藏'
   }
   return trace.settlementAdjustmentId ? `应收冲减 #${trace.settlementAdjustmentId}` : '-'
 }
@@ -132,9 +219,13 @@ async function postSalesReturn() {
   actionError.value = ''
   actionLoading.value = true
   try {
-    record.value = await returnRefundReversalApi.salesReturns.post(record.value.id)
+    record.value = await returnRefundReversalApi.salesReturns.post(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: createIdempotencyKey('sales-return-post'),
+    })
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadDetail()
   } finally {
     actionLoading.value = false
   }
@@ -147,9 +238,14 @@ async function cancelSalesReturn() {
   actionError.value = ''
   actionLoading.value = true
   try {
-    record.value = await returnRefundReversalApi.salesReturns.cancel(record.value.id)
+    record.value = await returnRefundReversalApi.salesReturns.cancel(record.value.id, {
+      version: record.value.version,
+      reason: '用户取消销售退货',
+      idempotencyKey: createIdempotencyKey('sales-return-cancel'),
+    })
   } catch (caught) {
     actionError.value = salesErrorMessage(caught)
+    await loadDetail()
   } finally {
     actionLoading.value = false
   }
@@ -198,14 +294,14 @@ onMounted(() => {
     <template #actions>
       <el-button @click="backToList">返回列表</el-button>
       <el-button
-        v-if="record && canUpdate && isDraft"
+        v-if="record && canUpdate"
         data-test="edit-sales-return-detail"
         @click="editSalesReturn"
       >
         编辑
       </el-button>
       <el-button
-        v-if="record && canPost && isDraft"
+        v-if="record && canPost"
         data-test="post-sales-return-detail"
         type="success"
         :loading="actionLoading"
@@ -215,7 +311,7 @@ onMounted(() => {
         过账
       </el-button>
       <el-button
-        v-if="record && canCancel && isDraft"
+        v-if="record && canCancel"
         data-test="cancel-sales-return-detail"
         type="danger"
         :loading="actionLoading"
@@ -353,6 +449,16 @@ onMounted(() => {
             <el-table-column label="库存流水" min-width="170" show-overflow-tooltip>
               <template #default="{ row }">
                 {{ impactSourceNo(row, 'inventory') }}
+              </template>
+            </el-table-column>
+            <el-table-column label="仓库" min-width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ impactDisplayText(row, row.warehouseName || record.warehouseName) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ impactDisplayText(row, [row.materialCode, row.materialName].filter(Boolean).join(' ')) }}
               </template>
             </el-table-column>
             <el-table-column label="业务日期" min-width="110">

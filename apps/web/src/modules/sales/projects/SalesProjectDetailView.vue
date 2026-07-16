@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../../shared/api/documentPlatformApi'
+import {
+  salesFulfillmentApi,
+  type SalesProjectFulfillmentRecord,
+} from '../../../shared/api/salesFulfillmentApi'
 import {
   salesProjectApi,
   type SalesProjectDetail,
@@ -15,6 +20,10 @@ import SalesProjectOperationsPanel from './SalesProjectOperationsPanel.vue'
 import SalesProjectOrderSummaryPanel from './SalesProjectOrderSummaryPanel.vue'
 import SalesProjectStatusTag from './SalesProjectStatusTag.vue'
 import {
+  formatSalesDecimal,
+  salesFulfillmentErrorMessage,
+} from '../salesFulfillmentPageHelpers'
+import {
   formatProjectAmount,
   formatProjectDateTime,
   projectApiErrorMessage,
@@ -26,8 +35,11 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const record = ref<SalesProjectDetail | null>(null)
+const fulfillment = ref<SalesProjectFulfillmentRecord | null>(null)
 const loading = ref(true)
+const fulfillmentLoading = ref(false)
 const error = ref('')
+const fulfillmentError = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
 const contractDrawerOpen = ref(false)
@@ -46,6 +58,11 @@ const actionDialog = reactive<{
   reason: '',
   error: '',
 })
+const fulfillmentCloseDialog = reactive({
+  visible: false,
+  reason: '',
+  error: '',
+})
 
 const canEdit = computed(() => Boolean(record.value) && authStore.hasPermission('sales:project:update')
   && record.value?.status !== 'CLOSED' && record.value?.status !== 'CANCELLED')
@@ -53,6 +70,10 @@ const canActivate = computed(() => record.value?.status === 'DRAFT' && authStore
 const canClose = computed(() => record.value?.status === 'ACTIVE' && authStore.hasPermission('sales:project:close'))
 const canCancel = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:cancel'))
 const canViewSalesOrders = computed(() => authStore.hasPermission('sales:order:view'))
+const canViewFulfillment = computed(() => authStore.hasPermission('sales:fulfillment:view'))
+const canCloseFulfillment = computed(() => Boolean(fulfillment.value)
+  && authStore.hasPermission('sales:fulfillment:close')
+  && (fulfillment.value?.allowedActions ?? []).includes('CLOSE'))
 const projectActivateDisabledReason = computed(() => {
   if (record.value?.status === 'DRAFT' && record.value.mainContractStatus !== 'EFFECTIVE') {
     return '项目需先存在已生效主合同后才能激活'
@@ -98,11 +119,33 @@ async function loadRecord() {
   error.value = ''
   try {
     record.value = await salesProjectApi.projects.get(route.params.id as ResourceId)
+    if (canViewFulfillment.value) {
+      await loadFulfillment()
+    } else {
+      fulfillment.value = null
+      fulfillmentError.value = ''
+    }
   } catch (caught) {
     record.value = null
     error.value = projectApiErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadFulfillment() {
+  if (!record.value) {
+    return
+  }
+  fulfillmentLoading.value = true
+  fulfillmentError.value = ''
+  try {
+    fulfillment.value = await salesFulfillmentApi.projectFulfillment.get(record.value.id)
+  } catch (caught) {
+    fulfillment.value = null
+    fulfillmentError.value = salesFulfillmentErrorMessage(caught)
+  } finally {
+    fulfillmentLoading.value = false
   }
 }
 
@@ -145,6 +188,38 @@ function openProjectAction(action: 'activate' | 'close' | 'cancel') {
   actionDialog.error = ''
 }
 
+function openFulfillmentClose() {
+  fulfillmentCloseDialog.visible = true
+  fulfillmentCloseDialog.reason = ''
+  fulfillmentCloseDialog.error = ''
+}
+
+async function confirmFulfillmentClose() {
+  if (!record.value || !fulfillment.value || actionLoading.value) {
+    return
+  }
+  const reasonError = validateProjectReason(fulfillmentCloseDialog.reason)
+  if (reasonError) {
+    fulfillmentCloseDialog.error = reasonError
+    return
+  }
+  actionLoading.value = true
+  fulfillmentCloseDialog.error = ''
+  try {
+    await salesFulfillmentApi.projectFulfillment.close(record.value.id, {
+      version: fulfillment.value.version,
+      reason: fulfillmentCloseDialog.reason.trim(),
+      idempotencyKey: createIdempotencyKey('sales-project-fulfillment-close'),
+    })
+    fulfillmentCloseDialog.visible = false
+    await loadFulfillment()
+  } catch (caught) {
+    fulfillmentCloseDialog.error = salesFulfillmentErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 async function confirmProjectAction() {
   if (!record.value || !actionDialog.action || actionLoading.value) {
     return
@@ -179,6 +254,10 @@ async function confirmProjectAction() {
 
 function contractRestricted(project: SalesProjectSummary) {
   return project.contractSummaryRestricted
+}
+
+function fulfillmentStatusLabel(status: string) {
+  return status === 'CLOSED' ? '已关闭' : '开放'
 }
 
 onMounted(loadRecord)
@@ -296,6 +375,94 @@ onMounted(loadRecord)
         :contract-summary-restricted="record.contractSummaryRestricted"
         :summary="record.salesOrderSummary"
       />
+
+      <section v-if="canViewFulfillment" class="section-block">
+        <div class="section-title">
+          <span>销售履约</span>
+          <el-button
+            v-if="canCloseFulfillment"
+            size="small"
+            type="warning"
+            plain
+            data-test="close-sales-fulfillment"
+            :loading="actionLoading"
+            @click="openFulfillmentClose"
+          >
+            关闭销售履约
+          </el-button>
+        </div>
+        <el-alert
+          v-if="fulfillmentError"
+          class="state-alert"
+          type="error"
+          :title="fulfillmentError"
+          :closable="false"
+        />
+        <el-alert
+          v-if="fulfillmentLoading"
+          class="state-alert"
+          type="info"
+          title="销售履约加载中"
+          :closable="false"
+        />
+        <div v-if="fulfillment" class="fulfillment-grid">
+          <div>
+            <span>状态</span>
+            <strong>{{ fulfillmentStatusLabel(fulfillment.status) }}</strong>
+          </div>
+          <div>
+            <span>合同有效金额</span>
+            <strong>{{ fulfillment.contractRestricted ? '合同信息受限' : formatSalesDecimal(fulfillment.contractEffectiveAmount) }}</strong>
+          </div>
+          <div>
+            <span>订单含税金额</span>
+            <strong>{{ fulfillment.contractRestricted ? '合同信息受限' : formatSalesDecimal(fulfillment.orderTaxIncludedAmount) }}</strong>
+          </div>
+          <div>
+            <span>计划数量</span>
+            <strong>{{ formatSalesDecimal(fulfillment.plannedQuantity) }}</strong>
+          </div>
+          <div>
+            <span>已发数量</span>
+            <strong>{{ formatSalesDecimal(fulfillment.shippedQuantity) }}</strong>
+          </div>
+          <div>
+            <span>退货数量</span>
+            <strong>{{ formatSalesDecimal(fulfillment.returnedQuantity) }}</strong>
+          </div>
+          <div>
+            <span>净交付</span>
+            <strong>{{ formatSalesDecimal(fulfillment.netDeliveredQuantity) }}</strong>
+          </div>
+          <div>
+            <span>开放需求</span>
+            <strong>{{ formatSalesDecimal(fulfillment.openDemandQuantity) }}</strong>
+          </div>
+          <div>
+            <span>逾期计划</span>
+            <strong>{{ fulfillment.overduePlanCount ?? '-' }}</strong>
+          </div>
+          <div>
+            <span>信用风险</span>
+            <strong>{{ fulfillment.creditRestricted ? '信用信息受限' : (fulfillment.creditRiskSummary || '无') }}</strong>
+          </div>
+        </div>
+        <el-alert
+          v-if="fulfillment?.legacyDeliveryPlanCompatible"
+          class="state-alert"
+          type="warning"
+          title="历史交付计划兼容：该项目包含旧阶段已发货订单，未伪造交付计划；如需新计划事实，请通过订单详情显式初始化或拆分交付计划。"
+          :closable="false"
+          show-icon
+        />
+        <div v-if="fulfillment?.blockReasons?.length" class="block-reasons">
+          <div class="section-subtitle">关闭阻断</div>
+          <el-tag v-for="reason in fulfillment.blockReasons" :key="reason" type="warning" effect="plain">
+            {{ reason }}
+          </el-tag>
+        </div>
+        <el-empty v-if="!fulfillmentLoading && !fulfillment && !fulfillmentError" description="暂无销售履约汇总" />
+      </section>
       <SalesProjectOperationsPanel :operations="record.operations" />
 
       <SalesProjectContractDrawer
@@ -327,6 +494,36 @@ onMounted(loadRecord)
             :type="projectConfirmButtonType"
             :loading="actionLoading"
             @click="confirmProjectAction"
+          >
+            确认
+          </el-button>
+        </template>
+      </el-dialog>
+
+      <el-dialog v-model="fulfillmentCloseDialog.visible" title="关闭销售履约" :teleported="false" width="420px">
+        <el-alert
+          v-if="fulfillmentCloseDialog.error"
+          class="state-alert"
+          type="error"
+          :title="fulfillmentCloseDialog.error"
+          :closable="false"
+        />
+        <el-input
+          v-model="fulfillmentCloseDialog.reason"
+          name="sales-project-fulfillment-close-reason"
+          type="textarea"
+          :rows="4"
+          maxlength="200"
+          show-word-limit
+          placeholder="请输入 1-200 字销售履约关闭原因"
+        />
+        <template #footer>
+          <el-button @click="fulfillmentCloseDialog.visible = false">取消</el-button>
+          <el-button
+            data-test="confirm-sales-fulfillment-close"
+            type="warning"
+            :loading="actionLoading"
+            @click="confirmFulfillmentClose"
           >
             确认
           </el-button>
@@ -398,6 +595,45 @@ onMounted(loadRecord)
   margin-bottom: 10px;
 }
 
+.section-subtitle {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.fulfillment-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.fulfillment-grid > div {
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.fulfillment-grid span {
+  color: var(--qherp-muted);
+  display: block;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.fulfillment-grid strong {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.block-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .numeric-cell {
   display: inline-block;
   min-width: 82px;
@@ -409,11 +645,19 @@ onMounted(loadRecord)
   .summary-strip {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .fulfillment-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
   .sales-project-detail-list {
     grid-template-columns: 88px minmax(0, 1fr);
+  }
+
+  .fulfillment-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

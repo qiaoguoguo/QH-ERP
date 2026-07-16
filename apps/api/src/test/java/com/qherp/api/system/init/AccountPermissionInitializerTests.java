@@ -638,8 +638,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(indexes("sal_sales_order")).contains("uk_sal_sales_order_no", "idx_sal_sales_order_customer",
 				"idx_sal_sales_order_status_date", "idx_sal_sales_order_expected_date");
 		assertThat(indexes("sal_sales_order_line")).contains("uk_sal_sales_order_line_no",
-				"uk_sal_sales_order_line_material", "idx_sal_sales_order_line_order",
-				"idx_sal_sales_order_line_material");
+				"idx_sal_sales_order_line_order", "idx_sal_sales_order_line_material",
+				"idx_sal_sales_order_line_reservation_warehouse", "idx_sal_sales_order_line_quote_line");
 		assertThat(indexes("sal_sales_shipment")).contains("uk_sal_sales_shipment_no",
 				"idx_sal_sales_shipment_order", "idx_sal_sales_shipment_customer",
 				"idx_sal_sales_shipment_warehouse", "idx_sal_sales_shipment_status_date");

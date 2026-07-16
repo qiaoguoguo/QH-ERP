@@ -61,6 +61,9 @@ public class PlatformDocumentTaskService {
 			"PROCUREMENT_INQUIRY_EXPORT", "PROCUREMENT_QUOTE_EXPORT", "PROCUREMENT_PRICE_AGREEMENT_EXPORT",
 			"PROCUREMENT_ORDER_EXPORT", "PROCUREMENT_SCHEDULE_EXPORT", "PROCUREMENT_SUPPLY_EXPORT");
 
+	private static final Set<String> SALES_EXPORT_TASK_TYPES = Set.of("SALES_QUOTE_EXPORT",
+			"SALES_DELIVERY_PLAN_EXPORT", "SALES_EFFECTIVE_DEMAND_EXPORT");
+
 	private static final Set<String> PROCUREMENT_ORDER_PRINT_STATUSES = Set.of("CONFIRMED", "PARTIALLY_RECEIVED",
 			"RECEIVED", "CLOSED");
 
@@ -277,11 +280,18 @@ public class PlatformDocumentTaskService {
 	public DocumentTaskRecord createExportTask(ProcurementExportRequest request, String idempotencyKey,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateIdempotencyKey(idempotencyKey);
-		if (request == null || !PROCUREMENT_EXPORT_TASK_TYPES.contains(request.taskType())) {
+		boolean procurementExport = request != null && PROCUREMENT_EXPORT_TASK_TYPES.contains(request.taskType());
+		boolean salesExport = request != null && SALES_EXPORT_TASK_TYPES.contains(request.taskType());
+		if (!procurementExport && !salesExport) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		requirePermission(operator, "platform:document-task:create");
-		requireProcurementExportPermissions(request.taskType(), operator);
+		if (procurementExport) {
+			requireProcurementExportPermissions(request.taskType(), operator);
+		}
+		else {
+			requireSalesExportPermissions(request.taskType(), operator);
+		}
 		ProcurementExportRequest payload = new ProcurementExportRequest(request.taskType(),
 				trimToNull(request.objectType()), request.objectId(),
 				request.filters() == null ? Map.of() : new LinkedHashMap<>(request.filters()));
@@ -346,6 +356,9 @@ public class PlatformDocumentTaskService {
 		if (request != null && "PROCUREMENT_ORDER".equals(request.objectType())) {
 			return createProcurementOrderPrintTask(request, idempotencyKey, operator, servletRequest);
 		}
+		if (request != null && "SALES_QUOTE".equals(request.objectType())) {
+			return createSalesQuotePrintTask(request, idempotencyKey, operator, servletRequest);
+		}
 		if (request == null || request.approvalInstanceId() == null || !hasText(request.templateCode())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
@@ -369,6 +382,39 @@ public class PlatformDocumentTaskService {
 			Long taskId = insertQueuedTask("APPROVAL_PRINT", "PRINT", payloadJson, idempotencyKey, null, operator);
 			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId, request.templateCode(),
 					servletRequest);
+			return get(taskId, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private DocumentTaskRecord createSalesQuotePrintTask(PrintTaskRequest request, String idempotencyKey,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		if (request.objectId() == null || !"SALES_QUOTE_V1".equals(request.templateCode())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requireSalesQuotePrintAccess(request.objectId(), operator);
+		SalesQuotePrintSnapshot snapshot = salesQuotePrintSnapshot(request.objectId());
+		if (!"APPROVED".equals(snapshot.status())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
+		int templateVersion = printTemplateVersion(request.templateCode(), "SALES_QUOTE_PRINT", "SALES_QUOTE");
+		String payloadJson = json(new SalesQuotePrintPayload(request.objectId(), request.templateCode(),
+				snapshot.version(), templateVersion));
+		List<ExistingTask> existing = existingTask(operator.id(), "SALES_QUOTE_PRINT", idempotencyKey);
+		if (!existing.isEmpty()) {
+			ExistingTask existingTask = existing.getFirst();
+			if (!jsonEquivalent(payloadJson, existingTask.requestPayload())) {
+				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+			}
+			return get(existingTask.id(), operator);
+		}
+		try {
+			Long taskId = insertQueuedTask("SALES_QUOTE_PRINT", "PRINT", payloadJson, idempotencyKey, null,
+					operator);
+			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId,
+					request.templateCode(), servletRequest);
 			return get(taskId, operator);
 		}
 		catch (DuplicateKeyException exception) {
@@ -869,6 +915,10 @@ public class PlatformDocumentTaskService {
 		return PROCUREMENT_EXPORT_TASK_TYPES.contains(taskType);
 	}
 
+	public boolean isSalesExportTaskType(String taskType) {
+		return SALES_EXPORT_TASK_TYPES.contains(taskType);
+	}
+
 	public ProcurementExportRequest parseProcurementExportRequest(String payload) {
 		return parse(payload, ProcurementExportRequest.class);
 	}
@@ -891,6 +941,32 @@ public class PlatformDocumentTaskService {
 			}
 			workbook.write(output);
 			return new ExportedFile(procurementExportFilename(request.taskType()),
+					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", output.toByteArray(),
+					dataset.rows().size());
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	public ExportedFile salesExportFile(ProcurementExportRequest request, CurrentUser operator) {
+		if (request == null || !SALES_EXPORT_TASK_TYPES.contains(request.taskType())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requireSalesExportPermissions(request.taskType(), operator);
+		ProcurementExportDataset dataset = salesExportDataset(request);
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet(dataset.sheetName());
+			writeRow(sheet.createRow(0), dataset.headers().toArray(String[]::new));
+			for (int i = 0; i < dataset.rows().size(); i++) {
+				Row excelRow = sheet.createRow(i + 1);
+				List<String> row = dataset.rows().get(i);
+				for (int j = 0; j < row.size(); j++) {
+					excelRow.createCell(j).setCellValue(nullToBlank(row.get(j)));
+				}
+			}
+			workbook.write(output);
+			return new ExportedFile(salesExportFilename(request.taskType()),
 					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", output.toByteArray(),
 					dataset.rows().size());
 		}
@@ -952,6 +1028,67 @@ public class PlatformDocumentTaskService {
 			}
 			document.save(output);
 			return new ExportedFile("procurement-order-" + snapshot.orderNo() + ".pdf", "application/pdf",
+					output.toByteArray(), 1);
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	public SalesQuotePrintPayload parseSalesQuotePrintPayload(String payload) {
+		return parse(payload, SalesQuotePrintPayload.class);
+	}
+
+	public ExportedFile printSalesQuoteFile(SalesQuotePrintPayload payload, CurrentUser operator) {
+		requireSalesQuotePrintAccess(payload.quoteId(), operator);
+		SalesQuotePrintSnapshot snapshot = salesQuotePrintSnapshot(payload.quoteId());
+		if (!snapshot.version().equals(payload.quoteVersion())
+				|| printTemplateVersion(payload.templateCode(), "SALES_QUOTE_PRINT", "SALES_QUOTE")
+						!= payload.templateVersion()) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_BUSINESS_OBJECT_CHANGED);
+		}
+		if (!"APPROVED".equals(snapshot.status())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
+		List<SalesQuotePrintLine> lines = salesQuotePrintLines(payload.quoteId());
+		try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			PDPage page = new PDPage();
+			document.addPage(page);
+			document.getDocumentInformation().setTitle("销售报价");
+			document.getDocumentInformation().setSubject(payload.templateCode());
+			document.getDocumentInformation().setCustomMetadataValue("templateVersion",
+					Integer.toString(payload.templateVersion()));
+			document.getDocumentInformation().setCustomMetadataValue("quoteId", Long.toString(payload.quoteId()));
+			document.getDocumentInformation().setCustomMetadataValue("quoteVersion",
+					Long.toString(payload.quoteVersion()));
+			PDType0Font font = PDType0Font.load(document,
+					new ClassPathResource("fonts/NotoSansSC-wght.ttf").getInputStream());
+			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+				content.beginText();
+				content.setFont(font, 12);
+				content.setLeading(18);
+				content.newLineAtOffset(50, 760);
+				for (String line : List.of("销售报价", "报价号：" + snapshot.quoteNo(), "客户："
+						+ nullToBlank(snapshot.customerName()), "项目："
+						+ nullToBlank(snapshot.projectName()), "状态：" + snapshot.status(), "报价日期："
+						+ stringDate(snapshot.quoteDate()), "有效期至：" + stringDate(snapshot.validUntil()),
+						"模板版本：" + payload.templateVersion())) {
+					content.showText(line);
+					content.newLine();
+				}
+				content.newLine();
+				content.showText("明细");
+				content.newLine();
+				for (SalesQuotePrintLine line : lines) {
+					content.showText(line.lineNo() + ". " + line.materialCode() + " "
+							+ nullToBlank(line.materialName()) + " 数量 " + line.quantity() + " 含税单价 "
+							+ line.taxIncludedUnitPrice());
+					content.newLine();
+				}
+				content.endText();
+			}
+			document.save(output);
+			return new ExportedFile("sales-quote-" + snapshot.quoteNo() + ".pdf", "application/pdf",
 					output.toByteArray(), 1);
 		}
 		catch (IOException exception) {
@@ -1034,6 +1171,197 @@ public class PlatformDocumentTaskService {
 		};
 	}
 
+	private ProcurementExportDataset salesExportDataset(ProcurementExportRequest request) {
+		return switch (request.taskType()) {
+			case "SALES_QUOTE_EXPORT" -> new ProcurementExportDataset("销售报价",
+					List.of("ID", "报价号", "客户", "项目", "合同", "状态", "报价日期", "有效期至", "币种", "含税金额"),
+					salesQuoteExportRows(request));
+			case "SALES_DELIVERY_PLAN_EXPORT" -> new ProcurementExportDataset("销售交付计划",
+					List.of("ID", "订单号", "订单行", "计划序号", "计划日期", "计划数量", "已发数量", "剩余数量", "状态",
+							"物料"),
+					salesDeliveryPlanExportRows(request));
+			case "SALES_EFFECTIVE_DEMAND_EXPORT" -> new ProcurementExportDataset("有效销售需求",
+					List.of("ID", "订单号", "订单行", "项目", "客户", "合同", "物料", "订单数量", "已发数量", "已退数量",
+							"未履约数量", "预计日期", "状态", "计入有效需求", "排除原因"),
+					salesEffectiveDemandExportRows(request));
+			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		};
+	}
+
+	private List<List<String>> salesQuoteExportRows(ProcurementExportRequest request) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		String keyword = filterString(request.filters(), "keyword");
+		if (keyword != null) {
+			conditions.add("(q.quote_no ilike ? or c.name ilike ? or c.code ilike ?)");
+			String pattern = "%" + keyword + "%";
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+		}
+		Long customerId = filterLong(request.filters(), "customerId");
+		if (customerId != null) {
+			conditions.add("q.customer_id = ?");
+			args.add(customerId);
+		}
+		Long projectId = filterLong(request.filters(), "projectId");
+		if (projectId != null) {
+			conditions.add("q.project_id = ?");
+			args.add(projectId);
+		}
+		String status = filterString(request.filters(), "status");
+		if (status != null) {
+			conditions.add("q.status = ?");
+			args.add(status);
+		}
+		if (request.objectId() != null && "SALES_QUOTE".equals(request.objectType())) {
+			conditions.add("q.id = ?");
+			args.add(request.objectId());
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
+		return exportRows("""
+				select q.id, q.quote_no, c.name as customer_name, p.name as project_name, pc.contract_no,
+				       q.status, q.quote_date, q.valid_until, q.currency, q.tax_included_amount
+				from sal_sales_quote q
+				join mst_customer c on c.id = q.customer_id
+				left join sal_project p on p.id = q.project_id
+				left join sal_project_contract pc on pc.id = q.contract_id
+				%s
+				order by q.updated_at desc, q.id desc
+				""".formatted(where), args);
+	}
+
+	private List<List<String>> salesDeliveryPlanExportRows(ProcurementExportRequest request) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		Long orderId = filterLong(request.filters(), "orderId");
+		if (orderId != null) {
+			conditions.add("p.order_id = ?");
+			args.add(orderId);
+		}
+		Long projectId = filterLong(request.filters(), "projectId");
+		if (projectId != null) {
+			conditions.add("o.project_id = ?");
+			args.add(projectId);
+		}
+		String status = filterString(request.filters(), "status");
+		if (status != null) {
+			conditions.add("p.status = ?");
+			args.add(status);
+		}
+		LocalDate expectedDateFrom = filterDate(request.filters(), "expectedDateFrom");
+		if (expectedDateFrom != null) {
+			conditions.add("p.planned_date >= ?");
+			args.add(expectedDateFrom);
+		}
+		LocalDate expectedDateTo = filterDate(request.filters(), "expectedDateTo");
+		if (expectedDateTo != null) {
+			conditions.add("p.planned_date <= ?");
+			args.add(expectedDateTo);
+		}
+		if (request.objectId() != null && "SALES_ORDER".equals(request.objectType())) {
+			conditions.add("p.order_id = ?");
+			args.add(request.objectId());
+		}
+		if (request.objectId() != null && "SALES_DELIVERY_PLAN".equals(request.objectType())) {
+			conditions.add("p.id = ?");
+			args.add(request.objectId());
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
+		return exportRows("""
+				select p.id, o.order_no, l.line_no as order_line_no, p.line_no as plan_line_no,
+				       p.planned_date, p.planned_quantity, p.shipped_quantity,
+				       (p.planned_quantity - p.shipped_quantity) as remaining_quantity,
+				       p.status, m.code as material_code
+				from sal_sales_delivery_plan p
+				join sal_sales_order o on o.id = p.order_id
+				join sal_sales_order_line l on l.id = p.order_line_id
+				join mst_material m on m.id = l.material_id
+				%s
+				order by p.planned_date asc, p.line_no asc, p.id asc
+				""".formatted(where), args);
+	}
+
+	private List<List<String>> salesEffectiveDemandExportRows(ProcurementExportRequest request) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		Long projectId = filterLong(request.filters(), "projectId");
+		if (projectId != null) {
+			conditions.add("d.project_id = ?");
+			args.add(projectId);
+		}
+		Long customerId = filterLong(request.filters(), "customerId");
+		if (customerId != null) {
+			conditions.add("d.customer_id = ?");
+			args.add(customerId);
+		}
+		Long contractId = filterLong(request.filters(), "contractId");
+		if (contractId != null) {
+			conditions.add("d.contract_id = ?");
+			args.add(contractId);
+		}
+		Long orderId = filterLong(request.filters(), "orderId");
+		if (orderId != null) {
+			conditions.add("d.order_id = ?");
+			args.add(orderId);
+		}
+		Long materialId = filterLong(request.filters(), "materialId");
+		if (materialId != null) {
+			conditions.add("d.material_id = ?");
+			args.add(materialId);
+		}
+		if (Boolean.TRUE.equals(filterBoolean(request.filters(), "countedOnly"))) {
+			conditions.add("d.counted_as_effective_demand = true");
+		}
+		LocalDate expectedDateFrom = filterDate(request.filters(), "expectedDateFrom");
+		if (expectedDateFrom != null) {
+			conditions.add("coalesce(p.planned_date, o.expected_ship_date, o.order_date) >= ?");
+			args.add(expectedDateFrom);
+		}
+		LocalDate expectedDateTo = filterDate(request.filters(), "expectedDateTo");
+		if (expectedDateTo != null) {
+			conditions.add("coalesce(p.planned_date, o.expected_ship_date, o.order_date) <= ?");
+			args.add(expectedDateTo);
+		}
+		String status = filterString(request.filters(), "status");
+		if (status != null) {
+			conditions.add("""
+					case
+					    when not d.counted_as_effective_demand then 'EXCLUDED'
+					    when coalesce(p.planned_date, o.expected_ship_date, o.order_date) < current_date
+					         and d.open_demand_quantity > 0 then 'OVERDUE'
+					    when d.shipped_quantity > 0 then 'PARTIALLY_SHIPPED'
+					    else 'OPEN'
+					end = ?
+					""");
+			args.add(status);
+		}
+		if (request.objectId() != null && "SALES_ORDER".equals(request.objectType())) {
+			conditions.add("d.order_id = ?");
+			args.add(request.objectId());
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
+		return exportRows("""
+				select d.id, d.order_no, d.order_line_id, d.project_name, d.customer_name, d.contract_no,
+				       d.material_code, d.ordered_quantity, d.shipped_quantity, d.returned_quantity,
+				       d.open_demand_quantity, coalesce(p.planned_date, o.expected_ship_date, o.order_date) as expected_date,
+				       case
+				           when not d.counted_as_effective_demand then 'EXCLUDED'
+				           when coalesce(p.planned_date, o.expected_ship_date, o.order_date) < current_date
+				                and d.open_demand_quantity > 0 then 'OVERDUE'
+				           when d.shipped_quantity > 0 then 'PARTIALLY_SHIPPED'
+				           else 'OPEN'
+				       end as status,
+				       d.counted_as_effective_demand,
+				       d.excluded_reason_code
+				from sal_effective_sales_demand d
+				join sal_sales_order o on o.id = d.order_id
+				left join sal_sales_delivery_plan p on p.order_line_id = d.order_line_id
+				%s
+				order by expected_date asc, d.order_no asc, d.order_line_id asc
+				""".formatted(where), args);
+	}
+
 	private List<List<String>> procurementRows(String sql, String keyword, String objectType, Long objectId) {
 		String pattern = keyword == null ? null : "%" + keyword + "%";
 		int keywordPlaceholders = placeholderCountBeforeObjectFilter(sql);
@@ -1045,6 +1373,13 @@ public class PlatformDocumentTaskService {
 		args.add(objectId);
 		args.add(objectType);
 		args.add(objectId);
+		return this.jdbcTemplate.queryForList(sql, args.toArray())
+			.stream()
+			.map((row) -> row.values().stream().map(this::exportCell).toList())
+			.toList();
+	}
+
+	private List<List<String>> exportRows(String sql, List<Object> args) {
 		return this.jdbcTemplate.queryForList(sql, args.toArray())
 			.stream()
 			.map((row) -> row.values().stream().map(this::exportCell).toList())
@@ -1123,11 +1458,40 @@ public class PlatformDocumentTaskService {
 				+ ".xlsx";
 	}
 
+	private String salesExportFilename(String taskType) {
+		return taskType.toLowerCase().replace('_', '-') + "-" + OffsetDateTime.now().format(TASK_NO_FORMATTER)
+				+ ".xlsx";
+	}
+
 	private String filterString(Map<String, Object> filters, String key) {
 		if (filters == null || !filters.containsKey(key) || filters.get(key) == null) {
 			return null;
 		}
 		return trimToNull(String.valueOf(filters.get(key)));
+	}
+
+	private Long filterLong(Map<String, Object> filters, String key) {
+		if (filters == null || !filters.containsKey(key) || filters.get(key) == null) {
+			return null;
+		}
+		Object value = filters.get(key);
+		if (value instanceof Number number) {
+			return number.longValue();
+		}
+		String text = trimToNull(String.valueOf(value));
+		return text == null ? null : Long.valueOf(text);
+	}
+
+	private Boolean filterBoolean(Map<String, Object> filters, String key) {
+		if (filters == null || !filters.containsKey(key) || filters.get(key) == null) {
+			return null;
+		}
+		Object value = filters.get(key);
+		if (value instanceof Boolean bool) {
+			return bool;
+		}
+		String text = trimToNull(String.valueOf(value));
+		return text == null ? null : Boolean.valueOf(text);
 	}
 
 	private LocalDate filterDate(Map<String, Object> filters, String key) {
@@ -1832,6 +2196,21 @@ public class PlatformDocumentTaskService {
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_NOT_FOUND));
 	}
 
+	private SalesQuotePrintSnapshot salesQuotePrintSnapshot(Long quoteId) {
+		return this.jdbcTemplate.query("""
+				select q.id, q.quote_no, q.status, q.quote_date, q.valid_until, q.version,
+				       c.name as customer_name, p.name as project_name
+				from sal_sales_quote q
+				join mst_customer c on c.id = q.customer_id
+				left join sal_project p on p.id = q.project_id
+				where q.id = ?
+				""", (rs, rowNum) -> new SalesQuotePrintSnapshot(rs.getLong("id"), rs.getString("quote_no"),
+				rs.getString("status"), rs.getObject("quote_date", LocalDate.class),
+				rs.getObject("valid_until", LocalDate.class), rs.getString("customer_name"),
+				rs.getString("project_name"), rs.getLong("version")), quoteId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_QUOTE_NOT_FOUND));
+	}
+
 	private List<ProcurementOrderPrintLine> procurementOrderPrintLines(Long orderId) {
 		return this.jdbcTemplate.query("""
 				select ol.line_no, m.code as material_code, m.name as material_name, ol.quantity,
@@ -1843,6 +2222,19 @@ public class PlatformDocumentTaskService {
 				""", (rs, rowNum) -> new ProcurementOrderPrintLine(rs.getInt("line_no"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getBigDecimal("quantity"),
 				rs.getBigDecimal("tax_included_unit_price")), orderId);
+	}
+
+	private List<SalesQuotePrintLine> salesQuotePrintLines(Long quoteId) {
+		return this.jdbcTemplate.query("""
+				select ql.line_no, m.code as material_code, m.name as material_name, ql.quantity,
+				       ql.tax_included_unit_price
+				from sal_sales_quote_line ql
+				join mst_material m on m.id = ql.material_id
+				where ql.quote_id = ?
+				order by ql.line_no
+				""", (rs, rowNum) -> new SalesQuotePrintLine(rs.getInt("line_no"),
+				rs.getString("material_code"), rs.getString("material_name"), rs.getBigDecimal("quantity"),
+				rs.getBigDecimal("tax_included_unit_price")), quoteId);
 	}
 
 	private int printTemplateVersion(String templateCode, String sceneCode, String objectType) {
@@ -1870,6 +2262,13 @@ public class PlatformDocumentTaskService {
 		requirePermission(operator, "procurement:order:view");
 		requirePermission(operator, "procurement:order:print");
 		procurementOrderPrintSnapshot(orderId);
+	}
+
+	private void requireSalesQuotePrintAccess(Long quoteId, CurrentUser operator) {
+		requirePermission(operator, "platform:print:generate");
+		requirePermission(operator, "sales:quote:view");
+		requirePermission(operator, "sales:document:print");
+		salesQuotePrintSnapshot(quoteId);
 	}
 
 	private void requireSupplierQuoteImportAccess(Long inquiryId, CurrentUser operator) {
@@ -1904,6 +2303,16 @@ public class PlatformDocumentTaskService {
 				requirePermission(operator, "procurement:supply:view");
 				requirePermission(operator, "procurement:supply:export");
 			}
+			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private void requireSalesExportPermissions(String taskType, CurrentUser operator) {
+		requirePermission(operator, "sales:document:export");
+		switch (taskType) {
+			case "SALES_QUOTE_EXPORT" -> requirePermission(operator, "sales:quote:view");
+			case "SALES_DELIVERY_PLAN_EXPORT" -> requirePermission(operator, "sales:delivery-plan:view");
+			case "SALES_EFFECTIVE_DEMAND_EXPORT" -> requirePermission(operator, "sales:effective-demand:view");
 			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		}
 	}
@@ -1992,7 +2401,17 @@ public class PlatformDocumentTaskService {
 				return new TaskObjectInfo("PROCUREMENT_ORDER", payload.orderId(), snapshot.orderNo(),
 						snapshot.supplierName());
 			}
+			if ("SALES_QUOTE_PRINT".equals(task.taskType())) {
+				SalesQuotePrintPayload payload = parseSalesQuotePrintPayload(taskRequestPayload(task.id()));
+				SalesQuotePrintSnapshot snapshot = salesQuotePrintSnapshot(payload.quoteId());
+				return new TaskObjectInfo("SALES_QUOTE", payload.quoteId(), snapshot.quoteNo(),
+						snapshot.customerName());
+			}
 			if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
+				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
+			}
+			if (SALES_EXPORT_TASK_TYPES.contains(task.taskType())) {
 				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
 				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
 			}
@@ -2097,8 +2516,14 @@ public class PlatformDocumentTaskService {
 		if ("PROCUREMENT_ORDER_PRINT".equals(task.taskType())) {
 			return canViewProcurementOrderPrintTask(task, currentUser);
 		}
+		if ("SALES_QUOTE_PRINT".equals(task.taskType())) {
+			return canViewSalesQuotePrintTask(task, currentUser);
+		}
 		if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
 			return canAccessProcurementExportTask(task, currentUser);
+		}
+		if (SALES_EXPORT_TASK_TYPES.contains(task.taskType())) {
+			return canAccessSalesExportTask(task, currentUser);
 		}
 		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
 			return canViewSupplierQuoteImportTask(task, currentUser);
@@ -2129,10 +2554,32 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private boolean canViewSalesQuotePrintTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			SalesQuotePrintPayload payload = parseSalesQuotePrintPayload(taskRequestPayload(task.id()));
+			requireSalesQuotePrintAccess(payload.quoteId(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
 	private boolean canAccessProcurementExportTask(DocumentTaskState task, CurrentUser currentUser) {
 		try {
 			ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
 			requireProcurementExportPermissions(payload.taskType(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
+	private boolean canAccessSalesExportTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+			requireSalesExportPermissions(payload.taskType(), currentUser);
 			return true;
 		}
 		catch (RuntimeException exception) {
@@ -2167,12 +2614,15 @@ public class PlatformDocumentTaskService {
 			case "BOM_DRAFT_EXPORT" -> "material:bom:export";
 			case "APPROVAL_PRINT" -> "platform:print:generate";
 			case "PROCUREMENT_ORDER_PRINT" -> "procurement:order:print";
+			case "SALES_QUOTE_PRINT" -> "sales:document:print";
 			case "PROCUREMENT_QUOTE_IMPORT" -> "procurement:quote:import";
 			case "PROCUREMENT_QUOTE_EXPORT" -> "procurement:quote:export";
 			case "PROCUREMENT_SUPPLY_EXPORT" -> "procurement:supply:export";
 			case "PROCUREMENT_REQUISITION_EXPORT", "PROCUREMENT_INQUIRY_EXPORT",
 					"PROCUREMENT_PRICE_AGREEMENT_EXPORT", "PROCUREMENT_ORDER_EXPORT",
 					"PROCUREMENT_SCHEDULE_EXPORT" -> "procurement:document:export";
+			case "SALES_QUOTE_EXPORT", "SALES_DELIVERY_PLAN_EXPORT", "SALES_EFFECTIVE_DEMAND_EXPORT" ->
+				"sales:document:export";
 			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		};
 	}
@@ -2288,6 +2738,10 @@ public class PlatformDocumentTaskService {
 			case "PROCUREMENT_ORDER_EXPORT" -> "POEX";
 			case "PROCUREMENT_SCHEDULE_EXPORT" -> "PSEX";
 			case "PROCUREMENT_SUPPLY_EXPORT" -> "PUEX";
+			case "SALES_QUOTE_PRINT" -> "SQPR";
+			case "SALES_QUOTE_EXPORT" -> "SQEX";
+			case "SALES_DELIVERY_PLAN_EXPORT" -> "SDPX";
+			case "SALES_EFFECTIVE_DEMAND_EXPORT" -> "SDEX";
 			default -> "TASK";
 		};
 	}
@@ -2558,6 +3012,9 @@ public class PlatformDocumentTaskService {
 			int templateVersion) {
 	}
 
+	public record SalesQuotePrintPayload(Long quoteId, String templateCode, Long quoteVersion, int templateVersion) {
+	}
+
 	private record ImportTaskPayload(Long sourceFileId, String filename, String sha256) {
 	}
 
@@ -2576,6 +3033,14 @@ public class PlatformDocumentTaskService {
 
 	private record ProcurementOrderPrintLine(Integer lineNo, String materialCode, String materialName,
 			BigDecimal quantity, BigDecimal taxIncludedUnitPrice) {
+	}
+
+	private record SalesQuotePrintSnapshot(Long id, String quoteNo, String status, LocalDate quoteDate,
+			LocalDate validUntil, String customerName, String projectName, Long version) {
+	}
+
+	private record SalesQuotePrintLine(Integer lineNo, String materialCode, String materialName, BigDecimal quantity,
+			BigDecimal taxIncludedUnitPrice) {
 	}
 
 	private record MaterialImportRow(String code, String name, String specification, String materialType,

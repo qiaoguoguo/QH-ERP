@@ -13,6 +13,10 @@ import {
   type SalesShipmentLineRecord,
   type SalesShipmentPayload,
 } from '../../shared/api/salesApi'
+import {
+  salesFulfillmentApi,
+  type SalesDeliveryPlanRecord,
+} from '../../shared/api/salesFulfillmentApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 import {
@@ -45,6 +49,7 @@ const warehouses = ref<WarehouseRecord[]>([])
 const sourceOrder = ref<SalesOrderDetailRecord | null>(null)
 const editingRecord = ref<SalesShipmentDetailRecord | null>(null)
 const sourceLines = ref<SalesShipmentSourceLine[]>([])
+const deliveryPlans = ref<SalesDeliveryPlanRecord[]>([])
 const referenceLoading = ref(true)
 const loading = ref(false)
 const referenceError = ref('')
@@ -76,7 +81,13 @@ const canEditForm = computed(() => (
   && (!isEdit.value || Boolean(editingRecord.value))
   && sourceOrderAllowed.value
 ))
-const canSubmit = computed(() => !formSubmitting.value && canEditForm.value)
+const missingDeliveryPlansForNewOrder = computed(() => (
+  !isEdit.value
+  && Boolean(sourceOrder.value)
+  && allowedSourceStatuses.includes(sourceOrder.value!.status)
+  && deliveryPlans.value.length === 0
+))
+const canSubmit = computed(() => !formSubmitting.value && canEditForm.value && !missingDeliveryPlansForNewOrder.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售出库' : '新建销售出库'))
 const orderSummary = computed(() => editingRecord.value?.orderSummary ?? sourceOrder.value)
 
@@ -107,10 +118,17 @@ async function loadSourceOrder() {
   formError.value = ''
   try {
     const detail = await salesApi.orders.get(route.params.orderId as ResourceId)
+    deliveryPlans.value = await loadOrderDeliveryPlans(detail.id)
     sourceOrder.value = detail
+    if (allowedSourceStatuses.includes(detail.status) && deliveryPlans.value.length === 0) {
+      sourceLines.value = []
+      formError.value = '该订单尚未初始化交付计划，请返回订单详情初始化/拆分交付计划后再创建出库'
+      return
+    }
     sourceLines.value = await enrichSourceLineTracking(detail.lines
       .filter((line) => Number(line.remainingQuantity) > 0)
-      .map((line) => salesShipmentSourceFromOrderLine(line)))
+      .map((line) => withDeliveryPlan(salesShipmentSourceFromOrderLine(line)))
+      .filter((line) => Boolean(line.deliveryPlanId)))
     if (!allowedSourceStatuses.includes(detail.status)) {
       formError.value = '仅已确认或部分出库销售订单可创建销售出库'
     }
@@ -121,9 +139,35 @@ async function loadSourceOrder() {
   }
 }
 
+async function loadOrderDeliveryPlans(orderId: ResourceId): Promise<SalesDeliveryPlanRecord[]> {
+  const response = await salesFulfillmentApi.deliveryPlans.listByOrder(orderId)
+  const payload = response as { items?: SalesDeliveryPlanRecord[]; lines?: SalesDeliveryPlanRecord[] }
+  return Array.isArray(payload.items) ? payload.items : (Array.isArray(payload.lines) ? payload.lines : [])
+}
+
+function withDeliveryPlan(line: SalesShipmentSourceLine): SalesShipmentSourceLine {
+  const plan = deliveryPlans.value.find((item) => (
+    String(item.orderLineId) === String(line.id)
+    && item.status !== 'CLOSED'
+    && item.status !== 'CANCELLED'
+  ))
+  if (!plan) {
+    return line
+  }
+  return {
+    ...line,
+    deliveryPlanId: plan.id,
+    deliveryPlanNo: plan.planNo ?? String(plan.id),
+    deliveryPlanDate: plan.planDate ?? plan.plannedDate ?? '',
+  }
+}
+
 function draftFromShipmentLine(line: SalesShipmentLineRecord): SalesShipmentLineDraft {
   return {
     lineNo: line.lineNo,
+    deliveryPlanId: line.deliveryPlanId ?? '',
+    deliveryPlanNo: '',
+    deliveryPlanDate: '',
     orderLineId: line.orderLineId,
     materialId: line.materialId,
     materialCode: line.materialCode,
@@ -160,7 +204,7 @@ function mergeSourceLines(
 ): SalesShipmentSourceLine[] {
   const mergedLines: SalesShipmentSourceLine[] = []
   const seenOrderLineIds = new Set<string>()
-  const currentSourceLines = orderDetail.lines.map((line) => salesShipmentSourceFromOrderLine(line))
+  const currentSourceLines = orderDetail.lines.map((line) => withDeliveryPlan(salesShipmentSourceFromOrderLine(line)))
   const currentSourceLineById = new Map(currentSourceLines.map((line) => [String(line.id), line]))
   const appendLine = (line: SalesShipmentSourceLine) => {
     const key = String(line.id)
@@ -186,7 +230,7 @@ function refreshDraftLinesWithCurrentOrder(
   orderDetail: SalesOrderDetailRecord,
 ): SalesShipmentLineDraft[] {
   const currentSourceLineById = new Map(orderDetail.lines
-    .map((line) => salesShipmentSourceFromOrderLine(line))
+    .map((line) => withDeliveryPlan(salesShipmentSourceFromOrderLine(line)))
     .map((line) => [String(line.id), line]))
 
   return draftLines.map((line) => {
@@ -196,6 +240,9 @@ function refreshDraftLinesWithCurrentOrder(
     }
     return {
       ...line,
+      deliveryPlanId: line.deliveryPlanId || currentSourceLine.deliveryPlanId || '',
+      deliveryPlanNo: line.deliveryPlanNo || currentSourceLine.deliveryPlanNo || '',
+      deliveryPlanDate: line.deliveryPlanDate || currentSourceLine.deliveryPlanDate || '',
       materialId: currentSourceLine.materialId,
       materialCode: currentSourceLine.materialCode,
       materialName: currentSourceLine.materialName,
@@ -391,6 +438,7 @@ async function loadRecord() {
       return
     }
     const orderDetail = await salesApi.orders.get(detail.orderId)
+    deliveryPlans.value = await loadOrderDeliveryPlans(orderDetail.id)
     sourceOrder.value = orderDetail
     sourceLines.value = await enrichSourceLineTracking(mergeSourceLines(shipmentSourceLines, orderDetail))
     lines.value = refreshDraftLinesWithCurrentOrder(lines.value, orderDetail)
@@ -466,9 +514,11 @@ function validateForm(): SalesShipmentPayload | null {
     duplicateSourceLines.add(duplicateKey)
     const materialId = normalizeRequiredId(line.materialId)
     const unitId = normalizeRequiredId(line.unitId)
+    const deliveryPlanId = normalizeRequiredId(line.deliveryPlanId)
     payloadLines.push({
       lineNo: line.lineNo,
       orderLineId,
+      ...(deliveryPlanId !== null ? { deliveryPlanId } : {}),
       ...(materialId !== null ? { materialId } : {}),
       ...(unitId !== null ? { unitId } : {}),
       quantity: quantityResult.payloadValue,
@@ -508,6 +558,10 @@ async function saveShipment() {
     formError.value = '仅已确认或部分出库销售订单可创建销售出库'
     return
   }
+  if (missingDeliveryPlansForNewOrder.value) {
+    formError.value = '该订单尚未初始化交付计划，请返回订单详情初始化/拆分交付计划后再创建出库'
+    return
+  }
   const payload = validateForm()
   if (!payload) {
     return
@@ -545,6 +599,16 @@ function cancel() {
   void router.push({ name: 'sales-shipments' })
 }
 
+function returnToSourceOrderDetail() {
+  if (!sourceOrder.value) {
+    return
+  }
+  void router.push({
+    name: 'sales-order-detail',
+    params: { id: String(sourceOrder.value.id) },
+  })
+}
+
 onMounted(async () => {
   await Promise.all([
     loadReferences(),
@@ -560,6 +624,15 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
     <template #alerts>
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
+      <el-button
+        v-if="missingDeliveryPlansForNewOrder"
+        data-test="return-sales-order-detail"
+        type="primary"
+        plain
+        @click="returnToSourceOrderDetail"
+      >
+        返回订单详情初始化
+      </el-button>
       <el-alert
         v-if="editingRecord && isPostedRecord"
         class="state-alert"

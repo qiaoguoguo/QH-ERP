@@ -1,6 +1,8 @@
 import type {
   ResourceId,
   SalesOrderLineRecord,
+  SalesOrderSummaryRecord,
+  SalesPriceSourceType,
   SalesOrderStatus,
   SalesShipmentLineRecord,
   SalesShipmentStatus,
@@ -22,6 +24,13 @@ export interface SalesOrderLineDraft {
   reservationWarehouseName: string
   quantity: string
   unitPrice: string
+  priceSourceType: SalesPriceSourceType
+  priceSourceNo: string
+  quoteLineId?: ResourceId | null
+  contractLineId?: ResourceId | null
+  untaxedUnitPrice: string
+  taxIncludedUnitPrice: string
+  taxRate: string
   expectedShipDate: string
   remark: string
 }
@@ -29,6 +38,9 @@ export interface SalesOrderLineDraft {
 export interface SalesShipmentSourceLine {
   id: ResourceId
   lineNo: number
+  deliveryPlanId?: ResourceId | null
+  deliveryPlanNo?: string | null
+  deliveryPlanDate?: string | null
   materialId: ResourceId
   materialCode: string
   materialName: string
@@ -57,6 +69,9 @@ export interface SalesShipmentSourceLine {
 export interface SalesShipmentLineDraft {
   lineNo: number
   orderLineId: ResourceId | ''
+  deliveryPlanId: ResourceId | ''
+  deliveryPlanNo: string
+  deliveryPlanDate: string
   materialId: ResourceId | ''
   materialCode: string
   materialName: string
@@ -119,6 +134,10 @@ export function salesOrderStatusLabel(status: SalesOrderStatus): string {
 
 export function salesOrderStatusTagType(status: SalesOrderStatus): 'info' | 'success' | 'warning' | 'danger' {
   return salesOrderStatusTypes[status]
+}
+
+export function salesOrderTaxIncludedAmount(record: Pick<SalesOrderSummaryRecord, 'totalTaxIncludedAmount' | 'taxIncludedAmount'>): string | null | undefined {
+  return record.taxIncludedAmount ?? record.totalTaxIncludedAmount
 }
 
 export function salesShipmentStatusLabel(status: SalesShipmentStatus): string {
@@ -245,6 +264,13 @@ export function newSalesOrderLine(lineNo = 10): SalesOrderLineDraft {
     reservationWarehouseName: '',
     quantity: '',
     unitPrice: '',
+    priceSourceType: 'MANUAL',
+    priceSourceNo: '',
+    quoteLineId: undefined,
+    contractLineId: undefined,
+    untaxedUnitPrice: '',
+    taxIncludedUnitPrice: '',
+    taxRate: '',
     expectedShipDate: '',
     remark: '',
   }
@@ -259,6 +285,9 @@ export function newSalesShipmentLine(lineNo = 10): SalesShipmentLineDraft {
   return {
     lineNo,
     orderLineId: '',
+    deliveryPlanId: '',
+    deliveryPlanNo: '',
+    deliveryPlanDate: '',
     materialId: '',
     materialCode: '',
     materialName: '',
@@ -298,6 +327,13 @@ export function salesOrderLineDraftFromRecord(line: SalesOrderLineRecord): Sales
     reservationWarehouseName: line.reservationWarehouseName ?? '',
     quantity: String(line.quantity),
     unitPrice: String(line.unitPrice),
+    priceSourceType: line.priceSourceType ?? 'MANUAL',
+    priceSourceNo: line.priceSourceNo ?? '',
+    quoteLineId: line.quoteLineId ?? (line.priceSourceType && line.priceSourceType !== 'MANUAL' ? null : undefined),
+    contractLineId: line.contractLineId ?? (line.priceSourceType && line.priceSourceType !== 'MANUAL' ? null : undefined),
+    untaxedUnitPrice: line.untaxedUnitPrice ?? '',
+    taxIncludedUnitPrice: line.taxIncludedUnitPrice ?? '',
+    taxRate: line.taxRate ?? '',
     expectedShipDate: line.expectedShipDate ?? '',
     remark: line.remark ?? '',
   }
@@ -307,6 +343,9 @@ export function salesShipmentSourceFromOrderLine(line: SalesOrderLineRecord): Sa
   return {
     id: line.id,
     lineNo: line.lineNo,
+    deliveryPlanId: undefined,
+    deliveryPlanNo: undefined,
+    deliveryPlanDate: undefined,
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
@@ -337,6 +376,9 @@ export function salesShipmentSourceFromShipmentLine(line: SalesShipmentLineRecor
   return {
     id: line.orderLineId,
     lineNo: line.lineNo,
+    deliveryPlanId: line.deliveryPlanId ?? undefined,
+    deliveryPlanNo: undefined,
+    deliveryPlanDate: undefined,
     materialId: line.materialId,
     materialCode: line.materialCode,
     materialName: line.materialName,
