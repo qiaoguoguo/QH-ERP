@@ -1,13 +1,20 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   createIdempotencyKey,
   documentPlatformApi,
   type DocumentTaskRecord,
 } from '../../../shared/api/documentPlatformApi'
+import { masterDataApi, type MaterialRecord, type PartnerRecord } from '../../../shared/api/masterDataApi'
+import { salesApi, type SalesOrderSummaryRecord } from '../../../shared/api/salesApi'
 import { salesFulfillmentApi, type SalesDeliveryPlanRecord, type SalesDeliveryPlanStatus } from '../../../shared/api/salesFulfillmentApi'
+import { salesProjectApi, type SalesOrderProjectContractCandidate, type SalesProjectSummary } from '../../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../../stores/authStore'
-import { pageItems } from '../../system/shared/pageHelpers'
+import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
+import BusinessReferenceSelect from '../../system/shared/BusinessReferenceSelect.vue'
+import type { BusinessReferenceOption } from '../../system/shared/businessReferenceSelectTypes'
+import { pageItems, pageTotal } from '../../system/shared/pageHelpers'
 import SalesDocumentTaskPanel from '../SalesDocumentTaskPanel.vue'
 import {
   deliveryPlanStatusLabel,
@@ -18,7 +25,9 @@ import {
 } from '../salesFulfillmentPageHelpers'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const records = ref<SalesDeliveryPlanRecord[]>([])
+const total = ref(0)
 const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -43,6 +52,54 @@ function canExport() {
   return authStore.hasPermission('platform:document-task:create') && authStore.hasPermission('sales:document:export')
 }
 
+function customerOption(customer: PartnerRecord): BusinessReferenceOption {
+  return { id: customer.id, label: `${customer.code} ${customer.name}` }
+}
+
+function materialOption(material: MaterialRecord): BusinessReferenceOption {
+  return { id: material.id, label: `${material.code} ${material.name}` }
+}
+
+function projectOption(project: SalesProjectSummary): BusinessReferenceOption {
+  return { id: project.id, label: `${project.projectNo} ${project.name}` }
+}
+
+function orderOption(order: SalesOrderSummaryRecord): BusinessReferenceOption {
+  return { id: order.id, label: `${order.orderNo} ${order.customerName}` }
+}
+
+function contractOption(candidate: SalesOrderProjectContractCandidate): BusinessReferenceOption {
+  return {
+    id: candidate.contractId,
+    label: `${candidate.contractNo} ${candidate.contractName} / ${candidate.projectNo} ${candidate.projectName}`,
+  }
+}
+
+async function loadCustomerOptions(keyword: string) {
+  const page = await masterDataApi.customers.list({ keyword, status: 'ENABLED', page: 1, pageSize: 50 })
+  return pageItems(page).map(customerOption)
+}
+
+async function loadMaterialOptions(keyword: string) {
+  const page = await masterDataApi.materials.list({ keyword, status: 'ENABLED', page: 1, pageSize: 50 })
+  return pageItems(page).map(materialOption)
+}
+
+async function loadProjectOptions(keyword: string) {
+  const page = await salesProjectApi.projects.list({ keyword, status: 'ACTIVE', page: 1, pageSize: 50 })
+  return pageItems(page).map(projectOption)
+}
+
+async function loadOrderOptions(keyword: string) {
+  const page = await salesApi.orders.list({ keyword, page: 1, pageSize: 50 })
+  return pageItems(page).map(orderOption)
+}
+
+async function loadContractOptions(keyword: string) {
+  const page = await salesProjectApi.listOrderLinkCandidates({ keyword, page: 1, pageSize: 50 })
+  return pageItems(page).map(contractOption)
+}
+
 async function loadRecords() {
   loading.value = true
   error.value = ''
@@ -62,12 +119,45 @@ async function loadRecords() {
       pageSize: filters.pageSize,
     })
     records.value = pageItems(page)
+    total.value = pageTotal(page)
   } catch (caught) {
     records.value = []
+    total.value = 0
     error.value = salesFulfillmentErrorMessage(caught)
   } finally {
     loading.value = false
   }
+}
+
+async function searchRecords() {
+  filters.page = 1
+  await loadRecords()
+}
+
+async function resetFilters() {
+  filters.keyword = ''
+  filters.customerId = ''
+  filters.projectId = ''
+  filters.contractId = ''
+  filters.orderId = ''
+  filters.materialId = ''
+  filters.status = undefined
+  filters.expectedDateFrom = ''
+  filters.expectedDateTo = ''
+  filters.countedOnly = true
+  filters.page = 1
+  await loadRecords()
+}
+
+async function changePage(page: number) {
+  filters.page = page
+  await loadRecords()
+}
+
+async function changePageSize(pageSize: number) {
+  filters.pageSize = pageSize
+  filters.page = 1
+  await loadRecords()
 }
 
 async function exportPlans() {
@@ -101,116 +191,141 @@ onMounted(loadRecords)
 </script>
 
 <template>
-  <section class="sales-list-page">
-    <header class="page-header">
-      <div>
-        <h1>交付计划</h1>
-        <p>全局只读查看销售订单交付计划；维护动作回到订单详情。</p>
-      </div>
+  <MasterDataTableView
+    title="交付计划"
+    description="全局只读查看销售订单交付计划；维护动作回到订单详情。"
+  >
+    <template #actions>
       <el-button v-if="canExport()" data-test="export-sales-delivery-plans" :loading="actionLoading" @click="exportPlans">
         当前筛选导出
       </el-button>
-    </header>
+    </template>
 
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
-    <SalesDocumentTaskPanel :task="latestDocumentTask" />
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+      <SalesDocumentTaskPanel :task="latestDocumentTask" />
+    </template>
 
-    <div class="filter-strip">
-      <el-input v-model="filters.keyword" placeholder="订单、客户或物料" clearable />
-      <el-input v-model="filters.projectId" placeholder="项目 ID" clearable />
-      <el-select v-model="filters.status" clearable placeholder="计划状态">
-        <el-option label="计划中" value="PLANNED" />
-        <el-option label="部分出库" value="PARTIALLY_SHIPPED" />
-        <el-option label="已全部出库" value="SHIPPED" />
-        <el-option label="已关闭" value="CLOSED" />
-      </el-select>
-      <el-button data-test="search-sales-delivery-plans" type="primary" @click="loadRecords">查询</el-button>
+    <template #filters>
+    <el-form class="query-form" label-position="top">
+      <el-form-item label="关键词">
+        <el-input v-model="filters.keyword" placeholder="订单、客户或物料" clearable />
+      </el-form-item>
+      <el-form-item label="项目">
+        <BusinessReferenceSelect v-model="filters.projectId" placeholder="搜索项目编号或名称" :load-options="loadProjectOptions" />
+      </el-form-item>
+      <el-form-item label="客户">
+        <BusinessReferenceSelect v-model="filters.customerId" placeholder="搜索客户编码或名称" :load-options="loadCustomerOptions" />
+      </el-form-item>
+      <el-form-item label="合同">
+        <BusinessReferenceSelect v-model="filters.contractId" placeholder="搜索合同编号或名称" :load-options="loadContractOptions" />
+      </el-form-item>
+      <el-form-item label="订单">
+        <BusinessReferenceSelect v-model="filters.orderId" placeholder="搜索订单号或客户" :load-options="loadOrderOptions" />
+      </el-form-item>
+      <el-form-item label="物料">
+        <BusinessReferenceSelect v-model="filters.materialId" placeholder="搜索物料编码或名称" :load-options="loadMaterialOptions" />
+      </el-form-item>
+      <el-form-item label="计划状态">
+        <el-select v-model="filters.status" clearable placeholder="计划状态">
+          <el-option label="计划中" value="PLANNED" />
+          <el-option label="部分出库" value="PARTIALLY_SHIPPED" />
+          <el-option label="已全部出库" value="SHIPPED" />
+          <el-option label="已关闭" value="CLOSED" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="预计起">
+        <el-date-picker
+          v-model="filters.expectedDateFrom"
+          type="date"
+          format="YYYY-MM-DD"
+          value-format="YYYY-MM-DD"
+          value-on-clear=""
+          placeholder="预计起"
+        />
+      </el-form-item>
+      <el-form-item label="预计止">
+        <el-date-picker
+          v-model="filters.expectedDateTo"
+          type="date"
+          format="YYYY-MM-DD"
+          value-format="YYYY-MM-DD"
+          value-on-clear=""
+          placeholder="预计止"
+        />
+      </el-form-item>
+      <el-form-item label="只看有效">
+        <el-checkbox v-model="filters.countedOnly">仅计入有效需求</el-checkbox>
+      </el-form-item>
+      <el-form-item class="query-actions" label="操作">
+        <el-button data-test="search-sales-delivery-plans" type="primary" @click="searchRecords">查询</el-button>
+        <el-button @click="resetFilters">重置</el-button>
+      </el-form-item>
+    </el-form>
+    </template>
+
+    <div class="table-scroll">
+      <el-table v-loading="loading" :data="records" row-key="id" :empty-text="loading ? '加载中' : '暂无交付计划'">
+        <el-table-column label="订单与项目" min-width="260">
+          <template #default="{ row }">
+            <strong>{{ row.orderNo }} / 行 {{ row.lineNo }}</strong>
+            <span>{{ row.projectNo }} {{ row.projectName }}</span>
+            <span>{{ row.contractNo || '合同信息受限' }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="物料与状态" min-width="240">
+          <template #default="{ row }">
+            <span>{{ row.materialCode }} {{ row.materialName }}</span>
+            <span>预计日期：{{ deliveryPlanDate(row) }}</span>
+            <span>{{ deliveryPlanStatusLabel(row.status) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="计划进度" min-width="280">
+          <template #default="{ row }">
+            <span>
+              计划/已发/剩余：{{ formatSalesDecimal(row.plannedQuantity) }}/{{
+                formatSalesDecimal(row.shippedQuantity)
+              }}/{{ formatSalesDecimal(row.remainingQuantity) }}
+            </span>
+            <span v-if="row.legacyDeliveryPlanCompatible">历史兼容计划</span>
+            <span v-if="row.closeReason">关闭原因：{{ row.closeReason }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="180" fixed="right">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-button text type="primary" @click="router.push({ name: 'sales-order-detail', params: { id: String(row.orderId) } })">
+                进入订单详情维护
+              </el-button>
+              <span v-if="row.actionDisabledReason">{{ row.actionDisabledReason }}</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
 
-    <el-empty v-if="!loading && records.length === 0" description="暂无交付计划" />
-    <div class="sales-record-grid" v-loading="loading">
-      <article v-for="record in records" :key="record.id" class="sales-record-row">
-        <div class="decision-column">
-          <strong>{{ record.orderNo }} / 行 {{ record.lineNo }}</strong>
-          <span>{{ record.projectNo }} {{ record.projectName }}</span>
-          <span>{{ record.contractNo || '合同信息受限' }}</span>
-        </div>
-        <div class="state-column">
-          <span>{{ record.materialCode }} {{ record.materialName }}</span>
-          <span>预计日期：{{ deliveryPlanDate(record) }}</span>
-          <span>{{ deliveryPlanStatusLabel(record.status) }}</span>
-        </div>
-        <div class="progress-column">
-          <span>
-            计划/已发/剩余：{{ formatSalesDecimal(record.plannedQuantity) }}/{{
-              formatSalesDecimal(record.shippedQuantity)
-            }}/{{ formatSalesDecimal(record.remainingQuantity) }}
-          </span>
-          <span v-if="record.legacyDeliveryPlanCompatible">历史兼容计划</span>
-          <span v-if="record.closeReason">关闭原因：{{ record.closeReason }}</span>
-        </div>
-        <div class="action-column">
-          <el-button text type="primary">进入订单详情维护</el-button>
-          <span v-if="record.actionDisabledReason">{{ record.actionDisabledReason }}</span>
-        </div>
-      </article>
-    </div>
-  </section>
+    <el-pagination
+      class="table-pagination"
+      layout="total, sizes, prev, pager, next"
+      :total="total"
+      :current-page="filters.page"
+      :page-size="filters.pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      @current-change="changePage"
+      @size-change="changePageSize"
+    />
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.sales-list-page,
-.sales-record-grid {
+.table-scroll span {
+  display: block;
+}
+
+.row-actions {
   display: grid;
-  gap: 12px;
-}
-
-.page-header,
-.filter-strip {
-  align-items: flex-start;
-  display: flex;
-  gap: 12px;
-  justify-content: space-between;
-}
-
-.filter-strip {
-  flex-wrap: wrap;
-  justify-content: flex-start;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
-}
-
-.sales-record-row {
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(250px, 1.2fr) minmax(210px, 1fr) minmax(220px, 1fr) minmax(160px, auto);
-  padding: 12px;
-}
-
-.decision-column,
-.state-column,
-.progress-column,
-.action-column {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.action-column {
-  align-items: flex-end;
-  position: sticky;
-  right: 0;
+  gap: 8px;
+  justify-items: end;
 }
 </style>

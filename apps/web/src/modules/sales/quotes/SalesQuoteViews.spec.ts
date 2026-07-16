@@ -6,6 +6,12 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import type { MaterialRecord, PartnerRecord } from '../../../shared/api/masterDataApi'
 import type { SalesQuoteDetailRecord, SalesQuoteSummaryRecord } from '../../../shared/api/salesFulfillmentApi'
+import {
+  expectNoBareIdFilters,
+  expectStandardDetailPage,
+  expectStandardFormPage,
+  expectStandardListPage,
+} from '../../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../../stores/authStore'
 import SalesQuoteDetailView from './SalesQuoteDetailView.vue'
 import SalesQuoteFormView from './SalesQuoteFormView.vue'
@@ -111,6 +117,16 @@ const projectContractCandidate = {
   externalContractNo: 'EXT-025',
   contractName: '华东主合同',
   contractType: 'MAIN',
+}
+
+function projectContractCandidateAt(index: number) {
+  return {
+    ...projectContractCandidate,
+    projectId: 20,
+    contractId: 1000 + index,
+    contractNo: `SC-${String(index).padStart(3, '0')}`,
+    contractName: `第${index}合同`,
+  }
 }
 
 const quoteSummary: SalesQuoteSummaryRecord = {
@@ -247,6 +263,39 @@ function pageResult<T>(items: T[]): PageResult<T> {
   return { items, total: items.length, page: 1, pageSize: 10 }
 }
 
+async function updateComponentModel(wrapper: ReturnType<typeof mount>, dataTest: string, value: string | number) {
+  const component = wrapper
+    .findAllComponents({ name: 'BusinessReferenceSelect' })
+    .find((candidate) => candidate.props('dataTest') === dataTest)
+  expect(component?.exists()).toBe(true)
+  component?.vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
+
+async function updateTextInput(wrapper: ReturnType<typeof mount>, name: string, value: string) {
+  const inputComponent = wrapper
+    .findAllComponents({ name: 'ElInput' })
+    .find((candidate) => candidate.props('name') === name)
+  if (inputComponent) {
+    inputComponent.vm.$emit('update:modelValue', value)
+    await flushPromises()
+    return
+  }
+  await wrapper.find(`input[name="${name}"]`).setValue(value)
+}
+
+async function expectReferenceLabels(wrapper: ReturnType<typeof mount>, dataTest: string, expectedLabels: string[]) {
+  const component = wrapper
+    .findAllComponents({ name: 'BusinessReferenceSelect' })
+    .find((candidate) => candidate.props('dataTest') === dataTest)
+  expect(component?.exists()).toBe(true)
+  const loadOptions = component?.props('loadOptions') as (keyword: string) => Promise<Array<{ label: string }>>
+  const options = await loadOptions('')
+  expectedLabels.forEach((label) => {
+    expect(options.map((option) => option.label)).toContain(label)
+  })
+}
+
 describe('025 销售报价页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -298,6 +347,8 @@ describe('025 销售报价页面', () => {
     const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['客户 ID', '项目 ID'])
     expect(wrapper.text()).toContain('SQ-202607-001')
     expect(wrapper.text()).toContain('项目销售 · PRJ-025/华东产线')
     expect(wrapper.text()).toContain('审批状态：已提交')
@@ -316,7 +367,7 @@ describe('025 销售报价页面', () => {
       customerId: 8,
       keyword: '',
       page: 1,
-      pageSize: 20,
+      pageSize: 50,
     })
     await wrapper.find('[data-test="quote-convert-project-contract"]').setValue('20:55')
     await wrapper.find('[data-test="confirm-sales-quote-conversion"]').trigger('click')
@@ -358,6 +409,73 @@ describe('025 销售报价页面', () => {
     expect(wrapper.text()).toContain('TASK-SALES-QUOTE-EXPORT')
   })
 
+  it('报价审批筛选只暴露稳定枚举并让列表与导出发送同一值', async () => {
+    const pinia = setup([
+      'sales:quote:view',
+      'platform:document-task:create',
+      'sales:document:export',
+    ])
+    const router = await createTestRouter('/sales/quotes')
+    const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    const optionValues = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => option.props('value'))
+    expect(optionValues).toEqual(expect.arrayContaining(['NONE', 'SUBMITTED', 'APPROVED', 'REJECTED']))
+    expect(optionValues).not.toContain('IN_APPROVAL')
+    expect(optionValues).not.toContain('NOT_SUBMITTED')
+
+    const approvalSelect = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.props('placeholder') === '审批状态')
+    expect(approvalSelect?.exists()).toBe(true)
+    approvalSelect?.vm.$emit('update:modelValue', 'NONE')
+    await wrapper.find('[data-test="search-sales-quotes"]').trigger('click')
+    await flushPromises()
+    expect(salesFulfillmentApiMock.quotes.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      approvalStatus: 'NONE',
+    }))
+
+    await wrapper.find('[data-test="export-sales-quotes"]').trigger('click')
+    await flushPromises()
+    expect(documentPlatformApiMock.exports.createSalesQuotes).toHaveBeenLastCalledWith(expect.objectContaining({
+      approvalStatus: 'NONE',
+    }))
+  })
+
+  it('报价转换候选支持远程搜索，第一页之外的第 21 条以后仍可达', async () => {
+    const firstPage = Array.from({ length: 20 }, (_, index) => projectContractCandidateAt(index + 1))
+    const twentyFifth = projectContractCandidateAt(25)
+    salesProjectApiMock.listOrderLinkCandidates
+      .mockResolvedValueOnce({ items: firstPage, page: 1, pageSize: 20, total: 25, totalPages: 2 })
+      .mockResolvedValueOnce({ items: [twentyFifth], page: 1, pageSize: 50, total: 1, totalPages: 1 })
+    const pinia = setup(['sales:quote:view', 'sales:quote:convert'])
+    const router = await createTestRouter('/sales/quotes')
+    const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    await wrapper.find('[data-test="convert-sales-quote-order-9"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('第25合同')
+
+    await wrapper.find('[data-test="quote-convert-candidate-search"]').setValue('第25')
+    await flushPromises()
+    expect(salesProjectApiMock.listOrderLinkCandidates).toHaveBeenLastCalledWith({
+      customerId: 8,
+      keyword: '第25',
+      page: 1,
+      pageSize: 50,
+    })
+    expect(wrapper.text()).toContain('第25合同')
+
+    await wrapper.find('[data-test="quote-convert-project-contract"]').setValue('20:1025')
+    await wrapper.find('[data-test="confirm-sales-quote-conversion"]').trigger('click')
+    await flushPromises()
+    expect(salesFulfillmentApiMock.quotes.convertOrder).toHaveBeenCalledWith(9, expect.objectContaining({
+      projectId: 20,
+      contractId: 1025,
+    }))
+  })
+
   it('报价列表和详情消费后端 canonical projectCode 与 taxIncludedAmount 字段', async () => {
     salesFulfillmentApiMock.quotes.list.mockResolvedValueOnce(pageResult([backendCanonicalQuoteSummary]))
     salesFulfillmentApiMock.quotes.get.mockResolvedValueOnce(backendCanonicalQuoteDetail)
@@ -378,6 +496,7 @@ describe('025 销售报价页面', () => {
     const detailWrapper = mount(SalesQuoteDetailView, { global: { plugins: [pinia, detailRouter, ElementPlus] } })
     await flushPromises()
 
+    expectStandardDetailPage(detailWrapper)
     expect(detailWrapper.text()).toContain('项目销售 · SP20260715143401020001/桥合低压柜技改项目')
     expect(detailWrapper.text()).toContain('含税金额1130 CNY')
     expect(detailWrapper.text()).toContain('未税单价 100')
@@ -441,21 +560,44 @@ describe('025 销售报价页面', () => {
     const wrapper = mount(SalesQuoteFormView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('华东客户')
-    expect(wrapper.text()).toContain('PRJ-025 华东产线')
-    expect(wrapper.text()).toContain('FG-001 控制柜')
+    expectStandardFormPage(wrapper, ['quote-date', 'quote-valid-until'])
+    const quoteForm = wrapper.findComponent({ name: 'ElForm' })
+    expect(quoteForm.exists()).toBe(true)
+    expect(quoteForm.props('labelPosition')).toBe('top')
+    expect(wrapper.findAllComponents({ name: 'ElFormItem' }).length).toBeGreaterThanOrEqual(6)
+    const referenceSelects = wrapper.findAllComponents({ name: 'BusinessReferenceSelect' })
+    expect(referenceSelects.map((select) => select.props('dataTest'))).toEqual(expect.arrayContaining([
+      'quote-customer-select',
+      'quote-project-select',
+      'quote-line-material-select',
+    ]))
+    expect(wrapper.find('.sales-quote-form select').exists()).toBe(false)
+    expect(wrapper.find('.sales-quote-form option').exists()).toBe(false)
+    const lineEditor = wrapper.find('.sales-quote-line-editor')
+    expect(lineEditor.exists()).toBe(true)
+    expect(lineEditor.find('.table-scroll').exists()).toBe(true)
+    expect(lineEditor.findComponent({ name: 'ElTable' }).exists()).toBe(true)
+    expect(lineEditor.text()).toContain('物料')
+    expect(lineEditor.text()).toContain('数量')
+    expect(lineEditor.text()).toContain('含税单价')
+    expect(lineEditor.text()).toContain('税率')
+    expect(lineEditor.text()).toContain('承诺日期')
+    expect(wrapper.find('.form-footer [data-test="save-sales-quote"]').exists()).toBe(true)
+    await expectReferenceLabels(wrapper, 'quote-customer-select', ['CUS-008 华东客户'])
+    await expectReferenceLabels(wrapper, 'quote-project-select', ['PRJ-025 华东产线'])
+    await expectReferenceLabels(wrapper, 'quote-line-material-select', ['FG-001 控制柜 / 台'])
     expect(wrapper.find('[data-test="quote-customer-id"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="quote-line-material-id"]').exists()).toBe(false)
 
-    await wrapper.find('[data-test="quote-customer-select"]').setValue('8')
-    await wrapper.find('[data-test="quote-project-select"]').setValue('20')
+    await updateComponentModel(wrapper, 'quote-customer-select', 8)
+    await updateComponentModel(wrapper, 'quote-project-select', 20)
     await wrapper.find('input[name="quote-date"]').setValue('2026-07-16')
     await wrapper.find('input[name="quote-valid-until"]').setValue('2026-08-16')
-    await wrapper.find('[data-test="quote-line-material-select"]').setValue('31')
-    await wrapper.find('input[name="quote-line-quantity"]').setValue('3.000000')
-    await wrapper.find('input[name="quote-line-untaxed-price"]').setValue('10.000000')
-    await wrapper.find('input[name="quote-line-tax-included-price"]').setValue('11.300000')
-    await wrapper.find('input[name="quote-line-tax-rate"]').setValue('0.130000')
+    await updateComponentModel(wrapper, 'quote-line-material-select', 31)
+    await updateTextInput(wrapper, 'quote-line-quantity', '3.000000')
+    await updateTextInput(wrapper, 'quote-line-untaxed-price', '10.000000')
+    await updateTextInput(wrapper, 'quote-line-tax-included-price', '11.300000')
+    await updateTextInput(wrapper, 'quote-line-tax-rate', '0.130000')
     await wrapper.find('[data-test="save-sales-quote"]').trigger('click')
     await flushPromises()
 
@@ -481,6 +623,19 @@ describe('025 销售报价页面', () => {
     await editWrapper.find('[data-test="save-sales-quote"]').trigger('click')
     await flushPromises()
     expect(salesFulfillmentApiMock.quotes.update).toHaveBeenCalledWith(9, expect.objectContaining({ version: 3 }))
+  })
+
+  it('报价编辑加载失败时只显示错误与返回动作，不渲染可编辑表单或保存入口', async () => {
+    salesFulfillmentApiMock.quotes.get.mockRejectedValueOnce(new Error('NOT_FOUND'))
+    const pinia = setup(['sales:quote:update'])
+    const router = await createTestRouter('/sales/quotes/404/edit')
+    const wrapper = mount(SalesQuoteFormView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('NOT_FOUND')
+    expect(wrapper.find('[data-test="save-sales-quote"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="quote-customer-select"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-sales-quotes"]').exists()).toBe(true)
   })
 
   it('普通报价转订单直接按手工订单提交，不强制选择项目合同', async () => {

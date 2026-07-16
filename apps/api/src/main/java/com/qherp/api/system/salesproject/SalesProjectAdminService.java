@@ -56,8 +56,10 @@ public class SalesProjectAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<ProjectResponse> projects(String keyword, Long customerId, String status, Long ownerUserId,
-			int page, int pageSize, CurrentUser currentUser) {
-		QueryParts queryParts = projectQueryParts(keyword, customerId, status, ownerUserId);
+			LocalDate plannedStartFrom, LocalDate plannedStartTo, LocalDate plannedFinishFrom,
+			LocalDate plannedFinishTo, int page, int pageSize, CurrentUser currentUser) {
+		QueryParts queryParts = projectQueryParts(keyword, customerId, status, ownerUserId, plannedStartFrom,
+				plannedStartTo, plannedFinishFrom, plannedFinishTo);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from sal_project p
@@ -783,7 +785,9 @@ public class SalesProjectAdminService {
 				+ blankToNull(request.reason()));
 	}
 
-	private QueryParts projectQueryParts(String keyword, Long customerId, String status, Long ownerUserId) {
+	private QueryParts projectQueryParts(String keyword, Long customerId, String status, Long ownerUserId,
+			LocalDate plannedStartFrom, LocalDate plannedStartTo, LocalDate plannedFinishFrom,
+			LocalDate plannedFinishTo) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -808,6 +812,22 @@ public class SalesProjectAdminService {
 		if (ownerUserId != null) {
 			conditions.add("p.owner_user_id = ?");
 			args.add(ownerUserId);
+		}
+		if (plannedStartFrom != null) {
+			conditions.add("p.planned_start_date >= ?");
+			args.add(plannedStartFrom);
+		}
+		if (plannedStartTo != null) {
+			conditions.add("p.planned_start_date <= ?");
+			args.add(plannedStartTo);
+		}
+		if (plannedFinishFrom != null) {
+			conditions.add("p.planned_finish_date >= ?");
+			args.add(plannedFinishFrom);
+		}
+		if (plannedFinishTo != null) {
+			conditions.add("p.planned_finish_date <= ?");
+			args.add(plannedFinishTo);
 		}
 		return where(conditions, args);
 	}

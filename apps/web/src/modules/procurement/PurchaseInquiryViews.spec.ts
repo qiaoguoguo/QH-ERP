@@ -12,6 +12,12 @@ import type {
   SupplierQuoteRecord,
 } from '../../shared/api/procurementApi'
 import type { SalesProjectSummary } from '../../shared/api/salesProjectApi'
+import {
+  expectNoBareIdFilters,
+  expectStandardDetailPage,
+  expectStandardFormPage,
+  expectStandardListPage,
+} from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import PurchaseInquiryDetailView from './PurchaseInquiryDetailView.vue'
 import PurchaseInquiryFormView from './PurchaseInquiryFormView.vue'
@@ -368,6 +374,8 @@ describe('采购询价与报价页面', () => {
     const wrapper = mount(PurchaseInquiryListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['项目 ID'])
     expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
     expect(wrapper.text()).toContain('业务状态：已完成')
     expect(wrapper.text()).toContain('M-100 伺服电机')
@@ -392,6 +400,7 @@ describe('采购询价与报价页面', () => {
     const wrapper = mount(PurchaseInquiryDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardDetailPage(wrapper)
     expect(procurementApiMock.inquiries.get).toHaveBeenCalledWith('201')
     expect(wrapper.text()).toContain('供应商报价比较')
     expect(wrapper.text()).toContain('最低有效报价')
@@ -432,6 +441,7 @@ describe('采购询价与报价页面', () => {
     const wrapper = mount(PurchaseInquiryFormView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardFormPage(wrapper)
     await setSelectValue(wrapper, 1, 30)
     await setSelectValue(wrapper, 2, 5)
     await setSelectValue(wrapper, 3, [100, 101])
@@ -498,5 +508,18 @@ describe('采购询价与报价页面', () => {
       lines: [expect.objectContaining({ materialId: 5, quantity: '88.000000' })],
     }))
     expect(router.currentRoute.value.name).toBe('procurement-inquiry-detail')
+  })
+
+  it('询价编辑加载失败时只显示错误与返回动作，不渲染可编辑表单或保存入口', async () => {
+    procurementApiMock.inquiries.get.mockRejectedValueOnce(new Error('NOT_FOUND'))
+    const pinia = setup(['procurement:inquiry:update'])
+    const router = await createTestRouter('/procurement/inquiries/404/edit')
+    const wrapper = mount(PurchaseInquiryFormView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('NOT_FOUND')
+    expect(wrapper.find('[data-test="save-inquiry"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="inquiry-material-id"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-inquiries"]').exists()).toBe(true)
   })
 })

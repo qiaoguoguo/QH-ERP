@@ -7,6 +7,12 @@ import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { MaterialRecord, PartnerRecord } from '../../shared/api/masterDataApi'
 import type { ProcurementRequisitionDetailRecord, ProcurementRequisitionSummaryRecord } from '../../shared/api/procurementApi'
 import type { SalesProjectSummary } from '../../shared/api/salesProjectApi'
+import {
+  expectNoBareIdFilters,
+  expectStandardDetailPage,
+  expectStandardFormPage,
+  expectStandardListPage,
+} from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import PurchaseRequisitionDetailView from './PurchaseRequisitionDetailView.vue'
 import PurchaseRequisitionFormView from './PurchaseRequisitionFormView.vue'
@@ -274,6 +280,8 @@ describe('采购请购页面', () => {
     const wrapper = mount(PurchaseRequisitionListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['项目 ID'])
     expect(procurementApiMock.requisitions.list).toHaveBeenCalledWith({
       keyword: '',
       procurementMode: undefined,
@@ -402,6 +410,7 @@ describe('采购请购页面', () => {
     const wrapper = mount(PurchaseRequisitionFormView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardFormPage(wrapper, ['requisition-required-date'])
     await setSelectValue(wrapper, 1, 30)
     await setSelectValue(wrapper, 2, 100)
     await setSelectValue(wrapper, 3, 200)
@@ -447,6 +456,28 @@ describe('采购请购页面', () => {
     }))
   })
 
+  it.each([
+    ['读取失败', '请购加载失败'],
+    ['404', '请购不存在'],
+    ['403', '无权编辑采购请购'],
+  ])('编辑路由%s时只显示错误和返回列表，不露出表单保存且不误创建', async (_caseName, message) => {
+    procurementApiMock.requisitions.get.mockRejectedValueOnce(new Error(message))
+    const pinia = setupAuth(['procurement:requisition:update'])
+    const router = await createTestRouter('/procurement/requisitions/404/edit')
+    const wrapper = mount(PurchaseRequisitionFormView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    expect(procurementApiMock.requisitions.get).toHaveBeenCalledWith('404')
+    expect(wrapper.text()).toContain(message)
+    expect(wrapper.text()).toContain('无法编辑采购请购')
+    expect(wrapper.find('[data-test="back-requisitions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="save-requisition"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="requisition-material-id"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="requisition-quantity"]').exists()).toBe(false)
+    expect(procurementApiMock.requisitions.create).not.toHaveBeenCalled()
+    expect(procurementApiMock.requisitions.update).not.toHaveBeenCalled()
+  })
+
   it('详情展示来源链、明细、审批和操作区，并提供真实审批与来源导航动作', async () => {
     const pinia = setupAuth([
       'procurement:requisition:view',
@@ -459,8 +490,36 @@ describe('采购请购页面', () => {
     const wrapper = mount(PurchaseRequisitionDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardDetailPage(wrapper)
     expect(procurementApiMock.requisitions.get).toHaveBeenCalledWith('1')
+    expect(wrapper.find('.summary-strip').exists()).toBe(true)
+    expect(wrapper.find('.summary-grid').exists()).toBe(false)
+    expect(wrapper.find('.state-box').exists()).toBe(false)
+    expect(wrapper.find('.trace-grid').exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-requisition-list"]').exists()).toBe(true)
+    const pageActions = wrapper.find('.page-actions')
+    expect(pageActions.text()).not.toContain('业务状态')
+    expect(pageActions.text()).not.toContain('审批状态')
     expect(wrapper.text()).toContain('REQ-PRJ-001')
+    expect(wrapper.find('.purchase-requisition-detail-list').exists()).toBe(true)
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('请购号')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('标题')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('采购模式')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('项目/公共')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('物料摘要')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('来源摘要')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('创建人')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('创建时间')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('更新时间')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('备注')
+    expect(wrapper.find('.purchase-requisition-detail-list').text()).toContain('结案原因')
+    expect(wrapper.findAll('.section-title').map((section) => section.text())).toEqual(expect.arrayContaining([
+      '请购明细',
+      '来源链',
+      '审批与附件',
+      '审计',
+    ]))
+    expect(wrapper.findAll('.numeric-cell').length).toBeGreaterThan(0)
     expect(wrapper.text()).toContain('来源链')
     expect(wrapper.text()).toContain('项目专采 · PRJ-024/华东产线改造')
     expect(wrapper.text()).toContain('伺服电机')
@@ -488,6 +547,78 @@ describe('采购请购页面', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('procurement-order-create')
     expect(router.currentRoute.value.query.requisitionId).toBe('1')
+  })
+
+  it('详情中文化状态与隐藏动作码，物料摘要为空时从明细回退且摘要保持短值', async () => {
+    procurementApiMock.requisitions.get.mockResolvedValueOnce({
+      ...requisitionDetail,
+      status: 'SUBMITTED',
+      statusName: null,
+      approvalStatus: 'SUBMITTED',
+      approvalStatusName: null,
+      materialSummary: null,
+      allowedActions: ['CANCEL'],
+      lines: [
+        requisitionDetail.lines[0],
+        {
+          ...requisitionDetail.lines[0],
+          id: 12,
+          lineNo: 20,
+          materialId: 101,
+          materialCode: 'M-200',
+          materialName: '铜排',
+        },
+        {
+          ...requisitionDetail.lines[0],
+          id: 13,
+          lineNo: 30,
+          materialId: 102,
+          materialCode: 'M-300',
+          materialName: '控制柜',
+        },
+      ],
+    } as unknown as ProcurementRequisitionDetailRecord)
+    const pinia = setupAuth(['procurement:requisition:view'])
+    const router = await createTestRouter('/procurement/requisitions/1')
+    const wrapper = mount(PurchaseRequisitionDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    const summaryStrip = wrapper.find('.summary-strip')
+    expect(summaryStrip.find('[data-test="requisition-business-status"]').text()).toContain('已提交')
+    expect(summaryStrip.find('[data-test="requisition-approval-status"]').text()).toContain('审批中')
+    expect(summaryStrip.find('[data-test="requisition-summary-mode"]').text()).toContain('项目专采')
+    expect(summaryStrip.find('[data-test="requisition-summary-mode"]').text()).not.toContain('华东产线改造')
+    expect(wrapper.find('[data-test="requisition-material-summary"]').text()).toContain('M-100 伺服电机、M-200 铜排等3项')
+    expect(wrapper.text()).not.toContain('SUBMITTED')
+    expect(wrapper.text()).not.toContain('CANCEL')
+    expect(wrapper.text()).not.toContain('动作限制')
+  })
+
+  it.each([
+    ['读取失败', '请购加载失败'],
+    ['404', '请购不存在'],
+    ['403', '无权查看采购请购'],
+  ])('详情路由%s时只显示错误和返回列表，不显示详情结构或业务动作', async (_caseName, message) => {
+    procurementApiMock.requisitions.get.mockRejectedValueOnce(new Error(message))
+    const pinia = setupAuth(['procurement:requisition:view'])
+    const router = await createTestRouter('/procurement/requisitions/404')
+    const wrapper = mount(PurchaseRequisitionDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    expect(procurementApiMock.requisitions.get).toHaveBeenCalledWith('404')
+    expect(wrapper.text()).toContain(message)
+    expect(wrapper.text()).toContain('无法加载采购请购')
+    expect(wrapper.find('[data-test="back-requisition-list"]').exists()).toBe(true)
+    expect(wrapper.find('.summary-strip').exists()).toBe(false)
+    expect(wrapper.find('.purchase-requisition-detail-list').exists()).toBe(false)
+    expect(wrapper.find('[data-test="submit-requisition-approval"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="create-inquiry-from-requisition"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="create-order-from-requisition"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="close-requisition"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="back-requisition-list"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('procurement-requisitions')
   })
 
   it('详情提交审批入口只按 submit 权限显示，approve 权限不能替代提交权限', async () => {

@@ -4,6 +4,11 @@ export function pageItems<T>(page: PageResult<T>): T[] {
   return page.items ?? page.records ?? page.content ?? []
 }
 
+export function pageTotal<T>(page: PageResult<T>): number {
+  const normalizedPage = page as PageResult<T> & { totalElements?: number }
+  return normalizedPage.total ?? normalizedPage.totalElements ?? pageItems(page).length
+}
+
 export function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) {
     return error.message

@@ -6,11 +6,14 @@ import type { PageResult } from '../../shared/api/accountPermissionApi'
 import {
   inventoryApi,
   type InventoryAllowedAction,
+  type InventoryBatchSummaryRecord,
   type InventoryControlledDocumentActionPayload,
   type InventoryControlledDocumentSummaryRecord,
+  type InventoryCostLayerRecord,
   type InventoryOwnershipConversionPayload,
   type InventoryOwnershipConversionRecord,
   type InventoryQualityStatus,
+  type InventorySerialSummaryRecord,
   type InventoryStocktakeLineRecord,
   type InventoryStocktakeLineUpdatePayload,
   type InventoryStocktakePayload,
@@ -21,6 +24,8 @@ import {
   type InventoryWarehouseTransferRecord,
   type ResourceId,
 } from '../../shared/api/inventoryApi'
+import { masterDataApi, type MaterialRecord, type UnitRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
+import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../stores/authStore'
 import ApprovalStatusPanel from '../platform/components/ApprovalStatusPanel.vue'
 import AttachmentPanel from '../platform/components/AttachmentPanel.vue'
@@ -186,9 +191,18 @@ const filters = reactive({ keyword: '', status: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<InventoryRecord[]>([])
 const record = ref<InventoryRecord | null>(null)
+const warehouses = ref<WarehouseRecord[]>([])
+const materials = ref<MaterialRecord[]>([])
+const units = ref<UnitRecord[]>([])
+const projects = ref<SalesProjectSummary[]>([])
+const batches = ref<InventoryBatchSummaryRecord[]>([])
+const serials = ref<InventorySerialSummaryRecord[]>([])
+const costLayers = ref<InventoryCostLayerRecord[]>([])
 const loading = ref(false)
+const referenceLoading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
+const referenceError = ref('')
 const actionError = ref('')
 const stocktakeLines = ref<InventoryStocktakeLineRecord[]>([])
 const stocktakeLinePagination = reactive({ page: 1, pageSize: 20, total: 0 })
@@ -246,6 +260,12 @@ const showStocktakeEvidencePanel = computed(() => {
   const summary = (record.value as InventoryStocktakeRecord).lineSummary
   return stocktakeEvidenceRequired.value || Number(summary?.positiveVarianceLines ?? 0) > 0
 })
+const readonlyFormReason = computed(() => {
+  if (mode.value !== 'edit' || !record.value || actionVisible(record.value, 'UPDATE')) {
+    return ''
+  }
+  return `当前状态“${statusText(record.value)}”不可编辑，请返回详情查看。`
+})
 
 function normalizeId(value: ResourceId | ''): ResourceId {
   const text = String(value).trim()
@@ -259,6 +279,96 @@ function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {
 
 function stringifyOptional(value: unknown) {
   return value === null || value === undefined ? '' : String(value)
+}
+
+async function loadReferences() {
+  if (!isForm.value || referenceLoading.value) {
+    return
+  }
+  referenceLoading.value = true
+  referenceError.value = ''
+  try {
+    const [
+      warehousePage,
+      materialPage,
+      unitPage,
+      projectPage,
+      batchPage,
+      serialPage,
+      costLayerPage,
+    ] = await Promise.all([
+      masterDataApi.warehouses.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+      masterDataApi.materials.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+      masterDataApi.units.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+      salesProjectApi.projects.list({ keyword: '', status: 'ACTIVE', page: 1, pageSize: 200 }),
+      inventoryApi.batches.list({ keyword: '', onlyAvailable: true, page: 1, pageSize: 200 }),
+      inventoryApi.serials.list({ keyword: '', onlyAvailable: true, page: 1, pageSize: 200 }),
+      inventoryApi.costLayers.list({ keyword: '', page: 1, pageSize: 200 }),
+    ])
+    warehouses.value = pageItems(warehousePage)
+    materials.value = pageItems(materialPage)
+    units.value = pageItems(unitPage)
+    projects.value = pageItems(projectPage)
+    batches.value = pageItems(batchPage)
+    serials.value = pageItems(serialPage)
+    costLayers.value = pageItems(costLayerPage)
+  } catch (caught) {
+    warehouses.value = []
+    materials.value = []
+    units.value = []
+    projects.value = []
+    batches.value = []
+    serials.value = []
+    costLayers.value = []
+    referenceError.value = errorMessage(caught)
+  } finally {
+    referenceLoading.value = false
+  }
+}
+
+function warehouseOptionLabel(item: WarehouseRecord) {
+  return `${item.code} ${item.name}`.trim()
+}
+
+function materialOptionLabel(item: MaterialRecord) {
+  return `${item.code} ${item.name}${item.unitName ? ` / ${item.unitName}` : ''}`.trim()
+}
+
+function unitOptionLabel(item: UnitRecord) {
+  return `${item.code} ${item.name}`.trim()
+}
+
+function projectOptionLabel(item: SalesProjectSummary) {
+  return `${item.projectNo} ${item.name}`.trim()
+}
+
+function batchOptionLabel(item: InventoryBatchSummaryRecord) {
+  return [
+    item.batchNo,
+    item.materialCode,
+    item.materialName,
+    item.warehouseName,
+  ].filter(Boolean).join(' / ')
+}
+
+function serialOptionLabel(item: InventorySerialSummaryRecord) {
+  return [
+    item.serialNo,
+    item.materialCode,
+    item.materialName,
+    item.warehouseName,
+  ].filter(Boolean).join(' / ')
+}
+
+function costLayerOptionLabel(item: InventoryCostLayerRecord) {
+  return [
+    item.layerNo,
+    item.materialCode,
+    item.materialName,
+    item.projectNo,
+    item.projectName,
+    item.warehouseName,
+  ].filter(Boolean).join(' / ')
 }
 
 function allowed(recordValue: InventoryControlledDocumentSummaryRecord, action: InventoryAllowedAction | string): boolean {
@@ -693,6 +803,13 @@ function stocktakeAttachmentReadonly(recordValue: InventoryRecord) {
   return !actionVisible(recordValue, 'UPDATE_LINES') && !actionVisible(recordValue, 'SUBMIT_APPROVAL')
 }
 
+function stocktakeEvidenceTitle() {
+  const requiresProjectEvidence = Object.values(stocktakeLineCache).some((line) => (
+    line.valuationRequirement?.requiredAttachment && line.ownershipType === 'PROJECT'
+  ))
+  return requiresProjectEvidence ? '项目盘盈证据附件' : '盘盈证据附件'
+}
+
 function stocktakeLinePayloads() {
   if (!record.value || config.value.kind !== 'stocktake') {
     return []
@@ -944,7 +1061,9 @@ watch(() => route.name, () => {
     void loadList()
   } else if (isForm.value && mode.value === 'create') {
     resetForm()
+    void loadReferences()
   } else if (isForm.value && mode.value === 'edit') {
+    void loadReferences()
     void loadDetail()
   } else if (mode.value === 'detail') {
     void loadDetail()
@@ -956,7 +1075,11 @@ onMounted(() => {
     void loadList()
   } else if (mode.value === 'create') {
     resetForm()
+    void loadReferences()
   } else if (mode.value === 'detail' || mode.value === 'edit') {
+    if (mode.value === 'edit') {
+      void loadReferences()
+    }
     void loadDetail()
   }
 })
@@ -992,8 +1115,10 @@ onMounted(() => {
 
     <template #alerts>
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
+      <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
       <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" class="state-alert" type="info" :title="`${config.title}加载中`" :closable="false" />
+      <el-alert v-if="referenceLoading" class="state-alert" type="info" title="业务候选加载中" :closable="false" />
     </template>
 
     <div v-if="isList" class="table-scroll">
@@ -1091,10 +1216,30 @@ onMounted(() => {
     </div>
 
     <div v-else-if="isForm" class="inventory-controlled-form">
+      <el-alert
+        v-if="readonlyFormReason"
+        class="state-alert"
+        type="warning"
+        :title="readonlyFormReason"
+        :closable="false"
+      />
+      <div v-if="readonlyFormReason" class="readonly-form-state">
+        <el-button v-if="record" type="primary" @click="routeToDetail(record)">返回详情</el-button>
+        <el-button @click="cancelForm">返回列表</el-button>
+      </div>
+      <template v-else>
       <el-form label-position="top">
         <div class="inventory-controlled-grid">
           <el-form-item label="业务日期">
-            <el-input v-model="form.businessDate" name="inventory-controlled-business-date" placeholder="YYYY-MM-DD" />
+            <el-date-picker
+              v-model="form.businessDate"
+              name="inventory-controlled-business-date"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="选择业务日期"
+            />
           </el-form-item>
           <el-form-item label="原因">
             <el-input v-model="form.reason" name="inventory-controlled-reason" placeholder="必填原因" />
@@ -1161,43 +1306,199 @@ onMounted(() => {
             <el-input v-model="form.quantity" name="inventory-controlled-quantity" placeholder="0.000000" />
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="来源仓库">
-            <el-input v-model="form.sourceWarehouseId" name="inventory-controlled-source-warehouse-id" placeholder="来源仓库标识" />
+            <el-select
+              v-model="form.sourceWarehouseId"
+              data-test="inventory-controlled-source-warehouse-id"
+              filterable
+              clearable
+              placeholder="请选择来源仓库"
+            >
+              <el-option
+                v-for="warehouse in warehouses"
+                :key="warehouse.id"
+                :label="warehouseOptionLabel(warehouse)"
+                :value="String(warehouse.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="目标仓库">
-            <el-input v-model="form.targetWarehouseId" name="inventory-controlled-target-warehouse-id" placeholder="目标仓库标识" />
+            <el-select
+              v-model="form.targetWarehouseId"
+              data-test="inventory-controlled-target-warehouse-id"
+              filterable
+              clearable
+              placeholder="请选择目标仓库"
+            >
+              <el-option
+                v-for="warehouse in warehouses"
+                :key="warehouse.id"
+                :label="warehouseOptionLabel(warehouse)"
+                :value="String(warehouse.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'stocktake'" label="仓库">
-            <el-input v-model="form.warehouseId" name="inventory-controlled-warehouse-id" placeholder="仓库标识" />
+            <el-select
+              v-model="form.warehouseId"
+              data-test="inventory-controlled-warehouse-id"
+              filterable
+              clearable
+              placeholder="请选择仓库"
+            >
+              <el-option
+                v-for="warehouse in warehouses"
+                :key="warehouse.id"
+                :label="warehouseOptionLabel(warehouse)"
+                :value="String(warehouse.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'valuationAdjustment'" label="项目">
-            <el-input v-model="form.projectId" name="inventory-controlled-project-id" placeholder="项目标识，公共库存留空" />
+            <el-select
+              v-model="form.projectId"
+              data-test="inventory-controlled-project-id"
+              filterable
+              clearable
+              placeholder="公共库存可留空"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="projectOptionLabel(project)"
+                :value="String(project.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'ownershipConversion'" label="来源项目">
-            <el-input v-model="form.sourceProjectId" name="inventory-controlled-source-project-id" placeholder="来源项目标识，公共库存留空" />
+            <el-select
+              v-model="form.sourceProjectId"
+              data-test="inventory-controlled-source-project-id"
+              filterable
+              clearable
+              placeholder="公共库存可留空"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="projectOptionLabel(project)"
+                :value="String(project.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'ownershipConversion'" label="目标项目">
-            <el-input v-model="form.targetProjectId" name="inventory-controlled-target-project-id" placeholder="目标项目标识，公共库存留空" />
+            <el-select
+              v-model="form.targetProjectId"
+              data-test="inventory-controlled-target-project-id"
+              filterable
+              clearable
+              placeholder="公共库存可留空"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="projectOptionLabel(project)"
+                :value="String(project.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item label="物料">
-            <el-input v-model="form.materialId" name="inventory-controlled-material-id" placeholder="物料标识" />
+            <el-select
+              v-model="form.materialId"
+              data-test="inventory-controlled-material-id"
+              filterable
+              clearable
+              placeholder="请选择物料"
+            >
+              <el-option
+                v-for="material in materials"
+                :key="material.id"
+                :label="materialOptionLabel(material)"
+                :value="String(material.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="单位">
-            <el-input v-model="form.unitId" name="inventory-controlled-unit-id" placeholder="单位标识" />
+            <el-select
+              v-model="form.unitId"
+              data-test="inventory-controlled-unit-id"
+              filterable
+              clearable
+              placeholder="请选择单位"
+            >
+              <el-option
+                v-for="unit in units"
+                :key="unit.id"
+                :label="unitOptionLabel(unit)"
+                :value="String(unit.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="批次">
-            <el-input v-model="form.batchId" name="inventory-controlled-batch-id" placeholder="批次标识，无批次留空" />
+            <el-select
+              v-model="form.batchId"
+              data-test="inventory-controlled-batch-id"
+              filterable
+              clearable
+              placeholder="无批次可留空"
+            >
+              <el-option
+                v-for="batch in batches"
+                :key="batch.id"
+                :label="batchOptionLabel(batch)"
+                :value="String(batch.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="序列号">
-            <el-input v-model="form.serialId" name="inventory-controlled-serial-id" placeholder="序列标识，无序列留空" />
+            <el-select
+              v-model="form.serialId"
+              data-test="inventory-controlled-serial-id"
+              filterable
+              clearable
+              placeholder="无序列可留空"
+            >
+              <el-option
+                v-for="serial in serials"
+                :key="serial.id"
+                :label="serialOptionLabel(serial)"
+                :value="String(serial.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="单价">
             <el-input v-model="form.unitCost" name="inventory-controlled-unit-cost" placeholder="0.000000" />
           </el-form-item>
           <el-form-item v-if="config.kind === 'warehouseTransfer' || config.kind === 'ownershipConversion'" label="来源成本层">
-            <el-input v-model="form.sourceCostLayerId" name="inventory-controlled-source-cost-layer-id" placeholder="项目库存必须明确来源成本层" />
+            <el-select
+              v-model="form.sourceCostLayerId"
+              data-test="inventory-controlled-source-cost-layer-id"
+              filterable
+              clearable
+              placeholder="项目库存必须明确来源成本层"
+            >
+              <el-option
+                v-for="layer in costLayers"
+                :key="layer.id"
+                :label="costLayerOptionLabel(layer)"
+                :value="String(layer.id)"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item v-if="config.kind === 'valuationAdjustment'" label="成本层">
-            <el-input v-model="form.costLayerId" name="inventory-controlled-cost-layer-id" placeholder="成本层标识" />
+            <el-select
+              v-model="form.costLayerId"
+              data-test="inventory-controlled-cost-layer-id"
+              filterable
+              clearable
+              placeholder="请选择成本层"
+            >
+              <el-option
+                v-for="layer in costLayers"
+                :key="layer.id"
+                :label="costLayerOptionLabel(layer)"
+                :value="String(layer.id)"
+              />
+            </el-select>
           </el-form-item>
         </div>
         <el-form-item label="备注">
@@ -1208,6 +1509,7 @@ onMounted(() => {
         <el-button @click="cancelForm">取消</el-button>
         <el-button type="primary" :loading="actionLoading" @click="saveForm">保存</el-button>
       </div>
+      </template>
     </div>
 
     <div v-else-if="record" class="inventory-controlled-detail">
@@ -1485,7 +1787,7 @@ onMounted(() => {
           class="stocktake-evidence-panel"
           object-type="INVENTORY_STOCKTAKE"
           :object-id="record.id"
-          title="项目盘盈证据附件"
+          :title="stocktakeEvidenceTitle()"
           :readonly="stocktakeAttachmentReadonly(record)"
         />
       </div>

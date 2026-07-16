@@ -7,15 +7,20 @@ import {
   type DocumentTaskRecord,
 } from '../../shared/api/documentPlatformApi'
 import { procurementApi, type ProcurementRequisitionSummaryRecord } from '../../shared/api/procurementApi'
+import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import { pageItems } from '../system/shared/pageHelpers'
 import {
   formatProcurementQuantity,
+  normalizeOptionalId,
   procurementErrorMessage,
   procurementOwnershipDisplay,
 } from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 import { useAuthStore } from '../../stores/authStore'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import BusinessReferenceSelect from '../system/shared/BusinessReferenceSelect.vue'
+import type { BusinessReferenceOption } from '../system/shared/businessReferenceSelectTypes'
 
 const route = useRoute()
 const router = useRouter()
@@ -29,7 +34,7 @@ const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
 const filters = reactive({
   keyword: '',
   procurementMode: undefined as 'PUBLIC' | 'PROJECT' | undefined,
-  projectId: undefined as string | number | undefined,
+  projectId: '' as string | number | '',
   status: undefined as ProcurementRequisitionSummaryRecord['status'] | undefined,
   approvalStatus: undefined as string | undefined,
   requiredDateFrom: '',
@@ -37,6 +42,7 @@ const filters = reactive({
   page: 1,
   pageSize: 10,
 })
+const total = ref(0)
 
 const canExport = computed(() => (
   authStore.hasPermission('procurement:requisition:view')
@@ -48,6 +54,20 @@ function allowed(record: ProcurementRequisitionSummaryRecord, action: string): b
   return (record.allowedActions ?? []).includes(action)
 }
 
+function projectOption(project: SalesProjectSummary): BusinessReferenceOption {
+  return { id: project.id, label: `${project.projectNo} ${project.name}` }
+}
+
+async function loadProjectOptions(keyword: string) {
+  const page = await salesProjectApi.projects.list({
+    keyword,
+    status: 'ACTIVE',
+    page: 1,
+    pageSize: 50,
+  })
+  return pageItems(page).map(projectOption)
+}
+
 async function loadRecords() {
   loading.value = true
   error.value = ''
@@ -55,7 +75,7 @@ async function loadRecords() {
     const page = await procurementApi.requisitions.list({
       keyword: filters.keyword,
       procurementMode: filters.procurementMode,
-      projectId: filters.projectId,
+      projectId: normalizeOptionalId(filters.projectId),
       status: filters.status,
       approvalStatus: filters.approvalStatus,
       requiredDateFrom: filters.requiredDateFrom,
@@ -64,6 +84,7 @@ async function loadRecords() {
       pageSize: filters.pageSize,
     })
     records.value = pageItems(page)
+    total.value = page.total
   } catch (caught) {
     records.value = []
     error.value = procurementErrorMessage(caught)
@@ -74,6 +95,35 @@ async function loadRecords() {
 
 function viewRecord(record: ProcurementRequisitionSummaryRecord) {
   void router.push({ name: 'procurement-requisition-detail', params: { id: String(record.id) } })
+}
+
+function searchRecords() {
+  filters.page = 1
+  void loadRecords()
+}
+
+function resetFilters() {
+  filters.keyword = ''
+  filters.procurementMode = undefined
+  filters.projectId = ''
+  filters.status = undefined
+  filters.approvalStatus = undefined
+  filters.requiredDateFrom = ''
+  filters.requiredDateTo = ''
+  filters.page = 1
+  filters.pageSize = 10
+  void loadRecords()
+}
+
+function changePage(page: number) {
+  filters.page = page
+  void loadRecords()
+}
+
+function changePageSize(pageSize: number) {
+  filters.pageSize = pageSize
+  filters.page = 1
+  void loadRecords()
 }
 
 function createInquiryFromRecord(record: ProcurementRequisitionSummaryRecord) {
@@ -121,7 +171,7 @@ async function exportRequisitions() {
     latestDocumentTask.value = await documentPlatformApi.exports.createProcurementRequisitions({
       keyword: filters.keyword,
       procurementMode: filters.procurementMode,
-      projectId: filters.projectId,
+      projectId: normalizeOptionalId(filters.projectId),
       status: filters.status,
       approvalStatus: filters.approvalStatus,
       requiredDateFrom: filters.requiredDateFrom,
@@ -141,139 +191,144 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="procurement-page procurement-list-page">
-    <header class="page-header">
-      <div>
-        <h1>采购请购</h1>
-        <p>项目专采与公共采购需求入口，审批状态和业务状态分开展示。</p>
-      </div>
+  <MasterDataTableView title="采购请购" description="项目专采与公共采购需求入口，审批状态和业务状态分开展示。">
+    <template #actions>
       <el-button data-test="create-requisition" type="primary" @click="router.push({ name: 'procurement-requisition-create' })">
         新建请购
       </el-button>
       <el-button v-if="canExport" data-test="export-requisitions" :loading="actionLoading" @click="exportRequisitions">
         当前筛选导出
       </el-button>
-    </header>
+    </template>
 
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
-    <ProcurementDocumentTaskPanel :task="latestDocumentTask" />
-    <el-empty v-if="!loading && records.length === 0" description="暂无采购请购" />
+    <template #filters>
+      <el-form class="query-form" inline>
+        <el-form-item label="关键词">
+          <el-input v-model="filters.keyword" clearable placeholder="请购号、标题、物料" />
+        </el-form-item>
+        <el-form-item label="采购模式">
+          <el-select v-model="filters.procurementMode" clearable placeholder="全部模式">
+            <el-option label="公共采购" value="PUBLIC" />
+            <el-option label="项目专采" value="PROJECT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <BusinessReferenceSelect
+            v-model="filters.projectId"
+            data-test="requisition-project-filter"
+            placeholder="项目编号或名称"
+            :load-options="loadProjectOptions"
+          />
+        </el-form-item>
+        <el-form-item label="业务状态">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
+            <el-option label="草稿" value="DRAFT" />
+            <el-option label="审批中" value="SUBMITTED" />
+            <el-option label="已批准" value="APPROVED" />
+            <el-option label="已关闭" value="CLOSED" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="审批状态">
+          <el-select v-model="filters.approvalStatus" clearable placeholder="全部审批">
+            <el-option label="未提交" value="NOT_SUBMITTED" />
+            <el-option label="审批中" value="SUBMITTED" />
+            <el-option label="审批通过" value="APPROVED" />
+            <el-option label="审批驳回" value="REJECTED" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="需求起始">
+          <el-date-picker v-model="filters.requiredDateFrom" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="起始日期" />
+        </el-form-item>
+        <el-form-item label="需求截止">
+          <el-date-picker v-model="filters.requiredDateTo" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="截止日期" />
+        </el-form-item>
+        <el-form-item label="操作">
+          <el-button data-test="search-requisitions" type="primary" @click="searchRecords">查询</el-button>
+          <el-button data-test="reset-requisitions" @click="resetFilters">重置</el-button>
+        </el-form-item>
+      </el-form>
+    </template>
 
-    <div class="procurement-table" v-loading="loading">
-      <article v-for="record in records" :key="record.id" class="procurement-row">
-        <div class="decision-column">
-          <strong>{{ record.requisitionNo }}</strong>
-          <span>{{ procurementOwnershipDisplay(record) }}</span>
-          <span>{{ record.materialSummary || '物料摘要未返回' }}</span>
-        </div>
-        <div class="state-column">
-          <span>业务状态：{{ record.statusName || record.status }}</span>
-          <span>审批状态：{{ record.approvalStatusName || record.approvalStatus || '未提交' }}</span>
-          <span>需求日期：{{ record.requiredDate }}</span>
-        </div>
-        <div class="progress-column">
-          <span>
-            计划/已转/剩余：{{ formatProcurementQuantity(record.totalQuantity) }}/{{
-              formatProcurementQuantity(record.orderedQuantity)
-            }}/{{ formatProcurementQuantity(record.remainingQuantity) }}
-          </span>
-          <span v-if="record.closeReason">结案原因：{{ record.closeReason }}</span>
-        </div>
-        <div class="action-column">
-          <el-button text type="primary" @click="viewRecord(record)">详情</el-button>
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+      <ProcurementDocumentTaskPanel :task="latestDocumentTask" />
+    </template>
+
+    <div class="table-scroll">
+      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无采购请购'" stripe v-loading="loading">
+        <el-table-column prop="requisitionNo" label="请购号" min-width="150" show-overflow-tooltip />
+        <el-table-column label="采购模式/项目" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ procurementOwnershipDisplay(row) }}</template>
+        </el-table-column>
+        <el-table-column label="物料摘要" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.materialSummary || '物料摘要未返回' }}</template>
+        </el-table-column>
+        <el-table-column label="业务/审批状态" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div>业务状态：{{ row.statusName || row.status }}</div>
+            <div>审批状态：{{ row.approvalStatusName || row.approvalStatus || '未提交' }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="requiredDate" label="需求日期" min-width="110" />
+        <el-table-column label="进度" min-width="230" show-overflow-tooltip>
+          <template #default="{ row }">
+            计划/已转/剩余：{{ formatProcurementQuantity(row.totalQuantity) }}/{{
+              formatProcurementQuantity(row.orderedQuantity)
+            }}/{{ formatProcurementQuantity(row.remainingQuantity) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="结案原因" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.closeReason || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="300">
+          <template #default="{ row }">
+            <el-button text type="primary" @click="viewRecord(row)">详情</el-button>
           <el-button
-            v-if="allowed(record, 'CREATE_INQUIRY')"
+            v-if="allowed(row, 'CREATE_INQUIRY')"
             data-test="create-inquiry-from-requisition-list"
             text
             type="primary"
-            @click="createInquiryFromRecord(record)"
+            @click="createInquiryFromRecord(row)"
           >
             创建询价
           </el-button>
           <el-button
-            v-if="allowed(record, 'CREATE_ORDER')"
+            v-if="allowed(row, 'CREATE_ORDER')"
             data-test="create-order-from-requisition-list"
             text
             type="primary"
-            @click="createOrderFromRecord(record)"
+            @click="createOrderFromRecord(row)"
           >
             转采购订单
           </el-button>
           <el-button
-            v-if="allowed(record, 'CLOSE')"
+            v-if="allowed(row, 'CLOSE')"
             data-test="close-requisition-list"
             text
             type="warning"
             :disabled="actionLoading"
-            @click="closeRecord(record)"
+            @click="closeRecord(row)"
           >
             结案
           </el-button>
-        </div>
-      </article>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
-  </section>
+    <el-pagination
+      class="table-pagination"
+      background
+      layout="total, sizes, prev, pager, next"
+      :current-page="filters.page"
+      :page-size="filters.pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      :total="total"
+      @current-change="changePage"
+      @size-change="changePageSize"
+    />
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-list-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.page-header {
-  align-items: flex-start;
-  display: flex;
-  gap: 16px;
-  justify-content: space-between;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
-}
-
-.procurement-table {
-  display: grid;
-  gap: 10px;
-}
-
-.procurement-row {
-  align-items: start;
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(260px, 1.4fr) minmax(180px, 1fr) minmax(240px, 1fr) minmax(180px, auto);
-  padding: 12px;
-}
-
-.decision-column,
-.state-column,
-.progress-column,
-.action-column {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.action-column {
-  align-items: flex-end;
-  position: sticky;
-  right: 0;
-}
-
-@media (max-width: 1280px) {
-  .procurement-row {
-    grid-template-columns: minmax(240px, 1fr) minmax(180px, 1fr) minmax(220px, 1fr) minmax(160px, auto);
-  }
-}
 </style>

@@ -90,6 +90,7 @@ const missingDeliveryPlansForNewOrder = computed(() => (
 const canSubmit = computed(() => !formSubmitting.value && canEditForm.value && !missingDeliveryPlansForNewOrder.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑销售出库' : '新建销售出库'))
 const orderSummary = computed(() => editingRecord.value?.orderSummary ?? sourceOrder.value)
+const terminalEditBlocked = computed(() => isEdit.value && isPostedRecord.value)
 
 async function loadReferences() {
   referenceLoading.value = true
@@ -623,7 +624,7 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
   <MasterDataTableView :title="pageTitle" description="维护销售出库草稿，过账前可调整出库仓库、业务日期和明细数量。">
     <template #alerts>
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
-      <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
+      <el-alert v-if="formError && !terminalEditBlocked" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-button
         v-if="missingDeliveryPlansForNewOrder"
         data-test="return-sales-order-detail"
@@ -634,13 +635,6 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
         返回订单详情初始化
       </el-button>
       <el-alert
-        v-if="editingRecord && isPostedRecord"
-        class="state-alert"
-        type="warning"
-        title="已过账销售出库不可编辑"
-        :closable="false"
-      />
-      <el-alert
         v-if="loading || referenceLoading"
         class="state-alert"
         type="info"
@@ -649,6 +643,17 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
       />
     </template>
 
+    <section v-if="terminalEditBlocked" class="section-block terminal-edit-block">
+      <h2>已过账销售出库不可编辑</h2>
+      <p>该销售出库已完成过账，编辑页不再提供表单、明细调整、追踪分配或保存动作。请返回详情查看过账结果。</p>
+      <div class="terminal-edit-actions">
+        <el-button data-test="back-sales-shipment-detail" type="primary" @click="cancel">
+          返回销售出库详情
+        </el-button>
+      </div>
+    </section>
+
+    <template v-else>
     <div v-if="orderSummary" class="source-summary">
       <div>
         <span>来源订单</span>
@@ -742,6 +747,7 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
         保存销售出库
       </el-button>
     </div>
+    </template>
   </MasterDataTableView>
 </template>
 
@@ -818,6 +824,20 @@ watch(lines, syncWarehouseWithSelectedReservationLines, { deep: true })
 
 .sales-shipment-line-form-item :deep(.sales-shipment-line-editor) {
   width: 100%;
+}
+
+.terminal-edit-block {
+  margin: 14px;
+}
+
+.terminal-edit-block p {
+  color: var(--qherp-muted);
+  margin: 0 0 12px;
+}
+
+.terminal-edit-actions {
+  display: flex;
+  gap: 8px;
 }
 
 @media (max-width: 900px) {

@@ -8,6 +8,9 @@ import {
   type SalesQuoteDetailRecord,
   type SalesQuoteLinePayload,
 } from '../../../shared/api/salesFulfillmentApi'
+import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
+import BusinessReferenceSelect from '../../system/shared/BusinessReferenceSelect.vue'
+import type { BusinessReferenceOption } from '../../system/shared/businessReferenceSelectTypes'
 import { pageItems } from '../../system/shared/pageHelpers'
 import {
   formatSalesDecimal,
@@ -27,10 +30,11 @@ const materials = ref<MaterialRecord[]>([])
 const editingRecord = ref<SalesQuoteDetailRecord | null>(null)
 const loading = ref(false)
 const error = ref('')
+const editLoadFailed = ref(false)
 const submitting = ref(false)
 const form = reactive({
-  customerId: '',
-  projectId: '',
+  customerId: '' as string | number | '',
+  projectId: '' as string | number | '',
   quoteDate: '',
   validUntil: '',
   deliveryCommitment: '',
@@ -41,7 +45,7 @@ const form = reactive({
   remark: '',
 })
 const line = reactive({
-  materialId: '',
+  materialId: '' as string | number | '',
   quantity: '',
   untaxedUnitPrice: '100.000000',
   taxIncludedUnitPrice: '',
@@ -56,46 +60,103 @@ const line = reactive({
 const isEdit = computed(() => Boolean(route.params.id))
 const pageTitle = computed(() => (isEdit.value ? '编辑销售报价' : '新建销售报价'))
 const decimalScale = 1_000_000n
+const quoteLines = computed(() => [line])
+
+function mergeById<T extends { id: unknown }>(current: T[], incoming: T[]) {
+  const merged = new Map(current.map((item) => [String(item.id), item]))
+  incoming.forEach((item) => merged.set(String(item.id), item))
+  return Array.from(merged.values())
+}
+
+function customerOption(customer: PartnerRecord): BusinessReferenceOption {
+  return { id: customer.id, label: `${customer.code} ${customer.name}` }
+}
+
+function projectOption(project: SalesProjectSummary): BusinessReferenceOption {
+  return { id: project.id, label: `${project.projectNo} ${project.name}` }
+}
+
+function materialOption(material: MaterialRecord): BusinessReferenceOption {
+  return { id: material.id, label: `${material.code} ${material.name} / ${material.unitName}` }
+}
+
+async function loadCustomerOptions(keyword: string) {
+  const page = await masterDataApi.customers.list({
+    keyword,
+    status: 'ENABLED',
+    page: 1,
+    pageSize: 50,
+  })
+  const items = pageItems(page)
+  customers.value = mergeById(customers.value, items)
+  return items.map(customerOption)
+}
+
+async function loadProjectOptions(keyword: string) {
+  const page = await salesProjectApi.projects.list({
+    keyword,
+    status: 'ACTIVE',
+    page: 1,
+    pageSize: 50,
+  })
+  const items = pageItems(page)
+  projects.value = mergeById(projects.value, items)
+  return items.map(projectOption)
+}
+
+async function loadMaterialOptions(keyword: string) {
+  const page = await masterDataApi.materials.list({
+    keyword,
+    status: 'ENABLED',
+    page: 1,
+    pageSize: 50,
+  })
+  const items = pageItems(page)
+  materials.value = mergeById(materials.value, items)
+  return items.map(materialOption)
+}
 
 async function loadReferences() {
-  const [customerPage, projectPage, materialPage] = await Promise.all([
-    masterDataApi.customers.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
-    salesProjectApi.projects.list({ keyword: '', status: 'ACTIVE', page: 1, pageSize: 200 }),
-    masterDataApi.materials.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+  await Promise.all([
+    loadCustomerOptions(''),
+    loadProjectOptions(''),
+    loadMaterialOptions(''),
   ])
-  customers.value = pageItems(customerPage)
-  projects.value = pageItems(projectPage)
-  materials.value = pageItems(materialPage)
 }
 
 async function loadRecord() {
   if (!route.params.id) {
     return
   }
-  const detail = await salesFulfillmentApi.quotes.get(normalizeSalesId(route.params.id))
-  editingRecord.value = detail
-  form.customerId = String(detail.customerId)
-  form.projectId = detail.projectId ? String(detail.projectId) : ''
-  form.quoteDate = detail.quoteDate
-  form.validUntil = detail.validUntil
-  form.deliveryCommitment = detail.deliveryCommitment ?? ''
-  form.defaultTaxRate = detail.defaultTaxRate
-  form.settlementMethod = detail.settlementMethod ?? ''
-  form.paymentTermDays = detail.paymentTermDays === null || detail.paymentTermDays === undefined ? '' : String(detail.paymentTermDays)
-  form.paymentTerms = detail.paymentTerms ?? ''
-  form.remark = detail.remark ?? ''
-  const firstLine = detail.lines[0]
-  if (firstLine) {
-    line.materialId = String(firstLine.materialId)
-    line.quantity = firstLine.quantity
-    line.untaxedUnitPrice = quoteLineUntaxedUnitPrice(firstLine) ?? ''
-    line.taxIncludedUnitPrice = firstLine.taxIncludedUnitPrice
-    line.taxRate = firstLine.taxRate
-    line.untaxedAmount = quoteLineUntaxedAmount(firstLine) ?? ''
-    line.taxAmount = firstLine.taxAmount
-    line.taxIncludedAmount = firstLine.taxIncludedAmount
-    line.promisedDate = quoteLineRequiredDate(firstLine) ?? ''
-    line.remark = firstLine.remark ?? ''
+  try {
+    const detail = await salesFulfillmentApi.quotes.get(normalizeSalesId(route.params.id))
+    editingRecord.value = detail
+    form.customerId = String(detail.customerId)
+    form.projectId = detail.projectId ? String(detail.projectId) : ''
+    form.quoteDate = detail.quoteDate
+    form.validUntil = detail.validUntil
+    form.deliveryCommitment = detail.deliveryCommitment ?? ''
+    form.defaultTaxRate = detail.defaultTaxRate
+    form.settlementMethod = detail.settlementMethod ?? ''
+    form.paymentTermDays = detail.paymentTermDays === null || detail.paymentTermDays === undefined ? '' : String(detail.paymentTermDays)
+    form.paymentTerms = detail.paymentTerms ?? ''
+    form.remark = detail.remark ?? ''
+    const firstLine = detail.lines[0]
+    if (firstLine) {
+      line.materialId = String(firstLine.materialId)
+      line.quantity = firstLine.quantity
+      line.untaxedUnitPrice = quoteLineUntaxedUnitPrice(firstLine) ?? ''
+      line.taxIncludedUnitPrice = firstLine.taxIncludedUnitPrice
+      line.taxRate = firstLine.taxRate
+      line.untaxedAmount = quoteLineUntaxedAmount(firstLine) ?? ''
+      line.taxAmount = firstLine.taxAmount
+      line.taxIncludedAmount = firstLine.taxIncludedAmount
+      line.promisedDate = quoteLineRequiredDate(firstLine) ?? ''
+      line.remark = firstLine.remark ?? ''
+    }
+  } catch (caught) {
+    editLoadFailed.value = true
+    error.value = salesFulfillmentErrorMessage(caught)
   }
 }
 
@@ -218,109 +279,192 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="sales-quote-form">
-    <header class="page-header">
-      <div>
-        <h1>{{ pageTitle }}</h1>
-        <p>客户、项目、税价和报价行均按冻结 DTO 提交，金额由后端形成可信结果。</p>
-      </div>
-    </header>
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="loading" class="page-alert" type="info" title="销售报价表单加载中" :closable="false" />
+  <MasterDataTableView
+    :title="pageTitle"
+    description="客户、项目、税价和报价行均按冻结 DTO 提交，金额由后端形成可信结果。"
+  >
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="销售报价表单加载中" :closable="false" />
+    </template>
 
-    <div class="form-grid">
-      <label>
-        客户
-        <select v-model="form.customerId" data-test="quote-customer-select">
-          <option value="">请选择客户</option>
-          <option v-for="customer in customers" :key="customer.id" :value="String(customer.id)">
-            {{ customer.code }} {{ customer.name }}
-          </option>
-        </select>
-      </label>
-      <label>
-        项目
-        <select v-model="form.projectId" data-test="quote-project-select">
-          <option value="">普通报价可留空</option>
-          <option v-for="project in projects" :key="project.id" :value="String(project.id)">
-            {{ project.projectNo }} {{ project.name }}
-          </option>
-        </select>
-      </label>
-      <label>报价日期<input v-model="form.quoteDate" name="quote-date" /></label>
-      <label>有效期<input v-model="form.validUntil" name="quote-valid-until" /></label>
-      <label>默认税率<input v-model="form.defaultTaxRate" name="quote-default-tax-rate" /></label>
-      <label>账期<input v-model="form.paymentTermDays" name="quote-payment-days" /></label>
-    </div>
-
-    <section class="line-editor">
-      <h2>报价明细</h2>
-      <div class="form-grid">
-        <label>
-          物料
-          <select v-model="line.materialId" data-test="quote-line-material-select">
-            <option value="">请选择物料</option>
-            <option v-for="material in materials" :key="material.id" :value="String(material.id)">
-              {{ material.code }} {{ material.name }} / {{ material.unitName }}
-            </option>
-          </select>
-        </label>
-        <label>数量<input v-model="line.quantity" name="quote-line-quantity" /></label>
-        <label>未税单价<input v-model="line.untaxedUnitPrice" name="quote-line-untaxed-price" /></label>
-        <label>含税单价<input v-model="line.taxIncludedUnitPrice" name="quote-line-tax-included-price" /></label>
-        <label>税率<input v-model="line.taxRate" name="quote-line-tax-rate" /></label>
-        <label>承诺日期<input v-model="line.promisedDate" name="quote-line-promised-date" /></label>
-      </div>
-      <p>当前行含税单价 {{ formatSalesDecimal(line.taxIncludedUnitPrice) }} CNY，税率 {{ formatSalesDecimal(line.taxRate) }}</p>
+    <section v-if="editLoadFailed" class="section-block">
+      <h2>无法编辑销售报价</h2>
+      <p>{{ error || '销售报价不存在或无权编辑' }}</p>
+      <el-button data-test="back-sales-quotes" type="primary" @click="router.push({ name: 'sales-quotes' })">
+        返回销售报价列表
+      </el-button>
     </section>
+
+    <template v-else>
+    <el-form label-position="top" class="sales-quote-form">
+      <section class="section-block">
+        <h2>报价主体</h2>
+        <div class="sales-quote-form-grid">
+          <el-form-item label="客户">
+            <BusinessReferenceSelect
+              v-model="form.customerId"
+              placeholder="搜索客户编码或名称"
+              :load-options="loadCustomerOptions"
+              data-test="quote-customer-select"
+            />
+          </el-form-item>
+          <el-form-item label="项目">
+            <BusinessReferenceSelect
+              v-model="form.projectId"
+              placeholder="普通报价可留空，项目报价搜索项目编号或名称"
+              :load-options="loadProjectOptions"
+              data-test="quote-project-select"
+            />
+          </el-form-item>
+          <el-form-item label="报价日期">
+            <el-date-picker
+              v-model="form.quoteDate"
+              name="quote-date"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="报价日期"
+            />
+          </el-form-item>
+          <el-form-item label="有效期">
+            <el-date-picker
+              v-model="form.validUntil"
+              name="quote-valid-until"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="有效期"
+            />
+          </el-form-item>
+          <el-form-item label="默认税率">
+            <el-input
+              v-model="form.defaultTaxRate"
+              name="quote-default-tax-rate"
+              inputmode="decimal"
+              placeholder="0.130000"
+            />
+          </el-form-item>
+          <el-form-item label="账期">
+            <el-input
+              v-model="form.paymentTermDays"
+              name="quote-payment-days"
+              inputmode="numeric"
+              placeholder="可选，单位：天"
+            />
+          </el-form-item>
+        </div>
+      </section>
+
+      <section class="section-block line-editor">
+        <h2>报价明细</h2>
+        <div class="sales-quote-line-editor">
+          <div class="table-scroll">
+            <el-table :data="quoteLines" empty-text="暂无报价明细" stripe>
+              <el-table-column label="行号" width="72">
+                <template #default>
+                  1
+                </template>
+              </el-table-column>
+              <el-table-column label="物料" min-width="240">
+                <template #default>
+                  <BusinessReferenceSelect
+                    v-model="line.materialId"
+                    placeholder="搜索物料编码或名称"
+                    :load-options="loadMaterialOptions"
+                    data-test="quote-line-material-select"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="数量" width="150" align="right">
+                <template #default>
+                  <el-input
+                    v-model="line.quantity"
+                    name="quote-line-quantity"
+                    inputmode="decimal"
+                    placeholder="> 0"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="未税单价" width="150" align="right">
+                <template #default>
+                  <el-input
+                    v-model="line.untaxedUnitPrice"
+                    name="quote-line-untaxed-price"
+                    inputmode="decimal"
+                    placeholder=">= 0"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="含税单价" width="150" align="right">
+                <template #default>
+                  <el-input
+                    v-model="line.taxIncludedUnitPrice"
+                    name="quote-line-tax-included-price"
+                    inputmode="decimal"
+                    placeholder=">= 0"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="税率" width="120" align="right">
+                <template #default>
+                  <el-input
+                    v-model="line.taxRate"
+                    name="quote-line-tax-rate"
+                    inputmode="decimal"
+                    placeholder="0.13"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="承诺日期" width="160">
+                <template #default>
+                  <el-date-picker
+                    v-model="line.promisedDate"
+                    name="quote-line-promised-date"
+                    type="date"
+                    format="YYYY-MM-DD"
+                    value-format="YYYY-MM-DD"
+                    value-on-clear=""
+                    placeholder="承诺日期"
+                  />
+                </template>
+              </el-table-column>
+              <el-table-column label="金额摘要" min-width="190">
+                <template #default>
+                  <span class="quote-line-summary">
+                    含税 {{ formatSalesDecimal(line.taxIncludedUnitPrice) }} CNY · 税率 {{ formatSalesDecimal(line.taxRate) }}
+                  </span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </div>
+      </section>
+    </el-form>
 
     <div class="form-footer">
       <el-button @click="router.push({ name: 'sales-quotes' })">取消</el-button>
       <el-button data-test="save-sales-quote" type="primary" :loading="submitting" @click="saveQuote">保存</el-button>
     </div>
-  </section>
+    </template>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
 .sales-quote-form {
+  padding: 14px;
+}
+
+.sales-quote-form-grid {
   display: grid;
-  gap: 14px;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
-}
-
-.form-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-label {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-input,
-select {
-  border: 1px solid #dcdfe6;
-  border-radius: 4px;
-  min-height: 32px;
-  padding: 0 10px;
+  gap: 0 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .line-editor {
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  padding: 12px;
+  margin-top: 12px;
 }
 
 .line-editor h2 {
@@ -328,9 +472,40 @@ select {
   margin: 0 0 12px;
 }
 
+.sales-quote-line-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quote-line-summary {
+  color: var(--qherp-muted);
+  font-size: 13px;
+  line-height: 32px;
+}
+
+.sales-quote-form :deep(.el-select),
+.sales-quote-form :deep(.el-input),
+.sales-quote-form :deep(.el-date-editor.el-input) {
+  width: 100%;
+}
+
 .form-footer {
   display: flex;
   gap: 8px;
   justify-content: flex-end;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--qherp-border);
+}
+
+@media (max-width: 760px) {
+  .sales-quote-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .form-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
 }
 </style>

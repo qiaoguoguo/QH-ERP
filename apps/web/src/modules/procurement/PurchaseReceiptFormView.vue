@@ -67,6 +67,7 @@ const canEditForm = computed(() => (
 const canSubmit = computed(() => !formSubmitting.value && canEditForm.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑采购入库' : '新建采购入库'))
 const orderSummary = computed(() => editingRecord.value?.orderSummary ?? sourceOrder.value)
+const terminalEditBlocked = computed(() => isEdit.value && isPostedRecord.value)
 
 async function loadReferences() {
   referenceLoading.value = true
@@ -405,14 +406,7 @@ onMounted(async () => {
   <MasterDataTableView :title="pageTitle" description="维护采购入库草稿，过账前可调整入库仓库、业务日期和明细数量。">
     <template #alerts>
       <el-alert v-if="referenceError" class="state-alert" type="error" :title="referenceError" :closable="false" />
-      <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
-      <el-alert
-        v-if="editingRecord && isPostedRecord"
-        class="state-alert"
-        type="warning"
-        title="已过账采购入库不可编辑"
-        :closable="false"
-      />
+      <el-alert v-if="formError && !terminalEditBlocked" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-alert
         v-if="loading || referenceLoading"
         class="state-alert"
@@ -422,6 +416,17 @@ onMounted(async () => {
       />
     </template>
 
+    <section v-if="terminalEditBlocked" class="section-block terminal-edit-block">
+      <h2>已过账采购入库不可编辑</h2>
+      <p>该采购入库已完成过账，编辑页不再提供表单、明细调整或保存动作。请返回详情查看过账结果。</p>
+      <div class="terminal-edit-actions">
+        <el-button data-test="back-purchase-receipt-detail" type="primary" @click="cancel">
+          返回采购入库详情
+        </el-button>
+      </div>
+    </section>
+
+    <template v-else>
     <div v-if="orderSummary" class="source-summary">
       <div>
         <span>来源订单</span>
@@ -498,6 +503,7 @@ onMounted(async () => {
         保存采购入库
       </el-button>
     </div>
+    </template>
   </MasterDataTableView>
 </template>
 
@@ -554,6 +560,20 @@ onMounted(async () => {
   gap: 8px;
   padding: 12px 14px 14px;
   border-top: 1px solid var(--qherp-border);
+}
+
+.terminal-edit-block {
+  margin: 14px;
+}
+
+.terminal-edit-block p {
+  color: var(--qherp-muted);
+  margin: 0 0 12px;
+}
+
+.terminal-edit-actions {
+  display: flex;
+  gap: 8px;
 }
 
 @media (max-width: 900px) {

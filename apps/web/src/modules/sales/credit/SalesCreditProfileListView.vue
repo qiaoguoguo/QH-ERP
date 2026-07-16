@@ -2,11 +2,13 @@
 import { onMounted, reactive, ref } from 'vue'
 import { salesFulfillmentApi, type SalesCreditProfileRecord } from '../../../shared/api/salesFulfillmentApi'
 import { useAuthStore } from '../../../stores/authStore'
-import { pageItems } from '../../system/shared/pageHelpers'
+import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
+import { pageItems, pageTotal } from '../../system/shared/pageHelpers'
 import { formatSalesDecimal, normalizeSalesId, salesFulfillmentErrorMessage } from '../salesFulfillmentPageHelpers'
 
 const authStore = useAuthStore()
 const records = ref<SalesCreditProfileRecord[]>([])
+const total = ref(0)
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
@@ -48,6 +50,7 @@ async function loadRecords() {
   try {
     if (!canViewCredit()) {
       records.value = []
+      total.value = 0
       error.value = '无信用档案查看权限'
       return
     }
@@ -57,13 +60,37 @@ async function loadRecords() {
       pageSize: filters.pageSize,
     })
     records.value = pageItems(page)
+    total.value = pageTotal(page)
     records.value.forEach(ensureDraft)
   } catch (caught) {
     records.value = []
+    total.value = 0
     error.value = salesFulfillmentErrorMessage(caught)
   } finally {
     loading.value = false
   }
+}
+
+async function searchRecords() {
+  filters.page = 1
+  await loadRecords()
+}
+
+async function resetFilters() {
+  filters.keyword = ''
+  filters.page = 1
+  await loadRecords()
+}
+
+async function changePage(page: number) {
+  filters.page = page
+  await loadRecords()
+}
+
+async function changePageSize(pageSize: number) {
+  filters.pageSize = pageSize
+  filters.page = 1
+  await loadRecords()
 }
 
 async function saveRecord(record: SalesCreditProfileRecord) {
@@ -96,96 +123,92 @@ onMounted(loadRecords)
 </script>
 
 <template>
-  <section class="sales-list-page">
-    <header class="page-header">
-      <div>
-        <h1>信用档案</h1>
-        <p>商业信用额度、三段占用、逾期风险和权限受限状态。</p>
-      </div>
-    </header>
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+  <MasterDataTableView
+    title="信用档案"
+    description="商业信用额度、三段占用、逾期风险和权限受限状态。"
+  >
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+    </template>
 
-    <el-empty v-if="!loading && records.length === 0" description="暂无信用档案" />
-    <div class="sales-record-grid" v-loading="loading">
-      <article v-for="record in records" :key="record.customerId" class="sales-record-row">
-        <div class="decision-column">
-          <strong>{{ record.customerCode }} {{ record.customerName }}</strong>
-          <span v-if="record.creditRestricted">信用信息受限</span>
-          <span v-else>商业信用额度 {{ formatSalesDecimal(record.creditLimit) }} CNY</span>
-        </div>
-        <div class="state-column">
-          <template v-if="!record.creditRestricted">
-            <span>订单承诺 {{ formatSalesDecimal(record.exposure?.orderCommitmentAmount) }}</span>
-            <span>待建应收出库 {{ formatSalesDecimal(record.exposure?.unsettledShipmentAmount) }}</span>
-            <span>基础应收未收 {{ formatSalesDecimal(record.exposure?.receivableOutstandingAmount) }}</span>
-            <span>可用额度 {{ formatSalesDecimal(record.exposure?.availableCredit) }}</span>
+    <template #filters>
+    <el-form class="query-form" label-position="top">
+      <el-form-item label="关键词">
+        <el-input v-model="filters.keyword" placeholder="客户编码或名称" clearable />
+      </el-form-item>
+      <el-form-item class="query-actions" label="操作">
+        <el-button data-test="search-sales-credit-profiles" type="primary" @click="searchRecords">查询</el-button>
+        <el-button @click="resetFilters">重置</el-button>
+      </el-form-item>
+    </el-form>
+    </template>
+
+    <div class="table-scroll">
+      <el-table v-loading="loading" :data="records" row-key="customerId" :empty-text="loading ? '加载中' : '暂无信用档案'">
+        <el-table-column label="客户与额度" min-width="240">
+          <template #default="{ row }">
+            <strong>{{ row.customerCode }} {{ row.customerName }}</strong>
+            <span v-if="row.creditRestricted">信用信息受限</span>
+            <span v-else>商业信用额度 {{ formatSalesDecimal(row.creditLimit) }} CNY</span>
           </template>
-          <span v-else>额度、占用、逾期和例外原因已脱敏</span>
-        </div>
-        <div class="edit-column">
-          <template v-if="!record.creditRestricted">
-            <input
-              v-model="ensureDraft(record).creditLimit"
-              :data-test="`credit-limit-${record.customerId}`"
-            />
-            <span>冻结：{{ ensureDraft(record).frozen ? '是' : '否' }} / 逾期阻断：{{ ensureDraft(record).blockOverdue ? '是' : '否' }}</span>
+        </el-table-column>
+        <el-table-column label="信用占用" min-width="280">
+          <template #default="{ row }">
+            <template v-if="!row.creditRestricted">
+              <span>订单承诺 {{ formatSalesDecimal(row.exposure?.orderCommitmentAmount) }}</span>
+              <span>待建应收出库 {{ formatSalesDecimal(row.exposure?.unsettledShipmentAmount) }}</span>
+              <span>基础应收未收 {{ formatSalesDecimal(row.exposure?.receivableOutstandingAmount) }}</span>
+              <span>可用额度 {{ formatSalesDecimal(row.exposure?.availableCredit) }}</span>
+            </template>
+            <span v-else>额度、占用、逾期和例外原因已脱敏</span>
           </template>
-        </div>
-        <div class="action-column">
-          <el-button
-            v-if="canManageCredit(record)"
-            :data-test="`save-credit-profile-${record.customerId}`"
-            text
-            type="primary"
-            :disabled="actionLoading"
-            @click="saveRecord(record)"
-          >
-            保存
-          </el-button>
-          <span v-if="record.actionDisabledReason">{{ record.actionDisabledReason }}</span>
-        </div>
-      </article>
+        </el-table-column>
+        <el-table-column label="维护草稿" min-width="260">
+          <template #default="{ row }">
+            <template v-if="!row.creditRestricted">
+              <input
+                v-model="ensureDraft(row).creditLimit"
+                :data-test="`credit-limit-${row.customerId}`"
+              />
+              <span>冻结：{{ ensureDraft(row).frozen ? '是' : '否' }} / 逾期阻断：{{ ensureDraft(row).blockOverdue ? '是' : '否' }}</span>
+            </template>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" min-width="150" fixed="right">
+          <template #default="{ row }">
+            <div class="row-actions">
+              <el-button
+                v-if="canManageCredit(row)"
+                :data-test="`save-credit-profile-${row.customerId}`"
+                text
+                type="primary"
+                :disabled="actionLoading"
+                @click="saveRecord(row)"
+              >
+                保存
+              </el-button>
+              <span v-if="row.actionDisabledReason">{{ row.actionDisabledReason }}</span>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
     </div>
-  </section>
+
+    <el-pagination
+      class="table-pagination"
+      layout="total, sizes, prev, pager, next"
+      :total="total"
+      :current-page="filters.page"
+      :page-size="filters.pageSize"
+      :page-sizes="[10, 20, 50, 100]"
+      @current-change="changePage"
+      @size-change="changePageSize"
+    />
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.sales-list-page,
-.sales-record-grid {
-  display: grid;
-  gap: 12px;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
-}
-
-.sales-record-row {
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  display: grid;
-  gap: 12px;
-  grid-template-columns: minmax(220px, 1fr) minmax(250px, 1.2fr) minmax(210px, 1fr) minmax(120px, auto);
-  padding: 12px;
-}
-
-.decision-column,
-.state-column,
-.edit-column,
-.action-column {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
 input {
   border: 1px solid #dcdfe6;
   border-radius: 4px;
@@ -193,9 +216,13 @@ input {
   padding: 0 8px;
 }
 
-.action-column {
-  align-items: flex-end;
-  position: sticky;
-  right: 0;
+.table-scroll span {
+  display: block;
+}
+
+.row-actions {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
 }
 </style>

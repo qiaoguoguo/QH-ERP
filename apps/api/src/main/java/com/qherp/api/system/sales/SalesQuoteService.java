@@ -128,8 +128,9 @@ public class SalesQuoteService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<SalesQuoteSummaryResponse> quotes(String keyword, Long customerId, Long projectId,
-			String status, int page, int pageSize) {
-		QueryParts query = quoteQueryParts(keyword, customerId, projectId, status);
+			String status, String approvalStatus, LocalDate validFrom, LocalDate validTo, int page, int pageSize) {
+		QueryParts query = quoteQueryParts(keyword, customerId, projectId, status, approvalStatus, validFrom,
+				validTo);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from sal_sales_quote q
@@ -147,7 +148,8 @@ public class SalesQuoteService {
 				       pc.external_contract_no, q.quote_date, q.valid_until, q.status, q.currency,
 				       q.tax_excluded_amount, q.tax_amount, q.tax_included_amount, q.approval_instance_id,
 				       q.converted_order_id, q.converted_contract_id, q.remark, q.created_by, q.created_at,
-				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version
+				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version,
+				       %s as latest_approval_status
 				from sal_sales_quote q
 				join mst_customer c on c.id = q.customer_id
 				left join sal_project p on p.id = q.project_id
@@ -155,7 +157,7 @@ public class SalesQuoteService {
 				%s
 				order by q.updated_at desc, q.id desc
 				limit ? offset ?
-				""".formatted(query.where()), this::mapQuoteSummary, args.toArray());
+				""".formatted(latestApprovalStatusExpression(), query.where()), this::mapQuoteSummary, args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -802,13 +804,14 @@ public class SalesQuoteService {
 				       pc.external_contract_no, q.quote_date, q.valid_until, q.status, q.currency,
 				       q.tax_excluded_amount, q.tax_amount, q.tax_included_amount, q.approval_instance_id,
 				       q.converted_order_id, q.converted_contract_id, q.remark, q.created_by, q.created_at,
-				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version
+				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version,
+				       %s as latest_approval_status
 				from sal_sales_quote q
 				join mst_customer c on c.id = q.customer_id
 				left join sal_project p on p.id = q.project_id
 				left join sal_project_contract pc on pc.id = q.contract_id
 				where q.id = ?
-				""", this::mapQuoteHeader, id).stream().findFirst().orElse(null));
+				""".formatted(latestApprovalStatusExpression()), this::mapQuoteHeader, id).stream().findFirst().orElse(null));
 	}
 
 	private OptionalQuote lockQuote(Long id) {
@@ -818,14 +821,15 @@ public class SalesQuoteService {
 				       pc.external_contract_no, q.quote_date, q.valid_until, q.status, q.currency,
 				       q.tax_excluded_amount, q.tax_amount, q.tax_included_amount, q.approval_instance_id,
 				       q.converted_order_id, q.converted_contract_id, q.remark, q.created_by, q.created_at,
-				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version
+				       q.updated_at, q.approved_by, q.approved_at, q.cancelled_by, q.cancelled_at, q.version,
+				       %s as latest_approval_status
 				from sal_sales_quote q
 				join mst_customer c on c.id = q.customer_id
 				left join sal_project p on p.id = q.project_id
 				left join sal_project_contract pc on pc.id = q.contract_id
 				where q.id = ?
 				for update of q
-				""", this::mapQuoteHeader, id).stream().findFirst().orElse(null));
+				""".formatted(latestApprovalStatusExpression()), this::mapQuoteHeader, id).stream().findFirst().orElse(null));
 	}
 
 	private List<QuoteLineRow> quoteLines(Long quoteId) {
@@ -842,7 +846,8 @@ public class SalesQuoteService {
 				""", this::mapQuoteLine, quoteId);
 	}
 
-	private QueryParts quoteQueryParts(String keyword, Long customerId, Long projectId, String status) {
+	private QueryParts quoteQueryParts(String keyword, Long customerId, Long projectId, String status,
+			String approvalStatus, LocalDate validFrom, LocalDate validTo) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
@@ -865,7 +870,53 @@ public class SalesQuoteService {
 			conditions.add("q.status = ?");
 			args.add(status.trim());
 		}
+		if (hasText(approvalStatus)) {
+			switch (approvalStatus.trim().toUpperCase()) {
+				case "APPROVED" -> conditions.add("q.status in ('APPROVED', 'CONVERTED')");
+				case "SUBMITTED", "PENDING", "IN_APPROVAL" -> conditions.add(
+						"q.approval_instance_id is not null and q.status = 'DRAFT'");
+				case "NONE", "NOT_SUBMITTED" -> conditions.add(
+						"q.approval_instance_id is null and q.status = 'DRAFT' and not exists ("
+								+ salesQuoteApprovalInstanceExistsSql() + ")");
+				case "REJECTED", "WITHDRAWN", "CANCELLED" -> conditions.add(
+						"q.approval_instance_id is null and q.status = 'DRAFT' and "
+								+ latestApprovalStatusExpression() + " = '" + approvalStatus.trim().toUpperCase() + "'");
+				default -> conditions.add("1 = 0");
+			}
+		}
+		if (validFrom != null) {
+			conditions.add("q.valid_until >= ?");
+			args.add(validFrom);
+		}
+		if (validTo != null) {
+			conditions.add("q.valid_until <= ?");
+			args.add(validTo);
+		}
 		return new QueryParts(conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions), args);
+	}
+
+	private String latestApprovalStatusExpression() {
+		return """
+				(
+					select ai.status
+					from platform_approval_instance ai
+					where ai.scene_code = 'SALES_QUOTE_APPROVAL'
+					and ai.business_object_type = 'SALES_QUOTE'
+					and ai.business_object_id = q.id
+					order by ai.created_at desc, ai.id desc
+					limit 1
+				)
+				""";
+	}
+
+	private String salesQuoteApprovalInstanceExistsSql() {
+		return """
+				select 1
+				from platform_approval_instance ai
+				where ai.scene_code = 'SALES_QUOTE_APPROVAL'
+				and ai.business_object_type = 'SALES_QUOTE'
+				and ai.business_object_id = q.id
+				""";
 	}
 
 	private LocalDate latestRequiredDate(Long quoteId) {
@@ -919,6 +970,10 @@ public class SalesQuoteService {
 		if (quote.approvalInstanceId() != null) {
 			return "SUBMITTED";
 		}
+		if (quote.latestApprovalStatus() != null
+				&& Set.of("REJECTED", "WITHDRAWN", "CANCELLED").contains(quote.latestApprovalStatus())) {
+			return quote.latestApprovalStatus();
+		}
 		return null;
 	}
 
@@ -956,7 +1011,7 @@ public class SalesQuoteService {
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
 				rs.getString("approved_by"), rs.getObject("approved_at", OffsetDateTime.class),
 				rs.getString("cancelled_by"), rs.getObject("cancelled_at", OffsetDateTime.class),
-				rs.getLong("version"));
+				rs.getLong("version"), rs.getString("latest_approval_status"));
 	}
 
 	private QuoteLineRow mapQuoteLine(ResultSet rs, int rowNum) throws SQLException {
@@ -1194,7 +1249,8 @@ public class SalesQuoteService {
 			BigDecimal taxExcludedAmount, BigDecimal taxAmount, BigDecimal taxIncludedAmount,
 			Long approvalInstanceId, Long convertedOrderId, Long convertedContractId, String remark,
 			String createdBy, OffsetDateTime createdAt, OffsetDateTime updatedAt, String approvedBy,
-			OffsetDateTime approvedAt, String cancelledBy, OffsetDateTime cancelledAt, Long version) {
+			OffsetDateTime approvedAt, String cancelledBy, OffsetDateTime cancelledAt, Long version,
+			String latestApprovalStatus) {
 	}
 
 	private record QuoteLineRow(Long id, Long quoteId, Integer lineNo, Long materialId, String materialCode,

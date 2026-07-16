@@ -13,6 +13,7 @@ import {
   type SalesProjectContractType,
 } from '../../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../../stores/authStore'
+import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../../system/shared/pageHelpers'
 import SalesDocumentTaskPanel from '../SalesDocumentTaskPanel.vue'
 import {
@@ -42,6 +43,7 @@ const conversionDialog = reactive({
   action: 'order' as 'order' | 'contract',
   contractType: 'MAIN' as SalesProjectContractType,
   selectedProjectContractKey: '',
+  keyword: '',
   candidates: [] as SalesOrderProjectContractCandidate[],
   loading: false,
   error: '',
@@ -93,15 +95,15 @@ function selectedConversionCandidate() {
   ))
 }
 
-async function loadConversionCandidates(current: SalesQuoteDetailRecord) {
+async function loadConversionCandidates(current: SalesQuoteDetailRecord, keyword = '') {
   conversionDialog.loading = true
   conversionDialog.error = ''
   try {
     const page = await salesProjectApi.listOrderLinkCandidates({
       customerId: current.customerId,
-      keyword: '',
+      keyword,
       page: 1,
-      pageSize: 20,
+      pageSize: 50,
     })
     conversionDialog.candidates = pageItems(page)
     const matching = conversionDialog.candidates.find((candidate) => (
@@ -114,6 +116,13 @@ async function loadConversionCandidates(current: SalesQuoteDetailRecord) {
   } finally {
     conversionDialog.loading = false
   }
+}
+
+async function searchConversionCandidates() {
+  if (!record.value) {
+    return
+  }
+  await loadConversionCandidates(record.value, conversionDialog.keyword)
 }
 
 async function submitApproval() {
@@ -167,6 +176,7 @@ async function convertOrder() {
     conversionDialog.action = 'order'
     conversionDialog.contractType = 'MAIN'
     conversionDialog.selectedProjectContractKey = ''
+    conversionDialog.keyword = ''
     await loadConversionCandidates(record.value)
     return
   }
@@ -207,6 +217,7 @@ async function convertContract() {
   conversionDialog.action = 'contract'
   conversionDialog.contractType = 'MAIN'
   conversionDialog.selectedProjectContractKey = ''
+  conversionDialog.keyword = ''
   await loadConversionCandidates(record.value)
 }
 
@@ -286,12 +297,11 @@ onMounted(loadRecord)
 </script>
 
 <template>
-  <section class="sales-quote-detail">
-    <header class="page-header">
-      <div>
-        <h1>销售报价详情</h1>
-        <p>审批状态、转换来源、税价和来源链分开展示。</p>
-      </div>
+  <MasterDataTableView
+    title="销售报价详情"
+    description="审批状态、转换来源、税价和来源链分开展示。"
+  >
+    <template #actions>
       <div class="header-actions">
         <el-button @click="router.push({ name: 'sales-quotes' })">返回列表</el-button>
         <el-button v-if="canSubmit" data-test="submit-sales-quote-detail" type="success" :loading="actionLoading" @click="submitApproval">
@@ -310,12 +320,14 @@ onMounted(loadRecord)
           打印
         </el-button>
       </div>
-    </header>
+    </template>
 
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
-    <el-alert v-if="loading" class="page-alert" type="info" title="销售报价详情加载中" :closable="false" />
-    <SalesDocumentTaskPanel :task="latestDocumentTask" />
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="销售报价详情加载中" :closable="false" />
+      <SalesDocumentTaskPanel :task="latestDocumentTask" />
+    </template>
 
     <div v-if="record" class="detail-body">
       <section class="summary-strip">
@@ -335,15 +347,45 @@ onMounted(loadRecord)
 
       <section class="section-block">
         <h2>报价明细</h2>
-        <article v-for="line in record.lines" :key="line.id" class="line-row">
-          <strong>{{ line.materialCode }} {{ line.materialName }}</strong>
-          <span>数量 {{ formatSalesDecimal(line.quantity) }} {{ line.unitName }}</span>
-          <span>未税单价 {{ formatSalesDecimal(quoteLineUntaxedUnitPrice(line)) }}</span>
-          <span>含税单价 {{ formatSalesDecimal(line.taxIncludedUnitPrice) }}</span>
-          <span>税率 {{ formatSalesDecimal(line.taxRate) }}</span>
-          <span>含税金额 {{ formatSalesDecimal(line.taxIncludedAmount) }} CNY</span>
-          <span>承诺日期 {{ quoteLineRequiredDate(line) || '-' }}</span>
-        </article>
+        <div class="table-scroll">
+          <el-table :data="record.lines" row-key="id">
+            <el-table-column label="物料" min-width="220">
+              <template #default="{ row }">
+                <strong>{{ row.materialCode }} {{ row.materialName }}</strong>
+              </template>
+            </el-table-column>
+            <el-table-column label="数量" min-width="150">
+              <template #default="{ row }">
+                数量 {{ formatSalesDecimal(row.quantity) }} {{ row.unitName }}
+              </template>
+            </el-table-column>
+            <el-table-column label="未税单价" min-width="150">
+              <template #default="{ row }">
+                未税单价 {{ formatSalesDecimal(quoteLineUntaxedUnitPrice(row)) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="含税单价" min-width="150">
+              <template #default="{ row }">
+                含税单价 {{ formatSalesDecimal(row.taxIncludedUnitPrice) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="税率" min-width="140">
+              <template #default="{ row }">
+                税率 {{ formatSalesDecimal(row.taxRate) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="含税金额" min-width="170">
+              <template #default="{ row }">
+                含税金额 {{ formatSalesDecimal(row.taxIncludedAmount) }} CNY
+              </template>
+            </el-table-column>
+            <el-table-column label="承诺日期" min-width="150">
+              <template #default="{ row }">
+                承诺日期 {{ quoteLineRequiredDate(row) || '-' }}
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
 
       <section class="section-block">
@@ -367,6 +409,16 @@ onMounted(loadRecord)
         :closable="false"
       />
       <div class="conversion-panel">
+        <label>
+          候选搜索
+          <input
+            v-model="conversionDialog.keyword"
+            data-test="quote-detail-convert-candidate-search"
+            autocomplete="off"
+            placeholder="项目、合同编号或名称"
+            @input="searchConversionCandidates"
+          >
+        </label>
         <label v-if="conversionDialog.action === 'contract'">
           合同类型
           <select v-model="conversionDialog.contractType" data-test="quote-convert-contract-type">
@@ -425,37 +477,21 @@ onMounted(loadRecord)
         </el-button>
       </template>
     </el-dialog>
-  </section>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.sales-quote-detail,
 .detail-body {
   display: grid;
   gap: 14px;
 }
 
-.page-header,
 .header-actions {
   align-items: flex-start;
   display: flex;
   gap: 12px;
-  justify-content: space-between;
-}
-
-.header-actions {
   flex-wrap: wrap;
   justify-content: flex-end;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
 }
 
 .summary-strip {
@@ -465,8 +501,7 @@ onMounted(loadRecord)
 }
 
 .summary-strip div,
-.section-block,
-.line-row {
+.section-block {
   border: 1px solid #dcdfe6;
   border-radius: 6px;
   padding: 10px 12px;
@@ -507,11 +542,5 @@ onMounted(loadRecord)
 
 .conversion-panel select {
   min-height: 34px;
-}
-
-.line-row {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: minmax(180px, 1.4fr) repeat(6, minmax(110px, 1fr));
 }
 </style>

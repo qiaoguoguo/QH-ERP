@@ -9,6 +9,7 @@ import {
   procurementErrorMessage,
   procurementOwnershipDisplay,
 } from './procurementPageHelpers'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -17,6 +18,9 @@ const error = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
 const record = ref<PriceAgreementDetailRecord | null>(null)
+const pageTitle = computed(() => record.value?.agreementNo ?? '价格协议详情')
+const pageDescription = computed(() => record.value ? procurementOwnershipDisplay(record.value) : '查看价格协议税价、来源链、审批和审计信息。')
+const detailRows = computed(() => (record.value ? [record.value] : []))
 
 function allowed(action: string): boolean {
   return Boolean(record.value?.allowedActions?.includes(action))
@@ -66,21 +70,13 @@ async function submitActivation() {
 </script>
 
 <template>
-  <section class="procurement-detail-page" v-loading="loading">
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
-    <template v-if="record">
-      <header class="detail-header">
-        <div>
-          <h1>{{ record.agreementNo }}</h1>
-          <p>{{ procurementOwnershipDisplay(record) }}</p>
-        </div>
+  <MasterDataTableView :title="pageTitle" :description="pageDescription">
+    <template #actions>
+      <template v-if="record">
         <div class="state-box">
           <span>业务状态：{{ record.statusName || record.status }}</span>
           <span>审批状态：{{ record.approvalStatusName || record.approvalStatus || '未提交' }}</span>
         </div>
-      </header>
-      <div class="action-bar">
         <el-button
           v-if="canSubmitActivation"
           data-test="submit-price-agreement-activation"
@@ -91,14 +87,38 @@ async function submitActivation() {
         >
           提交激活审批
         </el-button>
-      </div>
-      <section class="summary-grid">
-        <div>供应商：{{ record.supplierName }}</div>
-        <div>物料：{{ record.materialCode }} {{ record.materialName }}</div>
-        <div>未税单价 {{ formatProcurementAmount(record.taxExcludedUnitPrice) }}</div>
-        <div>含税单价 {{ formatProcurementAmount(record.taxIncludedUnitPrice) }}</div>
-        <div>税率 {{ formatProcurementAmount(record.taxRate) }} / {{ record.currency }}</div>
-        <div>有效期：{{ record.validFrom }} 至 {{ record.validTo }}</div>
+      </template>
+    </template>
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
+      <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="价格协议详情加载中" show-icon :closable="false" />
+    </template>
+    <template v-if="record">
+      <section class="section-block">
+        <h2>协议税价明细</h2>
+        <div class="table-scroll">
+          <el-table :data="detailRows" empty-text="暂无价格协议明细" stripe>
+            <el-table-column label="供应商" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.supplierName }}</template>
+            </el-table-column>
+            <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
+            </el-table-column>
+            <el-table-column label="未税单价" min-width="120" align="right">
+              <template #default="{ row }">未税单价 {{ formatProcurementAmount(row.taxExcludedUnitPrice) }}</template>
+            </el-table-column>
+            <el-table-column label="含税单价" min-width="120" align="right">
+              <template #default="{ row }">含税单价 {{ formatProcurementAmount(row.taxIncludedUnitPrice) }}</template>
+            </el-table-column>
+            <el-table-column label="税率/币种" min-width="130">
+              <template #default="{ row }">税率 {{ formatProcurementAmount(row.taxRate) }} / {{ row.currency }}</template>
+            </el-table-column>
+            <el-table-column label="有效期" min-width="190">
+              <template #default="{ row }">有效期：{{ row.validFrom }} 至 {{ row.validTo }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
       <section class="trace-grid">
         <div>
@@ -121,31 +141,14 @@ async function submitActivation() {
         </div>
       </section>
     </template>
-  </section>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-detail-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.detail-header,
-.summary-grid,
 .trace-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(4, minmax(180px, 1fr));
-}
-
-.detail-header {
-  grid-template-columns: 1fr auto;
-}
-
-.detail-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
 }
 
 .state-box {
@@ -155,9 +158,16 @@ async function submitActivation() {
   text-align: right;
 }
 
-.action-bar {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end;
+.section-block {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
 }
 </style>

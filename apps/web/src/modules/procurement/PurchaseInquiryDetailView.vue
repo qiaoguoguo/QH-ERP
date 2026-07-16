@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { procurementApi, type ProcurementInquiryDetailRecord, type ResourceId } from '../../shared/api/procurementApi'
 import { createIdempotencyKey, documentPlatformApi, type DocumentTaskRecord } from '../../shared/api/documentPlatformApi'
@@ -11,6 +11,7 @@ import {
 } from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 import SupplierQuoteCompareView from './SupplierQuoteCompareView.vue'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
 const route = useRoute()
 const authStore = useAuthStore()
@@ -20,6 +21,10 @@ const actionError = ref('')
 const actionLoading = ref(false)
 const latestDocumentTask = ref<DocumentTaskRecord | null>(null)
 const record = ref<ProcurementInquiryDetailRecord | null>(null)
+const pageTitle = computed(() => record.value?.inquiryNo ?? '询价比价详情')
+const pageDescription = computed(() => (
+  record.value ? procurementModeDisplay(record.value.procurementMode, record.value.projectCode, record.value.projectName) : '查看询价明细、报价比较和文档任务。'
+))
 
 async function loadRecord() {
   loading.value = true
@@ -81,15 +86,9 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="procurement-detail-page" v-loading="loading">
-    <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
-    <template v-if="record">
-      <header class="detail-header">
-        <div>
-          <h1>{{ record.inquiryNo }}</h1>
-          <p>{{ procurementModeDisplay(record.procurementMode, record.projectCode, record.projectName) }}</p>
-        </div>
-        <div class="state-box">
+  <MasterDataTableView :title="pageTitle" :description="pageDescription">
+    <template #actions>
+      <div v-if="record" class="state-box">
           <span>业务状态：{{ record.statusName || record.status }}</span>
           <span>供应商 {{ record.supplierCount }} 家 / 报价 {{ record.quoteCount }} 条</span>
           <span class="task-actions">
@@ -107,31 +106,32 @@ onMounted(() => {
               报价导出
             </el-button>
           </span>
-        </div>
-      </header>
+      </div>
+    </template>
+    <template #alerts>
+      <el-alert v-if="error" class="page-alert" type="error" :title="error" show-icon :closable="false" />
       <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="询价详情加载中" show-icon :closable="false" />
       <ProcurementDocumentTaskPanel :task="latestDocumentTask" />
+    </template>
 
-      <section>
+    <template v-if="record">
+      <section class="section-block">
         <h2>询价明细</h2>
-        <table class="plain-table">
-          <thead>
-            <tr>
-              <th>物料</th>
-              <th>数量</th>
-              <th>需求日期</th>
-              <th>请购来源</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr v-for="line in record.lines" :key="line.id">
-              <td>{{ line.materialCode }} {{ line.materialName }}</td>
-              <td>{{ formatProcurementQuantity(line.quantity) }}</td>
-              <td>{{ line.requiredDate || '-' }}</td>
-              <td>{{ line.requisitionNo || '-' }}</td>
-            </tr>
-          </tbody>
-        </table>
+        <div class="table-scroll">
+          <el-table :data="record.lines" empty-text="暂无询价明细" stripe>
+            <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
+            </el-table-column>
+            <el-table-column label="数量" min-width="110" align="right">
+              <template #default="{ row }">{{ formatProcurementQuantity(row.quantity) }}</template>
+            </el-table-column>
+            <el-table-column prop="requiredDate" label="需求日期" min-width="120" />
+            <el-table-column label="请购来源" min-width="170" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.requisitionNo || '-' }}</template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
 
       <SupplierQuoteCompareView :inquiry-id="record.id" />
@@ -153,26 +153,14 @@ onMounted(() => {
         </div>
       </section>
     </template>
-  </section>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-detail-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.detail-header,
 .trace-grid {
   display: grid;
   gap: 12px;
   grid-template-columns: 1fr auto;
-}
-
-.detail-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
 }
 
 .state-box {
@@ -199,16 +187,16 @@ onMounted(() => {
   display: none;
 }
 
-.plain-table {
-  border-collapse: collapse;
-  width: 100%;
+.section-block {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
 }
 
-.plain-table th,
-.plain-table td {
-  border-bottom: 1px solid #ebeef5;
-  padding: 8px;
-  text-align: left;
-  vertical-align: top;
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
 }
 </style>

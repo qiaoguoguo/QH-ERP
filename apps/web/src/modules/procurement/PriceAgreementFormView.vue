@@ -17,6 +17,7 @@ import {
   validateProcurementDecimal,
   validatePurchaseUnitPrice,
 } from './procurementPageHelpers'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -24,6 +25,7 @@ const submitting = ref(false)
 const loading = ref(false)
 const formError = ref('')
 const referenceError = ref('')
+const editLoadFailed = ref(false)
 const projects = ref<SalesProjectSummary[]>([])
 const suppliers = ref<PartnerRecord[]>([])
 const materials = ref<MaterialRecord[]>([])
@@ -82,6 +84,7 @@ async function loadRecord() {
     form.validTo = detail.validTo
     form.remark = detail.remark ?? ''
   } catch (caught) {
+    editLoadFailed.value = true
     formError.value = procurementErrorMessage(caught)
   } finally {
     loading.value = false
@@ -164,115 +167,137 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="procurement-form-page">
-    <header class="page-header">
-      <h1>{{ pageTitle }}</h1>
-      <p>首版币种固定 CNY，提交后进入固定激活审批。</p>
-    </header>
-    <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
-    <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
-    <el-alert v-if="loading" class="page-alert" type="info" title="价格协议加载中" show-icon :closable="false" />
-    <div class="form-grid">
-      <label>
-        采购模式
-        <el-select v-model="form.procurementMode" data-test="agreement-procurement-mode" style="width: 100%">
-          <el-option label="项目专采" value="PROJECT" />
-          <el-option label="公共采购" value="PUBLIC" />
-        </el-select>
-      </label>
-      <label>
-        项目
-        <el-select
-          v-model="form.projectId"
-          data-test="agreement-project-id"
-          style="width: 100%"
-          filterable
-          clearable
-          :disabled="form.procurementMode === 'PUBLIC'"
-          placeholder="选择项目"
-        >
-          <el-option
-            v-for="project in projects"
-            :key="project.id"
-            :label="`${project.projectNo} ${project.name}`"
-            :value="project.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        项目显示
-        <span class="readonly-field">{{ selectedProject ? `${selectedProject.projectNo} ${selectedProject.name}` : '公共采购' }}</span>
-      </label>
-      <label>
-        供应商
-        <el-select v-model="form.supplierId" data-test="agreement-supplier-id" style="width: 100%" filterable placeholder="选择供应商">
-          <el-option
-            v-for="supplier in suppliers"
-            :key="supplier.id"
-            :label="`${supplier.code} ${supplier.name}`"
-            :value="supplier.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        供应商显示
-        <span class="readonly-field">{{ selectedSupplier ? `${selectedSupplier.code} ${selectedSupplier.name}` : '未选择供应商' }}</span>
-      </label>
-      <label>
-        物料
-        <el-select v-model="form.materialId" data-test="agreement-material-id" style="width: 100%" filterable placeholder="选择物料">
-          <el-option
-            v-for="material in materials"
-            :key="material.id"
-            :label="`${material.code} ${material.name}`"
-            :value="material.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        物料显示
-        <span class="readonly-field">{{ selectedMaterial ? `${selectedMaterial.code} ${selectedMaterial.name}` : '未选择物料' }}</span>
-      </label>
-      <label>
-        税率
-        <input v-model="form.taxRate" name="agreement-tax-rate" autocomplete="off">
-      </label>
-      <label>
-        未税单价
-        <input v-model="form.taxExcludedUnitPrice" name="agreement-tax-excluded-unit-price" autocomplete="off">
-      </label>
-      <label>
-        含税单价
-        <input v-model="form.taxIncludedUnitPrice" name="agreement-tax-included-unit-price" autocomplete="off">
-      </label>
-      <label>
-        生效日期
-        <input v-model="form.validFrom" name="agreement-valid-from" type="date">
-      </label>
-      <label>
-        失效日期
-        <input v-model="form.validTo" name="agreement-valid-to" type="date">
-      </label>
-      <label class="full-row">
-        备注
-        <textarea v-model="form.remark" name="agreement-remark" rows="2" />
-      </label>
-    </div>
-    <div class="action-bar">
-      <el-button data-test="save-price-agreement" type="primary" :loading="submitting" @click="saveAgreement">
-        保存价格协议
-      </el-button>
-    </div>
-  </section>
+  <MasterDataTableView :title="pageTitle" description="首版币种固定 CNY，提交后进入固定激活审批。">
+    <template #alerts>
+      <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
+      <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="价格协议加载中" show-icon :closable="false" />
+    </template>
+    <section v-if="editLoadFailed" class="section-block">
+      <h2>无法编辑价格协议</h2>
+      <p>{{ formError || '价格协议不存在或无权编辑' }}</p>
+      <div class="action-bar">
+        <el-button data-test="back-price-agreements" @click="router.push({ name: 'procurement-price-agreements' })">
+          返回价格协议列表
+        </el-button>
+      </div>
+    </section>
+    <template v-else>
+      <section class="section-block">
+        <h2>协议基础信息</h2>
+        <div class="form-grid">
+          <label>
+            采购模式
+            <el-select v-model="form.procurementMode" data-test="agreement-procurement-mode" style="width: 100%">
+              <el-option label="项目专采" value="PROJECT" />
+              <el-option label="公共采购" value="PUBLIC" />
+            </el-select>
+          </label>
+          <label>
+            项目
+            <el-select
+              v-model="form.projectId"
+              data-test="agreement-project-id"
+              style="width: 100%"
+              filterable
+              clearable
+              :disabled="form.procurementMode === 'PUBLIC'"
+              placeholder="选择项目"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="`${project.projectNo} ${project.name}`"
+                :value="project.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            项目显示
+            <span class="readonly-field">{{ selectedProject ? `${selectedProject.projectNo} ${selectedProject.name}` : '公共采购' }}</span>
+          </label>
+          <label>
+            供应商
+            <el-select v-model="form.supplierId" data-test="agreement-supplier-id" style="width: 100%" filterable placeholder="选择供应商">
+              <el-option
+                v-for="supplier in suppliers"
+                :key="supplier.id"
+                :label="`${supplier.code} ${supplier.name}`"
+                :value="supplier.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            供应商显示
+            <span class="readonly-field">{{ selectedSupplier ? `${selectedSupplier.code} ${selectedSupplier.name}` : '未选择供应商' }}</span>
+          </label>
+          <label>
+            物料
+            <el-select v-model="form.materialId" data-test="agreement-material-id" style="width: 100%" filterable placeholder="选择物料">
+              <el-option
+                v-for="material in materials"
+                :key="material.id"
+                :label="`${material.code} ${material.name}`"
+                :value="material.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            物料显示
+            <span class="readonly-field">{{ selectedMaterial ? `${selectedMaterial.code} ${selectedMaterial.name}` : '未选择物料' }}</span>
+          </label>
+          <label>
+            税率
+            <input v-model="form.taxRate" name="agreement-tax-rate" autocomplete="off">
+          </label>
+          <label>
+            未税单价
+            <input v-model="form.taxExcludedUnitPrice" name="agreement-tax-excluded-unit-price" autocomplete="off">
+          </label>
+          <label>
+            含税单价
+            <input v-model="form.taxIncludedUnitPrice" name="agreement-tax-included-unit-price" autocomplete="off">
+          </label>
+          <label>
+            生效日期
+            <el-date-picker
+              v-model="form.validFrom"
+              name="agreement-valid-from"
+              value-on-clear=""
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              placeholder="选择生效日期"
+            />
+          </label>
+          <label>
+            失效日期
+            <el-date-picker
+              v-model="form.validTo"
+              name="agreement-valid-to"
+              value-on-clear=""
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              placeholder="选择失效日期"
+            />
+          </label>
+          <label class="full-row">
+            备注
+            <textarea v-model="form.remark" name="agreement-remark" rows="2" />
+          </label>
+        </div>
+      </section>
+      <div class="action-bar">
+        <el-button data-test="save-price-agreement" type="primary" :loading="submitting" @click="saveAgreement">
+          保存价格协议
+        </el-button>
+      </div>
+    </template>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-form-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 .form-grid {
   display: grid;
   gap: 12px;
@@ -311,5 +336,18 @@ textarea {
 .action-bar {
   display: flex;
   justify-content: flex-end;
+}
+
+.section-block {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
 }
 </style>

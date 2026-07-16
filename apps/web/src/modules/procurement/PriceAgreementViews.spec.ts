@@ -7,6 +7,12 @@ import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { MaterialRecord, PartnerRecord } from '../../shared/api/masterDataApi'
 import type { PriceAgreementDetailRecord, PriceAgreementSummaryRecord } from '../../shared/api/procurementApi'
 import type { SalesProjectSummary } from '../../shared/api/salesProjectApi'
+import {
+  expectNoBareIdFilters,
+  expectStandardDetailPage,
+  expectStandardFormPage,
+  expectStandardListPage,
+} from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import PriceAgreementDetailView from './PriceAgreementDetailView.vue'
 import PriceAgreementFormView from './PriceAgreementFormView.vue'
@@ -233,6 +239,8 @@ describe('采购价格协议页面', () => {
     const wrapper = mount(PriceAgreementListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['供应商 ID', '物料 ID', '项目 ID'])
     expect(procurementApiMock.priceAgreements.list).toHaveBeenCalledWith({
       keyword: '',
       supplierId: undefined,
@@ -356,6 +364,7 @@ describe('采购价格协议页面', () => {
     const wrapper = mount(PriceAgreementFormView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardFormPage(wrapper, ['agreement-valid-from', 'agreement-valid-to'])
     await setSelectValue(wrapper, 0, 'PROJECT')
     await setSelectValue(wrapper, 1, 30)
     await setSelectValue(wrapper, 2, 100)
@@ -406,12 +415,26 @@ describe('采购价格协议页面', () => {
     expect(router.currentRoute.value.name).toBe('procurement-price-agreement-detail')
   })
 
+  it('价格协议编辑加载失败时只显示错误与返回动作，不渲染可编辑表单或保存入口', async () => {
+    procurementApiMock.priceAgreements.get.mockRejectedValueOnce(new Error('FORBIDDEN'))
+    const pinia = setup(['procurement:price-agreement:update'])
+    const router = await createTestRouter('/procurement/price-agreements/404/edit')
+    const wrapper = mount(PriceAgreementFormView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('FORBIDDEN')
+    expect(wrapper.find('[data-test="save-price-agreement"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="agreement-supplier-id"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-price-agreements"]').exists()).toBe(true)
+  })
+
   it('详情展示来源链、审批、附件和审计，并提交激活审批后重新加载', async () => {
     const pinia = setup(['procurement:price-agreement:view', 'procurement:price-agreement:submit'])
     const router = await createTestRouter('/procurement/price-agreements/401')
     const wrapper = mount(PriceAgreementDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardDetailPage(wrapper)
     expect(wrapper.text()).toContain('AGR-001')
     expect(wrapper.text()).toContain('最低有效报价')
     expect(wrapper.text()).toContain('来源链')

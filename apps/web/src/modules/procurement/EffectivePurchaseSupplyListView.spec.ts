@@ -4,13 +4,26 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { EffectivePurchaseSupplyRecord } from '../../shared/api/procurementApi'
+import { expectNoBareIdFilters, expectStandardListPage } from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import EffectivePurchaseSupplyListView from './EffectivePurchaseSupplyListView.vue'
 
 const procurementApiMock = vi.hoisted(() => ({
+  orders: {
+    list: vi.fn(),
+  },
   effectiveSupplies: {
     list: vi.fn(),
   },
+}))
+
+const masterDataApiMock = vi.hoisted(() => ({
+  suppliers: { list: vi.fn() },
+  materials: { list: vi.fn() },
+}))
+
+const salesProjectApiMock = vi.hoisted(() => ({
+  projects: { list: vi.fn() },
 }))
 
 const documentPlatformApiMock = vi.hoisted(() => ({
@@ -30,6 +43,14 @@ const documentPlatformApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/procurementApi', () => ({
   procurementApi: procurementApiMock,
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/salesProjectApi', () => ({
+  salesProjectApi: salesProjectApiMock,
 }))
 
 vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
@@ -108,6 +129,10 @@ describe('有效采购供给页面', () => {
       total: 2,
       totalPages: 1,
     } satisfies PageResult<EffectivePurchaseSupplyRecord>)
+    procurementApiMock.orders.list.mockResolvedValue({ items: [], page: 1, pageSize: 50, total: 0, totalPages: 0 })
+    masterDataApiMock.suppliers.list.mockResolvedValue({ items: [{ id: 100, code: 'SUP-100', name: '华东五金', status: 'ENABLED' }], page: 1, pageSize: 50, total: 1, totalPages: 1 })
+    masterDataApiMock.materials.list.mockResolvedValue({ items: [{ id: 5, code: 'M-100', name: '伺服电机', materialType: 'RAW_MATERIAL', sourceType: 'PURCHASED', trackingMethod: 'NONE', trackingMethodName: '不追踪', categoryId: 1, unitId: 1, unitName: '台', status: 'ENABLED' }], page: 1, pageSize: 50, total: 1, totalPages: 1 })
+    salesProjectApiMock.projects.list.mockResolvedValue({ items: [{ id: 30, projectNo: 'PRJ-024', name: '华东产线改造', customerId: 1000, customerCode: 'CUS-A', customerName: '华东客户', ownerUserId: 1, ownerUsername: 'planner', ownerDisplayName: '计划员', status: 'ACTIVE', targetRevenue: '0.000000', targetCost: '0.000000', contractSummaryRestricted: false, salesOrderSummaryRestricted: false, createdByName: '计划员', createdAt: '2026-07-01T09:00:00+08:00', updatedAt: '2026-07-15T09:00:00+08:00', version: 2 }], page: 1, pageSize: 50, total: 1, totalPages: 1 })
     documentPlatformApiMock.exports.createProcurementEffectiveSupplies.mockResolvedValue({
       id: 907,
       taskNo: 'TASK-SUPPLY-EXPORT',
@@ -132,6 +157,8 @@ describe('有效采购供给页面', () => {
     const wrapper = mount(EffectivePurchaseSupplyListView, { global: { plugins: [pinia, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['项目 ID', '物料 ID', '供应商 ID'])
     expect(procurementApiMock.effectiveSupplies.list).toHaveBeenCalledWith({
       projectId: undefined,
       materialId: undefined,

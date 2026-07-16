@@ -732,13 +732,22 @@ describe('销售出库表单页', () => {
 
   it('已过账销售出库不可提交', async () => {
     salesApiMock.shipments.get.mockResolvedValueOnce(postedShipment)
-    const { wrapper } = await mountForm('/sales/shipments/700/edit')
+    const { wrapper, router } = await mountForm('/sales/shipments/700/edit')
 
     expect(wrapper.text()).toContain('已过账销售出库不可编辑')
-    expect(wrapper.find('[data-test="save-sales-shipment"]').attributes('disabled')).toBeDefined()
-    await wrapper.find('[data-test="save-sales-shipment"]').trigger('click')
+    expect(wrapper.find('[data-test="save-sales-shipment"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="add-sales-shipment-line"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remove-sales-shipment-line"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="sales-shipment-business-date"]').exists()).toBe(false)
+    expect(wrapper.findComponent(SalesShipmentLineEditor).exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-sales-shipment-detail"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="back-sales-shipment-detail"]').trigger('click')
     await flushPromises()
+
     expect(salesApiMock.shipments.update).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.name).toBe('sales-shipment-detail')
+    expect(router.currentRoute.value.params.id).toBe('700')
   })
 
   it('来源订单状态不允许创建销售出库时禁止保存', async () => {

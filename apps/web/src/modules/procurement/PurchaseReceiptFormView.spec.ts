@@ -450,13 +450,22 @@ describe('采购入库表单页', () => {
 
   it('已过账采购入库不可提交', async () => {
     procurementApiMock.receipts.get.mockResolvedValueOnce(postedReceipt)
-    const { wrapper } = await mountForm('/procurement/receipts/700/edit')
+    const { wrapper, router } = await mountForm('/procurement/receipts/700/edit')
 
     expect(wrapper.text()).toContain('已过账采购入库不可编辑')
-    expect(wrapper.find('[data-test="save-purchase-receipt"]').attributes('disabled')).toBeDefined()
-    await wrapper.find('[data-test="save-purchase-receipt"]').trigger('click')
+    expect(wrapper.find('[data-test="save-purchase-receipt"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="add-purchase-receipt-line"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remove-purchase-receipt-line"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="purchase-receipt-business-date"]').exists()).toBe(false)
+    expect(wrapper.findComponent(PurchaseReceiptLineEditor).exists()).toBe(false)
+    expect(wrapper.find('[data-test="back-purchase-receipt-detail"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="back-purchase-receipt-detail"]').trigger('click')
     await flushPromises()
+
     expect(procurementApiMock.receipts.update).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.name).toBe('procurement-receipt-detail')
+    expect(router.currentRoute.value.params.id).toBe('700')
   })
 
   it('来源订单状态不允许创建采购入库时禁止保存', async () => {

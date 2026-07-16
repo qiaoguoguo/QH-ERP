@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { InventoryBalanceRecord, InventoryTraceDetailRecord } from '../../shared/api/inventoryApi'
 import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
+import { expectDrawerWideTableGoverned } from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import InventoryBalanceListView from './InventoryBalanceListView.vue'
 import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
@@ -472,6 +473,7 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('原始金额')
     expect(wrapper.text()).toContain('父层')
     expect(wrapper.text()).toContain('来源类型')
+    expectDrawerWideTableGoverned(wrapper)
     expect(wrapper.text()).toContain('CL-PRJ-001')
     expect(wrapper.text()).toContain('B-20260711-001 / SN-001')
     expect(wrapper.text()).toContain('1,325.50')

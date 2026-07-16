@@ -5,6 +5,7 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -14,6 +15,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping("/api/admin/sales-projects")
@@ -29,10 +32,14 @@ public class SalesProjectAdminController {
 	public ApiResponse<PageResponse<SalesProjectAdminService.ProjectResponse>> projects(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long customerId,
 			@RequestParam(required = false) String status, @RequestParam(required = false) Long ownerUserId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate plannedStartFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate plannedStartTo,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate plannedFinishFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate plannedFinishTo,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.salesProjectAdminService.projects(keyword, customerId, status, ownerUserId, page,
-				pageSize, currentUser));
+		return ApiResponse.ok(this.salesProjectAdminService.projects(keyword, customerId, status, ownerUserId,
+				plannedStartFrom, plannedStartTo, plannedFinishFrom, plannedFinishTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/{id}")

@@ -1214,6 +1214,31 @@ public class PlatformDocumentTaskService {
 			conditions.add("q.status = ?");
 			args.add(status);
 		}
+		String approvalStatus = filterString(request.filters(), "approvalStatus");
+		if (approvalStatus != null) {
+			switch (approvalStatus.toUpperCase()) {
+				case "APPROVED" -> conditions.add("q.status in ('APPROVED', 'CONVERTED')");
+				case "SUBMITTED", "PENDING", "IN_APPROVAL" -> conditions.add(
+						"q.approval_instance_id is not null and q.status = 'DRAFT'");
+				case "NONE", "NOT_SUBMITTED" -> conditions.add(
+						"q.approval_instance_id is null and q.status = 'DRAFT' and not exists ("
+								+ salesQuoteApprovalInstanceExistsSql() + ")");
+				case "REJECTED", "WITHDRAWN", "CANCELLED" -> conditions.add(
+						"q.approval_instance_id is null and q.status = 'DRAFT' and "
+								+ latestSalesQuoteApprovalStatusExpression() + " = '" + approvalStatus.toUpperCase() + "'");
+				default -> conditions.add("1 = 0");
+			}
+		}
+		LocalDate validFrom = filterDate(request.filters(), "validFrom");
+		if (validFrom != null) {
+			conditions.add("q.valid_until >= ?");
+			args.add(validFrom);
+		}
+		LocalDate validTo = filterDate(request.filters(), "validTo");
+		if (validTo != null) {
+			conditions.add("q.valid_until <= ?");
+			args.add(validTo);
+		}
 		if (request.objectId() != null && "SALES_QUOTE".equals(request.objectType())) {
 			conditions.add("q.id = ?");
 			args.add(request.objectId());
@@ -1231,9 +1256,50 @@ public class PlatformDocumentTaskService {
 				""".formatted(where), args);
 	}
 
+	private String latestSalesQuoteApprovalStatusExpression() {
+		return """
+				(
+					select ai.status
+					from platform_approval_instance ai
+					where ai.scene_code = 'SALES_QUOTE_APPROVAL'
+					and ai.business_object_type = 'SALES_QUOTE'
+					and ai.business_object_id = q.id
+					order by ai.created_at desc, ai.id desc
+					limit 1
+				)
+				""";
+	}
+
+	private String salesQuoteApprovalInstanceExistsSql() {
+		return """
+				select 1
+				from platform_approval_instance ai
+				where ai.scene_code = 'SALES_QUOTE_APPROVAL'
+				and ai.business_object_type = 'SALES_QUOTE'
+				and ai.business_object_id = q.id
+				""";
+	}
+
 	private List<List<String>> salesDeliveryPlanExportRows(ProcurementExportRequest request) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
+		String keyword = filterString(request.filters(), "keyword");
+		if (keyword != null) {
+			conditions.add("(o.order_no ilike ? or c.code ilike ? or c.name ilike ? or m.code ilike ? "
+					+ "or m.name ilike ? or p.close_reason ilike ?)");
+			String pattern = "%" + keyword + "%";
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+			args.add(pattern);
+		}
+		Long customerId = filterLong(request.filters(), "customerId");
+		if (customerId != null) {
+			conditions.add("o.customer_id = ?");
+			args.add(customerId);
+		}
 		Long orderId = filterLong(request.filters(), "orderId");
 		if (orderId != null) {
 			conditions.add("p.order_id = ?");
@@ -1244,10 +1310,23 @@ public class PlatformDocumentTaskService {
 			conditions.add("o.project_id = ?");
 			args.add(projectId);
 		}
+		Long contractId = filterLong(request.filters(), "contractId");
+		if (contractId != null) {
+			conditions.add("o.contract_id = ?");
+			args.add(contractId);
+		}
+		Long materialId = filterLong(request.filters(), "materialId");
+		if (materialId != null) {
+			conditions.add("l.material_id = ?");
+			args.add(materialId);
+		}
 		String status = filterString(request.filters(), "status");
 		if (status != null) {
 			conditions.add("p.status = ?");
 			args.add(status);
+		}
+		if (Boolean.TRUE.equals(filterBoolean(request.filters(), "countedOnly"))) {
+			conditions.add("p.status in ('PLANNED', 'PARTIALLY_SHIPPED')");
 		}
 		LocalDate expectedDateFrom = filterDate(request.filters(), "expectedDateFrom");
 		if (expectedDateFrom != null) {
@@ -1277,6 +1356,7 @@ public class PlatformDocumentTaskService {
 				join sal_sales_order o on o.id = p.order_id
 				join sal_sales_order_line l on l.id = p.order_line_id
 				join mst_material m on m.id = l.material_id
+				join mst_customer c on c.id = o.customer_id
 				%s
 				order by p.planned_date asc, p.line_no asc, p.id asc
 				""".formatted(where), args);

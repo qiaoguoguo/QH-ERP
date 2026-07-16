@@ -561,13 +561,53 @@ public class SalesFulfillmentService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<DeliveryPlanResponse> deliveryPlans(Long orderId, Boolean countedOnly, int page,
-			int pageSize) {
+	public PageResponse<DeliveryPlanResponse> deliveryPlans(String keyword, Long customerId, Long projectId,
+			Long contractId, Long orderId, Long materialId, String status, LocalDate expectedDateFrom,
+			LocalDate expectedDateTo, Boolean countedOnly, int page, int pageSize) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(o.order_no ilike ? or c.code ilike ? or c.name ilike ? or m.code ilike ? "
+					+ "or m.name ilike ? or p.close_reason ilike ?)");
+			String like = "%" + keyword.trim() + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (customerId != null) {
+			conditions.add("o.customer_id = ?");
+			args.add(customerId);
+		}
+		if (projectId != null) {
+			conditions.add("o.project_id = ?");
+			args.add(projectId);
+		}
+		if (contractId != null) {
+			conditions.add("o.contract_id = ?");
+			args.add(contractId);
+		}
 		if (orderId != null) {
 			conditions.add("p.order_id = ?");
 			args.add(orderId);
+		}
+		if (materialId != null) {
+			conditions.add("l.material_id = ?");
+			args.add(materialId);
+		}
+		if (hasText(status)) {
+			conditions.add("p.status = ?");
+			args.add(status.trim());
+		}
+		if (expectedDateFrom != null) {
+			conditions.add("p.planned_date >= ?");
+			args.add(expectedDateFrom);
+		}
+		if (expectedDateTo != null) {
+			conditions.add("p.planned_date <= ?");
+			args.add(expectedDateTo);
 		}
 		if (Boolean.TRUE.equals(countedOnly)) {
 			conditions.add("p.status in ('PLANNED', 'PARTIALLY_SHIPPED')");
@@ -576,6 +616,10 @@ public class SalesFulfillmentService {
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from sal_sales_delivery_plan p
+				join sal_sales_order o on o.id = p.order_id
+				join sal_sales_order_line l on l.id = p.order_line_id
+				join mst_material m on m.id = l.material_id
+				join mst_customer c on c.id = o.customer_id
 				%s
 				""".formatted(where), Long.class, args.toArray());
 		List<Object> pageArgs = new ArrayList<>(args);
@@ -592,6 +636,7 @@ public class SalesFulfillmentService {
 				join sal_sales_order_line l on l.id = p.order_line_id
 				join mst_material m on m.id = l.material_id
 				join mst_unit u on u.id = l.unit_id
+				join mst_customer c on c.id = o.customer_id
 				%s
 				order by p.planned_date asc, p.line_no asc, p.id asc
 				limit ? offset ?

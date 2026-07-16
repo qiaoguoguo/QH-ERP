@@ -19,6 +19,7 @@ import {
   procurementModeDisplay,
   validatePurchaseQuantity,
 } from './procurementPageHelpers'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,6 +27,7 @@ const submitting = ref(false)
 const loading = ref(false)
 const formError = ref('')
 const referenceError = ref('')
+const editLoadFailed = ref(false)
 const projects = ref<SalesProjectSummary[]>([])
 const materials = ref<MaterialRecord[]>([])
 const suppliers = ref<PartnerRecord[]>([])
@@ -78,6 +80,7 @@ async function loadRecord() {
     form.quantity = firstLine?.quantity ?? ''
     form.remark = detail.remark ?? ''
   } catch (caught) {
+    editLoadFailed.value = true
     formError.value = procurementErrorMessage(caught)
   } finally {
     loading.value = false
@@ -177,19 +180,28 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="procurement-form-page">
-    <header class="page-header">
-      <h1>{{ pageTitle }}</h1>
-      <p>报价导入仅限当前询价范围，不能跨询价写入。</p>
-    </header>
-    <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
-    <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
-    <el-alert v-if="loading" class="page-alert" type="info" title="询价加载中" show-icon :closable="false" />
-    <div v-if="requisitionSourceLabel" class="source-summary">
+  <MasterDataTableView :title="pageTitle" description="报价导入仅限当前询价范围，不能跨询价写入。">
+    <template #alerts>
+      <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
+      <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="询价加载中" show-icon :closable="false" />
+    </template>
+    <section v-if="editLoadFailed" class="section-block">
+      <h2>无法编辑询价</h2>
+      <p>{{ formError || '询价不存在或无权编辑' }}</p>
+      <el-button data-test="back-inquiries" type="primary" @click="router.push({ name: 'procurement-inquiries' })">
+        返回询价列表
+      </el-button>
+    </section>
+    <template v-else>
+    <section v-if="requisitionSourceLabel" class="section-block source-summary">
+      <h2>请购来源</h2>
       <span>请购来源：{{ requisitionSourceLabel }}</span>
       <span>{{ procurementModeDisplay(form.procurementMode, selectedProject?.projectNo, selectedProject?.name) }}</span>
-    </div>
-    <div class="form-grid">
+    </section>
+    <section class="section-block">
+      <h2>询价基础信息</h2>
+      <div class="form-grid">
       <label>
         采购模式
         <el-select v-model="form.procurementMode" data-test="inquiry-procurement-mode" style="width: 100%">
@@ -254,20 +266,16 @@ onMounted(async () => {
         备注
         <textarea v-model="form.remark" name="inquiry-remark" rows="2" />
       </label>
-    </div>
+      </div>
+    </section>
     <div class="action-bar">
       <el-button data-test="save-inquiry" type="primary" :loading="submitting" @click="saveInquiry">保存询价</el-button>
     </div>
-  </section>
+    </template>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-form-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 .form-grid {
   display: grid;
   gap: 12px;
@@ -317,5 +325,18 @@ textarea {
 .action-bar {
   display: flex;
   justify-content: flex-end;
+}
+
+.section-block {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
 }
 </style>

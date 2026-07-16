@@ -8,6 +8,15 @@ import { useAuthStore } from '../../stores/authStore'
 import InventoryControlledDocumentView from './InventoryControlledDocumentView.vue'
 
 const inventoryApiMock = vi.hoisted(() => ({
+  batches: {
+    list: vi.fn(),
+  },
+  serials: {
+    list: vi.fn(),
+  },
+  costLayers: {
+    list: vi.fn(),
+  },
   warehouseTransfers: {
     list: vi.fn(),
     get: vi.fn(),
@@ -50,6 +59,24 @@ const inventoryApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/inventoryApi', () => ({
   inventoryApi: inventoryApiMock,
+}))
+
+const masterDataApiMock = vi.hoisted(() => ({
+  warehouses: { list: vi.fn() },
+  materials: { list: vi.fn() },
+  units: { list: vi.fn() },
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+const salesProjectApiMock = vi.hoisted(() => ({
+  projects: { list: vi.fn() },
+}))
+
+vi.mock('../../shared/api/salesProjectApi', () => ({
+  salesProjectApi: salesProjectApiMock,
 }))
 
 const transferRecord = {
@@ -249,6 +276,134 @@ function stocktakeLine(
   }
 }
 
+const warehouseCandidates = [
+  { id: 1, code: 'WH-RAW', name: '原料仓', status: 'ENABLED', version: 1 },
+  { id: 2, code: 'WH-FG', name: '成品仓', status: 'ENABLED', version: 1 },
+]
+
+const materialCandidates = [
+  {
+    id: 3,
+    code: 'RM-001',
+    name: '钢板',
+    status: 'ENABLED',
+    materialType: 'RAW_MATERIAL',
+    sourceType: 'PURCHASED',
+    trackingMethod: 'SERIAL',
+    trackingMethodName: '序列号',
+    categoryId: 10,
+    unitId: 4,
+    unitName: '千克',
+  },
+]
+
+const unitCandidates = [
+  { id: 4, code: 'KG', name: '千克', status: 'ENABLED', precisionScale: 6, sortOrder: 1 },
+]
+
+const projectCandidates = [
+  {
+    id: 501,
+    projectNo: 'PRJ-001',
+    name: '一号项目',
+    customerId: 8,
+    customerCode: 'CUS-008',
+    customerName: '华东客户',
+    ownerUserId: 1,
+    ownerUsername: 'admin',
+    ownerDisplayName: '管理员',
+    status: 'ACTIVE',
+    targetRevenue: '0.00',
+    targetCost: '0.00',
+    contractSummaryRestricted: false,
+    salesOrderSummaryRestricted: false,
+    createdByName: '管理员',
+    createdAt: '2026-07-14T09:00:00+08:00',
+    updatedAt: '2026-07-14T09:30:00+08:00',
+    version: 1,
+  },
+  {
+    id: 502,
+    projectNo: 'PRJ-002',
+    name: '二号项目',
+    customerId: 8,
+    customerCode: 'CUS-008',
+    customerName: '华东客户',
+    ownerUserId: 1,
+    ownerUsername: 'admin',
+    ownerDisplayName: '管理员',
+    status: 'ACTIVE',
+    targetRevenue: '0.00',
+    targetCost: '0.00',
+    contractSummaryRestricted: false,
+    salesOrderSummaryRestricted: false,
+    createdByName: '管理员',
+    createdAt: '2026-07-14T09:00:00+08:00',
+    updatedAt: '2026-07-14T09:30:00+08:00',
+    version: 1,
+  },
+]
+
+const batchCandidates = [
+  {
+    id: 610,
+    batchNo: 'B-TF-001',
+    materialId: 3,
+    materialCode: 'RM-001',
+    materialName: '钢板',
+    warehouseId: 1,
+    warehouseName: '原料仓',
+    qualityStatus: 'QUALIFIED',
+    qualityStatusName: '合格',
+    quantityOnHand: '12.345678',
+    availableQuantity: '12.345678',
+    updatedAt: '2026-07-14T09:30:00+08:00',
+  },
+]
+
+const serialCandidates = [
+  {
+    id: 711,
+    serialNo: 'SN-TF-001',
+    materialId: 3,
+    materialCode: 'RM-001',
+    materialName: '钢板',
+    batchId: 610,
+    batchNo: 'B-TF-001',
+    warehouseId: 1,
+    warehouseName: '原料仓',
+    qualityStatus: 'QUALIFIED',
+    qualityStatusName: '合格',
+    availableQuantity: '1.000000',
+    updatedAt: '2026-07-14T09:30:00+08:00',
+  },
+]
+
+const costLayerCandidates = [
+  {
+    id: 9001,
+    layerNo: 'CL-PRJ-001',
+    ownershipType: 'PROJECT',
+    projectId: 501,
+    projectNo: 'PRJ-001',
+    projectName: '一号项目',
+    warehouseId: 1,
+    warehouseName: '原料仓',
+    materialId: 3,
+    materialCode: 'RM-001',
+    materialName: '钢板',
+    batchId: 610,
+    batchNo: 'B-TF-001',
+    serialId: 711,
+    serialNo: 'SN-TF-001',
+    originalQuantity: '12.345678',
+    remainingQuantity: '12.345678',
+    unitCost: '11.000000',
+    status: 'OPEN',
+    statusName: '可用',
+  },
+]
+
 const valuationAdjustmentRecord = {
   id: 1004,
   documentNo: 'VA-001',
@@ -365,6 +520,21 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
   await flushPromises()
 }
 
+function fieldProps(wrapper: VueWrapper, dataTest: string) {
+  const field = wrapper.findComponent(`[data-test="${dataTest}"]`) as VueWrapper
+  expect(field.exists()).toBe(true)
+  return field.props() as Record<string, unknown>
+}
+
+async function setDatePickerValue(wrapper: VueWrapper, name: string, value: string) {
+  const datePicker = wrapper
+    .findAllComponents({ name: 'ElDatePicker' })
+    .find((candidate) => candidate.props('name') === name) as VueWrapper | undefined
+  expect(datePicker?.exists()).toBe(true)
+  datePicker?.vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   const promise = new Promise<T>((settled) => {
@@ -433,6 +603,14 @@ describe('库存受控单据页', () => {
     inventoryApiMock.valuationAdjustments.submitApproval.mockResolvedValue(valuationAdjustmentRecord)
     inventoryApiMock.valuationAdjustments.withdraw.mockResolvedValue(valuationAdjustmentRecord)
     inventoryApiMock.valuationAdjustments.cancel.mockResolvedValue({ ...valuationAdjustmentRecord, status: 'CANCELLED' })
+
+    inventoryApiMock.batches.list.mockResolvedValue({ items: batchCandidates, page: 1, pageSize: 200, total: 1, totalPages: 1 })
+    inventoryApiMock.serials.list.mockResolvedValue({ items: serialCandidates, page: 1, pageSize: 200, total: 1, totalPages: 1 })
+    inventoryApiMock.costLayers.list.mockResolvedValue({ items: costLayerCandidates, page: 1, pageSize: 200, total: 1, totalPages: 1 })
+    masterDataApiMock.warehouses.list.mockResolvedValue({ items: warehouseCandidates, page: 1, pageSize: 200, total: 2, totalPages: 1 })
+    masterDataApiMock.materials.list.mockResolvedValue({ items: materialCandidates, page: 1, pageSize: 200, total: 1, totalPages: 1 })
+    masterDataApiMock.units.list.mockResolvedValue({ items: unitCandidates, page: 1, pageSize: 200, total: 1, totalPages: 1 })
+    salesProjectApiMock.projects.list.mockResolvedValue({ items: projectCandidates, page: 1, pageSize: 200, total: 2, totalPages: 1 })
   })
 
   it('仓库调拨列表按 allowedActions 显示过账和取消，动作携带版本与幂等键并刷新', async () => {
@@ -569,18 +747,41 @@ describe('库存受控单据页', () => {
   it('新建仓库调拨提交后端完整 DTO，包含质量、批次、序列、项目和来源成本层', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/create')
 
-    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    const datePicker = wrapper
+      .findAllComponents({ name: 'ElDatePicker' })
+      .find((candidate) => candidate.props('name') === 'inventory-controlled-business-date')
+    expect(datePicker?.props('valueOnClear')).toBe('')
+    expect(masterDataApiMock.warehouses.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(masterDataApiMock.materials.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(masterDataApiMock.units.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(salesProjectApiMock.projects.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(inventoryApiMock.batches.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(inventoryApiMock.serials.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({ pageSize: 200 }))
+    expect(fieldProps(wrapper, 'inventory-controlled-source-warehouse-id').filterable).toBe(true)
+    expect(fieldProps(wrapper, 'inventory-controlled-material-id').filterable).toBe(true)
+    expect(fieldProps(wrapper, 'inventory-controlled-source-cost-layer-id').filterable).toBe(true)
+    const optionLabels = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => option.props('label'))
+    expect(optionLabels).toContain('WH-RAW 原料仓')
+    expect(optionLabels).toContain('RM-001 钢板 / 千克')
+    expect(optionLabels).toContain('KG 千克')
+    expect(optionLabels).toContain('PRJ-001 一号项目')
+    expect(optionLabels).toContain('B-TF-001 / RM-001 / 钢板 / 原料仓')
+    expect(optionLabels).toContain('SN-TF-001 / RM-001 / 钢板 / 原料仓')
+    expect(optionLabels).toContain('CL-PRJ-001 / RM-001 / 钢板 / PRJ-001 / 一号项目 / 原料仓')
+
+    await setDatePickerValue(wrapper, 'inventory-controlled-business-date', '2026-07-15')
     await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目仓调拨')
     await setSelectValue(wrapper, 'inventory-controlled-quality-status', 'QUALIFIED')
-    await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
-    await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
-    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
-    await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
+    await setSelectValue(wrapper, 'inventory-controlled-source-warehouse-id', '1')
+    await setSelectValue(wrapper, 'inventory-controlled-target-warehouse-id', '2')
+    await setSelectValue(wrapper, 'inventory-controlled-material-id', '3')
+    await setSelectValue(wrapper, 'inventory-controlled-unit-id', '4')
     await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('7.000000')
-    await wrapper.find('input[name="inventory-controlled-project-id"]').setValue('501')
-    await wrapper.find('input[name="inventory-controlled-batch-id"]').setValue('610')
-    await wrapper.find('input[name="inventory-controlled-serial-id"]').setValue('711')
-    await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
+    await setSelectValue(wrapper, 'inventory-controlled-project-id', '501')
+    await setSelectValue(wrapper, 'inventory-controlled-batch-id', '610')
+    await setSelectValue(wrapper, 'inventory-controlled-serial-id', '711')
+    await setSelectValue(wrapper, 'inventory-controlled-source-cost-layer-id', '9001')
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
 
@@ -607,13 +808,13 @@ describe('库存受控单据页', () => {
   it('编辑仓库调拨从详情回填质量、批次、序列和成本层并携带版本保存，避免空表单覆盖', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001/edit')
 
-    expect((wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').element as HTMLInputElement).value).toBe('1')
-    expect((wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').element as HTMLInputElement).value).toBe('2')
-    expect((wrapper.find('input[name="inventory-controlled-material-id"]').element as HTMLInputElement).value).toBe('3')
-    expect((wrapper.find('input[name="inventory-controlled-unit-id"]').element as HTMLInputElement).value).toBe('4')
-    expect((wrapper.find('input[name="inventory-controlled-batch-id"]').element as HTMLInputElement).value).toBe('610')
-    expect((wrapper.find('input[name="inventory-controlled-serial-id"]').element as HTMLInputElement).value).toBe('711')
-    expect((wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').element as HTMLInputElement).value).toBe('9001')
+    expect(fieldProps(wrapper, 'inventory-controlled-source-warehouse-id').modelValue).toBe('1')
+    expect(fieldProps(wrapper, 'inventory-controlled-target-warehouse-id').modelValue).toBe('2')
+    expect(fieldProps(wrapper, 'inventory-controlled-material-id').modelValue).toBe('3')
+    expect(fieldProps(wrapper, 'inventory-controlled-unit-id').modelValue).toBe('4')
+    expect(fieldProps(wrapper, 'inventory-controlled-batch-id').modelValue).toBe('610')
+    expect(fieldProps(wrapper, 'inventory-controlled-serial-id').modelValue).toBe('711')
+    expect(fieldProps(wrapper, 'inventory-controlled-source-cost-layer-id').modelValue).toBe('9001')
 
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
@@ -634,24 +835,39 @@ describe('库存受控单据页', () => {
     }))
   })
 
+  it('终态编辑路由显示不可编辑原因且不露出保存语义', async () => {
+    inventoryApiMock.warehouseTransfers.get.mockResolvedValueOnce({
+      ...transferRecord,
+      status: 'POSTED',
+      statusName: '已过账',
+      allowedActions: [],
+    })
+
+    const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001/edit')
+
+    expect(wrapper.text()).toContain('当前状态“已过账”不可编辑')
+    expect(wrapper.findAllComponents({ name: 'ElButton' }).some((button) => button.text().trim() === '保存')).toBe(false)
+    expect(inventoryApiMock.warehouseTransfers.update).not.toHaveBeenCalled()
+  })
+
   it('所有权转换支持项目间转换并提交来源目标仓库、项目、单位、质量、追踪身份和成本层', async () => {
     const { wrapper } = await mountInventoryDocument('/inventory/ownership-conversions/create')
 
-    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    await setDatePickerValue(wrapper, 'inventory-controlled-business-date', '2026-07-15')
     await wrapper.find('input[name="inventory-controlled-reason"]').setValue('项目间借用')
     await setSelectValue(wrapper, 'inventory-controlled-source-ownership-type', 'PROJECT')
     await setSelectValue(wrapper, 'inventory-controlled-target-ownership-type', 'PROJECT')
     await setSelectValue(wrapper, 'inventory-controlled-quality-status', 'QUALIFIED')
-    await wrapper.find('input[name="inventory-controlled-source-warehouse-id"]').setValue('1')
-    await wrapper.find('input[name="inventory-controlled-target-warehouse-id"]').setValue('2')
-    await wrapper.find('input[name="inventory-controlled-source-project-id"]').setValue('501')
-    await wrapper.find('input[name="inventory-controlled-target-project-id"]').setValue('502')
-    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
-    await wrapper.find('input[name="inventory-controlled-unit-id"]').setValue('4')
+    await setSelectValue(wrapper, 'inventory-controlled-source-warehouse-id', '1')
+    await setSelectValue(wrapper, 'inventory-controlled-target-warehouse-id', '2')
+    await setSelectValue(wrapper, 'inventory-controlled-source-project-id', '501')
+    await setSelectValue(wrapper, 'inventory-controlled-target-project-id', '502')
+    await setSelectValue(wrapper, 'inventory-controlled-material-id', '3')
+    await setSelectValue(wrapper, 'inventory-controlled-unit-id', '4')
     await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('5.000000')
-    await wrapper.find('input[name="inventory-controlled-batch-id"]').setValue('610')
-    await wrapper.find('input[name="inventory-controlled-serial-id"]').setValue('711')
-    await wrapper.find('input[name="inventory-controlled-source-cost-layer-id"]').setValue('9001')
+    await setSelectValue(wrapper, 'inventory-controlled-batch-id', '610')
+    await setSelectValue(wrapper, 'inventory-controlled-serial-id', '711')
+    await setSelectValue(wrapper, 'inventory-controlled-source-cost-layer-id', '9001')
     expect(wrapper.find('input[name="inventory-controlled-source-unit-cost"]').exists()).toBe(false)
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
@@ -1032,6 +1248,42 @@ describe('库存受控单据页', () => {
       .toContain('INVENTORY_STOCKTAKE 1003 项目盘盈证据附件 true')
   })
 
+  it('PUBLIC 盘盈证据附件标题使用所有权中性文案', async () => {
+    const publicPositiveLine = stocktakeLine({
+      id: 2702,
+      ownershipType: 'PUBLIC',
+      countedQuantity: '13.000000',
+      bookQuantity: '12.000000',
+      varianceQuantity: '1.000000',
+      varianceUnitCost: '10.000000',
+      varianceReason: '公共盘盈复核',
+      valuationRequirement: {
+        mode: 'EXPLICIT_UNIT_COST',
+        requiredUnitCost: true,
+        requiredReason: true,
+        requiredAttachment: true,
+      },
+      version: 72,
+    })
+    inventoryApiMock.stocktakes.get.mockResolvedValueOnce({
+      ...stocktakeRecord,
+      status: 'RECONCILED',
+      statusName: '已确认差异',
+      allowedActions: ['SUBMIT_APPROVAL', 'CANCEL'],
+      lineSummary: { ...stocktakeLineSummary, positiveVarianceLines: 1 },
+      lines: undefined,
+      costVisible: true,
+    })
+    inventoryApiMock.stocktakes.listLines.mockResolvedValueOnce(stocktakeLinePage([publicPositiveLine]))
+
+    const { wrapper } = await mountInventoryDocument('/inventory/stocktakes/1003')
+
+    expect(wrapper.find('[data-test="stocktake-evidence-attachment"]').text())
+      .toContain('INVENTORY_STOCKTAKE 1003 盘盈证据附件 false')
+    expect(wrapper.find('[data-test="stocktake-evidence-attachment"]').text())
+      .not.toContain('项目盘盈证据附件')
+  })
+
   it('盘点无成本权限保存数量时 payload 完全省略 varianceUnitCost', async () => {
     const header = { ...stocktakeRecord, lineSummary: stocktakeLineSummary, lines: undefined, costVisible: false }
     inventoryApiMock.stocktakes.get.mockResolvedValueOnce(header)
@@ -1098,14 +1350,14 @@ describe('库存受控单据页', () => {
     const { wrapper } = await mountInventoryDocument('/inventory/valuation-adjustments/create')
 
     await setSelectValue(wrapper, 'inventory-controlled-adjustment-type', 'PROVISIONAL_REVALUATION')
-    await wrapper.find('input[name="inventory-controlled-business-date"]').setValue('2026-07-15')
+    await setDatePickerValue(wrapper, 'inventory-controlled-business-date', '2026-07-15')
     await wrapper.find('input[name="inventory-controlled-reason"]').setValue('暂估价修正')
-    await wrapper.find('input[name="inventory-controlled-material-id"]').setValue('3')
+    await setSelectValue(wrapper, 'inventory-controlled-material-id', '3')
     await wrapper.find('input[name="inventory-controlled-quantity"]').setValue('10.000000')
     await wrapper.find('input[name="inventory-controlled-unit-cost"]').setValue('12.000000')
     await wrapper.find('input[name="inventory-controlled-adjustment-amount"]').setValue('120.00')
-    await wrapper.find('input[name="inventory-controlled-project-id"]').setValue('501')
-    await wrapper.find('input[name="inventory-controlled-cost-layer-id"]').setValue('9001')
+    await setSelectValue(wrapper, 'inventory-controlled-project-id', '501')
+    await setSelectValue(wrapper, 'inventory-controlled-cost-layer-id', '9001')
     await firstButton(wrapper, '保存').trigger('click')
     await flushPromises()
 

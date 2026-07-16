@@ -8,10 +8,12 @@ import type {
   SalesDeliveryPlanRecord,
   SalesEffectiveDemandRecord,
 } from '../../shared/api/salesFulfillmentApi'
+import { expectNoBareIdFilters, expectStandardListPage } from '../../test/pageGovernanceAssertions'
 import { useAuthStore } from '../../stores/authStore'
 import SalesCreditProfileListView from './credit/SalesCreditProfileListView.vue'
 import SalesDeliveryPlanListView from './delivery/SalesDeliveryPlanListView.vue'
 import EffectiveSalesDemandListView from './effective-demand/EffectiveSalesDemandListView.vue'
+import effectiveSalesDemandSource from './effective-demand/EffectiveSalesDemandListView.vue?raw'
 
 const salesFulfillmentApiMock = vi.hoisted(() => ({
   deliveryPlans: {
@@ -25,6 +27,20 @@ const salesFulfillmentApiMock = vi.hoisted(() => ({
   effectiveDemands: {
     list: vi.fn(),
   },
+}))
+
+const masterDataApiMock = vi.hoisted(() => ({
+  customers: { list: vi.fn() },
+  materials: { list: vi.fn() },
+}))
+
+const salesApiMock = vi.hoisted(() => ({
+  orders: { list: vi.fn() },
+}))
+
+const salesProjectApiMock = vi.hoisted(() => ({
+  projects: { list: vi.fn() },
+  listOrderLinkCandidates: vi.fn(),
 }))
 
 const documentPlatformApiMock = vi.hoisted(() => ({
@@ -45,6 +61,18 @@ const documentPlatformApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/salesFulfillmentApi', () => ({
   salesFulfillmentApi: salesFulfillmentApiMock,
+}))
+
+vi.mock('../../shared/api/masterDataApi', () => ({
+  masterDataApi: masterDataApiMock,
+}))
+
+vi.mock('../../shared/api/salesApi', () => ({
+  salesApi: salesApiMock,
+}))
+
+vi.mock('../../shared/api/salesProjectApi', () => ({
+  salesProjectApi: salesProjectApiMock,
 }))
 
 vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
@@ -159,6 +187,69 @@ const demand: SalesEffectiveDemandRecord = {
   updatedAt: '2026-07-16T10:00:00+08:00',
 }
 
+const customer = { id: 8, code: 'CUS-008', name: '华东客户', status: 'ENABLED' }
+const material = {
+  id: 31,
+  code: 'FG-001',
+  name: '控制柜',
+  materialType: 'FINISHED_GOOD',
+  sourceType: 'SELF_MADE',
+  trackingMethod: 'NONE',
+  trackingMethodName: '不追踪',
+  categoryId: 1,
+  unitId: 2,
+  unitName: '台',
+  status: 'ENABLED',
+}
+const project = {
+  id: 20,
+  projectNo: 'PRJ-025',
+  name: '华东产线',
+  customerId: 8,
+  customerCode: 'CUS-008',
+  customerName: '华东客户',
+  ownerUserId: 1,
+  ownerUsername: 'seller',
+  ownerDisplayName: '销售员',
+  status: 'ACTIVE',
+  targetRevenue: '0.000000',
+  targetCost: '0.000000',
+  contractSummaryRestricted: false,
+  salesOrderSummaryRestricted: false,
+  createdByName: '销售员',
+  createdAt: '2026-07-01T09:00:00+08:00',
+  updatedAt: '2026-07-15T09:00:00+08:00',
+  version: 1,
+}
+const order = {
+  id: 88,
+  orderNo: 'SO-001',
+  customerId: 8,
+  customerCode: 'CUS-008',
+  customerName: '华东客户',
+  orderDate: '2026-07-16',
+  status: 'CONFIRMED',
+  lineCount: 1,
+  totalQuantity: '10.000000',
+  shippedQuantity: '4.000000',
+  remainingQuantity: '6.000000',
+  createdByName: '销售员',
+  createdAt: '2026-07-16T09:00:00+08:00',
+  updatedAt: '2026-07-16T10:00:00+08:00',
+  version: 2,
+}
+const contractCandidate = {
+  projectId: 20,
+  projectNo: 'PRJ-025',
+  projectName: '华东产线',
+  customerId: 8,
+  customerName: '华东客户',
+  contractId: 55,
+  contractNo: 'SC-001',
+  contractName: '华东合同',
+  contractType: 'MAIN',
+}
+
 function setup(permissions: string[]) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -191,6 +282,11 @@ describe('025 销售履约页面', () => {
     salesFulfillmentApiMock.creditProfiles.get.mockResolvedValue(credit)
     salesFulfillmentApiMock.creditProfiles.upsert.mockResolvedValue({ ...credit, version: 8 })
     salesFulfillmentApiMock.effectiveDemands.list.mockResolvedValue({ items: [demand], total: 1, page: 1, pageSize: 10 })
+    masterDataApiMock.customers.list.mockResolvedValue({ items: [customer], total: 1, page: 1, pageSize: 50, totalPages: 1 })
+    masterDataApiMock.materials.list.mockResolvedValue({ items: [material], total: 1, page: 1, pageSize: 50, totalPages: 1 })
+    salesApiMock.orders.list.mockResolvedValue({ items: [order], total: 1, page: 1, pageSize: 50, totalPages: 1 })
+    salesProjectApiMock.projects.list.mockResolvedValue({ items: [project], total: 1, page: 1, pageSize: 50, totalPages: 1 })
+    salesProjectApiMock.listOrderLinkCandidates.mockResolvedValue({ items: [contractCandidate], total: 1, page: 1, pageSize: 50, totalPages: 1 })
     documentPlatformApiMock.exports.createSalesDeliveryPlans.mockResolvedValue({
       id: 801,
       taskNo: 'TASK-DELIVERY-EXPORT',
@@ -219,6 +315,8 @@ describe('025 销售履约页面', () => {
     const wrapper = mount(SalesDeliveryPlanListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['项目 ID', '客户 ID', '合同 ID', '订单 ID', '物料 ID'])
     expect(salesFulfillmentApiMock.deliveryPlans.list).toHaveBeenCalledWith(expect.objectContaining({ countedOnly: true }))
     expect(wrapper.text()).toContain('PRJ-025 华东产线')
     expect(wrapper.text()).toContain('SC-001')
@@ -242,6 +340,8 @@ describe('025 销售履约页面', () => {
     const wrapper = mount(SalesCreditProfileListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['客户 ID'])
     expect(wrapper.text()).toContain('订单承诺 30000')
     expect(wrapper.text()).toContain('待建应收出库 10000')
     expect(wrapper.text()).toContain('基础应收未收 20000')
@@ -283,6 +383,8 @@ describe('025 销售履约页面', () => {
     const wrapper = mount(EffectiveSalesDemandListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
+    expectStandardListPage(wrapper)
+    expectNoBareIdFilters(wrapper, ['项目 ID', '客户 ID', '合同 ID', '物料 ID'])
     expect(salesFulfillmentApiMock.effectiveDemands.list).toHaveBeenCalledWith(expect.objectContaining({ countedOnly: true }))
     expect(wrapper.text()).toContain('报价 -> 合同/订单 -> 交付计划 -> 出库 -> 退货/关闭')
     expect(wrapper.text()).toContain('开放需求 6')
@@ -307,5 +409,31 @@ describe('025 销售履约页面', () => {
       idempotencyKey: 'sales-fulfillment-key',
     }))
     expect(wrapper.text()).toContain('TASK-DEMAND-EXPORT')
+  })
+
+  it('有效销售需求状态筛选使用稳定枚举且不保留 never 兜底', async () => {
+    expect(effectiveSalesDemandSource).not.toContain('as never')
+    const pinia = setup(['sales:effective-demand:view'])
+    const router = await routerFor('/sales/effective-demands')
+    const wrapper = mount(EffectiveSalesDemandListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    const optionValues = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => option.props('value'))
+    expect(optionValues).toEqual(expect.arrayContaining(['OPEN', 'PARTIALLY_SHIPPED', 'OVERDUE', 'EXCLUDED']))
+    expect(optionValues).not.toContain('PARTIAL')
+    expect(optionValues).not.toContain('FULFILLED')
+    expect(optionValues).not.toContain('CLOSED')
+
+    const statusSelect = wrapper
+      .findAllComponents({ name: 'ElSelect' })
+      .find((select) => select.props('placeholder') === '需求状态')
+    expect(statusSelect?.exists()).toBe(true)
+    statusSelect?.vm.$emit('update:modelValue', 'PARTIALLY_SHIPPED')
+    await wrapper.find('[data-test="search-sales-effective-demands"]').trigger('click')
+    await flushPromises()
+
+    expect(salesFulfillmentApiMock.effectiveDemands.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      status: 'PARTIALLY_SHIPPED',
+    }))
   })
 })

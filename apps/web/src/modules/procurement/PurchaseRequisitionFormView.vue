@@ -18,6 +18,7 @@ import {
   validateProcurementDecimal,
   validatePurchaseQuantity,
 } from './procurementPageHelpers'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,6 +26,7 @@ const submitting = ref(false)
 const loading = ref(false)
 const formError = ref('')
 const referenceError = ref('')
+const editLoadFailed = ref(false)
 const projects = ref<SalesProjectSummary[]>([])
 const materials = ref<MaterialRecord[]>([])
 const suppliers = ref<PartnerRecord[]>([])
@@ -67,6 +69,7 @@ async function loadRecord() {
   }
   loading.value = true
   formError.value = ''
+  editLoadFailed.value = false
   try {
     const detail = await procurementApi.requisitions.get(route.params.id as ResourceId)
     const firstLine = detail.lines[0]
@@ -81,6 +84,7 @@ async function loadRecord() {
     form.purpose = firstLine?.purpose ?? ''
     form.remark = detail.remark ?? ''
   } catch (caught) {
+    editLoadFailed.value = true
     formError.value = procurementErrorMessage(caught)
   } finally {
     loading.value = false
@@ -131,6 +135,10 @@ async function saveRequisition() {
   if (submitting.value) {
     return
   }
+  if (isEdit.value && (!editingRecord.value || editLoadFailed.value)) {
+    formError.value = '采购请购不存在或无权编辑'
+    return
+  }
   const payload = buildPayload()
   if (!payload) {
     return
@@ -163,120 +171,124 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="procurement-form-page">
-    <header class="page-header">
-      <h1>{{ pageTitle }}</h1>
-      <p>项目专采必须来自明确项目；公共采购显示为公共采购。</p>
-    </header>
+  <MasterDataTableView :title="pageTitle" description="项目专采必须来自明确项目；公共采购显示为公共采购。">
+    <template #alerts>
+      <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
+      <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
+      <el-alert v-if="loading" class="page-alert" type="info" title="采购请购加载中" show-icon :closable="false" />
+    </template>
 
-    <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
-    <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
-    <el-alert v-if="loading" class="page-alert" type="info" title="采购请购加载中" show-icon :closable="false" />
+    <section v-if="editLoadFailed" class="section-block">
+      <h2>无法编辑采购请购</h2>
+      <p>{{ formError || '采购请购不存在或无权编辑' }}</p>
+      <div class="action-bar">
+        <el-button data-test="back-requisitions" @click="router.push({ name: 'procurement-requisitions' })">
+          返回请购列表
+        </el-button>
+      </div>
+    </section>
 
-    <div class="form-grid">
-      <label>
-        采购模式
-        <el-select v-model="form.procurementMode" data-test="requisition-procurement-mode" style="width: 100%">
-          <el-option label="项目专采" value="PROJECT" />
-          <el-option label="公共采购" value="PUBLIC" />
-        </el-select>
-      </label>
-      <label>
-        项目
-        <el-select
-          v-model="form.projectId"
-          data-test="requisition-project-id"
-          style="width: 100%"
-          filterable
-          clearable
-          :disabled="form.procurementMode === 'PUBLIC'"
-          placeholder="选择项目"
-        >
-          <el-option
-            v-for="project in projects"
-            :key="project.id"
-            :label="`${project.projectNo} ${project.name}`"
-            :value="project.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        项目显示
-        <span class="readonly-field">{{ selectedProject ? `${selectedProject.projectNo} ${selectedProject.name}` : '公共采购' }}</span>
-      </label>
-      <label>
-        物料
-        <el-select v-model="form.materialId" data-test="requisition-material-id" style="width: 100%" filterable placeholder="选择物料">
-          <el-option
-            v-for="material in materials"
-            :key="material.id"
-            :label="`${material.code} ${material.name}`"
-            :value="material.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        物料显示
-        <span class="readonly-field">{{ selectedMaterial ? `${selectedMaterial.code} ${selectedMaterial.name}` : '未选择物料' }}</span>
-      </label>
-      <label>
-        建议供应商
-        <el-select v-model="form.suggestedSupplierId" data-test="requisition-supplier-id" style="width: 100%" filterable clearable placeholder="可选">
-          <el-option
-            v-for="supplier in suppliers"
-            :key="supplier.id"
-            :label="`${supplier.code} ${supplier.name}`"
-            :value="supplier.id"
-          />
-        </el-select>
-      </label>
-      <label>
-        数量
-        <input v-model="form.quantity" name="requisition-quantity" autocomplete="off">
-      </label>
-      <label>
-        税率
-        <input v-model="form.taxRate" name="requisition-tax-rate" autocomplete="off">
-      </label>
-      <label>
-        需求日期
-        <input v-model="form.requiredDate" name="requisition-required-date" type="date">
-      </label>
-      <label class="full-row">
-        用途说明
-        <textarea v-model="form.purpose" name="requisition-purpose" rows="3" />
-      </label>
-      <label class="full-row">
-        备注
-        <textarea v-model="form.remark" name="requisition-remark" rows="2" />
-      </label>
-    </div>
+    <template v-else>
+      <section class="section-block">
+        <h2>请购基础信息</h2>
+        <div class="form-grid">
+          <label>
+            采购模式
+            <el-select v-model="form.procurementMode" data-test="requisition-procurement-mode" style="width: 100%">
+              <el-option label="项目专采" value="PROJECT" />
+              <el-option label="公共采购" value="PUBLIC" />
+            </el-select>
+          </label>
+          <label>
+            项目
+            <el-select
+              v-model="form.projectId"
+              data-test="requisition-project-id"
+              style="width: 100%"
+              filterable
+              clearable
+              :disabled="form.procurementMode === 'PUBLIC'"
+              placeholder="选择项目"
+            >
+              <el-option
+                v-for="project in projects"
+                :key="project.id"
+                :label="`${project.projectNo} ${project.name}`"
+                :value="project.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            项目显示
+            <span class="readonly-field">{{ selectedProject ? `${selectedProject.projectNo} ${selectedProject.name}` : '公共采购' }}</span>
+          </label>
+          <label>
+            物料
+            <el-select v-model="form.materialId" data-test="requisition-material-id" style="width: 100%" filterable placeholder="选择物料">
+              <el-option
+                v-for="material in materials"
+                :key="material.id"
+                :label="`${material.code} ${material.name}`"
+                :value="material.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            物料显示
+            <span class="readonly-field">{{ selectedMaterial ? `${selectedMaterial.code} ${selectedMaterial.name}` : '未选择物料' }}</span>
+          </label>
+          <label>
+            建议供应商
+            <el-select v-model="form.suggestedSupplierId" data-test="requisition-supplier-id" style="width: 100%" filterable clearable placeholder="可选">
+              <el-option
+                v-for="supplier in suppliers"
+                :key="supplier.id"
+                :label="`${supplier.code} ${supplier.name}`"
+                :value="supplier.id"
+              />
+            </el-select>
+          </label>
+          <label>
+            数量
+            <input v-model="form.quantity" name="requisition-quantity" autocomplete="off">
+          </label>
+          <label>
+            税率
+            <input v-model="form.taxRate" name="requisition-tax-rate" autocomplete="off">
+          </label>
+          <label>
+            需求日期
+            <el-date-picker
+              v-model="form.requiredDate"
+              name="requisition-required-date"
+              value-on-clear=""
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              placeholder="选择需求日期"
+            />
+          </label>
+          <label class="full-row">
+            用途说明
+            <textarea v-model="form.purpose" name="requisition-purpose" rows="3" />
+          </label>
+          <label class="full-row">
+            备注
+            <textarea v-model="form.remark" name="requisition-remark" rows="2" />
+          </label>
+        </div>
+      </section>
 
-    <div class="action-bar">
-      <el-button data-test="save-requisition" type="primary" :loading="submitting" @click="saveRequisition">
-        保存请购
-      </el-button>
-    </div>
-  </section>
+      <div class="action-bar">
+        <el-button data-test="save-requisition" type="primary" :loading="submitting" @click="saveRequisition">
+          保存请购
+        </el-button>
+      </div>
+    </template>
+  </MasterDataTableView>
 </template>
 
 <style scoped>
-.procurement-form-page {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.page-header h1 {
-  font-size: 22px;
-  margin: 0 0 6px;
-}
-
-.page-header p {
-  color: #606266;
-  margin: 0;
-}
-
 .form-grid {
   display: grid;
   gap: 12px;
@@ -317,5 +329,18 @@ textarea {
 .action-bar {
   display: flex;
   justify-content: flex-end;
+}
+
+.section-block {
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
 }
 </style>

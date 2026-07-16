@@ -46,8 +46,12 @@ public class SalesFulfillmentController {
 			@RequestParam(required = false) Long customerId,
 			@RequestParam(required = false) Long projectId,
 			@RequestParam(required = false) String status,
+			@RequestParam(required = false) String approvalStatus,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate validFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate validTo,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.salesQuoteService.quotes(keyword, customerId, projectId, status, page, pageSize));
+		return ApiResponse.ok(this.salesQuoteService.quotes(keyword, customerId, projectId, status,
+				approvalStatus, validFrom, validTo, page, pageSize));
 	}
 
 	@GetMapping("/quotes/{id}")
@@ -125,10 +129,19 @@ public class SalesFulfillmentController {
 
 	@GetMapping("/delivery-plans")
 	public ApiResponse<PageResponse<SalesFulfillmentService.DeliveryPlanResponse>> deliveryPlans(
+			@RequestParam(required = false) String keyword,
+			@RequestParam(required = false) Long customerId,
+			@RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) Long contractId,
 			@RequestParam(required = false) Long orderId,
+			@RequestParam(required = false) Long materialId,
+			@RequestParam(required = false) String status,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate expectedDateTo,
 			@RequestParam(required = false) Boolean countedOnly,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.salesFulfillmentService.deliveryPlans(orderId, countedOnly, page, pageSize));
+		return ApiResponse.ok(this.salesFulfillmentService.deliveryPlans(keyword, customerId, projectId, contractId,
+				orderId, materialId, status, expectedDateFrom, expectedDateTo, countedOnly, page, pageSize));
 	}
 
 	@GetMapping("/effective-demands")

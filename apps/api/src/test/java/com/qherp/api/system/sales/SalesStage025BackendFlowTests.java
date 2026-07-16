@@ -26,6 +26,7 @@ import org.testcontainers.utility.DockerImageName;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.ByteArrayInputStream;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -34,6 +35,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -266,6 +272,183 @@ class SalesStage025BackendFlowTests extends PostgresIntegrationTest {
 				Map.of("version", expired.get("version").longValue(), "idempotencyKey",
 						"S25-QUOTE-EXPIRED-CONVERT-" + expired.get("id").longValue())),
 				HttpStatus.CONFLICT, "SALES_QUOTE_STATUS_INVALID");
+	}
+
+	@Test
+	void quoteListFiltersApprovalStatusValidDateAndPaginationTotal() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		LocalDate validUntil = LocalDate.now().plusDays(10);
+
+		Map<String, Object> submittedPayload = quotePayload(fixture.customerId(),
+				List.of(quoteLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "100.000000",
+						"0.130000")));
+		submittedPayload.put("validUntil", validUntil.toString());
+		JsonNode submittedQuote = data(post(admin, "/api/admin/sales/quotes", submittedPayload));
+		data(post(admin, "/api/admin/sales/quotes/" + submittedQuote.get("id").longValue() + "/submit-approval",
+				Map.of("version", submittedQuote.get("version").longValue(), "reason", "025A 报价筛选审批",
+						"idempotencyKey", "S25A-QUOTE-FILTER-SUBMIT-" + submittedQuote.get("id").longValue())));
+
+		Map<String, Object> draftPayload = quotePayload(fixture.customerId(),
+				List.of(quoteLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "90.000000",
+						"0.130000")));
+		draftPayload.put("validUntil", validUntil.toString());
+		data(post(admin, "/api/admin/sales/quotes", draftPayload));
+
+		Map<String, Object> outOfRangePayload = quotePayload(fixture.customerId(),
+				List.of(quoteLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "80.000000",
+						"0.130000")));
+		outOfRangePayload.put("validUntil", validUntil.plusDays(30).toString());
+		JsonNode outOfRangeQuote = data(post(admin, "/api/admin/sales/quotes", outOfRangePayload));
+		data(post(admin, "/api/admin/sales/quotes/" + outOfRangeQuote.get("id").longValue() + "/submit-approval",
+				Map.of("version", outOfRangeQuote.get("version").longValue(), "reason", "025A 报价筛选审批",
+						"idempotencyKey", "S25A-QUOTE-FILTER-SUBMIT-" + outOfRangeQuote.get("id").longValue())));
+
+		JsonNode page = data(get(admin, "/api/admin/sales/quotes?customerId=" + fixture.customerId()
+				+ "&approvalStatus=SUBMITTED&validFrom=" + validUntil.minusDays(1) + "&validTo="
+				+ validUntil.plusDays(1) + "&page=1&pageSize=1"));
+		assertThat(page.get("total").longValue()).isEqualTo(1);
+		assertThat(page.get("page").intValue()).isEqualTo(1);
+		assertThat(page.get("pageSize").intValue()).isEqualTo(1);
+		assertThat(page.get("items")).hasSize(1);
+		assertThat(page.get("items").get(0).get("id").longValue()).isEqualTo(submittedQuote.get("id").longValue());
+		assertThat(page.get("items").get(0).get("approvalStatus").asText()).isEqualTo("SUBMITTED");
+
+		JsonNode aliasPage = data(get(admin, "/api/admin/sales/quotes?customerId=" + fixture.customerId()
+				+ "&approvalStatus=IN_APPROVAL&validFrom=" + validUntil.minusDays(1) + "&validTo="
+				+ validUntil.plusDays(1) + "&page=1&pageSize=20"));
+		JsonNode aliasItem = findItemById(aliasPage, submittedQuote.get("id").longValue());
+		assertThat(aliasItem.get("approvalStatus").asText()).isEqualTo("SUBMITTED");
+
+		JsonNode exportTask = data(postWithIdempotency(admin, "/api/admin/export-tasks",
+				Map.of("taskType", "SALES_QUOTE_EXPORT", "filters", Map.of("customerId", fixture.customerId(),
+						"approvalStatus", "SUBMITTED", "validFrom", validUntil.minusDays(1).toString(),
+						"validTo", validUntil.plusDays(1).toString())),
+				"S25A-QUOTE-SUBMITTED-EXPORT-" + submittedQuote.get("id").longValue()));
+		assertThat(this.documentTaskWorker.processAvailableOnce()).isTrue();
+		JsonNode finishedExportTask = data(get(admin, "/api/admin/document-tasks/" + exportTask.get("id").longValue()));
+		assertThat(finishedExportTask.get("status").asText()).isEqualTo("SUCCEEDED");
+		String exportText = workbookText(downloadBytes(admin, "/api/admin/document-tasks/"
+				+ exportTask.get("id").longValue() + "/download").getBody());
+		assertThat(exportText).contains(submittedQuote.get("quoteNo").asText());
+	}
+
+	@Test
+	void quoteRejectedApprovalFilterAndExportUseRealApprovalInstanceStatus() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		LocalDate validUntil = LocalDate.now().plusDays(11);
+		int suffix = SEQUENCE.incrementAndGet();
+
+		Map<String, Object> rejectedPayload = quotePayload(fixture.customerId(),
+				List.of(quoteLine(1, fixture.finishedMaterialId(), fixture.unitId(), "1.000000", "70.000000",
+						"0.130000")));
+		rejectedPayload.put("validUntil", validUntil.toString());
+		rejectedPayload.put("remark", "025A_REJECTED_QUOTE_" + suffix);
+		JsonNode rejectedQuote = data(post(admin, "/api/admin/sales/quotes", rejectedPayload));
+		data(post(admin, "/api/admin/sales/quotes/" + rejectedQuote.get("id").longValue() + "/submit-approval",
+				Map.of("version", rejectedQuote.get("version").longValue(), "reason", "025A 报价驳回筛选",
+						"idempotencyKey", "S25A-QUOTE-REJECTED-SUBMIT-" + rejectedQuote.get("id").longValue())));
+
+		AuthenticatedSession approver = createUserAndLogin("s25a-quote-reject-approver-",
+				"S25A_QUOTE_REJECT_APPROVER_", List.of("platform:approval:view", "platform:todo:view",
+						"sales:quote:view", "sales:quote:approve"));
+		ApprovalTaskHandle task = latestApprovalTask("sales:quote:approve");
+		JsonNode rejectedInstance = data(post(approver, "/api/admin/approval-tasks/" + task.taskId() + "/reject",
+				Map.of("version", task.version(), "comment", "报价驳回", "idempotencyKey",
+						"S25A-QUOTE-REJECT-" + task.taskId())));
+		assertThat(rejectedInstance.get("status").asText()).isEqualTo("REJECTED");
+
+		JsonNode rejectedPage = data(get(admin, "/api/admin/sales/quotes?customerId=" + fixture.customerId()
+				+ "&approvalStatus=REJECTED&validFrom=" + validUntil.minusDays(1) + "&validTo="
+				+ validUntil.plusDays(1) + "&page=1&pageSize=20"));
+		JsonNode rejectedItem = findItemById(rejectedPage, rejectedQuote.get("id").longValue());
+		assertThat(rejectedItem.get("approvalStatus").asText()).isEqualTo("REJECTED");
+		JsonNode submittedPage = data(get(admin, "/api/admin/sales/quotes?customerId=" + fixture.customerId()
+				+ "&approvalStatus=SUBMITTED&validFrom=" + validUntil.minusDays(1) + "&validTo="
+				+ validUntil.plusDays(1) + "&page=1&pageSize=20"));
+		assertThat(submittedPage.toString()).doesNotContain(rejectedQuote.get("quoteNo").asText());
+
+		JsonNode exportTask = data(postWithIdempotency(admin, "/api/admin/export-tasks",
+				Map.of("taskType", "SALES_QUOTE_EXPORT", "filters", Map.of("customerId", fixture.customerId(),
+						"approvalStatus", "REJECTED", "validFrom", validUntil.minusDays(1).toString(),
+						"validTo", validUntil.plusDays(1).toString())),
+				"S25A-QUOTE-REJECTED-EXPORT-" + rejectedQuote.get("id").longValue()));
+		assertThat(exportTask.get("taskType").asText()).isEqualTo("SALES_QUOTE_EXPORT");
+		assertThat(this.documentTaskWorker.processAvailableOnce()).isTrue();
+		JsonNode finishedExportTask = data(get(admin, "/api/admin/document-tasks/" + exportTask.get("id").longValue()));
+		assertThat(finishedExportTask.get("status").asText()).isEqualTo("SUCCEEDED");
+		String exportText = workbookText(downloadBytes(admin, "/api/admin/document-tasks/"
+				+ exportTask.get("id").longValue() + "/download").getBody());
+		assertThat(exportText).contains(rejectedQuote.get("quoteNo").asText());
+	}
+
+	@Test
+	void globalDeliveryPlanListFiltersAllVisibleFieldsAndKeepsPageShape() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		int suffix = SEQUENCE.incrementAndGet();
+		long projectId = insertProject("S25A_PLAN_PRJ_" + suffix, fixture.customerId(), "ACTIVE");
+		long contractId = insertProjectContract(projectId);
+		String orderNo = "S25A-PLAN-ORDER-" + suffix;
+		long orderId = insertSalesOrderForDeliveryPlan(orderNo, fixture.customerId(), projectId, contractId);
+		long targetLineId = insertSalesOrderLineForDeliveryPlan(orderId, 1, fixture.finishedMaterialId(),
+				fixture.unitId(), "5.000000", "100.000000");
+		long otherMaterialId = insertMaterial("S25A_PLAN_FG_" + suffix, "025A交付计划非目标物料" + suffix,
+				insertMaterialCategory("S25A_PLAN_CAT_" + suffix), fixture.unitId());
+		long otherLineId = insertSalesOrderLineForDeliveryPlan(orderId, 2, otherMaterialId, fixture.unitId(),
+				"3.000000", "80.000000");
+		LocalDate targetDate = LocalDate.now().plusDays(12);
+		long targetPlanId = insertDeliveryPlan(orderId, targetLineId, 1, targetDate, "5.000000", "PLANNED");
+		insertDeliveryPlan(orderId, otherLineId, 1, targetDate.plusDays(30), "3.000000", "PLANNED");
+
+		JsonNode page = data(get(admin, "/api/admin/sales/delivery-plans?keyword=" + orderNo
+				+ "&customerId=" + fixture.customerId() + "&projectId=" + projectId + "&contractId="
+				+ contractId + "&materialId=" + fixture.finishedMaterialId() + "&status=PLANNED"
+				+ "&expectedDateFrom=" + targetDate.minusDays(1) + "&expectedDateTo=" + targetDate.plusDays(1)
+				+ "&countedOnly=true&page=1&pageSize=1"));
+		assertThat(page.get("total").longValue()).isEqualTo(1);
+		assertThat(page.get("page").intValue()).isEqualTo(1);
+		assertThat(page.get("pageSize").intValue()).isEqualTo(1);
+		assertThat(page.get("items")).hasSize(1);
+		JsonNode plan = page.get("items").get(0);
+		assertThat(plan.get("id").longValue()).isEqualTo(targetPlanId);
+		assertThat(plan.get("orderId").longValue()).isEqualTo(orderId);
+		assertThat(plan.get("materialId").longValue()).isEqualTo(fixture.finishedMaterialId());
+		assertThat(plan.get("plannedDate").asText()).isEqualTo(targetDate.toString());
+
+		JsonNode orderScoped = data(get(admin, "/api/admin/sales/delivery-plans?orderId=" + orderId
+				+ "&expectedDateFrom=" + targetDate.minusDays(1) + "&expectedDateTo=" + targetDate.plusDays(1)
+				+ "&page=1&pageSize=20"));
+		assertThat(orderScoped.get("total").longValue()).isEqualTo(1);
+		assertThat(orderScoped.get("items").get(0).get("id").longValue()).isEqualTo(targetPlanId);
+	}
+
+	@Test
+	void salesProjectListFiltersPlannedStartAndFinishBoundariesWithPaginationTotal() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		int suffix = SEQUENCE.incrementAndGet();
+		LocalDate targetStart = LocalDate.now().plusDays(5);
+		LocalDate targetFinish = LocalDate.now().plusDays(45);
+		long targetProjectId = insertProject("S25A_PRJ_FILTER_" + suffix, fixture.customerId(), "ACTIVE",
+				targetStart, targetFinish);
+		insertProject("S25A_PRJ_FILTER_START_" + suffix, fixture.customerId(), "ACTIVE",
+				targetStart.minusDays(30), targetFinish);
+		insertProject("S25A_PRJ_FILTER_FINISH_" + suffix, fixture.customerId(), "ACTIVE",
+				targetStart, targetFinish.plusDays(30));
+
+		JsonNode page = data(get(admin, "/api/admin/sales-projects?customerId=" + fixture.customerId()
+				+ "&plannedStartFrom=" + targetStart + "&plannedStartTo=" + targetStart
+				+ "&plannedFinishFrom=" + targetFinish + "&plannedFinishTo=" + targetFinish
+				+ "&page=1&pageSize=1"));
+		assertThat(page.get("total").longValue()).isEqualTo(1);
+		assertThat(page.get("page").intValue()).isEqualTo(1);
+		assertThat(page.get("pageSize").intValue()).isEqualTo(1);
+		assertThat(page.get("items")).hasSize(1);
+		assertThat(page.get("items").get(0).get("id").longValue()).isEqualTo(targetProjectId);
+		assertThat(page.get("items").get(0).get("plannedStartDate").asText()).isEqualTo(targetStart.toString());
+		assertThat(page.get("items").get(0).get("plannedFinishDate").asText()).isEqualTo(targetFinish.toString());
 	}
 
 	@Test
@@ -1536,17 +1719,83 @@ class SalesStage025BackendFlowTests extends PostgresIntegrationTest {
 	}
 
 	private long insertProject(String code, long customerId, String status) {
+		return insertProject(code, customerId, status, LocalDate.now(), LocalDate.now().plusDays(60));
+	}
+
+	private long insertProject(String code, long customerId, String status, LocalDate plannedStart,
+			LocalDate plannedFinish) {
 		return this.jdbcTemplate.queryForObject("""
 				insert into sal_project (
 					project_no, name, customer_id, owner_user_id, planned_start_date, planned_finish_date, status,
 					target_revenue, target_cost, remark, created_by, created_at, updated_by, updated_at, activated_by,
 					activated_at
 				)
-				values (?, ?, ?, (select id from sys_user where username = 'admin'), current_date,
-					current_date + interval '60 day', ?, 100000.00, 50000.00, ?, 'test', now(), 'test', now(),
+				values (?, ?, ?, (select id from sys_user where username = 'admin'), ?, ?,
+					?, 100000.00, 50000.00, ?, 'test', now(), 'test', now(),
 					case when ? = 'ACTIVE' then 'test' end, case when ? = 'ACTIVE' then now() end)
 				returning id
-				""", Long.class, code, code + "项目", customerId, status, code + "项目", status, status);
+				""", Long.class, code, code + "项目", customerId, plannedStart, plannedFinish, status,
+				code + "项目", status, status);
+	}
+
+	private long insertProjectContract(long projectId) {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project_contract (
+					contract_no, external_contract_no, project_id, contract_type, name, signed_date,
+					effective_start_date, effective_end_date, amount, status, remark, created_by, created_at,
+					updated_by, updated_at, activated_by, activated_at
+				)
+				values (?, ?, ?, 'MAIN', ?, current_date, current_date, current_date + interval '60 day',
+					1000.00, 'EFFECTIVE', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "S25A-CONTRACT-" + suffix, "EXT-S25A-" + suffix, projectId,
+				"025A 交付计划筛选合同", "025A 交付计划筛选合同");
+	}
+
+	private long insertSalesOrderForDeliveryPlan(String orderNo, long customerId, long projectId, long contractId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_order (
+					order_no, customer_id, project_id, contract_id, order_date, expected_ship_date, status, remark,
+					created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at, currency, price_mode,
+					tax_excluded_amount, tax_amount, tax_included_amount, sales_fulfillment_compatible
+				)
+				values (?, ?, ?, ?, current_date, current_date + interval '7 day', 'CONFIRMED',
+					'025A 交付计划筛选订单', 'test', now(), 'test', now(), 'test', now(), 'CNY', 'TAX_INCLUDED',
+					0, 0, 0, false)
+				returning id
+				""", Long.class, orderNo, customerId, projectId, contractId);
+	}
+
+	private long insertSalesOrderLineForDeliveryPlan(long orderId, int lineNo, long materialId, long unitId,
+			String quantity, String unitPrice) {
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitPriceValue = new BigDecimal(unitPrice);
+		BigDecimal amount = quantityValue.multiply(unitPriceValue).setScale(2, java.math.RoundingMode.HALF_UP);
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_order_line (
+					order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
+					expected_ship_date, reservation_warehouse_id, remark, price_source_type, currency, tax_rate,
+					tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount, tax_amount,
+					tax_included_amount, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 0, ?, current_date + interval '7 day', null,
+					'025A 交付计划筛选订单行', 'MANUAL', 'CNY', 0, ?, ?, ?, 0, ?, now(), now())
+				returning id
+				""", Long.class, orderId, lineNo, materialId, unitId, quantityValue, unitPriceValue,
+				unitPriceValue, unitPriceValue, amount, amount);
+	}
+
+	private long insertDeliveryPlan(long orderId, long orderLineId, int lineNo, LocalDate plannedDate,
+			String quantity, String status) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_delivery_plan (
+					order_id, order_line_id, line_no, planned_date, planned_quantity, shipped_quantity, status,
+					close_reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, ?, 0, ?, null, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, orderId, orderLineId, lineNo, plannedDate, new BigDecimal(quantity), status);
 	}
 
 	private long insertProjectSalesOrder(long projectId, long customerId, String status, boolean compatible) {
@@ -1758,6 +2007,19 @@ class SalesStage025BackendFlowTests extends PostgresIntegrationTest {
 		assertThat(node.has(field)).as("缺少十进制字段 " + field + "，实际响应：" + node).isTrue();
 		assertThat(node.get(field).isTextual()).as(field + " 必须是 JSON 字符串，实际响应：" + node).isTrue();
 		assertThat(new BigDecimal(node.get(field).asText())).isNotNull();
+	}
+
+	private String workbookText(byte[] content) throws Exception {
+		StringBuilder text = new StringBuilder();
+		try (Workbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+			for (Sheet sheet : workbook) {
+				text.append(sheet.getSheetName()).append('\n');
+				for (Row row : sheet) {
+					row.forEach((cell) -> text.append(cell.toString()).append('\n'));
+				}
+			}
+		}
+		return text.toString();
 	}
 
 	private void assertAttachmentObjectAccepted(String objectType, long objectId) {
