@@ -315,7 +315,7 @@
 **主要文件**：
 
 - 新建 `apps/api/src/main/java/com/qherp/api/system/production/outsourcing/` 下的控制器、服务、状态、请求/响应和过账编排文件。
-- 新建 `apps/api/src/test/java/com/qherp/api/system/production/outsourcing/ProductionOutsourcingStage027Tests.java`。
+- 外协集成测试归并到既有 `apps/api/src/test/java/com/qherp/api/system/production/ProductionAdminControllerTests.java`，V29 与拆分门禁分别由 `ProjectProductionV29MigrationRegressionTests.java`、`ProjectProductionStage027Tests.java` 承担；不另建重复的外协测试类。
 - 新建 `apps/web/src/shared/api/productionOutsourcingApi.ts` 及规格测试。
 - 新建 `apps/web/src/modules/production/outsourcing/` 下的列表、表单、详情、发料、收货、状态组件和规格测试。
 - 修改销售项目详情生产/外协摘要与规格测试。
@@ -331,9 +331,9 @@
 
 ## 开发期定向验证命令
 
-- 后端生产/外协：`cd apps/api && .\mvnw.cmd -Dtest=ProjectProductionStage027Tests,ProductionOutsourcingStage027Tests,ProductionAdminControllerTests,MaterialRequirementPlanningStage026Tests,ReversalAdminControllerTests test`。
+- 后端生产/外协：`cd apps/api && .\mvnw.cmd -Dtest=ProjectProductionStage027Tests,ProjectProductionV29MigrationRegressionTests,ProductionAdminControllerTests,MaterialRequirementPlanningStage026Tests,ReversalAdminControllerTests test`。
 - 后端权限：`cd apps/api && .\mvnw.cmd -Dtest=PermissionAuthorizationTests,AccountPermissionInitializerTests test`。
-- 前端项目生产与外协：`cd apps/web && npm test -- ProductionWorkOrderListView.spec.ts ProductionWorkOrderFormView.spec.ts ProductionWorkOrderDetailView.spec.ts ProductionExecutionForms.spec.ts ProductionMaterialReversalViews.spec.ts MaterialRequirementViews.spec.ts projectProductionApi.spec.ts productionOutsourcingApi.spec.ts`。
+- 前端项目生产与外协：`cd apps/web && npm test -- ProductionWorkOrderListView.spec.ts ProductionWorkOrderFormView.spec.ts ProductionWorkOrderDetailView.spec.ts ProductionExecutionForms.spec.ts ProductionMaterialReversalViews.spec.ts MaterialRequirementViews.spec.ts ProductionOutsourcingViews.spec.ts SalesProjectDetailView.spec.ts projectProductionApi.spec.ts productionOutsourcingApi.spec.ts`。
 - 前端路由菜单：`cd apps/web && npm test -- permissionGuard.spec.ts App.spec.ts`，以仓库实际应用壳规格文件为准补充 027 断言，不为命令不存在另建无意义文件。
 - 开发期不运行全量后端、全量前端、完整构建或完整浏览器验收。
 
@@ -435,6 +435,7 @@
 - 2026-07-17：功能提交 `748ac96f89e0e8469733ed759d19425e34185018 完成027项目生产执行与外协基础` 由 `codex/027-project-production-outsourcing` 纯快进合入 `main` 并推送。部署前正式库备份到仓库外 `C:\Users\14567\.codex\backups\qherp\qherp-before-v29-20260718-033825.dump`，大小 777077 字节；主分支 API/Web 从 `F:\zhangqiao\AI-study\qherp` 启动，18080/5173 均返回 200。
 - 2026-07-17：正式库由 V28 自然前迁至 V29，checksum `774334682`、失败迁移 0，数据库 `AVAILABLE` 文件与 `qherp-private` 对象保持 18/18；精确 V29 独立验证器 114/114 通过。本地 `main`、`origin/main` 与远端哈希一致，历史公共工单仍为 `PUBLIC/projectId=null`，正式外协为空态，未创建伪造 027 事实。
 - 2026-07-17：主分支 UI 复验发现退/补料详情 descriptions 未注册和销售项目 0/0 空态误显示“无权限”两项严重问题；原前端角色按测试先行修复，RED 47/51、GREEN 51/51，类型检查和构建 2131 模块通过，原测试角色独立复验同为 51/51。补丁 `3c410f5168a62cc484248fd4db7dee71cd376402 修复027主分支视觉验收问题` 纯快进合入并推送；UI 只复验三条差异路径，未解析组件/Vue warn、权限误判、控制台、页面、网络和横向溢出均为 0。
+- 2026-07-18：完成目标审计时校正测试文件清单：外协端到端集成场景实际归并在 `ProductionAdminControllerTests`，V29 存量回归与架构门禁分别由 `ProjectProductionV29MigrationRegressionTests`、`ProjectProductionStage027Tests` 承担。该归并避免创建只承载同一能力的重复测试类，不改变业务范围、接口、数据兼容或验收矩阵；同步修正后端定向命令，并为前端定向命令补齐外协页面与销售项目生产摘要规格。固定测试角色按最新映射独立复验：后端 7 个报告 152/152、前端 12 个文件 237/237、类型检查、生产构建 2131 个模块、正式只读验证器 114/114、V29 checksum `774334682`、失败迁移 0 和资源 18/18 均通过，阻断/严重/一般问题为 0。
 - 一般后续：服务边界直接调用缺少 `CurrentUser` 时可进一步统一显式返回 `AUTH_FORBIDDEN`；一个前端测试挂载辅助仍使用 `component as never`；外协新建页部分下拉缺中文 placeholder；`TrackingPickerDrawer` 的 `v-loading` 未进入选择性注册。四项不影响已认证 HTTP 链路、当前业务数据、关键动作或最终桌面验收，登记后续处理，不阻断 027 交付。
 - 结论：027 已完成范围实现、集中审查整改、全量验证、主分支部署和差异视觉复验，正式交付完成，下一阶段为尚未启动的 028。
 
