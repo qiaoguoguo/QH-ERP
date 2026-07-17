@@ -88,6 +88,15 @@ public class PlatformDocumentTaskWorker {
 						"exports/sales/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_SALES");
 				return true;
 			}
+			if (this.documentTaskService.isPlanningExportTaskType(task.taskType())) {
+				PlatformDocumentTaskService.ProcurementExportRequest request = this.documentTaskService
+					.parseProcurementExportRequest(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.planningExportFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"exports/planning/" + UUID.randomUUID() + ".xlsx", "DOCUMENT_TASK_EXPORT_PLANNING");
+				return true;
+			}
 			if ("APPROVAL_PRINT".equals(task.taskType())) {
 				PlatformDocumentTaskService.PrintTaskPayload request = this.documentTaskService
 					.parsePrintTaskPayload(task.requestPayload());

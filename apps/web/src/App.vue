@@ -54,6 +54,7 @@ const salesShipmentPath = '/sales/shipments'
 const salesReturnPath = '/sales/returns'
 const salesCreditProfilePath = '/sales/credit-profiles'
 const salesEffectiveDemandPath = '/sales/effective-demands'
+const planningMaterialRequirementPath = '/planning/material-requirements'
 const productionWorkOrderPath = '/production/work-orders'
 const productionMaterialReturnPath = '/production/material-returns'
 const productionMaterialSupplementPath = '/production/material-supplements'
@@ -114,6 +115,7 @@ const supportedMenuPaths = new Set([
   salesReturnPath,
   salesCreditProfilePath,
   salesEffectiveDemandPath,
+  planningMaterialRequirementPath,
   productionWorkOrderPath,
   productionMaterialReturnPath,
   productionMaterialSupplementPath,
@@ -337,6 +339,15 @@ const salesChildren: MenuNode[] = [
   },
 ]
 const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
+const planningChildren: MenuNode[] = [
+  {
+    id: 'planning-material-requirements',
+    code: 'planning:material-requirement:view',
+    name: '订单缺料分析',
+    routePath: planningMaterialRequirementPath,
+  },
+]
+const planningMenuPaths = new Set(planningChildren.map((child) => child.routePath))
 const productionChildren: MenuNode[] = [
   {
     id: 'production-work-orders',
@@ -410,6 +421,7 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/quality|质量/, Collection],
   [/procurement|purchase|采购/, ShoppingCart],
   [/sales|销售/, Sell],
+  [/planning|计划|缺料/, TrendCharts],
   [/production|生产/, Cpu],
   [/cost|成本/, Coin],
   [/finance|财务|往来|应收|应付/, Money],
@@ -423,7 +435,8 @@ const menuTree = computed<MenuNode[]>(() => {
   const inventoryMenus = ensureInventoryMenu(systemMenus)
   const procurementMenus = ensureProcurementMenu(inventoryMenus)
   const salesMenus = ensureSalesMenu(procurementMenus)
-  const productionMenus = ensureProductionMenu(salesMenus)
+  const planningMenus = ensurePlanningMenu(salesMenus)
+  const productionMenus = ensureProductionMenu(planningMenus)
   const qualityMenus = ensureQualityMenu(productionMenus)
   const costMenus = ensureCostMenu(qualityMenus)
   const financeMenus = ensureFinanceMenu(costMenus)
@@ -721,6 +734,43 @@ function removeSalesMenus(menus: MenuNode[]): MenuNode[] {
       children: removeSalesMenus(menu.children ?? []),
     }))
     .filter((menu) => !isSalesMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
+}
+
+function ensurePlanningMenu(menus: MenuNode[]): MenuNode[] {
+  const allowedChildren = planningChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removePlanningMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
+  }
+
+  return [
+    ...cleanedMenus,
+    {
+      id: 'planning',
+      code: 'planning',
+      name: '计划管理',
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isPlanningMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'planning'
+    || code.startsWith('planning:')
+    || (menu.routePath ? planningMenuPaths.has(menu.routePath) : false)
+}
+
+function removePlanningMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removePlanningMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isPlanningMenu(menu) && (
       (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
     ))
 }

@@ -125,6 +125,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return salesProjectPermissionCode;
 		}
 
+		String planningPermissionCode = planningPermissionCode(method, path);
+		if (planningPermissionCode != null) {
+			return planningPermissionCode;
+		}
+
 		String productionPermissionCode = productionPermissionCode(method, path);
 		if (productionPermissionCode != null) {
 			return productionPermissionCode;
@@ -253,7 +258,7 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "material:bom:export";
 		}
 		if ("POST".equals(method) && "/api/admin/export-tasks".equals(path)) {
-			return "platform:document-task:create";
+			return "platform:document-task:create|procurement:document:export|procurement:quote:export|procurement:supply:export|sales:document:export|sales:quote:export|sales:effective-demand:export|planning:material-requirement:export";
 		}
 		if (matchesBasePath(path, "/api/admin/document-tasks")) {
 			if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/document-tasks") + "/\\d+/download")) {
@@ -834,6 +839,30 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(Pattern.quote(contractPath) + "/\\d+/cancel")) {
 			return "sales:contract:cancel";
+		}
+		return null;
+	}
+
+	private String planningPermissionCode(String method, String path) {
+		String runPath = "/api/admin/planning/material-requirement-runs";
+		String suggestionPath = "/api/admin/planning/material-requirement-suggestions";
+		if (!matchesBasePath(path, runPath) && !matchesBasePath(path, suggestionPath)) {
+			return null;
+		}
+		if ("POST".equals(method) && runPath.equals(path)) {
+			return "planning:material-requirement:calculate";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(runPath) + "/\\d+/recalculate")) {
+			return "planning:material-requirement:calculate";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, runPath)) {
+			return "planning:material-requirement:view";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(suggestionPath) + "/\\d+/(confirm|dismiss)")) {
+			return "planning:material-requirement:manage-suggestion";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(suggestionPath) + "/\\d+/convert-requisition")) {
+			return "planning:material-requirement:convert-requisition";
 		}
 		return null;
 	}

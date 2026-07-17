@@ -506,6 +506,71 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/production')
   })
 
+  it('有 026 计划查看权限但后端菜单缺失时补齐订单缺料分析入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'planner', displayName: '计划员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['planning:material-requirement:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('计划管理')
+    expect(wrapper.text()).toContain('订单缺料分析')
+    expect(wrapper.find('[data-test="main-menu-icon-planning"]').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toContain('/planning/material-requirements')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/planning')
+  })
+
+  it('无 026 计划查看权限时递归移除计划菜单', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'no_planning', displayName: '无计划权限', status: 'ENABLED' },
+      menus: [
+        {
+          id: 95,
+          code: 'business',
+          name: '业务管理',
+          routePath: null,
+          children: [
+            {
+              id: 96,
+              code: 'planning:material-requirement:view',
+              name: '订单缺料分析',
+              routePath: '/planning/material-requirements',
+            },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('计划管理')
+    expect(wrapper.text()).not.toContain('订单缺料分析')
+    expect(wrapper.text()).not.toContain('业务管理')
+  })
+
   it('无生产查看权限时递归移除生产菜单', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)

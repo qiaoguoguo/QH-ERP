@@ -63,6 +63,10 @@ const procurementRouteOrder = [
   { name: 'procurement-effective-supplies', permission: 'procurement:supply:view' },
 ] as const
 
+const planningRouteOrder = [
+  { name: 'planning-material-requirements', permission: 'planning:material-requirement:view' },
+] as const
+
 const routes: RouteRecordRaw[] = [
   {
     path: '/login',
@@ -636,6 +640,24 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/sales/effective-demand/EffectiveSalesDemandListView.vue'),
   },
   {
+    path: '/planning',
+    name: 'planning-root',
+    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
+    component: placeholder('计划管理', '订单缺料分析入口。'),
+  },
+  {
+    path: '/planning/material-requirements',
+    name: 'planning-material-requirements',
+    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
+    component: () => import('../modules/planning/material-requirements/MaterialRequirementRunListView.vue'),
+  },
+  {
+    path: '/planning/material-requirements/:id',
+    name: 'planning-material-requirement-detail',
+    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
+    component: () => import('../modules/planning/material-requirements/MaterialRequirementRunDetailView.vue'),
+  },
+  {
     path: '/production',
     redirect: '/production/work-orders',
     meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
@@ -973,6 +995,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return { name: procurementRoute.name }
+    }
+
+    if (to.name === 'planning-root') {
+      const planningRoute = planningRouteOrder.find((item) => authStore.hasPermission(item.permission))
+      if (!planningRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return { name: planningRoute.name }
     }
 
     if (to.name === 'reports-root') {

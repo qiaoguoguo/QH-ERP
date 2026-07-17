@@ -34,6 +34,8 @@ import ProductionMaterialReturnListView from '../modules/reversal/ProductionMate
 import ProductionMaterialSupplementDetailView from '../modules/reversal/ProductionMaterialSupplementDetailView.vue'
 import ProductionMaterialSupplementFormView from '../modules/reversal/ProductionMaterialSupplementFormView.vue'
 import ProductionMaterialSupplementListView from '../modules/reversal/ProductionMaterialSupplementListView.vue'
+import MaterialRequirementRunDetailView from '../modules/planning/material-requirements/MaterialRequirementRunDetailView.vue'
+import MaterialRequirementRunListView from '../modules/planning/material-requirements/MaterialRequirementRunListView.vue'
 import CostRecordDetailView from '../modules/cost/CostRecordDetailView.vue'
 import CostRecordFormView from '../modules/cost/CostRecordFormView.vue'
 import CostRecordListView from '../modules/cost/CostRecordListView.vue'
@@ -340,6 +342,38 @@ describe('账号权限路由守卫', () => {
 
       expect(route?.path).toBe(path)
       expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+  })
+
+  it('026 订单缺料分析路由加载真实页面并配置计划查看权限', async () => {
+    const router = createQhErpRouter()
+    const rootRoute = router.getRoutes().find((item) => item.name === 'planning-root')
+    const planningRoutes = [
+      [
+        'planning-material-requirements',
+        '/planning/material-requirements',
+        MaterialRequirementRunListView,
+      ],
+      [
+        'planning-material-requirement-detail',
+        '/planning/material-requirements/:id',
+        MaterialRequirementRunDetailView,
+      ],
+    ] as const
+
+    expect(rootRoute?.path).toBe('/planning')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+    expect(rootRoute?.meta.requiredPermission).toBe('planning:material-requirement:view')
+
+    for (const [routeName, path, expectedComponent] of planningRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe('planning:material-requirement:view')
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
@@ -816,6 +850,29 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('production-material-supplements')
+  })
+
+  it('已登录且拥有订单缺料查看权限时访问计划入口，缺少权限时进入无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['planning:material-requirement:view'] })
+
+    await router.push('/planning/material-requirements')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('planning-material-requirements')
+
+    const rootRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['planning:material-requirement:view'] })
+    await rootRouter.push('/planning')
+    await rootRouter.isReady()
+    expect(rootRouter.currentRoute.value.name).toBe('planning-material-requirements')
+
+    const forbiddenRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+    await forbiddenRouter.push('/planning/material-requirements')
+    await forbiddenRouter.isReady()
+    expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
+    expect(forbiddenRouter.currentRoute.value.query.from).toBe('/planning/material-requirements')
   })
 
   it('已登录但缺少生产补料创建权限时不能访问新建生产补料', async () => {

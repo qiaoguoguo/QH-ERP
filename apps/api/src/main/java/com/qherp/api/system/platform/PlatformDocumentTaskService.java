@@ -64,6 +64,8 @@ public class PlatformDocumentTaskService {
 	private static final Set<String> SALES_EXPORT_TASK_TYPES = Set.of("SALES_QUOTE_EXPORT",
 			"SALES_DELIVERY_PLAN_EXPORT", "SALES_EFFECTIVE_DEMAND_EXPORT");
 
+	private static final Set<String> PLANNING_EXPORT_TASK_TYPES = Set.of("MATERIAL_REQUIREMENT_RUN_EXPORT");
+
 	private static final Set<String> PROCUREMENT_ORDER_PRINT_STATUSES = Set.of("CONFIRMED", "PARTIALLY_RECEIVED",
 			"RECEIVED", "CLOSED");
 
@@ -282,15 +284,21 @@ public class PlatformDocumentTaskService {
 		validateIdempotencyKey(idempotencyKey);
 		boolean procurementExport = request != null && PROCUREMENT_EXPORT_TASK_TYPES.contains(request.taskType());
 		boolean salesExport = request != null && SALES_EXPORT_TASK_TYPES.contains(request.taskType());
-		if (!procurementExport && !salesExport) {
+		boolean planningExport = request != null && PLANNING_EXPORT_TASK_TYPES.contains(request.taskType());
+		if (!procurementExport && !salesExport && !planningExport) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
-		requirePermission(operator, "platform:document-task:create");
+		if (!planningExport) {
+			requirePermission(operator, "platform:document-task:create");
+		}
 		if (procurementExport) {
 			requireProcurementExportPermissions(request.taskType(), operator);
 		}
-		else {
+		else if (salesExport) {
 			requireSalesExportPermissions(request.taskType(), operator);
+		}
+		else {
+			requirePlanningExportPermissions(request.taskType(), operator);
 		}
 		ProcurementExportRequest payload = new ProcurementExportRequest(request.taskType(),
 				trimToNull(request.objectType()), request.objectId(),
@@ -919,6 +927,10 @@ public class PlatformDocumentTaskService {
 		return SALES_EXPORT_TASK_TYPES.contains(taskType);
 	}
 
+	public boolean isPlanningExportTaskType(String taskType) {
+		return PLANNING_EXPORT_TASK_TYPES.contains(taskType);
+	}
+
 	public ProcurementExportRequest parseProcurementExportRequest(String payload) {
 		return parse(payload, ProcurementExportRequest.class);
 	}
@@ -967,6 +979,32 @@ public class PlatformDocumentTaskService {
 			}
 			workbook.write(output);
 			return new ExportedFile(salesExportFilename(request.taskType()),
+					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", output.toByteArray(),
+					dataset.rows().size());
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	public ExportedFile planningExportFile(ProcurementExportRequest request, CurrentUser operator) {
+		if (request == null || !PLANNING_EXPORT_TASK_TYPES.contains(request.taskType())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		requirePlanningExportPermissions(request.taskType(), operator);
+		ProcurementExportDataset dataset = planningExportDataset(request, operator);
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet(dataset.sheetName());
+			writeRow(sheet.createRow(0), dataset.headers().toArray(String[]::new));
+			for (int i = 0; i < dataset.rows().size(); i++) {
+				Row excelRow = sheet.createRow(i + 1);
+				List<String> row = dataset.rows().get(i);
+				for (int j = 0; j < row.size(); j++) {
+					excelRow.createCell(j).setCellValue(nullToBlank(row.get(j)));
+				}
+			}
+			workbook.write(output);
+			return new ExportedFile(planningExportFilename(request.taskType()),
 					"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", output.toByteArray(),
 					dataset.rows().size());
 		}
@@ -1186,6 +1224,129 @@ public class PlatformDocumentTaskService {
 					salesEffectiveDemandExportRows(request));
 			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		};
+	}
+
+	private ProcurementExportDataset planningExportDataset(ProcurementExportRequest request, CurrentUser operator) {
+		return switch (request.taskType()) {
+			case "MATERIAL_REQUIREMENT_RUN_EXPORT" -> new ProcurementExportDataset("缺料净算快照",
+					List.of("运行ID", "运行编号", "范围", "项目ID", "状态", "来源指纹", "计算时间", "过期时间",
+							"需求行数", "短缺行数", "建议数"),
+					materialRequirementRunExportRows(request, operator));
+			default -> throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		};
+	}
+
+	private List<List<String>> materialRequirementRunExportRows(ProcurementExportRequest request,
+			CurrentUser operator) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (request.objectId() != null && "MATERIAL_REQUIREMENT_RUN".equals(request.objectType())) {
+			conditions.add("r.id = ?");
+			args.add(request.objectId());
+		}
+		Long runId = filterLong(request.filters(), "runId");
+		if (runId != null) {
+			conditions.add("r.id = ?");
+			args.add(runId);
+		}
+		Long projectId = filterLong(request.filters(), "projectId");
+		if (projectId != null) {
+			conditions.add("r.project_id = ?");
+			args.add(projectId);
+		}
+		Long customerId = filterLong(request.filters(), "customerId");
+		if (customerId != null) {
+			conditions.add("""
+					(r.customer_id = ? or exists (
+						select 1
+						from mrp_requirement_line rl
+						join sal_sales_order so on so.id = rl.demand_source_id
+						where rl.run_id = r.id
+						and rl.demand_source_type = 'SALES_ORDER'
+						and so.customer_id = ?
+					))
+					""");
+			args.add(customerId);
+			args.add(customerId);
+		}
+		Long contractId = filterLong(request.filters(), "contractId");
+		if (contractId != null) {
+			conditions.add("""
+					(r.contract_id = ? or exists (
+						select 1
+						from mrp_requirement_line rl
+						join sal_sales_order so on so.id = rl.demand_source_id
+						where rl.run_id = r.id
+						and rl.demand_source_type = 'SALES_ORDER'
+						and so.contract_id = ?
+					))
+					""");
+			args.add(contractId);
+			args.add(contractId);
+		}
+		Long orderId = filterLong(request.filters(), "orderId");
+		if (orderId != null) {
+			conditions.add("""
+					(r.sales_order_id = ? or exists (
+						select 1
+						from mrp_requirement_line rl
+						where rl.run_id = r.id
+						and rl.demand_source_type = 'SALES_ORDER'
+						and rl.demand_source_id = ?
+					))
+					""");
+			args.add(orderId);
+			args.add(orderId);
+		}
+		Long materialId = filterLong(request.filters(), "materialId");
+		if (materialId != null) {
+			conditions.add("""
+					(r.material_id = ? or exists (
+						select 1
+						from mrp_requirement_line rl
+						where rl.run_id = r.id
+						and rl.material_id = ?
+					))
+					""");
+			args.add(materialId);
+			args.add(materialId);
+		}
+		LocalDate requiredDateTo = filterDate(request.filters(), "requiredDateTo");
+		if (requiredDateTo != null) {
+			conditions.add("r.demand_date_to = ?");
+			args.add(requiredDateTo);
+		}
+		String status = filterString(request.filters(), "status");
+		if (status != null) {
+			conditions.add("r.status = ?");
+			args.add(status);
+		}
+		Boolean expired = filterBoolean(request.filters(), "expired");
+		if (Boolean.TRUE.equals(expired)) {
+			conditions.add("(r.status = 'EXPIRED' or r.expires_at <= now())");
+		}
+		else if (Boolean.FALSE.equals(expired)) {
+			conditions.add("not (r.status = 'EXPIRED' or r.expires_at <= now())");
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
+		boolean projectVisible = operator == null || operator.permissions().contains("sales:project:view")
+				|| operator.permissions().contains("sales:order:view");
+		List<Object> queryArgs = new ArrayList<>();
+		queryArgs.add(projectVisible);
+		queryArgs.addAll(args);
+		return exportRows("""
+				select r.id, r.run_no, r.scope_type, case when ? then r.project_id else null end as project_id,
+				       r.status, r.source_fingerprint,
+				       r.calculated_at, r.expires_at, count(distinct rl.id) as requirement_count,
+				       count(distinct case when rl.shortage_quantity > 0 then rl.id end) as shortage_count,
+				       count(distinct s.id) as suggestion_count
+				from mrp_calculation_run r
+				left join mrp_requirement_line rl on rl.run_id = r.id
+				left join mrp_suggestion s on s.run_id = r.id
+				%s
+				group by r.id
+				order by r.created_at desc, r.id desc
+				""".formatted(where), queryArgs);
 	}
 
 	private List<List<String>> salesQuoteExportRows(ProcurementExportRequest request) {
@@ -1539,6 +1700,11 @@ public class PlatformDocumentTaskService {
 	}
 
 	private String salesExportFilename(String taskType) {
+		return taskType.toLowerCase().replace('_', '-') + "-" + OffsetDateTime.now().format(TASK_NO_FORMATTER)
+				+ ".xlsx";
+	}
+
+	private String planningExportFilename(String taskType) {
 		return taskType.toLowerCase().replace('_', '-') + "-" + OffsetDateTime.now().format(TASK_NO_FORMATTER)
 				+ ".xlsx";
 	}
@@ -2397,6 +2563,14 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private void requirePlanningExportPermissions(String taskType, CurrentUser operator) {
+		if (!PLANNING_EXPORT_TASK_TYPES.contains(taskType)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+		requirePermission(operator, "planning:material-requirement:view");
+		requirePermission(operator, "planning:material-requirement:export");
+	}
+
 	private ApprovalPrintSnapshot approvalPrintSnapshot(Long approvalInstanceId) {
 		return this.jdbcTemplate.query("""
 				select id, scene_code, business_object_type, business_object_id, business_object_no,
@@ -2492,6 +2666,10 @@ public class PlatformDocumentTaskService {
 				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
 			}
 			if (SALES_EXPORT_TASK_TYPES.contains(task.taskType())) {
+				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
+			}
+			if (PLANNING_EXPORT_TASK_TYPES.contains(task.taskType())) {
 				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
 				return new TaskObjectInfo(payload.objectType(), payload.objectId(), null, null);
 			}
@@ -2605,6 +2783,9 @@ public class PlatformDocumentTaskService {
 		if (SALES_EXPORT_TASK_TYPES.contains(task.taskType())) {
 			return canAccessSalesExportTask(task, currentUser);
 		}
+		if (PLANNING_EXPORT_TASK_TYPES.contains(task.taskType())) {
+			return canAccessPlanningExportTask(task, currentUser);
+		}
 		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
 			return canViewSupplierQuoteImportTask(task, currentUser);
 		}
@@ -2667,6 +2848,17 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private boolean canAccessPlanningExportTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
+			requirePlanningExportPermissions(payload.taskType(), currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
 	private boolean canViewSupplierQuoteImportTask(DocumentTaskState task, CurrentUser currentUser) {
 		try {
 			SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(taskRequestPayload(task.id()));
@@ -2703,6 +2895,7 @@ public class PlatformDocumentTaskService {
 					"PROCUREMENT_SCHEDULE_EXPORT" -> "procurement:document:export";
 			case "SALES_QUOTE_EXPORT", "SALES_DELIVERY_PLAN_EXPORT", "SALES_EFFECTIVE_DEMAND_EXPORT" ->
 				"sales:document:export";
+			case "MATERIAL_REQUIREMENT_RUN_EXPORT" -> "planning:material-requirement:export";
 			default -> throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		};
 	}

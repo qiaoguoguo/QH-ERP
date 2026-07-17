@@ -44,6 +44,7 @@ export type DocumentTaskType =
   | 'SALES_QUOTE_EXPORT'
   | 'SALES_DELIVERY_PLAN_EXPORT'
   | 'SALES_EFFECTIVE_DEMAND_EXPORT'
+  | 'MATERIAL_REQUIREMENT_RUN_EXPORT'
 export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT'
 export type DocumentTaskStatus =
@@ -358,6 +359,18 @@ export interface SalesEffectiveDemandExportPayload {
   idempotencyKey: string
 }
 
+export interface MaterialRequirementRunExportPayload {
+  projectId?: ResourceId
+  customerId?: ResourceId
+  contractId?: ResourceId
+  orderId?: ResourceId
+  materialId?: ResourceId
+  requiredDateTo?: string
+  status?: string
+  expired?: boolean
+  idempotencyKey: string
+}
+
 export type ExportTaskType =
   | 'PROCUREMENT_REQUISITION_EXPORT'
   | 'PROCUREMENT_INQUIRY_EXPORT'
@@ -369,6 +382,7 @@ export type ExportTaskType =
   | 'SALES_QUOTE_EXPORT'
   | 'SALES_DELIVERY_PLAN_EXPORT'
   | 'SALES_EFFECTIVE_DEMAND_EXPORT'
+  | 'MATERIAL_REQUIREMENT_RUN_EXPORT'
 
 export type ProcurementExportTaskType = Extract<ExportTaskType,
   | 'PROCUREMENT_REQUISITION_EXPORT'
@@ -477,6 +491,7 @@ export interface DocumentPlatformApi {
     createSalesQuotes(payload: SalesQuoteExportPayload): Promise<DocumentTaskRecord>
     createSalesDeliveryPlans(payload: SalesDeliveryPlanExportPayload): Promise<DocumentTaskRecord>
     createSalesEffectiveDemands(payload: SalesEffectiveDemandExportPayload): Promise<DocumentTaskRecord>
+    createMaterialRequirementRuns(payload: MaterialRequirementRunExportPayload): Promise<DocumentTaskRecord>
   }
   printTemplates: {
     list(query: { sceneCode: string }): Promise<PrintTemplateRecord[]>
@@ -756,6 +771,10 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
       createSalesEffectiveDemands: (payload) => {
         const { idempotencyKey, ...filters } = payload
         return createExportTask('SALES_EFFECTIVE_DEMAND_EXPORT', filters, idempotencyKey)
+      },
+      createMaterialRequirementRuns: (payload) => {
+        const { idempotencyKey, ...filters } = payload
+        return createExportTask('MATERIAL_REQUIREMENT_RUN_EXPORT', filters, idempotencyKey)
       },
     },
     printTemplates: {

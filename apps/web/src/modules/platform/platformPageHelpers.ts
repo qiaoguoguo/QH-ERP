@@ -77,6 +77,7 @@ export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
     SALES_QUOTE_EXPORT: '销售报价导出',
     SALES_DELIVERY_PLAN_EXPORT: '交付计划导出',
     SALES_EFFECTIVE_DEMAND_EXPORT: '有效销售需求导出',
+    MATERIAL_REQUIREMENT_RUN_EXPORT: '订单缺料分析导出',
   }
   return labels[type] ?? type
 }

@@ -13,9 +13,13 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+	private static final Logger LOGGER = Logger.getLogger(GlobalExceptionHandler.class.getName());
 
 	@ExceptionHandler(BusinessException.class)
 	public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException exception,
@@ -74,6 +78,7 @@ public class GlobalExceptionHandler {
 
 	@ExceptionHandler(Exception.class)
 	public ResponseEntity<ApiResponse<Void>> handleUnexpectedException(Exception exception, HttpServletRequest request) {
+		LOGGER.log(Level.SEVERE, "Unhandled API exception", exception);
 		return build(HttpStatus.INTERNAL_SERVER_ERROR, ApiErrorCode.SYSTEM_ERROR, ApiErrorCode.SYSTEM_ERROR.message(),
 				List.of(), request);
 	}

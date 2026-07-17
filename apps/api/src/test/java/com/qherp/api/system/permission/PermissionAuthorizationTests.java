@@ -479,6 +479,33 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/reports/exceptions/traces", "report:exception:view");
 	}
 
+	@Test
+	void planningMaterialRequirementPathsMapToDedicatedPermissionCodes() {
+		assertPermissionCode(HttpMethod.POST, "/api/admin/planning/material-requirement-runs",
+				"planning:material-requirement:calculate");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs/1",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/planning/material-requirement-runs/1/recalculate",
+				"planning:material-requirement:calculate");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs/1/requirements",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs/1/allocations",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs/1/suggestions",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/planning/material-requirement-runs/1/substitute-hints",
+				"planning:material-requirement:view");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/planning/material-requirement-suggestions/1/confirm",
+				"planning:material-requirement:manage-suggestion");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/planning/material-requirement-suggestions/1/dismiss",
+				"planning:material-requirement:manage-suggestion");
+		assertPermissionCode(HttpMethod.POST,
+				"/api/admin/planning/material-requirement-suggestions/1/convert-requisition",
+				"planning:material-requirement:convert-requisition");
+	}
+
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/roles",
 				Map.of("code", code, "name", name, "description", "测试", "status", "ENABLED"), session);

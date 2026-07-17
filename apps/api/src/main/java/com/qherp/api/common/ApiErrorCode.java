@@ -32,6 +32,8 @@ public enum ApiErrorCode {
 
 	MASTER_DATA_INVALID_STATUS(HttpStatus.BAD_REQUEST, "主数据状态不正确"),
 
+	MATERIAL_DISABLED(HttpStatus.BAD_REQUEST, "物料已停用"),
+
 	MASTER_DATA_REFERENCE_INVALID(HttpStatus.BAD_REQUEST, "主数据引用不正确"),
 
 	MASTER_DATA_CATEGORY_IN_USE(HttpStatus.CONFLICT, "物料分类已被启用数据引用"),
@@ -41,6 +43,8 @@ public enum ApiErrorCode {
 	MASTER_DATA_UNIT_IN_USE(HttpStatus.CONFLICT, "计量单位已被启用物料引用"),
 
 	BOM_NOT_FOUND(HttpStatus.NOT_FOUND, "BOM 不存在"),
+
+	BOM_NOT_EFFECTIVE(HttpStatus.BAD_REQUEST, "BOM 在需求日期未生效"),
 
 	BOM_CODE_EXISTS(HttpStatus.CONFLICT, "BOM 编码已存在"),
 
@@ -419,6 +423,22 @@ public enum ApiErrorCode {
 	PROCUREMENT_PRICE_AGREEMENT_APPROVAL_REQUIRED(HttpStatus.CONFLICT, "价格协议激活必须先通过审批"),
 
 	PROCUREMENT_ACTION_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "采购业务动作幂等键冲突"),
+
+	MATERIAL_REQUIREMENT_RUN_NOT_FOUND(HttpStatus.NOT_FOUND, "缺料净算运行不存在"),
+
+	MATERIAL_REQUIREMENT_RUN_CONFLICT(HttpStatus.CONFLICT, "缺料净算幂等键冲突"),
+
+	MATERIAL_REQUIREMENT_RUN_STALE(HttpStatus.CONFLICT, "缺料净算来源已变化，请重新计算"),
+
+	MATERIAL_REQUIREMENT_RUN_EXPIRED(HttpStatus.CONFLICT, "缺料净算快照已过期，请重新计算"),
+
+	MATERIAL_REQUIREMENT_SUGGESTION_NOT_FOUND(HttpStatus.NOT_FOUND, "缺料建议不存在"),
+
+	MATERIAL_REQUIREMENT_SUGGESTION_STATE_CONFLICT(HttpStatus.CONFLICT, "缺料建议状态不允许当前操作"),
+
+	MATERIAL_REQUIREMENT_REQUISITION_ALREADY_CONVERTED(HttpStatus.CONFLICT, "缺料建议已转为采购请购"),
+
+	MATERIAL_REQUIREMENT_SOURCE_CHANGED(HttpStatus.CONFLICT, "缺料净算来源已变化"),
 
 	SALES_ORDER_NOT_FOUND(HttpStatus.NOT_FOUND, "销售订单不存在"),
 

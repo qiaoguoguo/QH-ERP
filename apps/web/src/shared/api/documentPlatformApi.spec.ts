@@ -550,4 +550,42 @@ describe('022 文档平台 API', () => {
       headers: expect.objectContaining({ 'Idempotency-Key': 'quote-print-key' }),
     }))
   })
+
+  it('026 订单缺料分析导出使用固定任务类型和统一任务入口', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(csrfResponse())
+      .mockResolvedValueOnce(apiResponse({ ...task, taskType: 'MATERIAL_REQUIREMENT_RUN_EXPORT' }))
+    const api = createDocumentPlatformApi({ fetcher })
+
+    await api.exports.createMaterialRequirementRuns({
+      projectId: 20,
+      customerId: 8,
+      contractId: 30,
+      orderId: 40,
+      materialId: 31,
+      requiredDateTo: '2026-08-30',
+      status: 'COMPLETED',
+      expired: false,
+      idempotencyKey: 'material-requirement-export-key',
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/export-tasks', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        taskType: 'MATERIAL_REQUIREMENT_RUN_EXPORT',
+        filters: {
+          projectId: 20,
+          customerId: 8,
+          contractId: 30,
+          orderId: 40,
+          materialId: 31,
+          requiredDateTo: '2026-08-30',
+          status: 'COMPLETED',
+          expired: false,
+        },
+      }),
+      headers: expect.objectContaining({ 'Idempotency-Key': 'material-requirement-export-key' }),
+    }))
+  })
 })
