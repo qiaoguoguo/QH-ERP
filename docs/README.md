@@ -5,7 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接与后续规划（2026-07-16 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [项目交接与后续规划（2026-07-17 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
 - [固定五角色阶段协作与交付流程](ops/stage-collaboration-delivery-process.md)
 - [电气制造业全量演示数据基线与重建验收单](data/electrical-manufacturing-demo-data.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)

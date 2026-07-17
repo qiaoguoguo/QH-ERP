@@ -66,6 +66,8 @@ $commonPath = Join-Path $Root "tools/demo-data/lib/demo-data-common.ps1"
 $common = Get-Content -LiteralPath $commonPath -Raw
 $validatorPath = Join-Path $Root "tools/demo-data/validate-demo-data.ps1"
 $validator = Get-Content -LiteralPath $validatorPath -Raw
+$validatorSqlPath = Join-Path $Root "tools/demo-data/sql/validate-demo-data.sql"
+$validatorSql = Get-Content -LiteralPath $validatorSqlPath -Raw
 $apiPomPath = Join-Path $Root "apps/api/pom.xml"
 $apiPom = Get-Content -LiteralPath $apiPomPath -Raw
 $stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
@@ -86,6 +88,15 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+$flywayV28RuleIsStrict = ($validatorSql.Contains("FLYWAY_LATEST_V28") `
+        -and $validatorSql.Contains("latest successful version = 28") `
+        -and $validatorSql.Contains("coalesce(max(version::int), 0) = 28") `
+        -and $validatorSql.Contains("Flyway 最新成功版本必须为 V28。") `
+        -and (-not $validatorSql.Contains("FLYWAY_LATEST_V27")) `
+        -and (-not $validatorSql.Contains("latest successful version = 27")) `
+        -and (-not $validatorSql.Contains("max(version::int), 0) >= 28")))
+Assert-True -Condition $flywayV28RuleIsStrict `
+    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V28，不能保留 V27 或放宽为 >= 28。"
 
 function Test-SelfTestMinioFileObjectConsistency {
     param(
