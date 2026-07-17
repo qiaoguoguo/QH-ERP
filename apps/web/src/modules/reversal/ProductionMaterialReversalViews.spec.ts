@@ -11,6 +11,7 @@ import ProductionMaterialSupplementDetailView from './ProductionMaterialSuppleme
 import ProductionMaterialSupplementFormView from './ProductionMaterialSupplementFormView.vue'
 import ProductionMaterialSupplementListView from './ProductionMaterialSupplementListView.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import { installElementPlus } from '../../elementPlus'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 
@@ -380,6 +381,12 @@ const materialSupplementSource = {
 
 const page = <T>(items: T[], pageSize = 10) => ({ items, page: 1, pageSize, total: items.length })
 
+function unresolvedDescriptionsWarnings(calls: unknown[][]) {
+  return calls
+    .map((call) => call.map(String).join(' '))
+    .filter((message) => message.includes('Failed to resolve component: el-descriptions'))
+}
+
 async function mountReversalView(component: Component, path: string, permissions: string[]) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -410,7 +417,7 @@ async function mountReversalView(component: Component, path: string, permissions
   await router.isReady()
   const wrapper = mount(component, {
     global: {
-      plugins: [pinia, router, ElementPlus],
+      plugins: [pinia, router, { install: installElementPlus }],
     },
   })
   await flushPromises()
@@ -1120,43 +1127,49 @@ describe('生产退料补料前端页面', () => {
   })
 
   it('生产退料详情展示库存入库、成本影响、追溯和权限操作', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([returnInventoryAndCostTrace, restrictedTrace])
-    const { wrapper, router } = await mountReversalView(ProductionMaterialReturnDetailView, '/production/material-returns/3', [
-      'production:material-return:view',
-      'production:material-return:update',
-      'production:material-return:post',
-      'production:material-return:cancel',
-      'business:reversal:view',
-    ])
+    try {
+      const { wrapper, router } = await mountReversalView(ProductionMaterialReturnDetailView, '/production/material-returns/3', [
+        'production:material-return:view',
+        'production:material-return:update',
+        'production:material-return:post',
+        'production:material-return:cancel',
+        'business:reversal:view',
+      ])
 
-    expect(wrapper.text()).toContain('生产退料详情')
-    expect(wrapper.text()).toContain('MR202607050001')
-    expect(wrapper.text()).toContain('库存入库影响')
-    expect(wrapper.text()).toContain('成本影响')
-    expect(wrapper.text()).toContain('成本记录 #1001')
-    expect(wrapper.find('[data-test="edit-material-return-detail"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-material-return-detail"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-material-return-detail"]').exists()).toBe(true)
+      expect(wrapper.text()).toContain('生产退料详情')
+      expect(wrapper.text()).toContain('MR202607050001')
+      expect(wrapper.text()).toContain('库存入库影响')
+      expect(wrapper.text()).toContain('成本影响')
+      expect(wrapper.text()).toContain('成本记录 #1001')
+      expect(wrapper.find('[data-test="edit-material-return-detail"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="post-material-return-detail"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="cancel-material-return-detail"]').exists()).toBe(true)
 
-    await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
-    await flushPromises()
-    expect(returnRefundReversalApiMock.traces.list).toHaveBeenCalledWith({
-      sourceType: 'PRODUCTION_MATERIAL_RETURN',
-      sourceId: 3,
-      direction: 'REVERSE_TO_SOURCE',
-      includeRestricted: true,
-    })
-    expect(wrapper.text()).toContain('生产退料')
-    expect(wrapper.text()).toContain('库存流水 #901')
-    expect(wrapper.text()).toContain('成本记录 #1001')
-    expect(wrapper.text()).toContain('来源无查看权限')
+      await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
+      await flushPromises()
+      expect(returnRefundReversalApiMock.traces.list).toHaveBeenCalledWith({
+        sourceType: 'PRODUCTION_MATERIAL_RETURN',
+        sourceId: 3,
+        direction: 'REVERSE_TO_SOURCE',
+        includeRestricted: true,
+      })
+      expect(wrapper.text()).toContain('生产退料')
+      expect(wrapper.text()).toContain('库存流水 #901')
+      expect(wrapper.text()).toContain('成本记录 #1001')
+      expect(wrapper.text()).toContain('来源无查看权限')
 
-    const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
-    expect(impactButtons.length).toBeGreaterThanOrEqual(1)
-    await impactButtons[0].trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.name).toBe('inventory-movements')
-    expect(router.currentRoute.value.query.sourceId).toBe('3')
+      const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
+      expect(impactButtons.length).toBeGreaterThanOrEqual(1)
+      await impactButtons[0].trigger('click')
+      await flushPromises()
+      expect(router.currentRoute.value.name).toBe('inventory-movements')
+      expect(router.currentRoute.value.query.sourceId).toBe('3')
+      expect(unresolvedDescriptionsWarnings(warnSpy.mock.calls)).toEqual([])
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('生产退料详情只读展示来源继承的批次或序列身份', async () => {
@@ -1189,31 +1202,37 @@ describe('生产退料补料前端页面', () => {
   })
 
   it('生产补料详情展示库存出库、成本影响且不沿用退料语义', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     returnRefundReversalApiMock.productionMaterialSupplements.get.mockResolvedValueOnce({ ...materialSupplementDetail, status: 'POSTED' })
     returnRefundReversalApiMock.traces.list.mockResolvedValueOnce([supplementInventoryAndCostTrace])
-    const { wrapper } = await mountReversalView(ProductionMaterialSupplementDetailView, '/production/material-supplements/4', [
-      'production:material-supplement:view',
-      'business:reversal:view',
-    ])
+    try {
+      const { wrapper } = await mountReversalView(ProductionMaterialSupplementDetailView, '/production/material-supplements/4', [
+        'production:material-supplement:view',
+        'business:reversal:view',
+      ])
 
-    expect(wrapper.text()).toContain('生产补料详情')
-    expect(wrapper.text()).toContain('MS202607050001')
-    expect(wrapper.text()).toContain('库存出库影响')
-    expect(wrapper.text()).toContain('成本影响')
-    expect(wrapper.text()).toContain('补料数量')
-    expect(wrapper.text()).not.toContain('已退数量')
-    expect(wrapper.text()).not.toContain('可退数量')
+      expect(wrapper.text()).toContain('生产补料详情')
+      expect(wrapper.text()).toContain('MS202607050001')
+      expect(wrapper.text()).toContain('库存出库影响')
+      expect(wrapper.text()).toContain('成本影响')
+      expect(wrapper.text()).toContain('补料数量')
+      expect(wrapper.text()).not.toContain('已退数量')
+      expect(wrapper.text()).not.toContain('可退数量')
 
-    await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
-    await flushPromises()
-    expect(returnRefundReversalApiMock.traces.list).toHaveBeenCalledWith({
-      sourceType: 'PRODUCTION_MATERIAL_SUPPLEMENT',
-      sourceId: 4,
-      direction: 'REVERSE_TO_SOURCE',
-      includeRestricted: true,
-    })
-    expect(wrapper.text()).toContain('生产补料')
-    expect(wrapper.text()).toContain('库存流水 #902')
-    expect(wrapper.text()).toContain('成本记录 #1002')
+      await wrapper.find('[data-test="open-reversal-trace"]').trigger('click')
+      await flushPromises()
+      expect(returnRefundReversalApiMock.traces.list).toHaveBeenCalledWith({
+        sourceType: 'PRODUCTION_MATERIAL_SUPPLEMENT',
+        sourceId: 4,
+        direction: 'REVERSE_TO_SOURCE',
+        includeRestricted: true,
+      })
+      expect(wrapper.text()).toContain('生产补料')
+      expect(wrapper.text()).toContain('库存流水 #902')
+      expect(wrapper.text()).toContain('成本记录 #1002')
+      expect(unresolvedDescriptionsWarnings(warnSpy.mock.calls)).toEqual([])
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })

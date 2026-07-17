@@ -80,6 +80,13 @@ describe('全局样式契约', () => {
     expect(elementPlusSource).toContain("element-plus/theme-chalk/el-tab-pane.css")
   })
 
+  it('描述列表组件同时注册组件和加载基础样式', () => {
+    expectElementPlusComponentRegistered('ElDescriptions')
+    expectElementPlusComponentRegistered('ElDescriptionsItem')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-descriptions.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-descriptions-item.css")
+  })
+
   it('022 文档平台组件同时注册组件和加载基础样式', () => {
     for (const componentName of ['ElBadge', 'ElProgress', 'ElUpload', 'ElDivider', 'ElSwitch']) {
       expectElementPlusComponentRegistered(componentName)

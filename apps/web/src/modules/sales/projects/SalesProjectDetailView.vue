@@ -298,8 +298,8 @@ function productionSummaryDecimal(value?: string | null): string {
   return value === null ? '无权限' : formatSalesDecimal(value)
 }
 
-function productionSummaryText(value?: string | null): string {
-  return value === null ? '无权限' : value || '-'
+function productionSummaryLatestText(value?: string | null, count?: number | null): string {
+  return count === null ? '无权限' : value || '-'
 }
 
 function viewProjectWorkOrders() {
@@ -491,11 +491,11 @@ onMounted(loadRecord)
           </div>
           <div>
             <span>最新工单</span>
-            <strong>{{ productionSummaryText(productionSummary.latestWorkOrderNo) }}</strong>
+            <strong>{{ productionSummaryLatestText(productionSummary.latestWorkOrderNo, productionSummary.workOrderCount) }}</strong>
           </div>
           <div>
             <span>最新外协</span>
-            <strong>{{ productionSummaryText(productionSummary.latestOutsourcingOrderNo) }}</strong>
+            <strong>{{ productionSummaryLatestText(productionSummary.latestOutsourcingOrderNo, productionSummary.outsourcingOrderCount) }}</strong>
           </div>
           <div>
             <span>成本状态</span>

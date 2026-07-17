@@ -325,6 +325,36 @@ describe('销售项目详情页', () => {
     expect(empty.wrapper.text()).toContain('暂无生产/外协摘要')
   })
 
+  it('生产外协摘要双侧有权但无记录时最新单据显示空态而不是无权限', async () => {
+    salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce({
+      ...productionSummary,
+      workOrderCount: 0,
+      releasedWorkOrderCount: 0,
+      completedWorkOrderCount: 0,
+      plannedQuantity: '0.000000',
+      completedQuantity: '0.000000',
+      outsourcingOrderCount: 0,
+      outsourcingInProgressCount: 0,
+      outsourcingCompletedCount: 0,
+      outsourcingPlannedQuantity: '0.000000',
+      outsourcingReceivedQuantity: '0.000000',
+      latestWorkOrderNo: null,
+      latestOutsourcingOrderNo: null,
+    })
+    const emptyProduction = await mountDetail(project, [
+      'sales:project:view',
+      'production:work-order:view',
+      'production:outsourcing:view',
+    ])
+
+    expect(emptyProduction.wrapper.text()).toContain('生产工单 0')
+    expect(emptyProduction.wrapper.text()).toContain('外协订单 0')
+    expect(emptyProduction.wrapper.text()).toContain('最新工单-')
+    expect(emptyProduction.wrapper.text()).toContain('最新外协-')
+    expect(emptyProduction.wrapper.text()).not.toContain('最新工单无权限')
+    expect(emptyProduction.wrapper.text()).not.toContain('最新外协无权限')
+  })
+
   it('生产外协摘要支持单边权限分段脱敏，null 计数显示无权限且两者都无权限时不请求', async () => {
     salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce({
       ...productionSummary,
@@ -343,6 +373,7 @@ describe('销售项目详情页', () => {
     expect(workOrderOnly.wrapper.text()).toContain('生产工单 2')
     expect(workOrderOnly.wrapper.text()).toContain('外协订单 无权限')
     expect(workOrderOnly.wrapper.text()).toContain('外协收货 无权限')
+    expect(workOrderOnly.wrapper.text()).toContain('最新外协无权限')
     expect(workOrderOnly.wrapper.text()).not.toContain('外协订单 0')
 
     salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce({
@@ -360,6 +391,7 @@ describe('销售项目详情页', () => {
     ])
     expect(outsourcingOnly.wrapper.text()).toContain('生产工单 无权限')
     expect(outsourcingOnly.wrapper.text()).toContain('已完工 无权限')
+    expect(outsourcingOnly.wrapper.text()).toContain('最新工单无权限')
     expect(outsourcingOnly.wrapper.text()).toContain('外协订单 1')
     expect(outsourcingOnly.wrapper.text()).not.toContain('生产工单 0')
 

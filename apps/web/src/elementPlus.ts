@@ -7,6 +7,8 @@ import {
   ElCard,
   ElContainer,
   ElDatePicker,
+  ElDescriptions,
+  ElDescriptionsItem,
   ElDialog,
   ElDivider,
   ElDrawer,
@@ -49,6 +51,8 @@ import 'element-plus/theme-chalk/el-card.css'
 import 'element-plus/theme-chalk/el-container.css'
 import 'element-plus/theme-chalk/el-date-picker.css'
 import 'element-plus/theme-chalk/el-date-picker-panel.css'
+import 'element-plus/theme-chalk/el-descriptions.css'
+import 'element-plus/theme-chalk/el-descriptions-item.css'
 import 'element-plus/theme-chalk/el-dialog.css'
 import 'element-plus/theme-chalk/el-divider.css'
 import 'element-plus/theme-chalk/el-drawer.css'
@@ -93,6 +97,8 @@ const elementPlusComponents = [
   ElCard,
   ElContainer,
   ElDatePicker,
+  ElDescriptions,
+  ElDescriptionsItem,
   ElDialog,
   ElDivider,
   ElDrawer,
