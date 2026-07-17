@@ -464,6 +464,39 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
+		String outsourcingPath = "/api/admin/production/outsourcing-orders";
+		if ("GET".equals(method) && (outsourcingPath.equals(path) || matchesIdPath(path, outsourcingPath))) {
+			return "production:outsourcing:view";
+		}
+		if ("POST".equals(method) && outsourcingPath.equals(path)) {
+			return "production:outsourcing:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, outsourcingPath)) {
+			return "production:outsourcing:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(outsourcingPath) + "/\\d+/release")) {
+			return "production:outsourcing:release";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(outsourcingPath) + "/\\d+/close")) {
+			return "production:outsourcing:close";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(outsourcingPath) + "/\\d+/cancel")) {
+			return "production:outsourcing:cancel";
+		}
+		String outsourcingIssuePermissionCode = nestedProductionDocumentPermissionCode(method, path, outsourcingPath,
+				"material-issues", "production:outsourcing-issue");
+		if (outsourcingIssuePermissionCode != null) {
+			return "GET".equals(method)
+					? "production:outsourcing:view|" + outsourcingIssuePermissionCode
+					: outsourcingIssuePermissionCode;
+		}
+		String outsourcingReceiptPermissionCode = nestedProductionDocumentPermissionCode(method, path, outsourcingPath,
+				"receipts", "production:outsourcing-receipt");
+		if (outsourcingReceiptPermissionCode != null) {
+			return "GET".equals(method)
+					? "production:outsourcing:view|" + outsourcingReceiptPermissionCode
+					: outsourcingReceiptPermissionCode;
+		}
 		String workOrderPath = "/api/admin/production/work-orders";
 		if ("GET".equals(method) && (workOrderPath.equals(path) || matchesIdPath(path, workOrderPath))) {
 			return "production:work-order:view";
@@ -797,6 +830,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/sales-orders")) {
 			return "sales:project:view";
 		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/production-summary")) {
+			return "sales:project:view";
+		}
 		if ("GET".equals(method) && path.matches(Pattern.quote(projectPath) + "/\\d+/fulfillment")) {
 			return "sales:fulfillment:view";
 		}
@@ -864,6 +900,13 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("POST".equals(method) && path.matches(Pattern.quote(suggestionPath) + "/\\d+/convert-requisition")) {
 			return "planning:material-requirement:convert-requisition";
 		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(suggestionPath) + "/\\d+/convert-work-order")) {
+			return "planning:material-requirement:convert-production";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote(suggestionPath) + "/\\d+/convert-outsourcing-order")) {
+			return "planning:material-requirement:convert-outsourcing";
+		}
 		return null;
 	}
 
@@ -903,6 +946,27 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+/post")) {
 			return permissionPrefix + ":post";
+		}
+		return null;
+	}
+
+	private String nestedProductionDocumentPermissionCode(String method, String path, String parentPath,
+			String resourceSegment, String permissionPrefix) {
+		String collectionPattern = Pattern.quote(parentPath) + "/\\d+/" + Pattern.quote(resourceSegment);
+		if ("GET".equals(method) && (path.matches(collectionPattern) || path.matches(collectionPattern + "/\\d+"))) {
+			return permissionPrefix + ":view";
+		}
+		if ("POST".equals(method) && path.matches(collectionPattern)) {
+			return permissionPrefix + ":create";
+		}
+		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+")) {
+			return permissionPrefix + ":update";
+		}
+		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+/post")) {
+			return permissionPrefix + ":post";
+		}
+		if ("PUT".equals(method) && path.matches(collectionPattern + "/\\d+/cancel")) {
+			return permissionPrefix + ":cancel";
 		}
 		return null;
 	}

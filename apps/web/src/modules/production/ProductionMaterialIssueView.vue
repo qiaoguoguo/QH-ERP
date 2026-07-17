@@ -4,12 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { inventoryApi, type InventoryTrackingAllocationPayload, type InventoryTrackingMethod } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord } from '../../shared/api/masterDataApi'
 import {
-  productionApi,
-  type ProductionMaterialIssuePayload,
-  type ProductionWorkOrderDetailRecord,
-  type ProductionWorkOrderMaterialRecord,
+  projectProductionApi,
+  type ProjectProductionMaterialIssuePayload,
+  type ProjectProductionWorkOrderDetailRecord,
+  type ProjectProductionWorkOrderMaterialRecord,
   type ResourceId,
-} from '../../shared/api/productionApi'
+} from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
 import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
@@ -26,6 +26,7 @@ import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
   todayText,
   validateProductionQuantity,
@@ -45,7 +46,7 @@ interface IssueLineDraft {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
+const workOrder = ref<ProjectProductionWorkOrderDetailRecord | null>(null)
 const lines = ref<IssueLineDraft[]>([])
 const loading = ref(true)
 const error = ref('')
@@ -91,14 +92,14 @@ async function loadWorkOrder() {
   loading.value = true
   error.value = ''
   try {
-    const detail = await productionApi.workOrders.get(route.params.id as ResourceId)
+    const detail = await projectProductionApi.workOrders.get(route.params.id as ResourceId)
     workOrder.value = detail
     lines.value = await Promise.all(detail.materials.map(async (material) => {
       const tracking = await materialTracking(material.materialId)
       return {
         workOrderMaterialId: material.id,
         lineNo: material.lineNo,
-        warehouseId: detail.issueWarehouseId,
+        warehouseId: detail.issueWarehouseId ?? '',
         trackingMethod: tracking.trackingMethod,
         trackingMethodName: tracking.trackingMethodName,
         trackingAllocations: [],
@@ -130,11 +131,11 @@ async function materialTracking(materialId: ResourceId) {
   return result
 }
 
-function materialForLine(line: IssueLineDraft): ProductionWorkOrderMaterialRecord | undefined {
+function materialForLine(line: IssueLineDraft): ProjectProductionWorkOrderMaterialRecord | undefined {
   return workOrder.value?.materials.find((material) => String(material.id) === String(line.workOrderMaterialId))
 }
 
-function numericMaterialValue(material: ProductionWorkOrderMaterialRecord | undefined, key: 'maxSelectableQuantity'): number | null {
+function numericMaterialValue(material: ProjectProductionWorkOrderMaterialRecord | undefined, key: 'maxSelectableQuantity'): number | null {
   const value = material?.[key]
   if (value === null || value === undefined || value === '') {
     return null
@@ -143,11 +144,11 @@ function numericMaterialValue(material: ProductionWorkOrderMaterialRecord | unde
   return Number.isFinite(numberValue) ? numberValue : null
 }
 
-function materialDisabledReason(material: ProductionWorkOrderMaterialRecord | undefined): string {
+function materialDisabledReason(material: ProjectProductionWorkOrderMaterialRecord | undefined): string {
   return material?.disabledReason ?? '该候选库存不可领料'
 }
 
-function materialUnavailable(material: ProductionWorkOrderMaterialRecord | undefined): boolean {
+function materialUnavailable(material: ProjectProductionWorkOrderMaterialRecord | undefined): boolean {
   const maxSelectableQuantity = numericMaterialValue(material, 'maxSelectableQuantity')
   return material?.selectable === false || (maxSelectableQuantity !== null && maxSelectableQuantity <= 0)
 }
@@ -228,7 +229,7 @@ function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayl
   trackingPickerVisible.value = false
 }
 
-function validateForm(): ProductionMaterialIssuePayload | null {
+function validateForm(): ProjectProductionMaterialIssuePayload | null {
   if (!workOrder.value) {
     formError.value = '生产工单未加载'
     return null
@@ -295,11 +296,15 @@ function validateForm(): ProductionMaterialIssuePayload | null {
         continue
       }
     }
+    const projectId = material?.projectId ?? workOrder.value.projectId
     payloadLines.push({
       workOrderMaterialId: line.workOrderMaterialId,
       lineNo: line.lineNo,
       warehouseId,
       quantity: quantityResult.payloadValue,
+      ownershipType: material?.ownershipType ?? workOrder.value.ownershipType ?? 'PUBLIC',
+      ...(projectId ? { projectId } : {}),
+      ...(material?.costLayerId ? { costLayerId: material.costLayerId } : {}),
       ...(trackingAllocationsPayload(line) ? { trackingAllocations: trackingAllocationsPayload(line) } : {}),
       ...(line.remark.trim() ? { remark: line.remark.trim() } : {}),
     })
@@ -317,6 +322,8 @@ function validateForm(): ProductionMaterialIssuePayload | null {
 
   formError.value = ''
   return {
+    version: workOrder.value.version,
+    idempotencyKey: createProductionIdempotencyKey('production-material-issue-save'),
     businessDate: form.businessDate.trim(),
     reason: form.reason.trim(),
     ...(form.remark.trim() ? { remark: form.remark.trim() } : {}),
@@ -338,7 +345,7 @@ async function submitIssue() {
   }
   formSubmitting.value = true
   try {
-    await productionApi.materialIssues.create(workOrder.value.id, payload)
+    await projectProductionApi.materialIssues.create(workOrder.value.id, payload)
     await router.push({ name: 'production-work-order-detail', params: { id: String(workOrder.value.id) } })
   } catch (caught) {
     formError.value = productionErrorMessage(caught)
@@ -383,6 +390,15 @@ onMounted(() => {
         <div>
           <span>领料仓库</span>
           <strong>{{ workOrder.issueWarehouseName }}</strong>
+        </div>
+        <div>
+          <span>项目归属</span>
+          <strong>
+            <template v-if="workOrder.ownershipType === 'PROJECT'">
+              {{ workOrder.projectNo || workOrder.projectId || '-' }} {{ workOrder.projectName || '' }}
+            </template>
+            <template v-else>公共工单</template>
+          </strong>
         </div>
       </section>
 
@@ -466,6 +482,17 @@ onMounted(() => {
           <el-table-column label="禁用原因" min-width="190" show-overflow-tooltip>
             <template #default="{ row }">
               <span class="candidate-disabled-reason">{{ materialForLine(row)?.disabledReason || '-' }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="消耗来源" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">
+              <template v-if="materialForLine(row)?.ownershipType === 'PROJECT'">
+                {{ materialForLine(row)?.projectNo || materialForLine(row)?.projectId || '-' }} {{ materialForLine(row)?.projectName || '' }}
+              </template>
+              <template v-else>公共库存</template>
+              <div v-if="materialForLine(row)?.costLayerId" class="tracking-empty-text">
+                成本层 #{{ materialForLine(row)?.costLayerId }}
+              </div>
             </template>
           </el-table-column>
           <el-table-column label="本次领料" min-width="150">

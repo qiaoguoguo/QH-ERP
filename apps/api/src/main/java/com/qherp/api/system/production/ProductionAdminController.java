@@ -31,10 +31,12 @@ public class ProductionAdminController {
 	public ApiResponse<PageResponse<ProductionAdminService.WorkOrderSummaryResponse>> workOrders(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
 			@RequestParam(required = false) Long productMaterialId, @RequestParam(required = false) LocalDate dateFrom,
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String ownershipType,
+			@RequestParam(required = false) Long sourceMrpSuggestionId,
 			@RequestParam(required = false) LocalDate dateTo, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.productionAdminService.workOrders(keyword, status, productMaterialId, dateFrom,
-				dateTo, page, pageSize));
+				dateTo, projectId, ownershipType, sourceMrpSuggestionId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/work-orders/{id}")
@@ -59,20 +61,23 @@ public class ProductionAdminController {
 
 	@PutMapping("/work-orders/{id}/release")
 	public ApiResponse<ProductionAdminService.WorkOrderDetailResponse> releaseWorkOrder(@PathVariable Long id,
+			@Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.productionAdminService.releaseWorkOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.productionAdminService.releaseWorkOrder(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/work-orders/{id}/complete")
 	public ApiResponse<ProductionAdminService.WorkOrderDetailResponse> completeWorkOrder(@PathVariable Long id,
+			@Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.productionAdminService.completeWorkOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.productionAdminService.completeWorkOrder(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/work-orders/{id}/cancel")
 	public ApiResponse<ProductionAdminService.WorkOrderDetailResponse> cancelWorkOrder(@PathVariable Long id,
+			@Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.productionAdminService.cancelWorkOrder(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.productionAdminService.cancelWorkOrder(id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/material-issues")
@@ -109,9 +114,10 @@ public class ProductionAdminController {
 	@PutMapping("/work-orders/{workOrderId}/material-issues/{id}/post")
 	public ApiResponse<ProductionAdminService.MaterialIssueDetailResponse> postMaterialIssue(
 			@PathVariable Long workOrderId, @PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
 			HttpServletRequest servletRequest) {
 		return ApiResponse
-			.ok(this.productionAdminService.postMaterialIssue(workOrderId, id, currentUser, servletRequest));
+			.ok(this.productionAdminService.postMaterialIssue(workOrderId, id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/reports")
@@ -144,8 +150,10 @@ public class ProductionAdminController {
 
 	@PutMapping("/work-orders/{workOrderId}/reports/{id}/post")
 	public ApiResponse<ProductionAdminService.WorkReportResponse> postReport(@PathVariable Long workOrderId,
-			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.productionAdminService.postReport(workOrderId, id, currentUser, servletRequest));
+			@PathVariable Long id, @Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.productionAdminService.postReport(workOrderId, id, request, currentUser,
+				servletRequest));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/completion-receipts")
@@ -182,9 +190,10 @@ public class ProductionAdminController {
 	@PutMapping("/work-orders/{workOrderId}/completion-receipts/{id}/post")
 	public ApiResponse<ProductionAdminService.CompletionReceiptResponse> postCompletionReceipt(
 			@PathVariable Long workOrderId, @PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@Valid @RequestBody ProductionAdminService.ProductionActionRequest request,
 			HttpServletRequest servletRequest) {
 		return ApiResponse.ok(
-				this.productionAdminService.postCompletionReceipt(workOrderId, id, currentUser, servletRequest));
+				this.productionAdminService.postCompletionReceipt(workOrderId, id, request, currentUser, servletRequest));
 	}
 
 }

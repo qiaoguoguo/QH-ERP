@@ -4,8 +4,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { AccountPermissionApiError } from '../../shared/api/accountPermissionApi'
 import type { WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
+import type { ProjectProductionWorkOrderDetailRecord } from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
@@ -15,6 +17,21 @@ import ProductionWorkReportView from './ProductionWorkReportView.vue'
 import { todayText } from './productionPageHelpers'
 
 const productionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    get: vi.fn(),
+  },
+  materialIssues: {
+    create: vi.fn(),
+  },
+  reports: {
+    create: vi.fn(),
+  },
+  completionReceipts: {
+    create: vi.fn(),
+  },
+}))
+
+const projectProductionApiMock = vi.hoisted(() => ({
   workOrders: {
     get: vi.fn(),
   },
@@ -49,6 +66,10 @@ const inventoryApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/productionApi', () => ({
   productionApi: productionApiMock,
+}))
+
+vi.mock('../../shared/api/projectProductionApi', () => ({
+  projectProductionApi: projectProductionApiMock,
 }))
 
 vi.mock('../../shared/api/masterDataApi', () => ({
@@ -172,6 +193,53 @@ const selectableWorkOrder: ProductionWorkOrderDetailRecord = {
   })),
 }
 
+const projectSelectableWorkOrder = {
+  ...selectableWorkOrder,
+  ownershipType: 'PROJECT',
+  projectId: 3001,
+  projectNo: 'SP-027',
+  projectName: '销售项目 027',
+  plannedQuantity: '100.000000',
+  reportedQuantity: '50.000000',
+  qualifiedQuantity: '40.000000',
+  defectiveQuantity: '10.000000',
+  receivedQuantity: '30.000000',
+  allowedActions: ['ISSUE', 'REPORT', 'RECEIPT'],
+  version: 6,
+  materials: selectableWorkOrder.materials.map((material) => ({
+    ...material,
+    requiredQuantity: '100.000000',
+    issuedQuantity: '60.000000',
+    remainingQuantity: '40.000000',
+    ownershipType: 'PROJECT',
+    projectId: 3001,
+    projectNo: 'SP-027',
+    projectName: '销售项目 027',
+    costLayerId: 7001,
+  })),
+} as unknown as ProjectProductionWorkOrderDetailRecord
+
+function projectWorkOrderFrom(record: ProductionWorkOrderDetailRecord): ProjectProductionWorkOrderDetailRecord {
+  return {
+    ...record,
+    ownershipType: 'PUBLIC',
+    plannedQuantity: String(record.plannedQuantity),
+    reportedQuantity: String(record.reportedQuantity),
+    qualifiedQuantity: String(record.qualifiedQuantity),
+    defectiveQuantity: String(record.defectiveQuantity),
+    receivedQuantity: String(record.receivedQuantity),
+    allowedActions: ['ISSUE', 'REPORT', 'RECEIPT'],
+    version: 6,
+    materials: record.materials.map((material) => ({
+      ...material,
+      requiredQuantity: String(material.requiredQuantity),
+      issuedQuantity: String(material.issuedQuantity),
+      remainingQuantity: String(material.remainingQuantity),
+      ownershipType: 'PUBLIC',
+    })),
+  } as unknown as ProjectProductionWorkOrderDetailRecord
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void
   let reject!: (reason?: unknown) => void
@@ -241,6 +309,10 @@ describe('生产执行表单页', () => {
     productionApiMock.materialIssues.create.mockResolvedValue({ id: 1, issueNo: 'MI-001' })
     productionApiMock.reports.create.mockResolvedValue({ id: 2, reportNo: 'WR-001' })
     productionApiMock.completionReceipts.create.mockResolvedValue({ id: 3, receiptNo: 'CR-001' })
+    projectProductionApiMock.workOrders.get.mockResolvedValue(projectWorkOrderFrom(workOrder))
+    projectProductionApiMock.materialIssues.create.mockResolvedValue({ id: 1, issueNo: 'MI-001', version: 7 })
+    projectProductionApiMock.reports.create.mockResolvedValue({ id: 2, reportNo: 'WR-001', version: 7 })
+    projectProductionApiMock.completionReceipts.create.mockResolvedValue({ id: 3, receiptNo: 'CR-001', version: 7 })
     masterDataApiMock.materials.get.mockImplementation((id: number) => Promise.resolve({
       id,
       code: id === 10 ? 'FG-001' : 'RM-001',
@@ -324,7 +396,7 @@ describe('生产执行表单页', () => {
   })
 
   it('领料数量不能超过未领数量', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(selectableWorkOrder))
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -336,18 +408,18 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('本次领料不能大于未领数量')
-    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('领料数量不能超过后端返回的本次最多领料', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce({
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom({
       ...selectableWorkOrder,
       materials: selectableWorkOrder.materials.map((material) => ({
         ...material,
         remainingQuantity: 40,
         maxSelectableQuantity: '12.000000',
       })),
-    })
+    }))
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -359,7 +431,7 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('本次领料不能大于本次最多领料')
-    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('生产领料候选行展示质量状态、现存、占用预留、可承诺、本次最多领料和禁用原因', async () => {
@@ -382,7 +454,7 @@ describe('生产执行表单页', () => {
   })
 
   it('生产领料按工单领料仓库消耗预留，仓库不一致时阻止提交', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(selectableWorkOrder))
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -400,7 +472,7 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('第 10 行领料仓库必须与工单领料仓库一致，按工单领料仓库消耗预留')
-    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('生产领料不可选候选行禁用数量输入并保留禁用原因', async () => {
@@ -416,11 +488,11 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('待检库存不可领料')
-    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('批次管理生产领料通过候选抽屉选择批次并提交', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce(selectableWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(selectableWorkOrder))
     const { wrapper } = await mountExecution(
       ProductionMaterialIssueView,
       '/production/work-orders/9/material-issues',
@@ -445,7 +517,7 @@ describe('生产执行表单页', () => {
     await submitButton(wrapper, '保存领料单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.materialIssues.create).toHaveBeenCalledWith(9, expect.objectContaining({
+    expect(projectProductionApiMock.materialIssues.create).toHaveBeenCalledWith(9, expect.objectContaining({
       lines: [
         expect.objectContaining({
           workOrderMaterialId: 100,
@@ -468,7 +540,7 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('累计报工不能超过计划数量')
-    expect(productionApiMock.reports.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.reports.create).not.toHaveBeenCalled()
   })
 
   it('入库数量不能超过累计合格报工减已入库数量', async () => {
@@ -483,7 +555,7 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('入库数量不能超过累计合格报工减已入库数量')
-    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.completionReceipts.create).not.toHaveBeenCalled()
   })
 
   it('批次管理完工入库显示追踪分配并提交', async () => {
@@ -502,14 +574,14 @@ describe('生产执行表单页', () => {
     await submitButton(wrapper, '保存入库单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
+    expect(projectProductionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
       quantity: '5.000000',
       trackingAllocations: [{ batchNo: 'B-FG-001', quantity: '5.000000' }],
     }))
   })
 
   it('首次完工无公共平均价时必须录入暂估单价并以字符串提交', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce(manualProvisionalWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(manualProvisionalWorkOrder))
     const { wrapper } = await mountExecution(
       ProductionCompletionReceiptView,
       '/production/work-orders/9/completion-receipts',
@@ -526,20 +598,20 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('请输入暂估单价')
-    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.completionReceipts.create).not.toHaveBeenCalled()
 
     await wrapper.find('input[name="production-receipt-provisional-unit-cost"]').setValue('12.345678')
     await submitButton(wrapper, '保存入库单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
+    expect(projectProductionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
       quantity: '5.000000',
       provisionalUnitCost: '12.345678',
     }))
   })
 
   it('暂估单价限制 6 位小数且已有公共平均价时只提示沿用平均价', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce(manualProvisionalWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(manualProvisionalWorkOrder))
     const manual = await mountExecution(
       ProductionCompletionReceiptView,
       '/production/work-orders/9/completion-receipts',
@@ -554,9 +626,9 @@ describe('生产执行表单页', () => {
     await flushPromises()
 
     expect(manual.wrapper.text()).toContain('暂估单价最多 6 位小数')
-    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.completionReceipts.create).not.toHaveBeenCalled()
 
-    productionApiMock.workOrders.get.mockResolvedValueOnce(currentAverageProvisionalWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(currentAverageProvisionalWorkOrder))
     const average = await mountExecution(
       ProductionCompletionReceiptView,
       '/production/work-orders/9/completion-receipts',
@@ -569,10 +641,10 @@ describe('生产执行表单页', () => {
   })
 
   it('无成本权限时完工入库不显示公共均价但仍按后端计价状态控制暂估输入', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce({
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom({
       ...currentAverageProvisionalWorkOrder,
       costVisible: false,
-    })
+    }))
     const { wrapper } = await mountExecution(
       ProductionCompletionReceiptView,
       '/production/work-orders/9/completion-receipts',
@@ -601,12 +673,12 @@ describe('生产执行表单页', () => {
 
     expect(wrapper.text()).toContain('追踪分配')
     expect(wrapper.text()).toContain('与业务数量')
-    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.completionReceipts.create).not.toHaveBeenCalled()
   })
 
   it('后端错误消息可见，提交期间按钮禁用，失败后恢复', async () => {
     const pending = deferred<unknown>()
-    productionApiMock.reports.create.mockReturnValueOnce(pending.promise)
+    projectProductionApiMock.reports.create.mockReturnValueOnce(pending.promise)
     const { wrapper } = await mountExecution(
       ProductionWorkReportView,
       '/production/work-orders/9/reports',
@@ -639,7 +711,7 @@ describe('生产执行表单页', () => {
     await submitButton(wrapper, '保存领料单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.materialIssues.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
   it('无生产报工创建权限时禁用表单并阻止提交', async () => {
@@ -655,7 +727,7 @@ describe('生产执行表单页', () => {
     await submitButton(wrapper, '保存报工单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.reports.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.reports.create).not.toHaveBeenCalled()
   })
 
   it('无完工入库创建权限时禁用表单并阻止提交', async () => {
@@ -671,6 +743,81 @@ describe('生产执行表单页', () => {
     await submitButton(wrapper, '保存入库单').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.completionReceipts.create).not.toHaveBeenCalled()
+  })
+
+  it('027 生产领料展示项目库存来源并携带项目、成本层、版本和幂等键提交', async () => {
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectSelectableWorkOrder)
+    const { wrapper } = await mountExecution(
+      ProductionMaterialIssueView,
+      '/production/work-orders/9/material-issues',
+      ['production:work-order:view', 'production:issue:view', 'production:issue:create'],
+    )
+
+    expect(projectProductionApiMock.workOrders.get).toHaveBeenCalledWith('9')
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('成本层 #7001')
+
+    await wrapper.find('input[placeholder="0.000000"]').setValue('2.000000')
+    await submitButton(wrapper, '保存领料单').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.materialIssues.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-material-issue-save-/),
+      lines: [
+        expect.objectContaining({
+          workOrderMaterialId: 100,
+          ownershipType: 'PROJECT',
+          projectId: 3001,
+          costLayerId: 7001,
+          quantity: '2.000000',
+        }),
+      ],
+    }))
+  })
+
+  it('027 报工与完工入库携带版本和幂等键，409 冲突不自动重放', async () => {
+    projectProductionApiMock.reports.create.mockRejectedValueOnce(new AccountPermissionApiError(
+      '工单版本已变化，请刷新后重试',
+      'PRODUCTION_VERSION_CONFLICT',
+      409,
+      'trace-production-version',
+    ))
+    const report = await mountExecution(
+      ProductionWorkReportView,
+      '/production/work-orders/9/reports',
+      ['production:work-order:view', 'production:report:view', 'production:report:create'],
+    )
+
+    await report.wrapper.find('input[name="production-qualified-quantity"]').setValue('10.000000')
+    await submitButton(report.wrapper, '保存报工单').trigger('click')
+    await flushPromises()
+
+    expect(report.wrapper.text()).toContain('工单版本已变化，请刷新后重试')
+    expect(projectProductionApiMock.reports.create).toHaveBeenCalledTimes(1)
+    expect(projectProductionApiMock.reports.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-work-report-save-/),
+      qualifiedQuantity: '10.000000',
+    }))
+
+    const receipt = await mountExecution(
+      ProductionCompletionReceiptView,
+      '/production/work-orders/9/completion-receipts',
+      ['production:work-order:view', 'production:receipt:view', 'production:receipt:create'],
+    )
+    await receipt.wrapper.find('input[name="production-receipt-quantity"]').setValue('5.000000')
+    receipt.wrapper.findComponent(TrackingAllocationEditor).vm.$emit('update:modelValue', [
+      { batchNo: 'B-FG-001', quantity: '5.000000' },
+    ])
+    await submitButton(receipt.wrapper, '保存入库单').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.completionReceipts.create).toHaveBeenCalledWith(9, expect.objectContaining({
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-completion-receipt-save-/),
+      quantity: '5.000000',
+    }))
   })
 })

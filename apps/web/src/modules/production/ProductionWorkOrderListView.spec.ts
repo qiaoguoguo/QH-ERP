@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { ProductionWorkOrderSummaryRecord } from '../../shared/api/productionApi'
+import type { ProjectProductionWorkOrderSummaryRecord } from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import ProductionWorkOrderListView from './ProductionWorkOrderListView.vue'
 
@@ -17,8 +18,25 @@ const productionApiMock = vi.hoisted(() => ({
   },
 }))
 
+const projectProductionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    list: vi.fn(),
+    release: vi.fn(),
+    complete: vi.fn(),
+    cancel: vi.fn(),
+  },
+}))
+
 vi.mock('../../shared/api/productionApi', () => ({
   productionApi: productionApiMock,
+}))
+
+vi.mock('../../shared/api/projectProductionApi', () => ({
+  projectProductionApi: projectProductionApiMock,
+}))
+
+vi.mock('../../shared/ui/confirmDialog', () => ({
+  confirmAction: vi.fn(async () => true),
 }))
 
 const draftWorkOrder: ProductionWorkOrderSummaryRecord = {
@@ -82,6 +100,89 @@ const workOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
   totalPages: 1,
 }
 
+function projectCompatibleWorkOrder(
+  record: ProductionWorkOrderSummaryRecord,
+  allowedActions?: string[],
+): ProjectProductionWorkOrderSummaryRecord {
+  return {
+    ...record,
+    ownershipType: 'PUBLIC',
+    plannedQuantity: String(record.plannedQuantity),
+    reportedQuantity: String(record.reportedQuantity),
+    qualifiedQuantity: String(record.qualifiedQuantity),
+    defectiveQuantity: String(record.defectiveQuantity),
+    receivedQuantity: String(record.receivedQuantity),
+    allowedActions,
+    version: Number(record.id),
+  }
+}
+
+const compatibleWorkOrderPage: PageResult<ProjectProductionWorkOrderSummaryRecord> = {
+  items: [
+    projectCompatibleWorkOrder(draftWorkOrder, ['UPDATE', 'RELEASE', 'CANCEL']),
+    projectCompatibleWorkOrder(releasedWorkOrder, ['ISSUE', 'REPORT', 'RECEIPT', 'COMPLETE', 'CANCEL']),
+    projectCompatibleWorkOrder(inProgressWorkOrder, ['ISSUE', 'REPORT', 'RECEIPT', 'COMPLETE']),
+    projectCompatibleWorkOrder(completedWorkOrder, []),
+  ],
+  page: 1,
+  pageSize: 10,
+  total: 4,
+  totalPages: 1,
+}
+
+const projectWorkOrder: ProjectProductionWorkOrderSummaryRecord = {
+  id: 27,
+  workOrderNo: 'WO-PROJ-027',
+  ownershipType: 'PROJECT',
+  projectId: 3001,
+  projectNo: 'SP-027',
+  projectName: '销售项目 027',
+  productMaterialId: 10,
+  productMaterialCode: 'FG-001',
+  productMaterialName: '成品 A',
+  bomId: 20,
+  bomCode: 'BOM-FG-001',
+  bomVersionCode: 'V1',
+  plannedQuantity: '100.000000',
+  reportedQuantity: '0.000000',
+  qualifiedQuantity: '0.000000',
+  defectiveQuantity: '0.000000',
+  receivedQuantity: '0.000000',
+  issueWarehouseId: 30,
+  issueWarehouseName: '原料仓',
+  receiptWarehouseId: 31,
+  receiptWarehouseName: '成品仓',
+  plannedStartDate: '2026-07-03',
+  plannedFinishDate: '2026-07-10',
+  status: 'DRAFT',
+  sourceMrpRunId: 9001,
+  sourceMrpSuggestionId: 9101,
+  sourceSuggestionNo: 'MRP-SUG-027',
+  allowedActions: ['UPDATE', 'RELEASE', 'CANCEL'],
+  version: 6,
+  createdByName: '管理员',
+  createdAt: '2026-07-03T08:00:00+08:00',
+  updatedAt: '2026-07-03T09:00:00+08:00',
+}
+
+const lockedProjectWorkOrder: ProjectProductionWorkOrderSummaryRecord = {
+  ...projectWorkOrder,
+  id: 28,
+  workOrderNo: 'WO-PROJ-LOCKED',
+  status: 'RELEASED',
+  allowedActions: [],
+  actionDisabledReason: '项目工单已被外协转换锁定',
+  version: 7,
+}
+
+const projectWorkOrderPage: PageResult<ProjectProductionWorkOrderSummaryRecord> = {
+  items: [projectWorkOrder, lockedProjectWorkOrder],
+  page: 1,
+  pageSize: 10,
+  total: 2,
+  totalPages: 1,
+}
+
 const emptyWorkOrderPage: PageResult<ProductionWorkOrderSummaryRecord> = {
   items: [],
   page: 1,
@@ -111,7 +212,7 @@ async function mountList(permissions = [
   'production:issue:create',
   'production:report:create',
   'production:receipt:create',
-]) {
+], path = '/production/work-orders') {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -131,7 +232,7 @@ async function mountList(permissions = [
       { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component: { render: () => null } },
     ],
   })
-  await router.push('/production/work-orders')
+  await router.push(path)
   await router.isReady()
   const wrapper = mount(ProductionWorkOrderListView, {
     global: {
@@ -149,6 +250,10 @@ describe('生产工单列表页', () => {
     productionApiMock.workOrders.release.mockResolvedValue(releasedWorkOrder)
     productionApiMock.workOrders.complete.mockResolvedValue(completedWorkOrder)
     productionApiMock.workOrders.cancel.mockResolvedValue({ ...draftWorkOrder, status: 'CANCELLED' })
+    projectProductionApiMock.workOrders.list.mockResolvedValue(compatibleWorkOrderPage)
+    projectProductionApiMock.workOrders.release.mockResolvedValue({ ...projectWorkOrder, status: 'RELEASED', version: 7 })
+    projectProductionApiMock.workOrders.complete.mockResolvedValue({ ...projectWorkOrder, status: 'COMPLETED', version: 8 })
+    projectProductionApiMock.workOrders.cancel.mockResolvedValue({ ...projectWorkOrder, status: 'CANCELLED', version: 8 })
   })
 
   afterEach(() => {
@@ -158,7 +263,7 @@ describe('生产工单列表页', () => {
   it('初始加载生产工单并使用默认分页参数', async () => {
     const { wrapper } = await mountList()
 
-    expect(productionApiMock.workOrders.list).toHaveBeenCalledWith({
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenCalledWith({
       keyword: '',
       status: undefined,
       dateFrom: '',
@@ -184,7 +289,7 @@ describe('生产工单列表页', () => {
     await wrapper.find('[data-test="search-production-work-orders"]').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.workOrders.list).toHaveBeenLastCalledWith({
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenLastCalledWith({
       keyword: 'WO',
       status: 'RELEASED',
       dateFrom: '2026-07-01',
@@ -195,7 +300,7 @@ describe('生产工单列表页', () => {
 
     await wrapper.find('[data-test="reset-production-work-orders"]').trigger('click')
     await flushPromises()
-    expect(productionApiMock.workOrders.list).toHaveBeenLastCalledWith({
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenLastCalledWith({
       keyword: '',
       status: undefined,
       dateFrom: '',
@@ -206,12 +311,15 @@ describe('生产工单列表页', () => {
   })
 
   it('无数据和加载失败时显示明确状态', async () => {
-    productionApiMock.workOrders.list.mockResolvedValueOnce(emptyWorkOrderPage)
+    projectProductionApiMock.workOrders.list.mockResolvedValueOnce({
+      ...emptyWorkOrderPage,
+      items: [],
+    })
     const { wrapper } = await mountList()
 
     expect(wrapper.text()).toContain('暂无生产工单')
 
-    productionApiMock.workOrders.list.mockRejectedValueOnce(new Error('生产工单接口异常'))
+    projectProductionApiMock.workOrders.list.mockRejectedValueOnce(new Error('生产工单接口异常'))
     await wrapper.find('[data-test="search-production-work-orders"]').trigger('click')
     await flushPromises()
 
@@ -244,5 +352,67 @@ describe('生产工单列表页', () => {
     expect(buttonsByText(wrapper, '完工入库')).toHaveLength(2)
     expect(buttonsByText(wrapper, '完成')).toHaveLength(2)
     expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
+  })
+
+  it('027 按项目、归属和来源筛选，并使用 allowedActions 与版本执行动作', async () => {
+    projectProductionApiMock.workOrders.list.mockResolvedValue(projectWorkOrderPage)
+    const { wrapper } = await mountList()
+
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenCalledWith({
+      keyword: '',
+      status: undefined,
+      dateFrom: '',
+      dateTo: '',
+      page: 1,
+      pageSize: 10,
+    })
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('项目工单')
+    expect(wrapper.text()).toContain('MRP-SUG-027')
+    expect(wrapper.text()).toContain('项目工单已被外协转换锁定')
+    expect(buttonsByText(wrapper, '发布')).toHaveLength(1)
+
+    await wrapper.find('input[name="production-project-id"]').setValue('3001')
+    await setSelectValue(wrapper, 1, 'PROJECT')
+    await wrapper.find('[data-test="search-production-work-orders"]').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenLastCalledWith({
+      keyword: '',
+      status: undefined,
+      projectId: '3001',
+      ownershipType: 'PROJECT',
+      dateFrom: '',
+      dateTo: '',
+      page: 1,
+      pageSize: 10,
+    })
+
+    await buttonsByText(wrapper, '发布')[0].trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.workOrders.release).toHaveBeenCalledWith(27, {
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-work-order-release-/),
+    })
+  })
+
+  it('027 从路由读取并监听项目与 MRP 来源筛选', async () => {
+    projectProductionApiMock.workOrders.list.mockResolvedValue(projectWorkOrderPage)
+    const { router } = await mountList([
+      'production:work-order:view',
+    ], '/production/work-orders?projectId=3001&sourceMrpSuggestionId=9101')
+
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      projectId: '3001',
+      sourceMrpSuggestionId: '9101',
+    }))
+
+    await router.push('/production/work-orders?projectId=3001&sourceMrpSuggestionId=9202')
+    await flushPromises()
+    expect(projectProductionApiMock.workOrders.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      projectId: '3001',
+      sourceMrpSuggestionId: '9202',
+    }))
   })
 })

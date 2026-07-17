@@ -7,10 +7,19 @@ import { AccountPermissionApiError } from '../../shared/api/accountPermissionApi
 import type { BomDetailRecord, BomSummaryRecord } from '../../shared/api/bomApi'
 import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
+import type { ProjectProductionWorkOrderDetailRecord } from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import ProductionWorkOrderFormView from './ProductionWorkOrderFormView.vue'
 
 const productionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    get: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
+  },
+}))
+
+const projectProductionApiMock = vi.hoisted(() => ({
   workOrders: {
     get: vi.fn(),
     create: vi.fn(),
@@ -34,6 +43,10 @@ const masterDataApiMock = vi.hoisted(() => ({
 
 vi.mock('../../shared/api/productionApi', () => ({
   productionApi: productionApiMock,
+}))
+
+vi.mock('../../shared/api/projectProductionApi', () => ({
+  projectProductionApi: projectProductionApiMock,
 }))
 
 vi.mock('../../shared/api/bomApi', () => ({
@@ -190,6 +203,42 @@ const savedWorkOrder: ProductionWorkOrderDetailRecord = {
   movements: [],
 }
 
+const projectSavedWorkOrder = {
+  ...savedWorkOrder,
+  ownershipType: 'PROJECT',
+  projectId: 3001,
+  projectNo: 'SP-027',
+  projectName: '销售项目 027',
+  plannedQuantity: '100.000000',
+  reportedQuantity: '0.000000',
+  qualifiedQuantity: '0.000000',
+  defectiveQuantity: '0.000000',
+  receivedQuantity: '0.000000',
+  sourceMrpRunId: 9001,
+  sourceMrpSuggestionId: 9101,
+  sourceSuggestionNo: 'MRP-SUG-027',
+  sourceSummary: {
+    sourceMrpRunId: 9001,
+    sourceMrpSuggestionId: 9101,
+    sourceSuggestionNo: 'MRP-SUG-027',
+    sourceRunNo: 'MRP-RUN-027',
+  },
+  allowedActions: ['UPDATE', 'RELEASE'],
+  version: 6,
+} as unknown as ProjectProductionWorkOrderDetailRecord
+
+const publicProjectSavedWorkOrder = {
+  ...savedWorkOrder,
+  ownershipType: 'PUBLIC',
+  projectId: null,
+  plannedQuantity: '100.000000',
+  reportedQuantity: '0.000000',
+  qualifiedQuantity: '0.000000',
+  defectiveQuantity: '0.000000',
+  receivedQuantity: '0.000000',
+  version: 6,
+} as unknown as ProjectProductionWorkOrderDetailRecord
+
 async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
   const select = wrapper.findAllComponents({ name: 'ElSelect' })[index] as VueWrapper | undefined
   expect(select?.exists()).toBe(true)
@@ -205,6 +254,13 @@ function findSelectByTest(wrapper: VueWrapper, dataTest: string) {
 
 function selectProps(wrapper: VueWrapper, dataTest: string) {
   return findSelectByTest(wrapper, dataTest).props() as Record<string, unknown>
+}
+
+async function setComponentModel(wrapper: VueWrapper, dataTest: string, value: unknown) {
+  const component = wrapper.findComponent(`[data-test="${dataTest}"]`) as VueWrapper
+  expect(component.exists()).toBe(true)
+  component.vm.$emit('update:modelValue', value)
+  await flushPromises()
 }
 
 function deferred<T>() {
@@ -270,6 +326,9 @@ describe('生产工单表单页', () => {
     productionApiMock.workOrders.get.mockResolvedValue(savedWorkOrder)
     productionApiMock.workOrders.create.mockResolvedValue(savedWorkOrder)
     productionApiMock.workOrders.update.mockResolvedValue(savedWorkOrder)
+    projectProductionApiMock.workOrders.get.mockResolvedValue(publicProjectSavedWorkOrder)
+    projectProductionApiMock.workOrders.create.mockResolvedValue(publicProjectSavedWorkOrder)
+    projectProductionApiMock.workOrders.update.mockResolvedValue(publicProjectSavedWorkOrder)
     bomApiMock.list.mockResolvedValue({
       items: [bomSummary],
       page: 1,
@@ -301,7 +360,7 @@ describe('生产工单表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('请完整选择产品物料、BOM、领料仓库和入库仓库')
-    expect(productionApiMock.workOrders.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.workOrders.create).not.toHaveBeenCalled()
   })
 
   it('计划数量必须大于 0', async () => {
@@ -312,7 +371,7 @@ describe('生产工单表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('数量必须大于 0')
-    expect(productionApiMock.workOrders.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.workOrders.create).not.toHaveBeenCalled()
   })
 
   it('计划完工日期不得早于计划开工日期', async () => {
@@ -324,7 +383,7 @@ describe('生产工单表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('计划完工日期不得早于计划开工日期')
-    expect(productionApiMock.workOrders.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.workOrders.create).not.toHaveBeenCalled()
   })
 
   it('未选择产品物料或计划开工日期时不能选择 BOM', async () => {
@@ -415,11 +474,11 @@ describe('生产工单表单页', () => {
 
     await wrapper.find('[data-test="save-production-work-order"]').trigger('click')
     await flushPromises()
-    expect(productionApiMock.workOrders.update).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.workOrders.update).not.toHaveBeenCalled()
   })
 
   it('非草稿编辑加载保留历史 BOM 和明细，不执行当前有效候选清理', async () => {
-    productionApiMock.workOrders.get.mockResolvedValueOnce({ ...savedWorkOrder, status: 'RELEASED' })
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce({ ...publicProjectSavedWorkOrder, status: 'RELEASED' })
     bomApiMock.list.mockResolvedValueOnce({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 })
     const { wrapper } = await mountForm('/production/work-orders/99/edit')
 
@@ -539,7 +598,7 @@ describe('生产工单表单页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期')
-    expect(productionApiMock.workOrders.create).not.toHaveBeenCalled()
+    expect(projectProductionApiMock.workOrders.create).not.toHaveBeenCalled()
   })
 
   it('候选加载失败与无有效 BOM 分开呈现，恢复有效候选只清理候选错误', async () => {
@@ -571,7 +630,7 @@ describe('生产工单表单页', () => {
   })
 
   it('保存失败后错误可见且输入保留', async () => {
-    productionApiMock.workOrders.create.mockRejectedValueOnce(new Error('BOM 已停用，不能创建生产工单'))
+    projectProductionApiMock.workOrders.create.mockRejectedValueOnce(new Error('BOM 已停用，不能创建生产工单'))
     const { wrapper } = await mountForm()
 
     await fillRequiredForm(wrapper, '12.500000')
@@ -586,7 +645,7 @@ describe('生产工单表单页', () => {
   })
 
   it('后端返回 BOM 时效 409 时在表单错误区域展示稳定文案', async () => {
-    productionApiMock.workOrders.create.mockRejectedValueOnce(new AccountPermissionApiError(
+    projectProductionApiMock.workOrders.create.mockRejectedValueOnce(new AccountPermissionApiError(
       '所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期',
       'PRODUCTION_BOM_EFFECTIVE_DATE_INVALID',
       409,
@@ -600,5 +659,53 @@ describe('生产工单表单页', () => {
 
     expect(wrapper.text()).toContain('所选 BOM 在计划开工日期不生效，请选择有效 BOM 或调整计划开工日期')
     expect(wrapper.find('[data-test="save-production-work-order"]').attributes('disabled')).toBeUndefined()
+  })
+
+  it('027 新建项目工单提交项目归属、项目 ID 和幂等键，不把来源信息前端推断进 payload', async () => {
+    projectProductionApiMock.workOrders.create.mockResolvedValue(projectSavedWorkOrder)
+    const { wrapper } = await mountForm()
+
+    await setComponentModel(wrapper, 'production-ownership-type', 'PROJECT')
+    await wrapper.find('input[name="production-project-id"]').setValue('3001')
+    await fillRequiredForm(wrapper, '12.500000')
+    await wrapper.find('input[name="production-work-order-remark"]').setValue('项目生产首批')
+    await wrapper.find('[data-test="save-production-work-order"]').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.workOrders.create).toHaveBeenCalledWith({
+      ownershipType: 'PROJECT',
+      projectId: 3001,
+      productMaterialId: 10,
+      bomId: 20,
+      plannedQuantity: '12.500000',
+      issueWarehouseId: 30,
+      receiptWarehouseId: 31,
+      plannedStartDate: '2026-07-03',
+      plannedFinishDate: '2026-07-10',
+      remark: '项目生产首批',
+      idempotencyKey: expect.stringMatching(/^production-work-order-save-/),
+    })
+    const payload = projectProductionApiMock.workOrders.create.mock.calls[0][0]
+    expect(payload).not.toHaveProperty('sourceMrpSuggestionId')
+  })
+
+  it('027 编辑项目工单展示来源建议并提交 version/idempotencyKey', async () => {
+    projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectSavedWorkOrder)
+    const { wrapper } = await mountForm('/production/work-orders/99/edit')
+
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('MRP-SUG-027')
+
+    await wrapper.find('input[name="production-planned-quantity"]').setValue('88.000000')
+    await wrapper.find('[data-test="save-production-work-order"]').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.workOrders.update).toHaveBeenCalledWith(99, expect.objectContaining({
+      ownershipType: 'PROJECT',
+      projectId: 3001,
+      plannedQuantity: '88.000000',
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-work-order-save-/),
+    }))
   })
 })

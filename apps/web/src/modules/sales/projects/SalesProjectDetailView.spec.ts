@@ -3,6 +3,7 @@ import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { AccountPermissionApiError } from '../../../shared/api/accountPermissionApi'
 import type { SalesProjectFulfillmentRecord } from '../../../shared/api/salesFulfillmentApi'
 import type { ProjectSalesOrderSummary, SalesProjectDetail } from '../../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../../stores/authStore'
@@ -23,6 +24,7 @@ const salesProjectApiMock = vi.hoisted(() => ({
     cancel: vi.fn(),
   },
   projectSalesOrders: vi.fn(),
+  projectProductionSummary: vi.fn(),
 }))
 
 vi.mock('../../../shared/api/salesProjectApi', async (importOriginal) => ({
@@ -151,6 +153,24 @@ const fulfillment: SalesProjectFulfillmentRecord = {
   version: 6,
 }
 
+const productionSummary = {
+  projectId: 12,
+  workOrderCount: 2,
+  releasedWorkOrderCount: 1,
+  completedWorkOrderCount: 1,
+  outsourcingOrderCount: 1,
+  outsourcingInProgressCount: 1,
+  outsourcingCompletedCount: 0,
+  plannedQuantity: '5.000000',
+  completedQuantity: '2.000000',
+  outsourcingPlannedQuantity: '3.000000',
+  outsourcingReceivedQuantity: '1.000000',
+  costVisible: false,
+  costRestrictedReason: '无库存估值权限',
+  latestWorkOrderNo: 'WO-027-001',
+  latestOutsourcingOrderNo: 'OS-027-001',
+}
+
 async function mountDetail(record: SalesProjectDetail = project, permissions = [
   'sales:project:view',
   'sales:project:update',
@@ -174,6 +194,7 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
     total: 1,
     totalPages: 1,
   })
+  salesProjectApiMock.projectProductionSummary.mockResolvedValue(productionSummary)
   salesFulfillmentApiMock.projectFulfillment.get.mockResolvedValue(fulfillmentRecord)
   salesFulfillmentApiMock.projectFulfillment.close.mockResolvedValue({
     ...fulfillmentRecord,
@@ -196,6 +217,8 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
       { path: '/sales/projects/:id', name: 'sales-project-detail', component: SalesProjectDetailView },
       { path: '/sales/projects/:id/edit', name: 'sales-project-edit', component: { render: () => null } },
       { path: '/sales/orders/:id', name: 'sales-order-detail', component: { render: () => null } },
+      { path: '/production/work-orders', name: 'production-work-orders', component: { render: () => null } },
+      { path: '/production/outsourcing-orders', name: 'production-outsourcing-orders', component: { render: () => null } },
     ],
   })
   await router.push('/sales/projects/12')
@@ -241,6 +264,109 @@ describe('销售项目详情页', () => {
     expect(wrapper.text()).toContain('更新目标成本')
     expect(wrapper.find('.sales-project-contract-table-scroll').exists()).toBe(true)
     expect(wrapper.find('.summary-strip').classes()).toContain('summary-strip-responsive')
+  })
+
+  it('展示项目生产与外协摘要，按权限提供目标页面跳转且不伪装受限成本', async () => {
+    const { wrapper, router } = await mountDetail(project, [
+      'sales:project:view',
+      'sales:order:view',
+      'sales:fulfillment:view',
+      'production:work-order:view',
+      'production:outsourcing:view',
+    ])
+
+    expect(salesProjectApiMock.projectProductionSummary).toHaveBeenCalledWith(12)
+    expect(wrapper.text()).toContain('生产/外协摘要')
+    expect(wrapper.text()).toContain('生产工单 2')
+    expect(wrapper.text()).toContain('已完工 1')
+    expect(wrapper.text()).toContain('外协订单 1')
+    expect(wrapper.text()).toContain('外协收货 1')
+    expect(wrapper.text()).toContain('WO-027-001')
+    expect(wrapper.text()).toContain('OS-027-001')
+    expect(wrapper.text()).toContain('成本受限')
+    expect(wrapper.text()).toContain('无库存估值权限')
+    expect(wrapper.text()).not.toContain('正式项目成本')
+
+    await wrapper.find('[data-test="view-project-work-orders"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('production-work-orders')
+    expect(router.currentRoute.value.query.projectId).toBe('12')
+
+    await router.push('/sales/projects/12')
+    await flushPromises()
+    await wrapper.find('[data-test="view-project-outsourcing-orders"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('production-outsourcing-orders')
+    expect(router.currentRoute.value.query.projectId).toBe('12')
+  })
+
+  it('生产外协摘要 403 与空响应有明确状态，不把受限响应伪装成 0', async () => {
+    salesProjectApiMock.projectProductionSummary.mockRejectedValueOnce(new AccountPermissionApiError(
+      '无生产摘要查看权限',
+      'FORBIDDEN',
+      403,
+      'trace-production-summary',
+    ))
+    const denied = await mountDetail(project, [
+      'sales:project:view',
+      'production:work-order:view',
+      'production:outsourcing:view',
+    ])
+    expect(denied.wrapper.text()).toContain('无生产摘要查看权限')
+    expect(denied.wrapper.text()).not.toContain('生产工单 0')
+    expect(denied.wrapper.text()).not.toContain('外协订单 0')
+
+    salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce(null)
+    const empty = await mountDetail(project, [
+      'sales:project:view',
+      'production:work-order:view',
+      'production:outsourcing:view',
+    ])
+    expect(empty.wrapper.text()).toContain('暂无生产/外协摘要')
+  })
+
+  it('生产外协摘要支持单边权限分段脱敏，null 计数显示无权限且两者都无权限时不请求', async () => {
+    salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce({
+      ...productionSummary,
+      outsourcingOrderCount: null,
+      outsourcingInProgressCount: null,
+      outsourcingCompletedCount: null,
+      outsourcingPlannedQuantity: null,
+      outsourcingReceivedQuantity: null,
+      latestOutsourcingOrderNo: null,
+    })
+    const workOrderOnly = await mountDetail(project, [
+      'sales:project:view',
+      'production:work-order:view',
+    ])
+    expect(salesProjectApiMock.projectProductionSummary).toHaveBeenCalledWith(12)
+    expect(workOrderOnly.wrapper.text()).toContain('生产工单 2')
+    expect(workOrderOnly.wrapper.text()).toContain('外协订单 无权限')
+    expect(workOrderOnly.wrapper.text()).toContain('外协收货 无权限')
+    expect(workOrderOnly.wrapper.text()).not.toContain('外协订单 0')
+
+    salesProjectApiMock.projectProductionSummary.mockResolvedValueOnce({
+      ...productionSummary,
+      workOrderCount: null,
+      releasedWorkOrderCount: null,
+      completedWorkOrderCount: null,
+      plannedQuantity: null,
+      completedQuantity: null,
+      latestWorkOrderNo: null,
+    })
+    const outsourcingOnly = await mountDetail(project, [
+      'sales:project:view',
+      'production:outsourcing:view',
+    ])
+    expect(outsourcingOnly.wrapper.text()).toContain('生产工单 无权限')
+    expect(outsourcingOnly.wrapper.text()).toContain('已完工 无权限')
+    expect(outsourcingOnly.wrapper.text()).toContain('外协订单 1')
+    expect(outsourcingOnly.wrapper.text()).not.toContain('生产工单 0')
+
+    salesProjectApiMock.projectProductionSummary.mockClear()
+    const noProduction = await mountDetail(project, ['sales:project:view'])
+    expect(salesProjectApiMock.projectProductionSummary).not.toHaveBeenCalled()
+    expect(noProduction.wrapper.text()).not.toContain('生产/外协摘要')
   })
 
   it('展示关联销售订单状态分布、列表摘要和有权限详情入口', async () => {

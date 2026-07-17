@@ -88,15 +88,18 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
-$flywayV28RuleIsStrict = ($validatorSql.Contains("FLYWAY_LATEST_V28") `
-        -and $validatorSql.Contains("latest successful version = 28") `
-        -and $validatorSql.Contains("coalesce(max(version::int), 0) = 28") `
-        -and $validatorSql.Contains("Flyway 最新成功版本必须为 V28。") `
-        -and (-not $validatorSql.Contains("FLYWAY_LATEST_V27")) `
-        -and (-not $validatorSql.Contains("latest successful version = 27")) `
-        -and (-not $validatorSql.Contains("max(version::int), 0) >= 28")))
-Assert-True -Condition $flywayV28RuleIsStrict `
-    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V28，不能保留 V27 或放宽为 >= 28。"
+$flywayV29RuleIsStrict = ($validatorSql.Contains("FLYWAY_LATEST_V29") `
+        -and $validatorSql.Contains("latest successful version = 29; checksum = 774334682") `
+        -and $validatorSql.Contains("= 29") `
+        -and $validatorSql.Contains("checksum = 774334682") `
+        -and $validatorSql.Contains("Flyway 最新成功版本必须为 V29，checksum 必须为 774334682。") `
+        -and (-not ($validatorSql -match "FLYWAY_LATEST_V2[78]")) `
+        -and (-not $validatorSql.Contains("latest successful version = 28")) `
+        -and (-not $validatorSql.Contains("Flyway 最新成功版本必须为 V28")) `
+        -and (-not ($validatorSql -match ">=\s*29")) `
+        -and (-not ($validatorSql -match "max\(version::int\)[^`r`n]*>=\s*29")))
+Assert-True -Condition $flywayV29RuleIsStrict `
+    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V29 且 checksum 为 774334682，不能保留 V28 或放宽为 >= 29。"
 
 function Test-SelfTestMinioFileObjectConsistency {
     param(

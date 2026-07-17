@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   returnRefundReversalApi,
@@ -46,6 +47,11 @@ interface MaterialSupplementLineDraft {
   materialCode: string
   materialName: string
   unitName: string
+  ownershipType?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  costLayerId?: ResourceId | null
   plannedQuantity: string
   issuedQuantity: string
   supplementedQuantity: string
@@ -149,6 +155,11 @@ async function lineDraftFromSource(line: ProductionMaterialSupplementSourceMater
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
+    ownershipType: line.ownershipType ?? null,
+    projectId: line.projectId ?? null,
+    projectNo: line.projectNo ?? null,
+    projectName: line.projectName ?? null,
+    costLayerId: line.costLayerId ?? null,
     plannedQuantity: line.plannedQuantity,
     issuedQuantity: line.issuedQuantity,
     supplementedQuantity: line.supplementedQuantity,
@@ -180,6 +191,11 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialSupplementLine
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
+    ownershipType: line.ownershipType ?? null,
+    projectId: line.projectId ?? null,
+    projectNo: line.projectNo ?? line.projectCode ?? null,
+    projectName: line.projectName ?? null,
+    costLayerId: line.costLayerId ?? null,
     plannedQuantity: '',
     issuedQuantity: '',
     supplementedQuantity: '',
@@ -360,7 +376,7 @@ function confirmTrackingAllocations(allocations: InventoryTrackingAllocationPayl
   trackingPickerVisible.value = false
 }
 
-function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
+function buildPayload(): ProductionMaterialSupplementPayload | ProductionMaterialSupplementUpdatePayload | null {
   if (!canEditForm.value) {
     submitError.value = `当前生产补料${nonEditableStatusText.value}，不可编辑`
     return null
@@ -404,6 +420,15 @@ function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
       quantity: quantity.payloadValue,
       reason: line.reason,
     }
+    if (line.ownershipType) {
+      payloadLine.ownershipType = line.ownershipType
+    }
+    if (line.projectId !== null && line.projectId !== undefined) {
+      payloadLine.projectId = line.projectId
+    }
+    if (line.costLayerId !== null && line.costLayerId !== undefined) {
+      payloadLine.costLayerId = line.costLayerId
+    }
     const trackingPayload = outboundTrackingAllocationsPayload(line.trackingMethod, line.trackingAllocations, quantity.payloadValue)
     if (trackingPayload) {
       payloadLine.trackingAllocations = trackingPayload
@@ -437,19 +462,36 @@ function buildPayload(): ProductionMaterialSupplementUpdatePayload | null {
     return null
   }
 
-  const payload: ProductionMaterialSupplementUpdatePayload = {
+  const basePayload = {
     businessDate: form.businessDate,
     clientRequestId: form.clientRequestId || `material-supplement-${Date.now()}`,
+    idempotencyKey: createIdempotencyKey('production-material-supplement-save'),
     remark: form.remark,
     lines: payloadLines,
   }
-  if (form.workOrderId) {
-    payload.workOrderId = form.workOrderId
+  if (isEdit.value) {
+    if (editDetail.value?.version === undefined) {
+      submitError.value = '生产补料版本缺失，请刷新后重试'
+      return null
+    }
+    return {
+      ...basePayload,
+      ...(form.workOrderId ? { workOrderId: form.workOrderId } : {}),
+      ...(form.warehouseId ? { warehouseId: form.warehouseId } : {}),
+      version: editDetail.value.version,
+    }
   }
-  if (form.warehouseId) {
-    payload.warehouseId = form.warehouseId
-  }
-  return payload
+  return {
+    ...basePayload,
+    workOrderId: form.workOrderId,
+    warehouseId: form.warehouseId,
+  } as ProductionMaterialSupplementPayload
+}
+
+function isSupplementUpdatePayload(
+  payload: ProductionMaterialSupplementPayload | ProductionMaterialSupplementUpdatePayload,
+): payload is ProductionMaterialSupplementUpdatePayload {
+  return 'version' in payload
 }
 
 async function submit() {
@@ -464,9 +506,20 @@ async function submit() {
 
   submitting.value = true
   try {
-    const detail = isEdit.value && routeId.value
-      ? await returnRefundReversalApi.productionMaterialSupplements.update(routeId.value, payload)
-      : await returnRefundReversalApi.productionMaterialSupplements.create(payload as ProductionMaterialSupplementPayload)
+    let detail: ProductionMaterialSupplementDetail
+    if (isEdit.value && routeId.value) {
+      if (!isSupplementUpdatePayload(payload)) {
+        submitError.value = '生产补料版本缺失，请刷新后重试'
+        return
+      }
+      detail = await returnRefundReversalApi.productionMaterialSupplements.update(routeId.value, payload)
+    } else {
+      if (isSupplementUpdatePayload(payload)) {
+        submitError.value = '生产补料创建参数异常，请刷新后重试'
+        return
+      }
+      detail = await returnRefundReversalApi.productionMaterialSupplements.create(payload)
+    }
     await router.push({
       name: 'production-material-supplement-detail',
       params: { id: String(detail.id) },
@@ -599,6 +652,17 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="unitName" label="单位" width="80" />
+            <el-table-column label="项目来源" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <template v-if="row.ownershipType === 'PROJECT'">
+                  {{ row.projectNo || row.projectId || '-' }} {{ row.projectName || '' }}
+                </template>
+                <template v-else>公共库存</template>
+                <div v-if="row.costLayerId" class="tracking-empty-text">
+                  成本层 #{{ row.costLayerId }}
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="计划用量" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatProductionQuantity(row.plannedQuantity) }}</span>

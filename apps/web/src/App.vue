@@ -20,6 +20,19 @@ import {
 import { useRoute, useRouter } from 'vue-router'
 import type { MenuNode } from './shared/api/accountPermissionApi'
 import { financePermissions } from './modules/finance/financePageHelpers'
+import {
+  planningChildren,
+  planningMaterialRequirementPath,
+  planningMenuPaths,
+} from './navigation/planningMenu'
+import {
+  productionChildren,
+  productionMaterialReturnPath,
+  productionMaterialSupplementPath,
+  productionMenuPaths,
+  productionOutsourcingOrderPath,
+  productionWorkOrderPath,
+} from './navigation/productionMenu'
 import { reportMenuChildren, reportRouteConfigs } from './modules/reports/reportPageHelpers'
 import { activeMenuPath } from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
@@ -54,10 +67,6 @@ const salesShipmentPath = '/sales/shipments'
 const salesReturnPath = '/sales/returns'
 const salesCreditProfilePath = '/sales/credit-profiles'
 const salesEffectiveDemandPath = '/sales/effective-demands'
-const planningMaterialRequirementPath = '/planning/material-requirements'
-const productionWorkOrderPath = '/production/work-orders'
-const productionMaterialReturnPath = '/production/material-returns'
-const productionMaterialSupplementPath = '/production/material-supplements'
 const qualityInspectionPath = '/quality/inspections'
 const costRecordPath = '/cost/records'
 const financeReceivablePath = '/finance/receivables'
@@ -119,6 +128,7 @@ const supportedMenuPaths = new Set([
   productionWorkOrderPath,
   productionMaterialReturnPath,
   productionMaterialSupplementPath,
+  productionOutsourcingOrderPath,
   qualityInspectionPath,
   costRecordPath,
   financeReceivablePath,
@@ -339,36 +349,6 @@ const salesChildren: MenuNode[] = [
   },
 ]
 const salesMenuPaths = new Set(salesChildren.map((child) => child.routePath))
-const planningChildren: MenuNode[] = [
-  {
-    id: 'planning-material-requirements',
-    code: 'planning:material-requirement:view',
-    name: '订单缺料分析',
-    routePath: planningMaterialRequirementPath,
-  },
-]
-const planningMenuPaths = new Set(planningChildren.map((child) => child.routePath))
-const productionChildren: MenuNode[] = [
-  {
-    id: 'production-work-orders',
-    code: 'production:work-order:view',
-    name: '生产工单',
-    routePath: productionWorkOrderPath,
-  },
-  {
-    id: 'production-material-returns',
-    code: 'production:material-return:view',
-    name: '生产退料',
-    routePath: productionMaterialReturnPath,
-  },
-  {
-    id: 'production-material-supplements',
-    code: 'production:material-supplement:view',
-    name: '生产补料',
-    routePath: productionMaterialSupplementPath,
-  },
-]
-const productionMenuPaths = new Set(productionChildren.map((child) => child.routePath))
 const qualityChildren: MenuNode[] = [
   {
     id: 'quality-inspections',

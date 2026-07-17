@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { WorkOrderCostSummaryRecord } from '../../shared/api/costCollectionApi'
 import type { ProductionWorkOrderDetailRecord } from '../../shared/api/productionApi'
+import type { ProjectProductionWorkOrderDetailRecord } from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import ProductionWorkOrderDetailView from './ProductionWorkOrderDetailView.vue'
 
@@ -26,8 +27,34 @@ const productionApiMock = vi.hoisted(() => ({
   },
 }))
 
+const projectProductionApiMock = vi.hoisted(() => ({
+  workOrders: {
+    get: vi.fn(),
+    release: vi.fn(),
+    complete: vi.fn(),
+    cancel: vi.fn(),
+  },
+  materialIssues: {
+    post: vi.fn(),
+  },
+  reports: {
+    post: vi.fn(),
+  },
+  completionReceipts: {
+    post: vi.fn(),
+  },
+}))
+
 vi.mock('../../shared/api/productionApi', () => ({
   productionApi: productionApiMock,
+}))
+
+vi.mock('../../shared/api/projectProductionApi', () => ({
+  projectProductionApi: projectProductionApiMock,
+}))
+
+vi.mock('../../shared/ui/confirmDialog', () => ({
+  confirmAction: vi.fn(async () => true),
 }))
 
 const costCollectionApiMock = vi.hoisted(() => ({
@@ -253,6 +280,102 @@ const postedExecutionRecord: ProductionWorkOrderDetailRecord = {
   })),
 }
 
+const projectDetailRecord = {
+  ...draftExecutionRecord,
+  ownershipType: 'PROJECT',
+  projectId: 3001,
+  projectNo: 'SP-027',
+  projectName: '销售项目 027',
+  plannedQuantity: '100.000000',
+  reportedQuantity: '60.000000',
+  qualifiedQuantity: '55.000000',
+  defectiveQuantity: '5.000000',
+  receivedQuantity: '40.000000',
+  sourceMrpRunId: 9001,
+  sourceMrpSuggestionId: 9101,
+  sourceSuggestionNo: 'MRP-SUG-027',
+  sourceSummary: {
+    sourceMrpRunId: 9001,
+    sourceMrpSuggestionId: 9101,
+    sourceSuggestionNo: 'MRP-SUG-027',
+    sourceRunNo: 'MRP-RUN-027',
+  },
+  executionSummary: {
+    issuedQuantity: '80.000000',
+    returnedQuantity: '3.000000',
+    supplementedQuantity: '2.000000',
+    reportedQualifiedQuantity: '55.000000',
+    completedQuantity: '40.000000',
+    progressPercent: '40.00',
+  },
+  traceLinks: [
+    {
+      label: '销售项目',
+      routeName: 'sales-project-detail',
+      targetId: 3001,
+    },
+    {
+      label: 'MRP 建议',
+      routeName: 'material-requirement-run-detail',
+      targetId: 9001,
+    },
+    {
+      label: '受限来源',
+      routePath: '/planning/material-requirements/9002',
+      restricted: true,
+      restrictedReason: '无规划快照查看权限',
+    },
+  ],
+  allowedActions: ['UPDATE', 'RELEASE'],
+  actionDisabledReason: '仅允许发布，不能完成',
+  version: 6,
+  materials: draftExecutionRecord.materials.map((material) => ({
+    ...material,
+    requiredQuantity: '120.000000',
+    issuedQuantity: '80.000000',
+    remainingQuantity: '40.000000',
+    ownershipType: 'PROJECT',
+    projectId: 3001,
+    projectNo: 'SP-027',
+    projectName: '销售项目 027',
+    costLayerId: 7001,
+  })),
+  materialIssues: draftExecutionRecord.materialIssues.map((issue) => ({ ...issue, version: 11 })),
+  reports: draftExecutionRecord.reports.map((report) => ({ ...report, version: 12 })),
+  completionReceipts: draftExecutionRecord.completionReceipts.map((receipt) => ({ ...receipt, version: 13 })),
+  movements: draftExecutionRecord.movements.map((movement) => ({
+    ...movement,
+    ownershipType: 'PROJECT',
+    projectId: 3001,
+    projectNo: 'SP-027',
+    quantity: '80.000000',
+  })),
+} as unknown as ProjectProductionWorkOrderDetailRecord
+
+function projectDetailFrom(record: ProductionWorkOrderDetailRecord): ProjectProductionWorkOrderDetailRecord {
+  return {
+    ...record,
+    ownershipType: 'PUBLIC',
+    plannedQuantity: String(record.plannedQuantity),
+    reportedQuantity: String(record.reportedQuantity),
+    qualifiedQuantity: String(record.qualifiedQuantity),
+    defectiveQuantity: String(record.defectiveQuantity),
+    receivedQuantity: String(record.receivedQuantity),
+    version: 6,
+    materials: record.materials.map((material) => ({
+      ...material,
+      requiredQuantity: String(material.requiredQuantity),
+      issuedQuantity: String(material.issuedQuantity),
+      remainingQuantity: String(material.remainingQuantity),
+      ownershipType: 'PUBLIC',
+    })),
+    materialIssues: record.materialIssues.map((issue) => ({ ...issue, version: 11 })),
+    reports: record.reports.map((report) => ({ ...report, version: 12 })),
+    completionReceipts: record.completionReceipts.map((receipt) => ({ ...receipt, version: 13 })),
+    movements: record.movements.map((movement) => ({ ...movement, quantity: String(movement.quantity) })),
+  } as unknown as ProjectProductionWorkOrderDetailRecord
+}
+
 const costSummaryRecord: WorkOrderCostSummaryRecord = {
   workOrderId: 9,
   workOrderNo: 'WO-20260703-001',
@@ -364,6 +487,11 @@ async function mountDetail(
   path = '/production/work-orders/9',
 ) {
   productionApiMock.workOrders.get.mockResolvedValue(record)
+  projectProductionApiMock.workOrders.get.mockResolvedValue(
+    'ownershipType' in record
+      ? record as unknown as ProjectProductionWorkOrderDetailRecord
+      : projectDetailFrom(record),
+  )
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -380,6 +508,8 @@ async function mountDetail(
       { path: '/production/work-orders/:id/material-issues', name: 'production-work-order-material-issues', component: { render: () => null } },
       { path: '/production/work-orders/:id/reports', name: 'production-work-order-reports', component: { render: () => null } },
       { path: '/production/work-orders/:id/completion-receipts', name: 'production-work-order-completion-receipts', component: { render: () => null } },
+      { path: '/sales/projects/:id', name: 'sales-project-detail', component: { render: () => null } },
+      { path: '/planning/material-requirements/:id', name: 'material-requirement-run-detail', component: { render: () => null } },
       { path: '/reports/cost', name: 'reports-cost', component: { render: () => null } },
       { path: '/cost/records/:id', name: 'cost-record-detail', component: { render: () => null } },
       { path: '/cost/records/:id/edit', name: 'cost-record-edit', component: { render: () => null } },
@@ -406,6 +536,13 @@ describe('生产工单详情页', () => {
     productionApiMock.materialIssues.post.mockResolvedValue(postedExecutionRecord.materialIssues[0])
     productionApiMock.reports.post.mockResolvedValue(postedExecutionRecord.reports[0])
     productionApiMock.completionReceipts.post.mockResolvedValue(postedExecutionRecord.completionReceipts[0])
+    projectProductionApiMock.workOrders.get.mockResolvedValue(projectDetailRecord)
+    projectProductionApiMock.workOrders.release.mockResolvedValue({ ...projectDetailRecord, status: 'RELEASED', version: 7 })
+    projectProductionApiMock.workOrders.complete.mockResolvedValue({ ...projectDetailRecord, status: 'COMPLETED', version: 7 })
+    projectProductionApiMock.workOrders.cancel.mockResolvedValue({ ...projectDetailRecord, status: 'CANCELLED', version: 7 })
+    projectProductionApiMock.materialIssues.post.mockResolvedValue(projectDetailRecord.materialIssues[0])
+    projectProductionApiMock.reports.post.mockResolvedValue(projectDetailRecord.reports[0])
+    projectProductionApiMock.completionReceipts.post.mockResolvedValue(projectDetailRecord.completionReceipts[0])
     costCollectionApiMock.workOrders.summary.mockResolvedValue(costSummaryRecord)
   })
 
@@ -503,16 +640,25 @@ describe('生产工单详情页', () => {
 
     await wrapper.find('[data-test="post-production-material-issue"]').trigger('click')
     await flushPromises()
-    expect(productionApiMock.materialIssues.post).toHaveBeenCalledWith(9, 301)
+    expect(projectProductionApiMock.materialIssues.post).toHaveBeenCalledWith(9, 301, {
+      version: 11,
+      idempotencyKey: expect.stringMatching(/^production-material-issue-post-/),
+    })
 
     await wrapper.find('[data-test="post-production-work-report"]').trigger('click')
     await flushPromises()
-    expect(productionApiMock.reports.post).toHaveBeenCalledWith(9, 401)
+    expect(projectProductionApiMock.reports.post).toHaveBeenCalledWith(9, 401, {
+      version: 12,
+      idempotencyKey: expect.stringMatching(/^production-work-report-post-/),
+    })
 
     await wrapper.find('[data-test="post-production-completion-receipt"]').trigger('click')
     await flushPromises()
-    expect(productionApiMock.completionReceipts.post).toHaveBeenCalledWith(9, 501)
-    expect(productionApiMock.workOrders.get).toHaveBeenCalledTimes(4)
+    expect(projectProductionApiMock.completionReceipts.post).toHaveBeenCalledWith(9, 501, {
+      version: 13,
+      idempotencyKey: expect.stringMatching(/^production-completion-receipt-post-/),
+    })
+    expect(projectProductionApiMock.workOrders.get).toHaveBeenCalledTimes(4)
   })
 
   it('已过账执行记录不显示过账按钮', async () => {
@@ -537,7 +683,7 @@ describe('生产工单详情页', () => {
   })
 
   it('执行单过账失败时错误可见且详情数据仍保留', async () => {
-    productionApiMock.reports.post.mockRejectedValueOnce(new Error('报工单已过账，不能重复过账'))
+    projectProductionApiMock.reports.post.mockRejectedValueOnce(new Error('报工单已过账，不能重复过账'))
     const { wrapper } = await mountDetail(draftExecutionRecord, [
       'production:work-order:view',
       'production:report:post',
@@ -546,7 +692,10 @@ describe('生产工单详情页', () => {
     await wrapper.find('[data-test="post-production-work-report"]').trigger('click')
     await flushPromises()
 
-    expect(productionApiMock.reports.post).toHaveBeenCalledWith(9, 401)
+    expect(projectProductionApiMock.reports.post).toHaveBeenCalledWith(9, 401, {
+      version: 12,
+      idempotencyKey: expect.stringMatching(/^production-work-report-post-/),
+    })
     expect(wrapper.text()).toContain('报工单已过账，不能重复过账')
     expect(wrapper.text()).toContain('WO-20260703-001')
     expect(wrapper.text()).toContain('WR-DRAFT-001')
@@ -626,5 +775,44 @@ describe('生产工单详情页', () => {
     expect(costCollectionApiMock.workOrders.summary).not.toHaveBeenCalled()
     expect(wrapper.text()).not.toContain('成本归集记录')
     expect(wrapper.text()).not.toContain('新增手工成本')
+  })
+
+  it('027 展示项目来源、执行摘要和追溯链接，并按单据版本过账执行记录', async () => {
+    const { wrapper, router } = await mountDetail(projectDetailRecord as unknown as ProductionWorkOrderDetailRecord, [
+      'production:work-order:view',
+      'production:work-order:update',
+      'production:work-order:release',
+      'production:work-order:complete',
+      'production:issue:post',
+      'production:report:post',
+      'production:receipt:post',
+    ])
+
+    expect(projectProductionApiMock.workOrders.get).toHaveBeenCalledWith('9')
+    expect(wrapper.text()).toContain('项目来源')
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('MRP-SUG-027')
+    expect(wrapper.text()).toContain('执行摘要')
+    expect(wrapper.text()).toContain('已退料')
+    expect(wrapper.text()).toContain('已补料')
+    expect(wrapper.text()).toContain('追溯链接')
+    expect(wrapper.text()).toContain('无规划快照查看权限')
+    expect(wrapper.text()).toContain('仅允许发布，不能完成')
+    const traceLinks = wrapper.findAll('[data-test="production-work-order-trace-link"]')
+    expect(traceLinks).toHaveLength(2)
+    await traceLinks[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('sales-project-detail')
+    expect(router.currentRoute.value.params.id).toBe('3001')
+    await router.push('/production/work-orders/9')
+    await flushPromises()
+
+    await wrapper.find('[data-test="post-production-material-issue"]').trigger('click')
+    await flushPromises()
+
+    expect(projectProductionApiMock.materialIssues.post).toHaveBeenCalledWith(9, 301, {
+      version: 11,
+      idempotencyKey: expect.stringMatching(/^production-material-issue-post-/),
+    })
   })
 })

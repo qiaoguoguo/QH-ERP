@@ -11,6 +11,8 @@ export const materialRequirementPermissions = {
   export: 'planning:material-requirement:export',
   manageSuggestion: 'planning:material-requirement:manage-suggestion',
   convertRequisition: 'planning:material-requirement:convert-requisition',
+  convertProduction: 'planning:material-requirement:convert-production',
+  convertOutsourcing: 'planning:material-requirement:convert-outsourcing',
 } as const
 
 export function materialRequirementErrorMessage(error: unknown): string {

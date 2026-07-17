@@ -1,12 +1,10 @@
-import type { ProductionDocumentStatus, ProductionWorkOrderStatus } from '../../shared/api/productionApi'
-
 export interface ProductionQuantityValidationResult {
   value: number | null
   payloadValue: string | null
   message: string | null
 }
 
-const workOrderStatusLabels: Record<ProductionWorkOrderStatus, string> = {
+const workOrderStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   RELEASED: '已发布',
   IN_PROGRESS: '生产中',
@@ -14,7 +12,7 @@ const workOrderStatusLabels: Record<ProductionWorkOrderStatus, string> = {
   CANCELLED: '已取消',
 }
 
-const workOrderStatusTypes: Record<ProductionWorkOrderStatus, 'info' | 'success' | 'warning' | 'danger'> = {
+const workOrderStatusTypes: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
   DRAFT: 'info',
   RELEASED: 'success',
   IN_PROGRESS: 'warning',
@@ -22,30 +20,32 @@ const workOrderStatusTypes: Record<ProductionWorkOrderStatus, 'info' | 'success'
   CANCELLED: 'danger',
 }
 
-const productionDocumentStatusLabels: Record<ProductionDocumentStatus, string> = {
+const productionDocumentStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   POSTED: '已过账',
+  CANCELLED: '已取消',
 }
 
-const productionDocumentStatusTypes: Record<ProductionDocumentStatus, 'info' | 'success'> = {
+const productionDocumentStatusTypes: Record<string, 'info' | 'success' | 'danger'> = {
   DRAFT: 'info',
   POSTED: 'success',
+  CANCELLED: 'danger',
 }
 
-export function workOrderStatusLabel(status: ProductionWorkOrderStatus): string {
-  return workOrderStatusLabels[status]
+export function workOrderStatusLabel(status: string): string {
+  return workOrderStatusLabels[status] ?? status
 }
 
-export function workOrderStatusType(status: ProductionWorkOrderStatus): 'info' | 'success' | 'warning' | 'danger' {
-  return workOrderStatusTypes[status]
+export function workOrderStatusType(status: string): 'info' | 'success' | 'warning' | 'danger' {
+  return workOrderStatusTypes[status] ?? 'info'
 }
 
-export function productionDocumentStatusLabel(status: ProductionDocumentStatus): string {
-  return productionDocumentStatusLabels[status]
+export function productionDocumentStatusLabel(status: string): string {
+  return productionDocumentStatusLabels[status] ?? status
 }
 
-export function productionDocumentStatusType(status: ProductionDocumentStatus): 'info' | 'success' {
-  return productionDocumentStatusTypes[status]
+export function productionDocumentStatusType(status: string): 'info' | 'success' | 'danger' {
+  return productionDocumentStatusTypes[status] ?? 'info'
 }
 
 export function formatProductionQuantity(value: unknown): string {
@@ -109,4 +109,9 @@ export function todayText(): string {
   const month = String(today.getMonth() + 1).padStart(2, '0')
   const day = String(today.getDate()).padStart(2, '0')
   return `${year}-${month}-${day}`
+}
+
+export function createProductionIdempotencyKey(prefix: string): string {
+  const randomPart = globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${randomPart}`
 }

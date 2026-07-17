@@ -122,4 +122,18 @@ public class MaterialRequirementPlanningAdminController {
 		return ApiResponse.ok(this.planningService.convertToRequisition(id, request, currentUser, servletRequest));
 	}
 
+	@PostMapping("/material-requirement-suggestions/{id}/convert-work-order")
+	public ApiResponse<MaterialRequirementPlanningService.SuggestionConversionResponse> convertToWorkOrder(
+			@PathVariable Long id, @Valid @RequestBody MaterialRequirementPlanningService.SuggestionActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.planningService.convertToWorkOrder(id, request, currentUser, servletRequest));
+	}
+
+	@PostMapping("/material-requirement-suggestions/{id}/convert-outsourcing-order")
+	public ApiResponse<MaterialRequirementPlanningService.SuggestionConversionResponse> convertToOutsourcingOrder(
+			@PathVariable Long id, @Valid @RequestBody MaterialRequirementPlanningService.SuggestionActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.planningService.convertToOutsourcingOrder(id, request, currentUser, servletRequest));
+	}
+
 }

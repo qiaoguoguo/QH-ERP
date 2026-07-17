@@ -3,6 +3,8 @@ import { createMemoryHistory, createRouter, createWebHistory, type RouteRecordRa
 import { firstFinanceRouteByPermission } from '../modules/finance/financePageHelpers'
 import { firstReportRouteByPermission, reportRouteConfigs } from '../modules/reports/reportPageHelpers'
 import { useAuthStore } from '../stores/authStore'
+import { firstPlanningRouteByPermission, planningRoutes } from './modules/planningRoutes'
+import { firstProductionRouteByPermission, productionRoutes } from './modules/productionRoutes'
 
 const history = import.meta.env.MODE === 'test' ? createMemoryHistory() : createWebHistory()
 
@@ -61,10 +63,6 @@ const procurementRouteOrder = [
   { name: 'procurement-receipts', permission: 'procurement:receipt:view' },
   { name: 'procurement-returns', permission: 'procurement:return:view' },
   { name: 'procurement-effective-supplies', permission: 'procurement:supply:view' },
-] as const
-
-const planningRouteOrder = [
-  { name: 'planning-material-requirements', permission: 'planning:material-requirement:view' },
 ] as const
 
 const routes: RouteRecordRaw[] = [
@@ -639,119 +637,8 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: 'sales:effective-demand:view' },
     component: () => import('../modules/sales/effective-demand/EffectiveSalesDemandListView.vue'),
   },
-  {
-    path: '/planning',
-    name: 'planning-root',
-    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
-    component: placeholder('计划管理', '订单缺料分析入口。'),
-  },
-  {
-    path: '/planning/material-requirements',
-    name: 'planning-material-requirements',
-    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
-    component: () => import('../modules/planning/material-requirements/MaterialRequirementRunListView.vue'),
-  },
-  {
-    path: '/planning/material-requirements/:id',
-    name: 'planning-material-requirement-detail',
-    meta: { requiresAuth: true, requiredPermission: 'planning:material-requirement:view' },
-    component: () => import('../modules/planning/material-requirements/MaterialRequirementRunDetailView.vue'),
-  },
-  {
-    path: '/production',
-    redirect: '/production/work-orders',
-    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
-  },
-  {
-    path: '/production/work-orders',
-    name: 'production-work-orders',
-    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
-    component: () => import('../modules/production/ProductionWorkOrderListView.vue'),
-  },
-  {
-    path: '/production/work-orders/create',
-    name: 'production-work-order-create',
-    meta: { requiresAuth: true, requiredPermission: 'production:work-order:create' },
-    component: () => import('../modules/production/ProductionWorkOrderFormView.vue'),
-  },
-  {
-    path: '/production/work-orders/:id',
-    name: 'production-work-order-detail',
-    meta: { requiresAuth: true, requiredPermission: 'production:work-order:view' },
-    component: () => import('../modules/production/ProductionWorkOrderDetailView.vue'),
-  },
-  {
-    path: '/production/work-orders/:id/edit',
-    name: 'production-work-order-edit',
-    meta: { requiresAuth: true, requiredPermission: 'production:work-order:update' },
-    component: () => import('../modules/production/ProductionWorkOrderFormView.vue'),
-  },
-  {
-    path: '/production/work-orders/:id/material-issues',
-    name: 'production-work-order-material-issues',
-    meta: { requiresAuth: true, requiredPermission: 'production:issue:view' },
-    component: () => import('../modules/production/ProductionMaterialIssueView.vue'),
-  },
-  {
-    path: '/production/work-orders/:id/reports',
-    name: 'production-work-order-reports',
-    meta: { requiresAuth: true, requiredPermission: 'production:report:view' },
-    component: () => import('../modules/production/ProductionWorkReportView.vue'),
-  },
-  {
-    path: '/production/work-orders/:id/completion-receipts',
-    name: 'production-work-order-completion-receipts',
-    meta: { requiresAuth: true, requiredPermission: 'production:receipt:view' },
-    component: () => import('../modules/production/ProductionCompletionReceiptView.vue'),
-  },
-  {
-    path: '/production/material-returns',
-    name: 'production-material-returns',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-return:view' },
-    component: () => import('../modules/reversal/ProductionMaterialReturnListView.vue'),
-  },
-  {
-    path: '/production/material-returns/create',
-    name: 'production-material-return-create',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-return:create' },
-    component: () => import('../modules/reversal/ProductionMaterialReturnFormView.vue'),
-  },
-  {
-    path: '/production/material-returns/:id',
-    name: 'production-material-return-detail',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-return:view' },
-    component: () => import('../modules/reversal/ProductionMaterialReturnDetailView.vue'),
-  },
-  {
-    path: '/production/material-returns/:id/edit',
-    name: 'production-material-return-edit',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-return:update' },
-    component: () => import('../modules/reversal/ProductionMaterialReturnFormView.vue'),
-  },
-  {
-    path: '/production/material-supplements',
-    name: 'production-material-supplements',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-supplement:view' },
-    component: () => import('../modules/reversal/ProductionMaterialSupplementListView.vue'),
-  },
-  {
-    path: '/production/material-supplements/create',
-    name: 'production-material-supplement-create',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-supplement:create' },
-    component: () => import('../modules/reversal/ProductionMaterialSupplementFormView.vue'),
-  },
-  {
-    path: '/production/material-supplements/:id',
-    name: 'production-material-supplement-detail',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-supplement:view' },
-    component: () => import('../modules/reversal/ProductionMaterialSupplementDetailView.vue'),
-  },
-  {
-    path: '/production/material-supplements/:id/edit',
-    name: 'production-material-supplement-edit',
-    meta: { requiresAuth: true, requiredPermission: 'production:material-supplement:update' },
-    component: () => import('../modules/reversal/ProductionMaterialSupplementFormView.vue'),
-  },
+  ...planningRoutes,
+  ...productionRoutes,
   {
     path: '/quality',
     redirect: '/quality/inspections',
@@ -998,11 +885,19 @@ export function createQhErpRouter() {
     }
 
     if (to.name === 'planning-root') {
-      const planningRoute = planningRouteOrder.find((item) => authStore.hasPermission(item.permission))
+      const planningRoute = firstPlanningRouteByPermission((permission) => authStore.hasPermission(permission))
       if (!planningRoute) {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
-      return { name: planningRoute.name }
+      return planningRoute
+    }
+
+    if (to.name === 'production-root') {
+      const productionRoute = firstProductionRouteByPermission((permission) => authStore.hasPermission(permission))
+      if (!productionRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return productionRoute
     }
 
     if (to.name === 'reports-root') {

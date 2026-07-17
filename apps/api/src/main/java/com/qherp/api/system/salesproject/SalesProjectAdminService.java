@@ -113,6 +113,68 @@ public class SalesProjectAdminService {
 		return salesFulfillmentResponse(project, includeLegacy, currentUser);
 	}
 
+	@Transactional(readOnly = true)
+	public ProductionSummaryResponse productionSummary(Long id, CurrentUser currentUser) {
+		if (!exists("select count(*) from sal_project where id = ?", id)) {
+			throw new BusinessException(ApiErrorCode.PROJECT_NOT_FOUND);
+		}
+		boolean canViewWorkOrders = hasPermission(currentUser, "production:work-order:view");
+		boolean canViewOutsourcing = hasPermission(currentUser, "production:outsourcing:view");
+		if (!canViewWorkOrders && !canViewOutsourcing) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+		boolean costVisible = hasPermission(currentUser, "inventory:valuation:view");
+		ProductionWorkOrderAggregate workOrders = canViewWorkOrders ? this.jdbcTemplate.queryForObject("""
+				select count(*) as work_order_count,
+				       count(*) filter (where status = 'RELEASED') as released_work_order_count,
+				       count(*) filter (where status = 'COMPLETED') as completed_work_order_count,
+				       coalesce(sum(planned_quantity), 0.000000) as planned_quantity,
+				       coalesce(sum(received_quantity), 0.000000) as completed_quantity,
+				       (select work_order_no from mfg_work_order latest
+				        where latest.project_id = ? and latest.ownership_type = 'PROJECT'
+				        and latest.status <> 'CANCELLED'
+				        order by latest.updated_at desc, latest.id desc limit 1) as latest_work_order_no
+				from mfg_work_order
+				where project_id = ?
+				and ownership_type = 'PROJECT'
+				and status <> 'CANCELLED'
+				""", (rs, rowNum) -> new ProductionWorkOrderAggregate(rs.getLong("work_order_count"),
+				rs.getLong("released_work_order_count"), rs.getLong("completed_work_order_count"),
+				rs.getBigDecimal("planned_quantity"), rs.getBigDecimal("completed_quantity"),
+				rs.getString("latest_work_order_no")), id, id) : null;
+		ProductionOutsourcingAggregate outsourcing = canViewOutsourcing ? this.jdbcTemplate.queryForObject("""
+				select count(*) as outsourcing_order_count,
+				       count(*) filter (where status = 'IN_PROGRESS') as outsourcing_in_progress_count,
+				       count(*) filter (where status = 'COMPLETED') as outsourcing_completed_count,
+				       coalesce(sum(planned_quantity), 0.000000) as outsourcing_planned_quantity,
+				       coalesce(sum(received_quantity), 0.000000) as outsourcing_received_quantity,
+				       (select outsourcing_order_no from mfg_outsourcing_order latest
+				        where latest.project_id = ? and latest.ownership_type = 'PROJECT'
+				        and latest.status <> 'CANCELLED'
+				        order by latest.updated_at desc, latest.id desc limit 1) as latest_outsourcing_order_no
+				from mfg_outsourcing_order
+				where project_id = ?
+				and ownership_type = 'PROJECT'
+				and status <> 'CANCELLED'
+				""", (rs, rowNum) -> new ProductionOutsourcingAggregate(rs.getLong("outsourcing_order_count"),
+				rs.getLong("outsourcing_in_progress_count"), rs.getLong("outsourcing_completed_count"),
+				rs.getBigDecimal("outsourcing_planned_quantity"), rs.getBigDecimal("outsourcing_received_quantity"),
+				rs.getString("latest_outsourcing_order_no")), id, id) : null;
+		return new ProductionSummaryResponse(id, canViewWorkOrders ? workOrders.workOrderCount() : null,
+				canViewWorkOrders ? workOrders.releasedWorkOrderCount() : null,
+				canViewWorkOrders ? workOrders.completedWorkOrderCount() : null,
+				canViewOutsourcing ? outsourcing.outsourcingOrderCount() : null,
+				canViewOutsourcing ? outsourcing.outsourcingInProgressCount() : null,
+				canViewOutsourcing ? outsourcing.outsourcingCompletedCount() : null,
+				canViewWorkOrders ? quantityString(workOrders.plannedQuantity()) : null,
+				canViewWorkOrders ? quantityString(workOrders.completedQuantity()) : null,
+				canViewOutsourcing ? quantityString(outsourcing.plannedQuantity()) : null,
+				canViewOutsourcing ? quantityString(outsourcing.receivedQuantity()) : null, costVisible,
+				costVisible ? null : "无库存估值查看权限",
+				canViewWorkOrders ? workOrders.latestWorkOrderNo() : null,
+				canViewOutsourcing ? outsourcing.latestOutsourcingOrderNo() : null);
+	}
+
 	@Transactional
 	public SalesFulfillmentResponse closeSalesFulfillment(Long id, FulfillmentCloseRequest request,
 			CurrentUser operator, HttpServletRequest requestContext) {
@@ -644,6 +706,16 @@ public class SalesProjectAdminService {
 		return count != null && count > 0;
 	}
 
+	private void requirePermission(CurrentUser currentUser, String permissionCode) {
+		if (!hasPermission(currentUser, permissionCode)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private boolean hasPermission(CurrentUser currentUser, String permissionCode) {
+		return currentUser != null && currentUser.permissions().contains(permissionCode);
+	}
+
 	private long openDemandCount(Long projectId) {
 		Long count = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -1070,6 +1142,13 @@ public class SalesProjectAdminService {
 			String creditRiskSummary, List<String> blockReasons, List<String> allowedActions, String actionDisabledReason) {
 	}
 
+	public record ProductionSummaryResponse(Long projectId, Long workOrderCount, Long releasedWorkOrderCount,
+			Long completedWorkOrderCount, Long outsourcingOrderCount, Long outsourcingInProgressCount,
+			Long outsourcingCompletedCount, String plannedQuantity, String completedQuantity,
+			String outsourcingPlannedQuantity, String outsourcingReceivedQuantity, boolean costVisible,
+			String costRestrictedReason, String latestWorkOrderNo, String latestOutsourcingOrderNo) {
+	}
+
 	public record FulfillmentOrderResponse(Long orderId, String orderNo, String status, String taxIncludedAmount,
 			Long version) {
 	}
@@ -1121,6 +1200,16 @@ public class SalesProjectAdminService {
 	}
 
 	private record ExistingAction(Long resultResourceId, String requestFingerprint) {
+	}
+
+	private record ProductionWorkOrderAggregate(Long workOrderCount, Long releasedWorkOrderCount,
+			Long completedWorkOrderCount, BigDecimal plannedQuantity, BigDecimal completedQuantity,
+			String latestWorkOrderNo) {
+	}
+
+	private record ProductionOutsourcingAggregate(Long outsourcingOrderCount, Long outsourcingInProgressCount,
+			Long outsourcingCompletedCount, BigDecimal plannedQuantity, BigDecimal receivedQuantity,
+			String latestOutsourcingOrderNo) {
 	}
 
 }

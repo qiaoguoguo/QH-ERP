@@ -9,6 +9,8 @@ import ReceivableStatusTag from './modules/finance/ReceivableStatusTag.vue'
 import ReceiptStatusTag from './modules/finance/ReceiptStatusTag.vue'
 import { financePermissions, formatFinanceAmount, financeSourceTypeText } from './modules/finance/financePageHelpers'
 import { reportPermissions } from './modules/reports/reportPageHelpers'
+import productionMenuSource from './navigation/productionMenu.ts?raw'
+import planningMenuSource from './navigation/planningMenu.ts?raw'
 import { createQhErpRouter } from './router'
 import type { AuthSession, CsrfToken } from './shared/api/accountPermissionApi'
 import { useAuthStore } from './stores/authStore'
@@ -506,6 +508,38 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/production')
   })
 
+  it('生产与计划菜单从触达模块接线，并按外协权限补齐外协执行入口', async () => {
+    expect(productionMenuSource).toContain('/production/outsourcing-orders')
+    expect(productionMenuSource).toContain('production:outsourcing:view')
+    expect(planningMenuSource).toContain('/planning/material-requirements')
+    expect(planningMenuSource).toContain('planning:material-requirement:view')
+
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'outsourcing_user', displayName: '外协员', status: 'ENABLED' },
+      menus: [],
+      permissions: ['production:outsourcing:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('生产管理')
+    expect(wrapper.text()).toContain('外协执行')
+    expect(wrapper.text()).not.toContain('生产工单')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toContain('/production/outsourcing-orders')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/production')
+  })
+
   it('有 026 计划查看权限但后端菜单缺失时补齐订单缺料分析入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
@@ -586,6 +620,7 @@ describe('ERP 应用骨架', () => {
             { id: 91, code: 'production:work-order:view', name: '生产工单', routePath: '/production/work-orders' },
             { id: 92, code: 'production:material-return:view', name: '生产退料', routePath: '/production/material-returns' },
             { id: 93, code: 'production:material-supplement:view', name: '生产补料', routePath: '/production/material-supplements' },
+            { id: 94, code: 'production:outsourcing:view', name: '外协执行', routePath: '/production/outsourcing-orders' },
           ],
         },
       ],
@@ -604,6 +639,7 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('生产工单')
     expect(wrapper.text()).not.toContain('生产退料')
     expect(wrapper.text()).not.toContain('生产补料')
+    expect(wrapper.text()).not.toContain('外协执行')
     expect(wrapper.text()).not.toContain('业务管理')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .not.toContain('/menu/production')

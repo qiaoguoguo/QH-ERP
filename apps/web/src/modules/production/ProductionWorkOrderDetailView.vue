@@ -6,7 +6,12 @@ import {
   type CostRecordSummaryRecord,
   type WorkOrderCostSummaryRecord,
 } from '../../shared/api/costCollectionApi'
-import { productionApi, type ProductionWorkOrderDetailRecord, type ResourceId } from '../../shared/api/productionApi'
+import {
+  projectProductionApi,
+  type ProjectProductionDocumentSummaryRecord,
+  type ProjectProductionWorkOrderDetailRecord,
+  type ResourceId,
+} from '../../shared/api/projectProductionApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import CostSourceTypeTag from '../cost/CostSourceTypeTag.vue'
@@ -19,11 +24,15 @@ import {
   formatCostQuantity,
 } from '../cost/costPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import ProductionDocumentStatusTag from './ProductionDocumentStatusTag.vue'
+import ProductionWorkOrderActionBar from './ProductionWorkOrderActionBar.vue'
+import ProductionWorkOrderExecutionRecords from './ProductionWorkOrderExecutionRecords.vue'
+import ProductionWorkOrderSourceSummary from './ProductionWorkOrderSourceSummary.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
+import ProductionWorkOrderTraceLinks from './ProductionWorkOrderTraceLinks.vue'
 import {
   formatProductionDateTime,
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
 } from './productionPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -31,7 +40,7 @@ import { confirmAction } from '../../shared/ui/confirmDialog'
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const record = ref<ProductionWorkOrderDetailRecord | null>(null)
+const record = ref<ProjectProductionWorkOrderDetailRecord | null>(null)
 const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
@@ -40,23 +49,31 @@ const costSummary = ref<WorkOrderCostSummaryRecord | null>(null)
 const costLoading = ref(false)
 const costError = ref('')
 
-const canEdit = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('production:work-order:update'))
-const canRelease = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('production:work-order:release'))
 const canExecute = computed(() => record.value?.status === 'RELEASED' || record.value?.status === 'IN_PROGRESS')
-const canCreateIssue = computed(() => canExecute.value && authStore.hasPermission('production:issue:create'))
-const canCreateReport = computed(() => canExecute.value && authStore.hasPermission('production:report:create'))
-const canCreateReceipt = computed(() => canExecute.value && authStore.hasPermission('production:receipt:create'))
 const canPostIssue = computed(() => authStore.hasPermission('production:issue:post'))
 const canPostReport = computed(() => authStore.hasPermission('production:report:post'))
 const canPostReceipt = computed(() => authStore.hasPermission('production:receipt:post'))
-const canComplete = computed(() => canExecute.value && authStore.hasPermission('production:work-order:complete'))
-const canCancel = computed(() => (
-  (record.value?.status === 'DRAFT' || record.value?.status === 'RELEASED') &&
-  authStore.hasPermission('production:work-order:cancel')
-))
 const canViewCost = computed(() => authStore.hasPermission('cost:record:view'))
 const canCreateCost = computed(() => authStore.hasPermission('cost:record:create'))
 const canUpdateCost = computed(() => authStore.hasPermission('cost:record:update'))
+
+function actionAllowed(codes: string[], fallback: boolean): boolean {
+  if (Array.isArray(record.value?.allowedActions)) {
+    return codes.some((code) => record.value?.allowedActions?.includes(code))
+  }
+  return fallback
+}
+
+const canEdit = computed(() => authStore.hasPermission('production:work-order:update') && actionAllowed(['UPDATE'], record.value?.status === 'DRAFT'))
+const canRelease = computed(() => authStore.hasPermission('production:work-order:release') && actionAllowed(['RELEASE'], record.value?.status === 'DRAFT'))
+const canCreateIssue = computed(() => authStore.hasPermission('production:issue:create') && actionAllowed(['ISSUE', 'CREATE_ISSUE'], canExecute.value))
+const canCreateReport = computed(() => authStore.hasPermission('production:report:create') && actionAllowed(['REPORT', 'CREATE_REPORT'], canExecute.value))
+const canCreateReceipt = computed(() => authStore.hasPermission('production:receipt:create') && actionAllowed(['RECEIPT', 'CREATE_RECEIPT'], canExecute.value))
+const canComplete = computed(() => authStore.hasPermission('production:work-order:complete') && actionAllowed(['COMPLETE'], canExecute.value))
+const canCancel = computed(() => authStore.hasPermission('production:work-order:cancel') && actionAllowed(
+  ['CANCEL'],
+  record.value?.status === 'DRAFT' || record.value?.status === 'RELEASED',
+))
 
 const postActionConfig = {
   materialIssue: {
@@ -77,7 +94,7 @@ async function loadRecord() {
   loading.value = true
   error.value = ''
   try {
-    record.value = await productionApi.workOrders.get(route.params.id as ResourceId)
+    record.value = await projectProductionApi.workOrders.get(route.params.id as ResourceId)
     if (canViewCost.value) {
       await loadCostSummary(record.value.id)
     } else {
@@ -181,11 +198,20 @@ async function runAction(action: 'release' | 'complete' | 'cancel') {
   actionLoading.value = true
   try {
     if (action === 'release') {
-      record.value = await productionApi.workOrders.release(record.value.id)
+      record.value = await projectProductionApi.workOrders.release(record.value.id, {
+        version: record.value.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-release'),
+      })
     } else if (action === 'complete') {
-      record.value = await productionApi.workOrders.complete(record.value.id)
+      record.value = await projectProductionApi.workOrders.complete(record.value.id, {
+        version: record.value.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-complete'),
+      })
     } else {
-      record.value = await productionApi.workOrders.cancel(record.value.id)
+      record.value = await projectProductionApi.workOrders.cancel(record.value.id, {
+        version: record.value.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-cancel'),
+      })
     }
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)
@@ -196,7 +222,7 @@ async function runAction(action: 'release' | 'complete' | 'cancel') {
 
 async function postExecutionDocument(
   action: 'materialIssue' | 'report' | 'completionReceipt',
-  documentId: ResourceId,
+  document: ProjectProductionDocumentSummaryRecord,
   documentNo: string,
 ) {
   if (!record.value || actionLoading.value) {
@@ -214,12 +240,22 @@ async function postExecutionDocument(
   actionError.value = ''
   actionLoading.value = true
   try {
+    const payload = {
+      version: Number(document.version ?? record.value.version),
+      idempotencyKey: createProductionIdempotencyKey(
+        action === 'materialIssue'
+          ? 'production-material-issue-post'
+          : action === 'report'
+            ? 'production-work-report-post'
+            : 'production-completion-receipt-post',
+      ),
+    }
     if (action === 'materialIssue') {
-      await productionApi.materialIssues.post(record.value.id, documentId)
+      await projectProductionApi.materialIssues.post(record.value.id, document.id, payload)
     } else if (action === 'report') {
-      await productionApi.reports.post(record.value.id, documentId)
+      await projectProductionApi.reports.post(record.value.id, document.id, payload)
     } else {
-      await productionApi.completionReceipts.post(record.value.id, documentId)
+      await projectProductionApi.completionReceipts.post(record.value.id, document.id, payload)
     }
     await loadRecord()
   } catch (caught) {
@@ -235,22 +271,24 @@ onMounted(loadRecord)
 <template>
   <MasterDataTableView title="生产工单详情" description="查看工单计划、BOM 快照、生产执行记录和库存流水追溯。">
     <template #actions>
-      <el-button data-test="back-production-work-order-list" @click="backToList">返回列表</el-button>
-      <el-button v-if="canEdit" data-test="edit-production-work-order-detail" type="primary" @click="editRecord">
-        编辑
-      </el-button>
-      <el-button v-if="canRelease" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runAction('release')">
-        发布
-      </el-button>
-      <el-button v-if="canCreateIssue" @click="createMaterialIssue">领料</el-button>
-      <el-button v-if="canCreateReport" @click="createReport">报工</el-button>
-      <el-button v-if="canCreateReceipt" @click="createCompletionReceipt">完工入库</el-button>
-      <el-button v-if="canComplete" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runAction('complete')">
-        完成
-      </el-button>
-      <el-button v-if="canCancel" type="danger" plain :loading="actionLoading" :disabled="actionLoading" @click="runAction('cancel')">
-        取消
-      </el-button>
+      <ProductionWorkOrderActionBar
+        :action-loading="actionLoading"
+        :can-edit="canEdit"
+        :can-release="canRelease"
+        :can-create-issue="canCreateIssue"
+        :can-create-report="canCreateReport"
+        :can-create-receipt="canCreateReceipt"
+        :can-complete="canComplete"
+        :can-cancel="canCancel"
+        @back="backToList"
+        @edit="editRecord"
+        @release="runAction('release')"
+        @create-issue="createMaterialIssue"
+        @create-report="createReport"
+        @create-receipt="createCompletionReceipt"
+        @complete="runAction('complete')"
+        @cancel="runAction('cancel')"
+      />
     </template>
 
     <template #alerts>
@@ -282,6 +320,15 @@ onMounted(loadRecord)
       <dl class="detail-list">
         <dt>工单编号</dt>
         <dd>{{ record.workOrderNo }}</dd>
+        <dt>项目来源</dt>
+        <dd>
+          <template v-if="record.ownershipType === 'PROJECT'">
+            {{ record.projectNo || record.projectId || '-' }} {{ record.projectName || '' }}
+          </template>
+          <template v-else>公共工单</template>
+        </dd>
+        <dt>来源建议</dt>
+        <dd>{{ record.sourceSummary?.sourceSuggestionNo || record.sourceSuggestionNo || '-' }}</dd>
         <dt>状态</dt>
         <dd><ProductionWorkOrderStatusTag :status="record.status" /></dd>
         <dt>产品物料</dt>
@@ -301,6 +348,17 @@ onMounted(loadRecord)
         <dt>备注</dt>
         <dd>{{ record.remark || '未填写' }}</dd>
       </dl>
+
+      <ProductionWorkOrderSourceSummary :record="record" />
+      <ProductionWorkOrderTraceLinks :links="record.traceLinks" />
+
+      <el-alert
+        v-if="record.actionDisabledReason"
+        class="state-alert"
+        type="warning"
+        :title="record.actionDisabledReason"
+        :closable="false"
+      />
 
       <section class="section-block">
         <h2>BOM 用料快照</h2>
@@ -325,108 +383,14 @@ onMounted(loadRecord)
         </div>
       </section>
 
-      <section class="section-block">
-        <h2>领料记录</h2>
-        <div class="table-scroll">
-          <el-table :data="record.materialIssues" empty-text="暂无领料记录" stripe>
-            <el-table-column prop="issueNo" label="领料单号" min-width="160" show-overflow-tooltip />
-            <el-table-column label="状态" min-width="90">
-              <template #default="{ row }"><ProductionDocumentStatusTag :status="row.status" /></template>
-            </el-table-column>
-            <el-table-column prop="businessDate" label="业务日期" min-width="110" />
-            <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="lineCount" label="明细数" min-width="90" />
-            <el-table-column prop="postedByName" label="过账人" min-width="110">
-              <template #default="{ row }">{{ row.postedByName || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="96" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'DRAFT' && canPostIssue"
-                  data-test="post-production-material-issue"
-                  size="small"
-                  text
-                  :loading="actionLoading"
-                  :disabled="actionLoading"
-                  @click="postExecutionDocument('materialIssue', row.id, row.issueNo)"
-                >
-                  过账
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </section>
-
-      <section class="section-block">
-        <h2>报工记录</h2>
-        <div class="table-scroll">
-          <el-table :data="record.reports" empty-text="暂无报工记录" stripe>
-            <el-table-column prop="reportNo" label="报工单号" min-width="160" show-overflow-tooltip />
-            <el-table-column label="状态" min-width="90">
-              <template #default="{ row }"><ProductionDocumentStatusTag :status="row.status" /></template>
-            </el-table-column>
-            <el-table-column prop="businessDate" label="报工日期" min-width="110" />
-            <el-table-column label="合格" min-width="100" align="right">
-              <template #default="{ row }"><span class="numeric-cell">{{ formatProductionQuantity(row.qualifiedQuantity) }}</span></template>
-            </el-table-column>
-            <el-table-column label="不良" min-width="100" align="right">
-              <template #default="{ row }"><span class="numeric-cell">{{ formatProductionQuantity(row.defectiveQuantity) }}</span></template>
-            </el-table-column>
-            <el-table-column prop="reporterName" label="报工人" min-width="110" />
-            <el-table-column label="操作" width="96" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'DRAFT' && canPostReport"
-                  data-test="post-production-work-report"
-                  size="small"
-                  text
-                  :loading="actionLoading"
-                  :disabled="actionLoading"
-                  @click="postExecutionDocument('report', row.id, row.reportNo)"
-                >
-                  过账
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </section>
-
-      <section class="section-block">
-        <h2>完工入库记录</h2>
-        <div class="table-scroll">
-          <el-table :data="record.completionReceipts" empty-text="暂无完工入库记录" stripe>
-            <el-table-column prop="receiptNo" label="入库单号" min-width="160" show-overflow-tooltip />
-            <el-table-column label="状态" min-width="90">
-              <template #default="{ row }"><ProductionDocumentStatusTag :status="row.status" /></template>
-            </el-table-column>
-            <el-table-column prop="businessDate" label="业务日期" min-width="110" />
-            <el-table-column prop="receiptWarehouseName" label="入库仓库" min-width="140" show-overflow-tooltip />
-            <el-table-column label="入库数量" min-width="110" align="right">
-              <template #default="{ row }"><span class="numeric-cell">{{ formatProductionQuantity(row.quantity) }}</span></template>
-            </el-table-column>
-            <el-table-column prop="postedByName" label="过账人" min-width="110">
-              <template #default="{ row }">{{ row.postedByName || '-' }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="96" fixed="right">
-              <template #default="{ row }">
-                <el-button
-                  v-if="row.status === 'DRAFT' && canPostReceipt"
-                  data-test="post-production-completion-receipt"
-                  size="small"
-                  text
-                  :loading="actionLoading"
-                  :disabled="actionLoading"
-                  @click="postExecutionDocument('completionReceipt', row.id, row.receiptNo)"
-                >
-                  过账
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </section>
+      <ProductionWorkOrderExecutionRecords
+        :record="record"
+        :action-loading="actionLoading"
+        :can-post-issue="canPostIssue"
+        :can-post-report="canPostReport"
+        :can-post-receipt="canPostReceipt"
+        @post="postExecutionDocument"
+      />
 
       <section class="section-block">
         <h2>库存流水摘要</h2>
@@ -637,6 +601,19 @@ onMounted(loadRecord)
 .section-block h2 {
   font-size: 16px;
   margin: 0 0 10px;
+}
+
+.trace-link-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.trace-link-list span {
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  color: var(--qherp-muted);
+  padding: 4px 8px;
 }
 
 .section-title-row {

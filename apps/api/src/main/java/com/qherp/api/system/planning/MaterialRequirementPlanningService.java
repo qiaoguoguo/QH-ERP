@@ -6,6 +6,7 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.procurement.ProcurementRequisitionService;
+import com.qherp.api.system.production.ProductionPlanningConversionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -60,16 +61,20 @@ public class MaterialRequirementPlanningService {
 
 	private final ProcurementRequisitionService requisitionService;
 
+	private final ProductionPlanningConversionService productionPlanningConversionService;
+
 	private final ObjectMapper objectMapper;
 
 	private final TransactionTemplate transactionTemplate;
 
 	public MaterialRequirementPlanningService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			ProcurementRequisitionService requisitionService, ObjectMapper objectMapper,
-			TransactionTemplate transactionTemplate) {
+			TransactionTemplate transactionTemplate,
+			ProductionPlanningConversionService productionPlanningConversionService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.requisitionService = requisitionService;
+		this.productionPlanningConversionService = productionPlanningConversionService;
 		this.objectMapper = objectMapper;
 		this.transactionTemplate = transactionTemplate;
 	}
@@ -610,6 +615,113 @@ public class MaterialRequirementPlanningService {
 		return suggestion(id);
 	}
 
+	@Transactional
+	public SuggestionConversionResponse convertToWorkOrder(Long id, SuggestionActionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		requirePermission(operator, "planning:material-requirement:convert-production");
+		requirePermission(operator, "production:work-order:create");
+		SuggestionActionRequest actionRequest = requireActionRequest(request);
+		SuggestionRow row = lockSuggestion(id).orElseThrow(this::suggestionNotFound);
+		String fingerprint = actionFingerprint("CONVERT_WORK_ORDER", id, actionRequest);
+		Optional<ActionRecord> existing = existingAction("CONVERT_WORK_ORDER", id, actionRequest.idempotencyKey(),
+				operator);
+		if (existing.isPresent()) {
+			requireSameFingerprint(existing.get(), fingerprint);
+			return suggestionConversion(id);
+		}
+		requireRunWritable(row.runId());
+		requireVersion(row.version(), actionRequest.version());
+		requireProductionConversionTarget(row, "SELF_MADE");
+		ProductionPlanningConversionService.ConvertedProductionTarget target =
+				this.productionPlanningConversionService.createDraftWorkOrder(planningSuggestion(row),
+						operator.username(), OffsetDateTime.now());
+		Long newVersion = markSuggestionConverted(id, row, target, operator);
+		recordAction("CONVERT_WORK_ORDER", id, actionRequest.idempotencyKey(), fingerprint, target.targetObjectType(),
+				target.targetObjectId(), newVersion, operator);
+		this.auditService.record(operator, "MATERIAL_REQUIREMENT_SUGGESTION_CONVERT_WORK_ORDER", TARGET_SUGGESTION,
+				id, target.targetObjectNo(), servletRequest);
+		return suggestionConversion(id);
+	}
+
+	@Transactional
+	public SuggestionConversionResponse convertToOutsourcingOrder(Long id, SuggestionActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		requirePermission(operator, "planning:material-requirement:convert-outsourcing");
+		requirePermission(operator, "production:outsourcing:create");
+		SuggestionActionRequest actionRequest = requireActionRequest(request);
+		SuggestionRow row = lockSuggestion(id).orElseThrow(this::suggestionNotFound);
+		String fingerprint = actionFingerprint("CONVERT_OUTSOURCING_ORDER", id, actionRequest);
+		Optional<ActionRecord> existing = existingAction("CONVERT_OUTSOURCING_ORDER", id,
+				actionRequest.idempotencyKey(), operator);
+		if (existing.isPresent()) {
+			requireSameFingerprint(existing.get(), fingerprint);
+			return suggestionConversion(id);
+		}
+		requireRunWritable(row.runId());
+		requireVersion(row.version(), actionRequest.version());
+		requireProductionConversionTarget(row, "OUTSOURCED");
+		ProductionPlanningConversionService.ConvertedProductionTarget target =
+				this.productionPlanningConversionService.createDraftOutsourcingOrder(planningSuggestion(row),
+						operator.username(), OffsetDateTime.now());
+		Long newVersion = markSuggestionConverted(id, row, target, operator);
+		recordAction("CONVERT_OUTSOURCING_ORDER", id, actionRequest.idempotencyKey(), fingerprint,
+				target.targetObjectType(), target.targetObjectId(), newVersion, operator);
+		this.auditService.record(operator, "MATERIAL_REQUIREMENT_SUGGESTION_CONVERT_OUTSOURCING", TARGET_SUGGESTION,
+				id, target.targetObjectNo(), servletRequest);
+		return suggestionConversion(id);
+	}
+
+	private SuggestionConversionResponse suggestionConversion(Long suggestionId) {
+		return this.jdbcTemplate.query("""
+				select id, status, target_object_type, target_object_id, target_object_no, version
+				from mrp_suggestion
+				where id = ?
+				""", (rs, rowNum) -> {
+			String storedType = rs.getString("target_object_type");
+			Long targetObjectId = nullableLong(rs, "target_object_id");
+			String targetObjectType = "PRODUCTION_WORK_ORDER".equals(storedType) ? "WORK_ORDER" : storedType;
+			String targetRoute = switch (targetObjectType) {
+				case "WORK_ORDER" -> "/production/work-orders/" + targetObjectId;
+				case "OUTSOURCING_ORDER" -> "/production/outsourcing-orders/" + targetObjectId;
+				default -> null;
+			};
+			return new SuggestionConversionResponse(rs.getLong("id"), rs.getString("status"), targetObjectType,
+					targetObjectId, rs.getString("target_object_no"), targetRoute, rs.getLong("version"));
+		}, suggestionId).stream().findFirst().orElseThrow(this::suggestionNotFound);
+	}
+
+	private void requireProductionConversionTarget(SuggestionRow row, String requiredSourceType) {
+		if (!"CONFIRMED".equals(row.status()) || !"PRODUCTION_ORDER".equals(row.suggestionType())
+				|| !requiredSourceType.equals(row.materialSourceType())) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_PLANNING_SUGGESTION_INVALID);
+		}
+		if (row.targetObjectId() != null) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_PLANNING_SUGGESTION_ALREADY_CONVERTED);
+		}
+		if ("PROJECT".equals(row.ownershipType()) && row.projectId() == null) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_PROJECT_REQUIRED);
+		}
+	}
+
+	private ProductionPlanningConversionService.PlanningProductionSuggestion planningSuggestion(SuggestionRow row) {
+		return new ProductionPlanningConversionService.PlanningProductionSuggestion(row.id(), row.runId(),
+				row.requirementLineId(), row.materialId(), row.unitId(), row.suggestedQuantity(), row.ownershipType(),
+				row.projectId(), row.requiredDate(), "MRP-SUG-" + row.id());
+	}
+
+	private Long markSuggestionConverted(Long id, SuggestionRow row,
+			ProductionPlanningConversionService.ConvertedProductionTarget target, CurrentUser operator) {
+		return this.jdbcTemplate.queryForObject("""
+				update mrp_suggestion
+				set status = 'CONVERTED', target_object_type = ?, target_object_id = ?,
+				    target_object_line_id = null, target_object_no = ?, converted_by = ?, converted_at = ?,
+				    updated_by = ?, updated_at = ?, version = version + 1
+				where id = ?
+				returning version
+				""", Long.class, target.targetObjectType(), target.targetObjectId(), target.targetObjectNo(),
+				operator.username(), OffsetDateTime.now(), operator.username(), OffsetDateTime.now(), id);
+	}
+
 	private CalculationResult buildCalculation(NormalizedScope scope) {
 		CalculationContext context = new CalculationContext(scope);
 		List<DemandRow> demands = demandRows(scope);
@@ -1031,17 +1143,25 @@ public class MaterialRequirementPlanningService {
 	private SuggestionResponse mapSuggestion(ResultSet rs, int rowNum, CurrentUser currentUser) throws SQLException {
 		boolean projectVisible = hasPermission(currentUser, "sales:project:view")
 				|| hasPermission(currentUser, "sales:order:view");
+		String status = rs.getString("status");
+		String suggestionType = rs.getString("suggestion_type");
+		String materialSourceType = rs.getString("material_source_type");
+		boolean storedConversionAllowed = rs.getBoolean("conversion_allowed");
+		boolean effectiveConversionAllowed = suggestionConversionAllowed(status, suggestionType, materialSourceType,
+				storedConversionAllowed, currentUser);
+		String actionDisabledReason = suggestionActionDisabledReason(status, suggestionType, materialSourceType,
+				storedConversionAllowed, effectiveConversionAllowed, rs.getString("action_disabled_reason"));
 		return new SuggestionResponse(rs.getLong("id"), rs.getLong("run_id"), rs.getLong("requirement_line_id"),
-				rs.getString("suggestion_type"), rs.getString("status"), rs.getLong("material_id"),
+				suggestionType, status, rs.getLong("material_id"),
 				rs.getString("material_code"), rs.getString("material_name"), rs.getLong("unit_id"),
 				rs.getString("unit_name"), projectVisible ? nullableLong(rs, "project_id") : null,
 				rs.getString("ownership_type"),
 				rs.getObject("required_date", LocalDate.class), decimalString(rs.getBigDecimal("suggested_quantity")),
-				rs.getString("material_source_type"), rs.getBoolean("conversion_allowed"),
-				rs.getString("action_disabled_reason"), rs.getString("reason"),
-				nullableLong(rs, "target_object_id"), rs.getString("target_object_no"), rs.getLong("version"),
-				suggestionAllowedActions(rs.getString("status"), rs.getString("suggestion_type"),
-						rs.getBoolean("conversion_allowed")),
+				materialSourceType, effectiveConversionAllowed,
+				actionDisabledReason, rs.getString("reason"),
+				nullableLong(rs, "target_object_id"), rs.getString("target_object_no"),
+				rs.getString("target_object_type"), rs.getLong("version"),
+				suggestionAllowedActions(status, suggestionType, effectiveConversionAllowed, materialSourceType),
 				"MRP-SUG-" + rs.getLong("id"), suggestionStatusName(rs.getString("status")),
 				projectVisible ? rs.getString("project_no") : null, projectVisible ? rs.getString("project_name") : null,
 				rs.getObject("required_date", LocalDate.class),
@@ -1093,7 +1213,8 @@ public class MaterialRequirementPlanningService {
 	private Optional<SuggestionRow> lockSuggestion(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, run_id, requirement_line_id, suggestion_type, status, material_id, unit_id, project_id,
-				       ownership_type, required_date, suggested_quantity, conversion_allowed, target_object_id, version
+				       ownership_type, required_date, suggested_quantity, material_source_type, conversion_allowed,
+				       target_object_id, version
 				from mrp_suggestion
 				where id = ?
 				for update
@@ -1105,7 +1226,8 @@ public class MaterialRequirementPlanningService {
 				rs.getString("suggestion_type"), rs.getString("status"), rs.getLong("material_id"),
 				rs.getLong("unit_id"), nullableLong(rs, "project_id"), rs.getString("ownership_type"),
 				rs.getObject("required_date", LocalDate.class), scale(rs.getBigDecimal("suggested_quantity")),
-				rs.getBoolean("conversion_allowed"), nullableLong(rs, "target_object_id"), rs.getLong("version"));
+				rs.getString("material_source_type"), rs.getBoolean("conversion_allowed"),
+				nullableLong(rs, "target_object_id"), rs.getLong("version"));
 	}
 
 	private NormalizedScope normalize(RunRequest request) {
@@ -1271,7 +1393,8 @@ public class MaterialRequirementPlanningService {
 		return List.of();
 	}
 
-	private List<String> suggestionAllowedActions(String status, String suggestionType, boolean conversionAllowed) {
+	private List<String> suggestionAllowedActions(String status, String suggestionType, boolean conversionAllowed,
+			String materialSourceType) {
 		if ("USE_PUBLIC_STOCK".equals(suggestionType) || "USE_EXISTING_SUPPLY".equals(suggestionType)) {
 			return List.of();
 		}
@@ -1281,7 +1404,44 @@ public class MaterialRequirementPlanningService {
 		if ("CONFIRMED".equals(status) && "PURCHASE_REQUISITION".equals(suggestionType) && conversionAllowed) {
 			return List.of("CONVERT_REQUISITION", "DISMISS");
 		}
+		if ("CONFIRMED".equals(status) && "PRODUCTION_ORDER".equals(suggestionType)) {
+			if ("SELF_MADE".equals(materialSourceType) && conversionAllowed) {
+				return List.of("CONVERT_WORK_ORDER", "DISMISS");
+			}
+			if ("OUTSOURCED".equals(materialSourceType) && conversionAllowed) {
+				return List.of("CONVERT_OUTSOURCING_ORDER", "DISMISS");
+			}
+		}
 		return List.of();
+	}
+
+	private boolean suggestionConversionAllowed(String status, String suggestionType, String materialSourceType,
+			boolean storedConversionAllowed, CurrentUser currentUser) {
+		if (!storedConversionAllowed || !"CONFIRMED".equals(status)) {
+			return storedConversionAllowed;
+		}
+		if ("PRODUCTION_ORDER".equals(suggestionType) && "SELF_MADE".equals(materialSourceType)) {
+			return hasPermission(currentUser, "planning:material-requirement:convert-production")
+					&& hasPermission(currentUser, "production:work-order:create");
+		}
+		if ("PRODUCTION_ORDER".equals(suggestionType) && "OUTSOURCED".equals(materialSourceType)) {
+			return hasPermission(currentUser, "planning:material-requirement:convert-outsourcing")
+					&& hasPermission(currentUser, "production:outsourcing:create");
+		}
+		return storedConversionAllowed;
+	}
+
+	private String suggestionActionDisabledReason(String status, String suggestionType, String materialSourceType,
+			boolean storedConversionAllowed, boolean effectiveConversionAllowed, String storedReason) {
+		if (hasText(storedReason)) {
+			return storedReason;
+		}
+		if (storedConversionAllowed && !effectiveConversionAllowed && "CONFIRMED".equals(status)
+				&& "PRODUCTION_ORDER".equals(suggestionType)
+				&& ("SELF_MADE".equals(materialSourceType) || "OUTSOURCED".equals(materialSourceType))) {
+			return "当前用户权限不足";
+		}
+		return null;
 	}
 
 	private boolean isReadOnlySuggestion(String suggestionType) {
@@ -1521,9 +1681,14 @@ public class MaterialRequirementPlanningService {
 			String status, Long materialId, String materialCode, String materialName, Long unitId, String unitName,
 			Long projectId, String ownershipType, LocalDate requiredDate, String suggestedQuantity,
 			String materialSourceType, boolean conversionAllowed, String actionDisabledReason, String reason,
-			Long targetObjectId, String targetObjectNo, Long version, List<String> allowedActions, String suggestionNo,
-			String statusName, String projectNo, String projectName, LocalDate suggestedDate, String reasonCode,
-			String reasonMessage, Long convertedRequisitionId, String convertedRequisitionNo) {
+			Long targetObjectId, String targetObjectNo, String targetObjectType, Long version,
+			List<String> allowedActions, String suggestionNo, String statusName, String projectNo, String projectName,
+			LocalDate suggestedDate, String reasonCode, String reasonMessage, Long convertedRequisitionId,
+			String convertedRequisitionNo) {
+	}
+
+	public record SuggestionConversionResponse(Long suggestionId, String status, String targetObjectType,
+			Long targetObjectId, String targetObjectNo, String targetRoute, Long version) {
 	}
 
 	public record SubstituteHintResponse(Long id, Long runId, Long requirementLineId, Long mainMaterialId,
@@ -1675,7 +1840,8 @@ public class MaterialRequirementPlanningService {
 
 	private record SuggestionRow(Long id, Long runId, Long requirementLineId, String suggestionType, String status,
 			Long materialId, Long unitId, Long projectId, String ownershipType, LocalDate requiredDate,
-			BigDecimal suggestedQuantity, boolean conversionAllowed, Long targetObjectId, Long version) {
+			BigDecimal suggestedQuantity, String materialSourceType, boolean conversionAllowed, Long targetObjectId,
+			Long version) {
 	}
 
 	private final class CalculationContext {
@@ -2210,10 +2376,7 @@ public class MaterialRequirementPlanningService {
 			suggestion.requiredDate = requirement.demandDate;
 			suggestion.suggestedQuantity = requirement.shortageQuantity;
 			suggestion.materialSourceType = material.sourceType();
-			suggestion.conversionAllowed = false;
-			if (material.isOutsourced()) {
-				suggestion.actionDisabledReason = "外协生产建议，027 后可执行";
-			}
+			suggestion.conversionAllowed = true;
 			suggestion.reason = "SHORTAGE";
 			this.suggestions.add(suggestion);
 		}

@@ -28,6 +28,11 @@ import ProductionWorkOrderDetailView from '../modules/production/ProductionWorkO
 import ProductionWorkOrderFormView from '../modules/production/ProductionWorkOrderFormView.vue'
 import ProductionWorkOrderListView from '../modules/production/ProductionWorkOrderListView.vue'
 import ProductionWorkReportView from '../modules/production/ProductionWorkReportView.vue'
+import ProductionOutsourcingOrderDetailView from '../modules/production/outsourcing/ProductionOutsourcingOrderDetailView.vue'
+import ProductionOutsourcingOrderFormView from '../modules/production/outsourcing/ProductionOutsourcingOrderFormView.vue'
+import ProductionOutsourcingOrderListView from '../modules/production/outsourcing/ProductionOutsourcingOrderListView.vue'
+import ProductionOutsourcingIssueView from '../modules/production/outsourcing/ProductionOutsourcingIssueView.vue'
+import ProductionOutsourcingReceiptView from '../modules/production/outsourcing/ProductionOutsourcingReceiptView.vue'
 import ProductionMaterialReturnDetailView from '../modules/reversal/ProductionMaterialReturnDetailView.vue'
 import ProductionMaterialReturnFormView from '../modules/reversal/ProductionMaterialReturnFormView.vue'
 import ProductionMaterialReturnListView from '../modules/reversal/ProductionMaterialReturnListView.vue'
@@ -91,6 +96,8 @@ import CostReportView from '../modules/reports/CostReportView.vue'
 import SettlementReportView from '../modules/reports/SettlementReportView.vue'
 import ExceptionReportView from '../modules/reports/ExceptionReportView.vue'
 import { createQhErpRouter } from './index'
+import productionRouteSource from './modules/productionRoutes.ts?raw'
+import planningRouteSource from './modules/planningRoutes.ts?raw'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
 const adminSession: AuthSession = {
@@ -334,6 +341,42 @@ describe('账号权限路由守卫', () => {
         'production:material-supplement:update',
         ProductionMaterialSupplementFormView,
       ],
+      [
+        'production-outsourcing-orders',
+        '/production/outsourcing-orders',
+        'production:outsourcing:view',
+        ProductionOutsourcingOrderListView,
+      ],
+      [
+        'production-outsourcing-order-create',
+        '/production/outsourcing-orders/create',
+        'production:outsourcing:create',
+        ProductionOutsourcingOrderFormView,
+      ],
+      [
+        'production-outsourcing-order-detail',
+        '/production/outsourcing-orders/:id',
+        'production:outsourcing:view',
+        ProductionOutsourcingOrderDetailView,
+      ],
+      [
+        'production-outsourcing-order-edit',
+        '/production/outsourcing-orders/:id/edit',
+        'production:outsourcing:update',
+        ProductionOutsourcingOrderFormView,
+      ],
+      [
+        'production-outsourcing-order-material-issues',
+        '/production/outsourcing-orders/:id/material-issues',
+        'production:outsourcing:view',
+        ProductionOutsourcingIssueView,
+      ],
+      [
+        'production-outsourcing-order-receipts',
+        '/production/outsourcing-orders/:id/receipts',
+        'production:outsourcing:view',
+        ProductionOutsourcingReceiptView,
+      ],
     ] as const
 
     for (const [routeName, path, permission, expectedComponent] of productionRoutes) {
@@ -345,6 +388,32 @@ describe('账号权限路由守卫', () => {
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
+  })
+
+  it('生产与计划路由从触达模块接线，生产根路由按首个有权子页面跳转', async () => {
+    expect(productionRouteSource).toContain('productionRouteOrder')
+    expect(productionRouteSource).toContain('production:outsourcing:view')
+    expect(planningRouteSource).toContain('planningRouteOrder')
+    expect(planningRouteSource).toContain('planning:material-requirement:view')
+
+    const outsourcingRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing:view'] })
+    await outsourcingRouter.push('/production')
+    await outsourcingRouter.isReady()
+    expect(outsourcingRouter.currentRoute.value.name).toBe('production-outsourcing-orders')
+
+    const reversalRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:material-return:view'] })
+    await reversalRouter.push('/production')
+    await reversalRouter.isReady()
+    expect(reversalRouter.currentRoute.value.name).toBe('production-material-returns')
+
+    const forbiddenRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+    await forbiddenRouter.push('/production')
+    await forbiddenRouter.isReady()
+    expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
+    expect(forbiddenRouter.currentRoute.value.query.from).toBe('/production')
   })
 
   it('026 订单缺料分析路由加载真实页面并配置计划查看权限', async () => {
@@ -819,6 +888,43 @@ describe('账号权限路由守卫', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.name).toBe('production-work-orders')
+  })
+
+  it('已登录且拥有外协查看权限时允许访问外协列表，缺少创建权限时不能新建外协单', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing:view'] })
+
+    await router.push('/production/outsourcing-orders')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('production-outsourcing-orders')
+
+    const createRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing:view'] })
+    await createRouter.push('/production/outsourcing-orders/create')
+    await createRouter.isReady()
+    expect(createRouter.currentRoute.value.name).toBe('forbidden')
+    expect(createRouter.currentRoute.value.query.from).toBe('/production/outsourcing-orders/create')
+  })
+
+  it('外协发料和收货页面入口依赖订单查看权限，子单写权限不替代订单中心入口权限', async () => {
+    const issueRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing:view'] })
+    await issueRouter.push('/production/outsourcing-orders/77/material-issues')
+    await issueRouter.isReady()
+    expect(issueRouter.currentRoute.value.name).toBe('production-outsourcing-order-material-issues')
+
+    const receiptRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing:view'] })
+    await receiptRouter.push('/production/outsourcing-orders/77/receipts')
+    await receiptRouter.isReady()
+    expect(receiptRouter.currentRoute.value.name).toBe('production-outsourcing-order-receipts')
+
+    const childOnlyRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['production:outsourcing-issue:view'] })
+    await childOnlyRouter.push('/production/outsourcing-orders/77/material-issues')
+    await childOnlyRouter.isReady()
+    expect(childOnlyRouter.currentRoute.value.name).toBe('forbidden')
+    expect(childOnlyRouter.currentRoute.value.query.from).toBe('/production/outsourcing-orders/77/material-issues')
   })
 
   it('已登录且拥有生产退料查看权限时允许访问生产退料列表', async () => {

@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import type { ProductionWorkOrderStatus } from '../../shared/api/productionApi'
 import { workOrderStatusLabel, workOrderStatusType } from './productionPageHelpers'
 
 defineProps<{
-  status: ProductionWorkOrderStatus
+  status: string
 }>()
 </script>
 

@@ -193,16 +193,18 @@ public class ReversalAdminController {
 
 	@PutMapping("/production/material-returns/{id}/post")
 	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> postMaterialReturn(
-			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.postMaterialReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.postMaterialReturn(id, request, currentUser, servletRequest));
 	}
 
 	@PutMapping("/production/material-returns/{id}/cancel")
 	public ApiResponse<ReversalAdminService.ProductionMaterialReturnDetailResponse> cancelMaterialReturn(
-			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.cancelMaterialReturn(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.cancelMaterialReturn(id, request, currentUser, servletRequest));
 	}
 
 	@GetMapping("/production/material-supplement-sources")
@@ -250,16 +252,20 @@ public class ReversalAdminController {
 
 	@PutMapping("/production/material-supplements/{id}/post")
 	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> postMaterialSupplement(
-			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.postMaterialSupplement(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.postMaterialSupplement(id, request, currentUser,
+				servletRequest));
 	}
 
 	@PutMapping("/production/material-supplements/{id}/cancel")
 	public ApiResponse<ReversalAdminService.ProductionMaterialSupplementDetailResponse> cancelMaterialSupplement(
-			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser,
+			@PathVariable Long id, @Valid @RequestBody ReversalAdminService.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
-		return ApiResponse.ok(this.reversalAdminService.cancelMaterialSupplement(id, currentUser, servletRequest));
+		return ApiResponse.ok(this.reversalAdminService.cancelMaterialSupplement(id, request, currentUser,
+				servletRequest));
 	}
 
 	@GetMapping("/finance/settlement-adjustment-sources")

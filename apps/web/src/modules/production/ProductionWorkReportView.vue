@@ -2,16 +2,17 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  productionApi,
-  type ProductionWorkOrderDetailRecord,
-  type ProductionWorkReportPayload,
+  projectProductionApi,
+  type ProjectProductionWorkOrderDetailRecord,
+  type ProjectProductionWorkReportPayload,
   type ResourceId,
-} from '../../shared/api/productionApi'
+} from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
   todayText,
   validateProductionQuantity,
@@ -20,7 +21,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
+const workOrder = ref<ProjectProductionWorkOrderDetailRecord | null>(null)
 const loading = ref(true)
 const error = ref('')
 const formError = ref('')
@@ -46,7 +47,7 @@ async function loadWorkOrder() {
   loading.value = true
   error.value = ''
   try {
-    workOrder.value = await productionApi.workOrders.get(route.params.id as ResourceId)
+    workOrder.value = await projectProductionApi.workOrders.get(route.params.id as ResourceId)
   } catch (caught) {
     workOrder.value = null
     error.value = productionErrorMessage(caught)
@@ -55,7 +56,7 @@ async function loadWorkOrder() {
   }
 }
 
-function validateForm(): ProductionWorkReportPayload | null {
+function validateForm(): ProjectProductionWorkReportPayload | null {
   if (!workOrder.value) {
     formError.value = '生产工单未加载'
     return null
@@ -95,6 +96,8 @@ function validateForm(): ProductionWorkReportPayload | null {
 
   formError.value = ''
   return {
+    version: workOrder.value.version,
+    idempotencyKey: createProductionIdempotencyKey('production-work-report-save'),
     businessDate: form.businessDate.trim(),
     qualifiedQuantity: qualified.payloadValue,
     defectiveQuantity: defective.payloadValue,
@@ -116,7 +119,7 @@ async function submitReport() {
   }
   formSubmitting.value = true
   try {
-    await productionApi.reports.create(workOrder.value.id, payload)
+    await projectProductionApi.reports.create(workOrder.value.id, payload)
     await router.push({ name: 'production-work-order-detail', params: { id: String(workOrder.value.id) } })
   } catch (caught) {
     formError.value = productionErrorMessage(caught)

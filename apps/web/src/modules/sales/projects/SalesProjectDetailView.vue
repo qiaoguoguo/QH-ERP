@@ -9,6 +9,7 @@ import {
 import {
   salesProjectApi,
   type SalesProjectDetail,
+  type SalesProjectProductionSummary,
   type SalesProjectSummary,
 } from '../../../shared/api/salesProjectApi'
 import type { ResourceId } from '../../../shared/api/salesApi'
@@ -36,10 +37,13 @@ const router = useRouter()
 const authStore = useAuthStore()
 const record = ref<SalesProjectDetail | null>(null)
 const fulfillment = ref<SalesProjectFulfillmentRecord | null>(null)
+const productionSummary = ref<SalesProjectProductionSummary | null>(null)
 const loading = ref(true)
 const fulfillmentLoading = ref(false)
+const productionSummaryLoading = ref(false)
 const error = ref('')
 const fulfillmentError = ref('')
+const productionSummaryError = ref('')
 const actionError = ref('')
 const actionLoading = ref(false)
 const contractDrawerOpen = ref(false)
@@ -71,6 +75,10 @@ const canClose = computed(() => record.value?.status === 'ACTIVE' && authStore.h
 const canCancel = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:cancel'))
 const canViewSalesOrders = computed(() => authStore.hasPermission('sales:order:view'))
 const canViewFulfillment = computed(() => authStore.hasPermission('sales:fulfillment:view'))
+const canViewProjectProduction = computed(() => (
+  authStore.hasPermission('production:work-order:view')
+  || authStore.hasPermission('production:outsourcing:view')
+))
 const canCloseFulfillment = computed(() => Boolean(fulfillment.value)
   && authStore.hasPermission('sales:fulfillment:close')
   && (fulfillment.value?.allowedActions ?? []).includes('CLOSE'))
@@ -125,11 +133,33 @@ async function loadRecord() {
       fulfillment.value = null
       fulfillmentError.value = ''
     }
+    if (canViewProjectProduction.value) {
+      await loadProductionSummary()
+    } else {
+      productionSummary.value = null
+      productionSummaryError.value = ''
+    }
   } catch (caught) {
     record.value = null
     error.value = projectApiErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadProductionSummary() {
+  if (!record.value) {
+    return
+  }
+  productionSummaryLoading.value = true
+  productionSummaryError.value = ''
+  try {
+    productionSummary.value = await salesProjectApi.projectProductionSummary(record.value.id)
+  } catch (caught) {
+    productionSummary.value = null
+    productionSummaryError.value = projectApiErrorMessage(caught)
+  } finally {
+    productionSummaryLoading.value = false
   }
 }
 
@@ -260,6 +290,32 @@ function fulfillmentStatusLabel(status: string) {
   return status === 'CLOSED' ? '已关闭' : '开放'
 }
 
+function productionSummaryCount(value?: number | null): string {
+  return value === null ? '无权限' : value === undefined ? '-' : String(value)
+}
+
+function productionSummaryDecimal(value?: string | null): string {
+  return value === null ? '无权限' : formatSalesDecimal(value)
+}
+
+function productionSummaryText(value?: string | null): string {
+  return value === null ? '无权限' : value || '-'
+}
+
+function viewProjectWorkOrders() {
+  if (!record.value) {
+    return
+  }
+  void router.push({ name: 'production-work-orders', query: { projectId: String(record.value.id) } })
+}
+
+function viewProjectOutsourcingOrders() {
+  if (!record.value) {
+    return
+  }
+  void router.push({ name: 'production-outsourcing-orders', query: { projectId: String(record.value.id) } })
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -375,6 +431,83 @@ onMounted(loadRecord)
         :contract-summary-restricted="record.contractSummaryRestricted"
         :summary="record.salesOrderSummary"
       />
+
+      <section v-if="canViewProjectProduction" class="section-block">
+        <div class="section-title">
+          <span>生产/外协摘要</span>
+          <div class="inline-actions">
+            <el-button
+              v-if="authStore.hasPermission('production:work-order:view')"
+              data-test="view-project-work-orders"
+              size="small"
+              text
+              type="primary"
+              @click="viewProjectWorkOrders"
+            >
+              查看工单
+            </el-button>
+            <el-button
+              v-if="authStore.hasPermission('production:outsourcing:view')"
+              data-test="view-project-outsourcing-orders"
+              size="small"
+              text
+              type="primary"
+              @click="viewProjectOutsourcingOrders"
+            >
+              查看外协
+            </el-button>
+          </div>
+        </div>
+        <el-alert
+          v-if="productionSummaryError"
+          class="state-alert"
+          type="error"
+          :title="productionSummaryError"
+          :closable="false"
+        />
+        <el-alert
+          v-if="productionSummaryLoading"
+          class="state-alert"
+          type="info"
+          title="生产/外协摘要加载中"
+          :closable="false"
+        />
+        <div v-if="productionSummary" class="fulfillment-grid">
+          <div>
+            <span>生产工单 </span>
+            <strong>{{ productionSummaryCount(productionSummary.workOrderCount) }}</strong>
+          </div>
+          <div>
+            <span>已完工 </span>
+            <strong>{{ productionSummaryCount(productionSummary.completedWorkOrderCount) }}</strong>
+          </div>
+          <div>
+            <span>外协订单 </span>
+            <strong>{{ productionSummaryCount(productionSummary.outsourcingOrderCount) }}</strong>
+          </div>
+          <div>
+            <span>外协收货 </span>
+            <strong>{{ productionSummaryDecimal(productionSummary.outsourcingReceivedQuantity) }}</strong>
+          </div>
+          <div>
+            <span>最新工单</span>
+            <strong>{{ productionSummaryText(productionSummary.latestWorkOrderNo) }}</strong>
+          </div>
+          <div>
+            <span>最新外协</span>
+            <strong>{{ productionSummaryText(productionSummary.latestOutsourcingOrderNo) }}</strong>
+          </div>
+          <div>
+            <span>成本状态</span>
+            <strong>{{ productionSummary.costVisible === false ? '成本受限' : '可查看' }}</strong>
+          </div>
+          <div>
+            <span>成本说明</span>
+            <strong>{{ productionSummary.costRestrictedReason || '未返回' }}</strong>
+          </div>
+        </div>
+        <el-empty v-if="!productionSummaryLoading && !productionSummary && !productionSummaryError" description="暂无生产/外协摘要" />
+      </section>
 
       <section v-if="canViewFulfillment" class="section-block">
         <div class="section-title">

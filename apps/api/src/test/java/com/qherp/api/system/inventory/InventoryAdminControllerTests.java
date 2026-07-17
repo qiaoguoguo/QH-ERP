@@ -354,7 +354,8 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		ResponseEntity<String> postedResponse = exchange(HttpMethod.PUT,
 				"/api/admin/production/work-orders/" + production.workOrderId() + "/completion-receipts/"
 						+ created.get("id").longValue() + "/post",
-				null, admin);
+				productionActionBody("mfg_completion_receipt", created.get("id").longValue(), "INV-REC-POST"),
+				admin);
 		assertOk(postedResponse);
 		JsonNode posted = data(postedResponse);
 		assertDecimal(posted, "unitCost", "9.000000");
@@ -3791,7 +3792,21 @@ class InventoryAdminControllerTests extends PostgresIntegrationTest {
 		body.put("quantity", quantity);
 		body.put("provisionalUnitCost", provisionalUnitCost);
 		body.put("remark", "023 完工暂估");
+		body.put("idempotencyKey", "INV-REC-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
+	}
+
+	private Map<String, Object> productionActionBody(String tableName, long id, String prefix) {
+		return Map.of("version", productionDocumentVersion(tableName, id), "idempotencyKey",
+				prefix + "-" + id + "-" + SEQUENCE.incrementAndGet());
+	}
+
+	private long productionDocumentVersion(String tableName, long id) {
+		String sql = switch (tableName) {
+			case "mfg_completion_receipt" -> "select version from mfg_completion_receipt where id = ?";
+			default -> throw new IllegalArgumentException(tableName);
+		};
+		return this.jdbcTemplate.queryForObject(sql, Long.class, id);
 	}
 
 	private AuthenticatedSession createReadOnlyUserAndLogin() {

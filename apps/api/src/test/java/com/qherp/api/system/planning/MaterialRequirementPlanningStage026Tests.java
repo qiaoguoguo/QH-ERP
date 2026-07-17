@@ -294,7 +294,19 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 
 		JsonNode suggestion = findSuggestion(suggestions.get("items"), outsourcedId, "PRODUCTION_ORDER");
 		assertThat(suggestion.get("suggestionType").asText()).isEqualTo("PRODUCTION_ORDER");
-		assertThat(suggestion.get("conversionAllowed").asBoolean()).isFalse();
+		assertThat(suggestion.get("status").asText()).isEqualTo("OPEN");
+		assertThat(suggestion.get("conversionAllowed").asBoolean()).isTrue();
+		assertThat(suggestion.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("CONFIRM"));
+		JsonNode confirmed = data(put(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + suggestion.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", suggestion.get("version").longValue(), "idempotencyKey",
+						"MRP-OUT-CONFIRM-" + suggestion.get("id").longValue())));
+		assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		assertThat(confirmed.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("CONVERT_OUTSOURCING_ORDER"));
+		assertThat(confirmed.hasNonNull("actionDisabledReason")).isFalse();
 		assertDecimal(suggestion, "suggestedQuantity", "6.000000");
 	}
 
@@ -582,6 +594,135 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 				Map.of("version", confirmed.get("version").longValue(), "idempotencyKey",
 						"MRP-AUTH-CONVERT-NO-026-" + suffix)),
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+	}
+
+	@Test
+	void stage027ProductionConversionRequiresPlanningAndTargetCreatePermissions() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		int suffix = SEQUENCE.incrementAndGet();
+		LocalDate selfMadeDate = LocalDate.now().plusDays(12);
+		DemandSeed selfMade = selfMadeDemand("MRP_027_AUTH_WO_" + suffix, selfMadeDate);
+		insertBom("MRP_027_AUTH_WO_BOM_" + suffix, selfMade.materialId(), selfMade.unitId(),
+				LocalDate.now().minusDays(1), List.of());
+		JsonNode selfMadeRun = data(post(admin, "/api/admin/planning/material-requirement-runs",
+				runRequest(selfMade.projectId(), selfMadeDate, "MRP-027-AUTH-WO-RUN-" + suffix)));
+		JsonNode selfMadeSuggestion = findSuggestion(data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + selfMadeRun.get("id").longValue()
+						+ "/suggestions?page=1&pageSize=50")).get("items"), selfMade.materialId(),
+				"PRODUCTION_ORDER");
+		JsonNode selfMadeConfirmed = data(put(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + selfMadeSuggestion.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", selfMadeSuggestion.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-WO-CONFIRM-" + suffix)));
+		JsonNode confirmedSelfMadeForAdmin = findSuggestion(data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + selfMadeRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				selfMade.materialId(), "PRODUCTION_ORDER");
+		assertThat(confirmedSelfMadeForAdmin.get("conversionAllowed").asBoolean()).isTrue();
+		assertThat(confirmedSelfMadeForAdmin.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("CONVERT_WORK_ORDER"));
+		assertThat(confirmedSelfMadeForAdmin.hasNonNull("actionDisabledReason")).isFalse();
+
+		AuthenticatedSession planningOnly = createPlanningUserAndLogin("mrp-027-prod-planning-only-",
+				"MRP_027_PROD_PLANNING_ONLY_", List.of("planning:material-requirement:view",
+						"planning:material-requirement:convert-production"));
+		JsonNode selfMadePlanningOnly = findSuggestion(data(get(planningOnly,
+				"/api/admin/planning/material-requirement-runs/" + selfMadeRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				selfMade.materialId(), "PRODUCTION_ORDER");
+		assertThat(selfMadePlanningOnly.get("conversionAllowed").asBoolean()).isFalse();
+		assertThat(selfMadePlanningOnly.get("allowedActions")).isEmpty();
+		assertThat(selfMadePlanningOnly.get("actionDisabledReason").asText()).isEqualTo("当前用户权限不足");
+		assertError(post(planningOnly,
+				"/api/admin/planning/material-requirement-suggestions/" + selfMadeConfirmed.get("id").longValue()
+						+ "/convert-work-order",
+				Map.of("version", selfMadeConfirmed.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-WO-PLANNING-ONLY-" + suffix)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		AuthenticatedSession workOrderCreateOnly = createPlanningUserAndLogin("mrp-027-prod-target-only-",
+				"MRP_027_PROD_TARGET_ONLY_", List.of("production:work-order:create"));
+		AuthenticatedSession workOrderCreateViewOnly = createPlanningUserAndLogin("mrp-027-prod-target-view-only-",
+				"MRP_027_PROD_TARGET_VIEW_ONLY_",
+				List.of("planning:material-requirement:view", "production:work-order:create"));
+		JsonNode selfMadeCreateOnly = findSuggestion(data(get(workOrderCreateViewOnly,
+				"/api/admin/planning/material-requirement-runs/" + selfMadeRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				selfMade.materialId(), "PRODUCTION_ORDER");
+		assertThat(selfMadeCreateOnly.get("conversionAllowed").asBoolean()).isFalse();
+		assertThat(selfMadeCreateOnly.get("allowedActions")).isEmpty();
+		assertThat(selfMadeCreateOnly.get("actionDisabledReason").asText()).isEqualTo("当前用户权限不足");
+		assertError(post(workOrderCreateOnly,
+				"/api/admin/planning/material-requirement-suggestions/" + selfMadeConfirmed.get("id").longValue()
+						+ "/convert-work-order",
+				Map.of("version", selfMadeConfirmed.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-WO-TARGET-ONLY-" + suffix)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		LocalDate outsourcedDate = LocalDate.now().plusDays(13);
+		DemandSeed outsourced = outsourcedDemand("MRP_027_AUTH_OS_" + suffix, outsourcedDate);
+		insertBom("MRP_027_AUTH_OS_BOM_" + suffix, outsourced.materialId(), outsourced.unitId(),
+				LocalDate.now().minusDays(1), List.of());
+		JsonNode outsourcedRun = data(post(admin, "/api/admin/planning/material-requirement-runs",
+				runRequest(outsourced.projectId(), outsourcedDate, "MRP-027-AUTH-OS-RUN-" + suffix)));
+		JsonNode outsourcedSuggestion = findSuggestion(data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + outsourcedRun.get("id").longValue()
+						+ "/suggestions?page=1&pageSize=50")).get("items"), outsourced.materialId(),
+				"PRODUCTION_ORDER");
+		JsonNode outsourcedConfirmed = data(put(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + outsourcedSuggestion.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", outsourcedSuggestion.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-OS-CONFIRM-" + suffix)));
+		JsonNode confirmedOutsourcedForAdmin = findSuggestion(data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + outsourcedRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				outsourced.materialId(), "PRODUCTION_ORDER");
+		assertThat(confirmedOutsourcedForAdmin.get("conversionAllowed").asBoolean()).isTrue();
+		assertThat(confirmedOutsourcedForAdmin.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("CONVERT_OUTSOURCING_ORDER"));
+		assertThat(confirmedOutsourcedForAdmin.hasNonNull("actionDisabledReason")).isFalse();
+
+		AuthenticatedSession outsourcingPlanningOnly = createPlanningUserAndLogin("mrp-027-os-planning-only-",
+				"MRP_027_OS_PLANNING_ONLY_", List.of("planning:material-requirement:view",
+						"planning:material-requirement:convert-outsourcing"));
+		JsonNode outsourcedPlanningOnly = findSuggestion(data(get(outsourcingPlanningOnly,
+				"/api/admin/planning/material-requirement-runs/" + outsourcedRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				outsourced.materialId(), "PRODUCTION_ORDER");
+		assertThat(outsourcedPlanningOnly.get("conversionAllowed").asBoolean()).isFalse();
+		assertThat(outsourcedPlanningOnly.get("allowedActions")).isEmpty();
+		assertThat(outsourcedPlanningOnly.get("actionDisabledReason").asText()).isEqualTo("当前用户权限不足");
+		assertError(post(outsourcingPlanningOnly,
+				"/api/admin/planning/material-requirement-suggestions/" + outsourcedConfirmed.get("id").longValue()
+						+ "/convert-outsourcing-order",
+				Map.of("version", outsourcedConfirmed.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-OS-PLANNING-ONLY-" + suffix)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		AuthenticatedSession outsourcingCreateOnly = createPlanningUserAndLogin("mrp-027-os-target-only-",
+				"MRP_027_OS_TARGET_ONLY_", List.of("production:outsourcing:create"));
+		AuthenticatedSession outsourcingCreateViewOnly = createPlanningUserAndLogin("mrp-027-os-target-view-only-",
+				"MRP_027_OS_TARGET_VIEW_ONLY_",
+				List.of("planning:material-requirement:view", "production:outsourcing:create"));
+		JsonNode outsourcedCreateOnly = findSuggestion(data(get(outsourcingCreateViewOnly,
+				"/api/admin/planning/material-requirement-runs/" + outsourcedRun.get("id").longValue()
+						+ "/suggestions?status=CONFIRMED&page=1&pageSize=50")).get("items"),
+				outsourced.materialId(), "PRODUCTION_ORDER");
+		assertThat(outsourcedCreateOnly.get("conversionAllowed").asBoolean()).isFalse();
+		assertThat(outsourcedCreateOnly.get("allowedActions")).isEmpty();
+		assertThat(outsourcedCreateOnly.get("actionDisabledReason").asText()).isEqualTo("当前用户权限不足");
+		assertError(post(outsourcingCreateOnly,
+				"/api/admin/planning/material-requirement-suggestions/" + outsourcedConfirmed.get("id").longValue()
+						+ "/convert-outsourcing-order",
+				Map.of("version", outsourcedConfirmed.get("version").longValue(), "idempotencyKey",
+						"MRP-027-AUTH-OS-TARGET-ONLY-" + suffix)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+		assertThat(countRowsForSql("select count(*) from mfg_work_order where source_mrp_suggestion_id = ?",
+				selfMadeConfirmed.get("id").longValue())).isZero();
+		assertThat(countRowsForSql("select count(*) from mfg_outsourcing_order where source_mrp_suggestion_id = ?",
+				outsourcedConfirmed.get("id").longValue())).isZero();
 	}
 
 	@Test
@@ -924,7 +1065,9 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 			if (productionSuggestion.hasNonNull("materialSourceType")) {
 				softly.assertThat(productionSuggestion.get("materialSourceType").asText()).isEqualTo("OUTSOURCED");
 			}
-			softly.assertThat(productionSuggestion.get("conversionAllowed").asBoolean()).isFalse();
+			softly.assertThat(productionSuggestion.get("conversionAllowed").asBoolean()).isTrue();
+			softly.assertThat(productionSuggestion.get("allowedActions"))
+				.anySatisfy((action) -> assertThat(action.asText()).isEqualTo("CONFIRM"));
 		}
 
 		long noBomMaterialId = insertMaterial("MRP_RED_C_OUT_NO_BOM_" + suffix, "FINISHED_GOOD", "OUTSOURCED",
@@ -1501,6 +1644,132 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void stage027ConfirmedSelfMadeSuggestionConvertsToDraftProjectWorkOrderIdempotently() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		int suffix = SEQUENCE.incrementAndGet();
+		LocalDate demandDate = LocalDate.now().plusDays(9);
+		DemandSeed seed = selfMadeDemand("MRP_027_WO_" + suffix, demandDate);
+		insertBom("MRP_027_WO_BOM_" + suffix, seed.materialId(), seed.unitId(), LocalDate.now().minusDays(1),
+				List.of());
+		JsonNode run = data(post(admin, "/api/admin/planning/material-requirement-runs",
+				runRequest(seed.projectId(), demandDate, "MRP-027-WO-RUN-" + suffix)));
+		JsonNode suggestions = data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + run.get("id").longValue()
+						+ "/suggestions?page=1&pageSize=50"));
+		JsonNode suggestion = findSuggestion(suggestions.get("items"), seed.materialId(), "PRODUCTION_ORDER");
+		JsonNode confirmed = data(put(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + suggestion.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", suggestion.get("version").longValue(), "idempotencyKey",
+						"MRP-027-WO-CONFIRM-" + suffix)));
+		Map<String, Object> convertRequest = Map.of("version", confirmed.get("version").longValue(),
+				"idempotencyKey", "MRP-027-WO-CONVERT-" + suffix);
+		JsonNode converted = data(post(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + confirmed.get("id").longValue()
+						+ "/convert-work-order",
+				convertRequest));
+		JsonNode convertedAgain = data(post(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + confirmed.get("id").longValue()
+						+ "/convert-work-order",
+				convertRequest));
+
+		assertProductionConversionRecord(converted, confirmed.get("id").longValue(), "WORK_ORDER", "MFG-WO",
+				"/production/work-orders/");
+		assertThat(converted.get("status").asText()).isEqualTo("CONVERTED");
+		assertThat(converted.get("targetObjectId").isNumber()).isTrue();
+		assertThat(convertedAgain.get("targetObjectId").longValue()).isEqualTo(converted.get("targetObjectId")
+			.longValue());
+		assertThat(convertedAgain.get("targetObjectNo").asText()).isEqualTo(converted.get("targetObjectNo").asText());
+		assertThat(convertedAgain.get("targetRoute").asText()).isEqualTo(converted.get("targetRoute").asText());
+
+		Map<String, Object> workOrder = this.jdbcTemplate.queryForMap("""
+				select work_order_no, status, product_material_id, planned_quantity, ownership_type, project_id,
+				       source_mrp_run_id, source_mrp_suggestion_id, bom_id, issue_warehouse_id,
+				       receipt_warehouse_id, planned_start_date, planned_finish_date
+				from mfg_work_order
+				where id = ?
+				""", converted.get("targetObjectId").longValue());
+		assertThat(workOrder.get("work_order_no")).isEqualTo(converted.get("targetObjectNo").asText());
+		assertThat(workOrder.get("status")).isEqualTo("DRAFT");
+		assertThat(((Number) workOrder.get("product_material_id")).longValue()).isEqualTo(seed.materialId());
+		assertThat((BigDecimal) workOrder.get("planned_quantity")).isEqualByComparingTo("1.000000");
+		assertThat(workOrder.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) workOrder.get("project_id")).longValue()).isEqualTo(seed.projectId());
+		assertThat(((Number) workOrder.get("source_mrp_run_id")).longValue()).isEqualTo(run.get("id").longValue());
+		assertThat(((Number) workOrder.get("source_mrp_suggestion_id")).longValue()).isEqualTo(confirmed.get("id")
+			.longValue());
+		assertThat(workOrder.get("bom_id")).isNull();
+		assertThat(workOrder.get("issue_warehouse_id")).isNull();
+		assertThat(workOrder.get("receipt_warehouse_id")).isNull();
+		assertThat(workOrder.get("planned_start_date")).isNull();
+		assertThat(workOrder.get("planned_finish_date")).isNull();
+	}
+
+	@Test
+	void stage027ConfirmedOutsourcedSuggestionConvertsToDraftOutsourcingOrderIdempotently() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		int suffix = SEQUENCE.incrementAndGet();
+		LocalDate demandDate = LocalDate.now().plusDays(10);
+		DemandSeed seed = outsourcedDemand("MRP_027_OS_" + suffix, demandDate);
+		insertBom("MRP_027_OS_BOM_" + suffix, seed.materialId(), seed.unitId(), LocalDate.now().minusDays(1),
+				List.of());
+		JsonNode run = data(post(admin, "/api/admin/planning/material-requirement-runs",
+				runRequest(seed.projectId(), demandDate, "MRP-027-OS-RUN-" + suffix)));
+		JsonNode suggestions = data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + run.get("id").longValue()
+						+ "/suggestions?page=1&pageSize=50"));
+		JsonNode suggestion = findSuggestion(suggestions.get("items"), seed.materialId(), "PRODUCTION_ORDER");
+		JsonNode confirmed = data(put(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + suggestion.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", suggestion.get("version").longValue(), "idempotencyKey",
+						"MRP-027-OS-CONFIRM-" + suffix)));
+		Map<String, Object> convertRequest = Map.of("version", confirmed.get("version").longValue(),
+				"idempotencyKey", "MRP-027-OS-CONVERT-" + suffix);
+		JsonNode converted = data(post(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + confirmed.get("id").longValue()
+						+ "/convert-outsourcing-order",
+				convertRequest));
+		JsonNode convertedAgain = data(post(admin,
+				"/api/admin/planning/material-requirement-suggestions/" + confirmed.get("id").longValue()
+						+ "/convert-outsourcing-order",
+				convertRequest));
+
+		assertProductionConversionRecord(converted, confirmed.get("id").longValue(), "OUTSOURCING_ORDER", "MFG-OS",
+				"/production/outsourcing-orders/");
+		assertThat(converted.get("status").asText()).isEqualTo("CONVERTED");
+		assertThat(converted.get("targetObjectId").isNumber()).isTrue();
+		assertThat(convertedAgain.get("targetObjectId").longValue()).isEqualTo(converted.get("targetObjectId")
+			.longValue());
+		assertThat(convertedAgain.get("targetObjectNo").asText()).isEqualTo(converted.get("targetObjectNo").asText());
+		assertThat(convertedAgain.get("targetRoute").asText()).isEqualTo(converted.get("targetRoute").asText());
+
+		Map<String, Object> outsourcingOrder = this.jdbcTemplate.queryForMap("""
+				select outsourcing_order_no, status, product_material_id, planned_quantity, ownership_type, project_id,
+				       source_mrp_run_id, source_mrp_suggestion_id, supplier_id, bom_id, issue_warehouse_id,
+				       receipt_warehouse_id, planned_issue_date, planned_receipt_date
+				from mfg_outsourcing_order
+				where id = ?
+				""", converted.get("targetObjectId").longValue());
+		assertThat(outsourcingOrder.get("outsourcing_order_no")).isEqualTo(converted.get("targetObjectNo").asText());
+		assertThat(outsourcingOrder.get("status")).isEqualTo("DRAFT");
+		assertThat(((Number) outsourcingOrder.get("product_material_id")).longValue()).isEqualTo(seed.materialId());
+		assertThat((BigDecimal) outsourcingOrder.get("planned_quantity")).isEqualByComparingTo("1.000000");
+		assertThat(outsourcingOrder.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) outsourcingOrder.get("project_id")).longValue()).isEqualTo(seed.projectId());
+		assertThat(((Number) outsourcingOrder.get("source_mrp_run_id")).longValue()).isEqualTo(run.get("id")
+			.longValue());
+		assertThat(((Number) outsourcingOrder.get("source_mrp_suggestion_id")).longValue()).isEqualTo(confirmed.get("id")
+			.longValue());
+		assertThat(outsourcingOrder.get("supplier_id")).isNull();
+		assertThat(outsourcingOrder.get("bom_id")).isNull();
+		assertThat(outsourcingOrder.get("issue_warehouse_id")).isNull();
+		assertThat(outsourcingOrder.get("receipt_warehouse_id")).isNull();
+		assertThat(outsourcingOrder.get("planned_issue_date")).isNull();
+		assertThat(outsourcingOrder.get("planned_receipt_date")).isNull();
+	}
+
+	@Test
 	void redReview_materialRequirementExportAppliesResultLevelFilters() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		int suffix = SEQUENCE.incrementAndGet();
@@ -1589,6 +1858,20 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 		long projectId = insertProject(prefix + "_PRJ", customerId, adminUserId);
 		long contractId = insertContract(prefix + "_CON", projectId);
 		long materialId = insertMaterial(prefix + "_MAT", "FINISHED_GOOD", "SELF_MADE", categoryId, unitId);
+		long demandLineId = insertSalesDemand(prefix + "_SO", customerId, projectId, contractId, materialId, unitId,
+				demandDate, "1.000000");
+		return new DemandSeed(projectId, materialId, unitId, categoryId, demandLineId);
+	}
+
+	private DemandSeed outsourcedDemand(String prefix, LocalDate demandDate) {
+		long adminUserId = this.jdbcTemplate.queryForObject("select id from sys_user where username = 'admin'",
+				Long.class);
+		long unitId = insertUnit(prefix + "_U");
+		long categoryId = insertCategory(prefix + "_CAT");
+		long customerId = insertCustomer(prefix + "_CUS");
+		long projectId = insertProject(prefix + "_PRJ", customerId, adminUserId);
+		long contractId = insertContract(prefix + "_CON", projectId);
+		long materialId = insertMaterial(prefix + "_MAT", "FINISHED_GOOD", "OUTSOURCED", categoryId, unitId);
 		long demandLineId = insertSalesDemand(prefix + "_SO", customerId, projectId, contractId, materialId, unitId,
 				demandDate, "1.000000");
 		return new DemandSeed(projectId, materialId, unitId, categoryId, demandLineId);
@@ -2153,6 +2436,18 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 		if (node.hasNonNull(field)) {
 			softly.assertThat(node.get(field).isBoolean()).as(label).isTrue();
 		}
+	}
+
+	private void assertProductionConversionRecord(JsonNode node, long suggestionId, String targetObjectType,
+			String targetNoPrefix, String targetRoutePrefix) {
+		assertThat(node.has("id")).as("027 生产转换响应不得继续返回完整建议 DTO：" + node).isFalse();
+		assertThat(node.has("materialId")).as("027 生产转换响应不得泄露建议列表字段：" + node).isFalse();
+		assertThat(node.get("suggestionId").longValue()).isEqualTo(suggestionId);
+		assertThat(node.get("status").asText()).isEqualTo("CONVERTED");
+		assertThat(node.get("targetObjectType").asText()).isEqualTo(targetObjectType);
+		assertThat(node.get("targetObjectNo").asText()).startsWith(targetNoPrefix);
+		assertThat(node.get("targetRoute").asText()).isEqualTo(targetRoutePrefix + node.get("targetObjectId").asText());
+		assertThat(node.get("version").isNumber()).isTrue();
 	}
 
 	private void assertSourceFieldsRedacted(SoftAssertions softly, JsonNode node, String label, String... fields) {

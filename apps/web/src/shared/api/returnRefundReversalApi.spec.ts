@@ -179,6 +179,7 @@ const productionMaterialReturnDetail: ProductionMaterialReturnDetail = {
   businessDate: '2026-07-05',
   status: 'DRAFT',
   totalQuantity: '3.000000',
+  version: 5,
   source: {
     sourceType: 'PRODUCTION_MATERIAL_ISSUE',
     sourceId: 40,
@@ -235,6 +236,7 @@ const productionMaterialSupplementDetail: ProductionMaterialSupplementDetail = {
   businessDate: '2026-07-05',
   status: 'DRAFT',
   totalQuantity: '2.000000',
+  version: 6,
   source: {
     sourceType: 'PRODUCTION_WORK_ORDER',
     sourceId: 30,
@@ -703,6 +705,7 @@ describe('退货退款与反冲 API', () => {
       sourceIssueId: 40,
       businessDate: '2026-07-05',
       clientRequestId: 'material-return-client-1',
+      idempotencyKey: 'material-return-create-1',
       remark: '余料退回',
       lines: [{
         sourceIssueLineId: 401,
@@ -716,6 +719,7 @@ describe('退货退款与反冲 API', () => {
       warehouseId: 4,
       businessDate: '2026-07-05',
       clientRequestId: 'material-supplement-client-1',
+      idempotencyKey: 'material-supplement-create-1',
       remark: '损耗补料',
       lines: [{
         workOrderMaterialId: 501,
@@ -726,13 +730,26 @@ describe('退货退款与反冲 API', () => {
     }
 
     await api.productionMaterialReturns.create(returnPayload)
-    await api.productionMaterialReturns.update(3, { ...returnPayload, sourceIssueId: undefined, lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }] })
-    await api.productionMaterialReturns.post(3)
-    await api.productionMaterialReturns.cancel(3)
+    await api.productionMaterialReturns.update(3, {
+      ...returnPayload,
+      sourceIssueId: undefined,
+      version: 9,
+      idempotencyKey: 'material-return-update-3',
+      lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }],
+    })
+    await api.productionMaterialReturns.post(3, { version: 10, idempotencyKey: 'material-return-post-3' })
+    await api.productionMaterialReturns.cancel(3, { version: 11, idempotencyKey: 'material-return-cancel-3' })
     await api.productionMaterialSupplements.create(supplementPayload)
-    await api.productionMaterialSupplements.update(4, { ...supplementPayload, workOrderId: undefined, warehouseId: undefined, lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }] })
-    await api.productionMaterialSupplements.post(4)
-    await api.productionMaterialSupplements.cancel(4)
+    await api.productionMaterialSupplements.update(4, {
+      ...supplementPayload,
+      workOrderId: undefined,
+      warehouseId: undefined,
+      version: 12,
+      idempotencyKey: 'material-supplement-update-4',
+      lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }],
+    })
+    await api.productionMaterialSupplements.post(4, { version: 13, idempotencyKey: 'material-supplement-post-4' })
+    await api.productionMaterialSupplements.cancel(4, { version: 14, idempotencyKey: 'material-supplement-cancel-4' })
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].quantity).toBe('3.000000')
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/production/material-returns', expect.objectContaining({
@@ -741,24 +758,51 @@ describe('退货退款与反冲 API', () => {
       method: 'POST',
     }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/production/material-returns/3', expect.objectContaining({
-      body: JSON.stringify({ ...returnPayload, sourceIssueId: undefined, lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }] }),
+      body: JSON.stringify({
+        ...returnPayload,
+        sourceIssueId: undefined,
+        version: 9,
+        idempotencyKey: 'material-return-update-3',
+        lines: [{ id: 31, quantity: '4.000000', reason: '调整退料' }],
+      }),
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-1' }),
       method: 'PUT',
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/production/material-returns/3/post', expect.objectContaining({ method: 'PUT' }))
-    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/production/material-returns/3/cancel', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/production/material-returns/3/post', expect.objectContaining({
+      body: JSON.stringify({ version: 10, idempotencyKey: 'material-return-post-3' }),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/production/material-returns/3/cancel', expect.objectContaining({
+      body: JSON.stringify({ version: 11, idempotencyKey: 'material-return-cancel-3' }),
+      method: 'PUT',
+    }))
     expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/production/material-supplements', expect.objectContaining({
       body: JSON.stringify(supplementPayload),
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-4' }),
       method: 'POST',
     }))
     expect(fetcher).toHaveBeenNthCalledWith(12, '/api/admin/production/material-supplements/4', expect.objectContaining({
-      body: JSON.stringify({ ...supplementPayload, workOrderId: undefined, warehouseId: undefined, lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }] }),
+      body: JSON.stringify({
+        ...supplementPayload,
+        workOrderId: undefined,
+        warehouseId: undefined,
+        version: 12,
+        idempotencyKey: 'material-supplement-update-4',
+        lines: [{ id: 41, quantity: '2.500000', reason: '调整补料' }],
+      }),
       headers: expect.objectContaining({ 'X-CSRF-TOKEN': 'csrf-5' }),
       method: 'PUT',
     }))
-    expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/production/material-supplements/4/post', expect.objectContaining({ method: 'PUT' }))
-    expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/production/material-supplements/4/cancel', expect.objectContaining({ method: 'PUT' }))
+    expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/production/material-supplements/4/post', expect.objectContaining({
+      body: JSON.stringify({ version: 13, idempotencyKey: 'material-supplement-post-4' }),
+      method: 'PUT',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(16, '/api/admin/production/material-supplements/4/cancel', expect.objectContaining({
+      body: JSON.stringify({ version: 14, idempotencyKey: 'material-supplement-cancel-4' }),
+      method: 'PUT',
+    }))
+    await expect(api.productionMaterialReturns.post(3, { version: 10, idempotencyKey: '' })).rejects.toThrow('幂等键不能为空')
+    await expect(api.productionMaterialSupplements.cancel(4, { version: 14, idempotencyKey: '  ' })).rejects.toThrow('幂等键不能为空')
   })
 
   it('按查询条件获取往来冲减和候选来源，并过滤空查询值', async () => {

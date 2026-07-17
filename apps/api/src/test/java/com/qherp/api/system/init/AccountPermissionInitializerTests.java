@@ -270,7 +270,39 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			new ExpectedActionPermission("production:material-supplement:post", "production", "PUT",
 					"/api/admin/production/material-supplements/{id}/post"),
 			new ExpectedActionPermission("production:material-supplement:cancel", "production", "PUT",
-					"/api/admin/production/material-supplements/{id}/cancel"));
+					"/api/admin/production/material-supplements/{id}/cancel"),
+			new ExpectedActionPermission("production:outsourcing:view", "production", "GET",
+					"/api/admin/production/outsourcing-orders/**"),
+			new ExpectedActionPermission("production:outsourcing:create", "production", "POST",
+					"/api/admin/production/outsourcing-orders"),
+			new ExpectedActionPermission("production:outsourcing:update", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}"),
+			new ExpectedActionPermission("production:outsourcing:release", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/release"),
+			new ExpectedActionPermission("production:outsourcing:close", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/close"),
+			new ExpectedActionPermission("production:outsourcing:cancel", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/cancel"),
+			new ExpectedActionPermission("production:outsourcing-issue:view", "production", "GET",
+					"/api/admin/production/outsourcing-orders/{id}/material-issues/**"),
+			new ExpectedActionPermission("production:outsourcing-issue:create", "production", "POST",
+					"/api/admin/production/outsourcing-orders/{id}/material-issues"),
+			new ExpectedActionPermission("production:outsourcing-issue:update", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/material-issues/{issueId}"),
+			new ExpectedActionPermission("production:outsourcing-issue:post", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/material-issues/{issueId}/post"),
+			new ExpectedActionPermission("production:outsourcing-issue:cancel", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/material-issues/{issueId}/cancel"),
+			new ExpectedActionPermission("production:outsourcing-receipt:view", "production", "GET",
+					"/api/admin/production/outsourcing-orders/{id}/receipts/**"),
+			new ExpectedActionPermission("production:outsourcing-receipt:create", "production", "POST",
+					"/api/admin/production/outsourcing-orders/{id}/receipts"),
+			new ExpectedActionPermission("production:outsourcing-receipt:update", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/receipts/{receiptId}"),
+			new ExpectedActionPermission("production:outsourcing-receipt:post", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/receipts/{receiptId}/post"),
+			new ExpectedActionPermission("production:outsourcing-receipt:cancel", "production", "PUT",
+					"/api/admin/production/outsourcing-orders/{id}/receipts/{receiptId}/cancel"));
 
 	private static final List<ExpectedActionPermission> COST_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("cost:record:view", "cost", "GET", "/api/admin/cost/**"),
@@ -1230,6 +1262,30 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 			assertThat(permission.getApiMethod()).isEqualTo(expected.apiMethod());
 			assertThat(permission.getApiPath()).isEqualTo(expected.apiPath());
 			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+			.isTrue();
+		});
+	}
+
+	@Test
+	void initializesStage027PlanningConversionPermissionsAndAssignsThemToSystemAdmin() {
+		var systemAdmin = this.roleRepository.findByCode("SYSTEM_ADMIN").orElseThrow();
+		var parent = this.permissionRepository.findByCode("planning:material-requirement").orElseThrow();
+		List<ExpectedActionPermission> actions = List.of(
+				new ExpectedActionPermission("planning:material-requirement:convert-production",
+						"planning:material-requirement", "POST",
+						"/api/admin/planning/material-requirement-suggestions/{id}/convert-work-order"),
+				new ExpectedActionPermission("planning:material-requirement:convert-outsourcing",
+						"planning:material-requirement", "POST",
+						"/api/admin/planning/material-requirement-suggestions/{id}/convert-outsourcing-order"));
+
+		actions.forEach(expected -> {
+			var permission = this.permissionRepository.findByCode(expected.code()).orElseThrow();
+			assertThat(permission.getType()).as(expected.code()).isEqualTo(SystemPermissionType.ACTION);
+			assertThat(permission.getParentId()).as(expected.code()).isEqualTo(parent.getId());
+			assertThat(permission.getApiMethod()).as(expected.code()).isEqualTo(expected.apiMethod());
+			assertThat(permission.getApiPath()).as(expected.code()).isEqualTo(expected.apiPath());
+			assertThat(this.rolePermissionRepository.existsByRoleIdAndPermissionId(systemAdmin.getId(), permission.getId()))
+				.as(expected.code())
 				.isTrue();
 		});
 	}

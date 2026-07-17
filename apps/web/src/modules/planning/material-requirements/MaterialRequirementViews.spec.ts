@@ -39,6 +39,8 @@ const materialRequirementApiMock = vi.hoisted(() => ({
     confirm: vi.fn(),
     dismiss: vi.fn(),
     convertRequisition: vi.fn(),
+    convertWorkOrder: vi.fn(),
+    convertOutsourcingOrder: vi.fn(),
   },
 }))
 
@@ -282,6 +284,38 @@ const confirmedSuggestion: MaterialRequirementSuggestionRecord = {
   version: 3,
 }
 
+const confirmedProductionSuggestion: MaterialRequirementSuggestionRecord = {
+  ...openSuggestion,
+  id: 'SUG-3',
+  suggestionNo: 'MS-026-003',
+  suggestionType: 'PRODUCTION_ORDER',
+  status: 'CONFIRMED',
+  statusName: '已确认',
+  materialSourceType: 'MANUFACTURED',
+  materialCode: 'FG-027',
+  materialName: '项目自制柜',
+  suggestedQuantity: '3.000000',
+  conversionAllowed: true,
+  allowedActions: ['CONVERT_WORK_ORDER'],
+  version: 4,
+}
+
+const confirmedOutsourcingSuggestion: MaterialRequirementSuggestionRecord = {
+  ...openSuggestion,
+  id: 'SUG-4',
+  suggestionNo: 'MS-026-004',
+  suggestionType: 'PRODUCTION_ORDER',
+  status: 'CONFIRMED',
+  statusName: '已确认',
+  materialSourceType: 'OUTSOURCED',
+  materialCode: 'SF-027',
+  materialName: '项目外协半成品',
+  suggestedQuantity: '2.000000',
+  conversionAllowed: true,
+  allowedActions: ['CONVERT_OUTSOURCING_ORDER'],
+  version: 5,
+}
+
 const productionSuggestion: MaterialRequirementSuggestionRecord = {
   ...openSuggestion,
   id: 'SUG-3',
@@ -321,6 +355,8 @@ async function routerFor(path: string) {
       { path: '/planning/material-requirements', name: 'planning-material-requirements', component: MaterialRequirementRunListView },
       { path: '/planning/material-requirements/:id', name: 'planning-material-requirement-detail', component: MaterialRequirementRunDetailView },
       { path: '/procurement/requisitions/:id', name: 'procurement-requisition-detail', component: { render: () => null } },
+      { path: '/production/work-orders/:id', name: 'production-work-order-detail', component: { render: () => null } },
+      { path: '/production/outsourcing-orders/:id', name: 'production-outsourcing-order-detail', component: { render: () => null } },
     ],
   })
   await router.push(path)
@@ -343,7 +379,13 @@ describe('026 订单缺料分析页面', () => {
       reservedAllocation,
       otherRequirementAllocation,
     ], 50))
-    materialRequirementApiMock.runs.suggestions.mockResolvedValue(page([openSuggestion, confirmedSuggestion, productionSuggestion]))
+    materialRequirementApiMock.runs.suggestions.mockResolvedValue(page([
+      openSuggestion,
+      confirmedSuggestion,
+      confirmedProductionSuggestion,
+      confirmedOutsourcingSuggestion,
+      productionSuggestion,
+    ]))
     materialRequirementApiMock.runs.substituteHints.mockResolvedValue(page([substituteHint, otherRequirementHint]))
     materialRequirementApiMock.suggestions.confirm.mockResolvedValue({ ...openSuggestion, status: 'CONFIRMED', version: 3 })
     materialRequirementApiMock.suggestions.dismiss.mockResolvedValue({ ...openSuggestion, status: 'DISMISSED', version: 3 })
@@ -353,6 +395,24 @@ describe('026 订单缺料分析页面', () => {
       convertedRequisitionId: 9001,
       convertedRequisitionNo: 'PR-026-001',
       version: 4,
+    })
+    materialRequirementApiMock.suggestions.convertWorkOrder.mockResolvedValue({
+      suggestionId: 'SUG-3',
+      status: 'CONVERTED',
+      targetObjectType: 'WORK_ORDER',
+      targetObjectId: 7001,
+      targetObjectNo: 'WO-027-001',
+      targetRoute: '/production/work-orders/7001?sourceMrpSuggestionId=SUG-3',
+      version: 6,
+    })
+    materialRequirementApiMock.suggestions.convertOutsourcingOrder.mockResolvedValue({
+      suggestionId: 'SUG-4',
+      status: 'CONVERTED',
+      targetObjectType: 'OUTSOURCING_ORDER',
+      targetObjectId: 8001,
+      targetObjectNo: 'OS-027-001',
+      targetRoute: '/production/outsourcing-orders/8001?sourceMrpSuggestionId=SUG-4',
+      version: 7,
     })
     documentPlatformApiMock.exports.createMaterialRequirementRuns.mockResolvedValue({
       id: 801,
@@ -468,7 +528,11 @@ describe('026 订单缺料分析页面', () => {
       'planning:material-requirement:view',
       'planning:material-requirement:manage-suggestion',
       'planning:material-requirement:convert-requisition',
+      'planning:material-requirement:convert-production',
+      'planning:material-requirement:convert-outsourcing',
       'procurement:requisition:create',
+      'production:work-order:create',
+      'production:outsourcing:create',
       'sales:effective-demand:view',
       'material:bom:view',
       'inventory:balance:view',
@@ -495,7 +559,11 @@ describe('026 订单缺料分析页面', () => {
     expect(wrapper.text()).toContain('短缺 8.5')
     expect(wrapper.text()).toContain('预计可用 2026-08-25')
     expect(wrapper.text()).toContain('采购请购建议')
-    expect(wrapper.text()).toContain('外协生产建议，027 后可执行')
+    expect(wrapper.text()).toContain('生产建议')
+    expect(wrapper.text()).toContain('项目自制柜')
+    expect(wrapper.text()).toContain('项目外协半成品')
+    expect(wrapper.text()).toContain('转生产工单')
+    expect(wrapper.text()).toContain('转外协订单')
     expect(wrapper.text()).not.toContain('生成采购订单')
     expect(wrapper.text()).not.toContain('自动建工单')
     expect(wrapper.text()).not.toContain('齐套承诺')
@@ -551,6 +619,28 @@ describe('026 订单缺料分析页面', () => {
       version: 3,
       idempotencyKey: 'material-requirement-key',
     })
+
+    await wrapper.find('[data-test="convert-work-order-suggestion-SUG-3"]').trigger('click')
+    await flushPromises()
+    expect(materialRequirementApiMock.suggestions.convertWorkOrder).toHaveBeenCalledWith('SUG-3', {
+      version: 4,
+      idempotencyKey: 'material-requirement-key',
+    })
+    expect(router.currentRoute.value.name).toBe('production-work-order-detail')
+    expect(router.currentRoute.value.params.id).toBe('7001')
+    expect(router.currentRoute.value.query.sourceMrpSuggestionId).toBe('SUG-3')
+
+    await router.push('/planning/material-requirements/1001')
+    await flushPromises()
+    await wrapper.find('[data-test="convert-outsourcing-suggestion-SUG-4"]').trigger('click')
+    await flushPromises()
+    expect(materialRequirementApiMock.suggestions.convertOutsourcingOrder).toHaveBeenCalledWith('SUG-4', {
+      version: 5,
+      idempotencyKey: 'material-requirement-key',
+    })
+    expect(router.currentRoute.value.name).toBe('production-outsourcing-order-detail')
+    expect(router.currentRoute.value.params.id).toBe('8001')
+    expect(router.currentRoute.value.query.sourceMrpSuggestionId).toBe('SUG-4')
   })
 
   it('来源受限时主表与建议使用受限文案，不把空字段渲染成未返回或来源明文', async () => {

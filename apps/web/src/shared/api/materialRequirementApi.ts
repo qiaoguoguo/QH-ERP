@@ -48,6 +48,16 @@ export interface MaterialRequirementDismissPayload extends MaterialRequirementVe
   reason: string
 }
 
+export interface MaterialRequirementSuggestionConversionRecord {
+  suggestionId: ResourceId
+  status: MaterialRequirementSuggestionStatus
+  targetObjectType: 'WORK_ORDER' | 'OUTSOURCING_ORDER' | 'PURCHASE_REQUISITION' | string
+  targetObjectId: ResourceId
+  targetObjectNo: string
+  targetRoute: string
+  version: number
+}
+
 export interface MaterialRequirementRequirementLineParams extends MaterialRequirementPageParams {
   materialId?: ResourceId | null | ''
   coverageStatus?: string | null
@@ -209,6 +219,14 @@ export interface MaterialRequirementApi {
       id: ResourceId,
       payload: MaterialRequirementVersionPayload,
     ): Promise<MaterialRequirementSuggestionRecord>
+    convertWorkOrder(
+      id: ResourceId,
+      payload: MaterialRequirementVersionPayload,
+    ): Promise<MaterialRequirementSuggestionConversionRecord>
+    convertOutsourcingOrder(
+      id: ResourceId,
+      payload: MaterialRequirementVersionPayload,
+    ): Promise<MaterialRequirementSuggestionConversionRecord>
   }
 }
 
@@ -344,6 +362,18 @@ export function createMaterialRequirementApi(options: MaterialRequirementApiOpti
         writeAction<MaterialRequirementSuggestionRecord>('PUT', `${suggestionPath(id)}/dismiss`, payload),
       convertRequisition: (id, payload) =>
         writeAction<MaterialRequirementSuggestionRecord>('POST', `${suggestionPath(id)}/convert-requisition`, payload),
+      convertWorkOrder: (id, payload) =>
+        writeAction<MaterialRequirementSuggestionConversionRecord>(
+          'POST',
+          `${suggestionPath(id)}/convert-work-order`,
+          payload,
+        ),
+      convertOutsourcingOrder: (id, payload) =>
+        writeAction<MaterialRequirementSuggestionConversionRecord>(
+          'POST',
+          `${suggestionPath(id)}/convert-outsourcing-order`,
+          payload,
+        ),
     },
   }
 }

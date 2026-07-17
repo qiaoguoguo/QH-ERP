@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createMaterialRequirementApi,
+  type MaterialRequirementSuggestionConversionRecord,
   type MaterialRequirementRunRecord,
   type MaterialRequirementSuggestionRecord,
 } from './materialRequirementApi'
@@ -48,6 +49,16 @@ describe('026 订单缺料分析 API', () => {
     suggestionHasAllowedActionsAndVersion: true as AssertTrue<
       MaterialRequirementSuggestionRecord extends { allowedActions?: string[]; version: number } ? true : false
     >,
+    conversionResponseHasTargetRoute: true as AssertTrue<
+      MaterialRequirementSuggestionConversionRecord extends {
+        suggestionId: unknown
+        targetObjectType: unknown
+        targetObjectId: unknown
+        targetObjectNo: unknown
+        targetRoute: string
+        version: number
+      } ? true : false
+    >,
     runUsesStableFailureSummary: true as AssertTrue<
       'failureSummary' extends keyof MaterialRequirementRunRecord ? true : false
     >,
@@ -58,6 +69,7 @@ describe('026 订单缺料分析 API', () => {
       runHasShortageCount: true,
       suggestionQuantityIsString: true,
       suggestionHasAllowedActionsAndVersion: true,
+      conversionResponseHasTargetRoute: true,
       runUsesStableFailureSummary: true,
     })
     expect(apiSource).toContain('failureSummary')
@@ -114,7 +126,15 @@ describe('026 订单缺料分析 API', () => {
 
   it('运行、重算和建议写动作先取 CSRF，携带 version 与幂等键且不自动重放 409', async () => {
     const fetcher = vi.fn()
-    const tokens = ['csrf-create-run', 'csrf-recalculate', 'csrf-confirm', 'csrf-dismiss', 'csrf-convert']
+    const tokens = [
+      'csrf-create-run',
+      'csrf-recalculate',
+      'csrf-confirm',
+      'csrf-dismiss',
+      'csrf-convert',
+      'csrf-convert-work-order',
+      'csrf-convert-outsourcing',
+    ]
     tokens.forEach((token) => {
       fetcher.mockResolvedValueOnce(apiResponse({ token, headerName: 'X-CSRF-TOKEN', parameterName: '_csrf' }))
       fetcher.mockResolvedValueOnce(apiResponse({ id: token, version: 8 }))
@@ -135,6 +155,11 @@ describe('026 订单缺料分析 API', () => {
       idempotencyKey: 'suggestion-dismiss-key',
     })
     await api.suggestions.convertRequisition('SUG-2', { version: 4, idempotencyKey: 'suggestion-convert-key' })
+    await api.suggestions.convertWorkOrder('SUG-3', { version: 5, idempotencyKey: 'suggestion-work-order-key' })
+    await api.suggestions.convertOutsourcingOrder('SUG-4', {
+      version: 6,
+      idempotencyKey: 'suggestion-outsourcing-key',
+    })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/planning/material-requirement-runs', {
       body: JSON.stringify({
@@ -169,6 +194,14 @@ describe('026 订单缺料分析 API', () => {
     }))
     expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/planning/material-requirement-suggestions/SUG-2/convert-requisition', expect.objectContaining({
       body: JSON.stringify({ version: 4, idempotencyKey: 'suggestion-convert-key' }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(12, '/api/admin/planning/material-requirement-suggestions/SUG-3/convert-work-order', expect.objectContaining({
+      body: JSON.stringify({ version: 5, idempotencyKey: 'suggestion-work-order-key' }),
+      method: 'POST',
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(14, '/api/admin/planning/material-requirement-suggestions/SUG-4/convert-outsourcing-order', expect.objectContaining({
+      body: JSON.stringify({ version: 6, idempotencyKey: 'suggestion-outsourcing-key' }),
       method: 'POST',
     }))
 

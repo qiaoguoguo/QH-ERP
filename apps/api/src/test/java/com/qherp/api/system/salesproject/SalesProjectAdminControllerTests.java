@@ -407,6 +407,7 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		List<String> projectColumns = columns("sal_project");
 		List<String> contractColumns = columns("sal_project_contract");
 		List<String> orderColumns = columns("sal_sales_order");
+		List<String> workOrderColumns = columns("mfg_work_order");
 
 		assertThat(projectColumns).contains("project_no", "customer_id", "owner_user_id", "status", "target_revenue",
 				"target_cost", "version");
@@ -414,11 +415,12 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 				"main_contract_id", "amount", "status", "version");
 		assertThat(orderColumns).contains("project_id", "contract_id");
 		assertThat(columns("proc_purchase_order")).contains("project_id").doesNotContain("contract_id");
-		assertThat(columns("mfg_work_order")).doesNotContain("project_id", "contract_id");
+		assertThat(workOrderColumns).contains("ownership_type", "project_id").doesNotContain("contract_id");
 		assertThat(indexes("sal_project_contract")).contains("uk_sal_project_contract_main_active");
 		assertThat(constraint("sal_sales_order", "ck_sal_sales_order_project_pair")).contains("project_id");
 		assertThat(nullable("sal_project", "owner_user_id")).isFalse();
 		assertThat(nullable("sal_project_contract", "signed_date")).isFalse();
+		assertThat(nullable("mfg_work_order", "project_id")).isTrue();
 	}
 
 	@Test
@@ -554,6 +556,87 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(summary.get("latestOrderDate").asText()).isEqualTo(LocalDate.now().toString());
 	}
 
+	@Test
+	void projectProductionSummaryAggregatesProductionOutsourcingAndMasksValuation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long customerId = insertCustomer("SPC_PROD_SUM_CUS_" + SEQUENCE.incrementAndGet(), "生产摘要客户", "ENABLED");
+		long ownerUserId = userId("admin");
+		JsonNode project = data(createProject(admin, projectPayload(customerId, ownerUserId, "生产摘要项目")));
+		long projectId = project.get("id").longValue();
+		ProductionSummarySeed seed = productionSummarySeed(projectId);
+
+		AuthenticatedSession neitherProduction = createUserAndLogin("project-prod-summary-project-only-",
+				"PROJECT_PROD_SUM_PROJECT_ONLY_", List.of("sales:project:view"));
+		assertError(get("/api/admin/sales-projects/" + projectId + "/production-summary", neitherProduction),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		AuthenticatedSession noValuation = createUserAndLogin("project-prod-summary-no-val-",
+				"PROJECT_PROD_SUM_NO_VAL_", List.of("sales:project:view", "production:work-order:view",
+						"production:outsourcing:view"));
+		JsonNode summary = data(get("/api/admin/sales-projects/" + projectId + "/production-summary", noValuation));
+		assertThat(summary.get("projectId").longValue()).isEqualTo(projectId);
+		assertThat(summary.get("workOrderCount").longValue()).isEqualTo(1L);
+		assertThat(summary.get("releasedWorkOrderCount").longValue()).isEqualTo(1L);
+		assertThat(summary.get("completedWorkOrderCount").longValue()).isZero();
+		assertThat(summary.get("outsourcingOrderCount").longValue()).isEqualTo(1L);
+		assertThat(summary.get("outsourcingInProgressCount").longValue()).isEqualTo(1L);
+		assertThat(summary.get("outsourcingCompletedCount").longValue()).isZero();
+		assertThat(summary.get("plannedQuantity").asText()).isEqualTo("3.000000");
+		assertThat(summary.get("completedQuantity").asText()).isEqualTo("1.000000");
+		assertThat(summary.get("outsourcingPlannedQuantity").asText()).isEqualTo("2.000000");
+		assertThat(summary.get("outsourcingReceivedQuantity").asText()).isEqualTo("0.500000");
+		assertThat(summary.get("costVisible").booleanValue()).isFalse();
+		assertThat(summary.get("costRestrictedReason").asText()).contains("估值");
+		assertThat(summary.get("latestWorkOrderNo").asText()).isEqualTo(seed.workOrderNo());
+		assertThat(summary.get("latestOutsourcingOrderNo").asText()).isEqualTo(seed.outsourcingOrderNo());
+
+		AuthenticatedSession onlyWorkOrder = createUserAndLogin("project-prod-summary-only-wo-",
+				"PROJECT_PROD_SUM_ONLY_WO_", List.of("sales:project:view", "production:work-order:view"));
+		JsonNode workOrderOnlySummary = data(get("/api/admin/sales-projects/" + projectId + "/production-summary",
+				onlyWorkOrder));
+		assertThat(workOrderOnlySummary.get("workOrderCount").longValue()).isEqualTo(1L);
+		assertThat(workOrderOnlySummary.get("releasedWorkOrderCount").longValue()).isEqualTo(1L);
+		assertThat(workOrderOnlySummary.get("completedWorkOrderCount").longValue()).isZero();
+		assertThat(workOrderOnlySummary.get("plannedQuantity").asText()).isEqualTo("3.000000");
+		assertThat(workOrderOnlySummary.get("completedQuantity").asText()).isEqualTo("1.000000");
+		assertThat(workOrderOnlySummary.get("latestWorkOrderNo").asText()).isEqualTo(seed.workOrderNo());
+		assertThat(workOrderOnlySummary.get("outsourcingOrderCount").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+		assertThat(workOrderOnlySummary.get("outsourcingInProgressCount").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+		assertThat(workOrderOnlySummary.get("outsourcingCompletedCount").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+		assertThat(workOrderOnlySummary.get("outsourcingPlannedQuantity").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+		assertThat(workOrderOnlySummary.get("outsourcingReceivedQuantity").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+		assertThat(workOrderOnlySummary.get("latestOutsourcingOrderNo").isNull()).as(workOrderOnlySummary.toString())
+			.isTrue();
+
+		AuthenticatedSession onlyOutsourcing = createUserAndLogin("project-prod-summary-only-os-",
+				"PROJECT_PROD_SUM_ONLY_OS_", List.of("sales:project:view", "production:outsourcing:view"));
+		JsonNode outsourcingOnlySummary = data(get("/api/admin/sales-projects/" + projectId + "/production-summary",
+				onlyOutsourcing));
+		assertThat(outsourcingOnlySummary.get("outsourcingOrderCount").longValue()).isEqualTo(1L);
+		assertThat(outsourcingOnlySummary.get("outsourcingInProgressCount").longValue()).isEqualTo(1L);
+		assertThat(outsourcingOnlySummary.get("outsourcingCompletedCount").longValue()).isZero();
+		assertThat(outsourcingOnlySummary.get("outsourcingPlannedQuantity").asText()).isEqualTo("2.000000");
+		assertThat(outsourcingOnlySummary.get("outsourcingReceivedQuantity").asText()).isEqualTo("0.500000");
+		assertThat(outsourcingOnlySummary.get("latestOutsourcingOrderNo").asText()).isEqualTo(seed.outsourcingOrderNo());
+		assertThat(outsourcingOnlySummary.get("workOrderCount").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+		assertThat(outsourcingOnlySummary.get("releasedWorkOrderCount").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+		assertThat(outsourcingOnlySummary.get("completedWorkOrderCount").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+		assertThat(outsourcingOnlySummary.get("plannedQuantity").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+		assertThat(outsourcingOnlySummary.get("completedQuantity").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+		assertThat(outsourcingOnlySummary.get("latestWorkOrderNo").isNull()).as(outsourcingOnlySummary.toString())
+			.isTrue();
+	}
+
 	private Map<String, Object> projectPayload(long customerId, long ownerUserId, String remark) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("name", "销售项目" + SEQUENCE.incrementAndGet());
@@ -647,6 +730,73 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 				returning id
 				""", Long.class, "SPC-PSO-" + suffix, customerId, orderDate, orderDate.plusDays(3), status,
 				"订单摘要", projectId, contractId);
+	}
+
+	private ProductionSummarySeed productionSummarySeed(long projectId) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long unitId = this.jdbcTemplate.queryForObject("""
+				insert into mst_unit (code, name, precision_scale, status, sort_order, created_by, created_at,
+					updated_by, updated_at)
+				values (?, ?, 6, 'ENABLED', 0, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-PROD-U-" + suffix, "生产摘要单位" + suffix);
+		long categoryId = this.jdbcTemplate.queryForObject("""
+				insert into mst_material_category (code, name, status, sort_order, created_by, created_at, updated_by,
+					updated_at)
+				values (?, ?, 'ENABLED', 0, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-PROD-CAT-" + suffix, "生产摘要分类" + suffix);
+		long productId = this.jdbcTemplate.queryForObject("""
+				insert into mst_material (
+					code, name, material_type, source_type, category_id, unit_id, status, created_by, created_at,
+					updated_by, updated_at
+				)
+				values (?, ?, 'FINISHED_GOOD', 'SELF_MADE', ?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-PROD-MAT-" + suffix, "生产摘要产品" + suffix, categoryId, unitId);
+		long issueWarehouseId = insertWarehouse("SPC-PROD-ISS-" + suffix, "生产摘要发料仓" + suffix);
+		long receiptWarehouseId = insertWarehouse("SPC-PROD-RCP-" + suffix, "生产摘要收货仓" + suffix);
+		long bomId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom (
+					bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id, status,
+					effective_from, created_by, created_at, updated_by, updated_at, enabled_by, enabled_at
+				)
+				values (?, ?, ?, ?, 1.000000, ?, 'ENABLED', current_date, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "SPC-PROD-BOM-" + suffix, productId, "V" + suffix, "生产摘要 BOM" + suffix, unitId);
+		String workOrderNo = "SPC-WO-" + suffix;
+		this.jdbcTemplate.update("""
+				insert into mfg_work_order (
+					work_order_no, product_material_id, bom_id, planned_quantity, reported_quantity,
+					qualified_quantity, defective_quantity, received_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_start_date, planned_finish_date, status, ownership_type, project_id,
+					remark, created_by, created_at, updated_by, updated_at, released_by, released_at
+				)
+				values (?, ?, ?, 3.000000, 1.500000, 1.000000, 0.500000, 1.000000, ?, ?, current_date,
+					current_date + interval '3 days', 'RELEASED', 'PROJECT', ?, '生产摘要工单', 'test', now(), 'test',
+					now(), 'test', now())
+				""", workOrderNo, productId, bomId, issueWarehouseId, receiptWarehouseId, projectId);
+		String outsourcingOrderNo = "SPC-OS-" + suffix;
+		this.jdbcTemplate.update("""
+				insert into mfg_outsourcing_order (
+					outsourcing_order_no, product_material_id, bom_id, planned_quantity, issued_quantity,
+					received_quantity, issue_warehouse_id, receipt_warehouse_id, planned_issue_date,
+					planned_receipt_date, status, ownership_type, project_id, provisional_unit_cost, remark,
+					created_by, created_at, updated_by, updated_at, released_by, released_at
+				)
+				values (?, ?, ?, 2.000000, 1.000000, 0.500000, ?, ?, current_date, current_date + interval '5 days',
+					'IN_PROGRESS', 'PROJECT', ?, 8.000000, '生产摘要外协', 'test', now(), 'test', now(), 'test', now())
+				""", outsourcingOrderNo, productId, bomId, issueWarehouseId, receiptWarehouseId, projectId);
+		return new ProductionSummarySeed(workOrderNo, outsourcingOrderNo);
+	}
+
+	private long insertWarehouse(String code, String name) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_warehouse (code, name, warehouse_type, status, created_by, created_at, updated_by,
+					updated_at)
+				values (?, ?, 'RAW', 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, name);
 	}
 
 	private String projectStatus(long projectId) {
@@ -909,6 +1059,9 @@ class SalesProjectAdminControllerTests extends PostgresIntegrationTest {
 
 	private record ProjectContractFixture(long projectId, long projectVersion, long mainContractId,
 			long mainContractVersion) {
+	}
+
+	private record ProductionSummarySeed(String workOrderNo, String outsourcingOrderNo) {
 	}
 
 }

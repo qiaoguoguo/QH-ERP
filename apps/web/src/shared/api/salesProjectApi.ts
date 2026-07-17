@@ -250,6 +250,24 @@ export interface SalesProjectOperation {
   createdAt: string
 }
 
+export interface SalesProjectProductionSummary {
+  projectId: ResourceId
+  workOrderCount: number | null
+  releasedWorkOrderCount?: number | null
+  completedWorkOrderCount?: number | null
+  outsourcingOrderCount: number | null
+  outsourcingInProgressCount?: number | null
+  outsourcingCompletedCount?: number | null
+  plannedQuantity?: string | null
+  completedQuantity?: string | null
+  outsourcingPlannedQuantity?: string | null
+  outsourcingReceivedQuantity?: string | null
+  costVisible?: boolean | null
+  costRestrictedReason?: string | null
+  latestWorkOrderNo?: string | null
+  latestOutsourcingOrderNo?: string | null
+}
+
 export interface SalesProjectApi {
   projects: {
     list(params: SalesProjectListParams): Promise<PageResult<SalesProjectSummary>>
@@ -273,6 +291,7 @@ export interface SalesProjectApi {
   ownerCandidates(params: CandidateListParams): Promise<PageResult<ProjectOwnerCandidate>>
   listOrderLinkCandidates(params: SalesOrderLinkCandidateParams): Promise<PageResult<SalesOrderProjectContractCandidate>>
   projectSalesOrders(projectId: ResourceId, params: ProjectSalesOrderListParams): Promise<PageResult<ProjectSalesOrderSummary>>
+  projectProductionSummary(projectId: ResourceId): Promise<SalesProjectProductionSummary>
 }
 
 export interface SalesProjectApiOptions {
@@ -389,6 +408,8 @@ export function createSalesProjectApi(options: SalesProjectApiOptions = {}): Sal
       ),
     projectSalesOrders: (projectId, params) =>
       get<PageResult<ProjectSalesOrderSummary>>(`${projectPath(projectId)}/sales-orders`, pickQuery(params, orderKeys)),
+    projectProductionSummary: (projectId) =>
+      get<SalesProjectProductionSummary>(`${projectPath(projectId)}/production-summary`),
   }
 }
 

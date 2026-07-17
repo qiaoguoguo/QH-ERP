@@ -20,6 +20,7 @@ import java.math.BigDecimal;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,6 +56,8 @@ class Stage021BackendControllerTests extends PostgresIntegrationTest {
 	private static final String SUBSTITUTES = "/api/admin/material-substitutes";
 
 	private static final String PRODUCTION = "/api/admin/production";
+
+	private static final AtomicInteger SEQUENCE = new AtomicInteger();
 
 	@Autowired
 	private TestRestTemplate restTemplate;
@@ -454,7 +457,7 @@ class Stage021BackendControllerTests extends PostgresIntegrationTest {
 				receiptWarehouseId);
 		seedStock(issueWarehouseId, rawId, eachUnitId, "20.000000");
 		ResponseEntity<String> release = exchange(HttpMethod.PUT, PRODUCTION + "/work-orders/" + workOrderId
-				+ "/release", Map.of(), admin);
+				+ "/release", productionActionBody("mfg_work_order", workOrderId, "T21-WO-REL"), admin);
 		assertThat(release.getStatusCode()).as(release.getBody()).isEqualTo(HttpStatus.OK);
 		JsonNode releasedMaterial = data(release).get("materials").get(0);
 		assertThat(releasedMaterial.get("businessUnitId").longValue()).isEqualTo(boxUnitId);
@@ -677,10 +680,24 @@ class Stage021BackendControllerTests extends PostgresIntegrationTest {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, PRODUCTION + "/work-orders",
 				Map.of("productMaterialId", productMaterialId, "bomId", bomId, "plannedQuantity", "1.000000",
 						"issueWarehouseId", issueWarehouseId, "receiptWarehouseId", receiptWarehouseId,
-						"plannedStartDate", "2026-07-20", "plannedFinishDate", "2026-07-25"),
+						"plannedStartDate", "2026-07-20", "plannedFinishDate", "2026-07-25",
+						"idempotencyKey", "T21-WO-CREATE-" + SEQUENCE.incrementAndGet()),
 				admin);
 		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
 		return data(response).get("id").longValue();
+	}
+
+	private Map<String, Object> productionActionBody(String tableName, long id, String prefix) {
+		return Map.of("version", productionDocumentVersion(tableName, id), "idempotencyKey",
+				prefix + "-" + id + "-" + SEQUENCE.incrementAndGet());
+	}
+
+	private long productionDocumentVersion(String tableName, long id) {
+		String sql = switch (tableName) {
+			case "mfg_work_order" -> "select version from mfg_work_order where id = ?";
+			default -> throw new IllegalArgumentException(tableName);
+		};
+		return this.jdbcTemplate.queryForObject(sql, Long.class, id);
 	}
 
 	private JsonNode createCodingRule(AuthenticatedSession admin, String code, String objectType, String prefix,

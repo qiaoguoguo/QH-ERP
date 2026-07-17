@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import {
   returnRefundReversalApi,
@@ -39,6 +40,11 @@ interface MaterialReturnLineDraft {
   materialCode: string
   materialName: string
   unitName: string
+  ownershipType?: string | null
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  projectName?: string | null
+  costLayerId?: ResourceId | null
   issuedQuantity: string
   returnedQuantity: string
   returnableQuantity: string
@@ -106,6 +112,11 @@ function lineDraftFromSource(line: ProductionMaterialReturnSourceLine): Material
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
+    ownershipType: line.ownershipType ?? null,
+    projectId: line.projectId ?? null,
+    projectNo: line.projectNo ?? null,
+    projectName: line.projectName ?? null,
+    costLayerId: line.costLayerId ?? null,
     issuedQuantity: line.issuedQuantity,
     returnedQuantity: line.returnedQuantity,
     returnableQuantity: line.returnableQuantity,
@@ -126,6 +137,11 @@ function lineDraftFromDetail(line: ReversalDocumentLine): MaterialReturnLineDraf
     materialCode: line.materialCode,
     materialName: line.materialName,
     unitName: line.unitName,
+    ownershipType: line.ownershipType ?? null,
+    projectId: line.projectId ?? null,
+    projectNo: line.projectNo ?? line.projectCode ?? null,
+    projectName: line.projectName ?? null,
+    costLayerId: line.costLayerId ?? null,
     issuedQuantity: '',
     returnedQuantity: line.returnedQuantityBefore ?? '',
     returnableQuantity: line.returnableQuantityBefore ?? '',
@@ -210,7 +226,7 @@ async function searchSources() {
   }
 }
 
-function buildPayload(): ProductionMaterialReturnUpdatePayload | null {
+function buildPayload(): ProductionMaterialReturnPayload | ProductionMaterialReturnUpdatePayload | null {
   if (!canEditForm.value) {
     submitError.value = `当前生产退料${nonEditableStatusText.value}，不可编辑`
     return null
@@ -277,16 +293,34 @@ function buildPayload(): ProductionMaterialReturnUpdatePayload | null {
     return null
   }
 
-  const payload: ProductionMaterialReturnUpdatePayload = {
+  const basePayload = {
     businessDate: form.businessDate,
     clientRequestId: form.clientRequestId || `material-return-${Date.now()}`,
+    idempotencyKey: createIdempotencyKey('production-material-return-save'),
     remark: form.remark,
     lines: payloadLines,
   }
-  if (form.sourceIssueId) {
-    payload.sourceIssueId = form.sourceIssueId
+  if (isEdit.value) {
+    if (editDetail.value?.version === undefined) {
+      submitError.value = '生产退料版本缺失，请刷新后重试'
+      return null
+    }
+    return {
+      ...basePayload,
+      ...(form.sourceIssueId ? { sourceIssueId: form.sourceIssueId } : {}),
+      version: editDetail.value.version,
+    }
   }
-  return payload
+  return {
+    ...basePayload,
+    sourceIssueId: form.sourceIssueId,
+  } as ProductionMaterialReturnPayload
+}
+
+function isReturnUpdatePayload(
+  payload: ProductionMaterialReturnPayload | ProductionMaterialReturnUpdatePayload,
+): payload is ProductionMaterialReturnUpdatePayload {
+  return 'version' in payload
 }
 
 async function submit() {
@@ -301,9 +335,20 @@ async function submit() {
 
   submitting.value = true
   try {
-    const detail = isEdit.value && routeId.value
-      ? await returnRefundReversalApi.productionMaterialReturns.update(routeId.value, payload)
-      : await returnRefundReversalApi.productionMaterialReturns.create(payload as ProductionMaterialReturnPayload)
+    let detail: ProductionMaterialReturnDetail
+    if (isEdit.value && routeId.value) {
+      if (!isReturnUpdatePayload(payload)) {
+        submitError.value = '生产退料版本缺失，请刷新后重试'
+        return
+      }
+      detail = await returnRefundReversalApi.productionMaterialReturns.update(routeId.value, payload)
+    } else {
+      if (isReturnUpdatePayload(payload)) {
+        submitError.value = '生产退料创建参数异常，请刷新后重试'
+        return
+      }
+      detail = await returnRefundReversalApi.productionMaterialReturns.create(payload)
+    }
     await router.push({
       name: 'production-material-return-detail',
       params: { id: String(detail.id) },
@@ -437,6 +482,17 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="unitName" label="单位" width="80" />
+            <el-table-column label="项目来源" min-width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                <template v-if="row.ownershipType === 'PROJECT'">
+                  {{ row.projectNo || row.projectId || '-' }} {{ row.projectName || '' }}
+                </template>
+                <template v-else>公共库存</template>
+                <div v-if="row.costLayerId" class="tracking-inherited-note">
+                  成本层 #{{ row.costLayerId }}
+                </div>
+              </template>
+            </el-table-column>
             <el-table-column label="已领数量" min-width="110" align="right">
               <template #default="{ row }">
                 <span class="numeric-cell">{{ formatProductionQuantity(row.issuedQuantity) }}</span>

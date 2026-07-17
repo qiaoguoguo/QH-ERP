@@ -3,12 +3,16 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V28'::text, 'migration'::text,
-        coalesce(max(version::int)::text, 'none'),
-        'latest successful version = 28'::text,
-        (coalesce(max(version::int), 0) = 28 and bool_and(success)),
-        'Flyway 最新成功版本必须为 V28。'::text
-    from flyway_schema_history where version ~ '^[0-9]+$'
+    select 'FLYWAY_LATEST_V29'::text, 'migration'::text,
+        concat(
+            'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
+            ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
+        ),
+        'latest successful version = 29; checksum = 774334682'::text,
+        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 29
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 774334682),
+        'Flyway 最新成功版本必须为 V29，checksum 必须为 774334682。'::text
+    from flyway_schema_history where success and version ~ '^[0-9]+$'
     union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) = 0,
         'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success
 

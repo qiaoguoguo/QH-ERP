@@ -4,11 +4,11 @@ import { useRoute, useRouter } from 'vue-router'
 import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
-  productionApi,
-  type ProductionCompletionReceiptPayload,
-  type ProductionWorkOrderDetailRecord,
+  projectProductionApi,
+  type ProjectProductionCompletionReceiptPayload,
+  type ProjectProductionWorkOrderDetailRecord,
   type ResourceId,
-} from '../../shared/api/productionApi'
+} from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import { validateInboundTrackingAllocations } from '../inventory/tracking/trackingPayloadHelpers'
@@ -18,6 +18,7 @@ import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
   todayText,
   validateProductionQuantity,
@@ -26,7 +27,7 @@ import {
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
-const workOrder = ref<ProductionWorkOrderDetailRecord | null>(null)
+const workOrder = ref<ProjectProductionWorkOrderDetailRecord | null>(null)
 const warehouses = ref<WarehouseRecord[]>([])
 const productTracking = ref<Pick<MaterialRecord, 'trackingMethod' | 'trackingMethodName'>>({
   trackingMethod: 'NONE',
@@ -94,10 +95,10 @@ async function loadWorkOrder() {
   loading.value = true
   error.value = ''
   try {
-    const detail = await productionApi.workOrders.get(route.params.id as ResourceId)
+    const detail = await projectProductionApi.workOrders.get(route.params.id as ResourceId)
     const material = await masterDataApi.materials.get(detail.productMaterialId)
     workOrder.value = detail
-    form.receiptWarehouseId = detail.receiptWarehouseId
+    form.receiptWarehouseId = detail.receiptWarehouseId ?? ''
     form.provisionalUnitCost = ''
     productTracking.value = {
       trackingMethod: material.trackingMethod,
@@ -131,7 +132,7 @@ function trackingAllocationsPayload(trackingMethod: InventoryTrackingMethod) {
   return allocations.length > 0 ? allocations : undefined
 }
 
-function validateForm(): ProductionCompletionReceiptPayload | null {
+function validateForm(): ProjectProductionCompletionReceiptPayload | null {
   if (!workOrder.value) {
     formError.value = '生产工单未加载'
     return null
@@ -189,6 +190,8 @@ function validateForm(): ProductionCompletionReceiptPayload | null {
     ? validateInventoryMoney(form.provisionalUnitCost, 6).payloadValue
     : null
   return {
+    version: workOrder.value.version,
+    idempotencyKey: createProductionIdempotencyKey('production-completion-receipt-save'),
     businessDate: form.businessDate.trim(),
     receiptWarehouseId,
     quantity: quantityResult.payloadValue,
@@ -212,7 +215,7 @@ async function submitReceipt() {
   }
   formSubmitting.value = true
   try {
-    await productionApi.completionReceipts.create(workOrder.value.id, payload)
+    await projectProductionApi.completionReceipts.create(workOrder.value.id, payload)
     await router.push({ name: 'production-work-order-detail', params: { id: String(workOrder.value.id) } })
   } catch (caught) {
     formError.value = productionErrorMessage(caught)

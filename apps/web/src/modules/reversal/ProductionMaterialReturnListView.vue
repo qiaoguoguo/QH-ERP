@@ -6,6 +6,7 @@ import {
   type ProductionMaterialReturnSummary,
   type ReversalStatus,
 } from '../../shared/api/returnRefundReversalApi'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -124,7 +125,10 @@ async function postMaterialReturn(record: ProductionMaterialReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.productionMaterialReturns.post(record.id)
+    await returnRefundReversalApi.productionMaterialReturns.post(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('production-material-return-post'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)
@@ -140,7 +144,10 @@ async function cancelMaterialReturn(record: ProductionMaterialReturnSummary) {
   actionError.value = ''
   actionLoading.value = true
   try {
-    await returnRefundReversalApi.productionMaterialReturns.cancel(record.id)
+    await returnRefundReversalApi.productionMaterialReturns.cancel(record.id, {
+      version: record.version,
+      idempotencyKey: createIdempotencyKey('production-material-return-cancel'),
+    })
     await loadRecords()
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)

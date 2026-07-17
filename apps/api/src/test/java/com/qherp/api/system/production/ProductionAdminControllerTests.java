@@ -129,6 +129,819 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void stage027ProjectWorkOrderPostsProjectIssueAndProjectCompletionWithValuation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long projectId = insertProject("MFG_027_PRJ_" + SEQUENCE.incrementAndGet());
+		long otherProjectId = insertProject("MFG_027_XPRJ_" + SEQUENCE.incrementAndGet());
+		markMaterialValued(fixture.rawMaterialId());
+		markMaterialValued(fixture.productMaterialId());
+		long rawCostLayerId = seedProjectCostLayerStock(projectId, fixture.issueWarehouseId(),
+				fixture.rawMaterialId(), fixture.unitId(), "2.000000", "3.000000");
+		long otherProjectCostLayerId = seedProjectCostLayerStock(otherProjectId, fixture.issueWarehouseId(),
+				fixture.rawMaterialId(), fixture.unitId(), "1.000000", "3.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "2.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "1.000000");
+
+		Map<String, Object> workOrderPayload = workOrderPayload(fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		workOrderPayload.put("ownershipType", "PROJECT");
+		workOrderPayload.put("projectId", projectId);
+		ResponseEntity<String> createdWorkOrder = createWorkOrder(admin, workOrderPayload);
+		assertOk(createdWorkOrder);
+		long workOrderId = data(createdWorkOrder).get("id").longValue();
+
+		JsonNode releasedData = data(releaseWorkOrder(admin, workOrderId));
+		JsonNode rawRequirement = workOrderMaterial(releasedData, fixture.rawMaterialId());
+		JsonNode auxiliaryRequirement = workOrderMaterial(releasedData, fixture.auxiliaryMaterialId());
+		long beforeIssueRows = countRows("select count(*) from mfg_material_issue");
+		long beforeIssueLineRows = countRows("select count(*) from mfg_material_issue_line");
+		long beforeIssueMovements = countRows(
+				"select count(*) from inv_stock_movement where source_type = 'PRODUCTION_MATERIAL_ISSUE'");
+		long beforeIssueValueMovements = countRows(
+				"select count(*) from inv_value_movement where source_type = 'PRODUCTION_MATERIAL_ISSUE'");
+		long beforeIssueTracking = countRows(
+				"select count(*) from inv_stock_tracking_allocation where document_type = 'PRODUCTION_MATERIAL_ISSUE'");
+		Map<String, Object> crossProjectLine = materialIssueLine(1, rawRequirement.get("id").longValue(),
+				fixture.issueWarehouseId(), "1.000000");
+		crossProjectLine.put("ownershipType", "PROJECT");
+		crossProjectLine.put("projectId", otherProjectId);
+		crossProjectLine.put("costLayerId", otherProjectCostLayerId);
+		assertError(createMaterialIssue(admin, workOrderId,
+				materialIssuePayload("跨项目生产领料", List.of(crossProjectLine))), HttpStatus.CONFLICT,
+				"PRODUCTION_PROJECT_MISMATCH");
+		assertThat(countRows("select count(*) from mfg_material_issue")).isEqualTo(beforeIssueRows);
+		assertThat(countRows("select count(*) from mfg_material_issue_line")).isEqualTo(beforeIssueLineRows);
+		assertThat(countRows(
+				"select count(*) from inv_stock_movement where source_type = 'PRODUCTION_MATERIAL_ISSUE'"))
+			.isEqualTo(beforeIssueMovements);
+		assertThat(countRows(
+				"select count(*) from inv_value_movement where source_type = 'PRODUCTION_MATERIAL_ISSUE'"))
+			.isEqualTo(beforeIssueValueMovements);
+		assertThat(countRows(
+				"select count(*) from inv_stock_tracking_allocation where document_type = 'PRODUCTION_MATERIAL_ISSUE'"))
+			.isEqualTo(beforeIssueTracking);
+
+		Map<String, Object> rawLine = materialIssueLine(1, rawRequirement.get("id").longValue(),
+				fixture.issueWarehouseId(), "2.000000");
+		rawLine.put("ownershipType", "PROJECT");
+		rawLine.put("projectId", projectId);
+		rawLine.put("costLayerId", rawCostLayerId);
+		Map<String, Object> auxiliaryLine = materialIssueLine(2, auxiliaryRequirement.get("id").longValue(),
+				fixture.issueWarehouseId(), "1.000000");
+		auxiliaryLine.put("ownershipType", "PUBLIC");
+		long issueId = createMaterialIssueId(admin, workOrderId,
+				materialIssuePayload("项目生产领料", List.of(rawLine, auxiliaryLine)));
+		JsonNode postedIssue = data(postMaterialIssue(admin, workOrderId, issueId));
+		JsonNode postedRawLine = materialIssueLine(postedIssue, fixture.rawMaterialId());
+		Map<String, Object> movement = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id, cost_layer_id, value_movement_id
+				from inv_stock_movement
+				where source_type = 'PRODUCTION_MATERIAL_ISSUE'
+				and source_line_id = ?
+				""", postedRawLine.get("id").longValue());
+		assertThat(movement.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) movement.get("project_id")).longValue()).isEqualTo(projectId);
+		assertThat(((Number) movement.get("cost_layer_id")).longValue()).isEqualTo(rawCostLayerId);
+		assertThat(movement.get("value_movement_id")).isNotNull();
+		assertThat(projectBalance(fixture.issueWarehouseId(), fixture.rawMaterialId(), projectId, rawCostLayerId))
+			.isEqualByComparingTo("0.000000");
+
+		long reportId = createReportId(admin, workOrderId, workReportPayload("1.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+		long receiptId = createCompletionReceiptId(admin, workOrderId,
+				completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000"));
+		assertOk(postCompletionReceipt(admin, workOrderId, receiptId));
+		Map<String, Object> receiptMovement = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id, value_movement_id
+				from inv_stock_movement
+				where source_type = 'PRODUCTION_COMPLETION_RECEIPT'
+				and source_line_id = ?
+				""", receiptId);
+		assertThat(receiptMovement.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) receiptMovement.get("project_id")).longValue()).isEqualTo(projectId);
+		assertThat(receiptMovement.get("value_movement_id")).isNotNull();
+	}
+
+	@Test
+	void stage027DraftWorkOrderOwnershipUpdatePersistsAndFreezesAfterRelease() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long projectId = insertProject("MFG_027_WO_OWN_PRJ_" + SEQUENCE.incrementAndGet());
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+
+		Map<String, Object> projectUpdate = workOrderPayload(fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		projectUpdate.put("ownershipType", "PROJECT");
+		projectUpdate.put("projectId", projectId);
+		JsonNode updated = data(updateWorkOrder(admin, workOrderId, projectUpdate));
+		assertThat(updated.get("ownershipType").asText()).isEqualTo("PROJECT");
+		assertThat(updated.get("projectId").longValue()).isEqualTo(projectId);
+		Map<String, Object> persisted = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id
+				from mfg_work_order
+				where id = ?
+				""", workOrderId);
+		assertThat(persisted.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) persisted.get("project_id")).longValue()).isEqualTo(projectId);
+
+		ensureReleaseStock(fixture, "1.000000");
+		assertOk(releaseWorkOrder(admin, workOrderId));
+		Map<String, Object> publicUpdate = workOrderPayload(fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		publicUpdate.put("ownershipType", "PUBLIC");
+		assertError(updateWorkOrder(admin, workOrderId, publicUpdate), HttpStatus.CONFLICT,
+				"PRODUCTION_WORK_ORDER_STATUS_INVALID");
+		Map<String, Object> frozen = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id
+				from mfg_work_order
+				where id = ?
+				""", workOrderId);
+		assertThat(frozen.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) frozen.get("project_id")).longValue()).isEqualTo(projectId);
+	}
+
+	@Test
+	void stage027OutsourcingOrderPostsProjectIssueAndReceiptWithValuation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long supplierId = insertSupplier("MFG_027_OS_SUP_" + SEQUENCE.incrementAndGet());
+		long projectId = insertProject("MFG_027_OS_PRJ_" + SEQUENCE.incrementAndGet());
+		markMaterialValued(fixture.rawMaterialId());
+		markMaterialValued(fixture.productMaterialId());
+		long rawCostLayerId = seedProjectCostLayerStock(projectId, fixture.issueWarehouseId(),
+				fixture.rawMaterialId(), fixture.unitId(), "2.000000", "3.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "1.000000");
+
+		Map<String, Object> orderBody = new LinkedHashMap<>();
+		orderBody.put("supplierId", supplierId);
+		orderBody.put("productMaterialId", fixture.productMaterialId());
+		orderBody.put("bomId", fixture.bomId());
+		orderBody.put("plannedQuantity", "1.000000");
+		orderBody.put("issueWarehouseId", fixture.issueWarehouseId());
+		orderBody.put("receiptWarehouseId", fixture.receiptWarehouseId());
+		orderBody.put("plannedIssueDate", LocalDate.now().toString());
+		orderBody.put("plannedReceiptDate", LocalDate.now().plusDays(3).toString());
+		orderBody.put("ownershipType", "PROJECT");
+		orderBody.put("projectId", projectId);
+		orderBody.put("provisionalUnitCost", "8.000000");
+		orderBody.put("remark", "外协项目测试");
+		orderBody.put("idempotencyKey", "PROD-027-OS-PROJECT-CREATE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> createOrderResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders", orderBody, admin);
+		assertOk(createOrderResponse);
+		JsonNode createdOrder = data(createOrderResponse);
+		long orderId = createdOrder.get("id").longValue();
+		long createdOrderVersion = createdOrder.get("version").longValue();
+		assertThat(createdOrder.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(createdOrder.get("ownershipType").asText()).isEqualTo("PROJECT");
+		assertThat(createdOrder.get("projectId").longValue()).isEqualTo(projectId);
+
+		Map<String, Object> releaseBody = actionBody(currentOutsourcingOrderVersion(orderId),
+				"PROD-027-OS-PROJECT-RELEASE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> releaseResponse = exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release", releaseBody, admin);
+		assertOk(releaseResponse);
+		JsonNode releasedOrder = data(releaseResponse);
+		assertThat(releasedOrder.get("status").asText()).isEqualTo("RELEASED");
+		assertThat(releasedOrder.get("version").longValue()).isGreaterThan(createdOrderVersion);
+		JsonNode rawRequirement = outsourcingMaterial(releasedOrder, fixture.rawMaterialId());
+		JsonNode auxiliaryRequirement = outsourcingMaterial(releasedOrder, fixture.auxiliaryMaterialId());
+
+		Map<String, Object> rawLine = new LinkedHashMap<>();
+		rawLine.put("lineNo", 1);
+		rawLine.put("orderMaterialId", rawRequirement.get("id").longValue());
+		rawLine.put("warehouseId", fixture.issueWarehouseId());
+		rawLine.put("quantity", "2.000000");
+		rawLine.put("ownershipType", "PROJECT");
+		rawLine.put("projectId", projectId);
+		rawLine.put("costLayerId", rawCostLayerId);
+		Map<String, Object> auxiliaryLine = new LinkedHashMap<>();
+		auxiliaryLine.put("lineNo", 2);
+		auxiliaryLine.put("orderMaterialId", auxiliaryRequirement.get("id").longValue());
+		auxiliaryLine.put("warehouseId", fixture.issueWarehouseId());
+		auxiliaryLine.put("quantity", "1.000000");
+		auxiliaryLine.put("ownershipType", "PUBLIC");
+		Map<String, Object> issueBody = new LinkedHashMap<>();
+		issueBody.put("businessDate", LocalDate.now().toString());
+		issueBody.put("reason", "外协发料");
+		issueBody.put("lines", List.of(rawLine, auxiliaryLine));
+		issueBody.put("idempotencyKey", "PROD-027-OS-PROJECT-ISSUE-CREATE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> createIssueResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", issueBody, admin);
+		assertOk(createIssueResponse);
+		JsonNode createdIssue = data(createIssueResponse);
+		long issueId = createdIssue.get("id").longValue();
+		long createdIssueVersion = createdIssue.get("version").longValue();
+		assertThat(createdIssue.get("status").asText()).isEqualTo("DRAFT");
+
+		Map<String, Object> postIssueBody = actionBody(currentOutsourcingIssueVersion(issueId),
+				"PROD-027-OS-PROJECT-ISSUE-POST-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> postIssueResponse = exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues/" + issueId + "/post",
+				postIssueBody, admin);
+		assertOk(postIssueResponse);
+		JsonNode postedIssue = data(postIssueResponse);
+		assertThat(postedIssue.get("status").asText()).isEqualTo("POSTED");
+		assertThat(postedIssue.get("version").longValue()).isGreaterThan(createdIssueVersion);
+		ResponseEntity<String> afterIssueOrderResponse = get("/api/admin/production/outsourcing-orders/" + orderId,
+				admin);
+		assertOk(afterIssueOrderResponse);
+		assertThat(data(afterIssueOrderResponse).get("status").asText()).isEqualTo("IN_PROGRESS");
+		JsonNode postedRawLine = outsourcingIssueLine(postedIssue, fixture.rawMaterialId());
+		Map<String, Object> issueMovement = this.jdbcTemplate.queryForMap("""
+				select movement_type, ownership_type, project_id, cost_layer_id, value_movement_id
+				from inv_stock_movement
+				where source_type = 'PRODUCTION_OUTSOURCING_ISSUE'
+				and source_line_id = ?
+				""", postedRawLine.get("id").longValue());
+		assertThat(issueMovement.get("movement_type")).isEqualTo("OUTSOURCING_ISSUE");
+		assertThat(issueMovement.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) issueMovement.get("project_id")).longValue()).isEqualTo(projectId);
+		assertThat(((Number) issueMovement.get("cost_layer_id")).longValue()).isEqualTo(rawCostLayerId);
+		assertThat(issueMovement.get("value_movement_id")).isNotNull();
+
+		Map<String, Object> receiptBody = new LinkedHashMap<>();
+		receiptBody.put("businessDate", LocalDate.now().toString());
+		receiptBody.put("receiptWarehouseId", fixture.receiptWarehouseId());
+		Map<String, Object> receiptLine = new LinkedHashMap<>();
+		receiptLine.put("lineNo", 1);
+		receiptLine.put("acceptedQuantity", "1.000000");
+		receiptLine.put("rejectedQuantity", "0.000000");
+		receiptLine.put("provisionalUnitCost", "8.000000");
+		receiptBody.put("lines", List.of(receiptLine));
+		receiptBody.put("idempotencyKey", "PROD-027-OS-PROJECT-RECEIPT-CREATE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> createReceiptResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", receiptBody, admin);
+		assertOk(createReceiptResponse);
+		JsonNode createdReceipt = data(createReceiptResponse);
+		long receiptId = createdReceipt.get("id").longValue();
+		long createdReceiptVersion = createdReceipt.get("version").longValue();
+		assertThat(createdReceipt.get("status").asText()).isEqualTo("DRAFT");
+		Long receiptLineId = this.jdbcTemplate.queryForObject("""
+				select id
+				from mfg_outsourcing_receipt_line
+				where receipt_id = ?
+				and line_no = 1
+				""", Long.class, receiptId);
+		Map<String, Object> postReceiptBody = actionBody(currentOutsourcingReceiptVersion(receiptId),
+				"PROD-027-OS-PROJECT-RECEIPT-POST-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> postReceiptResponse = exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + receiptId + "/post",
+				postReceiptBody, admin);
+		assertOk(postReceiptResponse);
+		JsonNode postedReceipt = data(postReceiptResponse);
+		assertThat(postedReceipt.get("status").asText()).isEqualTo("POSTED");
+		assertThat(postedReceipt.get("version").longValue()).isGreaterThan(createdReceiptVersion);
+		ResponseEntity<String> afterReceiptOrderResponse = get("/api/admin/production/outsourcing-orders/" + orderId,
+				admin);
+		assertOk(afterReceiptOrderResponse);
+		assertThat(data(afterReceiptOrderResponse).get("status").asText()).isEqualTo("COMPLETED");
+		Map<String, Object> receiptMovement = this.jdbcTemplate.queryForMap("""
+				select movement_type, ownership_type, project_id, value_movement_id
+				from inv_stock_movement
+				where source_type = 'PRODUCTION_OUTSOURCING_RECEIPT'
+				and source_line_id = ?
+				""", receiptLineId);
+		assertThat(receiptMovement.get("movement_type")).isEqualTo("OUTSOURCING_RECEIPT");
+		assertThat(receiptMovement.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) receiptMovement.get("project_id")).longValue()).isEqualTo(projectId);
+		assertThat(receiptMovement.get("value_movement_id")).isNotNull();
+		assertThat(this.jdbcTemplate.queryForObject("""
+				select stock_movement_id
+				from mfg_outsourcing_receipt_line
+				where id = ?
+				""", Long.class, receiptLineId)).isNotNull();
+	}
+
+	@Test
+	void stage027WorkOrderListAndDetailExposeProjectSourceActionsAndFilters() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long projectId = insertProject("MFG_027_FILTER_PRJ_" + SEQUENCE.incrementAndGet());
+		MrpSourceSeed source = seedMrpSuggestion(projectId, fixture.productMaterialId(), fixture.unitId());
+		long publicWorkOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		Map<String, Object> projectPayload = workOrderPayload(fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+		projectPayload.put("ownershipType", "PROJECT");
+		projectPayload.put("projectId", projectId);
+		long projectWorkOrderId = data(createWorkOrder(admin, projectPayload)).get("id").longValue();
+		this.jdbcTemplate.update("""
+				update mfg_work_order
+				set source_mrp_run_id = ?, source_mrp_requirement_line_id = ?, source_mrp_suggestion_id = ?,
+				    updated_at = now(), version = version + 1
+				where id = ?
+				""", source.runId(), source.requirementLineId(), source.suggestionId(), projectWorkOrderId);
+
+		JsonNode projectFiltered = firstItem(get("/api/admin/production/work-orders?ownershipType=PROJECT&projectId="
+				+ projectId + "&sourceMrpSuggestionId=" + source.suggestionId(), admin));
+		assertThat(projectFiltered.get("id").longValue()).isEqualTo(projectWorkOrderId);
+		assertThat(projectFiltered.get("ownershipType").asText()).isEqualTo("PROJECT");
+		assertThat(projectFiltered.get("projectId").longValue()).isEqualTo(projectId);
+		assertThat(projectFiltered.get("projectNo").asText()).startsWith("MFG_027_FILTER_PRJ_");
+		assertThat(projectFiltered.get("sourceMrpRunId").longValue()).isEqualTo(source.runId());
+		assertThat(projectFiltered.get("sourceMrpRequirementLineId").longValue()).isEqualTo(source.requirementLineId());
+		assertThat(projectFiltered.get("sourceMrpSuggestionId").longValue()).isEqualTo(source.suggestionId());
+		assertThat(projectFiltered.get("version").isNumber()).isTrue();
+		assertThat(projectFiltered.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("RELEASE"));
+
+		JsonNode publicFiltered = firstItem(get("/api/admin/production/work-orders?ownershipType=PUBLIC", admin));
+		assertThat(publicFiltered.get("id").longValue()).isEqualTo(publicWorkOrderId);
+		assertThat(publicFiltered.get("ownershipType").asText()).isEqualTo("PUBLIC");
+		assertThat(publicFiltered.get("projectId").isNull()).isTrue();
+
+		JsonNode detail = data(getWorkOrder(admin, projectWorkOrderId));
+		assertThat(detail.get("ownershipType").asText()).isEqualTo("PROJECT");
+		assertThat(detail.get("projectId").longValue()).isEqualTo(projectId);
+		assertThat(detail.get("sourceMrpSuggestionId").longValue()).isEqualTo(source.suggestionId());
+		assertThat(detail.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("RELEASE"));
+
+		AuthenticatedSession readOnly = createProductionUserAndLogin("prod_action_read", "prod_action_read_role",
+				List.of("production:work-order:view"));
+		JsonNode readOnlyDetail = data(getWorkOrder(readOnly, projectWorkOrderId));
+		assertThat(readOnlyDetail.get("allowedActions")).isEmpty();
+		assertThat(readOnlyDetail.get("actionDisabledReason").asText()).contains("权限");
+	}
+
+	@Test
+	void stage027ProductionStatusAndPostingPersistIdempotencyBeforeVersionChecks() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "10.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "5.000000");
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "2.000000");
+		Map<String, Object> releaseBody = actionBody(currentWorkOrderVersion(workOrderId),
+				"PROD-027-WO-RELEASE-" + SEQUENCE.incrementAndGet());
+		JsonNode firstRelease = data(releaseWorkOrder(admin, workOrderId, releaseBody));
+		JsonNode replayRelease = data(releaseWorkOrder(admin, workOrderId, releaseBody));
+		assertThat(replayRelease.get("version").longValue()).isEqualTo(firstRelease.get("version").longValue());
+
+		Map<String, Object> changedRelease = new LinkedHashMap<>(releaseBody);
+		changedRelease.put("reason", "同键不同载荷");
+		assertError(releaseWorkOrder(admin, workOrderId, changedRelease), HttpStatus.CONFLICT,
+				"PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		assertError(releaseWorkOrder(admin, workOrderId,
+				actionBody(releaseBody.get("version"), "PROD-027-WO-STALE-" + SEQUENCE.incrementAndGet())),
+				HttpStatus.CONFLICT, "VERSION_CONFLICT");
+
+		JsonNode released = data(getWorkOrder(admin, workOrderId));
+		JsonNode rawRequirement = workOrderMaterial(released, fixture.rawMaterialId());
+		Map<String, Object> createIssueBody = materialIssuePayload("027 幂等领料",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000")));
+		JsonNode firstCreate = data(createMaterialIssue(admin, workOrderId, createIssueBody));
+		JsonNode replayCreate = data(createMaterialIssue(admin, workOrderId, createIssueBody));
+		assertThat(replayCreate.get("id").longValue()).isEqualTo(firstCreate.get("id").longValue());
+		assertThat(replayCreate.get("version").longValue()).isEqualTo(firstCreate.get("version").longValue());
+		Map<String, Object> changedCreate = new LinkedHashMap<>(createIssueBody);
+		changedCreate.put("reason", "同键不同领料原因");
+		assertError(createMaterialIssue(admin, workOrderId, changedCreate), HttpStatus.CONFLICT,
+				"PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+
+		long issueId = firstCreate.get("id").longValue();
+		Map<String, Object> updateIssueBody = materialIssuePayload("027 幂等领料更新",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000")));
+		updateIssueBody.put("version", currentMaterialIssueVersion(issueId));
+		updateIssueBody.put("idempotencyKey", "PROD-027-ISSUE-UPDATE-" + SEQUENCE.incrementAndGet());
+		JsonNode firstUpdate = data(updateMaterialIssue(admin, workOrderId, issueId, updateIssueBody));
+		JsonNode replayUpdate = data(updateMaterialIssue(admin, workOrderId, issueId, updateIssueBody));
+		assertThat(replayUpdate.get("version").longValue()).isEqualTo(firstUpdate.get("version").longValue());
+		Map<String, Object> changedUpdate = new LinkedHashMap<>(updateIssueBody);
+		changedUpdate.put("reason", "同键不同更新原因");
+		assertError(updateMaterialIssue(admin, workOrderId, issueId, changedUpdate), HttpStatus.CONFLICT,
+				"PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		assertError(updateMaterialIssue(admin, workOrderId, issueId,
+				withVersionAndIdempotency(materialIssuePayload("027 过期版本领料更新",
+						List.of(materialIssueLine(1, rawRequirement.get("id").longValue(),
+								fixture.issueWarehouseId(), "1.000000"))),
+						((Number) updateIssueBody.get("version")).longValue(), "PROD-027-ISSUE-UPDATE-STALE")),
+				HttpStatus.CONFLICT, "VERSION_CONFLICT");
+
+		Map<String, Object> postBody = actionBody(currentMaterialIssueVersion(issueId),
+				"PROD-027-ISSUE-POST-" + SEQUENCE.incrementAndGet());
+		JsonNode firstPost = data(postMaterialIssue(admin, workOrderId, issueId, postBody));
+		JsonNode replayPost = data(postMaterialIssue(admin, workOrderId, issueId, postBody));
+		assertThat(replayPost.get("version").longValue()).isEqualTo(firstPost.get("version").longValue());
+
+		Map<String, Object> changedPost = new LinkedHashMap<>(postBody);
+		changedPost.put("reason", "同键不同过账原因");
+		assertError(postMaterialIssue(admin, workOrderId, issueId, changedPost), HttpStatus.CONFLICT,
+				"PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		assertError(postMaterialIssue(admin, workOrderId, issueId,
+				actionBody(postBody.get("version"), "PROD-027-ISSUE-STALE-" + SEQUENCE.incrementAndGet())),
+				HttpStatus.CONFLICT, "VERSION_CONFLICT");
+	}
+
+	@Test
+	void stage027OutsourcingUsesFrozenStateMachineAndPersistentIdempotency() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long supplierId = insertSupplier("MFG_027_OS_STATE_SUP_" + SEQUENCE.incrementAndGet());
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "20.000000");
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.auxiliaryMaterialId(), "10.000000");
+		Map<String, Object> orderBody = outsourcingOrderPayload(supplierId, fixture, "2.000000");
+		JsonNode firstOrderCreate = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				orderBody, admin));
+		JsonNode replayOrderCreate = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				orderBody, admin));
+		assertThat(replayOrderCreate.get("id").longValue()).isEqualTo(firstOrderCreate.get("id").longValue());
+		assertThat(replayOrderCreate.get("version").longValue()).isEqualTo(firstOrderCreate.get("version").longValue());
+		Map<String, Object> changedOrderCreate = new LinkedHashMap<>(orderBody);
+		changedOrderCreate.put("remark", "同键不同外协创建备注");
+		assertError(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders", changedOrderCreate, admin),
+				HttpStatus.CONFLICT, "PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		long orderId = firstOrderCreate
+			.get("id")
+			.longValue();
+
+		Map<String, Object> updateOrderBody = new LinkedHashMap<>(orderBody);
+		updateOrderBody.put("version", currentOutsourcingOrderVersion(orderId));
+		updateOrderBody.put("idempotencyKey", "PROD-027-OS-UPDATE-" + SEQUENCE.incrementAndGet());
+		JsonNode firstOrderUpdate = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId, updateOrderBody, admin));
+		JsonNode replayOrderUpdate = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId, updateOrderBody, admin));
+		assertThat(replayOrderUpdate.get("version").longValue()).isEqualTo(firstOrderUpdate.get("version").longValue());
+		Map<String, Object> changedOrderUpdate = new LinkedHashMap<>(updateOrderBody);
+		changedOrderUpdate.put("remark", "同键不同外协更新备注");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/" + orderId,
+				changedOrderUpdate, admin), HttpStatus.CONFLICT, "PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		Map<String, Object> staleOrderUpdate = new LinkedHashMap<>(orderBody);
+		staleOrderUpdate.put("version", updateOrderBody.get("version"));
+		staleOrderUpdate.put("idempotencyKey", "PROD-027-OS-UPDATE-STALE-" + SEQUENCE.incrementAndGet());
+		assertError(exchange(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/" + orderId, staleOrderUpdate,
+				admin), HttpStatus.CONFLICT, "VERSION_CONFLICT");
+
+		Map<String, Object> releaseBody = actionBody(currentOutsourcingOrderVersion(orderId),
+				"PROD-027-OS-RELEASE-" + SEQUENCE.incrementAndGet());
+		JsonNode released = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release", releaseBody, admin));
+		JsonNode replayRelease = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release", releaseBody, admin));
+		assertThat(replayRelease.get("version").longValue()).isEqualTo(released.get("version").longValue());
+		assertThat(released.get("status").asText()).isEqualTo("RELEASED");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/" + orderId + "/close",
+				actionBody(currentOutsourcingOrderVersion(orderId),
+						"PROD-027-OS-CLOSE-RELEASED-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "PRODUCTION_OUTSOURCING_STATUS_INVALID");
+		assertThat(data(get("/api/admin/production/outsourcing-orders/" + orderId, admin)).get("status").asText())
+			.isEqualTo("RELEASED");
+
+		JsonNode rawRequirement = outsourcingMaterial(released, fixture.rawMaterialId());
+		Map<String, Object> issueBody = outsourcingIssuePayload(fixture.issueWarehouseId(), rawRequirement, "4.000000");
+		long issueId = data(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", issueBody, admin)).get("id")
+			.longValue();
+		Map<String, Object> postIssueBody = actionBody(currentOutsourcingIssueVersion(issueId),
+				"PROD-027-OS-ISSUE-POST-" + SEQUENCE.incrementAndGet());
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues/" + issueId + "/post",
+				postIssueBody, admin));
+		JsonNode afterIssue = data(get("/api/admin/production/outsourcing-orders/" + orderId, admin));
+		assertThat(afterIssue.get("status").asText()).isEqualTo("IN_PROGRESS");
+		assertThat(afterIssue.get("statusName").asText()).doesNotContain("已发料");
+		assertThat(afterIssue.get("issuedQuantity").isTextual()).as(afterIssue.toString()).isTrue();
+		assertThat(afterIssue.get("issuedQuantity").asText()).isEqualTo("4.000000");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/" + orderId + "/close",
+				actionBody(currentOutsourcingOrderVersion(orderId),
+						"PROD-027-OS-CLOSE-IN-PROGRESS-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "PRODUCTION_OUTSOURCING_STATUS_INVALID");
+		assertThat(data(get("/api/admin/production/outsourcing-orders/" + orderId, admin)).get("status").asText())
+			.isEqualTo("IN_PROGRESS");
+
+		Map<String, Object> firstReceipt = outsourcingReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		long firstReceiptId = data(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", firstReceipt, admin)).get("id")
+			.longValue();
+		Map<String, Object> firstReceiptPost = actionBody(currentOutsourcingReceiptVersion(firstReceiptId),
+				"PROD-027-OS-RECEIPT-PARTIAL-" + SEQUENCE.incrementAndGet());
+		data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + firstReceiptId + "/post",
+				firstReceiptPost, admin));
+		assertThat(data(get("/api/admin/production/outsourcing-orders/" + orderId, admin)).get("status").asText())
+			.isEqualTo("IN_PROGRESS");
+
+		Map<String, Object> finalReceipt = outsourcingReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		long finalReceiptId = data(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", finalReceipt, admin)).get("id")
+			.longValue();
+		Map<String, Object> finalReceiptPost = actionBody(currentOutsourcingReceiptVersion(finalReceiptId),
+				"PROD-027-OS-RECEIPT-FINAL-" + SEQUENCE.incrementAndGet());
+		JsonNode postedFinal = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + finalReceiptId + "/post",
+				finalReceiptPost, admin));
+		JsonNode replayFinal = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + finalReceiptId + "/post",
+				finalReceiptPost, admin));
+		assertThat(replayFinal.get("version").longValue()).isEqualTo(postedFinal.get("version").longValue());
+		JsonNode completed = data(get("/api/admin/production/outsourcing-orders/" + orderId, admin));
+		assertThat(completed.get("status").asText()).isEqualTo("COMPLETED");
+		assertThat(completed.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("CLOSE"));
+		assertThat(completed.toString()).doesNotContain("ISSUED").doesNotContain("PARTIALLY_RECEIVED");
+		AuthenticatedSession outsourcingViewOnly = createProductionUserAndLogin("prod_os_view_only",
+				"prod_os_view_only_role", List.of("production:outsourcing:view"));
+		JsonNode restrictedDetail = data(get("/api/admin/production/outsourcing-orders/" + orderId,
+				outsourcingViewOnly));
+		assertThat(restrictedDetail.get("costVisible").booleanValue()).as(restrictedDetail.toString()).isFalse();
+		assertThat(restrictedDetail.get("provisionalUnitCost").isNull()).as(restrictedDetail.toString()).isTrue();
+		assertThat(restrictedDetail.get("allowedActions")).allSatisfy((action) -> assertThat(action.asText())
+			.isNotIn("UPDATE", "RELEASE", "ISSUE", "RECEIPT", "CLOSE", "CANCEL"));
+
+		Map<String, Object> changedRelease = new LinkedHashMap<>(releaseBody);
+		changedRelease.put("reason", "同键不同载荷");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/" + orderId + "/release",
+				changedRelease, admin), HttpStatus.CONFLICT, "PRODUCTION_ACTION_IDEMPOTENCY_CONFLICT");
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + finalReceiptId + "/post",
+				actionBody(finalReceiptPost.get("version"),
+						"PROD-027-OS-RECEIPT-STALE-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "VERSION_CONFLICT");
+	}
+
+	@Test
+	void stage027OutsourcingWriteResponsesUseOperatorPermissionContext() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long supplierId = insertSupplier("MFG_027_OS_MASK_SUP_" + SEQUENCE.incrementAndGet());
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "20.000000");
+		AuthenticatedSession writer = createProductionUserAndLogin("prod_os_write_mask",
+				"prod_os_write_mask_role", outsourcingWritePermissionCodesWithoutValuation());
+
+		Map<String, Object> orderBody = outsourcingOrderPayload(supplierId, fixture, "1.000000");
+		ResponseEntity<String> createOrderResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders", orderBody, writer);
+		assertOk(createOrderResponse);
+		JsonNode createdOrder = data(createOrderResponse);
+		assertOutsourcingOrderCostHidden(createdOrder);
+		assertThat(createdOrder.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("RELEASE"));
+		ResponseEntity<String> replayOrderResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders", orderBody, writer);
+		assertOk(replayOrderResponse);
+		JsonNode replayedOrder = data(replayOrderResponse);
+		assertThat(replayedOrder.get("id").longValue()).isEqualTo(createdOrder.get("id").longValue());
+		assertOutsourcingOrderCostHidden(replayedOrder);
+
+		long orderId = createdOrder.get("id").longValue();
+		Map<String, Object> releaseBody = actionBody(currentOutsourcingOrderVersion(orderId),
+				"PROD-027-OS-MASK-RELEASE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> releaseResponse = exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release", releaseBody, writer);
+		assertOk(releaseResponse);
+		JsonNode released = data(releaseResponse);
+		assertOutsourcingOrderCostHidden(released);
+		assertThat(released.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText())
+			.isEqualTo("ISSUE"));
+
+		JsonNode rawRequirement = outsourcingMaterial(released, fixture.rawMaterialId());
+		Map<String, Object> issueBody = outsourcingIssuePayload(fixture.issueWarehouseId(), rawRequirement, "1.000000");
+		ResponseEntity<String> createIssueResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", issueBody, writer);
+		assertOk(createIssueResponse);
+		JsonNode createdIssue = data(createIssueResponse);
+		assertOutsourcingIssueCostHidden(createdIssue, fixture.rawMaterialId());
+		ResponseEntity<String> replayIssueResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", issueBody, writer);
+		assertOk(replayIssueResponse);
+		JsonNode replayedIssue = data(replayIssueResponse);
+		assertThat(replayedIssue.get("id").longValue()).isEqualTo(createdIssue.get("id").longValue());
+		assertOutsourcingIssueCostHidden(replayedIssue, fixture.rawMaterialId());
+
+		Map<String, Object> receiptBody = outsourcingReceiptPayload(fixture.receiptWarehouseId(), "1.000000");
+		ResponseEntity<String> createReceiptResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", receiptBody, writer);
+		assertOk(createReceiptResponse);
+		JsonNode createdReceipt = data(createReceiptResponse);
+		assertOutsourcingReceiptCostHidden(createdReceipt);
+		ResponseEntity<String> replayReceiptResponse = exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", receiptBody, writer);
+		assertOk(replayReceiptResponse);
+		JsonNode replayedReceipt = data(replayReceiptResponse);
+		assertThat(replayedReceipt.get("id").longValue()).isEqualTo(createdReceipt.get("id").longValue());
+		assertOutsourcingReceiptCostHidden(replayedReceipt);
+	}
+
+	@Test
+	void stage027OutsourcingPostRejectsWhenParentLeavesExecutableStateWithoutSideEffects() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long supplierId = insertSupplier("MFG_027_OS_PARENT_LOCK_SUP_" + SEQUENCE.incrementAndGet());
+		createOpeningStock(admin, fixture.issueWarehouseId(), fixture.rawMaterialId(), "20.000000");
+
+		for (String parentStatus : List.of("COMPLETED", "CLOSED", "CANCELLED")) {
+			JsonNode issueOrder = createReleasedOutsourcingOrder(admin, fixture, supplierId, "1.000000");
+			long issueOrderId = issueOrder.get("id").longValue();
+			JsonNode rawRequirement = outsourcingMaterial(issueOrder, fixture.rawMaterialId());
+			long issueId = data(exchange(HttpMethod.POST,
+					"/api/admin/production/outsourcing-orders/" + issueOrderId + "/material-issues",
+					outsourcingIssuePayload(fixture.issueWarehouseId(), rawRequirement, "1.000000"), admin))
+				.get("id")
+				.longValue();
+			assertOutsourcingIssuePostRejectedAfterParentStatus(admin, issueOrderId, issueId, parentStatus);
+
+			JsonNode receiptOrder = createReleasedOutsourcingOrder(admin, fixture, supplierId, "1.000000");
+			long receiptOrderId = receiptOrder.get("id").longValue();
+			long receiptId = data(exchange(HttpMethod.POST,
+					"/api/admin/production/outsourcing-orders/" + receiptOrderId + "/receipts",
+					outsourcingReceiptPayload(fixture.receiptWarehouseId(), "1.000000"), admin))
+				.get("id")
+				.longValue();
+			assertOutsourcingReceiptPostRejectedAfterParentStatus(admin, receiptOrderId, receiptId, parentStatus);
+		}
+	}
+
+	@Test
+	void stage027OutsourcingTrackingPermissionsAndCrossProjectGuardUseHttpContract() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		setTrackingMethod(fixture.rawMaterialId(), "BATCH");
+		setTrackingMethod(fixture.productMaterialId(), "BATCH");
+		long supplierId = insertSupplier("MFG_027_OS_TRK_SUP_" + SEQUENCE.incrementAndGet());
+		long projectId = insertProject("MFG_027_OS_TRK_PRJ_" + SEQUENCE.incrementAndGet());
+		long otherProjectId = insertProject("MFG_027_OS_TRK_XPRJ_" + SEQUENCE.incrementAndGet());
+		long otherProjectCostLayerId = seedProjectCostLayerStock(otherProjectId, fixture.issueWarehouseId(),
+				fixture.rawMaterialId(), fixture.unitId(), "2.000000", "3.000000");
+		TrackedBatch issueBatch = seedBatchStock(fixture.issueWarehouseId(), fixture.rawMaterialId(),
+				fixture.unitId(), "MFG-OS-ISS-BATCH-" + SEQUENCE.incrementAndGet(), "2.000000");
+
+		Map<String, Object> orderBody = outsourcingOrderPayload(supplierId, fixture, "1.000000");
+		orderBody.put("ownershipType", "PROJECT");
+		orderBody.put("projectId", projectId);
+		orderBody.put("idempotencyKey", "PROD-027-OS-TRK-CREATE-" + SEQUENCE.incrementAndGet());
+		JsonNode order = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders", orderBody,
+				admin));
+		long orderId = order.get("id").longValue();
+		Map<String, Object> releaseBody = actionBody(currentOutsourcingOrderVersion(orderId),
+				"PROD-027-OS-TRK-RELEASE-" + SEQUENCE.incrementAndGet());
+		JsonNode released = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release", releaseBody, admin));
+		JsonNode rawRequirement = outsourcingMaterial(released, fixture.rawMaterialId());
+
+		long beforeIssueRows = countRows("select count(*) from mfg_outsourcing_issue");
+		long beforeIssueLineRows = countRows("select count(*) from mfg_outsourcing_issue_line");
+		long beforeIssueMovements = countRows(
+				"select count(*) from inv_stock_movement where source_type = 'PRODUCTION_OUTSOURCING_ISSUE'");
+		long beforeIssueValueMovements = countRows(
+				"select count(*) from inv_value_movement where source_type = 'PRODUCTION_OUTSOURCING_ISSUE'");
+		long beforeIssueTracking = countRows(
+				"select count(*) from inv_stock_tracking_allocation where document_type = 'PRODUCTION_OUTSOURCING_ISSUE'");
+		Map<String, Object> crossProjectLine = new LinkedHashMap<>();
+		crossProjectLine.put("lineNo", 1);
+		crossProjectLine.put("orderMaterialId", rawRequirement.get("id").longValue());
+		crossProjectLine.put("warehouseId", fixture.issueWarehouseId());
+		crossProjectLine.put("quantity", "1.000000");
+		crossProjectLine.put("ownershipType", "PROJECT");
+		crossProjectLine.put("projectId", otherProjectId);
+		crossProjectLine.put("costLayerId", otherProjectCostLayerId);
+		Map<String, Object> crossProjectIssue = new LinkedHashMap<>();
+		crossProjectIssue.put("businessDate", LocalDate.now().toString());
+		crossProjectIssue.put("reason", "跨项目外协发料");
+		crossProjectIssue.put("lines", List.of(crossProjectLine));
+		crossProjectIssue.put("idempotencyKey", "PROD-027-OS-TRK-CROSS-" + SEQUENCE.incrementAndGet());
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", crossProjectIssue,
+				admin), HttpStatus.CONFLICT, "PRODUCTION_PROJECT_MISMATCH");
+		assertThat(countRows("select count(*) from mfg_outsourcing_issue")).isEqualTo(beforeIssueRows);
+		assertThat(countRows("select count(*) from mfg_outsourcing_issue_line")).isEqualTo(beforeIssueLineRows);
+		assertThat(countRows(
+				"select count(*) from inv_stock_movement where source_type = 'PRODUCTION_OUTSOURCING_ISSUE'"))
+			.isEqualTo(beforeIssueMovements);
+		assertThat(countRows(
+				"select count(*) from inv_value_movement where source_type = 'PRODUCTION_OUTSOURCING_ISSUE'"))
+			.isEqualTo(beforeIssueValueMovements);
+		assertThat(countRows(
+				"select count(*) from inv_stock_tracking_allocation where document_type = 'PRODUCTION_OUTSOURCING_ISSUE'"))
+			.isEqualTo(beforeIssueTracking);
+
+		Map<String, Object> issueLine = new LinkedHashMap<>();
+		issueLine.put("lineNo", 1);
+		issueLine.put("orderMaterialId", rawRequirement.get("id").longValue());
+		issueLine.put("warehouseId", fixture.issueWarehouseId());
+		issueLine.put("quantity", "2.000000");
+		issueLine.put("ownershipType", "PUBLIC");
+		issueLine.put("trackingAllocations", List.of(batchAllocation(issueBatch.batchId(), "2.000000")));
+		Map<String, Object> issueBody = new LinkedHashMap<>();
+		issueBody.put("businessDate", LocalDate.now().toString());
+		issueBody.put("reason", "外协批次发料");
+		issueBody.put("lines", List.of(issueLine));
+		issueBody.put("idempotencyKey", "PROD-027-OS-TRK-ISS-CREATE-" + SEQUENCE.incrementAndGet());
+		JsonNode createdIssue = data(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues", issueBody, admin));
+		long issueId = createdIssue.get("id").longValue();
+		JsonNode createdIssueLine = outsourcingIssueLine(createdIssue, fixture.rawMaterialId());
+		assertThat(createdIssueLine.get("quantity").isTextual()).as(createdIssueLine.toString()).isTrue();
+		assertThat(createdIssueLine.get("quantity").asText()).isEqualTo("2.000000");
+		assertThat(createdIssueLine.get("trackingAllocations").size()).isOne();
+		assertThat(createdIssueLine.get("trackingAllocations").get(0).get("batchId").longValue())
+			.isEqualTo(issueBatch.batchId());
+		assertThat(createdIssueLine.get("trackingAllocations").get(0).get("quantity").asText()).isEqualTo("2.000000");
+		String postIssueKey = "PROD-027-OS-TRK-ISS-POST-" + SEQUENCE.incrementAndGet();
+		JsonNode postedIssue = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues/" + issueId + "/post",
+				actionBody(currentOutsourcingIssueVersion(issueId), postIssueKey), admin));
+		JsonNode postedIssueLine = outsourcingIssueLine(postedIssue, fixture.rawMaterialId());
+		long issueLineId = postedIssueLine.get("id").longValue();
+		assertThat(postedIssueLine.get("trackingAllocations").get(0).get("movementId").isNumber()).isTrue();
+		assertThat(trackingAllocationMovementCount("PRODUCTION_OUTSOURCING_ISSUE", issueId, issueLineId)).isOne();
+		assertThat(trackedMovementCount("PRODUCTION_OUTSOURCING_ISSUE", issueLineId, issueBatch.batchId())).isOne();
+		assertDecimal(trackingBalanceQuantity(fixture.issueWarehouseId(), fixture.rawMaterialId(),
+				InventoryQualityStatus.QUALIFIED, issueBatch.batchId(), null), "0.000000");
+		assertThat(countRows("""
+				select count(*)
+				from mfg_action_idempotency
+				where action = 'OUTSOURCING_ISSUE_POST'
+				and idempotency_key = ?
+				and result_resource_id = ?
+				""", postIssueKey, issueId)).isOne();
+
+		String receiptBatchNo = "MFG-OS-REC-BATCH-" + SEQUENCE.incrementAndGet();
+		Map<String, Object> receiptLine = new LinkedHashMap<>();
+		receiptLine.put("lineNo", 1);
+		receiptLine.put("acceptedQuantity", "1.000000");
+		receiptLine.put("rejectedQuantity", "0.000000");
+		receiptLine.put("provisionalUnitCost", "8.000000");
+		receiptLine.put("trackingAllocations", List.of(trackingAllocation(receiptBatchNo, "1.000000")));
+		Map<String, Object> receiptBody = new LinkedHashMap<>();
+		receiptBody.put("businessDate", LocalDate.now().toString());
+		receiptBody.put("receiptWarehouseId", fixture.receiptWarehouseId());
+		receiptBody.put("lines", List.of(receiptLine));
+		receiptBody.put("idempotencyKey", "PROD-027-OS-TRK-REC-CREATE-" + SEQUENCE.incrementAndGet());
+		JsonNode createdReceipt = data(exchange(HttpMethod.POST,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts", receiptBody, admin));
+		long receiptId = createdReceipt.get("id").longValue();
+		assertThat(createdReceipt.get("quantity").isTextual()).as(createdReceipt.toString()).isTrue();
+		assertThat(createdReceipt.get("quantity").asText()).isEqualTo("1.000000");
+		assertThat(createdReceipt.get("lines").get(0).get("trackingAllocations").size()).isOne();
+		JsonNode postedReceipt = data(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + receiptId + "/post",
+				actionBody(currentOutsourcingReceiptVersion(receiptId),
+						"PROD-027-OS-TRK-REC-POST-" + SEQUENCE.incrementAndGet()),
+				admin));
+		JsonNode postedReceiptLine = postedReceipt.get("lines").get(0);
+		long receiptLineId = this.jdbcTemplate.queryForObject("""
+				select id
+				from mfg_outsourcing_receipt_line
+				where receipt_id = ?
+				and line_no = 1
+				""", Long.class, receiptId);
+		long receiptBatchId = batchId(fixture.productMaterialId(), receiptBatchNo);
+		assertThat(postedReceiptLine.get("trackingAllocations").get(0).get("batchId").longValue())
+			.isEqualTo(receiptBatchId);
+		assertThat(postedReceiptLine.get("trackingAllocations").get(0).get("quantity").asText())
+			.isEqualTo("1.000000");
+		assertThat(postedReceiptLine.get("trackingAllocations").get(0).get("movementId").isNumber()).isTrue();
+		assertThat(trackingAllocationMovementCount("PRODUCTION_OUTSOURCING_RECEIPT", receiptId, receiptLineId))
+			.isOne();
+		assertDecimal(trackingBalanceQuantity(fixture.receiptWarehouseId(), fixture.productMaterialId(),
+				InventoryQualityStatus.PENDING_INSPECTION, receiptBatchId, null), "1.000000");
+		Map<String, Object> receiptMovement = this.jdbcTemplate.queryForMap("""
+				select ownership_type, project_id, value_movement_id
+				from inv_stock_movement
+				where source_type = 'PRODUCTION_OUTSOURCING_RECEIPT'
+				and source_line_id = ?
+				""", receiptLineId);
+		assertThat(receiptMovement.get("ownership_type")).isEqualTo("PROJECT");
+		assertThat(((Number) receiptMovement.get("project_id")).longValue()).isEqualTo(projectId);
+		assertThat(receiptMovement.get("value_movement_id")).isNotNull();
+
+		AuthenticatedSession viewOnly = createProductionUserAndLogin("prod_os_trk_view", "prod_os_trk_view_role",
+				List.of("production:outsourcing:view"));
+		ResponseEntity<String> restrictedIssueResponse = get("/api/admin/production/outsourcing-orders/" + orderId
+				+ "/material-issues/" + issueId, viewOnly);
+		assertOk(restrictedIssueResponse);
+		JsonNode restrictedIssue = data(restrictedIssueResponse);
+		assertThat(restrictedIssue.get("costVisible").booleanValue()).isFalse();
+		assertThat(restrictedIssue.get("allowedActions")).allSatisfy((action) -> assertThat(action.asText())
+			.isNotIn("UPDATE", "POST", "CANCEL"));
+		JsonNode restrictedIssueLine = outsourcingIssueLine(restrictedIssue, fixture.rawMaterialId());
+		assertThat(restrictedIssueLine.get("costLayerId").isNull()).isTrue();
+		assertThat(restrictedIssueLine.get("quantity").asText()).isEqualTo("2.000000");
+		assertThat(restrictedIssueLine.get("trackingAllocations").get(0).get("quantity").asText())
+			.isEqualTo("2.000000");
+		ResponseEntity<String> restrictedReceiptResponse = get("/api/admin/production/outsourcing-orders/" + orderId
+				+ "/receipts/" + receiptId, viewOnly);
+		assertOk(restrictedReceiptResponse);
+		JsonNode restrictedReceipt = data(restrictedReceiptResponse);
+		assertThat(restrictedReceipt.get("costVisible").booleanValue()).isFalse();
+		assertThat(restrictedReceipt.get("provisionalUnitCost").isNull()).isTrue();
+		assertThat(restrictedReceipt.get("unitCost").isNull()).isTrue();
+		assertThat(restrictedReceipt.get("valuationState").isNull()).isTrue();
+		assertThat(restrictedReceipt.get("allowedActions")).allSatisfy((action) -> assertThat(action.asText())
+			.isNotIn("UPDATE", "POST", "CANCEL"));
+		assertThat(restrictedReceipt.get("quantity").asText()).isEqualTo("1.000000");
+		assertThat(restrictedReceipt.get("lines").get(0).get("provisionalUnitCost").isNull()).isTrue();
+		assertThat(restrictedReceipt.get("lines").get(0).get("trackingAllocations").get(0).get("quantity").asText())
+			.isEqualTo("1.000000");
+	}
+
+	@Test
 	void workOrderDetailReturnsCompletionValuationStateAndMasksCosts() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProductionFixture fixture = fixture(admin);
@@ -1071,7 +1884,8 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> updateWorkOrder(AuthenticatedSession session, long workOrderId,
 			Map<String, Object> body) {
-		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId, body, session);
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId,
+				withVersionAndIdempotency(body, currentWorkOrderVersion(workOrderId), "PROD-WO-UPD"), session);
 	}
 
 	private Map<String, Object> workOrderPayload(long productId, long bomId, long issueWarehouseId,
@@ -1092,6 +1906,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("plannedStartDate", plannedStartDate.toString());
 		body.put("plannedFinishDate", plannedFinishDate.toString());
 		body.put("remark", "生产执行测试工单");
+		body.put("idempotencyKey", "PROD-WO-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -1109,17 +1924,25 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private ResponseEntity<String> releaseWorkOrder(AuthenticatedSession session, long workOrderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/release", null,
+		return releaseWorkOrder(session, workOrderId,
+				actionBody(currentWorkOrderVersion(workOrderId), "PROD-WO-REL-" + SEQUENCE.incrementAndGet()));
+	}
+
+	private ResponseEntity<String> releaseWorkOrder(AuthenticatedSession session, long workOrderId,
+			Map<String, Object> body) {
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/release", body,
 				session);
 	}
 
 	private ResponseEntity<String> completeWorkOrder(AuthenticatedSession session, long workOrderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/complete", null,
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/complete",
+				actionBody(currentWorkOrderVersion(workOrderId), "PROD-WO-COMP-" + SEQUENCE.incrementAndGet()),
 				session);
 	}
 
 	private ResponseEntity<String> cancelWorkOrder(AuthenticatedSession session, long workOrderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/cancel", null,
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/cancel",
+				actionBody(currentWorkOrderVersion(workOrderId), "PROD-WO-CAN-" + SEQUENCE.incrementAndGet()),
 				session);
 	}
 
@@ -1139,12 +1962,19 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	private ResponseEntity<String> updateMaterialIssue(AuthenticatedSession session, long workOrderId, long issueId,
 			Map<String, Object> body) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId, body, session);
+				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId,
+				withVersionAndIdempotency(body, currentMaterialIssueVersion(issueId), "PROD-ISS-UPD"), session);
 	}
 
 	private ResponseEntity<String> postMaterialIssue(AuthenticatedSession session, long workOrderId, long issueId) {
+		return postMaterialIssue(session, workOrderId, issueId,
+				actionBody(currentMaterialIssueVersion(issueId), "PROD-ISS-POST-" + SEQUENCE.incrementAndGet()));
+	}
+
+	private ResponseEntity<String> postMaterialIssue(AuthenticatedSession session, long workOrderId, long issueId,
+			Map<String, Object> body) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId + "/post", null,
+				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId + "/post", body,
 				session);
 	}
 
@@ -1163,7 +1993,8 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> postReport(AuthenticatedSession session, long workOrderId, long reportId) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/reports/" + reportId + "/post", null, session);
+				"/api/admin/production/work-orders/" + workOrderId + "/reports/" + reportId + "/post",
+				actionBody(currentReportVersion(reportId), "PROD-REP-POST-" + SEQUENCE.incrementAndGet()), session);
 	}
 
 	private ResponseEntity<String> createCompletionReceipt(AuthenticatedSession session, long workOrderId,
@@ -1183,14 +2014,15 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 			long receiptId) {
 		return exchange(HttpMethod.PUT,
 				"/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId + "/post",
-				null, session);
+				actionBody(currentCompletionReceiptVersion(receiptId), "PROD-REC-POST-" + SEQUENCE.incrementAndGet()),
+				session);
 	}
 
 	private ResponseEntity<String> updateCompletionReceipt(AuthenticatedSession session, long workOrderId,
 			long receiptId, Map<String, Object> body) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId, body,
-				session);
+				"/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId,
+				withVersionAndIdempotency(body, currentCompletionReceiptVersion(receiptId), "PROD-REC-UPD"), session);
 	}
 
 	private ResponseEntity<String> getCompletionReceipt(AuthenticatedSession session, long workOrderId,
@@ -1205,6 +2037,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("reason", reason);
 		body.put("remark", reason + "备注");
 		body.put("lines", lines);
+		body.put("idempotencyKey", "PROD-ISS-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -1226,6 +2059,7 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("defectiveQuantity", defectiveQuantity);
 		body.put("reporterName", "测试报工员");
 		body.put("remark", "生产报工测试");
+		body.put("idempotencyKey", "PROD-REP-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -1236,7 +2070,268 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		body.put("quantity", quantity);
 		body.put("provisionalUnitCost", "1.000000");
 		body.put("remark", "完工入库测试");
+		body.put("idempotencyKey", "PROD-REC-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
+	}
+
+	private Map<String, Object> actionBody(Object version, String idempotencyKey) {
+		Map<String, Object> body = new LinkedHashMap<>();
+		body.put("version", version);
+		body.put("reason", "027 后端幂等动作");
+		body.put("idempotencyKey", idempotencyKey);
+		return body;
+	}
+
+	private Map<String, Object> withVersionAndIdempotency(Map<String, Object> original, long version,
+			String keyPrefix) {
+		Map<String, Object> body = new LinkedHashMap<>(original);
+		body.putIfAbsent("version", version);
+		body.putIfAbsent("idempotencyKey", keyPrefix + "-" + SEQUENCE.incrementAndGet());
+		return body;
+	}
+
+	private long currentWorkOrderVersion(long workOrderId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_work_order where id = ?", Long.class,
+				workOrderId);
+	}
+
+	private long currentMaterialIssueVersion(long issueId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_material_issue where id = ?", Long.class,
+				issueId);
+	}
+
+	private long currentReportVersion(long reportId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_work_report where id = ?", Long.class,
+				reportId);
+	}
+
+	private long currentCompletionReceiptVersion(long receiptId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_completion_receipt where id = ?", Long.class,
+				receiptId);
+	}
+
+	private long currentOutsourcingOrderVersion(long orderId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_outsourcing_order where id = ?", Long.class,
+				orderId);
+	}
+
+	private long currentOutsourcingIssueVersion(long issueId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_outsourcing_issue where id = ?", Long.class,
+				issueId);
+	}
+
+	private long currentOutsourcingReceiptVersion(long receiptId) {
+		return this.jdbcTemplate.queryForObject("select version from mfg_outsourcing_receipt where id = ?", Long.class,
+				receiptId);
+	}
+
+	private Map<String, Object> outsourcingOrderPayload(long supplierId, ProductionFixture fixture,
+			String plannedQuantity) {
+		Map<String, Object> orderBody = new LinkedHashMap<>();
+		orderBody.put("supplierId", supplierId);
+		orderBody.put("productMaterialId", fixture.productMaterialId());
+		orderBody.put("bomId", fixture.bomId());
+		orderBody.put("plannedQuantity", plannedQuantity);
+		orderBody.put("issueWarehouseId", fixture.issueWarehouseId());
+		orderBody.put("receiptWarehouseId", fixture.receiptWarehouseId());
+		orderBody.put("plannedIssueDate", LocalDate.now().toString());
+		orderBody.put("plannedReceiptDate", LocalDate.now().plusDays(3).toString());
+		orderBody.put("ownershipType", "PUBLIC");
+		orderBody.put("provisionalUnitCost", "8.000000");
+		orderBody.put("remark", "外协状态机测试");
+		orderBody.put("idempotencyKey", "PROD-OS-CREATE-" + SEQUENCE.incrementAndGet());
+		return orderBody;
+	}
+
+	private Map<String, Object> outsourcingIssuePayload(long warehouseId, JsonNode requirement,
+			String quantity) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", 1);
+		line.put("orderMaterialId", requirement.get("id").longValue());
+		line.put("warehouseId", warehouseId);
+		line.put("quantity", quantity);
+		line.put("ownershipType", "PUBLIC");
+		Map<String, Object> issueBody = new LinkedHashMap<>();
+		issueBody.put("businessDate", LocalDate.now().toString());
+		issueBody.put("reason", "外协状态机发料");
+		issueBody.put("lines", List.of(line));
+		issueBody.put("idempotencyKey", "PROD-OS-ISS-CREATE-" + SEQUENCE.incrementAndGet());
+		return issueBody;
+	}
+
+	private Map<String, Object> outsourcingReceiptPayload(long warehouseId, String acceptedQuantity) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("lineNo", 1);
+		line.put("acceptedQuantity", acceptedQuantity);
+		line.put("rejectedQuantity", "0.000000");
+		line.put("provisionalUnitCost", "8.000000");
+		Map<String, Object> receiptBody = new LinkedHashMap<>();
+		receiptBody.put("businessDate", LocalDate.now().toString());
+		receiptBody.put("receiptWarehouseId", warehouseId);
+		receiptBody.put("lines", List.of(line));
+		receiptBody.put("idempotencyKey", "PROD-OS-REC-CREATE-" + SEQUENCE.incrementAndGet());
+		return receiptBody;
+	}
+
+	private List<String> outsourcingWritePermissionCodesWithoutValuation() {
+		return List.of("production:outsourcing:view", "production:outsourcing:create",
+				"production:outsourcing:update", "production:outsourcing:release", "production:outsourcing:close",
+				"production:outsourcing:cancel", "production:outsourcing-issue:view",
+				"production:outsourcing-issue:create", "production:outsourcing-issue:update",
+				"production:outsourcing-issue:post", "production:outsourcing-issue:cancel",
+				"production:outsourcing-receipt:view", "production:outsourcing-receipt:create",
+				"production:outsourcing-receipt:update", "production:outsourcing-receipt:post",
+				"production:outsourcing-receipt:cancel");
+	}
+
+	private void assertOutsourcingOrderCostHidden(JsonNode order) {
+		assertThat(order.get("costVisible").booleanValue()).as(order.toString()).isFalse();
+		assertThat(order.get("provisionalUnitCost").isNull()).as(order.toString()).isTrue();
+	}
+
+	private void assertOutsourcingIssueCostHidden(JsonNode issue, long materialId) {
+		assertThat(issue.get("costVisible").booleanValue()).as(issue.toString()).isFalse();
+		assertThat(issue.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText()).isEqualTo("POST"));
+		JsonNode issueLine = outsourcingIssueLine(issue, materialId);
+		assertThat(issueLine.get("costLayerId").isNull()).as(issueLine.toString()).isTrue();
+	}
+
+	private void assertOutsourcingReceiptCostHidden(JsonNode receipt) {
+		assertThat(receipt.get("costVisible").booleanValue()).as(receipt.toString()).isFalse();
+		assertThat(receipt.get("provisionalUnitCost").isNull()).as(receipt.toString()).isTrue();
+		assertThat(receipt.get("unitCost").isNull()).as(receipt.toString()).isTrue();
+		assertThat(receipt.get("valuationState").isNull()).as(receipt.toString()).isTrue();
+		assertThat(receipt.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText()).isEqualTo("POST"));
+		assertThat(receipt.get("lines").get(0).get("provisionalUnitCost").isNull()).as(receipt.toString()).isTrue();
+	}
+
+	private JsonNode createReleasedOutsourcingOrder(AuthenticatedSession session, ProductionFixture fixture,
+			long supplierId, String plannedQuantity) throws Exception {
+		JsonNode created = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				outsourcingOrderPayload(supplierId, fixture, plannedQuantity), session));
+		long orderId = created.get("id").longValue();
+		ResponseEntity<String> releaseResponse = exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/release",
+				actionBody(currentOutsourcingOrderVersion(orderId),
+						"PROD-027-OS-REL-HELPER-" + SEQUENCE.incrementAndGet()),
+				session);
+		assertOk(releaseResponse);
+		return data(releaseResponse);
+	}
+
+	private void assertOutsourcingIssuePostRejectedAfterParentStatus(AuthenticatedSession admin, long orderId,
+			long issueId, String parentStatus) throws Exception {
+		long issueLineId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_outsourcing_issue_line where issue_id = ? order by line_no limit 1",
+				Long.class, issueId);
+		BigDecimal beforeIssuedQuantity = outsourcingIssuedQuantity(orderId);
+		long beforeOrderVersion = currentOutsourcingOrderVersion(orderId);
+		long beforeMovements = movementCountBySource("PRODUCTION_OUTSOURCING_ISSUE", issueLineId);
+		long beforeValueMovements = valueMovementCountBySource("PRODUCTION_OUTSOURCING_ISSUE", issueLineId);
+		long beforeTrackingPosted = postedTrackingAllocationCount("PRODUCTION_OUTSOURCING_ISSUE", issueId);
+		forceOutsourcingOrderStatus(orderId, parentStatus);
+		long forcedVersion = currentOutsourcingOrderVersion(orderId);
+		assertThat(forcedVersion).isGreaterThan(beforeOrderVersion);
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/material-issues/" + issueId + "/post",
+				actionBody(currentOutsourcingIssueVersion(issueId),
+						"PROD-027-OS-ISS-PARENT-" + parentStatus + "-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "PRODUCTION_OUTSOURCING_STATUS_INVALID");
+
+		assertThat(currentOutsourcingOrderVersion(orderId)).isEqualTo(forcedVersion);
+		assertThat(outsourcingOrderStatus(orderId)).isEqualTo(parentStatus);
+		assertThat(outsourcingIssueStatus(issueId)).isEqualTo("DRAFT");
+		assertThat(outsourcingIssuedQuantity(orderId).compareTo(beforeIssuedQuantity)).isZero();
+		assertThat(movementCountBySource("PRODUCTION_OUTSOURCING_ISSUE", issueLineId)).isEqualTo(beforeMovements);
+		assertThat(valueMovementCountBySource("PRODUCTION_OUTSOURCING_ISSUE", issueLineId))
+			.isEqualTo(beforeValueMovements);
+		assertThat(postedTrackingAllocationCount("PRODUCTION_OUTSOURCING_ISSUE", issueId))
+			.isEqualTo(beforeTrackingPosted);
+	}
+
+	private void assertOutsourcingReceiptPostRejectedAfterParentStatus(AuthenticatedSession admin, long orderId,
+			long receiptId, String parentStatus) throws Exception {
+		long receiptLineId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_outsourcing_receipt_line where receipt_id = ? order by line_no limit 1",
+				Long.class, receiptId);
+		BigDecimal beforeReceivedQuantity = outsourcingReceivedQuantity(orderId);
+		long beforeOrderVersion = currentOutsourcingOrderVersion(orderId);
+		long beforeMovements = movementCountBySource("PRODUCTION_OUTSOURCING_RECEIPT", receiptLineId);
+		long beforeValueMovements = valueMovementCountBySource("PRODUCTION_OUTSOURCING_RECEIPT", receiptLineId);
+		long beforeTrackingPosted = postedTrackingAllocationCount("PRODUCTION_OUTSOURCING_RECEIPT", receiptId);
+		forceOutsourcingOrderStatus(orderId, parentStatus);
+		long forcedVersion = currentOutsourcingOrderVersion(orderId);
+		assertThat(forcedVersion).isGreaterThan(beforeOrderVersion);
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/production/outsourcing-orders/" + orderId + "/receipts/" + receiptId + "/post",
+				actionBody(currentOutsourcingReceiptVersion(receiptId),
+						"PROD-027-OS-REC-PARENT-" + parentStatus + "-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "PRODUCTION_OUTSOURCING_STATUS_INVALID");
+
+		assertThat(currentOutsourcingOrderVersion(orderId)).isEqualTo(forcedVersion);
+		assertThat(outsourcingOrderStatus(orderId)).isEqualTo(parentStatus);
+		assertThat(outsourcingReceiptStatus(receiptId)).isEqualTo("DRAFT");
+		assertThat(outsourcingReceivedQuantity(orderId).compareTo(beforeReceivedQuantity)).isZero();
+		assertThat(movementCountBySource("PRODUCTION_OUTSOURCING_RECEIPT", receiptLineId)).isEqualTo(beforeMovements);
+		assertThat(valueMovementCountBySource("PRODUCTION_OUTSOURCING_RECEIPT", receiptLineId))
+			.isEqualTo(beforeValueMovements);
+		assertThat(postedTrackingAllocationCount("PRODUCTION_OUTSOURCING_RECEIPT", receiptId))
+			.isEqualTo(beforeTrackingPosted);
+	}
+
+	private void forceOutsourcingOrderStatus(long orderId, String status) {
+		int updated = this.jdbcTemplate.update("""
+				update mfg_outsourcing_order
+				set status = ?, updated_at = now(), version = version + 1
+				where id = ?
+				""", status, orderId);
+		assertThat(updated).isOne();
+	}
+
+	private String outsourcingOrderStatus(long orderId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_outsourcing_order where id = ?", String.class,
+				orderId);
+	}
+
+	private String outsourcingIssueStatus(long issueId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_outsourcing_issue where id = ?", String.class,
+				issueId);
+	}
+
+	private String outsourcingReceiptStatus(long receiptId) {
+		return this.jdbcTemplate.queryForObject("select status from mfg_outsourcing_receipt where id = ?", String.class,
+				receiptId);
+	}
+
+	private BigDecimal outsourcingIssuedQuantity(long orderId) {
+		return this.jdbcTemplate.queryForObject("select issued_quantity from mfg_outsourcing_order where id = ?",
+				BigDecimal.class, orderId);
+	}
+
+	private BigDecimal outsourcingReceivedQuantity(long orderId) {
+		return this.jdbcTemplate.queryForObject("select received_quantity from mfg_outsourcing_order where id = ?",
+				BigDecimal.class, orderId);
+	}
+
+	private long valueMovementCountBySource(String sourceType, long sourceLineId) {
+		return countRows("""
+				select count(*)
+				from inv_value_movement
+				where source_type = ?
+				and source_line_id = ?
+				""", sourceType, sourceLineId);
+	}
+
+	private long postedTrackingAllocationCount(String documentType, long documentId) {
+		return countRows("""
+				select count(*)
+				from inv_stock_tracking_allocation
+				where document_type = ?
+				and document_id = ?
+				and movement_id is not null
+				""", documentType, documentId);
 	}
 
 	private Map<String, Object> trackingAllocation(String batchNo, String quantity) {
@@ -1306,6 +2401,28 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		throw new AssertionError("未找到生产领料行：" + materialId);
 	}
 
+	private JsonNode outsourcingMaterial(JsonNode order, long materialId) {
+		JsonNode materials = order.get("materials");
+		for (int i = 0; i < materials.size(); i++) {
+			JsonNode material = materials.get(i);
+			if (material.get("materialId").longValue() == materialId) {
+				return material;
+			}
+		}
+		throw new AssertionError("未找到外协用料：" + materialId);
+	}
+
+	private JsonNode outsourcingIssueLine(JsonNode issue, long materialId) {
+		JsonNode lines = issue.get("lines");
+		for (int i = 0; i < lines.size(); i++) {
+			JsonNode line = lines.get(i);
+			if (line.get("materialId").longValue() == materialId) {
+				return line;
+			}
+		}
+		throw new AssertionError("未找到外协发料行：" + materialId);
+	}
+
 	private BigDecimal balanceQuantity(long warehouseId, long materialId) throws Exception {
 		ResponseEntity<String> response = get(
 				"/api/admin/inventory/balances?warehouseId=" + warehouseId + "&materialId=" + materialId,
@@ -1356,6 +2473,108 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				    updated_at = now()
 				where id = ?
 				""", materialId);
+	}
+
+	private long insertProject(String projectNo) {
+		long adminUserId = this.jdbcTemplate.queryForObject("select id from sys_user where username = 'admin'",
+				Long.class);
+		long customerId = this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, projectNo + "_CUS", projectNo + "客户");
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project (project_no, name, customer_id, owner_user_id, planned_start_date,
+					planned_finish_date, status, target_revenue, target_cost, created_by, created_at, updated_by,
+					updated_at, activated_by, activated_at)
+				values (?, ?, ?, ?, ?, ?, 'ACTIVE', 1000.00, 100.00, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, projectNo, projectNo + "项目", customerId, adminUserId, LocalDate.now(),
+				LocalDate.now().plusDays(30));
+	}
+
+	private long insertSupplier(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_supplier (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, code + "供应商");
+	}
+
+	private MrpSourceSeed seedMrpSuggestion(long projectId, long materialId, long unitId) {
+		int sequence = SEQUENCE.incrementAndGet();
+		long adminUserId = this.jdbcTemplate.queryForObject("select id from sys_user where username = 'admin'",
+				Long.class);
+		long runId = this.jdbcTemplate.queryForObject("""
+				insert into mrp_calculation_run (
+					run_no, scope_type, project_id, demand_date_to, include_public_demand, scope_hash,
+					request_fingerprint, source_snapshot, status, calculated_at, idempotency_key,
+					created_by_user_id, created_by_username, created_at, updated_by, updated_at
+				)
+				values (?, 'PROJECT', ?, ?, true, ?, ?, '{}'::jsonb, 'COMPLETED', now(), ?,
+					?, 'admin', now(), 'admin', now())
+				returning id
+				""", Long.class, "MRP-FILTER-" + sequence, projectId, LocalDate.now().plusDays(7),
+				"scope-" + sequence, "request-" + sequence, "mrp-filter-" + sequence, adminUserId);
+		long requirementLineId = this.jdbcTemplate.queryForObject("""
+				insert into mrp_requirement_line (
+					run_id, line_no, demand_source_type, demand_type, project_id, material_id, unit_id,
+					demand_date, required_quantity, covered_quantity, shortage_quantity, source_snapshot
+				)
+				values (?, 1, 'TEST', 'SALES_DEMAND', ?, ?, ?, ?, 1.000000, 0.000000, 1.000000,
+					'{}'::jsonb)
+				returning id
+				""", Long.class, runId, projectId, materialId, unitId, LocalDate.now().plusDays(7));
+		long suggestionId = this.jdbcTemplate.queryForObject("""
+				insert into mrp_suggestion (
+					run_id, requirement_line_id, suggestion_type, status, material_id, unit_id, project_id,
+					ownership_type, required_date, suggested_quantity, material_source_type, conversion_allowed,
+					reason, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, 'PRODUCTION_ORDER', 'CONFIRMED', ?, ?, ?, 'PROJECT', ?, 1.000000,
+					'SELF_MADE', true, '027 工单筛选来源', 'admin', now(), 'admin', now())
+				returning id
+				""", Long.class, runId, requirementLineId, materialId, unitId, projectId,
+				LocalDate.now().plusDays(7));
+		return new MrpSourceSeed(runId, requirementLineId, suggestionId);
+	}
+
+	private long seedProjectCostLayerStock(long projectId, long warehouseId, long materialId, long unitId,
+			String quantity, String unitCost) {
+		BigDecimal quantityValue = new BigDecimal(quantity);
+		BigDecimal unitCostValue = new BigDecimal(unitCost);
+		BigDecimal amount = quantityValue.multiply(unitCostValue).setScale(2, java.math.RoundingMode.HALF_UP);
+		long costLayerId = this.jdbcTemplate.queryForObject("""
+				insert into inv_project_cost_layer (
+					project_id, material_id, source_type, source_id, source_line_id, original_quantity,
+					original_amount, remaining_quantity, remaining_amount, unit_cost, status
+				)
+				values (?, ?, 'TEST_PROJECT_STOCK', ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')
+				returning id
+				""", Long.class, projectId, materialId, 8_200_000L + SEQUENCE.incrementAndGet(),
+				8_210_000L + SEQUENCE.incrementAndGet(), quantityValue, amount, quantityValue, amount,
+				unitCostValue);
+		this.jdbcTemplate.update("""
+				insert into inv_stock_balance (
+					warehouse_id, material_id, unit_id, quality_status, ownership_type, project_id, cost_layer_id,
+					quantity_on_hand, locked_quantity, valuation_state, inventory_amount, average_unit_cost,
+					created_at, updated_at
+				)
+				values (?, ?, ?, 'QUALIFIED', 'PROJECT', ?, ?, ?, 0, 'VALUED', ?, ?, now(), now())
+				""", warehouseId, materialId, unitId, projectId, costLayerId, quantityValue, amount, unitCostValue);
+		return costLayerId;
+	}
+
+	private BigDecimal projectBalance(long warehouseId, long materialId, long projectId, long costLayerId) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(quantity_on_hand), 0)
+				from inv_stock_balance
+				where warehouse_id = ?
+				and material_id = ?
+				and ownership_type = 'PROJECT'
+				and project_id = ?
+				and cost_layer_id = ?
+				""", BigDecimal.class, warehouseId, materialId, projectId, costLayerId);
 	}
 
 	private TrackedBatch seedBatchStock(long warehouseId, long materialId, long unitId, String batchNo,
@@ -1500,6 +2719,11 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				where source_type = ?
 				and source_line_id = ?
 				""", Long.class, sourceType, sourceLineId);
+	}
+
+	private long countRows(String sql, Object... args) {
+		Long count = this.jdbcTemplate.queryForObject(sql, Long.class, args);
+		return count == null ? 0L : count;
 	}
 
 	private long trackingAllocationMovementCount(String documentType, long documentId, long documentLineId) {
@@ -1722,6 +2946,9 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	private record WorkOrderMaterialSnapshot(long materialId, BigDecimal requiredQuantity, BigDecimal businessQuantity,
 			BigDecimal baseRequiredQuantity) {
+	}
+
+	private record MrpSourceSeed(long runId, long requirementLineId, long suggestionId) {
 	}
 
 	private record TrackedBatch(long batchId, String batchNo) {

@@ -55,6 +55,12 @@ public class SalesProjectAdminController {
 		return ApiResponse.ok(this.salesProjectAdminService.salesFulfillment(id, includeLegacy, currentUser));
 	}
 
+	@GetMapping("/{id}/production-summary")
+	public ApiResponse<SalesProjectAdminService.ProductionSummaryResponse> productionSummary(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.salesProjectAdminService.productionSummary(id, currentUser));
+	}
+
 	@PostMapping("/{id}/close-sales-fulfillment")
 	public ApiResponse<SalesProjectAdminService.SalesFulfillmentResponse> closeSalesFulfillment(@PathVariable Long id,
 			@Valid @RequestBody SalesProjectAdminService.FulfillmentCloseRequest request,

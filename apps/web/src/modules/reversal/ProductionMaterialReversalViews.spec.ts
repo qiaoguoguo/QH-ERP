@@ -249,6 +249,7 @@ const materialReturnDetail = {
   updatedAt: '2026-07-05T12:00:00+08:00',
   clientRequestId: 'material-return-client-1',
   remark: '余料退回',
+  version: 5,
   lines: [
     {
       id: 31,
@@ -286,6 +287,7 @@ const materialSupplementDetail = {
   updatedAt: '2026-07-05T13:00:00+08:00',
   clientRequestId: 'material-supplement-client-1',
   remark: '损耗补料',
+  version: 6,
   lines: [
     {
       id: 41,
@@ -330,6 +332,11 @@ const materialReturnSource = {
       returnableQuantity: '10.000000',
       unitPrice: '20.00',
       returnableAmount: '200.00',
+      ownershipType: 'PROJECT',
+      projectId: 3001,
+      projectNo: 'SP-027',
+      projectName: '销售项目 027',
+      costLayerId: 7001,
     },
   ],
 }
@@ -362,6 +369,11 @@ const materialSupplementSource = {
       disabledReason: '冻结库存不可参与可用量',
       maxSelectableQuantity: '0.000000',
       unitPrice: '30.00',
+      ownershipType: 'PROJECT',
+      projectId: 3001,
+      projectNo: 'SP-027',
+      projectName: '销售项目 027',
+      costLayerId: 7002,
     },
   ],
 }
@@ -491,6 +503,31 @@ describe('生产退料补料前端页面', () => {
     expect(router.currentRoute.value.name).toBe('production-material-return-create')
   })
 
+  it('生产退料列表过账和取消携带当前版本与独立幂等键，409 错误只展示不重放', async () => {
+    returnRefundReversalApiMock.productionMaterialReturns.post.mockRejectedValueOnce(new Error('生产退料版本已变化'))
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnListView, '/production/material-returns', [
+      'production:material-return:view',
+      'production:material-return:post',
+      'production:material-return:cancel',
+    ])
+
+    await wrapper.find('[data-test="post-material-return"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.productionMaterialReturns.post).toHaveBeenCalledTimes(1)
+    expect(returnRefundReversalApiMock.productionMaterialReturns.post).toHaveBeenCalledWith(3, {
+      version: 5,
+      idempotencyKey: expect.stringMatching(/^production-material-return-post-/),
+    })
+    expect(wrapper.text()).toContain('生产退料版本已变化')
+
+    await wrapper.find('[data-test="cancel-material-return"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.productionMaterialReturns.cancel).toHaveBeenCalledWith(3, {
+      version: 5,
+      idempotencyKey: expect.stringMatching(/^production-material-return-cancel-/),
+    })
+  })
+
   it('生产补料列表支持筛选、创建入口和权限按钮', async () => {
     const { wrapper, router } = await mountReversalView(ProductionMaterialSupplementListView, '/production/material-supplements', [
       'production:material-supplement:view',
@@ -523,6 +560,28 @@ describe('生产退料补料前端页面', () => {
     expect(router.currentRoute.value.name).toBe('production-material-supplement-create')
   })
 
+  it('生产补料列表过账和取消携带当前版本与独立幂等键', async () => {
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementListView, '/production/material-supplements', [
+      'production:material-supplement:view',
+      'production:material-supplement:post',
+      'production:material-supplement:cancel',
+    ])
+
+    await wrapper.find('[data-test="post-material-supplement"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.post).toHaveBeenCalledWith(4, {
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-material-supplement-post-/),
+    })
+
+    await wrapper.find('[data-test="cancel-material-supplement"]').trigger('click')
+    await flushPromises()
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.cancel).toHaveBeenCalledWith(4, {
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-material-supplement-cancel-/),
+    })
+  })
+
   it('生产退料表单加载候选生产领料并以字符串数量提交创建请求', async () => {
     const { wrapper, router } = await mountReversalView(ProductionMaterialReturnFormView, '/production/material-returns/create', ['production:material-return:create'])
 
@@ -545,6 +604,8 @@ describe('生产退料补料前端页面', () => {
     expect(returnRefundReversalApiMock.productionMaterialReturns.create).toHaveBeenCalledWith(expect.objectContaining({
       sourceIssueId: 40,
       businessDate: '2026-07-05',
+      clientRequestId: expect.stringMatching(/^material-return-/),
+      idempotencyKey: expect.stringMatching(/^production-material-return-save-/),
       remark: '余料退回',
       lines: [{ sourceIssueLineId: 401, quantity: '3.000000', reason: '余料退回' }],
     }))
@@ -591,8 +652,10 @@ describe('生产退料补料前端页面', () => {
       workOrderId: 30,
       warehouseId: 4,
       businessDate: '2026-07-05',
+      clientRequestId: expect.stringMatching(/^material-supplement-/),
+      idempotencyKey: expect.stringMatching(/^production-material-supplement-save-/),
       remark: '损耗补料',
-      lines: [{ workOrderMaterialId: 501, quantity: '2.000000', reason: '损耗补料' }],
+      lines: [expect.objectContaining({ workOrderMaterialId: 501, quantity: '2.000000', reason: '损耗补料' })],
     }))
     expect(router.currentRoute.value.name).toBe('production-material-supplement-detail')
   })
@@ -662,6 +725,8 @@ describe('生产退料补料前端页面', () => {
 
     expect(returnRefundReversalApiMock.productionMaterialReturns.update).toHaveBeenCalledWith('3', expect.objectContaining({
       businessDate: '2026-07-05',
+      version: 5,
+      idempotencyKey: expect.stringMatching(/^production-material-return-save-/),
       remark: '余料退回',
       lines: [{ id: 31, quantity: '4.000000', reason: '受限退料调整' }],
     }))
@@ -714,6 +779,29 @@ describe('生产退料补料前端页面', () => {
     }))
   })
 
+  it('027 生产退料继承原领料项目和成本层，仅提交来源行与退料数量', async () => {
+    const { wrapper } = await mountReversalView(ProductionMaterialReturnFormView, '/production/material-returns/create', ['production:material-return:create'])
+
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('成本层 #7001')
+    expect(wrapper.find('input[name="material-return-project-id"]').exists()).toBe(false)
+
+    await wrapper.find('input[name="material-return-business-date"]').setValue('2026-07-05')
+    await wrapper.find('input[name="material-return-line-quantity-401"]').setValue('3.000000')
+    await wrapper.find('input[name="material-return-line-reason-401"]').setValue('项目余料退回')
+    await wrapper.find('[data-test="submit-material-return"]').trigger('click')
+    await flushPromises()
+
+    const payload = returnRefundReversalApiMock.productionMaterialReturns.create.mock.calls[0][0]
+    expect(payload.lines[0]).toEqual(expect.objectContaining({
+      sourceIssueLineId: 401,
+      quantity: '3.000000',
+      reason: '项目余料退回',
+    }))
+    expect(payload.lines[0]).not.toHaveProperty('projectId')
+    expect(payload.lines[0]).not.toHaveProperty('costLayerId')
+  })
+
   it('批次管理生产补料通过候选抽屉选择批次并随保存提交', async () => {
     returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValueOnce(page([
       {
@@ -755,12 +843,52 @@ describe('生产退料补料前端页面', () => {
 
     expect(returnRefundReversalApiMock.productionMaterialSupplements.create).toHaveBeenCalledWith(expect.objectContaining({
       lines: [
-        {
+        expect.objectContaining({
           workOrderMaterialId: 501,
           quantity: '2.000000',
           trackingAllocations: [{ batchId: 920, quantity: '2.000000' }],
           reason: '损耗补料',
-        },
+        }),
+      ],
+    }))
+  })
+
+  it('027 生产补料展示同项目库存来源并随行提交项目和成本层', async () => {
+    returnRefundReversalApiMock.productionMaterialSupplementSources.list.mockResolvedValueOnce(page([
+      {
+        ...materialSupplementSource,
+        materials: materialSupplementSource.materials.map((material) => ({
+          ...material,
+          qualityStatus: 'QUALIFIED',
+          qualityStatusName: '合格',
+          availableQuantity: '9.000000',
+          selectable: true,
+          disabledReasonCode: null,
+          disabledReason: null,
+          maxSelectableQuantity: '9.000000',
+        })),
+      },
+    ], 20))
+    const { wrapper } = await mountReversalView(ProductionMaterialSupplementFormView, '/production/material-supplements/create', ['production:material-supplement:create'])
+
+    expect(wrapper.text()).toContain('SP-027 销售项目 027')
+    expect(wrapper.text()).toContain('成本层 #7002')
+
+    await wrapper.find('input[name="material-supplement-line-quantity-501"]').setValue('2.000000')
+    await wrapper.find('input[name="material-supplement-line-reason-501"]').setValue('项目损耗补料')
+    await wrapper.find('[data-test="submit-material-supplement"]').trigger('click')
+    await flushPromises()
+
+    expect(returnRefundReversalApiMock.productionMaterialSupplements.create).toHaveBeenCalledWith(expect.objectContaining({
+      lines: [
+        expect.objectContaining({
+          workOrderMaterialId: 501,
+          quantity: '2.000000',
+          ownershipType: 'PROJECT',
+          projectId: 3001,
+          costLayerId: 7002,
+          reason: '项目损耗补料',
+        }),
       ],
     }))
   })
@@ -798,7 +926,7 @@ describe('生产退料补料前端页面', () => {
 
     expect(returnRefundReversalApiMock.productionMaterialSupplements.create).toHaveBeenCalledWith(expect.objectContaining({
       lines: [
-        {
+        expect.objectContaining({
           workOrderMaterialId: 501,
           quantity: '2.000000',
           trackingAllocations: [
@@ -806,7 +934,7 @@ describe('生产退料补料前端页面', () => {
             { batchId: 921, quantity: '0.800000' },
           ],
           reason: '损耗补料',
-        },
+        }),
       ],
     }))
   })
@@ -910,6 +1038,8 @@ describe('生产退料补料前端页面', () => {
 
     expect(returnRefundReversalApiMock.productionMaterialSupplements.update).toHaveBeenCalledWith('4', expect.objectContaining({
       businessDate: '2026-07-05',
+      version: 6,
+      idempotencyKey: expect.stringMatching(/^production-material-supplement-save-/),
       remark: '损耗补料',
       lines: [{ id: 41, quantity: '2.500000', reason: '受限补料调整' }],
     }))

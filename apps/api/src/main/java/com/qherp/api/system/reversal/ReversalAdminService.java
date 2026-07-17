@@ -16,6 +16,8 @@ import com.qherp.api.system.inventory.InventoryTrackingService;
 import com.qherp.api.system.period.BusinessPeriodGuard;
 import com.qherp.api.system.period.BusinessPeriodOperation;
 import com.qherp.api.system.procurement.ProcurementActionIdempotencyService;
+import com.qherp.api.system.production.ProductionActionIdempotencyService;
+import com.qherp.api.system.production.ProductionOwnershipPolicy;
 import com.qherp.api.system.quality.QualityAdminService;
 import com.qherp.api.system.quality.QualityInspectionSourceType;
 import jakarta.servlet.http.HttpServletRequest;
@@ -114,6 +116,10 @@ public class ReversalAdminService {
 
 	private final InventoryPostingService inventoryPostingService;
 
+	private final ProductionMaterialReversalService productionMaterialReversalService;
+
+	private final ProductionOwnershipPolicy productionOwnershipPolicy;
+
 	private final InventoryTrackingService inventoryTrackingService;
 
 	private final BusinessPeriodGuard businessPeriodGuard;
@@ -122,17 +128,26 @@ public class ReversalAdminService {
 
 	private final ProcurementActionIdempotencyService actionIdempotencyService;
 
+	private final ProductionActionIdempotencyService productionActionIdempotencyService;
+
 	public ReversalAdminService(JdbcTemplate jdbcTemplate, AuditService auditService,
-			InventoryPostingService inventoryPostingService, BusinessPeriodGuard businessPeriodGuard,
-			QualityAdminService qualityAdminService, InventoryTrackingService inventoryTrackingService,
-			ProcurementActionIdempotencyService actionIdempotencyService) {
+			InventoryPostingService inventoryPostingService,
+			ProductionMaterialReversalService productionMaterialReversalService,
+			ProductionOwnershipPolicy productionOwnershipPolicy,
+			BusinessPeriodGuard businessPeriodGuard, QualityAdminService qualityAdminService,
+			InventoryTrackingService inventoryTrackingService,
+			ProcurementActionIdempotencyService actionIdempotencyService,
+			ProductionActionIdempotencyService productionActionIdempotencyService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.inventoryPostingService = inventoryPostingService;
+		this.productionMaterialReversalService = productionMaterialReversalService;
+		this.productionOwnershipPolicy = productionOwnershipPolicy;
 		this.inventoryTrackingService = inventoryTrackingService;
 		this.businessPeriodGuard = businessPeriodGuard;
 		this.qualityAdminService = qualityAdminService;
 		this.actionIdempotencyService = actionIdempotencyService;
+		this.productionActionIdempotencyService = productionActionIdempotencyService;
 	}
 
 	public PageResponse<Object> emptyPage(int page, int pageSize) {
@@ -794,6 +809,14 @@ public class ReversalAdminService {
 	@Transactional
 	public ProductionMaterialReturnDetailResponse createMaterialReturn(ProductionMaterialReturnRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint("PRODUCTION_MATERIAL_RETURN_CREATE",
+				PRODUCTION_MATERIAL_RETURN_TARGET, 0L, null, request);
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_RETURN_CREATE", PRODUCTION_MATERIAL_RETURN_TARGET, 0L,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialReturn(idempotent.get().resultResourceId(), operator);
+		}
 		ValidatedMaterialReturn validated = validateMaterialReturnCreate(request);
 		ProductionIssueRow issue = lockProductionIssue(validated.sourceIssueId())
 			.orElseThrow(this::sourceNotFoundException);
@@ -816,7 +839,11 @@ public class ReversalAdminService {
 			prepareMaterialReturnAllocations(created.id(), issue.id(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_CREATE",
 					PRODUCTION_MATERIAL_RETURN_TARGET, created.id(), created.documentNo(), servletRequest);
-			return materialReturn(created.id(), operator);
+			ProductionMaterialReturnDetailResponse detail = materialReturn(created.id(), operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_RETURN_CREATE",
+					PRODUCTION_MATERIAL_RETURN_TARGET, 0L, null, request.idempotencyKey(), fingerprint,
+					PRODUCTION_MATERIAL_RETURN_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -826,7 +853,16 @@ public class ReversalAdminService {
 	@Transactional
 	public ProductionMaterialReturnDetailResponse updateMaterialReturn(Long id, ProductionMaterialReturnRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint("PRODUCTION_MATERIAL_RETURN_UPDATE",
+				PRODUCTION_MATERIAL_RETURN_TARGET, id, request == null ? null : request.version(), request);
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_RETURN_UPDATE", PRODUCTION_MATERIAL_RETURN_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialReturn(idempotent.get().resultResourceId(), operator);
+		}
 		MaterialReturnRow current = lockMaterialReturn(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(current.version(), request == null ? null : request.version());
 		if (current.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -855,7 +891,11 @@ public class ReversalAdminService {
 			prepareMaterialReturnAllocations(id, issue.id(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_UPDATE",
 					PRODUCTION_MATERIAL_RETURN_TARGET, id, current.returnNo(), servletRequest);
-			return materialReturn(id, operator);
+			ProductionMaterialReturnDetailResponse detail = materialReturn(id, operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_RETURN_UPDATE",
+					PRODUCTION_MATERIAL_RETURN_TARGET, id, request.version(), request.idempotencyKey(), fingerprint,
+					PRODUCTION_MATERIAL_RETURN_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -866,6 +906,26 @@ public class ReversalAdminService {
 	public ProductionMaterialReturnDetailResponse postMaterialReturn(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		MaterialReturnRow materialReturn = lockMaterialReturn(id).orElseThrow(this::sourceNotFoundException);
+		return postMaterialReturn(id,
+				new VersionedActionRequest(materialReturn.version(), "内部兼容生产退料过账",
+						"internal-production-material-return-post-" + id + "-" + System.nanoTime()),
+				operator, servletRequest);
+	}
+
+	@Transactional
+	public ProductionMaterialReturnDetailResponse postMaterialReturn(Long id, VersionedActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint("PRODUCTION_MATERIAL_RETURN_POST",
+				PRODUCTION_MATERIAL_RETURN_TARGET, id, request == null ? null : request.version(),
+				request == null ? null : request.reason());
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_RETURN_POST", PRODUCTION_MATERIAL_RETURN_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialReturn(idempotent.get().resultResourceId(), operator);
+		}
+		MaterialReturnRow materialReturn = lockMaterialReturn(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(materialReturn.version(), request == null ? null : request.version());
 		if (materialReturn.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -887,25 +947,29 @@ public class ReversalAdminService {
 				ProductionIssueLineRow sourceLine = lockProductionIssueLine(issue.id(), line.sourceIssueLineId())
 					.orElseThrow(this::sourceNotFoundException);
 				validateMaterialReturnLineStillReturnable(sourceLine, line);
-				InventoryPostingService.ValuationContext valuationContext = originalPublicValueContext(
-						PRODUCTION_MATERIAL_ISSUE_SOURCE, issue.id(), line.sourceIssueLineId(), line.quantity(),
-						line.unitPrice());
+				InventoryPostingService.ValuationContext valuationContext =
+						new InventoryPostingService.ValuationContext(line.ownershipType(), line.projectId(),
+								line.unitPrice(), line.costLayerId(), line.sourceValueMovementId());
 				List<InventoryTrackingService.ResolvedTrackingAllocation> trackingAllocations = this.inventoryTrackingService
 					.resolveStoredSourceInheritedInboundAllocations(PRODUCTION_MATERIAL_RETURN_SOURCE,
 							materialReturn.id(), line.id(), line.materialId(), line.quantity(),
 							InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_ISSUE_SOURCE,
 							issue.id(), line.sourceIssueLineId(), "trackingAllocations");
 				Long movementId = null;
+				Long valueMovementId = null;
 				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
-					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-							new InventoryPostingService.PostingRequest(
-									InventoryMovementType.PRODUCTION_MATERIAL_RETURN_IN, InventoryDirection.IN,
-									line.warehouseId(), line.materialId(), line.unitId(), allocation.quantity(),
-									InventoryQualityStatus.PENDING_INSPECTION, PRODUCTION_MATERIAL_RETURN_SOURCE,
-									materialReturn.id(), line.id(), materialReturn.businessDate(), "生产退料入库",
-									line.reason(), operator.username(), false, allocation.batchId(),
-									allocation.serialId(), valuationContext));
+					InventoryPostingService.PostingResult posting =
+							this.productionMaterialReversalService.postProductionMaterialReturn(
+									new ProductionMaterialReversalService.ProductionMaterialReturnPosting(
+											line.warehouseId(), line.materialId(), line.unitId(),
+											allocation.quantity(), PRODUCTION_MATERIAL_RETURN_SOURCE,
+											materialReturn.id(), line.id(), materialReturn.businessDate(),
+											"生产退料入库", line.reason(), operator.username(), allocation.batchId(),
+											allocation.serialId(), valuationContext.ownershipType(),
+											valuationContext.projectId(), valuationContext.unitPrice(),
+											valuationContext.costLayerId(), valuationContext.originalValueMovementId()));
 					movementId = posting.movementId();
+					valueMovementId = posting.valueMovementId();
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
 					this.inventoryTrackingService.markInboundPosted(allocation, line.warehouseId(),
 							InventoryQualityStatus.PENDING_INSPECTION, movementId, operator.username());
@@ -921,9 +985,9 @@ public class ReversalAdminService {
 						operator.username(), now);
 				this.jdbcTemplate.update("""
 						update mfg_material_return_line
-						set stock_movement_id = ?, cost_record_id = ?, updated_at = ?
+						set stock_movement_id = ?, value_movement_id = ?, cost_record_id = ?, updated_at = ?
 						where id = ?
-						""", movementId, costRecordId, now, line.id());
+						""", movementId, valueMovementId, costRecordId, now, line.id());
 				insertMaterialReturnReversalLink(issue, sourceLine, materialReturn, line, amount, operator.username(),
 						now);
 			}
@@ -935,7 +999,11 @@ public class ReversalAdminService {
 					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_POST",
 					PRODUCTION_MATERIAL_RETURN_TARGET, id, materialReturn.returnNo(), servletRequest);
-			return materialReturn(id, operator);
+			ProductionMaterialReturnDetailResponse detail = materialReturn(id, operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_RETURN_POST",
+					PRODUCTION_MATERIAL_RETURN_TARGET, id, request.version(), request.idempotencyKey(), fingerprint,
+					PRODUCTION_MATERIAL_RETURN_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -946,6 +1014,26 @@ public class ReversalAdminService {
 	public ProductionMaterialReturnDetailResponse cancelMaterialReturn(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		MaterialReturnRow materialReturn = lockMaterialReturn(id).orElseThrow(this::sourceNotFoundException);
+		return cancelMaterialReturn(id,
+				new VersionedActionRequest(materialReturn.version(), "内部兼容生产退料取消",
+						"internal-production-material-return-cancel-" + id + "-" + System.nanoTime()),
+				operator, servletRequest);
+	}
+
+	@Transactional
+	public ProductionMaterialReturnDetailResponse cancelMaterialReturn(Long id, VersionedActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint("PRODUCTION_MATERIAL_RETURN_CANCEL",
+				PRODUCTION_MATERIAL_RETURN_TARGET, id, request == null ? null : request.version(),
+				request == null ? null : request.reason());
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_RETURN_CANCEL", PRODUCTION_MATERIAL_RETURN_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialReturn(idempotent.get().resultResourceId(), operator);
+		}
+		MaterialReturnRow materialReturn = lockMaterialReturn(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(materialReturn.version(), request == null ? null : request.version());
 		if (materialReturn.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -961,7 +1049,11 @@ public class ReversalAdminService {
 				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
 		this.auditService.record(operator, "PRODUCTION_MATERIAL_RETURN_CANCEL", PRODUCTION_MATERIAL_RETURN_TARGET,
 				id, materialReturn.returnNo(), servletRequest);
-		return materialReturn(id, operator);
+		ProductionMaterialReturnDetailResponse detail = materialReturn(id, operator);
+		this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_RETURN_CANCEL",
+				PRODUCTION_MATERIAL_RETURN_TARGET, id, request.version(), request.idempotencyKey(), fingerprint,
+				PRODUCTION_MATERIAL_RETURN_TARGET, detail.id(), detail.version(), operator);
+		return detail;
 	}
 
 	@Transactional(readOnly = true)
@@ -1045,6 +1137,14 @@ public class ReversalAdminService {
 	@Transactional
 	public ProductionMaterialSupplementDetailResponse createMaterialSupplement(
 			ProductionMaterialSupplementRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint(
+				"PRODUCTION_MATERIAL_SUPPLEMENT_CREATE", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, 0L, null, request);
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_SUPPLEMENT_CREATE", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, 0L,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialSupplement(idempotent.get().resultResourceId(), operator);
+		}
 		ValidatedMaterialSupplement validated = validateMaterialSupplementCreate(request);
 		ProductionWorkOrderRow workOrder = lockProductionWorkOrder(validated.workOrderId())
 			.orElseThrow(this::sourceNotFoundException);
@@ -1066,7 +1166,11 @@ public class ReversalAdminService {
 			prepareMaterialSupplementAllocations(created.id(), validated.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_CREATE",
 					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, created.id(), created.documentNo(), servletRequest);
-			return materialSupplement(created.id(), operator);
+			ProductionMaterialSupplementDetailResponse detail = materialSupplement(created.id(), operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_SUPPLEMENT_CREATE",
+					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, 0L, null, request.idempotencyKey(), fingerprint,
+					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -1076,7 +1180,17 @@ public class ReversalAdminService {
 	@Transactional
 	public ProductionMaterialSupplementDetailResponse updateMaterialSupplement(Long id,
 			ProductionMaterialSupplementRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint(
+				"PRODUCTION_MATERIAL_SUPPLEMENT_UPDATE", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+				request == null ? null : request.version(), request);
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_SUPPLEMENT_UPDATE", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialSupplement(idempotent.get().resultResourceId(), operator);
+		}
 		MaterialSupplementRow current = lockMaterialSupplement(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(current.version(), request == null ? null : request.version());
 		if (current.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -1106,7 +1220,11 @@ public class ReversalAdminService {
 			prepareMaterialSupplementAllocations(id, validated.warehouseId(), lines, operator.username());
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_UPDATE",
 					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, current.supplementNo(), servletRequest);
-			return materialSupplement(id, operator);
+			ProductionMaterialSupplementDetailResponse detail = materialSupplement(id, operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_SUPPLEMENT_UPDATE",
+					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, request.version(), request.idempotencyKey(),
+					fingerprint, PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -1117,6 +1235,26 @@ public class ReversalAdminService {
 	public ProductionMaterialSupplementDetailResponse postMaterialSupplement(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		MaterialSupplementRow supplement = lockMaterialSupplement(id).orElseThrow(this::sourceNotFoundException);
+		return postMaterialSupplement(id,
+				new VersionedActionRequest(supplement.version(), "内部兼容生产补料过账",
+						"internal-production-material-supplement-post-" + id + "-" + System.nanoTime()),
+				operator, servletRequest);
+	}
+
+	@Transactional
+	public ProductionMaterialSupplementDetailResponse postMaterialSupplement(Long id, VersionedActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint(
+				"PRODUCTION_MATERIAL_SUPPLEMENT_POST", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+				request == null ? null : request.version(), request == null ? null : request.reason());
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_SUPPLEMENT_POST", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialSupplement(idempotent.get().resultResourceId(), operator);
+		}
+		MaterialSupplementRow supplement = lockMaterialSupplement(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(supplement.version(), request == null ? null : request.version());
 		if (supplement.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -1143,19 +1281,24 @@ public class ReversalAdminService {
 				if (trackingAllocations.size() == 1 && trackingAllocations.get(0).batchId() == null
 						&& trackingAllocations.get(0).serialId() == null
 						&& lockedStockQuantity(supplement.warehouseId(), line.materialId(),
-								InventoryQualityStatus.QUALIFIED).compareTo(line.quantity()) < 0) {
+								InventoryQualityStatus.QUALIFIED, line.ownershipType(), line.projectId(),
+								line.costLayerId()).compareTo(line.quantity()) < 0) {
 					throw new BusinessException(ApiErrorCode.INVENTORY_QUALITY_STATUS_BALANCE_NOT_ENOUGH);
 				}
 				Long movementId = null;
+				Long valueMovementId = null;
 				for (InventoryTrackingService.ResolvedTrackingAllocation allocation : trackingAllocations) {
-					InventoryPostingService.PostingResult posting = this.inventoryPostingService.post(
-							new InventoryPostingService.PostingRequest(
-									InventoryMovementType.PRODUCTION_MATERIAL_SUPPLEMENT_OUT, InventoryDirection.OUT,
-									supplement.warehouseId(), line.materialId(), line.unitId(), allocation.quantity(),
-									InventoryQualityStatus.QUALIFIED, PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
-									supplement.id(), line.id(), supplement.businessDate(), "生产补料出库", line.reason(),
-									operator.username(), allocation.batchId(), allocation.serialId()));
+					InventoryPostingService.PostingResult posting =
+							this.productionMaterialReversalService.postProductionMaterialSupplement(
+									new ProductionMaterialReversalService.ProductionMaterialSupplementPosting(
+											supplement.warehouseId(), line.materialId(), line.unitId(),
+											allocation.quantity(), PRODUCTION_MATERIAL_SUPPLEMENT_SOURCE,
+											supplement.id(), line.id(), supplement.businessDate(), "生产补料出库",
+											line.reason(), operator.username(), allocation.batchId(),
+											allocation.serialId(), line.ownershipType(), line.projectId(),
+											line.costLayerId()));
 					movementId = posting.movementId();
+					valueMovementId = posting.valueMovementId();
 					this.inventoryTrackingService.attachMovement(allocation.allocationId(), movementId);
 					this.inventoryTrackingService.markOutboundPosted(allocation, movementId, operator.username());
 				}
@@ -1167,9 +1310,9 @@ public class ReversalAdminService {
 						operator.username(), now);
 				this.jdbcTemplate.update("""
 						update mfg_material_supplement_line
-						set stock_movement_id = ?, cost_record_id = ?, updated_at = ?
+						set stock_movement_id = ?, value_movement_id = ?, cost_record_id = ?, updated_at = ?
 						where id = ?
-						""", movementId, costRecordId, now, line.id());
+						""", movementId, valueMovementId, costRecordId, now, line.id());
 				insertMaterialSupplementReversalLink(workOrder, sourceLine, supplement, line, amount,
 						operator.username(), now);
 			}
@@ -1181,7 +1324,11 @@ public class ReversalAdminService {
 					""", ReversalDocumentStatus.POSTED.name(), operator.username(), now, operator.username(), now, id);
 			this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_POST",
 					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, supplement.supplementNo(), servletRequest);
-			return materialSupplement(id, operator);
+			ProductionMaterialSupplementDetailResponse detail = materialSupplement(id, operator);
+			this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_SUPPLEMENT_POST",
+					PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, request.version(), request.idempotencyKey(),
+					fingerprint, PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, detail.id(), detail.version(), operator);
+			return detail;
 		}
 		catch (DuplicateKeyException exception) {
 			throw duplicateReversalException(exception);
@@ -1192,6 +1339,26 @@ public class ReversalAdminService {
 	public ProductionMaterialSupplementDetailResponse cancelMaterialSupplement(Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		MaterialSupplementRow supplement = lockMaterialSupplement(id).orElseThrow(this::sourceNotFoundException);
+		return cancelMaterialSupplement(id,
+				new VersionedActionRequest(supplement.version(), "内部兼容生产补料取消",
+						"internal-production-material-supplement-cancel-" + id + "-" + System.nanoTime()),
+				operator, servletRequest);
+	}
+
+	@Transactional
+	public ProductionMaterialSupplementDetailResponse cancelMaterialSupplement(Long id, VersionedActionRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		String fingerprint = this.productionActionIdempotencyService.fingerprint(
+				"PRODUCTION_MATERIAL_SUPPLEMENT_CANCEL", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+				request == null ? null : request.version(), request == null ? null : request.reason());
+		Optional<ProductionActionIdempotencyService.ResultRecord> idempotent = this.productionActionIdempotencyService
+			.existing("PRODUCTION_MATERIAL_SUPPLEMENT_CANCEL", PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id,
+					request == null ? null : request.idempotencyKey(), fingerprint, operator);
+		if (idempotent.isPresent()) {
+			return materialSupplement(idempotent.get().resultResourceId(), operator);
+		}
+		MaterialSupplementRow supplement = lockMaterialSupplement(id).orElseThrow(this::sourceNotFoundException);
+		requireVersion(supplement.version(), request == null ? null : request.version());
 		if (supplement.status() == ReversalDocumentStatus.POSTED) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_POSTED_IMMUTABLE);
 		}
@@ -1207,7 +1374,11 @@ public class ReversalAdminService {
 				""", ReversalDocumentStatus.CANCELLED.name(), operator.username(), now, operator.username(), now, id);
 		this.auditService.record(operator, "PRODUCTION_MATERIAL_SUPPLEMENT_CANCEL",
 				PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, supplement.supplementNo(), servletRequest);
-		return materialSupplement(id, operator);
+		ProductionMaterialSupplementDetailResponse detail = materialSupplement(id, operator);
+		this.productionActionIdempotencyService.record("PRODUCTION_MATERIAL_SUPPLEMENT_CANCEL",
+				PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, id, request.version(), request.idempotencyKey(), fingerprint,
+				PRODUCTION_MATERIAL_SUPPLEMENT_TARGET, detail.id(), detail.version(), operator);
+		return detail;
 	}
 
 	@Transactional(readOnly = true)
@@ -1520,7 +1691,7 @@ public class ReversalAdminService {
 		return new ProductionMaterialReturnDetailResponse(row.id(), row.returnNo(),
 				canViewSource ? row.workOrderId() : null, canViewSource ? row.workOrderNo() : null,
 				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
-				quantity(totalQuantity(lines)), amount(totalLineAmount(lines)),
+				row.version(), quantity(totalQuantity(lines)), amount(totalLineAmount(lines)),
 				sourceView(PRODUCTION_MATERIAL_ISSUE_SOURCE, row.sourceIssueId(), null, row.sourceIssueNo(), null,
 						row.sourceBusinessDate(), row.sourceStatus(), null, null, canViewSource,
 						"production-work-order-material-issues", Map.of("id", row.workOrderId()),
@@ -1539,7 +1710,7 @@ public class ReversalAdminService {
 		return new ProductionMaterialSupplementDetailResponse(row.id(), row.supplementNo(),
 				canViewSource ? row.workOrderId() : null, canViewSource ? row.workOrderNo() : null,
 				row.warehouseId(), row.warehouseName(), row.businessDate(), row.status().name(),
-				quantity(totalQuantity(lines)), amount(totalLineAmount(lines)),
+				row.version(), quantity(totalQuantity(lines)), amount(totalLineAmount(lines)),
 				sourceView(PRODUCTION_WORK_ORDER_SOURCE, row.workOrderId(), null, row.workOrderNo(), null,
 						row.businessDate(), row.sourceStatus(), null, null, canViewSource,
 						"production-work-order-detail", Map.of("id", row.workOrderId()), null),
@@ -3097,6 +3268,8 @@ public class ReversalAdminService {
 			lines.add(new ValidatedMaterialReturnLine(lineNo++, sourceLine.id(), sourceLine.workOrderMaterialId(),
 					sourceLine.warehouseId(), sourceLine.materialId(), sourceLine.unitId(), returnedQuantity,
 					returnableQuantity, quantity, unitPrice, amount, reason,
+					sourceLine.ownershipType(), sourceLine.projectId(), sourceLine.costLayerId(),
+					sourceLine.valueMovementId(),
 					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
@@ -3127,6 +3300,12 @@ public class ReversalAdminService {
 				|| !sourceLine.warehouseId().equals(line.warehouseId()) || !sourceLine.materialId().equals(line.materialId())
 				|| !sourceLine.unitId().equals(line.unitId())) {
 			throw new BusinessException(ApiErrorCode.REVERSAL_SOURCE_STATUS_INVALID);
+		}
+		if (!sourceLine.ownershipType().equals(line.ownershipType())
+				|| !nullableEquals(sourceLine.projectId(), line.projectId())
+				|| !nullableEquals(sourceLine.costLayerId(), line.costLayerId())
+				|| !nullableEquals(sourceLine.valueMovementId(), line.sourceValueMovementId())) {
+			throw new BusinessException(ApiErrorCode.PRODUCTION_OWNERSHIP_SOURCE_INVALID);
 		}
 		BigDecimal returnedQuantity = postedMaterialReturnedQuantity(sourceLine.id());
 		BigDecimal returnableQuantity = sourceLine.quantity().subtract(returnedQuantity);
@@ -3170,11 +3349,13 @@ public class ReversalAdminService {
 					insert into mfg_material_return_line (
 						return_id, source_issue_line_id, work_order_material_id, material_id, unit_id, line_no,
 						returned_quantity_before, returnable_quantity_before, quantity, reason, created_at, updated_at
+						, ownership_type, project_id, cost_layer_id, source_value_movement_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", returnId, line.sourceIssueLineId(), line.workOrderMaterialId(), line.materialId(),
 					line.unitId(), line.lineNo(), line.returnedQuantityBefore(), line.returnableQuantityBefore(),
-					line.quantity(), blankToNull(line.reason()), now, now);
+					line.quantity(), blankToNull(line.reason()), now, now, line.ownershipType(), line.projectId(),
+					line.costLayerId(), line.sourceValueMovementId());
 		}
 	}
 
@@ -3244,14 +3425,23 @@ public class ReversalAdminService {
 			BigDecimal quantity = validateQuantity(request.quantity());
 			ProductionWorkOrderMaterialRow sourceLine = productionWorkOrderMaterial(workOrder.id(), workOrderMaterialId)
 				.orElseThrow(this::sourceNotFoundException);
+			ProductionOwnershipPolicy.Ownership targetOwnership =
+					new ProductionOwnershipPolicy.Ownership(workOrder.ownershipType(), workOrder.projectId());
+			ProductionOwnershipPolicy.Ownership sourceOwnership =
+					this.productionOwnershipPolicy.normalizeTarget(request.ownershipType(), request.projectId());
+			this.productionOwnershipPolicy.requireLineSourceAllowed(targetOwnership, sourceOwnership,
+					request.costLayerId());
 			String reason = validateReason(request.reason());
-			BigDecimal availableStockQuantity = stockQuantity(warehouseId, sourceLine.materialId());
+			BigDecimal availableStockQuantity = lockedStockQuantity(warehouseId, sourceLine.materialId(),
+					InventoryQualityStatus.QUALIFIED, sourceOwnership.ownershipType(), sourceOwnership.projectId(),
+					request.costLayerId());
 			BigDecimal supplementedQuantity = postedMaterialSupplementedQuantity(sourceLine.id());
 			BigDecimal unitPrice = materialIssueUnitPrice(null, sourceLine.id());
 			BigDecimal amount = money(quantity.multiply(unitPrice));
 			lines.add(new ValidatedMaterialSupplementLine(lineNo++, sourceLine.id(), sourceLine.materialId(),
 					sourceLine.unitId(), sourceLine.issuedQuantity(), supplementedQuantity, availableStockQuantity,
-					quantity, unitPrice, amount, reason,
+					quantity, unitPrice, amount, reason, sourceOwnership.ownershipType(), sourceOwnership.projectId(),
+					request.costLayerId(),
 					request.trackingAllocations() == null ? List.of() : request.trackingAllocations()));
 		}
 		return lines;
@@ -3318,12 +3508,13 @@ public class ReversalAdminService {
 					insert into mfg_material_supplement_line (
 						supplement_id, work_order_material_id, material_id, unit_id, line_no,
 						issued_quantity_before, supplemented_quantity_before, available_stock_quantity_before,
-						quantity, reason, created_at, updated_at
+						quantity, reason, created_at, updated_at, ownership_type, project_id, cost_layer_id
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 					""", supplementId, line.workOrderMaterialId(), line.materialId(), line.unitId(), line.lineNo(),
 					line.issuedQuantityBefore(), line.supplementedQuantityBefore(),
-					line.availableStockQuantityBefore(), line.quantity(), blankToNull(line.reason()), now, now);
+					line.availableStockQuantityBefore(), line.quantity(), blankToNull(line.reason()), now, now,
+					line.ownershipType(), line.projectId(), line.costLayerId());
 		}
 	}
 
@@ -3618,7 +3809,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.work_order_id, wo.work_order_no, r.source_issue_id, i.issue_no,
 				       i.business_date as source_business_date, i.status as source_status, r.warehouse_id,
 				       w.name as warehouse_name, r.business_date, r.status, r.client_request_id, r.remark,
-				       r.created_at, r.updated_at
+				       r.version, r.created_at, r.updated_at
 				from mfg_material_return r
 				join mfg_work_order wo on wo.id = r.work_order_id
 				join mfg_material_issue i on i.id = r.source_issue_id
@@ -3636,7 +3827,7 @@ public class ReversalAdminService {
 		return this.jdbcTemplate.query("""
 				select s.id, s.supplement_no, s.work_order_id, wo.work_order_no, wo.status as source_status,
 				       s.warehouse_id, w.name as warehouse_name, s.business_date, s.status, s.client_request_id,
-				       s.remark, s.created_at, s.updated_at
+				       s.remark, s.version, s.created_at, s.updated_at
 				from mfg_material_supplement s
 				join mfg_work_order wo on wo.id = s.work_order_id
 				join mst_warehouse w on w.id = s.warehouse_id
@@ -3696,7 +3887,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.work_order_id, wo.work_order_no, r.source_issue_id, i.issue_no,
 				       i.business_date as source_business_date, i.status as source_status, r.warehouse_id,
 				       w.name as warehouse_name, r.business_date, r.status, r.client_request_id, r.remark,
-				       r.created_at, r.updated_at
+				       r.version, r.created_at, r.updated_at
 				from mfg_material_return r
 				join mfg_work_order wo on wo.id = r.work_order_id
 				join mfg_material_issue i on i.id = r.source_issue_id
@@ -3709,7 +3900,7 @@ public class ReversalAdminService {
 		return this.jdbcTemplate.query("""
 				select s.id, s.supplement_no, s.work_order_id, wo.work_order_no, wo.status as source_status,
 				       s.warehouse_id, w.name as warehouse_name, s.business_date, s.status, s.client_request_id,
-				       s.remark, s.created_at, s.updated_at
+				       s.remark, s.version, s.created_at, s.updated_at
 				from mfg_material_supplement s
 				join mfg_work_order wo on wo.id = s.work_order_id
 				join mst_warehouse w on w.id = s.warehouse_id
@@ -3769,7 +3960,7 @@ public class ReversalAdminService {
 				select r.id, r.return_no, r.work_order_id, wo.work_order_no, r.source_issue_id, i.issue_no,
 				       i.business_date as source_business_date, i.status as source_status, r.warehouse_id,
 				       w.name as warehouse_name, r.business_date, r.status, r.client_request_id, r.remark,
-				       r.created_at, r.updated_at
+				       r.version, r.created_at, r.updated_at
 				from mfg_material_return r
 				join mfg_work_order wo on wo.id = r.work_order_id
 				join mfg_material_issue i on i.id = r.source_issue_id
@@ -3783,7 +3974,7 @@ public class ReversalAdminService {
 		return this.jdbcTemplate.query("""
 				select s.id, s.supplement_no, s.work_order_id, wo.work_order_no, wo.status as source_status,
 				       s.warehouse_id, w.name as warehouse_name, s.business_date, s.status, s.client_request_id,
-				       s.remark, s.created_at, s.updated_at
+				       s.remark, s.version, s.created_at, s.updated_at
 				from mfg_material_supplement s
 				join mfg_work_order wo on wo.id = s.work_order_id
 				join mst_warehouse w on w.id = s.warehouse_id
@@ -3824,7 +4015,8 @@ public class ReversalAdminService {
 				       l.returnable_quantity_before, l.quantity,
 				       coalesce(cr.unit_price, source_cost.unit_price, 0) as unit_price,
 				       coalesce(cr.amount, l.quantity * coalesce(source_cost.unit_price, 0)) as amount,
-				       l.reason, l.stock_movement_id, l.cost_record_id
+				       l.reason, l.ownership_type, l.project_id, l.cost_layer_id,
+				       l.source_value_movement_id, l.value_movement_id, l.stock_movement_id, l.cost_record_id
 				from mfg_material_return_line l
 				join mfg_material_issue_line il on il.id = l.source_issue_line_id
 				left join mfg_cost_record cr on cr.id = l.cost_record_id
@@ -3851,7 +4043,8 @@ public class ReversalAdminService {
 				       l.available_stock_quantity_before, l.quantity,
 				       coalesce(cr.unit_price, source_cost.unit_price, 0) as unit_price,
 				       coalesce(cr.amount, l.quantity * coalesce(source_cost.unit_price, 0)) as amount,
-				       l.reason, l.stock_movement_id, l.cost_record_id
+				       l.reason, l.ownership_type, l.project_id, l.cost_layer_id,
+				       l.value_movement_id, l.stock_movement_id, l.cost_record_id
 				from mfg_material_supplement_line l
 				left join mfg_cost_record cr on cr.id = l.cost_record_id
 				left join lateral (
@@ -3988,7 +4181,7 @@ public class ReversalAdminService {
 
 	private Optional<ProductionWorkOrderRow> lockProductionWorkOrder(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, work_order_no, product_material_id, status
+				select id, work_order_no, product_material_id, status, ownership_type, project_id
 				from mfg_work_order
 				where id = ?
 				for update
@@ -3997,7 +4190,8 @@ public class ReversalAdminService {
 
 	private Optional<ProductionIssueLineRow> productionIssueLine(Long issueId, Long lineId) {
 		return this.jdbcTemplate.query("""
-				select id, issue_id, work_order_material_id, line_no, warehouse_id, material_id, unit_id, quantity
+				select id, issue_id, work_order_material_id, line_no, warehouse_id, material_id, unit_id, quantity,
+				       ownership_type, project_id, cost_layer_id, value_movement_id
 				from mfg_material_issue_line
 				where issue_id = ?
 				and id = ?
@@ -4006,7 +4200,8 @@ public class ReversalAdminService {
 
 	private Optional<ProductionIssueLineRow> lockProductionIssueLine(Long issueId, Long lineId) {
 		return this.jdbcTemplate.query("""
-				select id, issue_id, work_order_material_id, line_no, warehouse_id, material_id, unit_id, quantity
+				select id, issue_id, work_order_material_id, line_no, warehouse_id, material_id, unit_id, quantity,
+				       ownership_type, project_id, cost_layer_id, value_movement_id
 				from mfg_material_issue_line
 				where issue_id = ?
 				and id = ?
@@ -4804,7 +4999,7 @@ public class ReversalAdminService {
 				rs.getObject("source_business_date", LocalDate.class), rs.getString("source_status"),
 				rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
 				rs.getObject("business_date", LocalDate.class), ReversalDocumentStatus.valueOf(rs.getString("status")),
-				rs.getString("client_request_id"), rs.getString("remark"),
+				rs.getString("client_request_id"), rs.getString("remark"), rs.getLong("version"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
@@ -4813,7 +5008,7 @@ public class ReversalAdminService {
 				rs.getLong("work_order_id"), rs.getString("work_order_no"), rs.getString("source_status"),
 				rs.getLong("warehouse_id"), rs.getString("warehouse_name"),
 				rs.getObject("business_date", LocalDate.class), ReversalDocumentStatus.valueOf(rs.getString("status")),
-				rs.getString("client_request_id"), rs.getString("remark"),
+				rs.getString("client_request_id"), rs.getString("remark"), rs.getLong("version"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class));
 	}
 
@@ -4823,7 +5018,10 @@ public class ReversalAdminService {
 				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getInt("line_no"),
 				rs.getBigDecimal("returned_quantity_before"), rs.getBigDecimal("returnable_quantity_before"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), money(rs.getBigDecimal("amount")),
-				rs.getString("reason"), nullableLong(rs, "stock_movement_id"), nullableLong(rs, "cost_record_id"));
+				rs.getString("reason"), rs.getString("ownership_type"), nullableLong(rs, "project_id"),
+				nullableLong(rs, "cost_layer_id"), nullableLong(rs, "source_value_movement_id"),
+				nullableLong(rs, "value_movement_id"), nullableLong(rs, "stock_movement_id"),
+				nullableLong(rs, "cost_record_id"));
 	}
 
 	private MaterialSupplementLineRow mapMaterialSupplementLineRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4832,7 +5030,9 @@ public class ReversalAdminService {
 				rs.getInt("line_no"), rs.getBigDecimal("issued_quantity_before"),
 				rs.getBigDecimal("supplemented_quantity_before"), rs.getBigDecimal("available_stock_quantity_before"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("unit_price"), money(rs.getBigDecimal("amount")),
-				rs.getString("reason"), nullableLong(rs, "stock_movement_id"), nullableLong(rs, "cost_record_id"));
+				rs.getString("reason"), rs.getString("ownership_type"), nullableLong(rs, "project_id"),
+				nullableLong(rs, "cost_layer_id"), nullableLong(rs, "value_movement_id"),
+				nullableLong(rs, "stock_movement_id"), nullableLong(rs, "cost_record_id"));
 	}
 
 	private ShipmentRow mapShipmentRow(ResultSet rs, int rowNum) throws SQLException {
@@ -4882,13 +5082,16 @@ public class ReversalAdminService {
 
 	private ProductionWorkOrderRow mapProductionWorkOrderRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ProductionWorkOrderRow(rs.getLong("id"), rs.getString("work_order_no"),
-				rs.getLong("product_material_id"), rs.getString("status"));
+				rs.getLong("product_material_id"), rs.getString("status"),
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"));
 	}
 
 	private ProductionIssueLineRow mapProductionIssueLineRow(ResultSet rs, int rowNum) throws SQLException {
 		return new ProductionIssueLineRow(rs.getLong("id"), rs.getLong("issue_id"),
 				rs.getLong("work_order_material_id"), rs.getInt("line_no"), rs.getLong("warehouse_id"),
-				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getBigDecimal("quantity"));
+				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getBigDecimal("quantity"),
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"), nullableLong(rs, "cost_layer_id"),
+				nullableLong(rs, "value_movement_id"));
 	}
 
 	private ProductionWorkOrderMaterialRow mapProductionWorkOrderMaterialRow(ResultSet rs, int rowNum)
@@ -5846,6 +6049,10 @@ public class ReversalAdminService {
 		return value != null && !value.isBlank();
 	}
 
+	private static boolean nullableEquals(Object left, Object right) {
+		return left == null ? right == null : left.equals(right);
+	}
+
 	public record SalesReturnRequest(Long sourceShipmentId, @NotNull LocalDate businessDate,
 			String clientRequestId, String remark, @Valid List<SalesReturnLineRequest> lines) {
 	}
@@ -5869,7 +6076,8 @@ public class ReversalAdminService {
 	}
 
 	public record ProductionMaterialReturnRequest(Long sourceIssueId, @NotNull LocalDate businessDate,
-			String clientRequestId, String remark, @Valid List<ProductionMaterialReturnLineRequest> lines) {
+			String clientRequestId, String remark, @Valid List<ProductionMaterialReturnLineRequest> lines,
+			Long version, String idempotencyKey) {
 	}
 
 	public record ProductionMaterialReturnLineRequest(Long id, Long sourceIssueLineId,
@@ -5879,11 +6087,11 @@ public class ReversalAdminService {
 
 	public record ProductionMaterialSupplementRequest(Long workOrderId, Long warehouseId,
 			@NotNull LocalDate businessDate, String clientRequestId, String remark,
-			@Valid List<ProductionMaterialSupplementLineRequest> lines) {
+			@Valid List<ProductionMaterialSupplementLineRequest> lines, Long version, String idempotencyKey) {
 	}
 
 	public record ProductionMaterialSupplementLineRequest(Long id, Long workOrderMaterialId,
-			@NotNull BigDecimal quantity, String reason,
+			@NotNull BigDecimal quantity, String reason, String ownershipType, Long projectId, Long costLayerId,
 			@Valid List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
@@ -6052,14 +6260,14 @@ public class ReversalAdminService {
 
 	public record ProductionMaterialReturnDetailResponse(Long id, String returnNo, Long workOrderId,
 			String workOrderNo, Long warehouseId, String warehouseName, LocalDate businessDate, String status,
-			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
+			Long version, String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt, String clientRequestId, String remark, List<ReversalDocumentLine> lines,
 			List<ReversalTraceRecord> traces) {
 	}
 
 	public record ProductionMaterialSupplementDetailResponse(Long id, String supplementNo, Long workOrderId,
 			String workOrderNo, Long warehouseId, String warehouseName, LocalDate businessDate, String status,
-			String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
+			Long version, String totalQuantity, String totalAmount, Map<String, Object> source, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt, String clientRequestId, String remark, List<ReversalDocumentLine> lines,
 			List<ReversalTraceRecord> traces) {
 	}
@@ -6275,13 +6483,15 @@ public class ReversalAdminService {
 	private record ValidatedMaterialReturnLine(Integer lineNo, Long sourceIssueLineId, Long workOrderMaterialId,
 			Long warehouseId, Long materialId, Long unitId, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
+			String reason, String ownershipType, Long projectId, Long costLayerId, Long sourceValueMovementId,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record ValidatedMaterialSupplementLine(Integer lineNo, Long workOrderMaterialId, Long materialId,
 			Long unitId, BigDecimal issuedQuantityBefore, BigDecimal supplementedQuantityBefore,
 			BigDecimal availableStockQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
+			String reason, String ownershipType, Long projectId, Long costLayerId,
+			List<InventoryTrackingService.TrackingAllocationRequest> trackingAllocations) {
 	}
 
 	private record SalesReturnRow(Long id, String returnNo, Long customerId, String customerName, Long warehouseId,
@@ -6301,12 +6511,12 @@ public class ReversalAdminService {
 	private record MaterialReturnRow(Long id, String returnNo, Long workOrderId, String workOrderNo,
 			Long sourceIssueId, String sourceIssueNo, LocalDate sourceBusinessDate, String sourceStatus,
 			Long warehouseId, String warehouseName, LocalDate businessDate, ReversalDocumentStatus status,
-			String clientRequestId, String remark, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
+			String clientRequestId, String remark, Long version, OffsetDateTime createdAt, OffsetDateTime updatedAt) {
 	}
 
 	private record MaterialSupplementRow(Long id, String supplementNo, Long workOrderId, String workOrderNo,
 			String sourceStatus, Long warehouseId, String warehouseName, LocalDate businessDate,
-			ReversalDocumentStatus status, String clientRequestId, String remark, OffsetDateTime createdAt,
+			ReversalDocumentStatus status, String clientRequestId, String remark, Long version, OffsetDateTime createdAt,
 			OffsetDateTime updatedAt) {
 	}
 
@@ -6349,13 +6559,15 @@ public class ReversalAdminService {
 	private record MaterialReturnLineRow(Long id, Long returnId, Long sourceIssueLineId, Long workOrderMaterialId,
 			Long warehouseId, Long materialId, Long unitId, Integer lineNo, BigDecimal returnedQuantityBefore,
 			BigDecimal returnableQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, Long stockMovementId, Long costRecordId) {
+			String reason, String ownershipType, Long projectId, Long costLayerId, Long sourceValueMovementId,
+			Long valueMovementId, Long stockMovementId, Long costRecordId) {
 	}
 
 	private record MaterialSupplementLineRow(Long id, Long supplementId, Long workOrderMaterialId, Long materialId,
 			Long unitId, Integer lineNo, BigDecimal issuedQuantityBefore, BigDecimal supplementedQuantityBefore,
 			BigDecimal availableStockQuantityBefore, BigDecimal quantity, BigDecimal unitPrice, BigDecimal amount,
-			String reason, Long stockMovementId, Long costRecordId) {
+			String reason, String ownershipType, Long projectId, Long costLayerId, Long valueMovementId,
+			Long stockMovementId, Long costRecordId) {
 	}
 
 	private record ShipmentRow(Long id, String shipmentNo, Long orderId, Long customerId, Long warehouseId,
@@ -6379,11 +6591,13 @@ public class ReversalAdminService {
 			Long productMaterialId, LocalDate businessDate, String status) {
 	}
 
-	private record ProductionWorkOrderRow(Long id, String workOrderNo, Long productMaterialId, String status) {
+	private record ProductionWorkOrderRow(Long id, String workOrderNo, Long productMaterialId, String status,
+			String ownershipType, Long projectId) {
 	}
 
 	private record ProductionIssueLineRow(Long id, Long issueId, Long workOrderMaterialId, Integer lineNo,
-			Long warehouseId, Long materialId, Long unitId, BigDecimal quantity) {
+			Long warehouseId, Long materialId, Long unitId, BigDecimal quantity,
+			String ownershipType, Long projectId, Long costLayerId, Long valueMovementId) {
 	}
 
 	private record ProductionWorkOrderMaterialRow(Long id, Long workOrderId, Integer lineNo, Long materialId,

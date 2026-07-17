@@ -8,6 +8,7 @@ import {
   type ReversalSourceView,
   type ReversalTraceRecord,
 } from '../../shared/api/returnRefundReversalApi'
+import { createIdempotencyKey } from '../../shared/api/documentPlatformApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
@@ -121,7 +122,10 @@ async function postMaterialSupplement() {
   actionError.value = ''
   actionLoading.value = true
   try {
-    record.value = await returnRefundReversalApi.productionMaterialSupplements.post(record.value.id)
+    record.value = await returnRefundReversalApi.productionMaterialSupplements.post(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: createIdempotencyKey('production-material-supplement-post'),
+    })
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)
   } finally {
@@ -136,7 +140,10 @@ async function cancelMaterialSupplement() {
   actionError.value = ''
   actionLoading.value = true
   try {
-    record.value = await returnRefundReversalApi.productionMaterialSupplements.cancel(record.value.id)
+    record.value = await returnRefundReversalApi.productionMaterialSupplements.cancel(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: createIdempotencyKey('production-material-supplement-cancel'),
+    })
   } catch (caught) {
     actionError.value = productionErrorMessage(caught)
   } finally {

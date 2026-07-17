@@ -6,6 +6,7 @@ import {
   materialRequirementApi,
   type MaterialRequirementAllocationRecord,
   type MaterialRequirementRequirementLineRecord,
+  type MaterialRequirementSuggestionConversionRecord,
   type MaterialRequirementRunDetailRecord,
   type MaterialRequirementSubstituteHintRecord,
   type MaterialRequirementSuggestionRecord,
@@ -59,6 +60,14 @@ const canManageSuggestion = computed(() => authStore.hasPermission(materialRequi
 const canConvertRequisition = computed(() => (
   authStore.hasPermission(materialRequirementPermissions.convertRequisition)
   && authStore.hasPermission('procurement:requisition:create')
+))
+const canConvertProduction = computed(() => (
+  authStore.hasPermission(materialRequirementPermissions.convertProduction)
+  && authStore.hasPermission('production:work-order:create')
+))
+const canConvertOutsourcing = computed(() => (
+  authStore.hasPermission(materialRequirementPermissions.convertOutsourcing)
+  && authStore.hasPermission('production:outsourcing:create')
 ))
 const canViewSalesSource = computed(() => (
   authStore.hasPermission('sales:effective-demand:view')
@@ -273,8 +282,13 @@ function isOutsourcedProductionSuggestion(row: MaterialRequirementSuggestionReco
     && String(row.materialSourceType ?? '').toUpperCase() === 'OUTSOURCED'
 }
 
+function isSelfMadeProductionSuggestion(row: MaterialRequirementSuggestionRecord): boolean {
+  return row.suggestionType === 'PRODUCTION_ORDER'
+    && !isOutsourcedProductionSuggestion(row)
+}
+
 function suggestionTypeText(row: MaterialRequirementSuggestionRecord): string {
-  if (isOutsourcedProductionSuggestion(row)) {
+  if (isOutsourcedProductionSuggestion(row) && row.conversionAllowed === false) {
     return '外协生产建议，027 后可执行'
   }
   return suggestionTypeLabel(row.suggestionType)
@@ -316,6 +330,39 @@ function canConvertSuggestion(row: MaterialRequirementSuggestionRecord): boolean
     && row.suggestionType === 'PURCHASE_REQUISITION'
     && row.conversionAllowed !== false
     && hasAllowedAction(row, 'CONVERT_REQUISITION')
+}
+
+function canConvertWorkOrderSuggestion(row: MaterialRequirementSuggestionRecord): boolean {
+  return !suggestionsDisabled.value
+    && canConvertProduction.value
+    && row.status === 'CONFIRMED'
+    && isSelfMadeProductionSuggestion(row)
+    && row.conversionAllowed !== false
+    && hasAllowedAction(row, 'CONVERT_WORK_ORDER')
+}
+
+function canConvertOutsourcingSuggestion(row: MaterialRequirementSuggestionRecord): boolean {
+  return !suggestionsDisabled.value
+    && canConvertOutsourcing.value
+    && row.status === 'CONFIRMED'
+    && isOutsourcedProductionSuggestion(row)
+    && row.conversionAllowed !== false
+    && hasAllowedAction(row, 'CONVERT_OUTSOURCING_ORDER')
+}
+
+async function navigateConvertedTarget(
+  converted: MaterialRequirementSuggestionConversionRecord,
+  fallbackRouteName: string,
+) {
+  if (converted.targetRoute) {
+    await router.push(converted.targetRoute)
+    return
+  }
+  await router.push({
+    name: fallbackRouteName,
+    params: { id: String(converted.targetObjectId) },
+    query: { returnTo: route.fullPath },
+  })
 }
 
 async function confirmSuggestion(row: MaterialRequirementSuggestionRecord) {
@@ -385,6 +432,44 @@ async function convertSuggestion(row: MaterialRequirementSuggestionRecord) {
       return
     }
     await refreshSuggestions()
+  } catch (caught) {
+    actionError.value = materialRequirementErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function convertWorkOrderSuggestion(row: MaterialRequirementSuggestionRecord) {
+  if (!canConvertWorkOrderSuggestion(row) || actionLoading.value) {
+    return
+  }
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    const converted = await materialRequirementApi.suggestions.convertWorkOrder(row.id, {
+      version: row.version,
+      idempotencyKey: createIdempotencyKey('material-requirement-suggestion-convert-work-order'),
+    })
+    await navigateConvertedTarget(converted, 'production-work-order-detail')
+  } catch (caught) {
+    actionError.value = materialRequirementErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function convertOutsourcingSuggestion(row: MaterialRequirementSuggestionRecord) {
+  if (!canConvertOutsourcingSuggestion(row) || actionLoading.value) {
+    return
+  }
+  actionError.value = ''
+  actionLoading.value = true
+  try {
+    const converted = await materialRequirementApi.suggestions.convertOutsourcingOrder(row.id, {
+      version: row.version,
+      idempotencyKey: createIdempotencyKey('material-requirement-suggestion-convert-outsourcing'),
+    })
+    await navigateConvertedTarget(converted, 'production-outsourcing-order-detail')
   } catch (caught) {
     actionError.value = materialRequirementErrorMessage(caught)
   } finally {
@@ -557,6 +642,26 @@ onMounted(() => {
                   @click="convertSuggestion(row)"
                 >
                   转请购
+                </el-button>
+                <el-button
+                  v-if="canConvertWorkOrderSuggestion(row)"
+                  :data-test="`convert-work-order-suggestion-${row.id}`"
+                  text
+                  type="success"
+                  :loading="actionLoading"
+                  @click="convertWorkOrderSuggestion(row)"
+                >
+                  转生产工单
+                </el-button>
+                <el-button
+                  v-if="canConvertOutsourcingSuggestion(row)"
+                  :data-test="`convert-outsourcing-suggestion-${row.id}`"
+                  text
+                  type="success"
+                  :loading="actionLoading"
+                  @click="convertOutsourcingSuggestion(row)"
+                >
+                  转外协订单
                 </el-button>
               </template>
             </el-table-column>

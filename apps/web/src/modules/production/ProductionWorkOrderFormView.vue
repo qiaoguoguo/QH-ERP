@@ -5,17 +5,19 @@ import { queryWithReturnTo, routeReturnTo } from '../../shared/navigation/naviga
 import { bomApi, type BomDetailRecord, type BomSummaryRecord } from '../../shared/api/bomApi'
 import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import {
-  productionApi,
-  type ProductionWorkOrderDetailRecord,
-  type ProductionWorkOrderPayload,
+  projectProductionApi,
+  type ProductionOwnershipType,
+  type ProjectProductionWorkOrderDetailRecord,
+  type ProjectProductionWorkOrderPayload,
   type ResourceId,
-} from '../../shared/api/productionApi'
+} from '../../shared/api/projectProductionApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { materialTypeLabel } from '../master/shared/masterPageHelpers'
 import { pageItems } from '../system/shared/pageHelpers'
 import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
   validateProductionQuantity,
 } from './productionPageHelpers'
@@ -26,7 +28,7 @@ const materials = ref<MaterialRecord[]>([])
 const bomOptions = ref<BomSummaryRecord[]>([])
 const warehouses = ref<WarehouseRecord[]>([])
 const selectedBomDetail = ref<BomDetailRecord | null>(null)
-const editingRecord = ref<ProductionWorkOrderDetailRecord | null>(null)
+const editingRecord = ref<ProjectProductionWorkOrderDetailRecord | null>(null)
 const referenceLoading = ref(true)
 const loading = ref(false)
 const loadingRecord = ref(false)
@@ -45,6 +47,8 @@ let bomOptionsRequestId = 0
 let bomDetailRequestId = 0
 
 const form = reactive({
+  ownershipType: 'PUBLIC' as ProductionOwnershipType,
+  projectId: '' as ResourceId | '',
   productMaterialId: '' as ResourceId | '',
   bomId: '' as ResourceId | '',
   plannedQuantity: '',
@@ -57,13 +61,15 @@ const form = reactive({
 
 const isEdit = computed(() => Boolean(route.params.id))
 const isDraftRecord = computed(() => !editingRecord.value || editingRecord.value.status === 'DRAFT')
+const sourceLocked = computed(() => Boolean(editingRecord.value?.sourceMrpSuggestionId || editingRecord.value?.sourceSummary?.sourceMrpSuggestionId))
+const projectContextDisabled = computed(() => !isDraftRecord.value || sourceLocked.value)
 const pageTitle = computed(() => (isEdit.value ? '编辑生产工单' : '新建生产工单'))
 const productMaterials = computed(() => materials.value.filter((material) => (
   material.materialType === 'FINISHED_GOOD' || material.materialType === 'SEMI_FINISHED'
 )))
 const availableBoms = computed(() => bomOptions.value)
 const hasBomContext = computed(() => Boolean(form.productMaterialId && form.plannedStartDate.trim()))
-const bomSelectDisabled = computed(() => !isDraftRecord.value || !hasBomContext.value)
+const bomSelectDisabled = computed(() => !isDraftRecord.value || !hasBomContext.value || sourceLocked.value)
 const bomSelectPlaceholder = computed(() => (hasBomContext.value ? '请选择有效 BOM' : '请先选择产品物料和计划开工日期'))
 const saveDisabled = computed(() => formSubmitting.value || !isDraftRecord.value || bomOptionsLoading.value || bomLoading.value)
 const bomSelectionHint = computed(() => {
@@ -143,7 +149,20 @@ function isLatestBomDetailRequest(requestId: number, bomId: ResourceId) {
   return requestId === bomDetailRequestId && String(normalizeOptionalId(form.bomId)) === String(bomId)
 }
 
-function workOrderBomOption(detail: ProductionWorkOrderDetailRecord): BomSummaryRecord {
+type WorkOrderBomContext = ProjectProductionWorkOrderDetailRecord & {
+  bomId: ResourceId
+  bomCode: string
+  bomVersionCode: string
+}
+
+function hasWorkOrderBomContext(detail: ProjectProductionWorkOrderDetailRecord): detail is WorkOrderBomContext {
+  return detail.bomId !== null
+    && detail.bomId !== undefined
+    && Boolean(detail.bomCode)
+    && Boolean(detail.bomVersionCode)
+}
+
+function workOrderBomOption(detail: WorkOrderBomContext): BomSummaryRecord {
   return {
     id: detail.bomId,
     bomCode: detail.bomCode,
@@ -190,18 +209,22 @@ async function loadRecord() {
   loadingRecord.value = true
   formError.value = ''
   try {
-    const detail = await productionApi.workOrders.get(route.params.id as ResourceId)
+    const detail = await projectProductionApi.workOrders.get(route.params.id as ResourceId)
     editingRecord.value = detail
+    form.ownershipType = detail.ownershipType ?? (detail.projectId ? 'PROJECT' : 'PUBLIC')
+    form.projectId = detail.projectId ?? ''
     form.productMaterialId = detail.productMaterialId
-    form.bomId = detail.bomId
+    form.bomId = detail.bomId ?? ''
     form.plannedQuantity = String(detail.plannedQuantity)
-    form.plannedStartDate = detail.plannedStartDate
-    form.plannedFinishDate = detail.plannedFinishDate
-    form.issueWarehouseId = detail.issueWarehouseId
-    form.receiptWarehouseId = detail.receiptWarehouseId
+    form.plannedStartDate = detail.plannedStartDate ?? ''
+    form.plannedFinishDate = detail.plannedFinishDate ?? ''
+    form.issueWarehouseId = detail.issueWarehouseId ?? ''
+    form.receiptWarehouseId = detail.receiptWarehouseId ?? ''
     form.remark = detail.remark ?? ''
-    if (!isDraftRecord.value) {
+    if (!isDraftRecord.value && hasWorkOrderBomContext(detail)) {
       bomOptions.value = [workOrderBomOption(detail)]
+    } else if (!isDraftRecord.value) {
+      bomOptions.value = []
     } else {
       await loadEffectiveBoms()
     }
@@ -302,11 +325,12 @@ function clearBomForContextChange() {
   clearBomScopedErrors()
 }
 
-function validateForm(): ProductionWorkOrderPayload | null {
+function validateForm(): Omit<ProjectProductionWorkOrderPayload, 'idempotencyKey'> | null {
   const productMaterialId = normalizeRequiredId(form.productMaterialId)
   const bomId = normalizeRequiredId(form.bomId)
   const issueWarehouseId = normalizeRequiredId(form.issueWarehouseId)
   const receiptWarehouseId = normalizeRequiredId(form.receiptWarehouseId)
+  const projectId = normalizeOptionalId(form.projectId)
 
   if (bomOptionsLoading.value || bomLoading.value) {
     formError.value = 'BOM 信息加载中，请稍后保存'
@@ -322,6 +346,10 @@ function validateForm(): ProductionWorkOrderPayload | null {
   }
   if (productMaterialId === null || bomId === null || issueWarehouseId === null || receiptWarehouseId === null) {
     formError.value = '请完整选择产品物料、BOM、领料仓库和入库仓库'
+    return null
+  }
+  if (form.ownershipType === 'PROJECT' && projectId === undefined) {
+    formError.value = '项目工单必须填写项目 ID'
     return null
   }
   if (!availableBoms.value.some((item) => String(item.id) === String(bomId))) {
@@ -344,6 +372,8 @@ function validateForm(): ProductionWorkOrderPayload | null {
 
   formError.value = ''
   return {
+    ownershipType: form.ownershipType,
+    ...(form.ownershipType === 'PROJECT' ? { projectId } : { projectId: null }),
     productMaterialId,
     bomId,
     plannedQuantity: quantityResult.payloadValue,
@@ -367,11 +397,19 @@ async function saveWorkOrder() {
   if (!payload) {
     return
   }
-  formSubmitting.value = true
+    formSubmitting.value = true
   try {
+    const idempotencyKey = createProductionIdempotencyKey('production-work-order-save')
     const result = editingRecord.value
-      ? await productionApi.workOrders.update(editingRecord.value.id, payload)
-      : await productionApi.workOrders.create(payload)
+      ? await projectProductionApi.workOrders.update(editingRecord.value.id, {
+        ...payload,
+        version: editingRecord.value.version,
+        idempotencyKey,
+      })
+      : await projectProductionApi.workOrders.create({
+        ...payload,
+        idempotencyKey,
+      })
     await router.push({
       name: 'production-work-order-detail',
       params: { id: String(result.id) },
@@ -397,7 +435,7 @@ function cancel() {
 }
 
 watch(() => form.productMaterialId, () => {
-  if (loadingRecord.value || !isDraftRecord.value) {
+  if (loadingRecord.value || !isDraftRecord.value || sourceLocked.value) {
     return
   }
   clearBomForContextChange()
@@ -405,7 +443,7 @@ watch(() => form.productMaterialId, () => {
 })
 
 watch(() => form.plannedStartDate, () => {
-  if (loadingRecord.value || !isDraftRecord.value) {
+  if (loadingRecord.value || !isDraftRecord.value || sourceLocked.value) {
     return
   }
   clearBomForContextChange()
@@ -439,7 +477,42 @@ onMounted(async () => {
         <span>当前状态</span>
         <ProductionWorkOrderStatusTag :status="editingRecord.status" />
       </div>
+      <section v-if="editingRecord?.sourceMrpSuggestionId || editingRecord?.sourceSummary || editingRecord?.projectId" class="source-summary">
+        <div>
+          <span>项目归属</span>
+          <strong>
+            {{ form.ownershipType === 'PROJECT' ? `${editingRecord?.projectNo || form.projectId || '-'} ${editingRecord?.projectName || ''}` : '公共工单' }}
+          </strong>
+        </div>
+        <div>
+          <span>来源建议</span>
+          <strong>{{ editingRecord?.sourceSummary?.sourceSuggestionNo || editingRecord?.sourceSuggestionNo || '-' }}</strong>
+        </div>
+        <div>
+          <span>来源计划</span>
+          <strong>{{ editingRecord?.sourceSummary?.sourceRunNo || editingRecord?.sourceMrpRunId || '-' }}</strong>
+        </div>
+      </section>
       <div class="production-form-grid">
+        <el-form-item label="生产归属">
+          <el-radio-group
+            v-model="form.ownershipType"
+            data-test="production-ownership-type"
+            :disabled="projectContextDisabled"
+          >
+            <el-radio-button value="PUBLIC">公共工单</el-radio-button>
+            <el-radio-button value="PROJECT">项目工单</el-radio-button>
+          </el-radio-group>
+          <div v-if="sourceLocked" class="field-hint">来源建议已绑定，归属不可改</div>
+        </el-form-item>
+        <el-form-item label="项目 ID">
+          <el-input
+            v-model="form.projectId"
+            name="production-project-id"
+            placeholder="项目工单必填"
+            :disabled="projectContextDisabled || form.ownershipType !== 'PROJECT'"
+          />
+        </el-form-item>
         <el-form-item label="产品物料">
           <el-select
             v-model="form.productMaterialId"
@@ -447,7 +520,7 @@ onMounted(async () => {
             filterable
             placeholder="请选择成品或半成品"
             style="width: 100%"
-            :disabled="!isDraftRecord"
+            :disabled="!isDraftRecord || sourceLocked"
           >
             <el-option
               v-for="material in productMaterials"
@@ -576,6 +649,28 @@ onMounted(async () => {
   color: var(--qherp-muted);
 }
 
+.source-summary {
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+  padding: 10px;
+}
+
+.source-summary span {
+  color: var(--qherp-muted);
+  display: block;
+  font-size: 12px;
+}
+
+.source-summary strong {
+  display: block;
+  margin-top: 4px;
+  word-break: break-word;
+}
+
 .section-block {
   padding: 0 14px 14px;
 }
@@ -609,6 +704,10 @@ onMounted(async () => {
 
 @media (max-width: 760px) {
   .production-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .source-summary {
     grid-template-columns: 1fr;
   }
 

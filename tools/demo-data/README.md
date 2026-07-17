@@ -84,7 +84,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\demo-data\validate-demo-da
 
 规则位于 `tools/demo-data/sql/validate-demo-data.sql` 和 `tools/demo-data/validate-demo-data.ps1`，覆盖：
 
-- Flyway V28 与失败迁移检查。
+- Flyway V29（checksum 774334682）与失败迁移检查。
 - 账号、角色、权限、系统管理员和停用账号。
 - 单位、仓库、客户、供应商、物料、追踪方式、单位换算、结算税务资料和编码规则。
 - BOM、BOM 明细、替代料、ECO 当前/未来/历史治理样例。

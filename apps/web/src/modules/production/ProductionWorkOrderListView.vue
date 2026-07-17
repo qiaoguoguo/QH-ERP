@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
-  productionApi,
-  type ProductionWorkOrderStatus,
-  type ProductionWorkOrderSummaryRecord,
-} from '../../shared/api/productionApi'
+  projectProductionApi,
+  type ProjectProductionWorkOrderStatus,
+  type ProjectProductionWorkOrderSummaryRecord,
+  type ProductionOwnershipType,
+} from '../../shared/api/projectProductionApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -14,6 +15,7 @@ import ProductionWorkOrderStatusTag from './ProductionWorkOrderStatusTag.vue'
 import {
   formatProductionDateTime,
   formatProductionQuantity,
+  createProductionIdempotencyKey,
   productionErrorMessage,
   workOrderStatusLabel,
 } from './productionPageHelpers'
@@ -24,12 +26,18 @@ const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
-  status?: ProductionWorkOrderStatus
+  status?: ProjectProductionWorkOrderStatus
+  ownershipType?: ProductionOwnershipType
+  projectId: string
+  sourceMrpSuggestionId: string
   dateFrom: string
   dateTo: string
 }>({
   keyword: '',
   status: undefined,
+  ownershipType: undefined,
+  projectId: '',
+  sourceMrpSuggestionId: '',
   dateFrom: '',
   dateTo: '',
 })
@@ -38,7 +46,7 @@ const pagination = reactive({
   pageSize: 10,
   total: 0,
 })
-const records = ref<ProductionWorkOrderSummaryRecord[]>([])
+const records = ref<ProjectProductionWorkOrderSummaryRecord[]>([])
 const loading = ref(true)
 const error = ref('')
 const actionError = ref('')
@@ -53,13 +61,26 @@ const canCreateIssue = computed(() => authStore.hasPermission('production:issue:
 const canCreateReport = computed(() => authStore.hasPermission('production:report:create'))
 const canCreateReceipt = computed(() => authStore.hasPermission('production:receipt:create'))
 
+function queryValue(name: string) {
+  const value = route.query[name]
+  return Array.isArray(value) ? String(value[0] ?? '') : String(value ?? '')
+}
+
+function applyRouteFilters() {
+  filters.projectId = queryValue('projectId')
+  filters.sourceMrpSuggestionId = queryValue('sourceMrpSuggestionId')
+}
+
 async function loadRecords() {
   loading.value = true
   error.value = ''
   try {
-    const page = await productionApi.workOrders.list({
+    const page = await projectProductionApi.workOrders.list({
       keyword: filters.keyword,
       status: filters.status,
+      ...(filters.projectId.trim() ? { projectId: filters.projectId.trim() } : {}),
+      ...(filters.sourceMrpSuggestionId.trim() ? { sourceMrpSuggestionId: filters.sourceMrpSuggestionId.trim() } : {}),
+      ...(filters.ownershipType ? { ownershipType: filters.ownershipType } : {}),
       dateFrom: filters.dateFrom,
       dateTo: filters.dateTo,
       page: pagination.page,
@@ -84,6 +105,9 @@ function search() {
 function resetSearch() {
   filters.keyword = ''
   filters.status = undefined
+  filters.ownershipType = undefined
+  filters.projectId = queryValue('projectId')
+  filters.sourceMrpSuggestionId = queryValue('sourceMrpSuggestionId')
   filters.dateFrom = ''
   filters.dateTo = ''
   pagination.page = 1
@@ -105,7 +129,7 @@ function createWorkOrder() {
   void router.push({ name: 'production-work-order-create' })
 }
 
-function viewWorkOrder(record: ProductionWorkOrderSummaryRecord) {
+function viewWorkOrder(record: ProjectProductionWorkOrderSummaryRecord) {
   void router.push({
     name: 'production-work-order-detail',
     params: { id: String(record.id) },
@@ -113,27 +137,77 @@ function viewWorkOrder(record: ProductionWorkOrderSummaryRecord) {
   })
 }
 
-function editWorkOrder(record: ProductionWorkOrderSummaryRecord) {
+function editWorkOrder(record: ProjectProductionWorkOrderSummaryRecord) {
   void router.push({ name: 'production-work-order-edit', params: { id: String(record.id) } })
 }
 
-function createMaterialIssue(record: ProductionWorkOrderSummaryRecord) {
+function createMaterialIssue(record: ProjectProductionWorkOrderSummaryRecord) {
   void router.push({ name: 'production-work-order-material-issues', params: { id: String(record.id) } })
 }
 
-function createReport(record: ProductionWorkOrderSummaryRecord) {
+function createReport(record: ProjectProductionWorkOrderSummaryRecord) {
   void router.push({ name: 'production-work-order-reports', params: { id: String(record.id) } })
 }
 
-function createCompletionReceipt(record: ProductionWorkOrderSummaryRecord) {
+function createCompletionReceipt(record: ProjectProductionWorkOrderSummaryRecord) {
   void router.push({ name: 'production-work-order-completion-receipts', params: { id: String(record.id) } })
 }
 
-function canExecute(record: ProductionWorkOrderSummaryRecord) {
+function canExecute(record: ProjectProductionWorkOrderSummaryRecord) {
   return record.status === 'RELEASED' || record.status === 'IN_PROGRESS'
 }
 
-async function runWorkOrderAction(record: ProductionWorkOrderSummaryRecord, action: 'release' | 'complete' | 'cancel') {
+function actionAllowed(
+  record: ProjectProductionWorkOrderSummaryRecord,
+  codes: string[],
+  fallback: boolean,
+): boolean {
+  if (Array.isArray(record.allowedActions)) {
+    return codes.some((code) => record.allowedActions?.includes(code))
+  }
+  return fallback
+}
+
+function canEditRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canUpdate.value && actionAllowed(record, ['UPDATE'], record.status === 'DRAFT')
+}
+
+function canReleaseRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canRelease.value && actionAllowed(record, ['RELEASE'], record.status === 'DRAFT')
+}
+
+function canCreateIssueRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canCreateIssue.value && actionAllowed(record, ['ISSUE', 'CREATE_ISSUE'], canExecute(record))
+}
+
+function canCreateReportRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canCreateReport.value && actionAllowed(record, ['REPORT', 'CREATE_REPORT'], canExecute(record))
+}
+
+function canCreateReceiptRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canCreateReceipt.value && actionAllowed(record, ['RECEIPT', 'CREATE_RECEIPT'], canExecute(record))
+}
+
+function canCompleteRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canComplete.value && actionAllowed(record, ['COMPLETE'], canExecute(record))
+}
+
+function canCancelRecord(record: ProjectProductionWorkOrderSummaryRecord) {
+  return canCancel.value && actionAllowed(record, ['CANCEL'], record.status === 'DRAFT' || record.status === 'RELEASED')
+}
+
+function ownershipText(record: ProjectProductionWorkOrderSummaryRecord) {
+  return record.ownershipType === 'PROJECT' ? '项目工单' : '公共工单'
+}
+
+function projectText(record: ProjectProductionWorkOrderSummaryRecord) {
+  if (record.ownershipType !== 'PROJECT') {
+    return '公共'
+  }
+  return `${record.projectNo || record.projectId || '-'} ${record.projectName || ''}`.trim()
+}
+
+async function runWorkOrderAction(record: ProjectProductionWorkOrderSummaryRecord, action: 'release' | 'complete' | 'cancel') {
   if (actionLoading.value) {
     return
   }
@@ -150,11 +224,20 @@ async function runWorkOrderAction(record: ProductionWorkOrderSummaryRecord, acti
   actionLoading.value = true
   try {
     if (action === 'release') {
-      await productionApi.workOrders.release(record.id)
+      await projectProductionApi.workOrders.release(record.id, {
+        version: record.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-release'),
+      })
     } else if (action === 'complete') {
-      await productionApi.workOrders.complete(record.id)
+      await projectProductionApi.workOrders.complete(record.id, {
+        version: record.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-complete'),
+      })
     } else {
-      await productionApi.workOrders.cancel(record.id)
+      await projectProductionApi.workOrders.cancel(record.id, {
+        version: record.version,
+        idempotencyKey: createProductionIdempotencyKey('production-work-order-cancel'),
+      })
     }
     await loadRecords()
   } catch (caught) {
@@ -164,7 +247,25 @@ async function runWorkOrderAction(record: ProductionWorkOrderSummaryRecord, acti
   }
 }
 
-onMounted(loadRecords)
+watch(
+  () => [route.query.projectId, route.query.sourceMrpSuggestionId],
+  () => {
+    const nextProjectId = queryValue('projectId')
+    const nextSourceId = queryValue('sourceMrpSuggestionId')
+    if (filters.projectId === nextProjectId && filters.sourceMrpSuggestionId === nextSourceId) {
+      return
+    }
+    filters.projectId = nextProjectId
+    filters.sourceMrpSuggestionId = nextSourceId
+    pagination.page = 1
+    void loadRecords()
+  },
+)
+
+onMounted(() => {
+  applyRouteFilters()
+  void loadRecords()
+})
 </script>
 
 <template>
@@ -193,6 +294,18 @@ onMounted(loadRecords)
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
+        <el-form-item label="归属">
+          <el-select v-model="filters.ownershipType" clearable placeholder="全部归属">
+            <el-option label="项目工单" value="PROJECT" />
+            <el-option label="公共工单" value="PUBLIC" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <el-input v-model="filters.projectId" name="production-project-id" clearable placeholder="项目 ID" />
+        </el-form-item>
+        <el-form-item label="来源建议">
+          <el-input v-model="filters.sourceMrpSuggestionId" name="production-source-mrp-suggestion-id" clearable placeholder="MRP 建议 ID" />
+        </el-form-item>
         <el-form-item label="计划日期">
           <el-date-picker value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" v-model="filters.dateFrom" name="production-date-from" placeholder="起始日期" />
         </el-form-item>
@@ -219,6 +332,17 @@ onMounted(loadRecords)
         <el-table-column label="产品" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.productMaterialCode }} {{ row.productMaterialName }}
+          </template>
+        </el-table-column>
+        <el-table-column label="项目归属" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div>{{ projectText(row) }}</div>
+            <span class="operation-muted">{{ ownershipText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ row.sourceSuggestionNo || '-' }}
           </template>
         </el-table-column>
         <el-table-column label="BOM 版本" min-width="140" show-overflow-tooltip>
@@ -259,11 +383,11 @@ onMounted(loadRecords)
         <el-table-column label="操作" fixed="right" min-width="430">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-production-work-order" @click="viewWorkOrder(row)">详情</el-button>
-            <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text @click="editWorkOrder(row)">
+            <el-button v-if="canEditRecord(row)" size="small" text @click="editWorkOrder(row)">
               编辑
             </el-button>
             <el-button
-              v-if="canRelease && row.status === 'DRAFT'"
+              v-if="canReleaseRecord(row)"
               size="small"
               text
               type="success"
@@ -272,17 +396,17 @@ onMounted(loadRecords)
             >
               发布
             </el-button>
-            <el-button v-if="canCreateIssue && canExecute(row)" size="small" text @click="createMaterialIssue(row)">
+            <el-button v-if="canCreateIssueRecord(row)" size="small" text @click="createMaterialIssue(row)">
               领料
             </el-button>
-            <el-button v-if="canCreateReport && canExecute(row)" size="small" text @click="createReport(row)">
+            <el-button v-if="canCreateReportRecord(row)" size="small" text @click="createReport(row)">
               报工
             </el-button>
-            <el-button v-if="canCreateReceipt && canExecute(row)" size="small" text @click="createCompletionReceipt(row)">
+            <el-button v-if="canCreateReceiptRecord(row)" size="small" text @click="createCompletionReceipt(row)">
               完工入库
             </el-button>
             <el-button
-              v-if="canComplete && canExecute(row)"
+              v-if="canCompleteRecord(row)"
               size="small"
               text
               type="success"
@@ -292,7 +416,7 @@ onMounted(loadRecords)
               完成
             </el-button>
             <el-button
-              v-if="canCancel && (row.status === 'DRAFT' || row.status === 'RELEASED')"
+              v-if="canCancelRecord(row)"
               size="small"
               text
               type="danger"
@@ -303,6 +427,9 @@ onMounted(loadRecords)
             </el-button>
             <span v-if="row.status === 'COMPLETED' || row.status === 'CANCELLED'" class="operation-muted">
               {{ workOrderStatusLabel(row.status) }}
+            </span>
+            <span v-else-if="row.actionDisabledReason" class="operation-muted">
+              {{ row.actionDisabledReason }}
             </span>
           </template>
         </el-table-column>

@@ -228,6 +228,8 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/contracts", "sales:contract:view");
 		assertPermissionCode(HttpMethod.POST, "/api/admin/sales-projects/1/contracts", "sales:contract:create");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/sales-orders", "sales:project:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-projects/1/production-summary",
+				"sales:project:view");
 		assertPermissionCode(HttpMethod.GET, "/api/admin/sales-project-contracts/1", "sales:contract:view");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1", "sales:contract:update");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/sales-project-contracts/1/activate",
@@ -301,6 +303,44 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 				"production:material-supplement:post");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/material-supplements/1/cancel",
 				"production:material-supplement:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders",
+				"production:outsourcing:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders/1",
+				"production:outsourcing:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				"production:outsourcing:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1",
+				"production:outsourcing:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/release",
+				"production:outsourcing:release");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/close",
+				"production:outsourcing:close");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/cancel",
+				"production:outsourcing:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders/1/material-issues",
+				"production:outsourcing:view|production:outsourcing-issue:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders/1/material-issues/2",
+				"production:outsourcing:view|production:outsourcing-issue:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/outsourcing-orders/1/material-issues",
+				"production:outsourcing-issue:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/material-issues/2",
+				"production:outsourcing-issue:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/material-issues/2/post",
+				"production:outsourcing-issue:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/material-issues/2/cancel",
+				"production:outsourcing-issue:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders/1/receipts",
+				"production:outsourcing:view|production:outsourcing-receipt:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/production/outsourcing-orders/1/receipts/2",
+				"production:outsourcing:view|production:outsourcing-receipt:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/production/outsourcing-orders/1/receipts",
+				"production:outsourcing-receipt:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/receipts/2",
+				"production:outsourcing-receipt:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/receipts/2/post",
+				"production:outsourcing-receipt:post");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/production/outsourcing-orders/1/receipts/2/cancel",
+				"production:outsourcing-receipt:cancel");
 	}
 
 	@Test
@@ -504,6 +544,12 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.POST,
 				"/api/admin/planning/material-requirement-suggestions/1/convert-requisition",
 				"planning:material-requirement:convert-requisition");
+		assertPermissionCode(HttpMethod.POST,
+				"/api/admin/planning/material-requirement-suggestions/1/convert-work-order",
+				"planning:material-requirement:convert-production");
+		assertPermissionCode(HttpMethod.POST,
+				"/api/admin/planning/material-requirement-suggestions/1/convert-outsourcing-order",
+				"planning:material-requirement:convert-outsourcing");
 	}
 
 	private long createRole(String code, String name, AuthenticatedSession session) throws Exception {

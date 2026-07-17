@@ -574,8 +574,8 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 				admin);
 		assertOk(created);
 		long workOrderId = data(created).get("id").longValue();
-		assertOk(exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/release", null,
-				admin));
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/release",
+				productionActionBody("mfg_work_order", workOrderId, "COST-WO-REL"), admin));
 		return workOrderId;
 	}
 
@@ -666,6 +666,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("plannedStartDate", LocalDate.now().toString());
 		body.put("plannedFinishDate", LocalDate.now().plusDays(1).toString());
 		body.put("remark", "成本测试工单");
+		body.put("idempotencyKey", "COST-WO-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -674,8 +675,8 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private ResponseEntity<String> cancelWorkOrder(AuthenticatedSession session, long workOrderId) {
-		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/cancel", null,
-				session);
+		return exchange(HttpMethod.PUT, "/api/admin/production/work-orders/" + workOrderId + "/cancel",
+				productionActionBody("mfg_work_order", workOrderId, "COST-WO-CANCEL"), session);
 	}
 
 	private long createMaterialIssueId(AuthenticatedSession session, long workOrderId, Map<String, Object> body)
@@ -688,8 +689,8 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> postMaterialIssue(AuthenticatedSession session, long workOrderId, long issueId) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId + "/post", null,
-				session);
+				"/api/admin/production/work-orders/" + workOrderId + "/material-issues/" + issueId + "/post",
+				productionActionBody("mfg_material_issue", issueId, "COST-ISS-POST"), session);
 	}
 
 	private Map<String, Object> materialIssuePayload(String reason, List<Map<String, Object>> lines) {
@@ -698,6 +699,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("reason", reason);
 		body.put("remark", reason + "备注");
 		body.put("lines", lines);
+		body.put("idempotencyKey", "COST-ISS-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -722,7 +724,8 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 
 	private ResponseEntity<String> postReport(AuthenticatedSession session, long workOrderId, long reportId) {
 		return exchange(HttpMethod.PUT,
-				"/api/admin/production/work-orders/" + workOrderId + "/reports/" + reportId + "/post", null, session);
+				"/api/admin/production/work-orders/" + workOrderId + "/reports/" + reportId + "/post",
+				productionActionBody("mfg_work_report", reportId, "COST-REP-POST"), session);
 	}
 
 	private Map<String, Object> workReportPayload(String qualifiedQuantity, String defectiveQuantity) {
@@ -732,6 +735,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("defectiveQuantity", defectiveQuantity);
 		body.put("reporterName", "成本报工员");
 		body.put("remark", "成本报工测试");
+		body.put("idempotencyKey", "COST-REP-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
 	}
 
@@ -747,7 +751,7 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 			long receiptId) {
 		return exchange(HttpMethod.PUT,
 				"/api/admin/production/work-orders/" + workOrderId + "/completion-receipts/" + receiptId + "/post",
-				null, session);
+				productionActionBody("mfg_completion_receipt", receiptId, "COST-REC-POST"), session);
 	}
 
 	private Map<String, Object> completionReceiptPayload(long receiptWarehouseId, String quantity) {
@@ -757,7 +761,24 @@ class CostAdminControllerTests extends PostgresIntegrationTest {
 		body.put("quantity", quantity);
 		body.put("provisionalUnitCost", "1.000000");
 		body.put("remark", "成本完工入库测试");
+		body.put("idempotencyKey", "COST-REC-CREATE-" + SEQUENCE.incrementAndGet());
 		return body;
+	}
+
+	private Map<String, Object> productionActionBody(String tableName, long id, String prefix) {
+		return Map.of("version", productionDocumentVersion(tableName, id), "idempotencyKey",
+				prefix + "-" + id + "-" + SEQUENCE.incrementAndGet());
+	}
+
+	private long productionDocumentVersion(String tableName, long id) {
+		String sql = switch (tableName) {
+			case "mfg_work_order" -> "select version from mfg_work_order where id = ?";
+			case "mfg_material_issue" -> "select version from mfg_material_issue where id = ?";
+			case "mfg_work_report" -> "select version from mfg_work_report where id = ?";
+			case "mfg_completion_receipt" -> "select version from mfg_completion_receipt where id = ?";
+			default -> throw new IllegalArgumentException(tableName);
+		};
+		return this.jdbcTemplate.queryForObject(sql, Long.class, id);
 	}
 
 	private ResponseEntity<String> createCostRecord(AuthenticatedSession session, Map<String, Object> body) {
