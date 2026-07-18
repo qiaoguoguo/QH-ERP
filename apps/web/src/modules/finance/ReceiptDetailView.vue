@@ -8,8 +8,10 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ReceiptStatusTag from './ReceiptStatusTag.vue'
 import {
   financeErrorMessage,
+  financeMethodText,
   financePermissions,
   formatFinanceAmount,
+  voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -114,8 +116,12 @@ onMounted(loadRecord)
       <section class="summary-strip">
         <div><span>收款金额</span><strong>{{ formatFinanceAmount(record.amount) }}</strong></div>
         <div><span>收款日期</span><strong>{{ record.receiptDate }}</strong></div>
-        <div><span>收款方式</span><strong>{{ record.method }}</strong></div>
+        <div><span>收款方式</span><strong>{{ financeMethodText(record.method) }}</strong></div>
         <div><span>状态</span><ReceiptStatusTag :status="record.status" /></div>
+        <div><span>已核销金额</span><strong>{{ formatFinanceAmount(record.allocatedAmount ?? record.amount) }}</strong></div>
+        <div><span>预收余额</span><strong>{{ formatFinanceAmount(record.availableAmount ?? '0.00') }}</strong></div>
+        <div><span>多目标数</span><strong>{{ record.allocationTargetCount ?? record.allocations.length }}</strong></div>
+        <div><span>预收状态</span><strong>{{ record.advanceReceiptStatus ?? '未形成预收' }}</strong></div>
       </section>
 
       <dl class="detail-list">
@@ -135,7 +141,7 @@ onMounted(loadRecord)
       </dl>
 
       <section class="section-block">
-        <div class="section-title">核销应收</div>
+        <div class="section-title">多目标核销明细</div>
         <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
           <el-table-column prop="receivableNo" label="应收单号" min-width="170" show-overflow-tooltip />
           <el-table-column prop="customerName" label="客户" min-width="160" show-overflow-tooltip />
@@ -143,6 +149,16 @@ onMounted(loadRecord)
             <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
           </el-table-column>
         </el-table>
+      </section>
+      <section class="section-block">
+        <div class="section-title">发票链接</div>
+        <p v-if="!record.invoiceLinks?.length">暂无发票链接，历史单目标记录继续按原对象可读。</p>
+        <p v-for="link in record.invoiceLinks" :key="link.invoiceNo">{{ link.invoiceNo }} {{ formatFinanceAmount(link.amount) }}</p>
+      </section>
+      <section class="section-block">
+        <div class="section-title">凭证草稿摘要</div>
+        <p v-if="!record.voucherDrafts?.length">暂无凭证草稿。</p>
+        <p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p>
       </section>
     </div>
   </MasterDataTableView>

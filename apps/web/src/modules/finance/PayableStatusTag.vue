@@ -6,7 +6,7 @@ defineProps<{ status: PayableStatus }>()
 </script>
 
 <template>
-  <el-tag :type="payableStatusTagType[status]">
-    {{ payableStatusText[status] }}
-  </el-tag>
-</template>
+    <el-tag :type="payableStatusTagType[status] || undefined">
+      {{ payableStatusText[status] }}
+    </el-tag>
+  </template>

@@ -607,6 +607,46 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiresAuth).toBe(true)
   })
 
+  it('028 财务深化路由按独立资源权限注册', async () => {
+    const router = createQhErpRouter()
+    const finance028Routes = [
+      ['finance-sales-invoices', '/finance/sales-invoices', 'finance:sales-invoice:view'],
+      ['finance-sales-invoice-create', '/finance/sales-invoices/create', 'finance:sales-invoice:create'],
+      ['finance-sales-invoice-detail', '/finance/sales-invoices/:id', 'finance:sales-invoice:view'],
+      ['finance-sales-invoice-edit', '/finance/sales-invoices/:id/edit', 'finance:sales-invoice:update'],
+      ['finance-purchase-invoices', '/finance/purchase-invoices', 'finance:purchase-invoice:view'],
+      ['finance-purchase-invoice-create', '/finance/purchase-invoices/create', 'finance:purchase-invoice:create'],
+      ['finance-purchase-invoice-detail', '/finance/purchase-invoices/:id', 'finance:purchase-invoice:view'],
+      ['finance-purchase-invoice-edit', '/finance/purchase-invoices/:id/edit', 'finance:purchase-invoice:update'],
+      ['finance-purchase-invoice-matching', '/finance/purchase-invoices/:id/matching', 'finance:purchase-invoice:match'],
+      ['finance-expenses', '/finance/expenses', 'finance:expense:view'],
+      ['finance-expense-create', '/finance/expenses/create', 'finance:expense:create'],
+      ['finance-expense-detail', '/finance/expenses/:id', 'finance:expense:view'],
+      ['finance-expense-edit', '/finance/expenses/:id/edit', 'finance:expense:update'],
+      ['finance-advance-receipts', '/finance/advance-receipts', 'finance:advance-receipt:view'],
+      ['finance-advance-receipt-create', '/finance/advance-receipts/create', 'finance:advance-receipt:create'],
+      ['finance-advance-receipt-detail', '/finance/advance-receipts/:id', 'finance:advance-receipt:view'],
+      ['finance-advance-receipt-edit', '/finance/advance-receipts/:id/edit', 'finance:advance-receipt:update'],
+      ['finance-prepayments', '/finance/prepayments', 'finance:prepayment:view'],
+      ['finance-prepayment-create', '/finance/prepayments/create', 'finance:prepayment:create'],
+      ['finance-prepayment-detail', '/finance/prepayments/:id', 'finance:prepayment:view'],
+      ['finance-prepayment-edit', '/finance/prepayments/:id/edit', 'finance:prepayment:update'],
+      ['finance-settlement-workbench', '/finance/settlement-workbench', 'finance:settlement-allocation:view'],
+      ['finance-voucher-drafts', '/finance/voucher-drafts', 'finance:voucher-draft:view'],
+      ['finance-voucher-draft-detail', '/finance/voucher-drafts/:id', 'finance:voucher-draft:view'],
+    ] as const
+
+    for (const [routeName, path, permission] of finance028Routes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+    }
+  })
+
   it('经营报表路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
     const reportRoutes = [
@@ -679,12 +719,12 @@ describe('账号权限路由守卫', () => {
 
   it('访问财务根路径时按首个可用财务查看权限动态重定向', async () => {
     const router = createQhErpRouter()
-    useAuthStore().setSession({ user, menus: [], permissions: ['finance:receivable:view', 'finance:payable:view'] })
+    useAuthStore().setSession({ user, menus: [], permissions: ['finance:sales-invoice:view', 'finance:receivable:view', 'finance:payable:view'] })
 
     await router.push('/finance')
     await router.isReady()
 
-    expect(router.currentRoute.value.name).toBe('finance-receivables')
+    expect(router.currentRoute.value.name).toBe('finance-sales-invoices')
   })
 
   it('访问经营报表根路径时按首个可用报表权限动态重定向', async () => {

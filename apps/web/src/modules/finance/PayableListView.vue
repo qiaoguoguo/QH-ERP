@@ -9,10 +9,12 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import PayableStatusTag from './PayableStatusTag.vue'
 import {
+  compareFinanceAmount,
   financeErrorMessage,
   financePermissions,
   formatFinanceAmount,
   normalizeOptionalId,
+  voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -150,7 +152,7 @@ function createPayment(record: PayableSummaryRecord) {
 }
 
 function canCancel(record: PayableSummaryRecord) {
-  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && Number(record.paidAmount) <= 0)
+  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && compareFinanceAmount(record.paidAmount, '0.00') !== 1)
 }
 
 function canClose(record: PayableSummaryRecord) {
@@ -159,6 +161,32 @@ function canClose(record: PayableSummaryRecord) {
 
 function canCreatePayment(record: PayableSummaryRecord) {
   return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_PAID'
+}
+
+function payableLinkSummary(record: PayableSummaryRecord) {
+  const invoiceLinks = record.invoiceLinks ?? []
+  const expenseLinks = record.expenseLinks ?? []
+  const parts = [
+    ...invoiceLinks.map((link) => `${link.invoiceNo} ${formatFinanceAmount(link.amount)}`),
+    ...expenseLinks.map((link) => `${link.expenseNo} ${formatFinanceAmount(link.amount)}`),
+  ]
+  return parts.length ? parts.join('；') : '未关联发票/费用'
+}
+
+function allocationSummary(record: PayableSummaryRecord) {
+  const summary = record.allocationSummary
+  if (summary) {
+    const targetCount = summary.targetCount ?? 0
+    return `${targetCount} 个目标，已核销 ${formatFinanceAmount(summary.allocatedAmount ?? record.paidAmount)}，可用 ${formatFinanceAmount(summary.availableAmount ?? '0.00')}`
+  }
+  return `历史付款 ${formatFinanceAmount(record.paidAmount)}，未付 ${formatFinanceAmount(record.unpaidAmount)}`
+}
+
+function voucherDraftSummary(record: PayableSummaryRecord) {
+  if (!record.voucherDrafts?.length) {
+    return '暂无草稿'
+  }
+  return record.voucherDrafts.map((draft) => `${draft.draftNo} ${voucherDraftStatusText(draft.status)}`).join('；')
 }
 
 async function runPayableAction(record: PayableSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -195,7 +223,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="应付台账" description="按供应商、来源和到期日期追踪采购入库形成的应付余额。">
+  <MasterDataTableView title="应付台账" description="按供应商、来源和到期日期追踪采购入库形成的应付余额；含历史业务台账，028 发票/费用通过链接衔接。">
     <template #actions>
       <el-button v-if="canCreate" data-test="create-payable" type="primary" @click="createPayable">
         生成应付
@@ -272,7 +300,15 @@ onMounted(() => {
         <el-table-column label="未付金额" min-width="140" align="right">
           <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unpaidAmount) }}</span></template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" min-width="160" show-overflow-tooltip />
+        <el-table-column label="发票/费用链接" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ payableLinkSummary(row) }}</template>
+        </el-table-column>
+        <el-table-column label="核销摘要" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ allocationSummary(row) }}</template>
+        </el-table-column>
+        <el-table-column label="凭证草稿" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ voucherDraftSummary(row) }}</template>
+        </el-table-column>
         <el-table-column label="操作" fixed="right" min-width="330">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-payable" @click="viewPayable(row)">详情</el-button>

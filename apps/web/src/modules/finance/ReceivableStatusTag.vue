@@ -6,7 +6,7 @@ defineProps<{ status: ReceivableStatus }>()
 </script>
 
 <template>
-  <el-tag :type="receivableStatusTagType[status]">
-    {{ receivableStatusText[status] }}
-  </el-tag>
-</template>
+    <el-tag :type="receivableStatusTagType[status] || undefined">
+      {{ receivableStatusText[status] }}
+    </el-tag>
+  </template>

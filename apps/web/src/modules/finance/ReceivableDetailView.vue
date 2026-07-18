@@ -9,6 +9,7 @@ import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import ReceivableStatusTag from './ReceivableStatusTag.vue'
 import ReceiptStatusTag from './ReceiptStatusTag.vue'
 import {
+  compareFinanceAmount,
   financeErrorMessage,
   financePermissions,
   formatFinanceAmount,
@@ -27,7 +28,7 @@ const actionLoading = ref(false)
 const canEdit = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission(financePermissions.receivableUpdate))
 const canConfirm = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission(financePermissions.receivableConfirm))
 const canCancel = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.receivableCancel)
-  && (record.value?.status === 'DRAFT' || (record.value?.status === 'CONFIRMED' && Number(record.value?.receivedAmount) <= 0)))
+  && (record.value?.status === 'DRAFT' || (record.value?.status === 'CONFIRMED' && compareFinanceAmount(record.value.receivedAmount, '0.00') !== 1)))
 const canClose = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.receivableClose)
   && (record.value?.status === 'CONFIRMED' || record.value?.status === 'PARTIALLY_RECEIVED'))
 const canCreateReceipt = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.receiptCreate)

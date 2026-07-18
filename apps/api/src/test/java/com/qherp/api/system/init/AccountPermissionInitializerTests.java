@@ -754,7 +754,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				"idx_fin_receivable_source_receivable", "idx_fin_receivable_source_source");
 		assertThat(indexes("fin_receipt")).contains("uk_fin_receipt_no", "idx_fin_receipt_customer",
 				"idx_fin_receipt_status_date");
-		assertThat(indexes("fin_receipt_allocation")).contains("uk_fin_receipt_allocation_receipt",
+		assertThat(indexes("fin_receipt_allocation")).contains("uk_fin_receipt_allocation_receipt_target",
 				"idx_fin_receipt_allocation_receivable");
 		assertThat(indexes("fin_payable")).contains("uk_fin_payable_no", "idx_fin_payable_supplier",
 				"idx_fin_payable_status_date", "idx_fin_payable_due_date", "idx_fin_payable_source_no");
@@ -762,7 +762,7 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 				"idx_fin_payable_source_payable", "idx_fin_payable_source_source");
 		assertThat(indexes("fin_payment")).contains("uk_fin_payment_no", "idx_fin_payment_supplier",
 				"idx_fin_payment_status_date");
-		assertThat(indexes("fin_payment_allocation")).contains("uk_fin_payment_allocation_payment",
+		assertThat(indexes("fin_payment_allocation")).contains("uk_fin_payment_allocation_payment_target",
 				"idx_fin_payment_allocation_payable");
 
 		assertThat(constraint("fin_receivable", "ck_fin_receivable_status")).contains("DRAFT", "CONFIRMED",

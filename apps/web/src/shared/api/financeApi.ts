@@ -3,7 +3,7 @@ import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken, type PageR
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
 export type FinanceAmount = string | number
-export type FinanceSourceType = 'SALES_SHIPMENT' | 'PURCHASE_RECEIPT'
+export type FinanceSourceType = 'SALES_SHIPMENT' | 'PURCHASE_RECEIPT' | 'SALES_INVOICE' | 'PURCHASE_INVOICE' | 'EXPENSE'
 export type ReceivableStatus = 'DRAFT' | 'CONFIRMED' | 'PARTIALLY_RECEIVED' | 'RECEIVED' | 'CLOSED' | 'CANCELLED'
 export type ReceiptStatus = 'DRAFT' | 'POSTED' | 'CANCELLED'
 export type PayableStatus = 'DRAFT' | 'CONFIRMED' | 'PARTIALLY_PAID' | 'PAID' | 'CLOSED' | 'CANCELLED'
@@ -129,6 +129,9 @@ export interface ReceivableSummaryRecord {
   createdByName: string
   createdAt: string
   updatedAt: string
+  invoiceLinks?: Array<{ invoiceNo: string; amount: FinanceAmount }>
+  allocationSummary?: { targetCount?: number; allocatedAmount?: FinanceAmount; availableAmount?: FinanceAmount }
+  voucherDrafts?: Array<{ draftNo: string; status: string }>
 }
 
 export interface ReceivableSourceRecord {
@@ -166,6 +169,12 @@ export interface ReceiptSummaryRecord {
   createdByName: string
   postedByName?: string | null
   postedAt?: string | null
+  allocatedAmount?: FinanceAmount
+  availableAmount?: FinanceAmount
+  allocationTargetCount?: number
+  advanceReceiptStatus?: string | null
+  invoiceLinks?: Array<{ invoiceNo: string; amount: FinanceAmount }>
+  voucherDrafts?: Array<{ draftNo: string; status: string }>
 }
 
 export interface ReceiptAllocationRecord {
@@ -210,6 +219,10 @@ export interface PayableSummaryRecord {
   createdByName: string
   createdAt: string
   updatedAt: string
+  invoiceLinks?: Array<{ invoiceNo: string; amount: FinanceAmount }>
+  expenseLinks?: Array<{ expenseNo: string; amount: FinanceAmount }>
+  allocationSummary?: { targetCount?: number; allocatedAmount?: FinanceAmount; availableAmount?: FinanceAmount }
+  voucherDrafts?: Array<{ draftNo: string; status: string }>
 }
 
 export interface PayableSourceRecord {
@@ -247,6 +260,13 @@ export interface PaymentSummaryRecord {
   createdByName: string
   postedByName?: string | null
   postedAt?: string | null
+  allocatedAmount?: FinanceAmount
+  availableAmount?: FinanceAmount
+  allocationTargetCount?: number
+  prepaymentStatus?: string | null
+  invoiceLinks?: Array<{ invoiceNo: string; amount: FinanceAmount }>
+  expenseLinks?: Array<{ expenseNo: string; amount: FinanceAmount }>
+  voucherDrafts?: Array<{ draftNo: string; status: string }>
 }
 
 export interface PaymentAllocationRecord {

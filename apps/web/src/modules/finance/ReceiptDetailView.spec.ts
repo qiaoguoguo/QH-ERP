@@ -57,6 +57,10 @@ describe('收款详情页', () => {
 
     expect(wrapper.text()).toContain('RC-DRAFT-001')
     expect(wrapper.text()).toContain('AR-001')
+    expect(wrapper.text()).toContain('多目标核销明细')
+    expect(wrapper.text()).toContain('预收余额')
+    expect(wrapper.text()).toContain('发票链接')
+    expect(wrapper.text()).toContain('凭证草稿摘要')
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).toContain('100.00')
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)

@@ -81,9 +81,11 @@ describe('付款表单页', () => {
   it('提交付款草稿并跳转详情', async () => {
     const { wrapper, router } = await mountFinanceView(PaymentFormView, ['finance:payment:create'], '/finance/payables/10/payments/create')
 
+    expect(wrapper.text()).toContain('多目标分配可在对账核销工作台继续处理')
+    expect(wrapper.find('[data-test="payment-method-select"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('银行转账')
     await wrapper.find('input[name="payment-date"]').setValue('2026-07-10')
     await wrapper.find('input[name="payment-amount"]').setValue('300.00')
-    await wrapper.find('input[name="payment-method"]').setValue('BANK_TRANSFER')
     await wrapper.find('input[name="payment-remark"]').setValue('登记付款')
     await wrapper.find('[data-test="save-payment"]').trigger('click')
     await flushPromises()

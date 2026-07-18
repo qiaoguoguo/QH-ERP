@@ -56,7 +56,10 @@ describe('付款详情页', () => {
     ], '/finance/payments/20')
 
     expect(wrapper.text()).toContain('PY-001')
-    expect(wrapper.text()).toContain('核销应付')
+    expect(wrapper.text()).toContain('多目标核销明细')
+    expect(wrapper.text()).toContain('预付余额')
+    expect(wrapper.text()).toContain('费用链接')
+    expect(wrapper.text()).toContain('凭证草稿摘要')
     expect(wrapper.text()).toContain('AP-001')
     expect(wrapper.find('[data-test="post-payment-detail"]').exists()).toBe(true)
 

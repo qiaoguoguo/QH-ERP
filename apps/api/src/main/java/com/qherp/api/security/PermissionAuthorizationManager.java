@@ -343,6 +343,132 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
+		String salesInvoicePath = "/api/admin/finance/sales-invoices";
+		if ("GET".equals(method) && (salesInvoicePath.equals(path) || matchesIdPath(path, salesInvoicePath)
+				|| (salesInvoicePath + "/source-candidates").equals(path)
+				|| (salesInvoicePath + "/candidates").equals(path))) {
+			return "finance:sales-invoice:view";
+		}
+		if ("POST".equals(method) && salesInvoicePath.equals(path)) {
+			return "finance:sales-invoice:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, salesInvoicePath)) {
+			return "finance:sales-invoice:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(salesInvoicePath) + "/\\d+/confirm")) {
+			return "finance:sales-invoice:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(salesInvoicePath) + "/\\d+/cancel")) {
+			return "finance:sales-invoice:cancel";
+		}
+
+		String purchaseInvoicePath = "/api/admin/finance/purchase-invoices";
+		if ("GET".equals(method) && (purchaseInvoicePath.equals(path) || matchesIdPath(path, purchaseInvoicePath)
+				|| (purchaseInvoicePath + "/source-candidates").equals(path)
+				|| (purchaseInvoicePath + "/candidates").equals(path)
+				|| path.matches(Pattern.quote(purchaseInvoicePath) + "/\\d+/matching"))) {
+			return "finance:purchase-invoice:view";
+		}
+		if ("POST".equals(method) && purchaseInvoicePath.equals(path)) {
+			return "finance:purchase-invoice:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, purchaseInvoicePath)) {
+			return "finance:purchase-invoice:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(purchaseInvoicePath) + "/\\d+/match")) {
+			return "finance:purchase-invoice:match";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(purchaseInvoicePath) + "/\\d+/confirm")) {
+			return "finance:purchase-invoice:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(purchaseInvoicePath) + "/\\d+/cancel")) {
+			return "finance:purchase-invoice:cancel";
+		}
+
+		String expensePath = "/api/admin/finance/expenses";
+		if ("GET".equals(method) && (expensePath.equals(path) || matchesIdPath(path, expensePath)
+				|| (expensePath + "/categories").equals(path) || (expensePath + "/source-candidates").equals(path))) {
+			return "finance:expense:view";
+		}
+		if ("POST".equals(method) && expensePath.equals(path)) {
+			return "finance:expense:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, expensePath)) {
+			return "finance:expense:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(expensePath) + "/\\d+/confirm")) {
+			return "finance:expense:confirm";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(expensePath) + "/\\d+/cancel")) {
+			return "finance:expense:cancel";
+		}
+
+		String advanceReceiptPath = "/api/admin/finance/advance-receipts";
+		if ("GET".equals(method) && (advanceReceiptPath.equals(path) || matchesIdPath(path, advanceReceiptPath))) {
+			return "finance:advance-receipt:view";
+		}
+		if ("POST".equals(method) && advanceReceiptPath.equals(path)) {
+			return "finance:advance-receipt:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, advanceReceiptPath)) {
+			return "finance:advance-receipt:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(advanceReceiptPath) + "/\\d+/post")) {
+			return "finance:advance-receipt:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(advanceReceiptPath) + "/\\d+/cancel")) {
+			return "finance:advance-receipt:cancel";
+		}
+
+		String prepaymentPath = "/api/admin/finance/prepayments";
+		if ("GET".equals(method) && (prepaymentPath.equals(path) || matchesIdPath(path, prepaymentPath))) {
+			return "finance:prepayment:view";
+		}
+		if ("POST".equals(method) && prepaymentPath.equals(path)) {
+			return "finance:prepayment:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, prepaymentPath)) {
+			return "finance:prepayment:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(prepaymentPath) + "/\\d+/post")) {
+			return "finance:prepayment:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(prepaymentPath) + "/\\d+/cancel")) {
+			return "finance:prepayment:cancel";
+		}
+
+		String settlementWorkbenchPath = "/api/admin/finance/settlement-workbench";
+		String settlementAllocationPath = settlementWorkbenchPath + "/allocations";
+		if ("GET".equals(method) && matchesBasePath(path, settlementWorkbenchPath)) {
+			return "finance:settlement-allocation:view";
+		}
+		if ("POST".equals(method) && settlementAllocationPath.equals(path)) {
+			return "finance:settlement-allocation:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, settlementAllocationPath)) {
+			return "finance:settlement-allocation:update";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(settlementAllocationPath) + "/\\d+/post")) {
+			return "finance:settlement-allocation:post";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(settlementAllocationPath) + "/\\d+/cancel")) {
+			return "finance:settlement-allocation:cancel";
+		}
+
+		String voucherDraftPath = "/api/admin/finance/voucher-drafts";
+		if ("POST".equals(method) && (voucherDraftPath + "/generate").equals(path)) {
+			return "finance:voucher-draft:generate";
+		}
+		if ("GET".equals(method) && (voucherDraftPath.equals(path) || matchesIdPath(path, voucherDraftPath))) {
+			return "finance:voucher-draft:view";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(voucherDraftPath) + "/\\d+/ready")) {
+			return "finance:voucher-draft:ready";
+		}
+		if ("PUT".equals(method) && path.matches(Pattern.quote(voucherDraftPath) + "/\\d+/cancel")) {
+			return "finance:voucher-draft:cancel";
+		}
+
 		String receivablePath = "/api/admin/finance/receivables";
 		if ("GET".equals(method) && "/api/admin/finance/receivable-sources".equals(path)) {
 			return "finance:receivable:create";

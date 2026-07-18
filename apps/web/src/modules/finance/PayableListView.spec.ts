@@ -56,9 +56,13 @@ describe('应付台账列表页', () => {
     const { wrapper } = await mountFinanceView(PayableListView, ['finance:payable:view'], '/finance/payables')
 
     expect(wrapper.text()).toContain('应付台账')
+    expect(wrapper.text()).toContain('含历史业务台账，028 发票/费用通过链接衔接')
     expect(wrapper.text()).toContain('AP-001')
     expect(wrapper.text()).toContain('PR-001')
     expect(wrapper.text()).toContain('采购订单')
+    expect(wrapper.text()).toContain('发票/费用链接')
+    expect(wrapper.text()).toContain('核销摘要')
+    expect(wrapper.text()).toContain('凭证草稿')
 
     await wrapper.find('input[name="payable-keyword"]').setValue('AP')
     await setSelectValue(wrapper, 0, 100)

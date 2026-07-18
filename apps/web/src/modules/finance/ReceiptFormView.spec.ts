@@ -82,9 +82,11 @@ describe('收款表单页', () => {
   it('提交收款草稿并跳转详情', async () => {
     const { wrapper, router } = await mountFinanceView(ReceiptFormView, ['finance:receipt:create'], '/finance/receivables/10/receipts/create')
 
+    expect(wrapper.text()).toContain('多目标分配可在对账核销工作台继续处理')
+    expect(wrapper.find('[data-test="receipt-method-select"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('银行转账')
     await wrapper.find('input[name="receipt-date"]').setValue('2026-07-10')
     await wrapper.find('input[name="receipt-amount"]').setValue('300.00')
-    await wrapper.find('input[name="receipt-method"]').setValue('BANK_TRANSFER')
     await wrapper.find('input[name="receipt-remark"]').setValue('登记收款')
     await wrapper.find('[data-test="save-receipt"]').trigger('click')
     await flushPromises()
@@ -106,7 +108,7 @@ describe('收款表单页', () => {
     expect(wrapper.text()).toContain('非草稿收款只读')
     expect(wrapper.find('input[name="receipt-date"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('input[name="receipt-amount"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('input[name="receipt-method"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="receipt-method-select"]').classes()).toContain('is-disabled')
     expect(wrapper.find('input[name="receipt-remark"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="save-receipt"]').attributes('disabled')).toBeDefined()
 

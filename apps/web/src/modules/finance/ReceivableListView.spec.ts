@@ -96,10 +96,14 @@ describe('应收台账列表页', () => {
       pageSize: 10,
     })
     expect(wrapper.text()).toContain('应收台账')
+    expect(wrapper.text()).toContain('含历史业务台账，028 发票/费用通过链接衔接')
     expect(wrapper.text()).toContain('AR-DRAFT-001')
     expect(wrapper.text()).toContain('华东客户')
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).toContain('12,345,678,901,234,567,890.12')
+    expect(wrapper.text()).toContain('发票/费用链接')
+    expect(wrapper.text()).toContain('核销摘要')
+    expect(wrapper.text()).toContain('凭证草稿')
     expect(wrapper.find('[data-test="create-receivable"]').exists()).toBe(true)
   })
 

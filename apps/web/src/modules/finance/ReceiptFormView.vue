@@ -23,7 +23,7 @@ const submitting = ref(false)
 const form = reactive({
   receiptDate: '',
   amount: '',
-  method: '',
+  method: 'BANK_TRANSFER',
   remark: '',
 })
 
@@ -130,7 +130,7 @@ onMounted(loadData)
 </script>
 
 <template>
-  <MasterDataTableView :title="pageTitle" description="登记业务收款草稿，过账前不更新应收余额。">
+  <MasterDataTableView :title="pageTitle" description="登记业务收款草稿，过账前不更新应收余额；多目标分配可在对账核销工作台继续处理。">
     <template #alerts>
       <el-alert v-if="formError" class="state-alert" type="error" :title="formError" :closable="false" />
       <el-alert v-if="loading" class="state-alert" type="info" title="收款表单加载中" :closable="false" />
@@ -161,7 +161,12 @@ onMounted(loadData)
           <el-input v-model="form.amount" name="receipt-amount" placeholder="0.00" :disabled="isReadonlyEdit" />
         </el-form-item>
         <el-form-item label="收款方式">
-          <el-input v-model="form.method" name="receipt-method" placeholder="BANK_TRANSFER" :disabled="isReadonlyEdit" />
+          <el-select v-model="form.method" data-test="receipt-method-select" name="receipt-method" placeholder="选择收款方式" :disabled="isReadonlyEdit" :class="{ 'is-disabled': isReadonlyEdit }">
+            <el-option label="银行转账" value="BANK_TRANSFER" />
+            <el-option label="现金" value="CASH" />
+            <el-option label="支票" value="CHECK" />
+            <el-option label="其他" value="OTHER" />
+          </el-select>
         </el-form-item>
         <el-form-item label="备注">
           <el-input v-model="form.remark" name="receipt-remark" placeholder="可选" :disabled="isReadonlyEdit" />

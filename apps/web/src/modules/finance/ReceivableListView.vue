@@ -9,10 +9,12 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ReceivableStatusTag from './ReceivableStatusTag.vue'
 import {
+  compareFinanceAmount,
   financeErrorMessage,
   financePermissions,
   formatFinanceAmount,
   normalizeOptionalId,
+  voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -150,7 +152,7 @@ function createReceipt(record: ReceivableSummaryRecord) {
 }
 
 function canCancel(record: ReceivableSummaryRecord) {
-  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && Number(record.receivedAmount) <= 0)
+  return record.status === 'DRAFT' || (record.status === 'CONFIRMED' && compareFinanceAmount(record.receivedAmount, '0.00') !== 1)
 }
 
 function canClose(record: ReceivableSummaryRecord) {
@@ -159,6 +161,29 @@ function canClose(record: ReceivableSummaryRecord) {
 
 function canCreateReceipt(record: ReceivableSummaryRecord) {
   return record.status === 'CONFIRMED' || record.status === 'PARTIALLY_RECEIVED'
+}
+
+function invoiceLinkSummary(record: ReceivableSummaryRecord) {
+  if (!record.invoiceLinks?.length) {
+    return '未关联发票'
+  }
+  return record.invoiceLinks.map((link) => `${link.invoiceNo} ${formatFinanceAmount(link.amount)}`).join('；')
+}
+
+function allocationSummary(record: ReceivableSummaryRecord) {
+  const summary = record.allocationSummary
+  if (summary) {
+    const targetCount = summary.targetCount ?? 0
+    return `${targetCount} 个目标，已核销 ${formatFinanceAmount(summary.allocatedAmount ?? record.receivedAmount)}，可用 ${formatFinanceAmount(summary.availableAmount ?? '0.00')}`
+  }
+  return `历史收款 ${formatFinanceAmount(record.receivedAmount)}，未收 ${formatFinanceAmount(record.unreceivedAmount)}`
+}
+
+function voucherDraftSummary(record: ReceivableSummaryRecord) {
+  if (!record.voucherDrafts?.length) {
+    return '暂无草稿'
+  }
+  return record.voucherDrafts.map((draft) => `${draft.draftNo} ${voucherDraftStatusText(draft.status)}`).join('；')
 }
 
 async function runReceivableAction(record: ReceivableSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -195,7 +220,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="应收台账" description="按客户、来源和到期日期追踪销售出库形成的应收余额。">
+  <MasterDataTableView title="应收台账" description="按客户、来源和到期日期追踪销售出库形成的应收余额；含历史业务台账，028 发票/费用通过链接衔接。">
     <template #actions>
       <el-button v-if="canCreate" data-test="create-receivable" type="primary" @click="createReceivable">
         生成应收
@@ -272,7 +297,15 @@ onMounted(() => {
         <el-table-column label="未收金额" min-width="140" align="right">
           <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unreceivedAmount) }}</span></template>
         </el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" min-width="160" show-overflow-tooltip />
+        <el-table-column label="发票/费用链接" min-width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ invoiceLinkSummary(row) }}</template>
+        </el-table-column>
+        <el-table-column label="核销摘要" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ allocationSummary(row) }}</template>
+        </el-table-column>
+        <el-table-column label="凭证草稿" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">{{ voucherDraftSummary(row) }}</template>
+        </el-table-column>
         <el-table-column label="操作" fixed="right" min-width="330">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-receivable" @click="viewReceivable(row)">详情</el-button>

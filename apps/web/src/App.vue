@@ -69,6 +69,13 @@ const salesCreditProfilePath = '/sales/credit-profiles'
 const salesEffectiveDemandPath = '/sales/effective-demands'
 const qualityInspectionPath = '/quality/inspections'
 const costRecordPath = '/cost/records'
+const financeSalesInvoicePath = '/finance/sales-invoices'
+const financePurchaseInvoicePath = '/finance/purchase-invoices'
+const financeExpensePath = '/finance/expenses'
+const financeAdvanceReceiptPath = '/finance/advance-receipts'
+const financePrepaymentPath = '/finance/prepayments'
+const financeSettlementWorkbenchPath = '/finance/settlement-workbench'
+const financeVoucherDraftPath = '/finance/voucher-drafts'
 const financeReceivablePath = '/finance/receivables'
 const financeReceiptPath = '/finance/receipts'
 const financePayablePath = '/finance/payables'
@@ -131,6 +138,13 @@ const supportedMenuPaths = new Set([
   productionOutsourcingOrderPath,
   qualityInspectionPath,
   costRecordPath,
+  financeSalesInvoicePath,
+  financePurchaseInvoicePath,
+  financeExpensePath,
+  financeAdvanceReceiptPath,
+  financePrepaymentPath,
+  financeSettlementWorkbenchPath,
+  financeVoucherDraftPath,
   financeReceivablePath,
   financeReceiptPath,
   financePayablePath,
@@ -359,6 +373,48 @@ const qualityChildren: MenuNode[] = [
 ]
 const qualityMenuPaths = new Set(qualityChildren.map((child) => child.routePath))
 const financeChildren: MenuNode[] = [
+  {
+    id: 'finance-sales-invoices',
+    code: financePermissions.salesInvoiceView,
+    name: '销售发票',
+    routePath: financeSalesInvoicePath,
+  },
+  {
+    id: 'finance-purchase-invoices',
+    code: financePermissions.purchaseInvoiceView,
+    name: '采购发票',
+    routePath: financePurchaseInvoicePath,
+  },
+  {
+    id: 'finance-expenses',
+    code: financePermissions.expenseView,
+    name: '费用单',
+    routePath: financeExpensePath,
+  },
+  {
+    id: 'finance-advance-receipts',
+    code: financePermissions.advanceReceiptView,
+    name: '预收款',
+    routePath: financeAdvanceReceiptPath,
+  },
+  {
+    id: 'finance-prepayments',
+    code: financePermissions.prepaymentView,
+    name: '预付款',
+    routePath: financePrepaymentPath,
+  },
+  {
+    id: 'finance-settlement-workbench',
+    code: financePermissions.settlementAllocationView,
+    name: '对账核销',
+    routePath: financeSettlementWorkbenchPath,
+  },
+  {
+    id: 'finance-voucher-drafts',
+    code: financePermissions.voucherDraftView,
+    name: '凭证草稿',
+    routePath: financeVoucherDraftPath,
+  },
   {
     id: 'finance-receivables',
     code: financePermissions.receivableView,

@@ -8,8 +8,10 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import PaymentStatusTag from './PaymentStatusTag.vue'
 import {
   financeErrorMessage,
+  financeMethodText,
   financePermissions,
   formatFinanceAmount,
+  voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -114,8 +116,12 @@ onMounted(loadRecord)
       <section class="summary-strip">
         <div><span>付款金额</span><strong>{{ formatFinanceAmount(record.amount) }}</strong></div>
         <div><span>付款日期</span><strong>{{ record.paymentDate }}</strong></div>
-        <div><span>付款方式</span><strong>{{ record.method }}</strong></div>
+        <div><span>付款方式</span><strong>{{ financeMethodText(record.method) }}</strong></div>
         <div><span>状态</span><PaymentStatusTag :status="record.status" /></div>
+        <div><span>已核销金额</span><strong>{{ formatFinanceAmount(record.allocatedAmount ?? record.amount) }}</strong></div>
+        <div><span>预付余额</span><strong>{{ formatFinanceAmount(record.availableAmount ?? '0.00') }}</strong></div>
+        <div><span>多目标数</span><strong>{{ record.allocationTargetCount ?? record.allocations.length }}</strong></div>
+        <div><span>预付状态</span><strong>{{ record.prepaymentStatus ?? '未形成预付' }}</strong></div>
       </section>
 
       <dl class="detail-list">
@@ -135,7 +141,7 @@ onMounted(loadRecord)
       </dl>
 
       <section class="section-block">
-        <div class="section-title">核销应付</div>
+        <div class="section-title">多目标核销明细</div>
         <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
           <el-table-column prop="payableNo" label="应付单号" min-width="170" show-overflow-tooltip />
           <el-table-column prop="supplierName" label="供应商" min-width="160" show-overflow-tooltip />
@@ -143,6 +149,16 @@ onMounted(loadRecord)
             <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
           </el-table-column>
         </el-table>
+      </section>
+      <section class="section-block">
+        <div class="section-title">费用链接</div>
+        <p v-if="!record.expenseLinks?.length">暂无费用链接，历史单目标记录继续按原对象可读。</p>
+        <p v-for="link in record.expenseLinks" :key="link.expenseNo">{{ link.expenseNo }} {{ formatFinanceAmount(link.amount) }}</p>
+      </section>
+      <section class="section-block">
+        <div class="section-title">凭证草稿摘要</div>
+        <p v-if="!record.voucherDrafts?.length">暂无凭证草稿。</p>
+        <p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p>
       </section>
     </div>
   </MasterDataTableView>

@@ -448,7 +448,18 @@ describe('ERP 应用骨架', () => {
     useAuthStore().setSession({
       user: { id: 1, username: 'finance_user', displayName: '财务用户', status: 'ENABLED' },
       menus: [],
-      permissions: ['finance:receivable:view', 'finance:receipt:view', 'finance:payable:view'],
+      permissions: [
+        financePermissions.salesInvoiceView,
+        financePermissions.purchaseInvoiceView,
+        financePermissions.expenseView,
+        financePermissions.advanceReceiptView,
+        financePermissions.prepaymentView,
+        financePermissions.settlementAllocationView,
+        financePermissions.voucherDraftView,
+        'finance:receivable:view',
+        'finance:receipt:view',
+        'finance:payable:view',
+      ],
     })
     const router = createQhErpRouter()
     router.push('/')
@@ -461,6 +472,13 @@ describe('ERP 应用骨架', () => {
     })
 
     expect(wrapper.text()).toContain('财务往来')
+    expect(wrapper.text()).toContain('销售发票')
+    expect(wrapper.text()).toContain('采购发票')
+    expect(wrapper.text()).toContain('费用单')
+    expect(wrapper.text()).toContain('预收款')
+    expect(wrapper.text()).toContain('预付款')
+    expect(wrapper.text()).toContain('对账核销')
+    expect(wrapper.text()).toContain('凭证草稿')
     expect(wrapper.text()).toContain('应收台账')
     expect(wrapper.text()).toContain('收款记录')
     expect(wrapper.text()).toContain('应付台账')

@@ -9,6 +9,7 @@ import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import PayableStatusTag from './PayableStatusTag.vue'
 import PaymentStatusTag from './PaymentStatusTag.vue'
 import {
+  compareFinanceAmount,
   financeErrorMessage,
   financePermissions,
   formatFinanceAmount,
@@ -27,7 +28,7 @@ const actionLoading = ref(false)
 const canEdit = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission(financePermissions.payableUpdate))
 const canConfirm = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission(financePermissions.payableConfirm))
 const canCancel = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.payableCancel)
-  && (record.value?.status === 'DRAFT' || (record.value?.status === 'CONFIRMED' && Number(record.value?.paidAmount) <= 0)))
+  && (record.value?.status === 'DRAFT' || (record.value?.status === 'CONFIRMED' && compareFinanceAmount(record.value.paidAmount, '0.00') !== 1)))
 const canClose = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.payableClose)
   && (record.value?.status === 'CONFIRMED' || record.value?.status === 'PARTIALLY_PAID'))
 const canCreatePayment = computed(() => Boolean(record.value) && authStore.hasPermission(financePermissions.paymentCreate)

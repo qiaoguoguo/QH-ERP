@@ -1,0 +1,107 @@
+<script setup lang="ts">
+import { computed, onMounted, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { financeVoucherDraftApi, type VoucherDraftRecord } from '../../shared/api/financeVoucherDraftApi'
+import { useAuthStore } from '../../stores/authStore'
+import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import {
+  financeErrorMessage,
+  financePermissions,
+  financeSourceTypeText,
+  formatFinanceAmount,
+  ownershipTypeText,
+  voucherDraftStatusText,
+} from './financePageHelpers'
+import './Finance028Shared.css'
+
+const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+const record = ref<VoucherDraftRecord | null>(null)
+const loading = ref(false)
+const error = ref('')
+
+const canReady = computed(() => record.value?.allowedActions?.includes('READY') && authStore.hasPermission(financePermissions.voucherDraftReady))
+const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.voucherDraftCancel))
+const balanceText = computed(() => record.value?.balanced ? '借贷平衡' : '借贷不平衡')
+
+async function loadRecord() {
+  loading.value = true
+  error.value = ''
+  try {
+    record.value = await financeVoucherDraftApi.voucherDrafts.get(route.params.id as string)
+  } catch (caught) {
+    error.value = financeErrorMessage(caught)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadRecord)
+</script>
+
+<template>
+  <MasterDataTableView title="凭证草稿详情" description="查看非正式凭证草稿、来源事件、业务分类建议和金额平衡状态。">
+    <template #actions>
+      <el-button @click="router.push({ name: 'finance-voucher-drafts' })">返回列表</el-button>
+      <el-button @click="loadRecord">刷新</el-button>
+      <el-button v-if="canReady" type="success">标记待制证</el-button>
+      <el-button v-if="canCancel" type="danger">取消草稿</el-button>
+    </template>
+    <template #alerts>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="loading" type="info" title="凭证草稿详情加载中" :closable="false" />
+      <el-alert type="warning" title="非正式凭证草稿，不产生总账、会计期间或资金影响" :closable="false" />
+    </template>
+
+    <div v-if="record" class="finance-summary-strip">
+      <div><span>草稿属性</span><strong>非正式凭证草稿</strong></div>
+      <div><span>状态</span><strong>{{ voucherDraftStatusText(record.status) }}</strong></div>
+      <div><span>来源事件</span><strong>{{ financeSourceTypeText(record.sourceType) }} {{ record.sourceNo }}</strong></div>
+      <div><span>金额平衡</span><strong>{{ balanceText }}</strong></div>
+      <div><span>借方合计</span><strong>{{ formatFinanceAmount(record.debitTotal) }}</strong></div>
+      <div><span>贷方合计</span><strong>{{ formatFinanceAmount(record.creditTotal) }}</strong></div>
+      <div><span>生成版本</span><strong>{{ record.generationVersion }}</strong></div>
+      <div><span>项目/公共</span><strong>{{ ownershipTypeText(record.ownershipType) }} {{ record.projectName ?? '' }}</strong></div>
+    </div>
+
+    <div v-if="record" class="finance-section-grid">
+      <section class="finance-section">
+        <span class="finance-section-title">来源事件</span>
+        <p>{{ financeSourceTypeText(record.sourceType) }} {{ record.sourceNo }}</p>
+      </section>
+      <section class="finance-section">
+        <span class="finance-section-title">分录建议</span>
+        <div class="table-scroll">
+          <el-table :data="record.lines ?? []" empty-text="暂无分录建议">
+            <el-table-column label="借贷方向" min-width="100"><template #default="{ row }">{{ row.direction === 'DEBIT' ? '借方' : '贷方' }}</template></el-table-column>
+            <el-table-column prop="businessCategory" label="业务分类" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip />
+            <el-table-column label="未税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.pretaxAmount) }}</template></el-table-column>
+            <el-table-column label="税额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.taxAmount) }}</template></el-table-column>
+            <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.totalAmount) }}</template></el-table-column>
+            <el-table-column prop="partnerName" label="往来方" min-width="150" show-overflow-tooltip />
+            <el-table-column prop="projectName" label="项目" min-width="150" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </section>
+      <section class="finance-section">
+        <span class="finance-section-title">金额平衡</span>
+        <p>{{ balanceText }}，借方 {{ formatFinanceAmount(record.debitTotal) }}，贷方 {{ formatFinanceAmount(record.creditTotal) }}。</p>
+      </section>
+      <section class="finance-section">
+        <span class="finance-section-title">生成版本</span>
+        <p>第 {{ record.generationVersion }} 版建议。</p>
+      </section>
+      <section class="finance-section">
+        <span class="finance-section-title">来源追溯</span>
+        <p v-if="record.sourceSummary?.restricted">{{ record.sourceSummary.restrictedReason ?? '来源受限' }}</p>
+        <p v-else>{{ record.sourceSummary ? `${financeSourceTypeText(record.sourceSummary.sourceType)} ${record.sourceSummary.sourceNo}` : '暂无来源摘要' }}</p>
+      </section>
+      <section class="finance-section">
+        <span class="finance-section-title">审计</span>
+        <p>{{ record.auditSummary?.length ? '已有审计记录' : '暂无审计摘要' }}</p>
+      </section>
+    </div>
+  </MasterDataTableView>
+</template>
