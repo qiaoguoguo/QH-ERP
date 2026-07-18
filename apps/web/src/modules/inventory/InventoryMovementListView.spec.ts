@@ -1,8 +1,8 @@
-import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { installElementPlus } from '../../elementPlus'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { InventoryMovementRecord, InventoryTraceDetailRecord } from '../../shared/api/inventoryApi'
 import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
@@ -341,7 +341,7 @@ async function mountMovements(
   await router.isReady()
   const wrapper = mount(InventoryMovementListView, {
     global: {
-      plugins: [pinia, router, ElementPlus],
+      plugins: [pinia, router, installElementPlus],
     },
   })
   await flushPromises()
@@ -685,6 +685,38 @@ describe('库存变动流水页', () => {
     expect(inventoryApiMock.traces.getBatchTrace).toHaveBeenCalledWith(31)
     expect(wrapper.text()).toContain('来源去向追溯')
     expect(wrapper.text()).toContain('MV202607030001')
+  })
+
+  it('使用应用共享组件注册时追溯抽屉不产生骨架屏未解析告警', async () => {
+    inventoryApiMock.movements.list.mockResolvedValueOnce({
+      items: [productionIssueMovement],
+      page: 1,
+      pageSize: 10,
+      total: 1,
+      totalPages: 1,
+    })
+    let resolveTrace: (detail: InventoryTraceDetailRecord) => void = () => undefined
+    inventoryApiMock.traces.getBatchTrace.mockReturnValueOnce(new Promise<InventoryTraceDetailRecord>((resolve) => {
+      resolveTrace = resolve
+    }))
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      const { wrapper } = await mountMovements({ movementType: 'PRODUCTION_ISSUE' })
+
+      await wrapper.find('[data-test="view-movement-trace"]').trigger('click')
+      await flushPromises()
+
+      const skeletonWarnings = warnSpy.mock.calls
+        .map((call) => call.map(String).join(' '))
+        .filter((message) => message.includes('Failed to resolve component') && message.includes('el-skeleton'))
+      expect(skeletonWarnings).toEqual([])
+
+      resolveTrace(traceDetail)
+      await flushPromises()
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   it('采购入库来源流水可跳转到采购入库详情', async () => {

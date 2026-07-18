@@ -107,6 +107,11 @@ describe('全局样式契约', () => {
     expect(elementPlusSource).toContain("element-plus/theme-chalk/el-loading.css")
   })
 
+  it('库存追溯抽屉使用的骨架屏纳入共享 Element Plus 注册入口', () => {
+    expectElementPlusComponentRegistered('ElSkeleton')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-skeleton.css")
+  })
+
   it('027 外协页面规格不再通过旧挂载降级写法降低类型', () => {
     const outsourcingSpecSource = readFileSync(
       resolve(currentDir, 'modules/production/outsourcing/ProductionOutsourcingViews.spec.ts'),

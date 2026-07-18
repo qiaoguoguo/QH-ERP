@@ -30,6 +30,7 @@ import {
   ElResult,
   ElScrollbar,
   ElSelect,
+  ElSkeleton,
   ElSubMenu,
   ElSwitch,
   ElTabPane,
@@ -78,6 +79,7 @@ import 'element-plus/theme-chalk/el-radio-group.css'
 import 'element-plus/theme-chalk/el-result.css'
 import 'element-plus/theme-chalk/el-scrollbar.css'
 import 'element-plus/theme-chalk/el-select.css'
+import 'element-plus/theme-chalk/el-skeleton.css'
 import 'element-plus/theme-chalk/el-sub-menu.css'
 import 'element-plus/theme-chalk/el-switch.css'
 import 'element-plus/theme-chalk/el-tab-pane.css'
@@ -122,6 +124,7 @@ const elementPlusComponents = [
   ElResult,
   ElScrollbar,
   ElSelect,
+  ElSkeleton,
   ElSubMenu,
   ElSwitch,
   ElTabPane,
