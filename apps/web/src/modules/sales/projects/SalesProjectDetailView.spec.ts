@@ -555,7 +555,10 @@ describe('销售项目详情页', () => {
   })
 
   it('展示 025 销售履约汇总并按权限关闭销售履约', async () => {
-    const { wrapper } = await mountDetail()
+    const { wrapper } = await mountDetail(project, undefined, {
+      ...fulfillment,
+      blockReasons: ['NON_TERMINAL_ORDER'],
+    })
 
     expect(salesFulfillmentApiMock.projectFulfillment.get).toHaveBeenCalledWith(12)
     expect(wrapper.text()).toContain('销售履约')
@@ -566,7 +569,8 @@ describe('销售项目详情页', () => {
     expect(wrapper.text()).toContain('开放需求')
     expect(wrapper.text()).toContain('8')
     expect(wrapper.text()).toContain('信用通过')
-    expect(wrapper.text()).toContain('存在开放交付计划')
+    expect(wrapper.text()).toContain('项目仍有关联销售订单未终止，不能关闭项目。请先完成、关闭或取消相关订单。')
+    expect(wrapper.text()).not.toContain('NON_TERMINAL_ORDER')
 
     await buttonsByText(wrapper, '关闭销售履约')[0].trigger('click')
     await flushPromises()

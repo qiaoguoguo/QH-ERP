@@ -44,6 +44,8 @@ const form = reactive({
 
 const isEdit = computed(() => Boolean(route.params.id))
 const pageTitle = computed(() => (isEdit.value ? '编辑外协订单' : '新建外协订单'))
+const canShowForm = computed(() => !isEdit.value || Boolean(record.value))
+const canShowSave = computed(() => !isEdit.value || Boolean(record.value))
 
 function optionLabel(source: Record<string, unknown>, codeKey: string, nameKey: string) {
   return [source[codeKey], source[nameKey]].filter(Boolean).join(' ')
@@ -156,7 +158,7 @@ function buildPayload() {
 }
 
 async function saveOrder(api: ProductionOutsourcingApi = productionOutsourcingApi) {
-  if (saving.value) {
+  if (saving.value || !canShowSave.value) {
     return
   }
   saving.value = true
@@ -181,14 +183,15 @@ onMounted(loadPage)
   <MasterDataTableView :title="pageTitle" description="维护外协订单的项目/公共归属、供应商、物料、BOM、仓库和计划数量。">
     <template #actions>
       <el-button @click="router.push({ name: 'production-outsourcing-orders' })">返回列表</el-button>
-      <el-button data-test="save-outsourcing-order" type="primary" :loading="saving" @click="saveOrder()">保存</el-button>
+      <el-button v-if="canShowSave" data-test="save-outsourcing-order" type="primary" :loading="saving" @click="saveOrder()">保存</el-button>
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="loading" type="info" title="外协订单加载中" :closable="false" />
     </template>
 
-    <el-form class="detail-form" label-position="top">
+    <el-empty v-if="!loading && !canShowForm" description="外协订单不存在或无权查看" />
+    <el-form v-else-if="canShowForm" class="detail-form" label-position="top">
       <section class="section-block">
         <h2>归属与来源</h2>
         <div class="form-grid">
@@ -235,10 +238,10 @@ onMounted(loadPage)
             <el-input v-model="form.plannedQuantity" name="outsourcing-planned-quantity" />
           </el-form-item>
           <el-form-item label="计划发料">
-            <el-input v-model="form.plannedIssueDate" name="outsourcing-planned-issue-date" />
+            <el-input v-model="form.plannedIssueDate" name="outsourcing-planned-issue-date" placeholder="请选择计划发料日期" />
           </el-form-item>
           <el-form-item label="计划收货">
-            <el-input v-model="form.plannedReceiptDate" name="outsourcing-planned-receipt-date" />
+            <el-input v-model="form.plannedReceiptDate" name="outsourcing-planned-receipt-date" placeholder="请选择计划收货日期" />
           </el-form-item>
         </div>
       </section>
@@ -258,6 +261,28 @@ onMounted(loadPage)
           </el-form-item>
         </div>
       </section>
+      <div data-test="outsourcing-order-form-bottom-actions" class="form-actions">
+        <el-button @click="router.push({ name: 'production-outsourcing-orders' })">返回列表</el-button>
+        <el-button
+          v-if="canShowSave"
+          data-test="bottom-save-outsourcing-order"
+          type="primary"
+          :loading="saving"
+          @click="saveOrder()"
+        >
+          保存
+        </el-button>
+      </div>
     </el-form>
   </MasterDataTableView>
 </template>
+
+<style scoped>
+.form-actions {
+  border-top: 1px solid var(--qherp-border);
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 14px;
+}
+</style>

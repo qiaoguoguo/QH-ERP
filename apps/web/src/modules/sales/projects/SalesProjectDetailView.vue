@@ -101,6 +101,13 @@ const projectConfirmButtonType = computed(() => {
   return 'primary'
 })
 
+function fulfillmentBlockReasonText(reason: string) {
+  const labels: Record<string, string> = {
+    NON_TERMINAL_ORDER: '项目仍有关联销售订单未终止，不能关闭项目。请先完成、关闭或取消相关订单。',
+  }
+  return labels[reason] ?? reason
+}
+
 function resolveContractCreateState(project: SalesProjectDetail | null, hasCreatePermission: boolean) {
   if (!project || !hasCreatePermission || project.status === 'CLOSED' || project.status === 'CANCELLED') {
     return { visible: false, disabled: false, reason: '' }
@@ -591,7 +598,7 @@ onMounted(loadRecord)
         <div v-if="fulfillment?.blockReasons?.length" class="block-reasons">
           <div class="section-subtitle">关闭阻断</div>
           <el-tag v-for="reason in fulfillment.blockReasons" :key="reason" type="warning" effect="plain">
-            {{ reason }}
+            {{ fulfillmentBlockReasonText(reason) }}
           </el-tag>
         </div>
         <el-empty v-if="!fulfillmentLoading && !fulfillment && !fulfillmentError" description="暂无销售履约汇总" />

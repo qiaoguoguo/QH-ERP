@@ -289,6 +289,12 @@ function expectSelectPlaceholder(wrapper: VueWrapper, testId: string, placeholde
   expect((select.props() as { placeholder?: string }).placeholder).toBe(placeholder)
 }
 
+function expectInputPlaceholder(wrapper: VueWrapper, selector: string, placeholder: string) {
+  const input = wrapper.find(selector)
+  expect(input.exists()).toBe(true)
+  expect(input.attributes('placeholder')).toBe(placeholder)
+}
+
 describe('027 外协执行页面族', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -444,6 +450,29 @@ describe('027 外协执行页面族', () => {
     expectSelectPlaceholder(wrapper, 'outsourcing-bom-id', '请选择 BOM')
     expectSelectPlaceholder(wrapper, 'outsourcing-issue-warehouse-id', '请选择发料仓库')
     expectSelectPlaceholder(wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
+    expectInputPlaceholder(wrapper, 'input[name="outsourcing-planned-issue-date"]', '请选择计划发料日期')
+    expectInputPlaceholder(wrapper, 'input[name="outsourcing-planned-receipt-date"]', '请选择计划收货日期')
+    expect(wrapper.find('[data-test="outsourcing-order-form-bottom-actions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="bottom-save-outsourcing-order"]').exists()).toBe(true)
+  })
+
+  it('外协订单编辑页加载失败时关闭表单并只保留返回', async () => {
+    outsourcingApiMock.orders.get.mockRejectedValueOnce(new AccountPermissionApiError(
+      '外协订单不存在或无权查看',
+      'PRODUCTION_OUTSOURCING_ORDER_NOT_FOUND',
+      404,
+      'trace-outsourcing-order',
+    ))
+    const { wrapper } = await mountWithRouter(ProductionOutsourcingOrderFormView, '/production/outsourcing-orders/999/edit', [
+      'production:outsourcing:view',
+      'production:outsourcing:update',
+    ])
+
+    expect(wrapper.text()).toContain('外协订单不存在或无权查看')
+    expect(wrapper.find('[data-test="save-outsourcing-order"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="bottom-save-outsourcing-order"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="outsourcing-planned-quantity"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('外协订单加载中')
   })
 
   it('详情展示项目、供应商、来源、BOM、用料和执行单据，并按 allowedActions 执行发布关闭取消', async () => {
@@ -579,6 +608,90 @@ describe('027 外协执行页面族', () => {
     ])
     expect(receipt.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
     expect(receipt.wrapper.text()).toContain('没有外协收货写入权限')
+  })
+
+  it('外协发料和收货表单提供中文占位', async () => {
+    const issue = await mountWithRouter(ProductionOutsourcingIssueView, '/production/outsourcing-orders/77/material-issues', [
+      'production:outsourcing:view',
+      'production:outsourcing-issue:create',
+    ])
+    expectInputPlaceholder(issue.wrapper, 'input[name="outsourcing-issue-business-date"]', '请选择业务日期')
+    expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-warehouse-id', '请选择发料仓库')
+    expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-line-material', '请选择材料行')
+    expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-line-ownership', '请选择库存来源')
+
+    const receipt = await mountWithRouter(ProductionOutsourcingReceiptView, '/production/outsourcing-orders/77/receipts', [
+      'production:outsourcing:view',
+      'production:outsourcing-receipt:create',
+    ])
+    expectInputPlaceholder(receipt.wrapper, 'input[name="outsourcing-receipt-business-date"]', '请选择业务日期')
+    expectSelectPlaceholder(receipt.wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
+  })
+
+  it('外协发料或收货对象不存在时关闭草稿表单并只保留返回', async () => {
+    outsourcingApiMock.orders.get.mockRejectedValueOnce(new AccountPermissionApiError(
+      '外协订单不存在或无权查看',
+      'PRODUCTION_OUTSOURCING_ORDER_NOT_FOUND',
+      404,
+      'trace-outsourcing-issue-order',
+    ))
+    const missingIssueOrder = await mountWithRouter(ProductionOutsourcingIssueView, '/production/outsourcing-orders/999/material-issues', [
+      'production:outsourcing:view',
+      'production:outsourcing-issue:create',
+    ])
+    expect(missingIssueOrder.wrapper.text()).toContain('外协订单不存在或无权查看')
+    expect(missingIssueOrder.wrapper.find('[data-test="save-outsourcing-issue"]').exists()).toBe(false)
+    expect(missingIssueOrder.wrapper.find('input[name="outsourcing-issue-business-date"]').exists()).toBe(false)
+
+    outsourcingApiMock.materialIssues.get.mockRejectedValueOnce(new AccountPermissionApiError(
+      '外协发料不存在或无权查看',
+      'PRODUCTION_OUTSOURCING_ISSUE_NOT_FOUND',
+      404,
+      'trace-outsourcing-issue-document',
+    ))
+    const missingIssueDocument = await mountWithRouter(ProductionOutsourcingIssueView, '/production/outsourcing-orders/77/material-issues?documentId=999', [
+      'production:outsourcing:view',
+      'production:outsourcing-issue:update',
+      'production:outsourcing-issue:post',
+      'production:outsourcing-issue:cancel',
+    ])
+    expect(missingIssueDocument.wrapper.text()).toContain('外协发料不存在或无权查看')
+    expect(missingIssueDocument.wrapper.find('[data-test="save-outsourcing-issue"]').exists()).toBe(false)
+    expect(missingIssueDocument.wrapper.find('[data-test="post-outsourcing-issue"]').exists()).toBe(false)
+    expect(missingIssueDocument.wrapper.find('[data-test="cancel-outsourcing-issue"]').exists()).toBe(false)
+    expect(missingIssueDocument.wrapper.find('input[name="outsourcing-issue-business-date"]').exists()).toBe(false)
+
+    outsourcingApiMock.orders.get.mockRejectedValueOnce(new AccountPermissionApiError(
+      '外协订单不存在或无权查看',
+      'PRODUCTION_OUTSOURCING_ORDER_NOT_FOUND',
+      404,
+      'trace-outsourcing-receipt-order',
+    ))
+    const missingReceiptOrder = await mountWithRouter(ProductionOutsourcingReceiptView, '/production/outsourcing-orders/999/receipts', [
+      'production:outsourcing:view',
+      'production:outsourcing-receipt:create',
+    ])
+    expect(missingReceiptOrder.wrapper.text()).toContain('外协订单不存在或无权查看')
+    expect(missingReceiptOrder.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
+    expect(missingReceiptOrder.wrapper.find('input[name="outsourcing-receipt-business-date"]').exists()).toBe(false)
+
+    outsourcingApiMock.receipts.get.mockRejectedValueOnce(new AccountPermissionApiError(
+      '外协收货不存在或无权查看',
+      'PRODUCTION_OUTSOURCING_RECEIPT_NOT_FOUND',
+      404,
+      'trace-outsourcing-receipt-document',
+    ))
+    const missingReceiptDocument = await mountWithRouter(ProductionOutsourcingReceiptView, '/production/outsourcing-orders/77/receipts?documentId=999', [
+      'production:outsourcing:view',
+      'production:outsourcing-receipt:update',
+      'production:outsourcing-receipt:post',
+      'production:outsourcing-receipt:cancel',
+    ])
+    expect(missingReceiptDocument.wrapper.text()).toContain('外协收货不存在或无权查看')
+    expect(missingReceiptDocument.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
+    expect(missingReceiptDocument.wrapper.find('[data-test="post-outsourcing-receipt"]').exists()).toBe(false)
+    expect(missingReceiptDocument.wrapper.find('[data-test="cancel-outsourcing-receipt"]').exists()).toBe(false)
+    expect(missingReceiptDocument.wrapper.find('input[name="outsourcing-receipt-business-date"]').exists()).toBe(false)
   })
 
   it('外协发料支持草稿创建、编辑、过账和取消，记录项目/公共来源、成本层与批次分配', async () => {

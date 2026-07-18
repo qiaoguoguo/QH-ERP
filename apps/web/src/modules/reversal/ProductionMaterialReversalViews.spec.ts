@@ -1140,6 +1140,8 @@ describe('生产退料补料前端页面', () => {
 
       expect(wrapper.text()).toContain('生产退料详情')
       expect(wrapper.text()).toContain('MR202607050001')
+      expect(wrapper.text()).toContain('已过账')
+      expect(wrapper.text()).not.toContain('POSTED')
       expect(wrapper.text()).toContain('库存入库影响')
       expect(wrapper.text()).toContain('成本影响')
       expect(wrapper.text()).toContain('成本记录 #1001')
@@ -1213,6 +1215,8 @@ describe('生产退料补料前端页面', () => {
 
       expect(wrapper.text()).toContain('生产补料详情')
       expect(wrapper.text()).toContain('MS202607050001')
+      expect(wrapper.text()).toContain('进行中')
+      expect(wrapper.text()).not.toContain('IN_PROGRESS')
       expect(wrapper.text()).toContain('库存出库影响')
       expect(wrapper.text()).toContain('成本影响')
       expect(wrapper.text()).toContain('补料数量')

@@ -37,6 +37,7 @@ const documentId = computed(() => route.query.documentId as ResourceId | undefin
 const isEdit = computed(() => documentId.value !== undefined && documentId.value !== '')
 const costVisible = computed(() => order.value?.costVisible !== false)
 const costRestrictedReason = computed(() => order.value?.costRestrictedReason || '无库存估值权限')
+const hasLoadFailure = computed(() => !loading.value && Boolean(error.value) && (!order.value || (isEdit.value && !documentRecord.value)))
 const canSaveDocument = computed(() => {
   if (!order.value) {
     return false
@@ -145,7 +146,7 @@ function buildPayload() {
 }
 
 async function saveDocument() {
-  if (!order.value || saving.value) {
+  if (!order.value || saving.value || hasLoadFailure.value) {
     return
   }
   if (!canSaveDocument.value) {
@@ -199,9 +200,9 @@ onMounted(loadPage)
   <MasterDataTableView title="外协收货" description="记录外协合格/不合格数量、暂估单价、批次/序列和项目库存入库事实。">
     <template #actions>
       <el-button @click="router.push({ name: 'production-outsourcing-order-detail', params: { id: route.params.id } })">返回订单</el-button>
-      <el-button v-if="canSaveDocument" data-test="save-outsourcing-receipt" type="primary" :loading="saving" @click="saveDocument">保存草稿</el-button>
+      <el-button v-if="!hasLoadFailure && canSaveDocument" data-test="save-outsourcing-receipt" type="primary" :loading="saving" @click="saveDocument">保存草稿</el-button>
       <el-button
-        v-if="documentRecord"
+        v-if="!hasLoadFailure && documentRecord"
         data-test="post-outsourcing-receipt"
         :disabled="!canPostDocument"
         @click="runDocumentAction('post')"
@@ -209,7 +210,7 @@ onMounted(loadPage)
         过账
       </el-button>
       <el-button
-        v-if="documentRecord"
+        v-if="!hasLoadFailure && documentRecord"
         data-test="cancel-outsourcing-receipt"
         type="danger"
         :disabled="!canCancelDocument"
@@ -221,19 +222,20 @@ onMounted(loadPage)
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="loading" type="info" title="外协收货加载中" :closable="false" />
-      <el-alert v-if="order && !canSaveDocument && !isEdit" type="warning" title="没有外协收货写入权限" :closable="false" />
-      <el-alert v-if="order && !costVisible" type="warning" :title="costRestrictedReason" :closable="false" />
+      <el-alert v-if="order && !hasLoadFailure && !canSaveDocument && !isEdit" type="warning" title="没有外协收货写入权限" :closable="false" />
+      <el-alert v-if="order && !hasLoadFailure && !costVisible" type="warning" :title="costRestrictedReason" :closable="false" />
     </template>
 
-    <section class="section-block">
+    <el-empty v-if="hasLoadFailure" :description="error || '外协收货不存在或无权查看'" />
+    <section v-else class="section-block">
       <h2>{{ order?.orderNo || '外协订单' }} 收货草稿</h2>
       <el-form label-position="top">
         <div class="form-grid">
           <el-form-item label="业务日期">
-            <el-input v-model="form.businessDate" name="outsourcing-receipt-business-date" />
+            <el-input v-model="form.businessDate" name="outsourcing-receipt-business-date" placeholder="请选择业务日期" />
           </el-form-item>
           <el-form-item label="收货仓库">
-            <el-select v-model="form.receiptWarehouseId" data-test="outsourcing-receipt-warehouse-id">
+            <el-select v-model="form.receiptWarehouseId" data-test="outsourcing-receipt-warehouse-id" placeholder="请选择收货仓库">
               <el-option v-if="order?.receiptWarehouseId" :label="order.receiptWarehouseName || String(order.receiptWarehouseId)" :value="order.receiptWarehouseId" />
             </el-select>
           </el-form-item>

@@ -14,6 +14,7 @@ interface TrackingCandidateRecord {
   stockStatusName?: string | null
   availableQuantity?: string | number | null
   disabled?: boolean
+  disabledReasonCode?: string | null
   disabledReason?: string | null
 }
 
@@ -107,6 +108,19 @@ function candidateAllocation(row: TrackingCandidateRecord): InventoryTrackingAll
 
 function rowSelected(row: TrackingCandidateRecord) {
   return draftAllocations.value.some((allocation) => identityKey(allocation) === identityKey(candidateAllocation(row)))
+}
+
+function candidateDisabledReason(row: TrackingCandidateRecord) {
+  if (row.disabledReason) {
+    return row.disabledReason
+  }
+  const labels: Record<string, string> = {
+    NON_QUALIFIED_NOT_AVAILABLE: '待检库存不可领料',
+  }
+  if (row.disabledReasonCode) {
+    return labels[row.disabledReasonCode] ?? '该候选库存暂不可选择'
+  }
+  return row.disabled ? '该候选库存暂不可选择' : ''
 }
 
 function toggleCandidate(row: TrackingCandidateRecord) {
@@ -203,21 +217,21 @@ watch(() => props.selectedAllocations, () => {
       <el-table-column label="不可用原因" min-width="180">
         <template #default="{ row }">
           <el-tag
-            v-if="row.disabledReason"
+            v-if="candidateDisabledReason(row)"
             class="candidate-disabled-reason"
             data-test="tracking-candidate-disabled-reason"
             type="danger"
             effect="plain"
           >
-            {{ row.disabledReason }}
+            {{ candidateDisabledReason(row) }}
           </el-tag>
           <span v-else class="candidate-available-text">可选择</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90">
+      <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button size="small" text :disabled="row.disabled" @click="toggleCandidate(row)">
-            {{ rowSelected(row) ? '移除' : '选择' }}
+            {{ rowSelected(row) ? '已选' : '选择' }}
           </el-button>
           <el-button class="legacy-select-button" text @click="selectCandidate(row)">兼容选择</el-button>
         </template>

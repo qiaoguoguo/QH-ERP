@@ -16,6 +16,7 @@ export interface TrackingCandidateRecord {
   stockStatusName?: string | null
   availableQuantity?: string | number | null
   disabled?: boolean
+  disabledReasonCode?: string | null
   disabledReason?: string | null
 }
 
@@ -153,6 +154,7 @@ export function mapBatchCandidate(item: InventoryBatchSummaryRecord): TrackingCa
     stockStatusName: item.stockStatusName,
     availableQuantity: item.availableQuantity,
     disabled: item.selectable === false,
+    disabledReasonCode: item.disabledReasonCode ?? null,
     disabledReason: item.disabledReason ?? null,
   }
 }
@@ -168,6 +170,7 @@ export function mapSerialCandidate(item: InventorySerialSummaryRecord): Tracking
     stockStatusName: item.stockStatusName,
     availableQuantity: item.availableQuantity,
     disabled: item.selectable === false,
+    disabledReasonCode: item.disabledReasonCode ?? null,
     disabledReason: item.disabledReason ?? null,
   }
 }

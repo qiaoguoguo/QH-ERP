@@ -39,6 +39,7 @@ const documentId = computed(() => route.query.documentId as ResourceId | undefin
 const isEdit = computed(() => documentId.value !== undefined && documentId.value !== '')
 const costVisible = computed(() => order.value?.costVisible !== false)
 const costRestrictedReason = computed(() => order.value?.costRestrictedReason || '无库存估值权限')
+const hasLoadFailure = computed(() => !loading.value && Boolean(error.value) && (!order.value || (isEdit.value && !documentRecord.value)))
 const canSaveDocument = computed(() => {
   if (!order.value) {
     return false
@@ -161,7 +162,7 @@ function buildPayload() {
 }
 
 async function saveDocument() {
-  if (!order.value || saving.value) {
+  if (!order.value || saving.value || hasLoadFailure.value) {
     return
   }
   if (!canSaveDocument.value) {
@@ -215,9 +216,9 @@ onMounted(loadPage)
   <MasterDataTableView title="外协发料" description="按同项目或公共库存来源发料，记录成本层、批次/序列和来源追溯。">
     <template #actions>
       <el-button @click="router.push({ name: 'production-outsourcing-order-detail', params: { id: route.params.id } })">返回订单</el-button>
-      <el-button v-if="canSaveDocument" data-test="save-outsourcing-issue" type="primary" :loading="saving" @click="saveDocument">保存草稿</el-button>
+      <el-button v-if="!hasLoadFailure && canSaveDocument" data-test="save-outsourcing-issue" type="primary" :loading="saving" @click="saveDocument">保存草稿</el-button>
       <el-button
-        v-if="documentRecord"
+        v-if="!hasLoadFailure && documentRecord"
         data-test="post-outsourcing-issue"
         :disabled="!canPostDocument"
         @click="runDocumentAction('post')"
@@ -225,7 +226,7 @@ onMounted(loadPage)
         过账
       </el-button>
       <el-button
-        v-if="documentRecord"
+        v-if="!hasLoadFailure && documentRecord"
         data-test="cancel-outsourcing-issue"
         type="danger"
         :disabled="!canCancelDocument"
@@ -237,24 +238,25 @@ onMounted(loadPage)
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="loading" type="info" title="外协发料加载中" :closable="false" />
-      <el-alert v-if="order && !canSaveDocument && !isEdit" type="warning" title="没有外协发料写入权限" :closable="false" />
-      <el-alert v-if="order && !costVisible" type="warning" :title="costRestrictedReason" :closable="false" />
+      <el-alert v-if="order && !hasLoadFailure && !canSaveDocument && !isEdit" type="warning" title="没有外协发料写入权限" :closable="false" />
+      <el-alert v-if="order && !hasLoadFailure && !costVisible" type="warning" :title="costRestrictedReason" :closable="false" />
     </template>
 
-    <section class="section-block">
+    <el-empty v-if="hasLoadFailure" :description="error || '外协发料不存在或无权查看'" />
+    <section v-else class="section-block">
       <h2>{{ order?.orderNo || '外协订单' }} 发料草稿</h2>
       <el-form label-position="top">
         <div class="form-grid">
           <el-form-item label="业务日期">
-            <el-input v-model="form.businessDate" name="outsourcing-issue-business-date" />
+            <el-input v-model="form.businessDate" name="outsourcing-issue-business-date" placeholder="请选择业务日期" />
           </el-form-item>
           <el-form-item label="发料仓库">
-            <el-select v-model="form.warehouseId" data-test="outsourcing-issue-warehouse-id">
+            <el-select v-model="form.warehouseId" data-test="outsourcing-issue-warehouse-id" placeholder="请选择发料仓库">
               <el-option v-if="order?.issueWarehouseId" :label="order.issueWarehouseName || String(order.issueWarehouseId)" :value="order.issueWarehouseId" />
             </el-select>
           </el-form-item>
           <el-form-item label="材料行">
-            <el-select v-model="form.orderMaterialId" data-test="outsourcing-issue-line-material">
+            <el-select v-model="form.orderMaterialId" data-test="outsourcing-issue-line-material" placeholder="请选择材料行">
               <el-option
                 v-for="material in order?.materials ?? []"
                 :key="material.id"
@@ -267,7 +269,7 @@ onMounted(loadPage)
             <el-input v-model="form.quantity" name="outsourcing-issue-line-quantity" />
           </el-form-item>
           <el-form-item label="库存来源">
-            <el-select v-model="form.ownershipType" data-test="outsourcing-issue-line-ownership">
+            <el-select v-model="form.ownershipType" data-test="outsourcing-issue-line-ownership" placeholder="请选择库存来源">
               <el-option label="项目库存" value="PROJECT" />
               <el-option label="公共库存" value="PUBLIC" />
             </el-select>

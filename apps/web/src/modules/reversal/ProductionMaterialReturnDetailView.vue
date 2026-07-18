@@ -68,6 +68,15 @@ function impactDisplayText(trace: ReversalTraceRecord, value?: string) {
   return impactRestricted(trace) ? '' : value || '-'
 }
 
+function productionStatusText(status?: string | null) {
+  const labels: Record<string, string> = {
+    RELEASED: '已发布',
+    POSTED: '已过账',
+    IN_PROGRESS: '进行中',
+  }
+  return status ? (labels[status] ?? status) : '-'
+}
+
 function impactQuantityText(trace: ReversalTraceRecord) {
   return impactRestricted(trace) ? '' : formatProductionQuantity(trace.quantity)
 }
@@ -280,7 +289,7 @@ onMounted(() => {
             <span v-else>{{ record.source.sourceNo }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="业务日期">{{ record.source.businessDate || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ record.source.status || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ productionStatusText(record.source.status) }}</el-descriptions-item>
           <el-descriptions-item label="来源数量">
             <span class="numeric-cell">{{ formatProductionQuantity(record.source.quantity) }}</span>
           </el-descriptions-item>
@@ -363,7 +372,7 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="状态" min-width="100">
               <template #default="{ row }">
-                {{ impactDisplayText(row, row.status) }}
+                {{ impactRestricted(row) ? '' : productionStatusText(row.status) }}
               </template>
             </el-table-column>
           </el-table>
@@ -397,7 +406,7 @@ onMounted(() => {
             </el-table-column>
             <el-table-column label="状态" min-width="100">
               <template #default="{ row }">
-                {{ impactDisplayText(row, row.status) }}
+                {{ impactRestricted(row) ? '' : productionStatusText(row.status) }}
               </template>
             </el-table-column>
           </el-table>

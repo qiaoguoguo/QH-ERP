@@ -491,6 +491,56 @@ describe('生产执行表单页', () => {
     expect(projectProductionApiMock.materialIssues.create).not.toHaveBeenCalled()
   })
 
+  it('追踪选择抽屉固定候选操作列并中文展示已选态和禁用原因', async () => {
+    const wrapper = mount(TrackingPickerDrawer, {
+      props: {
+        modelValue: true,
+        trackingMethod: 'BATCH',
+        expectedQuantity: '2.000000',
+        selectedAllocations: [{ batchId: 51, batchNo: 'B-RM-001', quantity: '2.000000' }],
+        candidates: [
+          {
+            id: 51,
+            trackingNo: 'B-RM-001',
+            materialCode: 'RM-001',
+            materialName: '很长的原材料名称用于防止操作列被挤掉',
+            warehouseName: '原料仓',
+            qualityStatusName: '合格',
+            stockStatusName: '可用',
+            availableQuantity: '2.000000',
+          },
+          {
+            id: 52,
+            trackingNo: 'B-RM-002',
+            materialCode: 'RM-001',
+            materialName: '原材料 A',
+            warehouseName: '原料仓',
+            qualityStatusName: '待检',
+            stockStatusName: '待检',
+            availableQuantity: '0.000000',
+            disabled: true,
+            disabledReasonCode: 'NON_QUALIFIED_NOT_AVAILABLE',
+            disabledReason: null,
+          },
+        ],
+      },
+      global: {
+        plugins: [ElementPlus],
+      },
+    })
+    await flushPromises()
+
+    const candidateColumns = wrapper.findAllComponents({ name: 'ElTableColumn' })
+    const materialColumn = candidateColumns.find((column) => column.props('label') === '物料')
+    const operationColumn = candidateColumns.find((column) => column.props('label') === '操作')
+    expect(materialColumn?.props('showOverflowTooltip')).toBe(true)
+    expect(operationColumn?.props('fixed')).toBe('right')
+    expect(wrapper.text()).toContain('已选')
+    expect(wrapper.text()).toContain('待检库存不可领料')
+    expect(wrapper.text()).not.toContain('NON_QUALIFIED_NOT_AVAILABLE')
+    expect(wrapper.find('[data-test="confirm-tracking-picker"]').exists()).toBe(true)
+  })
+
   it('批次管理生产领料通过候选抽屉选择批次并提交', async () => {
     projectProductionApiMock.workOrders.get.mockResolvedValueOnce(projectWorkOrderFrom(selectableWorkOrder))
     const { wrapper } = await mountExecution(
