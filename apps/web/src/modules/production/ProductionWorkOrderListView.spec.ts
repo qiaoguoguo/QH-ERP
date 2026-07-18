@@ -354,6 +354,40 @@ describe('生产工单列表页', () => {
     expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
   })
 
+  it('生产执行入口按权限和合法状态展示，不依赖工单级 allowedActions 或旧私有码', async () => {
+    projectProductionApiMock.workOrders.list.mockResolvedValue({
+      items: [
+        {
+          ...projectWorkOrder,
+          id: 30,
+          workOrderNo: 'WO-EXEC-REL',
+          status: 'RELEASED',
+          allowedActions: [],
+        },
+        {
+          ...projectWorkOrder,
+          id: 31,
+          workOrderNo: 'WO-EXEC-DRAFT',
+          status: 'DRAFT',
+          allowedActions: ['CREATE_ISSUE', 'CREATE_REPORT', 'CREATE_RECEIPT'],
+        },
+      ],
+      page: 1,
+      pageSize: 10,
+      total: 2,
+      totalPages: 1,
+    })
+    const { wrapper, router } = await mountList()
+
+    expect(buttonsByText(wrapper, '领料')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '报工')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(1)
+
+    await buttonsByText(wrapper, '领料')[0].trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/production/work-orders/30/material-issues')
+  })
+
   it('027 按项目、归属和来源筛选，并使用 allowedActions 与版本执行动作', async () => {
     projectProductionApiMock.workOrders.list.mockResolvedValue(projectWorkOrderPage)
     const { wrapper } = await mountList()

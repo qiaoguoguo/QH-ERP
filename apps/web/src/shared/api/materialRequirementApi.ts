@@ -102,9 +102,19 @@ export interface MaterialRequirementRunRecord {
   version: number
 }
 
+export interface MaterialRequirementSourceCounts {
+  salesDemand: number
+  bomComponent: number
+  projectStock: number
+  publicStock: number
+  projectPurchase: number
+  publicPurchase: number
+  workOrder: number
+}
+
 export interface MaterialRequirementRunDetailRecord extends MaterialRequirementRunRecord {
   sourceFingerprint?: string | null
-  sourceCounts?: Record<string, number>
+  sourceCounts?: MaterialRequirementSourceCounts
   previousRunId?: ResourceId | null
 }
 
@@ -181,10 +191,10 @@ export interface MaterialRequirementSuggestionRecord {
 export interface MaterialRequirementSubstituteHintRecord {
   id: ResourceId
   requirementLineId?: ResourceId | null
-  mainMaterialId: ResourceId
+  mainMaterialId?: ResourceId | null
   mainMaterialCode?: string | null
   mainMaterialName?: string | null
-  substituteMaterialId: ResourceId
+  substituteMaterialId?: ResourceId | null
   substituteMaterialCode?: string | null
   substituteMaterialName?: string | null
   substituteRate?: string | null

@@ -27,6 +27,15 @@ const canCancel = computed(() => authStore.hasPermission('production:outsourcing
 const canIssue = computed(() => authStore.hasPermission('production:outsourcing-issue:create'))
 const canReceipt = computed(() => authStore.hasPermission('production:outsourcing-receipt:create'))
 
+const statusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  RELEASED: '已发布',
+  IN_PROGRESS: '进行中',
+  CLOSED: '已关闭',
+  CANCELLED: '已取消',
+  POSTED: '已过账',
+}
+
 function hasAction(action: string) {
   return Boolean(record.value?.allowedActions?.includes(action))
 }
@@ -52,7 +61,7 @@ function ownershipText() {
 }
 
 function statusText(status?: string | null, statusName?: string | null) {
-  return statusName || status || '状态未返回'
+  return statusName || statusLabels[String(status ?? '')] || status || '状态未返回'
 }
 
 function canCreateIssueDocument() {

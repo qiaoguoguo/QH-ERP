@@ -1,11 +1,14 @@
 package com.qherp.api.system.planning;
 
+import com.qherp.api.common.ApiErrorCode;
+import com.qherp.api.common.BusinessException;
 import com.qherp.api.support.PostgresIntegrationTest;
 import com.qherp.api.system.platform.PlatformDocumentTaskWorker;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.assertj.core.api.SoftAssertions;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -45,6 +48,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = { "qherp.test.context=planning-stage026", "qherp.platform.task.worker.enabled=false" })
@@ -90,6 +94,9 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 
 	@Autowired
 	private PlatformDocumentTaskWorker documentTaskWorker;
+
+	@Autowired
+	private MaterialRequirementPlanningService planningService;
 
 	@Test
 	void projectRunPersistsHybridSnapshotAndConvertsPurchaseSuggestionIdempotently() throws Exception {
@@ -594,6 +601,33 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 				Map.of("version", confirmed.get("version").longValue(), "idempotencyKey",
 						"MRP-AUTH-CONVERT-NO-026-" + suffix)),
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+	}
+
+	@Test
+	void stage027aPlanningServiceReadEntriesRejectMissingCurrentUser() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		int suffix = SEQUENCE.incrementAndGet();
+		Fixture fixture = fixture();
+		JsonNode run = data(post(admin, "/api/admin/planning/material-requirement-runs",
+				runRequest(fixture.projectId(), fixture.demandDate(), "MRP-027A-NULL-READ-" + suffix)));
+		long runId = run.get("id").longValue();
+		JsonNode requirements = data(get(admin,
+				"/api/admin/planning/material-requirement-runs/" + runId + "/requirements?page=1&pageSize=50"));
+		long requirementLineId = firstItem(requirements).get("id").longValue();
+
+		assertAuthForbidden(() -> this.planningService.list(
+				new MaterialRequirementPlanningService.RunListFilter(null, null, null, null, null, null, null, null),
+				1, 20));
+		assertAuthForbidden(() -> this.planningService.detail(runId));
+		assertAuthForbidden(() -> this.planningService.detail(runId, null));
+		assertAuthForbidden(() -> this.planningService.requirements(runId,
+				new MaterialRequirementPlanningService.RequirementLineFilter(null, null, null), 1, 20, null));
+		assertAuthForbidden(() -> this.planningService.allocations(runId,
+				new MaterialRequirementPlanningService.AllocationFilter(null), 1, 20, null));
+		assertAuthForbidden(() -> this.planningService.suggestions(runId,
+				new MaterialRequirementPlanningService.SuggestionFilter(null, null), 1, 20, null));
+		assertAuthForbidden(() -> this.planningService.substituteHints(runId,
+				new MaterialRequirementPlanningService.SubstituteHintFilter(requirementLineId), 1, 20, null));
 	}
 
 	@Test
@@ -2657,6 +2691,11 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {
 		assertThat(response.getStatusCode()).as(response.getBody()).isEqualTo(status);
 		assertThat(this.objectMapper.readTree(response.getBody()).get("code").asText()).isEqualTo(code);
+	}
+
+	private void assertAuthForbidden(ThrowingCallable callable) {
+		assertThatThrownBy(callable).isInstanceOfSatisfying(BusinessException.class,
+				(exception) -> assertThat(exception.errorCode()).isEqualTo(ApiErrorCode.AUTH_FORBIDDEN));
 	}
 
 	private void assertPlanningRunRejectedWithCode(ResponseEntity<String> response, String idempotencyKey, long projectId,

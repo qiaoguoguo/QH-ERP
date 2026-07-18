@@ -286,30 +286,24 @@ function allocationRows(group: TraceAllocationGroupKey): MaterialRequirementAllo
 }
 
 function materialIdentityText(
-  id: ResourceId | null | undefined,
   code: string | null | undefined,
   name: string | null | undefined,
-  fallbackLabel: string,
 ): string {
   const named = [code, name].filter(Boolean).join(' ').trim()
   if (named) {
     return named
   }
-  return id === null || id === undefined || id === ''
-    ? `${fallbackLabel}信息待补全`
-    : `${fallbackLabel} #${id}`
+  return '来源权限受限'
 }
 
 function substituteMainMaterialText(row: MaterialRequirementSubstituteHintRecord): string {
-  return materialIdentityText(row.mainMaterialId, row.mainMaterialCode, row.mainMaterialName, '主物料')
+  return materialIdentityText(row.mainMaterialCode, row.mainMaterialName)
 }
 
 function substituteMaterialText(row: MaterialRequirementSubstituteHintRecord): string {
   return materialIdentityText(
-    row.substituteMaterialId,
     row.substituteMaterialCode,
     row.substituteMaterialName,
-    '替代物料',
   )
 }
 

@@ -417,6 +417,13 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<MaterialIssueSummaryResponse> materialIssues(Long workOrderId, int page, int pageSize) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<MaterialIssueSummaryResponse> materialIssues(Long workOrderId, int page, int pageSize,
+			CurrentUser currentUser) {
+		requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
 		long total = this.jdbcTemplate.queryForObject(
 				"select count(*) from mfg_material_issue where work_order_id = ?", Long.class, workOrderId);
@@ -435,6 +442,12 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public MaterialIssueDetailResponse materialIssue(Long workOrderId, Long id) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public MaterialIssueDetailResponse materialIssue(Long workOrderId, Long id, CurrentUser currentUser) {
+		requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
 		MaterialIssueSummaryResponse summary = materialIssueSummary(workOrderId, id)
 			.orElseThrow(this::issueNotFound);
@@ -453,7 +466,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"MATERIAL_ISSUE_CREATE", MATERIAL_ISSUE_TARGET, 0L, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return materialIssue(workOrderId, existing.get().resultResourceId());
+			return materialIssue(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -467,7 +480,7 @@ public class ProductionAdminService {
 			prepareMaterialIssueAllocations(created.id(), validated, operator.username());
 			this.auditService.record(operator, "MFG_MATERIAL_ISSUE_CREATE", MATERIAL_ISSUE_TARGET, created.id(),
 					created.documentNo(), servletRequest);
-			MaterialIssueDetailResponse detail = materialIssue(workOrderId, created.id());
+			MaterialIssueDetailResponse detail = materialIssue(workOrderId, created.id(), operator);
 			this.actionIdempotencyService.record("MATERIAL_ISSUE_CREATE", MATERIAL_ISSUE_TARGET, 0L, null,
 					request.idempotencyKey(), fingerprint, MATERIAL_ISSUE_TARGET, detail.id(), detail.version(),
 					operator);
@@ -487,7 +500,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"MATERIAL_ISSUE_UPDATE", MATERIAL_ISSUE_TARGET, id, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return materialIssue(workOrderId, existing.get().resultResourceId());
+			return materialIssue(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -512,7 +525,7 @@ public class ProductionAdminService {
 		prepareMaterialIssueAllocations(id, validated, operator.username());
 		this.auditService.record(operator, "MFG_MATERIAL_ISSUE_UPDATE", MATERIAL_ISSUE_TARGET, id,
 				issue.documentNo(), servletRequest);
-		MaterialIssueDetailResponse detail = materialIssue(workOrderId, id);
+		MaterialIssueDetailResponse detail = materialIssue(workOrderId, id, operator);
 		this.actionIdempotencyService.record("MATERIAL_ISSUE_UPDATE", MATERIAL_ISSUE_TARGET, id, request.version(),
 				request.idempotencyKey(), fingerprint, MATERIAL_ISSUE_TARGET, detail.id(), detail.version(), operator);
 		return detail;
@@ -536,7 +549,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return materialIssue(workOrderId, existing.get().resultResourceId());
+			return materialIssue(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		try {
 			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
@@ -566,7 +579,7 @@ public class ProductionAdminService {
 			this.auditService.record(operator, "MFG_MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id,
 					issue.documentNo(), servletRequest);
 			this.costRecordWriter.writeMaterialIssue(id, operator, servletRequest);
-			MaterialIssueDetailResponse detail = materialIssue(workOrderId, id);
+			MaterialIssueDetailResponse detail = materialIssue(workOrderId, id, operator);
 			this.actionIdempotencyService.record("MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id, request.version(),
 					request.idempotencyKey(), fingerprint, MATERIAL_ISSUE_TARGET, detail.id(), detail.version(),
 					operator);
@@ -579,6 +592,13 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<WorkReportResponse> reports(Long workOrderId, int page, int pageSize) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<WorkReportResponse> reports(Long workOrderId, int page, int pageSize,
+			CurrentUser currentUser) {
+		requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
 		long total = this.jdbcTemplate.queryForObject("select count(*) from mfg_work_report where work_order_id = ?",
 				Long.class, workOrderId);
@@ -596,6 +616,12 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public WorkReportResponse report(Long workOrderId, Long id) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public WorkReportResponse report(Long workOrderId, Long id, CurrentUser currentUser) {
+		requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
 		return workReport(workOrderId, id).orElseThrow(this::reportNotFound);
 	}
@@ -609,7 +635,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"WORK_REPORT_CREATE", WORK_REPORT_TARGET, 0L, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return report(workOrderId, existing.get().resultResourceId());
+			return report(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -621,7 +647,7 @@ public class ProductionAdminService {
 			CreatedDocument created = insertReportWithRetry(workOrderId, validated, operator.username(), now);
 			this.auditService.record(operator, "MFG_WORK_REPORT_CREATE", WORK_REPORT_TARGET, created.id(),
 					created.documentNo(), servletRequest);
-			WorkReportResponse detail = report(workOrderId, created.id());
+			WorkReportResponse detail = report(workOrderId, created.id(), operator);
 			this.actionIdempotencyService.record("WORK_REPORT_CREATE", WORK_REPORT_TARGET, 0L, null,
 					request.idempotencyKey(), fingerprint, WORK_REPORT_TARGET, detail.id(), detail.version(), operator);
 			return detail;
@@ -640,7 +666,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"WORK_REPORT_UPDATE", WORK_REPORT_TARGET, id, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return report(workOrderId, existing.get().resultResourceId());
+			return report(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -662,7 +688,7 @@ public class ProductionAdminService {
 				validated.reporterName(), blankToNull(validated.remark()), operator.username(), now, id);
 		this.auditService.record(operator, "MFG_WORK_REPORT_UPDATE", WORK_REPORT_TARGET, id, report.documentNo(),
 				servletRequest);
-		WorkReportResponse detail = report(workOrderId, id);
+		WorkReportResponse detail = report(workOrderId, id, operator);
 		this.actionIdempotencyService.record("WORK_REPORT_UPDATE", WORK_REPORT_TARGET, id, request.version(),
 				request.idempotencyKey(), fingerprint, WORK_REPORT_TARGET, detail.id(), detail.version(), operator);
 		return detail;
@@ -686,7 +712,7 @@ public class ProductionAdminService {
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"WORK_REPORT_POST", WORK_REPORT_TARGET, id, request.idempotencyKey(), fingerprint, operator);
 		if (existing.isPresent()) {
-			return report(workOrderId, existing.get().resultResourceId());
+			return report(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -697,7 +723,7 @@ public class ProductionAdminService {
 		}
 		this.businessPeriodGuard.assertWritable(report.businessDate(), BusinessPeriodOperation.POST,
 				"PRODUCTION_WORK_REPORT", id);
-		WorkReportResponse detail = report(workOrderId, id);
+		WorkReportResponse detail = report(workOrderId, id, operator);
 		BigDecimal total = detail.qualifiedQuantity().add(detail.defectiveQuantity());
 		if (workOrder.reportedQuantity().add(total).compareTo(workOrder.plannedQuantity()) > 0) {
 			throw new BusinessException(ApiErrorCode.PRODUCTION_REPORT_EXCEEDS_PLAN);
@@ -719,7 +745,7 @@ public class ProductionAdminService {
 		this.auditService.record(operator, "MFG_WORK_REPORT_POST", WORK_REPORT_TARGET, id, report.documentNo(),
 				servletRequest);
 		this.costRecordWriter.writeWorkReport(id, operator, servletRequest);
-		WorkReportResponse postedDetail = report(workOrderId, id);
+		WorkReportResponse postedDetail = report(workOrderId, id, operator);
 		this.actionIdempotencyService.record("WORK_REPORT_POST", WORK_REPORT_TARGET, id, request.version(),
 				request.idempotencyKey(), fingerprint, WORK_REPORT_TARGET, postedDetail.id(), postedDetail.version(),
 				operator);
@@ -728,6 +754,13 @@ public class ProductionAdminService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<CompletionReceiptResponse> completionReceipts(Long workOrderId, int page, int pageSize) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<CompletionReceiptResponse> completionReceipts(Long workOrderId, int page, int pageSize,
+			CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
 		long total = this.jdbcTemplate.queryForObject(
 				"select count(*) from mfg_completion_receipt where work_order_id = ?", Long.class, workOrderId);
@@ -744,14 +777,21 @@ public class ProductionAdminService {
 				where r.work_order_id = ?
 				order by r.updated_at desc, r.id desc
 				limit ? offset ?
-				""", this::mapCompletionReceipt, workOrderId, limit(pageSize), offset(page, pageSize));
+				""", (rs, rowNum) -> mapCompletionReceipt(rs, rowNum, viewer), workOrderId, limit(pageSize),
+				offset(page, pageSize));
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
 	@Transactional(readOnly = true)
 	public CompletionReceiptResponse completionReceipt(Long workOrderId, Long id) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public CompletionReceiptResponse completionReceipt(Long workOrderId, Long id, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		ensureWorkOrderExists(workOrderId);
-		return completionReceiptDetail(workOrderId, id).orElseThrow(this::receiptNotFound);
+		return completionReceiptDetail(workOrderId, id, viewer).orElseThrow(this::receiptNotFound);
 	}
 
 	@Transactional
@@ -764,7 +804,7 @@ public class ProductionAdminService {
 				"COMPLETION_RECEIPT_CREATE", COMPLETION_RECEIPT_TARGET, 0L, request.idempotencyKey(), fingerprint,
 				operator);
 		if (existing.isPresent()) {
-			return completionReceipt(workOrderId, existing.get().resultResourceId());
+			return completionReceipt(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -778,7 +818,7 @@ public class ProductionAdminService {
 			prepareCompletionReceiptAllocations(created.id(), product, validated, operator.username());
 			this.auditService.record(operator, "MFG_COMPLETION_RECEIPT_CREATE", COMPLETION_RECEIPT_TARGET,
 					created.id(), created.documentNo(), servletRequest);
-			CompletionReceiptResponse detail = completionReceipt(workOrderId, created.id());
+			CompletionReceiptResponse detail = completionReceipt(workOrderId, created.id(), operator);
 			this.actionIdempotencyService.record("COMPLETION_RECEIPT_CREATE", COMPLETION_RECEIPT_TARGET, 0L, null,
 					request.idempotencyKey(), fingerprint, COMPLETION_RECEIPT_TARGET, detail.id(), detail.version(),
 					operator);
@@ -799,7 +839,7 @@ public class ProductionAdminService {
 				"COMPLETION_RECEIPT_UPDATE", COMPLETION_RECEIPT_TARGET, id, request.idempotencyKey(), fingerprint,
 				operator);
 		if (existing.isPresent()) {
-			return completionReceipt(workOrderId, existing.get().resultResourceId());
+			return completionReceipt(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
 		requireExecutableWorkOrder(workOrder);
@@ -824,7 +864,7 @@ public class ProductionAdminService {
 		prepareCompletionReceiptAllocations(id, product, validated, operator.username());
 		this.auditService.record(operator, "MFG_COMPLETION_RECEIPT_UPDATE", COMPLETION_RECEIPT_TARGET, id,
 				receipt.documentNo(), servletRequest);
-		CompletionReceiptResponse detail = completionReceipt(workOrderId, id);
+		CompletionReceiptResponse detail = completionReceipt(workOrderId, id, operator);
 		this.actionIdempotencyService.record("COMPLETION_RECEIPT_UPDATE", COMPLETION_RECEIPT_TARGET, id,
 				request.version(), request.idempotencyKey(), fingerprint, COMPLETION_RECEIPT_TARGET, detail.id(),
 				detail.version(), operator);
@@ -850,7 +890,7 @@ public class ProductionAdminService {
 				"COMPLETION_RECEIPT_POST", COMPLETION_RECEIPT_TARGET, id, request.idempotencyKey(), fingerprint,
 				operator);
 		if (existing.isPresent()) {
-			return completionReceipt(workOrderId, existing.get().resultResourceId());
+			return completionReceipt(workOrderId, existing.get().resultResourceId(), operator);
 		}
 		try {
 			WorkOrderRow workOrder = lockWorkOrder(workOrderId).orElseThrow(this::workOrderNotFound);
@@ -862,7 +902,8 @@ public class ProductionAdminService {
 			}
 			this.businessPeriodGuard.assertWritable(receipt.businessDate(), BusinessPeriodOperation.POST,
 					COMPLETION_RECEIPT_SOURCE, id);
-			CompletionReceiptResponse detail = completionReceipt(workOrderId, id);
+			CompletionReceiptResponse detail = completionReceiptDetailForPosting(workOrderId, id)
+				.orElseThrow(this::receiptNotFound);
 			validateEnabledWarehouse(detail.receiptWarehouseId());
 			if (workOrder.receivedQuantity().add(detail.quantity()).compareTo(workOrder.qualifiedQuantity()) > 0) {
 				throw new BusinessException(ApiErrorCode.PRODUCTION_RECEIPT_EXCEEDS_REPORTED);
@@ -929,7 +970,7 @@ public class ProductionAdminService {
 					workOrderId);
 			this.auditService.record(operator, "MFG_COMPLETION_RECEIPT_POST", COMPLETION_RECEIPT_TARGET, id,
 					receipt.documentNo(), servletRequest);
-			CompletionReceiptResponse postedDetail = completionReceipt(workOrderId, id);
+			CompletionReceiptResponse postedDetail = completionReceipt(workOrderId, id, operator);
 			this.actionIdempotencyService.record("COMPLETION_RECEIPT_POST", COMPLETION_RECEIPT_TARGET, id,
 					request.version(), request.idempotencyKey(), fingerprint, COMPLETION_RECEIPT_TARGET,
 					postedDetail.id(), postedDetail.version(), operator);
@@ -1497,13 +1538,14 @@ public class ProductionAdminService {
 				summary.allowedActions(), summary.actionDisabledReason(), summary.version(),
 				completionValuationState.state(), completionValuationState.requiresManualProvisionalUnitCost(),
 				completionValuationState.currentAverageUnitCost(), completionValuationState.costVisible(),
-				workOrderMaterials(summary.id()), materialIssues(summary.id(), 1, 100).items(),
-				reports(summary.id(), 1, 100).items(), completionReceipts(summary.id(), 1, 100).items(),
+				workOrderMaterials(summary.id()), materialIssues(summary.id(), 1, 100, currentUser).items(),
+				reports(summary.id(), 1, 100, currentUser).items(),
+				completionReceipts(summary.id(), 1, 100, currentUser).items(),
 				productionMovements(summary.id()));
 	}
 
 	private CompletionValuationState completionValuationState(Long materialId, CurrentUser currentUser) {
-		boolean costVisible = currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
+		boolean costVisible = canViewValuation(currentUser);
 		if (!materialValueEnabled(materialId)) {
 			return new CompletionValuationState("NON_VALUED", false, null, costVisible);
 		}
@@ -1778,7 +1820,17 @@ public class ProductionAdminService {
 				""", this::mapWorkReport, workOrderId, id).stream().findFirst();
 	}
 
-	private Optional<CompletionReceiptResponse> completionReceiptDetail(Long workOrderId, Long id) {
+	private Optional<CompletionReceiptResponse> completionReceiptDetail(Long workOrderId, Long id,
+			CurrentUser currentUser) {
+		return completionReceiptDetail(workOrderId, id, canViewValuation(currentUser));
+	}
+
+	private Optional<CompletionReceiptResponse> completionReceiptDetailForPosting(Long workOrderId, Long id) {
+		return completionReceiptDetail(workOrderId, id, true);
+	}
+
+	private Optional<CompletionReceiptResponse> completionReceiptDetail(Long workOrderId, Long id,
+			boolean costVisible) {
 		return this.jdbcTemplate.query("""
 				select r.id, r.receipt_no, r.work_order_id, r.status, r.business_date, r.receipt_warehouse_id,
 				       w.name as receipt_warehouse_name, r.quantity, r.before_quantity, r.after_quantity,
@@ -1791,7 +1843,8 @@ public class ProductionAdminService {
 				join mst_warehouse w on w.id = r.receipt_warehouse_id
 				where r.work_order_id = ?
 				and r.id = ?
-				""", this::mapCompletionReceipt, workOrderId, id).stream().findFirst();
+				""", (rs, rowNum) -> mapCompletionReceipt(rs, rowNum, costVisible), workOrderId, id).stream()
+			.findFirst();
 	}
 
 	private Optional<MaterialRef> materialRef(Long materialId) {
@@ -1925,6 +1978,10 @@ public class ProductionAdminService {
 		}
 	}
 
+	private boolean canViewValuation(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
+	}
+
 	private CurrentUser requireCurrentUser(CurrentUser currentUser) {
 		if (currentUser == null) {
 			throw authForbidden();
@@ -1988,14 +2045,25 @@ public class ProductionAdminService {
 	}
 
 	private CompletionReceiptResponse mapCompletionReceipt(ResultSet rs, int rowNum) throws SQLException {
+		return mapCompletionReceipt(rs, rowNum, false);
+	}
+
+	private CompletionReceiptResponse mapCompletionReceipt(ResultSet rs, int rowNum, CurrentUser currentUser)
+			throws SQLException {
+		return mapCompletionReceipt(rs, rowNum, canViewValuation(currentUser));
+	}
+
+	private CompletionReceiptResponse mapCompletionReceipt(ResultSet rs, int rowNum, boolean costVisible)
+			throws SQLException {
 		Long receiptId = rs.getLong("id");
 		InventoryTrackingMethod trackingMethod = InventoryTrackingMethod.valueOf(rs.getString("tracking_method"));
 		return new CompletionReceiptResponse(rs.getLong("id"), rs.getString("receipt_no"),
 				rs.getLong("work_order_id"), rs.getString("status"), rs.getObject("business_date", LocalDate.class),
 				rs.getLong("receipt_warehouse_id"), rs.getString("receipt_warehouse_name"),
 				rs.getBigDecimal("quantity"), rs.getBigDecimal("before_quantity"), rs.getBigDecimal("after_quantity"),
-				rs.getBigDecimal("provisional_unit_cost"), rs.getBigDecimal("unit_cost"),
-				rs.getString("valuation_state"), rs.getString("remark"), rs.getString("created_by"),
+				costVisible ? rs.getBigDecimal("provisional_unit_cost") : null,
+				costVisible ? rs.getBigDecimal("unit_cost") : null,
+				costVisible ? rs.getString("valuation_state") : null, rs.getString("remark"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
 				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class), trackingMethod.name(),
 				trackingMethod.displayName(),

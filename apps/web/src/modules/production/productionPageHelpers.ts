@@ -7,7 +7,7 @@ export interface ProductionQuantityValidationResult {
 const workOrderStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   RELEASED: '已发布',
-  IN_PROGRESS: '生产中',
+  IN_PROGRESS: '进行中',
   COMPLETED: '已完成',
   CANCELLED: '已取消',
 }
@@ -32,6 +32,16 @@ const productionDocumentStatusTypes: Record<string, 'info' | 'success' | 'danger
   CANCELLED: 'danger',
 }
 
+const productionMovementTypeLabels: Record<string, string> = {
+  PRODUCTION_ISSUE: '生产领料',
+  PRODUCTION_REPORT: '生产报工',
+  PRODUCTION_RECEIPT: '完工入库',
+  PRODUCTION_MATERIAL_RETURN: '生产退料',
+  PRODUCTION_MATERIAL_SUPPLEMENT: '生产补料',
+  OUTSOURCING_ISSUE: '外协发料',
+  OUTSOURCING_RECEIPT: '外协收货',
+}
+
 export function workOrderStatusLabel(status: string): string {
   return workOrderStatusLabels[status] ?? status
 }
@@ -46,6 +56,11 @@ export function productionDocumentStatusLabel(status: string): string {
 
 export function productionDocumentStatusType(status: string): 'info' | 'success' | 'danger' {
   return productionDocumentStatusTypes[status] ?? 'info'
+}
+
+export function productionMovementTypeLabel(type?: string | null): string {
+  const key = String(type ?? '')
+  return productionMovementTypeLabels[key] ?? (key || '类型未返回')
 }
 
 export function formatProductionQuantity(value: unknown): string {
@@ -94,6 +109,26 @@ export function validateProductionQuantity(value: unknown, options: { allowZero?
   }
 
   return { value: numberValue, payloadValue: normalizedValue, message: null }
+}
+
+export function validateProductionDate(value: unknown, label: string): string | null {
+  const normalizedValue = String(value ?? '').trim()
+  if (!normalizedValue) {
+    return `${label}不能为空`
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedValue)) {
+    return `${label}格式必须为 YYYY-MM-DD`
+  }
+  const [year, month, day] = normalizedValue.split('-').map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) {
+    return `${label}不是有效日期`
+  }
+  return null
 }
 
 export function formatProductionDateTime(value?: string | null): string {

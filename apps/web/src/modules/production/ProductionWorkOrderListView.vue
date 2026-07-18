@@ -177,15 +177,15 @@ function canReleaseRecord(record: ProjectProductionWorkOrderSummaryRecord) {
 }
 
 function canCreateIssueRecord(record: ProjectProductionWorkOrderSummaryRecord) {
-  return canCreateIssue.value && actionAllowed(record, ['ISSUE', 'CREATE_ISSUE'], canExecute(record))
+  return canCreateIssue.value && canExecute(record)
 }
 
 function canCreateReportRecord(record: ProjectProductionWorkOrderSummaryRecord) {
-  return canCreateReport.value && actionAllowed(record, ['REPORT', 'CREATE_REPORT'], canExecute(record))
+  return canCreateReport.value && canExecute(record)
 }
 
 function canCreateReceiptRecord(record: ProjectProductionWorkOrderSummaryRecord) {
-  return canCreateReceipt.value && actionAllowed(record, ['RECEIPT', 'CREATE_RECEIPT'], canExecute(record))
+  return canCreateReceipt.value && canExecute(record)
 }
 
 function canCompleteRecord(record: ProjectProductionWorkOrderSummaryRecord) {
@@ -289,7 +289,7 @@ onMounted(() => {
           >
             <el-option label="草稿" value="DRAFT" />
             <el-option label="已发布" value="RELEASED" />
-            <el-option label="生产中" value="IN_PROGRESS" />
+            <el-option label="进行中" value="IN_PROGRESS" />
             <el-option label="已完成" value="COMPLETED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>

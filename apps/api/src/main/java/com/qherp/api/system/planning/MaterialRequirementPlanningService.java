@@ -82,7 +82,7 @@ public class MaterialRequirementPlanningService {
 	public RunResponse calculate(RunRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
 		CalculationOutcome outcome = Objects.requireNonNull(this.transactionTemplate
 			.execute((status) -> calculateInTransaction(request, operator, servletRequest, false, null)));
-		return completeCalculation(outcome);
+		return completeCalculation(outcome, operator);
 	}
 
 	private CalculationOutcome calculateInTransaction(RunRequest request, CurrentUser operator,
@@ -145,11 +145,11 @@ public class MaterialRequirementPlanningService {
 		}
 	}
 
-	private RunResponse completeCalculation(CalculationOutcome outcome) {
+	private RunResponse completeCalculation(CalculationOutcome outcome, CurrentUser operator) {
 		if (outcome.failure() != null) {
 			throw planningBusinessException(outcome.failure());
 		}
-		return detail(outcome.runId());
+		return detail(outcome.runId(), operator);
 	}
 
 	private Optional<CalculationOutcome> existingIdempotentOutcome(CurrentUser operator, NormalizedScope scope) {
@@ -192,6 +192,12 @@ public class MaterialRequirementPlanningService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<RunResponse> list(RunListFilter filter, int page, int pageSize) {
+		throw authForbidden();
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<RunResponse> list(RunListFilter filter, int page, int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		validatePagination(page, pageSize);
 		List<Object> args = new ArrayList<>();
 		List<String> conditions = new ArrayList<>();
@@ -280,20 +286,21 @@ public class MaterialRequirementPlanningService {
 				%s
 				order by r.created_at desc, r.id desc
 				limit ? offset ?
-				""".formatted(where), (rs, rowNum) -> runResponse(mapRunRow(rs, rowNum)), pageArgs.toArray());
+				""".formatted(where), (rs, rowNum) -> runResponse(mapRunRow(rs, rowNum), viewer), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional
 	public RunResponse detail(Long id) {
-		return detail(id, null);
+		throw authForbidden();
 	}
 
 	@Transactional
 	public RunResponse detail(Long id, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		RunRow row = run(id).orElseThrow(this::notFound);
 		refreshRunState(row);
-		return run(id).map(this::runResponse).orElseThrow(this::notFound);
+		return run(id).map((freshRow) -> runResponse(freshRow, viewer)).orElseThrow(this::notFound);
 	}
 
 	public RunResponse recalculate(Long id, RunRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
@@ -301,12 +308,13 @@ public class MaterialRequirementPlanningService {
 		RunRequest effectiveRequest = recalculateRequest(row, request);
 		CalculationOutcome outcome = Objects.requireNonNull(this.transactionTemplate
 			.execute((status) -> calculateInTransaction(effectiveRequest, operator, servletRequest, true, id)));
-		return completeCalculation(outcome);
+		return completeCalculation(outcome, operator);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<RequirementLineResponse> requirements(Long runId, RequirementLineFilter filter, int page,
 			int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		validatePagination(page, pageSize);
 		ensureRunExists(runId);
 		List<Object> args = new ArrayList<>();
@@ -359,13 +367,14 @@ public class MaterialRequirementPlanningService {
 				limit ? offset ?
 				""".replace("{coverage_status}", coverageStatusExpression("rl")).replace("{where_clause}", where);
 		List<RequirementLineResponse> items = this.jdbcTemplate.query(sql,
-				(rs, rowNum) -> mapRequirement(rs, rowNum, currentUser), pageArgs.toArray());
+				(rs, rowNum) -> mapRequirement(rs, rowNum, viewer), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<SupplyAllocationResponse> allocations(Long runId, AllocationFilter filter, int page,
 			int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		validatePagination(page, pageSize);
 		ensureRunExists(runId);
 		List<Object> args = new ArrayList<>();
@@ -409,13 +418,14 @@ public class MaterialRequirementPlanningService {
 				%s
 				order by a.requirement_line_id asc, a.allocation_rank asc, a.id asc
 				limit ? offset ?
-				""".formatted(where), (rs, rowNum) -> mapAllocation(rs, rowNum, currentUser), pageArgs.toArray());
+				""".formatted(where), (rs, rowNum) -> mapAllocation(rs, rowNum, viewer), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<SuggestionResponse> suggestions(Long runId, SuggestionFilter filter, int page, int pageSize,
 			CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		validatePagination(page, pageSize);
 		ensureRunExists(runId);
 		List<Object> args = new ArrayList<>();
@@ -448,13 +458,14 @@ public class MaterialRequirementPlanningService {
 				%s
 				order by s.id asc
 				limit ? offset ?
-				""".formatted(where), (rs, rowNum) -> mapSuggestion(rs, rowNum, currentUser), pageArgs.toArray());
+				""".formatted(where), (rs, rowNum) -> mapSuggestion(rs, rowNum, viewer), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<SubstituteHintResponse> substituteHints(Long runId, SubstituteHintFilter filter, int page,
 			int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		validatePagination(page, pageSize);
 		ensureRunExists(runId);
 		List<Object> args = new ArrayList<>();
@@ -480,13 +491,14 @@ public class MaterialRequirementPlanningService {
 				%s
 				order by h.requirement_line_id asc, h.priority asc, h.id asc
 				limit ? offset ?
-				""".formatted(where), (rs, rowNum) -> mapSubstituteHint(rs, rowNum, currentUser), pageArgs.toArray());
+				""".formatted(where), (rs, rowNum) -> mapSubstituteHint(rs, rowNum, viewer), pageArgs.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional
 	public SuggestionResponse confirmSuggestion(Long id, SuggestionActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		SuggestionActionRequest actionRequest = requireActionRequest(request);
 		SuggestionRow row = lockSuggestion(id).orElseThrow(this::suggestionNotFound);
 		requireRunWritable(row.runId());
@@ -494,7 +506,7 @@ public class MaterialRequirementPlanningService {
 		Optional<ActionRecord> existing = existingAction("CONFIRM", id, actionRequest.idempotencyKey(), operator);
 		if (existing.isPresent()) {
 			requireSameFingerprint(existing.get(), fingerprint);
-			return suggestion(existing.get().resultResourceId());
+			return suggestion(existing.get().resultResourceId(), operator);
 		}
 		requireVersion(row.version(), actionRequest.version());
 		if (isReadOnlySuggestion(row.suggestionType())) {
@@ -509,7 +521,7 @@ public class MaterialRequirementPlanningService {
 				    version = version + 1
 				where id = ?
 				""", operator.username(), OffsetDateTime.now(), operator.username(), OffsetDateTime.now(), id);
-		SuggestionResponse result = suggestion(id);
+		SuggestionResponse result = suggestion(id, operator);
 		recordAction("CONFIRM", id, actionRequest.idempotencyKey(), fingerprint, TARGET_SUGGESTION, id,
 				result.version(), operator);
 		this.auditService.record(operator, "MATERIAL_REQUIREMENT_SUGGESTION_CONFIRM", TARGET_SUGGESTION, id,
@@ -520,6 +532,7 @@ public class MaterialRequirementPlanningService {
 	@Transactional
 	public SuggestionResponse dismissSuggestion(Long id, SuggestionActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		SuggestionActionRequest actionRequest = requireActionRequest(request);
 		SuggestionRow row = lockSuggestion(id).orElseThrow(this::suggestionNotFound);
 		requireRunWritable(row.runId());
@@ -527,7 +540,7 @@ public class MaterialRequirementPlanningService {
 		Optional<ActionRecord> existing = existingAction("DISMISS", id, actionRequest.idempotencyKey(), operator);
 		if (existing.isPresent()) {
 			requireSameFingerprint(existing.get(), fingerprint);
-			return suggestion(existing.get().resultResourceId());
+			return suggestion(existing.get().resultResourceId(), operator);
 		}
 		requireVersion(row.version(), actionRequest.version());
 		if (isReadOnlySuggestion(row.suggestionType())) {
@@ -542,7 +555,7 @@ public class MaterialRequirementPlanningService {
 				    version = version + 1
 				where id = ?
 				""", operator.username(), OffsetDateTime.now(), operator.username(), OffsetDateTime.now(), id);
-		SuggestionResponse result = suggestion(id);
+		SuggestionResponse result = suggestion(id, operator);
 		recordAction("DISMISS", id, actionRequest.idempotencyKey(), fingerprint, TARGET_SUGGESTION, id,
 				result.version(), operator);
 		this.auditService.record(operator, "MATERIAL_REQUIREMENT_SUGGESTION_DISMISS", TARGET_SUGGESTION, id,
@@ -562,7 +575,7 @@ public class MaterialRequirementPlanningService {
 				operator);
 		if (existing.isPresent()) {
 			requireSameFingerprint(existing.get(), fingerprint);
-			return suggestion(id);
+			return suggestion(id, operator);
 		}
 		requireVersion(row.version(), actionRequest.version());
 		if (!"CONFIRMED".equals(row.status()) || !"PURCHASE_REQUISITION".equals(row.suggestionType())
@@ -614,7 +627,7 @@ public class MaterialRequirementPlanningService {
 				"PROCUREMENT_REQUISITION", requisition.id(), newVersion, operator);
 		this.auditService.record(operator, "MATERIAL_REQUIREMENT_SUGGESTION_CONVERT_REQUISITION", TARGET_SUGGESTION,
 				id, requisition.requisitionNo(), servletRequest);
-		return suggestion(id);
+		return suggestion(id, operator);
 	}
 
 	@Transactional
@@ -1036,7 +1049,7 @@ public class MaterialRequirementPlanningService {
 		}
 	}
 
-	private RunResponse runResponse(RunRow row) {
+	private RunResponse runResponse(RunRow row, CurrentUser currentUser) {
 		RunCounts counts = this.jdbcTemplate.queryForObject("""
 				select count(distinct rl.id) as requirement_line_count,
 				       count(distinct rl.project_id) as project_count,
@@ -1060,7 +1073,7 @@ public class MaterialRequirementPlanningService {
 				row.contractId(), row.salesOrderId(), row.materialId(), row.demandDateTo(),
 				row.includePublicDemand(), row.status(), row.statusReason(), row.failureCode(), row.failureSummary(),
 				row.scopeHash(), row.sourceFingerprint(), row.calculatedAt(), row.expiresAt(),
-				counts.requirementLineCount(), counts.suggestionCount(), runAllowedActions(row.status()), row.version(),
+				counts.requirementLineCount(), counts.suggestionCount(), runAllowedActions(row.status(), currentUser), row.version(),
 				scopeSummary(row), counts.projectCount(), counts.requirementLineCount(), counts.shortageMaterialCount(),
 				counts.purchaseSuggestionCount(), counts.productionSuggestionCount(), counts.exceptionCount(),
 				row.demandDateTo(), row.calculatedAt(), row.calculatedAt(), row.createdByUsername(),
@@ -1068,7 +1081,7 @@ public class MaterialRequirementPlanningService {
 	}
 
 	private RunResponse mapRun(ResultSet rs, int rowNum) throws SQLException {
-		return runResponse(mapRunRow(rs, rowNum));
+		return runResponse(mapRunRow(rs, rowNum), null);
 	}
 
 	private RunRow mapRunRow(ResultSet rs, int rowNum) throws SQLException {
@@ -1163,7 +1176,8 @@ public class MaterialRequirementPlanningService {
 				actionDisabledReason, rs.getString("reason"),
 				nullableLong(rs, "target_object_id"), rs.getString("target_object_no"),
 				rs.getString("target_object_type"), rs.getLong("version"),
-				suggestionAllowedActions(status, suggestionType, effectiveConversionAllowed, materialSourceType),
+				suggestionAllowedActions(status, suggestionType, effectiveConversionAllowed, materialSourceType,
+						currentUser),
 				"MRP-SUG-" + rs.getLong("id"), suggestionStatusName(rs.getString("status")),
 				projectVisible ? rs.getString("project_no") : null, projectVisible ? rs.getString("project_name") : null,
 				rs.getObject("required_date", LocalDate.class),
@@ -1202,7 +1216,7 @@ public class MaterialRequirementPlanningService {
 				rs.getObject("delivery_plan_updated_at", OffsetDateTime.class));
 	}
 
-	private SuggestionResponse suggestion(Long id) {
+	private SuggestionResponse suggestion(Long id, CurrentUser currentUser) {
 		return this.jdbcTemplate.query("""
 				select s.*, m.code as material_code, m.name as material_name, u.name as unit_name,
 				       p.project_no, p.name as project_name
@@ -1211,7 +1225,8 @@ public class MaterialRequirementPlanningService {
 				join mst_unit u on u.id = s.unit_id
 				left join sal_project p on p.id = s.project_id
 				where s.id = ?
-				""", this::mapSuggestion, id).stream().findFirst().orElseThrow(this::suggestionNotFound);
+				""", (rs, rowNum) -> mapSuggestion(rs, rowNum, currentUser), id).stream().findFirst()
+				.orElseThrow(this::suggestionNotFound);
 	}
 
 	private Optional<SuggestionRow> lockSuggestion(Long id) {
@@ -1364,9 +1379,20 @@ public class MaterialRequirementPlanningService {
 	}
 
 	private void requirePermission(CurrentUser operator, String permissionCode) {
-		if (operator == null || !operator.permissions().contains(permissionCode)) {
-			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		if (!hasPermission(operator, permissionCode)) {
+			throw authForbidden();
 		}
+	}
+
+	private CurrentUser requireCurrentUser(CurrentUser currentUser) {
+		if (currentUser == null) {
+			throw authForbidden();
+		}
+		return currentUser;
+	}
+
+	private BusinessException authForbidden() {
+		return new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 	}
 
 	private BusinessException notFound() {
@@ -1387,7 +1413,10 @@ public class MaterialRequirementPlanningService {
 		}
 	}
 
-	private List<String> runAllowedActions(String status) {
+	private List<String> runAllowedActions(String status, CurrentUser currentUser) {
+		if (currentUser == null) {
+			return List.of();
+		}
 		if ("COMPLETED".equals(status)) {
 			return List.of("RECALCULATE", "EXPORT");
 		}
@@ -1398,7 +1427,10 @@ public class MaterialRequirementPlanningService {
 	}
 
 	private List<String> suggestionAllowedActions(String status, String suggestionType, boolean conversionAllowed,
-			String materialSourceType) {
+			String materialSourceType, CurrentUser currentUser) {
+		if (currentUser == null) {
+			return List.of();
+		}
 		if ("USE_PUBLIC_STOCK".equals(suggestionType) || "USE_EXISTING_SUPPLY".equals(suggestionType)) {
 			return List.of();
 		}
@@ -1499,12 +1531,12 @@ public class MaterialRequirementPlanningService {
 	}
 
 	private static boolean hasPermission(CurrentUser currentUser, String permissionCode) {
-		return currentUser == null || currentUser.permissions().contains(permissionCode);
+		return currentUser != null && currentUser.permissions().contains(permissionCode);
 	}
 
 	private static boolean allocationSourceVisible(CurrentUser currentUser, String sourceTable) {
 		if (currentUser == null) {
-			return true;
+			return false;
 		}
 		return switch (sourceTable) {
 			case "inv_stock_balance" -> currentUser.permissions().contains("inventory:balance:view");

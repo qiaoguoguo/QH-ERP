@@ -822,6 +822,36 @@ describe('026 订单缺料分析页面', () => {
     expect(drawerText).not.toContain('WO-026-001')
   })
 
+  it('替代料主物料和替代物料脱敏为空时显示来源权限受限，不用 ID 或待补全冒充摘要', async () => {
+    materialRequirementApiMock.runs.substituteHints.mockResolvedValueOnce(page([{
+      ...substituteHint,
+      mainMaterialCode: null,
+      mainMaterialName: null,
+      substituteMaterialCode: null,
+      substituteMaterialName: null,
+    }]))
+    const pinia = setup([
+      'planning:material-requirement:view',
+      'sales:effective-demand:view',
+      'material:bom:view',
+      'inventory:balance:view',
+      'procurement:supply:view',
+      'production:work-order:view',
+    ])
+    const router = await routerFor('/planning/material-requirements/1001')
+    const wrapper = mount(MaterialRequirementRunDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
+    await flushPromises()
+
+    await wrapper.find('[data-test="trace-requirement-REQ-1"]').trigger('click')
+    await flushPromises()
+
+    const drawerText = wrapper.find('.el-drawer').text()
+    expect(drawerText).toContain('来源权限受限')
+    expect(drawerText).not.toContain('主物料 #31')
+    expect(drawerText).not.toContain('替代物料 #32')
+    expect(drawerText).not.toContain('信息待补全')
+  })
+
   it('失败快照使用 failureCode 与 failureSummary 展示稳定中文摘要', async () => {
     materialRequirementApiMock.runs.get.mockResolvedValueOnce({
       ...runDetail,

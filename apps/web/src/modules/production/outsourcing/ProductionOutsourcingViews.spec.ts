@@ -277,6 +277,13 @@ async function setSelect(wrapper: VueWrapper, testId: string, value: unknown) {
   await flushPromises()
 }
 
+async function setDatePicker(wrapper: VueWrapper, testId: string, value: string) {
+  const picker = datePickerByName(wrapper, testId)
+  expect(picker?.exists()).toBe(true)
+  picker?.vm.$emit('update:modelValue', value)
+  await flushPromises()
+}
+
 function expectButtonDisabled(wrapper: VueWrapper, testId: string, disabled: boolean) {
   const button = wrapper.findComponent(`[data-test="${testId}"]`) as VueWrapper
   expect(button.exists()).toBe(true)
@@ -289,10 +296,21 @@ function expectSelectPlaceholder(wrapper: VueWrapper, testId: string, placeholde
   expect((select.props() as { placeholder?: string }).placeholder).toBe(placeholder)
 }
 
-function expectInputPlaceholder(wrapper: VueWrapper, selector: string, placeholder: string) {
-  const input = wrapper.find(selector)
-  expect(input.exists()).toBe(true)
-  expect(input.attributes('placeholder')).toBe(placeholder)
+function expectDatePickerContract(wrapper: VueWrapper, testId: string, placeholder: string) {
+  const picker = datePickerByName(wrapper, testId)
+  expect(picker?.exists()).toBe(true)
+  expect(picker?.props()).toMatchObject({
+    type: 'date',
+    format: 'YYYY-MM-DD',
+    valueFormat: 'YYYY-MM-DD',
+    valueOnClear: '',
+    placeholder,
+  })
+}
+
+function datePickerByName(wrapper: VueWrapper, name: string): VueWrapper | undefined {
+  return wrapper.findAllComponents({ name: 'ElDatePicker' })
+    .find((picker) => picker.props('name') === name)
 }
 
 describe('027 外协执行页面族', () => {
@@ -402,8 +420,8 @@ describe('027 外协执行页面族', () => {
     await setSelect(wrapper, 'outsourcing-issue-warehouse-id', 60)
     await setSelect(wrapper, 'outsourcing-receipt-warehouse-id', 61)
     await wrapper.find('input[name="outsourcing-planned-quantity"]').setValue('10.000000')
-    await wrapper.find('input[name="outsourcing-planned-issue-date"]').setValue('2026-07-18')
-    await wrapper.find('input[name="outsourcing-planned-receipt-date"]').setValue('2026-07-25')
+    await setDatePicker(wrapper, 'outsourcing-planned-issue-date', '2026-07-18')
+    await setDatePicker(wrapper, 'outsourcing-planned-receipt-date', '2026-07-25')
     await wrapper.find('[data-test="save-outsourcing-order"]').trigger('click')
     await flushPromises()
 
@@ -450,10 +468,35 @@ describe('027 外协执行页面族', () => {
     expectSelectPlaceholder(wrapper, 'outsourcing-bom-id', '请选择 BOM')
     expectSelectPlaceholder(wrapper, 'outsourcing-issue-warehouse-id', '请选择发料仓库')
     expectSelectPlaceholder(wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
-    expectInputPlaceholder(wrapper, 'input[name="outsourcing-planned-issue-date"]', '请选择计划发料日期')
-    expectInputPlaceholder(wrapper, 'input[name="outsourcing-planned-receipt-date"]', '请选择计划收货日期')
+    expectDatePickerContract(wrapper, 'outsourcing-planned-issue-date', '请选择计划发料日期')
+    expectDatePickerContract(wrapper, 'outsourcing-planned-receipt-date', '请选择计划收货日期')
     expect(wrapper.find('[data-test="outsourcing-order-form-bottom-actions"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="bottom-save-outsourcing-order"]').exists()).toBe(true)
+  })
+
+  it('外协订单计划日期使用日期选择器且非法日期不提交', async () => {
+    const { wrapper } = await mountWithRouter(ProductionOutsourcingOrderFormView, '/production/outsourcing-orders/create', [
+      'production:outsourcing:view',
+      'production:outsourcing:create',
+    ])
+
+    expectDatePickerContract(wrapper, 'outsourcing-planned-issue-date', '请选择计划发料日期')
+    expectDatePickerContract(wrapper, 'outsourcing-planned-receipt-date', '请选择计划收货日期')
+    await setSelect(wrapper, 'outsourcing-ownership-type', 'PROJECT')
+    await setSelect(wrapper, 'outsourcing-project-id', 20)
+    await setSelect(wrapper, 'outsourcing-supplier-id', 30)
+    await setSelect(wrapper, 'outsourcing-product-material-id', 40)
+    await setSelect(wrapper, 'outsourcing-bom-id', 50)
+    await setSelect(wrapper, 'outsourcing-issue-warehouse-id', 60)
+    await setSelect(wrapper, 'outsourcing-receipt-warehouse-id', 61)
+    await wrapper.find('input[name="outsourcing-planned-quantity"]').setValue('10.000000')
+    await setDatePicker(wrapper, 'outsourcing-planned-issue-date', '2026-7-18')
+    await setDatePicker(wrapper, 'outsourcing-planned-receipt-date', '2026-07-25')
+    await wrapper.find('[data-test="save-outsourcing-order"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('计划发料日期格式必须为 YYYY-MM-DD')
+    expect(outsourcingApiMock.orders.create).not.toHaveBeenCalled()
   })
 
   it('外协订单编辑页加载失败时关闭表单并只保留返回', async () => {
@@ -547,6 +590,24 @@ describe('027 外协执行页面族', () => {
     expect(wrapper.text()).toContain('外协订单尚未达到关闭条件')
   })
 
+  it('详情执行单据状态显示中文，不裸露 DRAFT 或 POSTED', async () => {
+    outsourcingApiMock.orders.get.mockResolvedValueOnce({
+      ...outsourcingOrder,
+      materialIssues: [{ ...outsourcingOrder.materialIssues[0], status: 'DRAFT' }],
+      receipts: [{ ...outsourcingOrder.receipts[0], status: 'POSTED' }],
+    })
+    const { wrapper } = await mountWithRouter(ProductionOutsourcingOrderDetailView, '/production/outsourcing-orders/77', [
+      'production:outsourcing:view',
+      'production:outsourcing-issue:view',
+      'production:outsourcing-receipt:view',
+    ])
+
+    expect(wrapper.text()).toContain('草稿')
+    expect(wrapper.text()).toContain('已过账')
+    expect(wrapper.text()).not.toContain('DRAFT')
+    expect(wrapper.text()).not.toContain('POSTED')
+  })
+
   it('订单级创建入口只接受后端 canonical ISSUE 和 RECEIPT 动作码', async () => {
     outsourcingApiMock.orders.get.mockResolvedValueOnce({
       ...outsourcingOrder,
@@ -615,7 +676,7 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing:view',
       'production:outsourcing-issue:create',
     ])
-    expectInputPlaceholder(issue.wrapper, 'input[name="outsourcing-issue-business-date"]', '请选择业务日期')
+    expectDatePickerContract(issue.wrapper, 'outsourcing-issue-business-date', '请选择业务日期')
     expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-warehouse-id', '请选择发料仓库')
     expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-line-material', '请选择材料行')
     expectSelectPlaceholder(issue.wrapper, 'outsourcing-issue-line-ownership', '请选择库存来源')
@@ -624,8 +685,38 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing:view',
       'production:outsourcing-receipt:create',
     ])
-    expectInputPlaceholder(receipt.wrapper, 'input[name="outsourcing-receipt-business-date"]', '请选择业务日期')
+    expectDatePickerContract(receipt.wrapper, 'outsourcing-receipt-business-date', '请选择业务日期')
     expectSelectPlaceholder(receipt.wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
+  })
+
+  it('外协发料和收货业务日期使用日期选择器且非法日期不提交', async () => {
+    const issue = await mountWithRouter(ProductionOutsourcingIssueView, '/production/outsourcing-orders/77/material-issues', [
+      'production:outsourcing:view',
+      'production:outsourcing-issue:create',
+    ])
+    expectDatePickerContract(issue.wrapper, 'outsourcing-issue-business-date', '请选择业务日期')
+    await setDatePicker(issue.wrapper, 'outsourcing-issue-business-date', '2026/07/18')
+    await setSelect(issue.wrapper, 'outsourcing-issue-warehouse-id', 60)
+    await setSelect(issue.wrapper, 'outsourcing-issue-line-material', 501)
+    await issue.wrapper.find('input[name="outsourcing-issue-line-quantity"]').setValue('4.000000')
+    await issue.wrapper.find('[data-test="save-outsourcing-issue"]').trigger('click')
+    await flushPromises()
+    expect(issue.wrapper.text()).toContain('业务日期格式必须为 YYYY-MM-DD')
+    expect(outsourcingApiMock.materialIssues.create).not.toHaveBeenCalled()
+
+    const receipt = await mountWithRouter(ProductionOutsourcingReceiptView, '/production/outsourcing-orders/77/receipts', [
+      'production:outsourcing:view',
+      'production:outsourcing-receipt:create',
+    ])
+    expectDatePickerContract(receipt.wrapper, 'outsourcing-receipt-business-date', '请选择业务日期')
+    await setDatePicker(receipt.wrapper, 'outsourcing-receipt-business-date', '2026/07/20')
+    await setSelect(receipt.wrapper, 'outsourcing-receipt-warehouse-id', 61)
+    await receipt.wrapper.find('input[name="outsourcing-receipt-accepted-quantity"]').setValue('2.000000')
+    await receipt.wrapper.find('input[name="outsourcing-receipt-rejected-quantity"]').setValue('0.000000')
+    await receipt.wrapper.find('[data-test="save-outsourcing-receipt"]').trigger('click')
+    await flushPromises()
+    expect(receipt.wrapper.text()).toContain('业务日期格式必须为 YYYY-MM-DD')
+    expect(outsourcingApiMock.receipts.create).not.toHaveBeenCalled()
   })
 
   it('外协发料或收货对象不存在时关闭草稿表单并只保留返回', async () => {
@@ -641,7 +732,7 @@ describe('027 外协执行页面族', () => {
     ])
     expect(missingIssueOrder.wrapper.text()).toContain('外协订单不存在或无权查看')
     expect(missingIssueOrder.wrapper.find('[data-test="save-outsourcing-issue"]').exists()).toBe(false)
-    expect(missingIssueOrder.wrapper.find('input[name="outsourcing-issue-business-date"]').exists()).toBe(false)
+    expect(datePickerByName(missingIssueOrder.wrapper, 'outsourcing-issue-business-date')).toBeUndefined()
 
     outsourcingApiMock.materialIssues.get.mockRejectedValueOnce(new AccountPermissionApiError(
       '外协发料不存在或无权查看',
@@ -659,7 +750,7 @@ describe('027 外协执行页面族', () => {
     expect(missingIssueDocument.wrapper.find('[data-test="save-outsourcing-issue"]').exists()).toBe(false)
     expect(missingIssueDocument.wrapper.find('[data-test="post-outsourcing-issue"]').exists()).toBe(false)
     expect(missingIssueDocument.wrapper.find('[data-test="cancel-outsourcing-issue"]').exists()).toBe(false)
-    expect(missingIssueDocument.wrapper.find('input[name="outsourcing-issue-business-date"]').exists()).toBe(false)
+    expect(datePickerByName(missingIssueDocument.wrapper, 'outsourcing-issue-business-date')).toBeUndefined()
 
     outsourcingApiMock.orders.get.mockRejectedValueOnce(new AccountPermissionApiError(
       '外协订单不存在或无权查看',
@@ -673,7 +764,7 @@ describe('027 外协执行页面族', () => {
     ])
     expect(missingReceiptOrder.wrapper.text()).toContain('外协订单不存在或无权查看')
     expect(missingReceiptOrder.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
-    expect(missingReceiptOrder.wrapper.find('input[name="outsourcing-receipt-business-date"]').exists()).toBe(false)
+    expect(datePickerByName(missingReceiptOrder.wrapper, 'outsourcing-receipt-business-date')).toBeUndefined()
 
     outsourcingApiMock.receipts.get.mockRejectedValueOnce(new AccountPermissionApiError(
       '外协收货不存在或无权查看',
@@ -691,7 +782,7 @@ describe('027 外协执行页面族', () => {
     expect(missingReceiptDocument.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
     expect(missingReceiptDocument.wrapper.find('[data-test="post-outsourcing-receipt"]').exists()).toBe(false)
     expect(missingReceiptDocument.wrapper.find('[data-test="cancel-outsourcing-receipt"]').exists()).toBe(false)
-    expect(missingReceiptDocument.wrapper.find('input[name="outsourcing-receipt-business-date"]').exists()).toBe(false)
+    expect(datePickerByName(missingReceiptDocument.wrapper, 'outsourcing-receipt-business-date')).toBeUndefined()
   })
 
   it('外协发料支持草稿创建、编辑、过账和取消，记录项目/公共来源、成本层与批次分配', async () => {
@@ -703,7 +794,7 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing-issue:cancel',
     ])
 
-    await wrapper.find('input[name="outsourcing-issue-business-date"]').setValue('2026-07-18')
+    await setDatePicker(wrapper, 'outsourcing-issue-business-date', '2026-07-18')
     await setSelect(wrapper, 'outsourcing-issue-warehouse-id', 60)
     await setSelect(wrapper, 'outsourcing-issue-line-material', 501)
     await wrapper.find('input[name="outsourcing-issue-line-quantity"]').setValue('4.000000')
@@ -799,7 +890,7 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing-receipt:cancel',
     ])
 
-    await wrapper.find('input[name="outsourcing-receipt-business-date"]').setValue('2026-07-20')
+    await setDatePicker(wrapper, 'outsourcing-receipt-business-date', '2026-07-20')
     await setSelect(wrapper, 'outsourcing-receipt-warehouse-id', 61)
     await wrapper.find('input[name="outsourcing-receipt-accepted-quantity"]').setValue('2.000000')
     await wrapper.find('input[name="outsourcing-receipt-rejected-quantity"]').setValue('0.000000')

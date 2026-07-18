@@ -37,6 +37,7 @@ import {
   productionErrorMessage,
   todayText,
   validateProductionQuantity,
+  workOrderStatusLabel,
 } from '../production/productionPageHelpers'
 
 interface MaterialSupplementLineDraft {
@@ -609,7 +610,9 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="workOrderNo" label="生产工单" min-width="170" show-overflow-tooltip />
-            <el-table-column prop="workOrderStatus" label="工单状态" min-width="110" />
+            <el-table-column label="工单状态" min-width="110">
+              <template #default="{ row }">{{ workOrderStatusLabel(row.workOrderStatus) }}</template>
+            </el-table-column>
             <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
           </el-table>
         </div>

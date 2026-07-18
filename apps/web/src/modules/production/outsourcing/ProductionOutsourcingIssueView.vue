@@ -12,7 +12,7 @@ import type { ProductionOwnershipType, ResourceId } from '../../../shared/api/pr
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../../stores/authStore'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
-import { productionErrorMessage, validateProductionQuantity } from '../productionPageHelpers'
+import { productionErrorMessage, validateProductionDate, validateProductionQuantity } from '../productionPageHelpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -126,6 +126,10 @@ function buildPayload() {
   const orderMaterialId = normalizeId(form.orderMaterialId)
   if (!warehouseId || !orderMaterialId) {
     throw new Error('发料仓库和材料行不能为空')
+  }
+  const businessDateError = validateProductionDate(form.businessDate, '业务日期')
+  if (businessDateError) {
+    throw new Error(businessDateError)
   }
   const trackingAllocations = form.batchNo.trim()
     ? [{
@@ -248,7 +252,16 @@ onMounted(loadPage)
       <el-form label-position="top">
         <div class="form-grid">
           <el-form-item label="业务日期">
-            <el-input v-model="form.businessDate" name="outsourcing-issue-business-date" placeholder="请选择业务日期" />
+            <el-date-picker
+              v-model="form.businessDate"
+              data-test="outsourcing-issue-business-date"
+              name="outsourcing-issue-business-date"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="请选择业务日期"
+            />
           </el-form-item>
           <el-form-item label="发料仓库">
             <el-select v-model="form.warehouseId" data-test="outsourcing-issue-warehouse-id" placeholder="请选择发料仓库">

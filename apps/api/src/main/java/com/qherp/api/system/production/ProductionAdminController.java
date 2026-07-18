@@ -83,14 +83,14 @@ public class ProductionAdminController {
 	@GetMapping("/work-orders/{workOrderId}/material-issues")
 	public ApiResponse<PageResponse<ProductionAdminService.MaterialIssueSummaryResponse>> materialIssues(
 			@PathVariable Long workOrderId, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.productionAdminService.materialIssues(workOrderId, page, pageSize));
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.materialIssues(workOrderId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/material-issues/{id}")
 	public ApiResponse<ProductionAdminService.MaterialIssueDetailResponse> materialIssue(
-			@PathVariable Long workOrderId, @PathVariable Long id) {
-		return ApiResponse.ok(this.productionAdminService.materialIssue(workOrderId, id));
+			@PathVariable Long workOrderId, @PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.materialIssue(workOrderId, id, currentUser));
 	}
 
 	@PostMapping("/work-orders/{workOrderId}/material-issues")
@@ -122,14 +122,15 @@ public class ProductionAdminController {
 
 	@GetMapping("/work-orders/{workOrderId}/reports")
 	public ApiResponse<PageResponse<ProductionAdminService.WorkReportResponse>> reports(@PathVariable Long workOrderId,
-			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.productionAdminService.reports(workOrderId, page, pageSize));
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.reports(workOrderId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/reports/{id}")
 	public ApiResponse<ProductionAdminService.WorkReportResponse> report(@PathVariable Long workOrderId,
-			@PathVariable Long id) {
-		return ApiResponse.ok(this.productionAdminService.report(workOrderId, id));
+			@PathVariable Long id, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.report(workOrderId, id, currentUser));
 	}
 
 	@PostMapping("/work-orders/{workOrderId}/reports")
@@ -159,14 +160,15 @@ public class ProductionAdminController {
 	@GetMapping("/work-orders/{workOrderId}/completion-receipts")
 	public ApiResponse<PageResponse<ProductionAdminService.CompletionReceiptResponse>> completionReceipts(
 			@PathVariable Long workOrderId, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.productionAdminService.completionReceipts(workOrderId, page, pageSize));
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.completionReceipts(workOrderId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/work-orders/{workOrderId}/completion-receipts/{id}")
 	public ApiResponse<ProductionAdminService.CompletionReceiptResponse> completionReceipt(
-			@PathVariable Long workOrderId, @PathVariable Long id) {
-		return ApiResponse.ok(this.productionAdminService.completionReceipt(workOrderId, id));
+			@PathVariable Long workOrderId, @PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.productionAdminService.completionReceipt(workOrderId, id, currentUser));
 	}
 
 	@PostMapping("/work-orders/{workOrderId}/completion-receipts")

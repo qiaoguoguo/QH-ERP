@@ -13,7 +13,7 @@ import type { ProductionOwnershipType, ResourceId } from '../../../shared/api/pr
 import { salesProjectApi } from '../../../shared/api/salesProjectApi'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../../system/shared/pageHelpers'
-import { productionErrorMessage, validateProductionQuantity } from '../productionPageHelpers'
+import { productionErrorMessage, validateProductionDate, validateProductionQuantity } from '../productionPageHelpers'
 
 type Option = { id: ResourceId; label: string }
 
@@ -141,6 +141,14 @@ function buildPayload() {
   if (form.ownershipType === 'PROJECT' && !normalizeRequiredId(form.projectId)) {
     throw new Error('项目外协订单必须选择项目')
   }
+  const plannedIssueDateError = validateProductionDate(form.plannedIssueDate, '计划发料日期')
+  if (plannedIssueDateError) {
+    throw new Error(plannedIssueDateError)
+  }
+  const plannedReceiptDateError = validateProductionDate(form.plannedReceiptDate, '计划收货日期')
+  if (plannedReceiptDateError) {
+    throw new Error(plannedReceiptDateError)
+  }
   return {
     ownershipType: form.ownershipType,
     projectId: form.ownershipType === 'PROJECT' ? normalizeRequiredId(form.projectId) : null,
@@ -238,10 +246,28 @@ onMounted(loadPage)
             <el-input v-model="form.plannedQuantity" name="outsourcing-planned-quantity" />
           </el-form-item>
           <el-form-item label="计划发料">
-            <el-input v-model="form.plannedIssueDate" name="outsourcing-planned-issue-date" placeholder="请选择计划发料日期" />
+            <el-date-picker
+              v-model="form.plannedIssueDate"
+              data-test="outsourcing-planned-issue-date"
+              name="outsourcing-planned-issue-date"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="请选择计划发料日期"
+            />
           </el-form-item>
           <el-form-item label="计划收货">
-            <el-input v-model="form.plannedReceiptDate" name="outsourcing-planned-receipt-date" placeholder="请选择计划收货日期" />
+            <el-date-picker
+              v-model="form.plannedReceiptDate"
+              data-test="outsourcing-planned-receipt-date"
+              name="outsourcing-planned-receipt-date"
+              type="date"
+              format="YYYY-MM-DD"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+              placeholder="请选择计划收货日期"
+            />
           </el-form-item>
         </div>
       </section>

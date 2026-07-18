@@ -473,7 +473,7 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
 }
 
 async function mountDetail(
-  record: ProductionWorkOrderDetailRecord,
+  record: ProductionWorkOrderDetailRecord | ProjectProductionWorkOrderDetailRecord,
   permissions = [
     'production:work-order:view',
     'production:work-order:update',
@@ -551,7 +551,7 @@ describe('生产工单详情页', () => {
   })
 
   it('展示状态标签、数量摘要和工单基础信息', async () => {
-    const { wrapper } = await mountDetail({ ...detailRecord, status: 'RELEASED' })
+    const { wrapper } = await mountDetail({ ...detailRecord, status: 'RELEASED' as const })
 
     expect(wrapper.text()).toContain('已发布')
     expect(wrapper.text()).not.toContain('RELEASED')
@@ -592,7 +592,8 @@ describe('生产工单详情页', () => {
     expect(wrapper.text()).toContain('CR-001')
     expect(wrapper.text()).toContain('成品仓')
     expect(wrapper.text()).toContain('MOV-001')
-    expect(wrapper.text()).toContain('PRODUCTION_ISSUE')
+    expect(wrapper.text()).toContain('生产领料')
+    expect(wrapper.text()).not.toContain('PRODUCTION_ISSUE')
   })
 
   it('只读用户不展示写操作按钮', async () => {
@@ -605,6 +606,30 @@ describe('生产工单详情页', () => {
     expect(buttonsByText(wrapper, '完工入库')).toHaveLength(0)
     expect(buttonsByText(wrapper, '完成')).toHaveLength(0)
     expect(buttonsByText(wrapper, '取消')).toHaveLength(0)
+  })
+
+  it('生产执行入口按权限和合法状态展示，不依赖工单级 allowedActions 或旧私有码', async () => {
+    const releasedWithoutWorkOrderActions = {
+      ...projectDetailRecord,
+      status: 'RELEASED' as const,
+      allowedActions: [],
+    }
+    const { wrapper } = await mountDetail(releasedWithoutWorkOrderActions)
+
+    expect(buttonsByText(wrapper, '领料')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '报工')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(1)
+
+    const draftWithLegacyPrivateActions = {
+      ...projectDetailRecord,
+      status: 'DRAFT' as const,
+      allowedActions: ['CREATE_ISSUE', 'CREATE_REPORT', 'CREATE_RECEIPT'],
+    }
+    const draft = await mountDetail(draftWithLegacyPrivateActions)
+
+    expect(buttonsByText(draft.wrapper, '领料')).toHaveLength(0)
+    expect(buttonsByText(draft.wrapper, '报工')).toHaveLength(0)
+    expect(buttonsByText(draft.wrapper, '完工入库')).toHaveLength(0)
   })
 
   it('已完成工单不展示写操作按钮', async () => {

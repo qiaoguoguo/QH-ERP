@@ -493,6 +493,23 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 				new ProductionAdminService.ProductionActionRequest(currentWorkOrderVersion(workOrderId),
 						"空用户发布", "PROD-027A-WO-NULL-" + SEQUENCE.incrementAndGet()),
 				null, null));
+		ensureReleaseStock(fixture, "1.000000");
+		JsonNode releasedWorkOrder = data(releaseWorkOrder(admin, workOrderId));
+		JsonNode rawRequirement = workOrderMaterial(releasedWorkOrder, fixture.rawMaterialId());
+		long issueId = createMaterialIssueId(admin, workOrderId, materialIssuePayload("空用户读取领料",
+				List.of(materialIssueLine(1, rawRequirement.get("id").longValue(), fixture.issueWarehouseId(),
+						"1.000000"))));
+		long reportId = createReportId(admin, workOrderId, workReportPayload("1.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+		long receiptId = createCompletionReceiptId(admin, workOrderId,
+				completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000"));
+
+		assertAuthForbidden(() -> this.productionAdminService.materialIssues(workOrderId, 1, 20));
+		assertAuthForbidden(() -> this.productionAdminService.materialIssue(workOrderId, issueId));
+		assertAuthForbidden(() -> this.productionAdminService.reports(workOrderId, 1, 20));
+		assertAuthForbidden(() -> this.productionAdminService.report(workOrderId, reportId));
+		assertAuthForbidden(() -> this.productionAdminService.completionReceipts(workOrderId, 1, 20));
+		assertAuthForbidden(() -> this.productionAdminService.completionReceipt(workOrderId, receiptId));
 
 		long supplierId = insertSupplier("MFG_027A_NULL_OS_SUP_" + SEQUENCE.incrementAndGet());
 		JsonNode outsourcingOrder = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
@@ -507,6 +524,50 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 						currentOutsourcingOrderVersion(outsourcingOrderId), "空用户发布",
 						"PROD-027A-OS-NULL-" + SEQUENCE.incrementAndGet()),
 				null, null));
+	}
+
+	@Test
+	void stage027aProductionCompletionReceiptMasksCostForReadAndWriteResponses() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long workOrderId = createAndReleaseWorkOrder(admin, fixture, "1.000000");
+		long reportId = createReportId(admin, workOrderId, workReportPayload("1.000000", "0.000000"));
+		assertOk(postReport(admin, workOrderId, reportId));
+		AuthenticatedSession receiptWriter = createProductionUserAndLogin("prod_receipt_mask",
+				"prod_receipt_mask_role", List.of("production:work-order:view", "production:receipt:view",
+						"production:receipt:create", "production:receipt:post"));
+
+		ResponseEntity<String> createResponse = createCompletionReceipt(receiptWriter, workOrderId,
+				completionReceiptPayload(fixture.receiptWarehouseId(), "1.000000"));
+		assertOk(createResponse);
+		JsonNode createdReceipt = data(createResponse);
+		assertProductionCompletionReceiptCostHidden(createdReceipt);
+		long receiptId = createdReceipt.get("id").longValue();
+
+		JsonNode listedReceipt = firstItem(get("/api/admin/production/work-orders/" + workOrderId
+				+ "/completion-receipts?page=1&pageSize=20", receiptWriter));
+		assertProductionCompletionReceiptCostHidden(listedReceipt);
+		JsonNode detailReceipt = data(getCompletionReceipt(receiptWriter, workOrderId, receiptId));
+		assertProductionCompletionReceiptCostHidden(detailReceipt);
+		JsonNode postedReceipt = data(postCompletionReceipt(receiptWriter, workOrderId, receiptId));
+		assertProductionCompletionReceiptCostHidden(postedReceipt);
+	}
+
+	@Test
+	void stage027aOutsourcingSubDocumentNotFoundUsesOutsourcingSemantics() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long supplierId = insertSupplier("MFG_027A_OS_ERR_SUP_" + SEQUENCE.incrementAndGet());
+		long orderId = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				outsourcingOrderPayload(supplierId, fixture, "1.000000"), admin)).get("id").longValue();
+		long missingId = 999_999_999L + SEQUENCE.incrementAndGet();
+
+		assertErrorMessage(get("/api/admin/production/outsourcing-orders/" + orderId + "/material-issues/"
+				+ missingId, admin), HttpStatus.NOT_FOUND, "PRODUCTION_OUTSOURCING_ISSUE_NOT_FOUND",
+				"外协发料不存在或无权查看");
+		assertErrorMessage(get("/api/admin/production/outsourcing-orders/" + orderId + "/receipts/"
+				+ missingId, admin), HttpStatus.NOT_FOUND, "PRODUCTION_OUTSOURCING_RECEIPT_NOT_FOUND",
+				"外协收货不存在或无权查看");
 	}
 
 	@Test
@@ -2247,6 +2308,12 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(receipt.get("lines").get(0).get("provisionalUnitCost").isNull()).as(receipt.toString()).isTrue();
 	}
 
+	private void assertProductionCompletionReceiptCostHidden(JsonNode receipt) {
+		assertThat(receipt.get("provisionalUnitCost").isNull()).as(receipt.toString()).isTrue();
+		assertThat(receipt.get("unitCost").isNull()).as(receipt.toString()).isTrue();
+		assertThat(receipt.get("valuationState").isNull()).as(receipt.toString()).isTrue();
+	}
+
 	private void assertAuthForbidden(ThrowingCallable callable) {
 		assertThatThrownBy(callable).isInstanceOfSatisfying(BusinessException.class,
 				(exception) -> assertThat(exception.errorCode()).isEqualTo(ApiErrorCode.AUTH_FORBIDDEN));
@@ -2948,6 +3015,14 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {
 		assertThat(response.getStatusCode()).isEqualTo(status);
 		assertThat(code(response)).isEqualTo(code);
+	}
+
+	private void assertErrorMessage(ResponseEntity<String> response, HttpStatus status, String code, String message)
+			throws Exception {
+		assertThat(response.getStatusCode()).isEqualTo(status);
+		JsonNode body = this.objectMapper.readTree(response.getBody());
+		assertThat(body.get("code").asText()).isEqualTo(code);
+		assertThat(body.get("message").asText()).isEqualTo(message);
 	}
 
 	private void assertForbidden(ResponseEntity<String> response) throws Exception {

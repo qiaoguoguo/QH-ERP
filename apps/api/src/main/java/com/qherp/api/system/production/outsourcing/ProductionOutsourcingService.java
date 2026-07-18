@@ -1686,11 +1686,11 @@ public class ProductionOutsourcingService {
 	}
 
 	private BusinessException issueNotFound() {
-		return new BusinessException(ApiErrorCode.PRODUCTION_ISSUE_NOT_FOUND);
+		return new BusinessException(ApiErrorCode.PRODUCTION_OUTSOURCING_ISSUE_NOT_FOUND);
 	}
 
 	private BusinessException receiptNotFound() {
-		return new BusinessException(ApiErrorCode.PRODUCTION_RECEIPT_NOT_FOUND);
+		return new BusinessException(ApiErrorCode.PRODUCTION_OUTSOURCING_RECEIPT_NOT_FOUND);
 	}
 
 	private static String nextNo(String prefix, AtomicInteger sequence) {

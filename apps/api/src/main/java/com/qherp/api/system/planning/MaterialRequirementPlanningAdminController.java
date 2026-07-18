@@ -40,11 +40,11 @@ public class MaterialRequirementPlanningAdminController {
 			@RequestParam(required = false) java.time.LocalDate requiredDateTo,
 			@RequestParam(required = false) String status, @RequestParam(required = false) Boolean expired,
 			@RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "20") int pageSize) {
+			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.planningService.list(
 				new MaterialRequirementPlanningService.RunListFilter(projectId, customerId, contractId, orderId,
 						materialId, requiredDateTo, status, expired),
-				page, pageSize));
+				page, pageSize, currentUser));
 	}
 
 	@GetMapping("/material-requirement-runs/{id}")

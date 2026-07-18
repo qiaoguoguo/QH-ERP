@@ -3,7 +3,9 @@ import { AccountPermissionApiError } from './accountPermissionApi'
 import {
   createMaterialRequirementApi,
   type MaterialRequirementSuggestionConversionRecord,
+  type MaterialRequirementRunDetailRecord,
   type MaterialRequirementRunRecord,
+  type MaterialRequirementSourceCounts,
   type MaterialRequirementSuggestionRecord,
 } from './materialRequirementApi'
 import apiSource from './materialRequirementApi.ts?raw'
@@ -62,6 +64,29 @@ describe('026 订单缺料分析 API', () => {
     runUsesStableFailureSummary: true as AssertTrue<
       'failureSummary' extends keyof MaterialRequirementRunRecord ? true : false
     >,
+    sourceCountsUseFixedKeys: true as AssertTrue<
+      keyof MaterialRequirementSourceCounts extends
+        | 'salesDemand'
+        | 'bomComponent'
+        | 'projectStock'
+        | 'publicStock'
+        | 'projectPurchase'
+        | 'publicPurchase'
+        | 'workOrder'
+        ? (
+          | 'salesDemand'
+          | 'bomComponent'
+          | 'projectStock'
+          | 'publicStock'
+          | 'projectPurchase'
+          | 'publicPurchase'
+          | 'workOrder'
+        ) extends keyof MaterialRequirementSourceCounts ? true : false
+        : false
+    >,
+    runDetailUsesFixedSourceCounts: true as AssertTrue<
+      MaterialRequirementRunDetailRecord extends { sourceCounts?: MaterialRequirementSourceCounts } ? true : false
+    >,
   }
 
   it('声明运行与建议类型保留状态、十进制字符串、allowedActions 和 version', () => {
@@ -71,10 +96,20 @@ describe('026 订单缺料分析 API', () => {
       suggestionHasAllowedActionsAndVersion: true,
       conversionResponseHasTargetRoute: true,
       runUsesStableFailureSummary: true,
+      sourceCountsUseFixedKeys: true,
+      runDetailUsesFixedSourceCounts: true,
     })
     expect(apiSource).toContain('failureSummary')
     expect(apiSource).not.toContain('failureMessage')
-    expect(apiSource).toContain('sourceCounts?: Record<string, number>')
+    expect(apiSource).toContain('sourceCounts?: MaterialRequirementSourceCounts')
+    expect(apiSource).not.toContain('sourceCounts?: Record<string, number>')
+    expect(apiSource).toContain('salesDemand: number')
+    expect(apiSource).toContain('bomComponent: number')
+    expect(apiSource).toContain('projectStock: number')
+    expect(apiSource).toContain('publicStock: number')
+    expect(apiSource).toContain('projectPurchase: number')
+    expect(apiSource).toContain('publicPurchase: number')
+    expect(apiSource).toContain('workOrder: number')
     expect(apiSource).toContain('mainMaterialId')
     expect(apiSource).toContain('mainMaterialCode')
     expect(apiSource).toContain('mainMaterialName')

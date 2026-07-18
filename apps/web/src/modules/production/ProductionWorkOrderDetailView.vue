@@ -33,6 +33,7 @@ import {
   formatProductionDateTime,
   formatProductionQuantity,
   createProductionIdempotencyKey,
+  productionMovementTypeLabel,
   productionErrorMessage,
 } from './productionPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -66,9 +67,9 @@ function actionAllowed(codes: string[], fallback: boolean): boolean {
 
 const canEdit = computed(() => authStore.hasPermission('production:work-order:update') && actionAllowed(['UPDATE'], record.value?.status === 'DRAFT'))
 const canRelease = computed(() => authStore.hasPermission('production:work-order:release') && actionAllowed(['RELEASE'], record.value?.status === 'DRAFT'))
-const canCreateIssue = computed(() => authStore.hasPermission('production:issue:create') && actionAllowed(['ISSUE', 'CREATE_ISSUE'], canExecute.value))
-const canCreateReport = computed(() => authStore.hasPermission('production:report:create') && actionAllowed(['REPORT', 'CREATE_REPORT'], canExecute.value))
-const canCreateReceipt = computed(() => authStore.hasPermission('production:receipt:create') && actionAllowed(['RECEIPT', 'CREATE_RECEIPT'], canExecute.value))
+const canCreateIssue = computed(() => authStore.hasPermission('production:issue:create') && canExecute.value)
+const canCreateReport = computed(() => authStore.hasPermission('production:report:create') && canExecute.value)
+const canCreateReceipt = computed(() => authStore.hasPermission('production:receipt:create') && canExecute.value)
 const canComplete = computed(() => authStore.hasPermission('production:work-order:complete') && actionAllowed(['COMPLETE'], canExecute.value))
 const canCancel = computed(() => authStore.hasPermission('production:work-order:cancel') && actionAllowed(
   ['CANCEL'],
@@ -397,7 +398,9 @@ onMounted(loadRecord)
         <div class="table-scroll">
           <el-table :data="record.movements" empty-text="暂无库存流水" stripe>
             <el-table-column prop="movementNo" label="流水号" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="movementType" label="类型" min-width="140" show-overflow-tooltip />
+            <el-table-column label="类型" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ productionMovementTypeLabel(row.movementType) }}</template>
+            </el-table-column>
             <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
             <el-table-column label="物料" min-width="200" show-overflow-tooltip>
               <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>

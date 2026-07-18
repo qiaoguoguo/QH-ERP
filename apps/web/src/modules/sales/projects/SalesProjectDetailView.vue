@@ -104,6 +104,8 @@ const projectConfirmButtonType = computed(() => {
 function fulfillmentBlockReasonText(reason: string) {
   const labels: Record<string, string> = {
     NON_TERMINAL_ORDER: '项目仍有关联销售订单未终止，不能关闭项目。请先完成、关闭或取消相关订单。',
+    OPEN_DEMAND: '项目仍有开放销售需求，不能关闭销售履约。',
+    OPEN_DELIVERY_PLAN: '项目仍有开放交付计划，不能关闭销售履约。',
   }
   return labels[reason] ?? reason
 }
