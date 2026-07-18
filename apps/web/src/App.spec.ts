@@ -170,6 +170,49 @@ describe('ERP 应用骨架', () => {
     expect(toggle().attributes('aria-label')).toBe('收起菜单')
   })
 
+  it('390px 窄屏初始使用收起菜单，避免常驻侧栏占据首屏', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+      matches: query === '(max-width: 390px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+      menus: [
+        {
+          id: 4,
+          code: 'inventory',
+          name: '库存管理',
+          routePath: '/inventory/balances',
+          children: [
+            { id: 5, code: 'inventory:balance:view', name: '库存余额', routePath: '/inventory/balances' },
+          ],
+        },
+      ],
+      permissions: [],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(wrapper.find('.app-sidebar').classes()).toContain('is-collapsed')
+    expect(wrapper.findComponent({ name: 'ElMenu' }).props('collapse')).toBe(true)
+    expect(wrapper.find('[data-test="sidebar-toggle-button"]').attributes('aria-label')).toBe('展开菜单')
+  })
+
   it('登录成功进入工作台后顶部显示当前用户而不是未登录', async () => {
     const fetcher = vi
       .fn()

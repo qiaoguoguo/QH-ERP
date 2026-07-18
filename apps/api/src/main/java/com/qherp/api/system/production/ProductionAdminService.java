@@ -124,6 +124,7 @@ public class ProductionAdminService {
 	public PageResponse<WorkOrderSummaryResponse> workOrders(String keyword, String status, Long productMaterialId,
 			LocalDate dateFrom, LocalDate dateTo, Long projectId, String ownershipType, Long sourceMrpSuggestionId,
 			int page, int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		QueryParts queryParts = workOrderQueryParts(keyword, status, productMaterialId, dateFrom, dateTo, projectId,
 				ownershipType, sourceMrpSuggestionId);
 		long total = this.jdbcTemplate.queryForObject("""
@@ -157,41 +158,44 @@ public class ProductionAdminService {
 				%s
 				order by wo.updated_at desc, wo.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), (rs, rowNum) -> mapWorkOrderSummary(rs, rowNum, currentUser),
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapWorkOrderSummary(rs, rowNum, viewer),
 				args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
 	@Transactional(readOnly = true)
 	public WorkOrderDetailResponse workOrder(Long id) {
-		return workOrder(id, null);
+		throw authForbidden();
 	}
 
 	@Transactional(readOnly = true)
 	public WorkOrderDetailResponse workOrder(Long id, CurrentUser currentUser) {
-		WorkOrderSummaryResponse summary = workOrderSummary(id, currentUser).orElseThrow(this::workOrderNotFound);
-		return workOrderDetail(summary, currentUser);
+		CurrentUser viewer = requireCurrentUser(currentUser);
+		WorkOrderSummaryResponse summary = workOrderSummary(id, viewer).orElseThrow(this::workOrderNotFound);
+		return workOrderDetail(summary, viewer);
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse createWorkOrder(WorkOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("WORK_ORDER_CREATE", WORK_ORDER_TARGET, 0L,
 				null, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
-				"WORK_ORDER_CREATE", WORK_ORDER_TARGET, 0L, request.idempotencyKey(), fingerprint, operator);
+				"WORK_ORDER_CREATE", WORK_ORDER_TARGET, 0L, request.idempotencyKey(), fingerprint, currentOperator);
 		if (existing.isPresent()) {
-			return workOrder(existing.get().resultResourceId(), operator);
+			return workOrder(existing.get().resultResourceId(), currentOperator);
 		}
 		ValidatedWorkOrder validated = validateWorkOrderRequest(request);
 		OffsetDateTime now = OffsetDateTime.now();
 		try {
-			CreatedDocument created = insertWorkOrderWithRetry(validated, operator.username(), now);
-			this.auditService.record(operator, "MFG_WORK_ORDER_CREATE", WORK_ORDER_TARGET, created.id(),
+			CreatedDocument created = insertWorkOrderWithRetry(validated, currentOperator.username(), now);
+			this.auditService.record(currentOperator, "MFG_WORK_ORDER_CREATE", WORK_ORDER_TARGET, created.id(),
 					created.documentNo(), servletRequest);
-			WorkOrderDetailResponse detail = workOrder(created.id(), operator);
+			WorkOrderDetailResponse detail = workOrder(created.id(), currentOperator);
 			this.actionIdempotencyService.record("WORK_ORDER_CREATE", WORK_ORDER_TARGET, 0L, null,
-					request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(), operator);
+					request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(),
+					currentOperator);
 			return detail;
 		}
 		catch (DuplicateKeyException exception) {
@@ -202,12 +206,13 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkOrderDetailResponse updateWorkOrder(Long id, WorkOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id,
 				request.version(), request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
-				"WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
+				"WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, currentOperator);
 		if (existing.isPresent()) {
-			return workOrder(existing.get().resultResourceId(), operator);
+			return workOrder(existing.get().resultResourceId(), currentOperator);
 		}
 		WorkOrderRow current = lockWorkOrder(id).orElseThrow(this::workOrderNotFound);
 		requireVersion(request.version(), current.version());
@@ -230,31 +235,34 @@ public class ProductionAdminService {
 				""", validated.productMaterial().id(), validated.bom().id(), validated.plannedQuantity(),
 				validated.issueWarehouseId(), validated.receiptWarehouseId(), validated.plannedStartDate(),
 				validated.plannedFinishDate(), blankToNull(validated.remark()), validated.ownershipType(),
-				validated.projectId(), operator.username(), now, id);
-		this.auditService.record(operator, "MFG_WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id, current.workOrderNo(),
+				validated.projectId(), currentOperator.username(), now, id);
+		this.auditService.record(currentOperator, "MFG_WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id, current.workOrderNo(),
 				servletRequest);
-		WorkOrderDetailResponse detail = workOrder(id, operator);
+		WorkOrderDetailResponse detail = workOrder(id, currentOperator);
 		this.actionIdempotencyService.record("WORK_ORDER_UPDATE", WORK_ORDER_TARGET, id, request.version(),
-				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(), operator);
+				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(),
+				currentOperator);
 		return detail;
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse releaseWorkOrder(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		return releaseWorkOrder(id,
 				new ProductionActionRequest(currentVersion("mfg_work_order", id), "内部兼容发布",
 						"INTERNAL-WO-REL-" + id + "-" + System.nanoTime()),
-				operator, servletRequest);
+				currentOperator, servletRequest);
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse releaseWorkOrder(Long id, ProductionActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
-				"WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
+				"WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, currentOperator);
 		if (existing.isPresent()) {
-			return workOrder(existing.get().resultResourceId(), operator);
+			return workOrder(existing.get().resultResourceId(), currentOperator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(id).orElseThrow(this::workOrderNotFound);
 		requireVersion(request.version(), workOrder.version());
@@ -300,33 +308,36 @@ public class ProductionAdminService {
 				update mfg_work_order
 				set status = ?, released_by = ?, released_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
-				""", ProductionWorkOrderStatus.RELEASED.name(), operator.username(), now, operator.username(), now,
-				id);
-		reserveWorkOrderMaterials(workOrder, operator, servletRequest);
-		this.auditService.record(operator, "MFG_WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
+				""", ProductionWorkOrderStatus.RELEASED.name(), currentOperator.username(), now,
+				currentOperator.username(), now, id);
+		reserveWorkOrderMaterials(workOrder, currentOperator, servletRequest);
+		this.auditService.record(currentOperator, "MFG_WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
 				servletRequest);
-		WorkOrderDetailResponse detail = workOrder(id, operator);
+		WorkOrderDetailResponse detail = workOrder(id, currentOperator);
 		this.actionIdempotencyService.record("WORK_ORDER_RELEASE", WORK_ORDER_TARGET, id, request.version(),
-				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(), operator);
+				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(),
+				currentOperator);
 		return detail;
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse completeWorkOrder(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		return completeWorkOrder(id,
 				new ProductionActionRequest(currentVersion("mfg_work_order", id), "内部兼容完成",
 						"INTERNAL-WO-COMP-" + id + "-" + System.nanoTime()),
-				operator, servletRequest);
+				currentOperator, servletRequest);
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse completeWorkOrder(Long id, ProductionActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
-				"WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
+				"WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, currentOperator);
 		if (existing.isPresent()) {
-			return workOrder(existing.get().resultResourceId(), operator);
+			return workOrder(existing.get().resultResourceId(), currentOperator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(id).orElseThrow(this::workOrderNotFound);
 		requireVersion(request.version(), workOrder.version());
@@ -342,34 +353,37 @@ public class ProductionAdminService {
 				update mfg_work_order
 				set status = ?, completed_by = ?, completed_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
-				""", ProductionWorkOrderStatus.COMPLETED.name(), operator.username(), now, operator.username(), now,
-				id);
+				""", ProductionWorkOrderStatus.COMPLETED.name(), currentOperator.username(), now,
+				currentOperator.username(), now, id);
 		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
-				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, operator, servletRequest);
-		this.auditService.record(operator, "MFG_WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id,
+				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, currentOperator, servletRequest);
+		this.auditService.record(currentOperator, "MFG_WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id,
 				workOrder.workOrderNo(), servletRequest);
-		WorkOrderDetailResponse detail = workOrder(id, operator);
+		WorkOrderDetailResponse detail = workOrder(id, currentOperator);
 		this.actionIdempotencyService.record("WORK_ORDER_COMPLETE", WORK_ORDER_TARGET, id, request.version(),
-				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(), operator);
+				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(),
+				currentOperator);
 		return detail;
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse cancelWorkOrder(Long id, CurrentUser operator, HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		return cancelWorkOrder(id,
 				new ProductionActionRequest(currentVersion("mfg_work_order", id), "内部兼容取消",
 						"INTERNAL-WO-CAN-" + id + "-" + System.nanoTime()),
-				operator, servletRequest);
+				currentOperator, servletRequest);
 	}
 
 	@Transactional
 	public WorkOrderDetailResponse cancelWorkOrder(Long id, ProductionActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		CurrentUser currentOperator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
-				"WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
+				"WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, request.idempotencyKey(), fingerprint, currentOperator);
 		if (existing.isPresent()) {
-			return workOrder(existing.get().resultResourceId(), operator);
+			return workOrder(existing.get().resultResourceId(), currentOperator);
 		}
 		WorkOrderRow workOrder = lockWorkOrder(id).orElseThrow(this::workOrderNotFound);
 		requireVersion(request.version(), workOrder.version());
@@ -388,15 +402,16 @@ public class ProductionAdminService {
 				update mfg_work_order
 				set status = ?, cancelled_by = ?, cancelled_at = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
-				""", ProductionWorkOrderStatus.CANCELLED.name(), operator.username(), now, operator.username(), now,
-				id);
+				""", ProductionWorkOrderStatus.CANCELLED.name(), currentOperator.username(), now,
+				currentOperator.username(), now, id);
 		this.inventoryAvailabilityService.releaseBySource(InventoryReservationType.RESERVATION,
-				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, operator, servletRequest);
-		this.auditService.record(operator, "MFG_WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
+				InventoryAvailabilityService.PRODUCTION_WORK_ORDER_SOURCE, id, currentOperator, servletRequest);
+		this.auditService.record(currentOperator, "MFG_WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, workOrder.workOrderNo(),
 				servletRequest);
-		WorkOrderDetailResponse detail = workOrder(id, operator);
+		WorkOrderDetailResponse detail = workOrder(id, currentOperator);
 		this.actionIdempotencyService.record("WORK_ORDER_CANCEL", WORK_ORDER_TARGET, id, request.version(),
-				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(), operator);
+				request.idempotencyKey(), fingerprint, WORK_ORDER_TARGET, detail.id(), detail.version(),
+				currentOperator);
 		return detail;
 	}
 
@@ -432,6 +447,7 @@ public class ProductionAdminService {
 	@Transactional
 	public MaterialIssueDetailResponse createMaterialIssue(Long workOrderId, MaterialIssueRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("MATERIAL_ISSUE_CREATE",
 				MATERIAL_ISSUE_TARGET, 0L, null, workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -465,6 +481,7 @@ public class ProductionAdminService {
 	@Transactional
 	public MaterialIssueDetailResponse updateMaterialIssue(Long workOrderId, Long id, MaterialIssueRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("MATERIAL_ISSUE_UPDATE",
 				MATERIAL_ISSUE_TARGET, id, request.version(), workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -504,6 +521,7 @@ public class ProductionAdminService {
 	@Transactional
 	public MaterialIssueDetailResponse postMaterialIssue(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		return postMaterialIssue(workOrderId, id,
 				new ProductionActionRequest(currentVersion("mfg_material_issue", id), "内部兼容领料过账",
 						"INTERNAL-ISS-POST-" + id + "-" + System.nanoTime()),
@@ -513,6 +531,7 @@ public class ProductionAdminService {
 	@Transactional
 	public MaterialIssueDetailResponse postMaterialIssue(Long workOrderId, Long id, ProductionActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"MATERIAL_ISSUE_POST", MATERIAL_ISSUE_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -584,6 +603,7 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkReportResponse createReport(Long workOrderId, WorkReportRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("WORK_REPORT_CREATE", WORK_REPORT_TARGET, 0L,
 				null, workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -614,6 +634,7 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkReportResponse updateReport(Long workOrderId, Long id, WorkReportRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("WORK_REPORT_UPDATE", WORK_REPORT_TARGET, id,
 				request.version(), workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -650,6 +671,7 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkReportResponse postReport(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		return postReport(workOrderId, id,
 				new ProductionActionRequest(currentVersion("mfg_work_report", id), "内部兼容报工过账",
 						"INTERNAL-REP-POST-" + id + "-" + System.nanoTime()),
@@ -659,6 +681,7 @@ public class ProductionAdminService {
 	@Transactional
 	public WorkReportResponse postReport(Long workOrderId, Long id, ProductionActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("WORK_REPORT_POST", WORK_REPORT_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"WORK_REPORT_POST", WORK_REPORT_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -734,6 +757,7 @@ public class ProductionAdminService {
 	@Transactional
 	public CompletionReceiptResponse createCompletionReceipt(Long workOrderId, CompletionReceiptRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("COMPLETION_RECEIPT_CREATE",
 				COMPLETION_RECEIPT_TARGET, 0L, null, workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -768,6 +792,7 @@ public class ProductionAdminService {
 	@Transactional
 	public CompletionReceiptResponse updateCompletionReceipt(Long workOrderId, Long id,
 			CompletionReceiptRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("COMPLETION_RECEIPT_UPDATE",
 				COMPLETION_RECEIPT_TARGET, id, request.version(), workOrderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -809,6 +834,7 @@ public class ProductionAdminService {
 	@Transactional
 	public CompletionReceiptResponse postCompletionReceipt(Long workOrderId, Long id, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		return postCompletionReceipt(workOrderId, id,
 				new ProductionActionRequest(currentVersion("mfg_completion_receipt", id), "内部兼容完工入库过账",
 						"INTERNAL-REC-POST-" + id + "-" + System.nanoTime()),
@@ -818,6 +844,7 @@ public class ProductionAdminService {
 	@Transactional
 	public CompletionReceiptResponse postCompletionReceipt(Long workOrderId, Long id, ProductionActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("COMPLETION_RECEIPT_POST", COMPLETION_RECEIPT_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"COMPLETION_RECEIPT_POST", COMPLETION_RECEIPT_TARGET, id, request.idempotencyKey(), fingerprint,
@@ -1476,7 +1503,7 @@ public class ProductionAdminService {
 	}
 
 	private CompletionValuationState completionValuationState(Long materialId, CurrentUser currentUser) {
-		boolean costVisible = currentUser == null || currentUser.permissions().contains("inventory:valuation:view");
+		boolean costVisible = currentUser != null && currentUser.permissions().contains("inventory:valuation:view");
 		if (!materialValueEnabled(materialId)) {
 			return new CompletionValuationState("NON_VALUED", false, null, costVisible);
 		}
@@ -1893,9 +1920,20 @@ public class ProductionAdminService {
 	}
 
 	private void addActionIfAllowed(List<String> actions, CurrentUser currentUser, String permission, String action) {
-		if (currentUser == null || currentUser.permissions().contains(permission)) {
+		if (currentUser != null && currentUser.permissions().contains(permission)) {
 			actions.add(action);
 		}
+	}
+
+	private CurrentUser requireCurrentUser(CurrentUser currentUser) {
+		if (currentUser == null) {
+			throw authForbidden();
+		}
+		return currentUser;
+	}
+
+	private BusinessException authForbidden() {
+		return new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 	}
 
 	private WorkOrderRow mapWorkOrderRow(ResultSet rs, int rowNum) throws SQLException {

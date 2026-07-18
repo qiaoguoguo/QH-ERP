@@ -306,6 +306,16 @@ describe('销售项目合同抽屉', () => {
     expect(buttonByTest(terminateWrapper, 'confirm-contract-action')?.props().type).toBe('danger')
   })
 
+  it('合同业务关闭与抽屉退出使用无歧义文案', async () => {
+    salesProjectApiMock.contracts.get.mockResolvedValueOnce({ ...contract, status: 'EFFECTIVE' })
+    const wrapper = await mountDrawer({ mode: 'edit', contractId: 55 })
+
+    expect(wrapper.find('[data-test="contract-action-close"]').text()).toContain('关闭合同')
+    expect(wrapper.find('[data-test="collapse-sales-project-contract-drawer"]').text()).toContain('收起')
+    expect(wrapper.find('[data-test="contract-action-close"]').text())
+      .not.toBe(wrapper.find('[data-test="collapse-sales-project-contract-drawer"]').text())
+  })
+
   it('视图模式强制只读并隐藏保存和状态动作', async () => {
     const wrapper = await mountDrawer({ mode: 'view', contractId: 55 })
 

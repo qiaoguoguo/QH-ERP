@@ -497,7 +497,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
             :title="contractActionStates.close.reason"
             @click="openContractAction('close')"
           >
-            关闭
+            关闭合同
           </el-button>
           <el-button
             v-if="contractActionStates.terminate.visible"
@@ -512,7 +512,7 @@ watch(() => [props.modelValue, props.mode, props.contractId, props.defaultContra
           </el-button>
         </div>
         <div class="drawer-actions">
-          <el-button @click="$emit('update:modelValue', false)">关闭</el-button>
+          <el-button data-test="collapse-sales-project-contract-drawer" @click="$emit('update:modelValue', false)">收起</el-button>
           <el-button v-if="canSave" data-test="save-sales-project-contract" type="primary" :loading="saving" :disabled="saving || !canEditFields" @click="saveContract">保存</el-button>
         </div>
       </div>

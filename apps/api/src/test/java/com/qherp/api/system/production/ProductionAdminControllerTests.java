@@ -1,7 +1,11 @@
 package com.qherp.api.system.production;
 
+import com.qherp.api.common.ApiErrorCode;
+import com.qherp.api.common.BusinessException;
 import com.qherp.api.support.PostgresIntegrationTest;
 import com.qherp.api.system.inventory.InventoryQualityStatus;
+import com.qherp.api.system.production.outsourcing.ProductionOutsourcingService;
+import org.assertj.core.api.ThrowableAssert.ThrowingCallable;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -34,6 +38,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
 		properties = "qherp.test.context=production-admin")
@@ -56,6 +61,12 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 
 	@Autowired
 	private PasswordEncoder passwordEncoder;
+
+	@Autowired
+	private ProductionAdminService productionAdminService;
+
+	@Autowired
+	private ProductionOutsourcingService outsourcingService;
 
 	@Test
 	void adminCanRunProductionExecutionLifecycle() throws Exception {
@@ -465,6 +476,37 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode readOnlyDetail = data(getWorkOrder(readOnly, projectWorkOrderId));
 		assertThat(readOnlyDetail.get("allowedActions")).isEmpty();
 		assertThat(readOnlyDetail.get("actionDisabledReason").asText()).contains("权限");
+	}
+
+	@Test
+	void stage027aProductionAndOutsourcingServicesRejectMissingCurrentUser() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProductionFixture fixture = fixture(admin);
+		long workOrderId = createWorkOrder(admin, fixture.productMaterialId(), fixture.bomId(),
+				fixture.issueWarehouseId(), fixture.receiptWarehouseId(), "1.000000");
+
+		assertAuthForbidden(() -> this.productionAdminService.workOrders(null, null, null, null, null, null, null,
+				null, 1, 20, null));
+		assertAuthForbidden(() -> this.productionAdminService.workOrder(workOrderId));
+		assertAuthForbidden(() -> this.productionAdminService.workOrder(workOrderId, null));
+		assertAuthForbidden(() -> this.productionAdminService.releaseWorkOrder(workOrderId,
+				new ProductionAdminService.ProductionActionRequest(currentWorkOrderVersion(workOrderId),
+						"空用户发布", "PROD-027A-WO-NULL-" + SEQUENCE.incrementAndGet()),
+				null, null));
+
+		long supplierId = insertSupplier("MFG_027A_NULL_OS_SUP_" + SEQUENCE.incrementAndGet());
+		JsonNode outsourcingOrder = data(exchange(HttpMethod.POST, "/api/admin/production/outsourcing-orders",
+				outsourcingOrderPayload(supplierId, fixture, "1.000000"), admin));
+		long outsourcingOrderId = outsourcingOrder.get("id").longValue();
+
+		assertAuthForbidden(() -> this.outsourcingService.orders(null, null, null, null, null, null, null, 1, 20,
+				null));
+		assertAuthForbidden(() -> this.outsourcingService.order(outsourcingOrderId, null));
+		assertAuthForbidden(() -> this.outsourcingService.releaseOrder(outsourcingOrderId,
+				new ProductionOutsourcingService.OutsourcingActionRequest(
+						currentOutsourcingOrderVersion(outsourcingOrderId), "空用户发布",
+						"PROD-027A-OS-NULL-" + SEQUENCE.incrementAndGet()),
+				null, null));
 	}
 
 	@Test
@@ -2203,6 +2245,11 @@ class ProductionAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(receipt.get("valuationState").isNull()).as(receipt.toString()).isTrue();
 		assertThat(receipt.get("allowedActions")).anySatisfy((action) -> assertThat(action.asText()).isEqualTo("POST"));
 		assertThat(receipt.get("lines").get(0).get("provisionalUnitCost").isNull()).as(receipt.toString()).isTrue();
+	}
+
+	private void assertAuthForbidden(ThrowingCallable callable) {
+		assertThatThrownBy(callable).isInstanceOfSatisfying(BusinessException.class,
+				(exception) -> assertThat(exception.errorCode()).isEqualTo(ApiErrorCode.AUTH_FORBIDDEN));
 	}
 
 	private JsonNode createReleasedOutsourcingOrder(AuthenticatedSession session, ProductionFixture fixture,

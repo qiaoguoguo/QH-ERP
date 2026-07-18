@@ -46,6 +46,9 @@ const referenceError = ref('')
 
 const canCreate = computed(() => authStore.hasPermission('sales:project:create'))
 const canUpdate = computed(() => authStore.hasPermission('sales:project:update'))
+const showMainEmpty = computed(() => !loading.value && !error.value && records.value.length === 0)
+const showTable = computed(() => !error.value && (loading.value || records.value.length > 0))
+const showPagination = computed(() => !error.value && pagination.total > 0)
 
 async function loadReferences() {
   referenceLoading.value = true
@@ -206,8 +209,8 @@ onMounted(() => {
       <el-alert v-if="loading || referenceLoading" class="state-alert" type="info" title="销售项目加载中" :closable="false" />
     </template>
 
-    <el-empty v-if="!loading && !error && records.length === 0" description="暂无销售项目" />
-    <div v-if="!error" class="table-scroll sales-project-table-scroll">
+    <el-empty v-if="showMainEmpty" description="暂无销售项目" />
+    <div v-if="showTable" class="table-scroll sales-project-table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无销售项目'" stripe>
         <el-table-column prop="projectNo" label="项目编号" min-width="160" show-overflow-tooltip />
         <el-table-column prop="name" label="项目名称" min-width="180" show-overflow-tooltip />
@@ -251,7 +254,7 @@ onMounted(() => {
       </el-table>
     </div>
     <el-pagination
-      v-if="!error"
+      v-if="showPagination"
       class="table-pagination"
       layout="total, sizes, prev, pager, next"
       :page-sizes="[10, 20, 50, 100]"

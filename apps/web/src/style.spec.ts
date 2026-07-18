@@ -102,6 +102,20 @@ describe('全局样式契约', () => {
     }
   })
 
+  it('追踪选择抽屉使用的 Loading 指令纳入共享 Element Plus 注册入口', () => {
+    expectElementPlusComponentRegistered('ElLoading')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-loading.css")
+  })
+
+  it('027 外协页面规格不再通过旧挂载降级写法降低类型', () => {
+    const outsourcingSpecSource = readFileSync(
+      resolve(currentDir, 'modules/production/outsourcing/ProductionOutsourcingViews.spec.ts'),
+      'utf8',
+    )
+
+    expect(outsourcingSpecSource).not.toContain(['component', 'as', 'never'].join(' '))
+  })
+
   it('搜索栏使用统一的标签置顶布局并对齐日期控件', () => {
     expect(styleSource).toContain('.el-form--inline.query-form')
     expect(styleSource).toContain('.query-form > .el-form-item .el-form-item__label')
@@ -117,5 +131,13 @@ describe('全局样式契约', () => {
 
     expect(mobileMedia).toMatch(/\.app-shell\s*>\s*\.el-container\s*{[^}]*height:\s*auto;[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;/s)
     expect(mobileMedia).toMatch(/\.app-main\s*{[^}]*flex:\s*1 1 auto;[^}]*min-height:\s*0;[^}]*overflow:\s*auto;/s)
+  })
+
+  it('390px 窄屏侧栏使用临时覆盖和收起结构', () => {
+    const narrowMedia = styleSource.slice(styleSource.indexOf('@media (max-width: 390px)'))
+
+    expect(narrowMedia).toMatch(/\.app-sidebar\s*{[^}]*position:\s*fixed;[^}]*height:\s*100svh;[^}]*transform:\s*translateX\(0\);/s)
+    expect(narrowMedia).toMatch(/\.app-sidebar\.is-collapsed\s*{[^}]*position:\s*sticky;[^}]*height:\s*56px;[^}]*max-height:\s*56px;/s)
+    expect(narrowMedia).toContain('.app-sidebar.is-collapsed .side-menu-scroll')
   })
 })

@@ -472,8 +472,10 @@ public class MaterialRequirementPlanningService {
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
 		List<SubstituteHintResponse> items = this.jdbcTemplate.query("""
-				select h.*, sm.code as substitute_material_code, sm.name as substitute_material_name
+				select h.*, mm.code as main_material_code, mm.name as main_material_name,
+				       sm.code as substitute_material_code, sm.name as substitute_material_name
 				from mrp_substitute_hint h
+				join mst_material mm on mm.id = h.main_material_id
 				join mst_material sm on sm.id = h.substitute_material_id
 				%s
 				order by h.requirement_line_id asc, h.priority asc, h.id asc
@@ -1178,7 +1180,9 @@ public class MaterialRequirementPlanningService {
 		boolean substituteVisible = hasPermission(currentUser, "material:substitute:view")
 				&& hasPermission(currentUser, "master:material:view");
 		return new SubstituteHintResponse(rs.getLong("id"), rs.getLong("run_id"), rs.getLong("requirement_line_id"),
-				rs.getLong("main_material_id"), substituteVisible ? rs.getLong("substitute_material_id") : null,
+				rs.getLong("main_material_id"), substituteVisible ? rs.getString("main_material_code") : null,
+				substituteVisible ? rs.getString("main_material_name") : null,
+				substituteVisible ? rs.getLong("substitute_material_id") : null,
 				substituteVisible ? rs.getString("substitute_material_code") : null,
 				substituteVisible ? rs.getString("substitute_material_name") : null,
 				rs.getInt("priority"), decimalString(rs.getBigDecimal("substitute_rate")), rs.getString("scope_type"),
@@ -1692,8 +1696,9 @@ public class MaterialRequirementPlanningService {
 	}
 
 	public record SubstituteHintResponse(Long id, Long runId, Long requirementLineId, Long mainMaterialId,
-			Long substituteMaterialId, String substituteMaterialCode, String substituteMaterialName, Integer priority,
-			String substituteRate, String scopeType, LocalDate effectiveFrom, LocalDate effectiveTo) {
+			String mainMaterialCode, String mainMaterialName, Long substituteMaterialId, String substituteMaterialCode,
+			String substituteMaterialName, Integer priority, String substituteRate, String scopeType,
+			LocalDate effectiveFrom, LocalDate effectiveTo) {
 	}
 
 	private record NormalizedScope(String scopeType, Long projectId, Long customerId, Long contractId, Long salesOrderId,

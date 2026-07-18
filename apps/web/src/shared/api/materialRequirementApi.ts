@@ -104,6 +104,7 @@ export interface MaterialRequirementRunRecord {
 
 export interface MaterialRequirementRunDetailRecord extends MaterialRequirementRunRecord {
   sourceFingerprint?: string | null
+  sourceCounts?: Record<string, number>
   previousRunId?: ResourceId | null
 }
 
@@ -180,11 +181,13 @@ export interface MaterialRequirementSuggestionRecord {
 export interface MaterialRequirementSubstituteHintRecord {
   id: ResourceId
   requirementLineId?: ResourceId | null
-  materialCode: string
-  materialName: string
-  substituteMaterialCode: string
-  substituteMaterialName: string
-  conversionRatio?: string | null
+  mainMaterialId: ResourceId
+  mainMaterialCode?: string | null
+  mainMaterialName?: string | null
+  substituteMaterialId: ResourceId
+  substituteMaterialCode?: string | null
+  substituteMaterialName?: string | null
+  substituteRate?: string | null
   priority?: number | null
   hintMessage?: string | null
 }

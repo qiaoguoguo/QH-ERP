@@ -193,7 +193,7 @@ onMounted(loadPage)
         <h2>归属与来源</h2>
         <div class="form-grid">
           <el-form-item label="归属">
-            <el-select v-model="form.ownershipType" data-test="outsourcing-ownership-type">
+            <el-select v-model="form.ownershipType" data-test="outsourcing-ownership-type" placeholder="请选择归属">
               <el-option label="项目" value="PROJECT" />
               <el-option label="公共" value="PUBLIC" />
             </el-select>
@@ -204,13 +204,14 @@ onMounted(loadPage)
               data-test="outsourcing-project-id"
               clearable
               filterable
+              placeholder="请选择项目"
               :disabled="form.ownershipType === 'PUBLIC'"
             >
               <el-option v-for="project in projects" :key="project.id" :label="project.label" :value="project.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="供应商">
-            <el-select v-model="form.supplierId" data-test="outsourcing-supplier-id" filterable>
+            <el-select v-model="form.supplierId" data-test="outsourcing-supplier-id" filterable placeholder="请选择供应商">
               <el-option v-for="supplier in suppliers" :key="supplier.id" :label="supplier.label" :value="supplier.id" />
             </el-select>
           </el-form-item>
@@ -221,12 +222,12 @@ onMounted(loadPage)
         <h2>物料与计划</h2>
         <div class="form-grid">
           <el-form-item label="成品物料">
-            <el-select v-model="form.productMaterialId" data-test="outsourcing-product-material-id" filterable>
+            <el-select v-model="form.productMaterialId" data-test="outsourcing-product-material-id" filterable placeholder="请选择成品物料">
               <el-option v-for="material in materials" :key="material.id" :label="material.label" :value="material.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="BOM">
-            <el-select v-model="form.bomId" data-test="outsourcing-bom-id" filterable>
+            <el-select v-model="form.bomId" data-test="outsourcing-bom-id" filterable placeholder="请选择 BOM">
               <el-option v-for="bom in boms" :key="bom.id" :label="bom.label" :value="bom.id" />
             </el-select>
           </el-form-item>
@@ -246,12 +247,12 @@ onMounted(loadPage)
         <h2>仓库</h2>
         <div class="form-grid">
           <el-form-item label="发料仓库">
-            <el-select v-model="form.issueWarehouseId" data-test="outsourcing-issue-warehouse-id" filterable>
+            <el-select v-model="form.issueWarehouseId" data-test="outsourcing-issue-warehouse-id" filterable placeholder="请选择发料仓库">
               <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.label" :value="warehouse.id" />
             </el-select>
           </el-form-item>
           <el-form-item label="收货仓库">
-            <el-select v-model="form.receiptWarehouseId" data-test="outsourcing-receipt-warehouse-id" filterable>
+            <el-select v-model="form.receiptWarehouseId" data-test="outsourcing-receipt-warehouse-id" filterable placeholder="请选择收货仓库">
               <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.label" :value="warehouse.id" />
             </el-select>
           </el-form-item>

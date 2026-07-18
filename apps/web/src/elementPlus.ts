@@ -17,6 +17,7 @@ import {
   ElFormItem,
   ElHeader,
   ElInput,
+  ElLoading,
   ElMain,
   ElMenu,
   ElMenuItem,
@@ -61,6 +62,7 @@ import 'element-plus/theme-chalk/el-form.css'
 import 'element-plus/theme-chalk/el-form-item.css'
 import 'element-plus/theme-chalk/el-header.css'
 import 'element-plus/theme-chalk/el-input.css'
+import 'element-plus/theme-chalk/el-loading.css'
 import 'element-plus/theme-chalk/el-main.css'
 import 'element-plus/theme-chalk/el-menu.css'
 import 'element-plus/theme-chalk/el-menu-item.css'
@@ -107,6 +109,7 @@ const elementPlusComponents = [
   ElFormItem,
   ElHeader,
   ElInput,
+  ElLoading,
   ElMain,
   ElMenu,
   ElMenuItem,

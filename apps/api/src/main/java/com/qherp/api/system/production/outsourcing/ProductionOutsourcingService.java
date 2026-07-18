@@ -91,13 +91,14 @@ public class ProductionOutsourcingService {
 
 	@Transactional(readOnly = true)
 	public OutsourcingOrderDetailResponse order(Long id, CurrentUser currentUser) {
-		return orderDetail(id, currentUser);
+		return orderDetail(id, requireCurrentUser(currentUser));
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<OutsourcingOrderSummaryResponse> orders(String keyword, Long projectId, Long supplierId,
 			Long productMaterialId, String status, LocalDate plannedDateFrom, LocalDate plannedDateTo, int page,
 			int pageSize, CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		QueryParts queryParts = outsourcingOrderQueryParts(keyword, projectId, supplierId, productMaterialId, status,
 				plannedDateFrom, plannedDateTo);
 		Long total = this.jdbcTemplate.queryForObject("""
@@ -136,7 +137,7 @@ public class ProductionOutsourcingService {
 				%s
 				order by o.updated_at desc, o.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), (rs, rowNum) -> mapOrderSummary(rs, rowNum, currentUser),
+				""".formatted(queryParts.where()), (rs, rowNum) -> mapOrderSummary(rs, rowNum, viewer),
 				args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
@@ -144,6 +145,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingOrderDetailResponse createOrder(OutsourcingOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_ORDER_CREATE", ORDER_TARGET, 0L,
 				null, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -166,6 +168,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingOrderDetailResponse updateOrder(Long id, OutsourcingOrderRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_ORDER_UPDATE", ORDER_TARGET, id,
 				request.version(), request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -203,6 +206,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingOrderDetailResponse releaseOrder(Long id, OutsourcingActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_ORDER_RELEASE", ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_ORDER_RELEASE", ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -259,6 +263,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingOrderDetailResponse closeOrder(Long id, OutsourcingActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_ORDER_CLOSE", ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_ORDER_CLOSE", ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -288,6 +293,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingOrderDetailResponse cancelOrder(Long id, OutsourcingActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_ORDER_CANCEL", ORDER_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_ORDER_CANCEL", ORDER_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -317,6 +323,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingIssueDetailResponse createIssue(Long orderId, OutsourcingIssueRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_ISSUE_CREATE", ISSUE_TARGET, 0L,
 				null, orderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -346,6 +353,7 @@ public class ProductionOutsourcingService {
 	@Transactional(readOnly = true)
 	public PageResponse<OutsourcingDocumentSummaryResponse> issues(Long orderId, int page, int pageSize,
 			CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		orderRow(orderId).orElseThrow(this::orderNotFound);
 		Long total = this.jdbcTemplate.queryForObject(
 				"select count(*) from mfg_outsourcing_issue where outsourcing_order_id = ?", Long.class, orderId);
@@ -359,19 +367,20 @@ public class ProductionOutsourcingService {
 				group by i.id
 				order by i.updated_at desc, i.id desc
 				limit ? offset ?
-				""", (rs, rowNum) -> mapDocumentSummary(rs, rowNum, "production:outsourcing-issue", currentUser),
+				""", (rs, rowNum) -> mapDocumentSummary(rs, rowNum, "production:outsourcing-issue", viewer),
 				orderId, limit(pageSize), offset(page, pageSize));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
 	public OutsourcingIssueDetailResponse issue(Long orderId, Long id, CurrentUser currentUser) {
-		return issueDetail(orderId, id, currentUser);
+		return issueDetail(orderId, id, requireCurrentUser(currentUser));
 	}
 
 	@Transactional
 	public OutsourcingIssueDetailResponse updateIssue(Long orderId, Long id, OutsourcingIssueRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_ISSUE_UPDATE", ISSUE_TARGET, id,
 				request.version(), orderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -411,6 +420,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingIssueDetailResponse cancelIssue(Long orderId, Long id, OutsourcingActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_ISSUE_CANCEL", ISSUE_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_ISSUE_CANCEL", ISSUE_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -443,6 +453,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingIssueDetailResponse postIssue(Long orderId, Long id, OutsourcingActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_ISSUE_POST", ISSUE_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_ISSUE_POST", ISSUE_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -500,6 +511,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingReceiptResponse createReceipt(Long orderId, OutsourcingReceiptRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_RECEIPT_CREATE", RECEIPT_TARGET,
 				0L, null, orderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -530,6 +542,7 @@ public class ProductionOutsourcingService {
 	@Transactional(readOnly = true)
 	public PageResponse<OutsourcingDocumentSummaryResponse> receipts(Long orderId, int page, int pageSize,
 			CurrentUser currentUser) {
+		CurrentUser viewer = requireCurrentUser(currentUser);
 		orderRow(orderId).orElseThrow(this::orderNotFound);
 		Long total = this.jdbcTemplate.queryForObject(
 				"select count(*) from mfg_outsourcing_receipt where outsourcing_order_id = ?", Long.class, orderId);
@@ -546,19 +559,20 @@ public class ProductionOutsourcingService {
 				where r.outsourcing_order_id = ?
 				order by r.updated_at desc, r.id desc
 				limit ? offset ?
-				""", (rs, rowNum) -> mapDocumentSummary(rs, rowNum, "production:outsourcing-receipt", currentUser),
+				""", (rs, rowNum) -> mapDocumentSummary(rs, rowNum, "production:outsourcing-receipt", viewer),
 				orderId, limit(pageSize), offset(page, pageSize));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
 	public OutsourcingReceiptResponse receipt(Long orderId, Long id, CurrentUser currentUser) {
-		return receiptDetail(orderId, id, currentUser);
+		return receiptDetail(orderId, id, requireCurrentUser(currentUser));
 	}
 
 	@Transactional
 	public OutsourcingReceiptResponse updateReceipt(Long orderId, Long id, OutsourcingReceiptRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = this.actionIdempotencyService.fingerprint("OUTSOURCING_RECEIPT_UPDATE", RECEIPT_TARGET,
 				id, request.version(), orderId, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
@@ -599,6 +613,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingReceiptResponse cancelReceipt(Long orderId, Long id, OutsourcingActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_RECEIPT_CANCEL", RECEIPT_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_RECEIPT_CANCEL", RECEIPT_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -631,6 +646,7 @@ public class ProductionOutsourcingService {
 	@Transactional
 	public OutsourcingReceiptResponse postReceipt(Long orderId, Long id, OutsourcingActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		operator = requireCurrentUser(operator);
 		String fingerprint = actionFingerprint("OUTSOURCING_RECEIPT_POST", RECEIPT_TARGET, id, request);
 		Optional<ProductionActionIdempotencyService.ResultRecord> existing = this.actionIdempotencyService.existing(
 				"OUTSOURCING_RECEIPT_POST", RECEIPT_TARGET, id, request.idempotencyKey(), fingerprint, operator);
@@ -1648,6 +1664,13 @@ public class ProductionOutsourcingService {
 
 	private boolean costVisible(CurrentUser currentUser) {
 		return hasPermission(currentUser, "inventory:valuation:view");
+	}
+
+	private CurrentUser requireCurrentUser(CurrentUser currentUser) {
+		if (currentUser == null) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+		return currentUser;
 	}
 
 	private boolean hasPermission(CurrentUser currentUser, String permissionCode) {

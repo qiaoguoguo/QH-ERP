@@ -134,6 +134,15 @@ const staleRun: MaterialRequirementRunRecord = {
 const runDetail: MaterialRequirementRunDetailRecord = {
   ...completedRun,
   sourceFingerprint: 'fp-026',
+  sourceCounts: {
+    salesDemand: 2,
+    bomComponent: 5,
+    projectStock: 1,
+    publicStock: 3,
+    projectPurchase: 1,
+    publicPurchase: 2,
+    workOrder: 4,
+  },
   previousRunId: null,
   failureCode: null,
   failureSummary: null,
@@ -230,11 +239,13 @@ const otherRequirementAllocation: MaterialRequirementAllocationRecord = {
 const substituteHint: MaterialRequirementSubstituteHintRecord = {
   id: 'HINT-1',
   requirementLineId: 'REQ-1',
-  materialCode: 'M-900',
-  materialName: '伺服电机',
+  mainMaterialId: 31,
+  mainMaterialCode: 'M-900',
+  mainMaterialName: '伺服电机',
+  substituteMaterialId: 32,
   substituteMaterialCode: 'M-901',
   substituteMaterialName: '替代伺服电机',
-  conversionRatio: '1.000000',
+  substituteRate: '1.000000',
   priority: 1,
   hintMessage: '仅供人工评估，不自动抵扣缺料',
 }
@@ -550,6 +561,13 @@ describe('026 订单缺料分析页面', () => {
     expect(wrapper.text()).toContain('短缺物料2')
     expect(wrapper.text()).toContain('采购建议1')
     expect(wrapper.text()).toContain('生产建议1')
+    expect(wrapper.text()).toContain('销售需求2')
+    expect(wrapper.text()).toContain('BOM 组件5')
+    expect(wrapper.text()).toContain('项目库存1')
+    expect(wrapper.text()).toContain('公共库存3')
+    expect(wrapper.text()).toContain('项目采购1')
+    expect(wrapper.text()).toContain('公共采购2')
+    expect(wrapper.text()).toContain('工单供给4')
     expect(wrapper.text()).toContain('PRJ-026 华东产线')
     expect(wrapper.text()).toContain('SO-026/SDP-001')
     expect(wrapper.text()).toContain('FG-026 控制柜')
@@ -591,6 +609,8 @@ describe('026 订单缺料分析页面', () => {
     expect(wrapper.text()).toContain('预留占用库存')
     expect(wrapper.text()).toContain('库存已预留或占用')
     expect(wrapper.text()).toContain('替代伺服电机')
+    expect(wrapper.text()).toContain('替代比例')
+    expect(wrapper.text()).toContain('1')
     expect(wrapper.text()).toContain('仅供人工评估，不自动抵扣缺料')
     expect(wrapper.text()).not.toContain('其他需求行库存')
     expect(wrapper.text()).not.toContain('其他需求行替代料')

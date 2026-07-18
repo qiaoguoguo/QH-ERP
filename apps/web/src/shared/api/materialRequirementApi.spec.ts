@@ -74,6 +74,13 @@ describe('026 订单缺料分析 API', () => {
     })
     expect(apiSource).toContain('failureSummary')
     expect(apiSource).not.toContain('failureMessage')
+    expect(apiSource).toContain('sourceCounts?: Record<string, number>')
+    expect(apiSource).toContain('mainMaterialId')
+    expect(apiSource).toContain('mainMaterialCode')
+    expect(apiSource).toContain('mainMaterialName')
+    expect(apiSource).toContain('substituteMaterialId')
+    expect(apiSource).toContain('substituteRate')
+    expect(apiSource).not.toContain('conversionRatio')
   })
 
   it('按冻结路径分页查询运行、明细和建议，并过滤空查询值', async () => {

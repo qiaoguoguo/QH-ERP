@@ -106,6 +106,24 @@ const traceAllocationGroups: Array<{
   { key: 'production', title: '工单供给', restrictedTitle: '生产来源权限受限' },
   { key: 'reservation', title: '预留占用', restrictedTitle: '库存来源权限受限' },
 ]
+const sourceCountDefinitions = [
+  { key: 'salesDemand', label: '销售需求' },
+  { key: 'bomComponent', label: 'BOM 组件' },
+  { key: 'projectStock', label: '项目库存' },
+  { key: 'publicStock', label: '公共库存' },
+  { key: 'projectPurchase', label: '项目采购' },
+  { key: 'publicPurchase', label: '公共采购' },
+  { key: 'workOrder', label: '工单供给' },
+] as const
+const sourceCountItems = computed(() => {
+  const counts = run.value?.sourceCounts
+  if (!counts) {
+    return []
+  }
+  return sourceCountDefinitions
+    .map(({ key, label }) => ({ key, label, count: counts[key] }))
+    .filter((item) => item.count !== undefined && item.count !== null)
+})
 
 function routeId(): ResourceId {
   const rawId = String(route.params.id ?? '')
@@ -265,6 +283,38 @@ function allocationGroupKey(row: MaterialRequirementAllocationRecord): TraceAllo
 
 function allocationRows(group: TraceAllocationGroupKey): MaterialRequirementAllocationRecord[] {
   return traceDrawer.allocations.filter((row) => allocationGroupKey(row) === group)
+}
+
+function materialIdentityText(
+  id: ResourceId | null | undefined,
+  code: string | null | undefined,
+  name: string | null | undefined,
+  fallbackLabel: string,
+): string {
+  const named = [code, name].filter(Boolean).join(' ').trim()
+  if (named) {
+    return named
+  }
+  return id === null || id === undefined || id === ''
+    ? `${fallbackLabel}信息待补全`
+    : `${fallbackLabel} #${id}`
+}
+
+function substituteMainMaterialText(row: MaterialRequirementSubstituteHintRecord): string {
+  return materialIdentityText(row.mainMaterialId, row.mainMaterialCode, row.mainMaterialName, '主物料')
+}
+
+function substituteMaterialText(row: MaterialRequirementSubstituteHintRecord): string {
+  return materialIdentityText(
+    row.substituteMaterialId,
+    row.substituteMaterialCode,
+    row.substituteMaterialName,
+    '替代物料',
+  )
+}
+
+function substituteRateText(row: MaterialRequirementSubstituteHintRecord): string {
+  return formatMaterialRequirementQuantity(row.substituteRate)
 }
 
 function canViewAllocationGroup(group: TraceAllocationGroupKey): boolean {
@@ -525,6 +575,9 @@ onMounted(() => {
         <div><strong>生产建议</strong><span>{{ run?.productionSuggestionCount ?? '-' }}</span></div>
         <div><strong>异常/受限</strong><span>{{ run?.exceptionCount ?? 0 }}</span></div>
         <div><strong>基准时间</strong><span>{{ formatMaterialRequirementDateTime(run?.asOfTime) }}</span></div>
+        <div v-for="item in sourceCountItems" :key="item.key">
+          <strong>{{ item.label }}</strong><span>{{ item.count }}</span>
+        </div>
       </div>
     </section>
 
@@ -717,10 +770,13 @@ onMounted(() => {
         <div v-else class="table-scroll">
           <el-table :data="traceDrawer.substituteHints" empty-text="暂无替代料提示" stripe>
             <el-table-column label="主物料" min-width="160" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
+              <template #default="{ row }">{{ substituteMainMaterialText(row) }}</template>
             </el-table-column>
             <el-table-column label="替代物料" min-width="180" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.substituteMaterialCode }} {{ row.substituteMaterialName }}</template>
+              <template #default="{ row }">{{ substituteMaterialText(row) }}</template>
+            </el-table-column>
+            <el-table-column label="替代比例" min-width="100" align="right">
+              <template #default="{ row }">{{ substituteRateText(row) }}</template>
             </el-table-column>
             <el-table-column label="提示" min-width="260" show-overflow-tooltip>
               <template #default="{ row }">{{ row.hintMessage || '仅供人工评估，不抵扣缺料' }}</template>

@@ -426,7 +426,14 @@ const displayName = computed(() => authStore.currentUser?.displayName ?? authSto
 const logoutError = ref('')
 const logoutLoading = ref(false)
 const sessionHydrating = ref(false)
-const sidebarCollapsed = ref(false)
+
+function initialSidebarCollapsed() {
+  return typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(max-width: 390px)').matches
+}
+
+const sidebarCollapsed = ref(initialSidebarCollapsed())
 const sidebarToggleLabel = computed(() => sidebarCollapsed.value ? '展开菜单' : '收起菜单')
 const sidebarToggleIcon = computed(() => sidebarCollapsed.value ? Expand : Fold)
 

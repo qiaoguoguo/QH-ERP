@@ -2,6 +2,7 @@ import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { AccountPermissionApiError } from '../../../shared/api/accountPermissionApi'
 import type {
@@ -244,7 +245,7 @@ function setSession(permissions: string[]) {
   return pinia
 }
 
-async function mountWithRouter(component: unknown, path: string, permissions: string[]) {
+async function mountWithRouter(component: Component, path: string, permissions: string[]) {
   const pinia = setSession(permissions)
   const router = createRouter({
     history: createMemoryHistory(),
@@ -260,7 +261,7 @@ async function mountWithRouter(component: unknown, path: string, permissions: st
   })
   await router.push(path)
   await router.isReady()
-  const wrapper = mount(component as never, {
+  const wrapper = mount(component, {
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -280,6 +281,12 @@ function expectButtonDisabled(wrapper: VueWrapper, testId: string, disabled: boo
   const button = wrapper.findComponent(`[data-test="${testId}"]`) as VueWrapper
   expect(button.exists()).toBe(true)
   expect(Boolean((button.props() as { disabled?: boolean }).disabled)).toBe(disabled)
+}
+
+function expectSelectPlaceholder(wrapper: VueWrapper, testId: string, placeholder: string) {
+  const select = wrapper.findComponent(`[data-test="${testId}"]`) as VueWrapper
+  expect(select.exists()).toBe(true)
+  expect((select.props() as { placeholder?: string }).placeholder).toBe(placeholder)
 }
 
 describe('027 外协执行页面族', () => {
@@ -422,6 +429,21 @@ describe('027 外协执行页面族', () => {
       plannedQuantity: '12.000000',
       idempotencyKey: 'outsourcing-key',
     }))
+  })
+
+  it('创建表单所有业务选择控件提供明确中文占位', async () => {
+    const { wrapper } = await mountWithRouter(ProductionOutsourcingOrderFormView, '/production/outsourcing-orders/create', [
+      'production:outsourcing:view',
+      'production:outsourcing:create',
+    ])
+
+    expectSelectPlaceholder(wrapper, 'outsourcing-ownership-type', '请选择归属')
+    expectSelectPlaceholder(wrapper, 'outsourcing-project-id', '请选择项目')
+    expectSelectPlaceholder(wrapper, 'outsourcing-supplier-id', '请选择供应商')
+    expectSelectPlaceholder(wrapper, 'outsourcing-product-material-id', '请选择成品物料')
+    expectSelectPlaceholder(wrapper, 'outsourcing-bom-id', '请选择 BOM')
+    expectSelectPlaceholder(wrapper, 'outsourcing-issue-warehouse-id', '请选择发料仓库')
+    expectSelectPlaceholder(wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
   })
 
   it('详情展示项目、供应商、来源、BOM、用料和执行单据，并按 allowedActions 执行发布关闭取消', async () => {

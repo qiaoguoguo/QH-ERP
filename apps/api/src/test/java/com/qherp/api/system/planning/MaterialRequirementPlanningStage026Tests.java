@@ -748,6 +748,10 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 						+ "/substitute-hints?page=1&pageSize=50"));
 		JsonNode hint = findSubstituteHint(hints.get("items"), rawRequirement.get("id").longValue(),
 				fixture.rawMaterialId(), fixture.substituteMaterialId());
+		assertJsonTextEquals(hint, "mainMaterialCode", materialCode(fixture.rawMaterialId()));
+		assertJsonTextEquals(hint, "mainMaterialName", materialName(fixture.rawMaterialId()));
+		assertJsonTextEquals(hint, "substituteMaterialCode", materialCode(fixture.substituteMaterialId()));
+		assertJsonTextEquals(hint, "substituteMaterialName", materialName(fixture.substituteMaterialId()));
 		assertThat(hint.get("priority").intValue()).isEqualTo(1);
 		assertDecimal(hint, "substituteRate", "1.000000");
 
@@ -1361,6 +1365,17 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 				"shortageMaterialCount", "purchaseSuggestionCount", "productionSuggestionCount", "exceptionCount",
 				"asOfBusinessDate", "asOfTime", "completedAt", "createdByName", "stale", "expired",
 				"failureCode", "failureSummary", "allowedActions", "previousRunId", "sourceCounts");
+		softly.assertThat(detail.get("allowedActions")).as("运行详情 allowedActions 必须保持顶层数组").isNotNull();
+		softly.assertThat(detail.get("allowedActions").isArray()).as("运行详情 allowedActions 必须保持顶层数组").isTrue();
+		JsonNode sourceCounts = detail.get("sourceCounts");
+		softly.assertThat(sourceCounts).as("运行详情 sourceCounts 必须保持顶层对象").isNotNull();
+		softly.assertThat(sourceCounts.isObject()).as("运行详情 sourceCounts 必须保持顶层对象").isTrue();
+		softly.assertThat(sourceCounts.propertyNames())
+			.containsExactly("salesDemand", "bomComponent", "projectStock", "publicStock", "projectPurchase",
+					"publicPurchase", "workOrder");
+		sourceCounts.properties().forEach((property) -> softly.assertThat(property.getValue().isNumber())
+			.as("sourceCounts." + property.getKey() + " 必须是数字")
+			.isTrue());
 		assertJsonNumberOrNull(softly, detail, "projectCount", "运行详情 projectCount 类型");
 		assertJsonNumberOrNull(softly, detail, "requirementLineCount", "运行详情 requirementLineCount 类型");
 		assertJsonNumberOrNull(softly, detail, "shortageMaterialCount", "运行详情 shortageMaterialCount 类型");
@@ -1517,7 +1532,7 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 						+ requirement.get("id").longValue() + "&page=1&pageSize=50"));
 		JsonNode restrictedHint = firstItem(restrictedHints);
 		assertSourceFieldsRedacted(softly, restrictedHint, "低权限替代提示", "substituteMaterialCode",
-				"substituteMaterialName");
+				"substituteMaterialName", "mainMaterialCode", "mainMaterialName");
 
 		AuthenticatedSession sourceVisible = createPlanningUserAndLogin("mrp-review-source-visible-",
 				"MRP_REVIEW_SOURCE_VISIBLE_",
@@ -1534,7 +1549,7 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 						+ requirement.get("id").longValue() + "&page=1&pageSize=50"));
 		JsonNode visibleHint = firstItem(visibleHints);
 		assertHasTextJsonFields(softly, visibleHint, "来源权限补齐后的替代提示", "substituteMaterialCode",
-				"substituteMaterialName");
+				"substituteMaterialName", "mainMaterialCode", "mainMaterialName");
 		softly.assertAll();
 	}
 
@@ -1960,6 +1975,21 @@ class MaterialRequirementPlanningStage026Tests extends PostgresIntegrationTest {
 					'test', now(), 'test', now())
 				returning id
 				""", Long.class, code, code + " material", materialType, sourceType, categoryId, unitId);
+	}
+
+	private String materialCode(long materialId) {
+		return this.jdbcTemplate.queryForObject("select code from mst_material where id = ?", String.class,
+				materialId);
+	}
+
+	private String materialName(long materialId) {
+		return this.jdbcTemplate.queryForObject("select name from mst_material where id = ?", String.class,
+				materialId);
+	}
+
+	private void assertJsonTextEquals(JsonNode node, String field, String expected) {
+		assertThat(node.get(field)).as(field + " 字段必须存在").isNotNull();
+		assertThat(node.get(field).asText()).isEqualTo(expected);
 	}
 
 	private BomItemSeed bomItem(int lineNo, long materialId, long unitId, String quantity) {

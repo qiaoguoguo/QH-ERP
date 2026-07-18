@@ -208,4 +208,20 @@ describe('销售项目列表页', () => {
     expect(wrapper.find('.sales-project-table-scroll').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('暂无销售项目')
   })
+
+  it('列表空数据只保留主空态，不显示表格空态或零条分页', async () => {
+    salesProjectApiMock.projects.list.mockResolvedValueOnce({
+      items: [],
+      page: 1,
+      pageSize: 10,
+      total: 0,
+      totalPages: 0,
+    })
+    const { wrapper } = await mountList()
+
+    expect(wrapper.findComponent({ name: 'ElEmpty' }).exists()).toBe(true)
+    expect(wrapper.find('.sales-project-table-scroll').exists()).toBe(false)
+    expect(wrapper.findComponent({ name: 'ElPagination' }).exists()).toBe(false)
+    expect(wrapper.text().match(/暂无销售项目/g)).toHaveLength(1)
+  })
 })

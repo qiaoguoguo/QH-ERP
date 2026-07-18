@@ -1400,3 +1400,56 @@ body .app-main .report-filter-bar .report-date-picker {
     max-width: calc(100vw - 24px);
   }
 }
+
+@media (max-width: 390px) {
+  .app-shell {
+    position: relative;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 40;
+    width: min(288px, 86vw) !important;
+    height: 100svh;
+    max-height: none;
+    border-right: 1px solid var(--qherp-sidebar-border);
+    border-bottom: 0;
+    box-shadow: 18px 0 34px rgb(15 23 42 / 0.22);
+    transform: translateX(0);
+  }
+
+  .app-sidebar.is-collapsed {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    flex: 0 0 56px;
+    width: 100% !important;
+    height: 56px;
+    max-height: 56px;
+    border-right: 0;
+    border-bottom: 1px solid var(--qherp-sidebar-border);
+    box-shadow: none;
+    transform: none;
+  }
+
+  .app-sidebar.is-collapsed .brand {
+    height: 56px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 10px;
+    padding: 10px 12px;
+  }
+
+  .app-sidebar.is-collapsed .brand-copy {
+    display: flex;
+  }
+
+  .app-sidebar.is-collapsed .side-menu-scroll {
+    display: none;
+  }
+
+  .app-sidebar.is-collapsed .sidebar-toggle {
+    margin-left: auto;
+  }
+}
