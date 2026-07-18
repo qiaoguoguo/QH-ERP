@@ -30,6 +30,7 @@ const payment: PaymentSummaryRecord = {
   method: 'BANK_TRANSFER',
   status: 'DRAFT',
   createdByName: '财务员',
+  version: 3,
 }
 
 describe('付款记录列表页', () => {

@@ -21,6 +21,22 @@ const canMatch = computed(() => Boolean(record.value?.allowedActions?.includes('
 const canConfirm = computed(() => Boolean(record.value?.allowedActions?.includes('CONFIRM')) && authStore.hasPermission(financePermissions.purchaseInvoiceConfirm))
 const canCancel = computed(() => Boolean(record.value?.allowedActions?.includes('CANCEL')) && authStore.hasPermission(financePermissions.purchaseInvoiceCancel))
 
+function partyName(record: PurchaseInvoiceRecord) {
+  return record.partyName || record.partnerName || record.supplierName || '-'
+}
+
+function payableLinkText(link: NonNullable<PurchaseInvoiceRecord['payableLinks']>[number]) {
+  const parts = [link.payableNo]
+  const totalAmount = link.totalAmount ?? link.amount
+  if (totalAmount !== undefined && totalAmount !== null && totalAmount !== '') {
+    parts.push(`总额 ${formatFinanceAmount(totalAmount)}`)
+  }
+  if (link.unpaidAmount !== undefined && link.unpaidAmount !== null && link.unpaidAmount !== '') {
+    parts.push(`未付 ${formatFinanceAmount(link.unpaidAmount)}`)
+  }
+  return parts.join(' ')
+}
+
 async function loadRecord() {
   try {
     record.value = await financeInvoiceApi.purchaseInvoices.get(route.params.id as string)
@@ -102,6 +118,7 @@ onMounted(loadRecord)
       <div><span>发票状态</span><strong>{{ invoiceStatusText(record.status) }}</strong></div>
       <div><span>匹配状态</span><strong>{{ matchStatusText(record.matchStatus) }}</strong></div>
       <div><span>结算状态</span><strong>{{ settlementStatusText(record.settlementStatus) }}</strong></div>
+      <div><span>往来方</span><strong>{{ partyName(record) }}</strong></div>
       <div><span>来源类型</span><strong>{{ financeSourceTypeText(record.sourceType) }}</strong></div>
       <div><span>含税金额</span><strong>{{ formatFinanceAmount(record.totalAmount) }}</strong></div>
       <div><span>未结余额</span><strong>{{ formatFinanceAmount(record.unsettledAmount) }}</strong></div>
@@ -109,7 +126,11 @@ onMounted(loadRecord)
     <div v-if="record" class="finance-section-grid">
       <section class="finance-section"><span class="finance-section-title">匹配摘要</span><p>{{ matchStatusText(record.matchStatus) }}，差异数 {{ record.differenceCount ?? 0 }}</p></section>
       <section class="finance-section"><span class="finance-section-title">三单明细</span><p v-for="diff in record.matching?.differences" :key="diff.message">{{ diff.message }}</p></section>
-      <section class="finance-section"><span class="finance-section-title">应付链接</span><p v-for="link in record.payableLinks" :key="link.payableNo">{{ link.payableNo }} {{ formatFinanceAmount(link.amount) }}</p></section>
+      <section class="finance-section">
+        <span class="finance-section-title">应付链接</span>
+        <p v-if="!record.payableLinks?.length">暂无应付链接</p>
+        <p v-for="link in record.payableLinks" :key="link.payableNo">{{ payableLinkText(link) }}</p>
+      </section>
       <section class="finance-section"><span class="finance-section-title">付款/预付核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-if="!record.voucherDrafts?.length">暂无凭证草稿</p><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
     </div>

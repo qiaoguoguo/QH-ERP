@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { financeInvoiceApi, type PurchaseInvoiceMatchingResult } from '../../shared/api/financeInvoiceApi'
+import { financeInvoiceApi, type PurchaseInvoiceMatchingFact, type PurchaseInvoiceMatchingResult, type PurchaseInvoiceMatchingRow } from '../../shared/api/financeInvoiceApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { financeErrorMessage, formatFinanceAmount, matchStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
@@ -19,7 +19,7 @@ async function loadMatching() {
   }
 }
 
-function rowValue(row: Record<string, unknown> | null | undefined, key: string) {
+function rowValue(row: PurchaseInvoiceMatchingFact | null | undefined, key: keyof PurchaseInvoiceMatchingFact) {
   const value = row?.[key]
   if (value === null || value === undefined || value === '') {
     return '-'
@@ -27,12 +27,12 @@ function rowValue(row: Record<string, unknown> | null | undefined, key: string) 
   return String(value)
 }
 
-function rowAmount(row: Record<string, unknown> | null | undefined, key: string) {
+function rowAmount(row: PurchaseInvoiceMatchingFact | null | undefined, key: keyof PurchaseInvoiceMatchingFact) {
   return formatFinanceAmount(rowValue(row, key))
 }
 
-function rowDifferenceText(row: { differences?: Array<{ message: string }> }) {
-  return row.differences?.map((item) => item.message).join('；') || '无差异'
+function rowDifferenceText(row: PurchaseInvoiceMatchingRow) {
+  return row.differences?.map((item) => item.message).join('；') || matchStatusText(row.matchStatus)
 }
 
 onMounted(loadMatching)
@@ -55,14 +55,26 @@ onMounted(loadMatching)
           <el-table-column prop="lineNo" label="行号" min-width="80" />
           <el-table-column label="物料" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template></el-table-column>
           <el-table-column label="订单数量" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.order, 'quantity') }}</template></el-table-column>
+          <el-table-column label="订单未税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'taxExcludedUnitPrice') }}</template></el-table-column>
+          <el-table-column label="订单含税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'taxIncludedUnitPrice') }}</template></el-table-column>
           <el-table-column label="订单税率" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.order, 'taxRate') }}</template></el-table-column>
-          <el-table-column label="订单含税金额" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'totalAmount') }}</template></el-table-column>
+          <el-table-column label="订单未税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'taxExcludedAmount') }}</template></el-table-column>
+          <el-table-column label="订单税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'taxAmount') }}</template></el-table-column>
+          <el-table-column label="订单含税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.order, 'taxIncludedAmount') }}</template></el-table-column>
           <el-table-column label="入库数量" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.receipt, 'quantity') }}</template></el-table-column>
+          <el-table-column label="入库未税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'taxExcludedUnitPrice') }}</template></el-table-column>
+          <el-table-column label="入库含税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'taxIncludedUnitPrice') }}</template></el-table-column>
           <el-table-column label="入库税率" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.receipt, 'taxRate') }}</template></el-table-column>
-          <el-table-column label="入库含税金额" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'totalAmount') }}</template></el-table-column>
+          <el-table-column label="入库未税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'taxExcludedAmount') }}</template></el-table-column>
+          <el-table-column label="入库税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'taxAmount') }}</template></el-table-column>
+          <el-table-column label="入库含税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.receipt, 'taxIncludedAmount') }}</template></el-table-column>
           <el-table-column label="发票数量" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.invoice, 'quantity') }}</template></el-table-column>
+          <el-table-column label="发票未税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'taxExcludedUnitPrice') }}</template></el-table-column>
+          <el-table-column label="发票含税单价" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'taxIncludedUnitPrice') }}</template></el-table-column>
           <el-table-column label="发票税率" min-width="110" align="right"><template #default="{ row }">{{ rowValue(row.invoice, 'taxRate') }}</template></el-table-column>
-          <el-table-column label="发票含税金额" min-width="130" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'totalAmount') }}</template></el-table-column>
+          <el-table-column label="发票未税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'taxExcludedAmount') }}</template></el-table-column>
+          <el-table-column label="发票税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'taxAmount') }}</template></el-table-column>
+          <el-table-column label="发票含税额" min-width="120" align="right"><template #default="{ row }">{{ rowAmount(row.invoice, 'taxIncludedAmount') }}</template></el-table-column>
           <el-table-column label="结构化差异" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ rowDifferenceText(row) }}</template></el-table-column>
         </el-table>
       </div>

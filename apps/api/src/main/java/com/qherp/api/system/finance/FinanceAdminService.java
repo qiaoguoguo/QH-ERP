@@ -301,14 +301,15 @@ public class FinanceAdminService {
 				       case when count(distinct r.id) = 1 then min(r.receivable_no) else '多目标核销' end as receivable_no,
 				       p.customer_id, c.name as customer_name,
 				       p.receipt_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_receipt p
 				join mst_customer c on c.id = p.customer_id
 				left join fin_receipt_allocation a on a.receipt_id = p.id
 				left join fin_receivable r on r.id = a.receivable_id
 				%s
 				group by p.id, p.receipt_no, p.customer_id, c.name, p.receipt_date, p.amount, p.method,
-				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at,
+				         p.version
 				order by p.updated_at desc, p.id desc
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapReceiptSummary, args.toArray());
@@ -657,14 +658,15 @@ public class FinanceAdminService {
 				       case when count(distinct py.id) = 1 then min(py.payable_no) else '多目标核销' end as payable_no,
 				       p.supplier_id, s.name as supplier_name,
 				       p.payment_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_payment p
 				join mst_supplier s on s.id = p.supplier_id
 				left join fin_payment_allocation a on a.payment_id = p.id
 				left join fin_payable py on py.id = a.payable_id
 				%s
 				group by p.id, p.payment_no, p.supplier_id, s.name, p.payment_date, p.amount, p.method,
-				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at,
+				         p.version
 				order by p.updated_at desc, p.id desc
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapPaymentSummary, args.toArray());
@@ -1292,14 +1294,15 @@ public class FinanceAdminService {
 				       case when count(distinct r.id) = 1 then min(r.receivable_no) else '多目标核销' end as receivable_no,
 				       p.customer_id, c.name as customer_name,
 				       p.receipt_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_receipt p
 				join mst_customer c on c.id = p.customer_id
 				left join fin_receipt_allocation a on a.receipt_id = p.id
 				left join fin_receivable r on r.id = a.receivable_id
 				where p.id = ?
 				group by p.id, p.receipt_no, p.customer_id, c.name, p.receipt_date, p.amount, p.method,
-				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at,
+				         p.version
 				""", this::mapReceiptSummary, id).stream().findFirst();
 	}
 
@@ -1326,14 +1329,15 @@ public class FinanceAdminService {
 				       case when count(distinct py.id) = 1 then min(py.payable_no) else '多目标核销' end as payable_no,
 				       p.supplier_id, s.name as supplier_name,
 				       p.payment_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_payment p
 				join mst_supplier s on s.id = p.supplier_id
 				left join fin_payment_allocation a on a.payment_id = p.id
 				left join fin_payable py on py.id = a.payable_id
 				where p.id = ?
 				group by p.id, p.payment_no, p.supplier_id, s.name, p.payment_date, p.amount, p.method,
-				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at,
+				         p.version
 				""", this::mapPaymentSummary, id).stream().findFirst();
 	}
 
@@ -1390,7 +1394,7 @@ public class FinanceAdminService {
 		return this.jdbcTemplate.query("""
 				select p.id, p.receipt_no, a.receivable_id, r.receivable_no, p.customer_id, c.name as customer_name,
 				       p.receipt_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_receipt p
 				join fin_receipt_allocation a on a.receipt_id = p.id
 				join fin_receivable r on r.id = a.receivable_id
@@ -1405,7 +1409,7 @@ public class FinanceAdminService {
 		return this.jdbcTemplate.query("""
 				select p.id, p.payment_no, a.payable_id, py.payable_no, p.supplier_id, s.name as supplier_name,
 				       p.payment_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
-				       p.updated_at, p.posted_by, p.posted_at
+				       p.updated_at, p.posted_by, p.posted_at, p.version
 				from fin_payment p
 				join fin_payment_allocation a on a.payment_id = p.id
 				join fin_payable py on py.id = a.payable_id
@@ -1595,7 +1599,7 @@ public class FinanceAdminService {
 				rs.getBigDecimal("amount"), rs.getString("method"), rs.getString("status"), rs.getString("remark"),
 				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("posted_by"),
-				rs.getObject("posted_at", OffsetDateTime.class));
+				rs.getObject("posted_at", OffsetDateTime.class), rs.getLong("version"));
 	}
 
 	private PaymentSummaryResponse mapPaymentSummary(ResultSet rs, int rowNum) throws SQLException {
@@ -1604,7 +1608,7 @@ public class FinanceAdminService {
 				rs.getObject("payment_date", LocalDate.class), rs.getBigDecimal("amount"), rs.getString("method"),
 				rs.getString("status"), rs.getString("remark"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
-				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class));
+				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class), rs.getLong("version"));
 	}
 
 	private Long nullableLong(ResultSet rs, String column) throws SQLException {
@@ -1859,7 +1863,7 @@ public class FinanceAdminService {
 	public record ReceiptSummaryResponse(Long id, String receiptNo, Long receivableId, String receivableNo,
 			Long customerId, String customerName, LocalDate receiptDate, BigDecimal amount, String method,
 			String status, String remark, String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt,
-			String postedByName, OffsetDateTime postedAt) {
+			String postedByName, OffsetDateTime postedAt, Long version) {
 	}
 
 	public record ReceiptDetailResponse(Long id, String receiptNo, Long receivableId, String receivableNo,
@@ -1898,7 +1902,7 @@ public class FinanceAdminService {
 	public record PaymentSummaryResponse(Long id, String paymentNo, Long payableId, String payableNo, Long supplierId,
 			String supplierName, LocalDate paymentDate, BigDecimal amount, String method, String status, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName,
-			OffsetDateTime postedAt) {
+			OffsetDateTime postedAt, Long version) {
 	}
 
 	public record PaymentDetailResponse(Long id, String paymentNo, Long payableId, String payableNo, Long supplierId,

@@ -92,6 +92,8 @@ const salesInvoice = {
   sourceId: 501,
   sourceNo: 'SS-001',
   customerName: '华东客户',
+  partyName: '华东客户',
+  partnerName: '华东客户',
   ownershipType: 'PROJECT',
   projectId: 188,
   projectName: '项目 A',
@@ -108,8 +110,8 @@ const salesInvoice = {
   updatedAt: '2026-08-03T09:00:00+08:00',
   version: 2,
   allowedActions: ['UPDATE', 'CONFIRM', 'CANCEL'],
-  sources: [{ sourceType: 'SALES_SHIPMENT', sourceNo: 'SS-001', summary: '销售出库 SS-001', restricted: false }],
-  receivableLinks: [{ receivableNo: 'AR-001', amount: '113.00' }],
+  sources: [{ sourceType: 'SALES_SHIPMENT', sourceId: 501, sourceNo: 'SS-001', sourceSummary: '销售出库 SS-001', businessDate: '2026-08-03', amount: '113.00', restricted: false, restrictedReasons: [] }],
+  receivableLinks: [{ receivableId: 301, receivableNo: 'AR-001', status: 'PARTIALLY_RECEIVED', totalAmount: '113.00', receivedAmount: '70.00', unreceivedAmount: '43.00', linkMode: 'AUTO' }],
   settlements: [{ documentNo: 'RC-001', amount: '70.00' }],
   voucherDrafts: [{ draftNo: 'VD-001', status: 'DRAFT' }],
   lines: [{
@@ -179,6 +181,8 @@ const purchaseInvoice = {
   sourceId: 601,
   sourceNo: 'PR-001',
   supplierName: '外协供应商',
+  partyName: '外协供应商',
+  partnerName: '外协供应商',
   invoiceType: 'GENERAL_VAT',
   sourceType: 'PURCHASE_RECEIPT',
   ownershipType: 'PUBLIC',
@@ -202,15 +206,15 @@ const purchaseInvoice = {
       key: 'PR-001-1',
       materialCode: 'MAT-B',
       materialName: '原料 B',
-      order: { quantity: '3.000000', pretaxUnitPrice: '100.00', taxRate: '0.130000', totalAmount: '226.00' },
-      receipt: { quantity: '3.000000', pretaxUnitPrice: '100.00', taxRate: '0.130000', totalAmount: '226.00' },
-      invoice: { quantity: '3.000000', pretaxUnitPrice: '101.00', taxRate: '0.130000', totalAmount: '228.26' },
-      differences: [{ type: 'PRICE', message: '未税单价差异', orderValue: '100.00', receiptValue: '100.00', invoiceValue: '101.00' }],
+      order: { quantity: '3.000000', taxExcludedUnitPrice: '66.666667', taxIncludedUnitPrice: '75.333333', taxRate: '0.130000', taxExcludedAmount: '200.00', taxAmount: '26.00', taxIncludedAmount: '226.00' },
+      receipt: { quantity: '3.000000', taxExcludedUnitPrice: '66.666667', taxIncludedUnitPrice: '75.333333', taxRate: '0.130000', taxExcludedAmount: '200.00', taxAmount: '26.00', taxIncludedAmount: '226.00' },
+      invoice: { quantity: '3.000000', taxExcludedUnitPrice: '67.800000', taxIncludedUnitPrice: '76.613333', taxRate: '0.130000', taxExcludedAmount: '203.40', taxAmount: '26.44', taxIncludedAmount: '229.84' },
+      matchStatus: 'EXCEPTION',
     }],
-    differences: [{ type: 'PRICE', message: '未税单价差异', orderValue: '100.00', receiptValue: '100.00', invoiceValue: '101.00' }],
+    differences: [{ type: 'PRICE', message: '未税单价差异', orderValue: '66.666667', receiptValue: '66.666667', invoiceValue: '67.800000' }],
   },
-  sources: [{ sourceType: 'PURCHASE_RECEIPT', sourceNo: 'PR-001', summary: '采购入库 PR-001' }],
-  payableLinks: [],
+  sources: [{ sourceType: 'PURCHASE_RECEIPT', sourceId: 601, sourceNo: 'PR-001', sourceSummary: '采购入库 PR-001', businessDate: '2026-08-04', amount: '226.00', restricted: false, restrictedReasons: [] }],
+  payableLinks: [{ payableId: 401, payableNo: 'AP-001', status: 'PARTIALLY_PAID', totalAmount: '226.00', paidAmount: '40.00', unpaidAmount: '186.00', linkMode: 'AUTO' }],
   settlements: [],
   voucherDrafts: [],
   lines: [{
@@ -377,7 +381,7 @@ describe('028 财务页面', () => {
     settlementApiMock.settlementWorkbench.funds.mockResolvedValue(page([advanceReceipt], 1, 50))
     settlementApiMock.settlementWorkbench.targets.mockResolvedValue(page([
       { targetType: 'SALES_INVOICE', targetId: 11, targetNo: 'SI-001', originalAmount: '113.00', settledAmount: '70.00', adjustedAmount: '0.00', allocatedAmount: '0.00', unsettledAmount: '43.00', status: 'CONFIRMED', sourceSummary: '销售发票 SI-001', version: 2 },
-      { targetType: 'RECEIVABLE', targetId: 12, targetNo: 'AR-002', originalAmount: '200.00', settledAmount: '0.00', adjustedAmount: '0.00', allocatedAmount: '0.00', unsettledAmount: '200.00', status: 'CONFIRMED', sourceSummary: '应收 AR-002', version: 3 },
+      { targetType: 'RECEIVABLE', targetId: 12, targetNo: 'AR-002', originalAmount: '200.00', settledAmount: '0.00', adjustedAmount: '0.00', allocatedAmount: '0.00', unsettledAmount: '200.00', status: 'PARTIALLY_RECEIVED', sourceSummary: '应收 AR-002', version: 3 },
     ], 1, 50))
     settlementApiMock.settlementWorkbench.allocations.mockResolvedValue(page([{
       id: 71,
@@ -450,9 +454,21 @@ describe('028 财务页面', () => {
       sourceLines: [expect.objectContaining({ invoiceQuantity: '2.500000' })],
     }))
 
+    invoiceApiMock.salesInvoices.get.mockResolvedValueOnce({
+      ...salesInvoice,
+      customerName: '',
+      partyName: '后端往来客户',
+      sources: [{ sourceType: 'SALES_SHIPMENT', sourceId: 501, sourceNo: 'SS-DTO-001', sourceSummary: '销售出库 SS-DTO-001', businessDate: '2026-08-03', amount: '113.00', restricted: false, restrictedReasons: [] }],
+      receivableLinks: [{ receivableId: 302, receivableNo: 'AR-DTO-001', status: 'PARTIALLY_RECEIVED', totalAmount: '113.00', receivedAmount: '70.00', unreceivedAmount: '43.00', linkMode: 'AUTO' }],
+    })
     const { wrapper: detailWrapper } = await mountFinanceView(SalesInvoiceDetailView, ['finance:sales-invoice:view', 'finance:sales-invoice:confirm'], '/finance/sales-invoices/11')
     expect(detailWrapper.text()).toContain('确认后不可普通编辑')
+    expect(detailWrapper.text()).toContain('后端往来客户')
     expect(detailWrapper.text()).toContain('应收链接')
+    expect(detailWrapper.text()).toContain('AR-DTO-001')
+    expect(detailWrapper.text()).toContain('未收 43.00')
+    expect(detailWrapper.text()).toContain('销售出库 SS-DTO-001')
+    expect(detailWrapper.text()).toContain('2026-08-03')
     expect(detailWrapper.find('[data-test="confirm-sales-invoice"]').exists()).toBe(true)
     await detailWrapper.find('[data-test="confirm-sales-invoice"]').trigger('click')
     await flushPromises()
@@ -466,6 +482,14 @@ describe('028 财务页面', () => {
       '/finance/sales-invoices/11/edit',
     )
 
+    expect(invoiceApiMock.salesInvoiceCandidates.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceId: 501,
+      customerId: 88,
+      ownershipType: 'PROJECT',
+      projectId: 188,
+      page: 1,
+      pageSize: 10,
+    }))
     expect(wrapper.text()).toContain('真实客户')
     expect(wrapper.text()).toContain('SS-001')
     expect(wrapper.text()).toContain('113.00')
@@ -478,6 +502,26 @@ describe('028 财务页面', () => {
       version: 2,
       sourceLines: [expect.objectContaining({ sourceLineId: 1001, invoiceQuantity: '2.500000' })],
     }))
+  })
+
+  it('已确认销售发票直达编辑路由时进入只读态且保存不可达', async () => {
+    invoiceApiMock.salesInvoices.get.mockResolvedValueOnce({
+      ...salesInvoice,
+      status: 'CONFIRMED',
+      allowedActions: [],
+    })
+    const { wrapper } = await mountFinanceView(
+      SalesInvoiceFormView,
+      ['finance:sales-invoice:view', 'finance:sales-invoice:update'],
+      '/finance/sales-invoices/11/edit',
+    )
+
+    expect(wrapper.text()).toContain('确认后不可普通编辑')
+    expect(wrapper.find('[data-test="save-sales-invoice"]').attributes('disabled')).toBeDefined()
+    invoiceApiMock.salesInvoices.update.mockClear()
+    await wrapper.find('[data-test="save-sales-invoice"]').trigger('click')
+    await flushPromises()
+    expect(invoiceApiMock.salesInvoices.update).not.toHaveBeenCalled()
   })
 
   it('采购发票与三单匹配页面展示零容差差异、外协来源和确认禁用原因', async () => {
@@ -506,8 +550,19 @@ describe('028 财务页面', () => {
       sourceLines: [expect.objectContaining({ orderLineId: 2001, receiptLineId: 2002, invoiceQuantity: '3.000000' })],
     }))
 
+    invoiceApiMock.purchaseInvoices.get.mockResolvedValueOnce({
+      ...purchaseInvoice,
+      supplierName: '',
+      partyName: '后端供应商',
+      sources: [{ sourceType: 'PURCHASE_RECEIPT', sourceId: 601, sourceNo: 'PR-DTO-001', sourceSummary: '采购入库 PR-DTO-001', businessDate: '2026-08-04', amount: '226.00', restricted: false, restrictedReasons: [] }],
+      payableLinks: [{ payableId: 402, payableNo: 'AP-DTO-001', status: 'PARTIALLY_PAID', totalAmount: '226.00', paidAmount: '40.00', unpaidAmount: '186.00', linkMode: 'AUTO' }],
+    })
     const { wrapper: detailWrapper } = await mountFinanceView(PurchaseInvoiceDetailView, ['finance:purchase-invoice:view', 'finance:purchase-invoice:match', 'finance:purchase-invoice:confirm'], '/finance/purchase-invoices/21')
     expect(detailWrapper.text()).toContain('存在三单差异，零容差规则禁止确认')
+    expect(detailWrapper.text()).toContain('后端供应商')
+    expect(detailWrapper.text()).toContain('AP-DTO-001')
+    expect(detailWrapper.text()).toContain('未付 186.00')
+    expect(detailWrapper.text()).toContain('采购入库 PR-DTO-001')
     expect(detailWrapper.find('[data-test="confirm-purchase-invoice"]').attributes('disabled')).toBeDefined()
     await detailWrapper.find('[data-test="match-purchase-invoice"]').trigger('click')
     await flushPromises()
@@ -517,6 +572,12 @@ describe('028 财务页面', () => {
     expect(matchingWrapper.text()).toContain('订单事实')
     expect(matchingWrapper.text()).toContain('入库事实')
     expect(matchingWrapper.text()).toContain('发票事实')
+    expect(matchingWrapper.text()).toContain('66.666667')
+    expect(matchingWrapper.text()).toContain('67.800000')
+    expect(matchingWrapper.text()).toContain('203.40')
+    expect(matchingWrapper.text()).toContain('26.44')
+    expect(matchingWrapper.text()).toContain('229.84')
+    expect(matchingWrapper.text()).toContain('存在差异')
     expect(matchingWrapper.text()).toContain('未税单价差异')
   })
 
@@ -537,6 +598,15 @@ describe('028 财务页面', () => {
       '/finance/purchase-invoices/21/edit',
     )
 
+    expect(invoiceApiMock.purchaseInvoiceCandidates.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceType: 'PURCHASE_RECEIPT',
+      sourceId: 601,
+      supplierId: 99,
+      ownershipType: 'PROJECT',
+      projectId: 188,
+      page: 1,
+      pageSize: 10,
+    }))
     expect(wrapper.text()).toContain('真实供应商')
     expect(wrapper.text()).toContain('PR-001')
     expect(wrapper.text()).toContain('226.00')
@@ -551,6 +621,26 @@ describe('028 财务页面', () => {
     }))
   })
 
+  it('已确认采购发票直达编辑路由时进入只读态且保存不可达', async () => {
+    invoiceApiMock.purchaseInvoices.get.mockResolvedValueOnce({
+      ...purchaseInvoice,
+      status: 'CONFIRMED',
+      allowedActions: [],
+    })
+    const { wrapper } = await mountFinanceView(
+      PurchaseInvoiceFormView,
+      ['finance:purchase-invoice:view', 'finance:purchase-invoice:update'],
+      '/finance/purchase-invoices/21/edit',
+    )
+
+    expect(wrapper.text()).toContain('确认后不可普通编辑')
+    expect(wrapper.find('[data-test="save-purchase-invoice"]').attributes('disabled')).toBeDefined()
+    invoiceApiMock.purchaseInvoices.update.mockClear()
+    await wrapper.find('[data-test="save-purchase-invoice"]').trigger('click')
+    await flushPromises()
+    expect(invoiceApiMock.purchaseInvoices.update).not.toHaveBeenCalled()
+  })
+
   it('费用单页面表达项目公共归属、供应商费用和非正式成本边界', async () => {
     const { wrapper: listWrapper } = await mountFinanceView(ExpenseListView, ['finance:expense:view', 'finance:expense:create'], '/finance/expenses')
     expect(listWrapper.text()).toContain('记录项目/公共供应商费用归属')
@@ -562,10 +652,15 @@ describe('028 财务页面', () => {
     expect(expenseApiMock.expenseCategories.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 100 }))
     expect(masterDataApiMock.suppliers.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 200 }))
     expect(salesProjectApiMock.projects.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 200 }))
-    expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 10 }))
+    expect(expenseApiMock.expenseSourceCandidates.list).not.toHaveBeenCalled()
     expect(formWrapper.text()).not.toContain('外协订单')
+    expect(formWrapper.text()).toContain('选择采购入库或外协收货后加载来源候选')
     expect(formWrapper.text()).toContain('来源净可用金额')
     expect(formWrapper.text()).toContain('0.00')
+    await setSelectValue(formWrapper, 4, 'PURCHASE_RECEIPT')
+    await buttonsByText(formWrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenCalledWith(expect.objectContaining({ sourceType: 'PURCHASE_RECEIPT', page: 1, pageSize: 10 }))
     await setSelectValue(formWrapper, 0, 'PROJECT')
     await setSelectValue(formWrapper, 2, 188)
     await formWrapper.find('input[name="expense-business-date"]').setValue('2026-08-05')
@@ -648,6 +743,10 @@ describe('028 财务页面', () => {
     await wrapper.find('[data-test="select-settlement-target"]').trigger('click')
     expect(wrapper.text()).not.toContain('单目标核销金额')
     expect(wrapper.text()).not.toContain('项目 ID')
+    expect(wrapper.text()).toContain('应收账款')
+    expect(wrapper.text()).toContain('部分收款')
+    expect(wrapper.text()).not.toContain('RECEIVABLE')
+    expect(wrapper.text()).not.toContain('PARTIALLY_RECEIVED')
     expect(wrapper.find('input[name="settlement-allocation-amount"]').exists()).toBe(false)
     await wrapper.find('input[name="settlement-target-amount-11"]').setValue('999.00')
     expect(wrapper.text()).toContain('本次核销金额不能超过资金可用余额或目标未结余额')
@@ -858,6 +957,75 @@ describe('028 财务页面', () => {
       version: 4,
       idempotencyKey: expect.any(String),
     })
+  })
+
+  it('凭证草稿生成可通过已过账付款和已过账核销业务候选提交真实版本', async () => {
+    const { wrapper } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'finance:voucher-draft:generate'],
+      '/finance/voucher-drafts',
+    )
+
+    await setSelectValue(wrapper, 0, 'PAYMENT')
+    await buttonsByText(wrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    expect(financeApiMock.payments.list).toHaveBeenCalledWith(expect.objectContaining({ status: 'POSTED', page: 1, pageSize: 20 }))
+    await setSelectValue(wrapper, 1, 'PAYMENT:91')
+    await wrapper.find('[data-test="generate-voucher-draft"]').trigger('click')
+    await flushPromises()
+    expect(voucherApiMock.voucherDrafts.generate).toHaveBeenLastCalledWith({
+      sourceType: 'PAYMENT',
+      sourceId: 91,
+      version: 5,
+      idempotencyKey: expect.any(String),
+    })
+
+    voucherApiMock.voucherDrafts.generate.mockClear()
+    await setSelectValue(wrapper, 0, 'SETTLEMENT_ALLOCATION')
+    await buttonsByText(wrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    expect(settlementApiMock.settlementWorkbench.allocations).toHaveBeenCalledWith(expect.objectContaining({ status: 'POSTED', page: 1, pageSize: 20 }))
+    await setSelectValue(wrapper, 1, 'SETTLEMENT_ALLOCATION:71')
+    await wrapper.find('[data-test="generate-voucher-draft"]').trigger('click')
+    await flushPromises()
+    expect(voucherApiMock.voucherDrafts.generate).toHaveBeenCalledWith({
+      sourceType: 'SETTLEMENT_ALLOCATION',
+      sourceId: 71,
+      version: 2,
+      idempotencyKey: expect.any(String),
+    })
+  })
+
+  it('凭证草稿来源缺真实版本时不启用生成按钮且不提交伪造版本', async () => {
+    financeApiMock.receipts.list.mockResolvedValueOnce(page([{
+      id: 82,
+      receiptNo: 'RC-NO-VERSION',
+      receivableId: 12,
+      receivableNo: 'AR-002',
+      customerId: 88,
+      customerName: '真实客户',
+      receiptDate: '2026-08-06',
+      amount: '100.00',
+      method: 'BANK_TRANSFER',
+      status: 'POSTED',
+      createdByName: '财务用户',
+    }]))
+    const { wrapper } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'finance:voucher-draft:generate'],
+      '/finance/voucher-drafts',
+    )
+
+    await setSelectValue(wrapper, 0, 'RECEIPT')
+    await buttonsByText(wrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    await setSelectValue(wrapper, 1, 'RECEIPT:82')
+
+    expect(wrapper.find('[data-test="generate-voucher-draft"]').attributes('disabled')).toBeDefined()
+    voucherApiMock.voucherDrafts.generate.mockClear()
+    await wrapper.find('[data-test="generate-voucher-draft"]').trigger('click')
+    await flushPromises()
+    expect(voucherApiMock.voucherDrafts.generate).not.toHaveBeenCalled()
   })
 
   it('费用详情和发票详情使用多态来源追溯并显示真实受限原因', async () => {

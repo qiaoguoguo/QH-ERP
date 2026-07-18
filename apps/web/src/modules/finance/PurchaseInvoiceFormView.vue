@@ -30,7 +30,7 @@ const candidatesLoading = ref(false)
 const error = ref('')
 const submitting = ref(false)
 const candidatePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const candidateFilters = reactive({ keyword: '', businessDateFrom: '', businessDateTo: '' })
+const candidateFilters = reactive({ keyword: '' })
 const form = reactive({
   invoiceDate: '',
   invoiceType: 'GENERAL_VAT' as InvoiceType,
@@ -50,7 +50,14 @@ const selectedSupplierName = computed(() => (
 ))
 const selectedProjectName = computed(() => projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? '')
 const selectedCandidateBalance = computed(() => selected.value[0]?.availableAmount ?? selected.value[0]?.totalAmount ?? candidates.value[0]?.availableAmount ?? candidates.value[0]?.totalAmount ?? '0.00')
+const readOnlyReason = computed(() => {
+  if (!isEdit.value || !detail.value) return ''
+  if (detail.value.status === 'CONFIRMED') return '确认后不可普通编辑'
+  if (!(detail.value.allowedActions ?? []).includes('UPDATE')) return '当前采购发票不可编辑'
+  return ''
+})
 const saveDisabledReason = computed(() => {
+  if (readOnlyReason.value) return readOnlyReason.value
   if (!form.invoiceDate) return '请选择发票日期'
   if (!form.supplierId) return '请选择供应商'
   if (form.ownershipType === 'PROJECT' && !form.projectId) return '请选择项目'
@@ -116,11 +123,11 @@ async function loadCandidates() {
   try {
     const page = await financeInvoiceApi.purchaseInvoiceCandidates.list({
       keyword: candidateFilters.keyword,
+      sourceId: selected.value[0]?.sourceId ?? detail.value?.sourceId ?? undefined,
       supplierId: normalizeOptionalId(form.supplierId),
       ownershipType: form.ownershipType,
+      projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) : undefined,
       sourceType: form.sourceType,
-      businessDateFrom: candidateFilters.businessDateFrom,
-      businessDateTo: candidateFilters.businessDateTo,
       page: candidatePagination.page,
       pageSize: candidatePagination.pageSize,
     })

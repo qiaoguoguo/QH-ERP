@@ -36,6 +36,7 @@ const receipt: ReceiptSummaryRecord = {
   createdByName: '财务员',
   postedByName: '财务主管',
   postedAt: '2026-07-10T09:00:00+08:00',
+  version: 3,
 }
 const draftReceipt: ReceiptSummaryRecord = {
   ...receipt,

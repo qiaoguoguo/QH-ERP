@@ -45,7 +45,7 @@ interface VoucherSourceCandidate {
   partyName?: string | null
   ownershipText?: string
   amount?: string | number | null
-  version: number
+  version?: number
   status?: string
   summary: string
   disabledReason?: string
@@ -53,6 +53,14 @@ interface VoucherSourceCandidate {
 
 const sourceCandidates = ref<VoucherSourceCandidate[]>([])
 const selectedSourceCandidate = computed(() => sourceCandidates.value.find((item) => item.key === generation.selectedKey) ?? null)
+const generateDisabled = computed(() => {
+  const source = selectedSourceCandidate.value
+  return generating.value
+    || !authStore.hasPermission(financePermissions.voucherDraftGenerate)
+    || !source
+    || source.version === undefined
+    || Boolean(source.disabledReason)
+})
 
 function balanceText(record: VoucherDraftRecord) {
   return record.balanced ? '借贷平衡' : '借贷不平衡'
@@ -160,7 +168,7 @@ function cashCandidate(record: ReceiptSummaryRecord | PaymentSummaryRecord, sour
     partyName,
     ownershipText: '',
     amount: record.amount,
-    version: record.version ?? 0,
+    version: record.version,
     status: record.status,
     summary: `${financeSourceTypeText(sourceType)} ${sourceNo}${partyName ? ` ${partyName}` : ''}`,
     disabledReason: record.version === undefined ? '来源缺少版本，暂不能生成凭证草稿' : undefined,
@@ -226,12 +234,13 @@ async function generateDraft() {
   if (generating.value || !authStore.hasPermission(financePermissions.voucherDraftGenerate)) {
     return
   }
-  if (!selectedSourceCandidate.value) {
+  const source = selectedSourceCandidate.value
+  if (!source) {
     actionError.value = '请选择已确认或已过账的业务来源'
     return
   }
-  if (selectedSourceCandidate.value.disabledReason) {
-    actionError.value = selectedSourceCandidate.value.disabledReason
+  if (source.disabledReason || source.version === undefined) {
+    actionError.value = source.disabledReason ?? '来源缺少版本，暂不能生成凭证草稿'
     return
   }
   if (!(await confirmAction('从当前来源生成非正式凭证草稿？'))) {
@@ -241,9 +250,9 @@ async function generateDraft() {
   actionError.value = ''
   try {
     await financeVoucherDraftApi.voucherDrafts.generate({
-      sourceType: selectedSourceCandidate.value.sourceType,
-      sourceId: selectedSourceCandidate.value.sourceId,
-      version: selectedSourceCandidate.value.version,
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+      version: source.version,
       idempotencyKey: `voucher-draft-generate-${Date.now()}`,
     })
     await loadRecords()
@@ -297,7 +306,7 @@ onMounted(() => {
           <span class="finance-muted-note"> {{ source.disabledReason ?? source.ownershipText }} {{ formatFinanceAmount(source.amount) }}</span>
         </el-option>
       </el-select>
-      <el-button data-test="generate-voucher-draft" type="primary" :loading="generating" :disabled="generating || !authStore.hasPermission(financePermissions.voucherDraftGenerate)" @click="generateDraft">从来源生成草稿</el-button>
+      <el-button data-test="generate-voucher-draft" type="primary" :loading="generating" :disabled="generateDisabled" @click="generateDraft">从来源生成草稿</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>

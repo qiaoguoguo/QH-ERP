@@ -20,6 +20,22 @@ const actionLoading = ref(false)
 const canConfirm = computed(() => Boolean(record.value?.allowedActions?.includes('CONFIRM')) && authStore.hasPermission(financePermissions.salesInvoiceConfirm))
 const canCancel = computed(() => Boolean(record.value?.allowedActions?.includes('CANCEL')) && authStore.hasPermission(financePermissions.salesInvoiceCancel))
 
+function partyName(record: SalesInvoiceRecord) {
+  return record.partyName || record.partnerName || record.customerName || '-'
+}
+
+function receivableLinkText(link: NonNullable<SalesInvoiceRecord['receivableLinks']>[number]) {
+  const parts = [link.receivableNo]
+  const totalAmount = link.totalAmount ?? link.amount
+  if (totalAmount !== undefined && totalAmount !== null && totalAmount !== '') {
+    parts.push(`总额 ${formatFinanceAmount(totalAmount)}`)
+  }
+  if (link.unreceivedAmount !== undefined && link.unreceivedAmount !== null && link.unreceivedAmount !== '') {
+    parts.push(`未收 ${formatFinanceAmount(link.unreceivedAmount)}`)
+  }
+  return parts.join(' ')
+}
+
 async function loadRecord() {
   loading.value = true
   error.value = ''
@@ -95,13 +111,17 @@ onMounted(loadRecord)
     <div v-if="record" class="finance-summary-strip">
       <div><span>发票状态</span><strong>{{ invoiceStatusText(record.status) }}</strong></div>
       <div><span>结算状态</span><strong>{{ settlementStatusText(record.settlementStatus) }}</strong></div>
-      <div><span>客户</span><strong>{{ record.customerName }}</strong></div>
+      <div><span>往来方</span><strong>{{ partyName(record) }}</strong></div>
       <div><span>价税合计</span><strong>{{ formatFinanceAmount(record.totalAmount) }}</strong></div>
       <div><span>未结余额</span><strong>{{ formatFinanceAmount(record.unsettledAmount) }}</strong></div>
       <div><span>只读原因</span><strong>确认后不可普通编辑</strong></div>
     </div>
     <div v-if="record" class="finance-section-grid">
-      <section class="finance-section"><span class="finance-section-title">应收链接</span><p v-for="link in record.receivableLinks" :key="link.receivableNo">{{ link.receivableNo }} {{ formatFinanceAmount(link.amount) }}</p></section>
+      <section class="finance-section">
+        <span class="finance-section-title">应收链接</span>
+        <p v-if="!record.receivableLinks?.length">暂无应收链接</p>
+        <p v-for="link in record.receivableLinks" :key="link.receivableNo">{{ receivableLinkText(link) }}</p>
+      </section>
       <section class="finance-section"><span class="finance-section-title">收款/预收核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
     </div>

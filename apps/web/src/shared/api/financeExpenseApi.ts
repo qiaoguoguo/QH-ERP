@@ -38,11 +38,6 @@ export interface ExpenseCategoryListParams {
 export interface ExpenseSourceCandidateListParams {
   keyword?: string | null
   sourceType?: ExpenseSourceType | null
-  supplierId?: ResourceId | null
-  ownershipType?: OwnershipType | null
-  projectId?: ResourceId | null
-  businessDateFrom?: string | null
-  businessDateTo?: string | null
   page: number
   pageSize: number
 }
@@ -138,7 +133,7 @@ export function createFinanceExpenseApi(options: FinanceStage028ApiOptions = {})
   const expensePath = (id?: ResourceId) => `/api/admin/finance/expenses${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const expenseQueryKeys = ['keyword', 'supplierId', 'categoryId', 'ownershipType', 'sourceType', 'status', 'settlementStatus', 'businessDateFrom', 'businessDateTo', 'costRestricted', 'page', 'pageSize'] as const
   const categoryQueryKeys = ['keyword', 'status', 'page', 'pageSize'] as const
-  const sourceQueryKeys = ['keyword', 'sourceType', 'supplierId', 'ownershipType', 'projectId', 'businessDateFrom', 'businessDateTo', 'page', 'pageSize'] as const
+  const sourceQueryKeys = ['keyword', 'sourceType', 'page', 'pageSize'] as const
 
   return {
     expenses: {

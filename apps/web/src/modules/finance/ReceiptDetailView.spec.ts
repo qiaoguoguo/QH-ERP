@@ -24,6 +24,7 @@ const draftReceipt: ReceiptDetailRecord = {
   method: 'BANK_TRANSFER',
   status: 'DRAFT',
   createdByName: '财务员',
+  version: 3,
   allocations: [{
     id: 1,
     receiptId: 20,

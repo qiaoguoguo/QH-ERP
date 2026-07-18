@@ -12,6 +12,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -71,24 +72,77 @@ public class FinanceStage028Service {
 
 	private final BusinessPeriodGuard businessPeriodGuard;
 
+	private final ObjectMapper objectMapper;
+
 	public FinanceStage028Service(JdbcTemplate jdbcTemplate, AuditService auditService,
-			BusinessPeriodGuard businessPeriodGuard) {
+			BusinessPeriodGuard businessPeriodGuard, ObjectMapper objectMapper) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.businessPeriodGuard = businessPeriodGuard;
+		this.objectMapper = objectMapper;
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<Map<String, Object>> salesInvoices(String keyword, Long customerId, Long projectId,
+			String status, String settlementStatus, String invoiceType, LocalDate invoiceDateFrom,
+			LocalDate invoiceDateTo, String externalInvoiceNo, String sourceShipmentNo, CurrentUser currentUser,
+			int page, int pageSize) {
+		requireUser(currentUser, "finance:sales-invoice:view");
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(si.invoice_no ilike ? or si.external_invoice_no ilike ? or si.source_no ilike ? or c.name ilike ?)");
+			String like = "%" + keyword + "%";
+			for (int i = 0; i < 4; i++) {
+				args.add(like);
+			}
+		}
+		if (customerId != null) {
+			conditions.add("si.customer_id = ?");
+			args.add(customerId);
+		}
+		if (projectId != null) {
+			conditions.add("si.project_id = ?");
+			args.add(projectId);
+		}
+		if (hasText(status)) {
+			conditions.add("si.status = ?");
+			args.add(status);
+		}
+		addReceivableSettlementCondition(conditions, settlementStatus);
+		if (hasText(invoiceType)) {
+			conditions.add("si.invoice_type = ?");
+			args.add(invoiceType);
+		}
+		addDateRange(conditions, args, "si.invoice_date", invoiceDateFrom, invoiceDateTo);
+		if (hasText(externalInvoiceNo)) {
+			conditions.add("si.external_invoice_no ilike ?");
+			args.add("%" + externalInvoiceNo + "%");
+		}
+		if (hasText(sourceShipmentNo)) {
+			conditions.add("si.source_no ilike ?");
+			args.add("%" + sourceShipmentNo + "%");
+		}
+		String from = """
+				from fin_sales_invoice si
+				join mst_customer c on c.id = si.customer_id
+				left join fin_receivable ar on ar.id = si.linked_receivable_id
+				""";
+		return filteredPage("si", "si.invoice_date desc, si.id desc", from, conditions, args, page, pageSize,
+				(id) -> salesInvoice(id, currentUser));
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> salesInvoices(String keyword, String status, CurrentUser currentUser,
 			int page, int pageSize) {
-		requireUser(currentUser, "finance:sales-invoice:view");
-		return page("fin_sales_invoice", "invoice_no", keyword, status, page, pageSize,
-				(id) -> salesInvoice(id, currentUser));
+		return salesInvoices(keyword, null, null, status, null, null, null, null, null, null, currentUser, page,
+				pageSize);
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> salesInvoiceCandidates(String keyword, Long sourceId, Long customerId,
-			String ownershipType, Long projectId, CurrentUser currentUser, int page, int pageSize) {
+			String ownershipType, Long projectId, String contractNo, String orderNo, LocalDate shipmentDateFrom,
+			LocalDate shipmentDateTo, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:sales-invoice:view");
 		List<Object> args = new ArrayList<>();
 		String where = " where sh.status = 'POSTED' and sl.quantity > coalesce(inv.invoiced_quantity, 0)";
@@ -114,6 +168,22 @@ public class FinanceStage028Service {
 		if (projectId != null) {
 			where += " and so.project_id = ?";
 			args.add(projectId);
+		}
+		if (hasText(contractNo)) {
+			where += " and exists (select 1 from sal_project_contract sc where sc.id = so.contract_id and sc.contract_no ilike ?)";
+			args.add("%" + contractNo + "%");
+		}
+		if (hasText(orderNo)) {
+			where += " and so.order_no ilike ?";
+			args.add("%" + orderNo + "%");
+		}
+		if (shipmentDateFrom != null) {
+			where += " and sh.business_date >= ?";
+			args.add(shipmentDateFrom);
+		}
+		if (shipmentDateTo != null) {
+			where += " and sh.business_date <= ?";
+			args.add(shipmentDateTo);
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -243,7 +313,7 @@ public class FinanceStage028Service {
 		ActionRequestContext action = mutationRequest(currentUser, "UPDATE", "FINANCE_SALES_INVOICE", id,
 				request.version(), request.idempotencyKey(), fingerprint("SALES_INVOICE_UPDATE", id, request));
 		if (action.resultResourceId() != null) {
-			return salesInvoice(action.resultResourceId(), currentUser);
+			return replayActionResult(action, currentUser, (resourceId) -> salesInvoice(resourceId, currentUser));
 		}
 		InvoiceRow invoice = lockSalesInvoice(id).orElseThrow(this::invoiceNotFound);
 		assertVersion(action.version(), invoice.version());
@@ -291,8 +361,9 @@ public class FinanceStage028Service {
 		insertSalesInvoiceLines(id, source, lines, now);
 		this.auditService.record(currentUser, "FINANCE_SALES_INVOICE_UPDATE", "FINANCE_SALES_INVOICE", id,
 				invoice.documentNo(), servletRequest);
-		recordAction(action, "FINANCE_SALES_INVOICE", id, invoice.version() + 1, currentUser);
-		return salesInvoice(id, currentUser);
+		Map<String, Object> response = salesInvoice(id, currentUser);
+		recordAction(action, "FINANCE_SALES_INVOICE", id, invoice.version() + 1, currentUser, response);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
@@ -300,7 +371,13 @@ public class FinanceStage028Service {
 		requireUser(currentUser, "finance:sales-invoice:view");
 		InvoiceRow row = salesInvoiceRow(id).orElseThrow(this::invoiceNotFound);
 		Map<String, Object> response = invoiceMap(row);
+		String customerName = customer(row.partyId()).map(CustomerRow::name).orElse(null);
+		response.put("customerName", customerName);
+		response.put("partyName", customerName);
+		response.put("partnerName", customerName);
 		response.put("linkedReceivableId", row.linkedReceivableId());
+		response.put("sources", invoiceSources(row));
+		response.put("receivableLinks", receivableLinks(id));
 		response.put("partySettlementSnapshot", partySnapshot(row.partyId(), true,
 				hasPermission(currentUser, "finance:settlement-sensitive:view")));
 		response.put("restrictedReasons", restrictedReasons(currentUser));
@@ -378,24 +455,59 @@ public class FinanceStage028Service {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> purchaseInvoices(String keyword, String status, CurrentUser currentUser,
-			int page, int pageSize) {
+	public PageResponse<Map<String, Object>> purchaseInvoices(String keyword, Long supplierId, String sourceType,
+			String status, String matchStatus, String settlementStatus, LocalDate invoiceDateFrom,
+			LocalDate invoiceDateTo, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:purchase-invoice:view");
-		return page("fin_purchase_invoice", "invoice_no", keyword, status, page, pageSize,
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(pi.invoice_no ilike ? or pi.supplier_invoice_no ilike ? or pi.source_no ilike ? or s.name ilike ?)");
+			String like = "%" + keyword + "%";
+			for (int i = 0; i < 4; i++) {
+				args.add(like);
+			}
+		}
+		if (supplierId != null) {
+			conditions.add("pi.supplier_id = ?");
+			args.add(supplierId);
+		}
+		if (hasText(sourceType)) {
+			conditions.add("pi.source_type = ?");
+			args.add(sourceType);
+		}
+		if (hasText(status)) {
+			conditions.add("pi.status = ?");
+			args.add(status);
+		}
+		if (hasText(matchStatus)) {
+			conditions.add("pi.match_status = ?");
+			args.add(matchStatus);
+		}
+		addPayableSettlementCondition(conditions, settlementStatus);
+		addDateRange(conditions, args, "pi.invoice_date", invoiceDateFrom, invoiceDateTo);
+		String from = """
+				from fin_purchase_invoice pi
+				join mst_supplier s on s.id = pi.supplier_id
+				left join fin_payable ap on ap.id = pi.linked_payable_id
+				""";
+		return filteredPage("pi", "pi.invoice_date desc, pi.id desc", from, conditions, args, page, pageSize,
 				(id) -> purchaseInvoice(id, currentUser));
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> purchaseInvoiceCandidates(String keyword, String sourceType,
-			Long sourceId, Long supplierId, String ownershipType, Long projectId, CurrentUser currentUser, int page,
-			int pageSize) {
+			Long sourceId, Long supplierId, String ownershipType, Long projectId, LocalDate businessDateFrom,
+			LocalDate businessDateTo, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:purchase-invoice:view");
 		List<Map<String, Object>> items = new ArrayList<>();
 		if (!hasText(sourceType) || PURCHASE_RECEIPT.equals(sourceType)) {
-			items.addAll(purchaseReceiptCandidates(keyword, sourceId, supplierId, ownershipType, projectId));
+			items.addAll(purchaseReceiptCandidates(keyword, sourceId, supplierId, ownershipType, projectId,
+					businessDateFrom, businessDateTo));
 		}
 		if (!hasText(sourceType) || OUTSOURCING_RECEIPT.equals(sourceType)) {
-			items.addAll(outsourcingReceiptCandidates(keyword, sourceId, supplierId, ownershipType, projectId));
+			items.addAll(outsourcingReceiptCandidates(keyword, sourceId, supplierId, ownershipType, projectId,
+					businessDateFrom, businessDateTo));
 		}
 		items.sort(candidateComparator());
 		int safePageSize = limit(pageSize);
@@ -432,7 +544,7 @@ public class FinanceStage028Service {
 		}
 		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
 		List<ValidatedInvoiceLine> requestLines = validateInvoiceLines(purchaseRequestLines(request, source, sourceLines),
-				sourceLines, null);
+				source, sourceLines, null);
 		MatchResult matchResult = matchResult(source.settlementKind(), sourceLines, requestLines);
 		DocumentAmounts amounts = invoiceLineAmounts(requestLines);
 		this.businessPeriodGuard.assertWritable(request.invoiceDate(), BusinessPeriodOperation.CREATE,
@@ -484,7 +596,7 @@ public class FinanceStage028Service {
 		ActionRequestContext action = mutationRequest(currentUser, "UPDATE", "FINANCE_PURCHASE_INVOICE", id,
 				request.version(), request.idempotencyKey(), fingerprint("PURCHASE_INVOICE_UPDATE", id, request));
 		if (action.resultResourceId() != null) {
-			return purchaseInvoice(action.resultResourceId(), currentUser);
+			return replayActionResult(action, currentUser, (resourceId) -> purchaseInvoice(resourceId, currentUser));
 		}
 		InvoiceRow invoice = lockPurchaseInvoice(id).orElseThrow(this::invoiceNotFound);
 		assertVersion(action.version(), invoice.version());
@@ -505,7 +617,7 @@ public class FinanceStage028Service {
 		}
 		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
 		List<ValidatedInvoiceLine> requestLines = validateInvoiceLines(purchaseRequestLines(request, source, sourceLines),
-				sourceLines, id);
+				source, sourceLines, id);
 		MatchResult matchResult = matchResult(source.settlementKind(), sourceLines, requestLines);
 		DocumentAmounts amounts = invoiceLineAmounts(requestLines);
 		this.businessPeriodGuard.assertWritable(request.invoiceDate(), BusinessPeriodOperation.UPDATE,
@@ -537,8 +649,9 @@ public class FinanceStage028Service {
 		insertMatchDifferences(id, matchResult.differences(), now);
 		this.auditService.record(currentUser, "FINANCE_PURCHASE_INVOICE_UPDATE", "FINANCE_PURCHASE_INVOICE", id,
 				invoice.documentNo(), servletRequest);
-		recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version() + 1, currentUser);
-		return purchaseInvoice(id, currentUser);
+		Map<String, Object> response = purchaseInvoice(id, currentUser);
+		recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version() + 1, currentUser, response);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
@@ -546,9 +659,15 @@ public class FinanceStage028Service {
 		requireUser(currentUser, "finance:purchase-invoice:view");
 		InvoiceRow row = purchaseInvoiceRow(id).orElseThrow(this::invoiceNotFound);
 		Map<String, Object> response = invoiceMap(row);
+		String supplierName = supplier(row.partyId()).map(SupplierRow::name).orElse(null);
+		response.put("supplierName", supplierName);
+		response.put("partyName", supplierName);
+		response.put("partnerName", supplierName);
 		response.put("settlementKind", row.settlementKind());
 		response.put("matchStatus", row.matchStatus());
 		response.put("linkedPayableId", row.linkedPayableId());
+		response.put("sources", invoiceSources(row));
+		response.put("payableLinks", payableLinks(id));
 		response.put("partySettlementSnapshot", partySnapshot(row.partyId(), false,
 				hasPermission(currentUser, "finance:settlement-sensitive:view")));
 		response.put("restrictedReasons", restrictedReasons(currentUser));
@@ -565,6 +684,7 @@ public class FinanceStage028Service {
 		Map<String, Object> response = new LinkedHashMap<>();
 		response.put("status", row.matchStatus());
 		response.put("differences", matchDifferences(id));
+		response.put("rows", purchaseInvoiceMatchingRows(id));
 		return response;
 	}
 
@@ -697,10 +817,62 @@ public class FinanceStage028Service {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> expenses(String keyword, String status, CurrentUser currentUser, int page,
-			int pageSize) {
+	public PageResponse<Map<String, Object>> expenses(String keyword, Long supplierId, Long categoryId,
+			String ownershipType, Long projectId, String sourceType, String status, String settlementStatus,
+			LocalDate businessDateFrom, LocalDate businessDateTo, Boolean costRestricted, CurrentUser currentUser,
+			int page, int pageSize) {
 		requireUser(currentUser, "finance:expense:view");
-		return page("fin_expense", "expense_no", keyword, status, page, pageSize, (id) -> expense(id, currentUser));
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (hasText(keyword)) {
+			conditions.add("(e.expense_no ilike ? or e.remark ilike ? or s.name ilike ?)");
+			String like = "%" + keyword + "%";
+			args.add(like);
+			args.add(like);
+			args.add(like);
+		}
+		if (supplierId != null) {
+			conditions.add("e.supplier_id = ?");
+			args.add(supplierId);
+		}
+		String category = expenseCategoryCode(categoryId);
+		if (category != null) {
+			conditions.add("exists (select 1 from fin_expense_line el where el.expense_id = e.id and el.expense_category = ?)");
+			args.add(category);
+		}
+		if (hasText(ownershipType)) {
+			conditions.add("e.ownership_type = ?");
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			conditions.add("e.project_id = ?");
+			args.add(projectId);
+		}
+		if (hasText(sourceType)) {
+			if ("NONE".equals(sourceType)) {
+				conditions.add("not exists (select 1 from fin_expense_line el where el.expense_id = e.id and el.source_type is not null)");
+			}
+			else {
+				conditions.add("exists (select 1 from fin_expense_line el where el.expense_id = e.id and el.source_type = ?)");
+				args.add(sourceType);
+			}
+		}
+		if (hasText(status)) {
+			conditions.add("e.status = ?");
+			args.add(status);
+		}
+		addPayableSettlementCondition(conditions, settlementStatus);
+		addDateRange(conditions, args, "e.expense_date", businessDateFrom, businessDateTo);
+		if (costRestricted != null) {
+			conditions.add(Boolean.TRUE.equals(costRestricted) ? "false" : "true");
+		}
+		String from = """
+				from fin_expense e
+				join mst_supplier s on s.id = e.supplier_id
+				left join fin_payable ap on ap.id = e.linked_payable_id
+				""";
+		return filteredPage("e", "e.expense_date desc, e.id desc", from, conditions, args, page, pageSize,
+				(id) -> expense(id, currentUser));
 	}
 
 	@Transactional(readOnly = true)
@@ -722,14 +894,17 @@ public class FinanceStage028Service {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> expenseSourceCandidates(String keyword, String sourceType,
-			CurrentUser currentUser, int page, int pageSize) {
+			CurrentUser currentUser, Long supplierId, String ownershipType, Long projectId, LocalDate businessDateFrom,
+			LocalDate businessDateTo, int page, int pageSize) {
 		requireUser(currentUser, "finance:expense:view");
 		List<Map<String, Object>> items = new ArrayList<>();
 		if (!hasText(sourceType) || PURCHASE_RECEIPT.equals(sourceType)) {
-			items.addAll(purchaseReceiptCandidates(keyword, null, null, null, null));
+			items.addAll(purchaseReceiptCandidates(keyword, null, supplierId, ownershipType, projectId,
+					businessDateFrom, businessDateTo));
 		}
 		if (!hasText(sourceType) || OUTSOURCING_RECEIPT.equals(sourceType)) {
-			items.addAll(outsourcingReceiptCandidates(keyword, null, null, null, null));
+			items.addAll(outsourcingReceiptCandidates(keyword, null, supplierId, ownershipType, projectId,
+					businessDateFrom, businessDateTo));
 		}
 		items.sort(candidateComparator());
 		int safePageSize = limit(pageSize);
@@ -799,7 +974,7 @@ public class FinanceStage028Service {
 		ActionRequestContext action = mutationRequest(currentUser, "UPDATE", "FINANCE_EXPENSE", id, request.version(),
 				request.idempotencyKey(), fingerprint("EXPENSE_UPDATE", id, request));
 		if (action.resultResourceId() != null) {
-			return expense(action.resultResourceId(), currentUser);
+			return replayActionResult(action, currentUser, (resourceId) -> expense(resourceId, currentUser));
 		}
 		ExpenseRow expense = lockExpense(id).orElseThrow(this::expenseNotFound);
 		assertVersion(action.version(), expense.version());
@@ -833,8 +1008,9 @@ public class FinanceStage028Service {
 		insertExpenseLines(id, lines, now);
 		this.auditService.record(currentUser, "FINANCE_EXPENSE_UPDATE", "FINANCE_EXPENSE", id, expense.documentNo(),
 				servletRequest);
-		recordAction(action, "FINANCE_EXPENSE", id, expense.version() + 1, currentUser);
-		return expense(id, currentUser);
+		Map<String, Object> response = expense(id, currentUser);
+		recordAction(action, "FINANCE_EXPENSE", id, expense.version() + 1, currentUser, response);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
@@ -925,10 +1101,12 @@ public class FinanceStage028Service {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> advanceReceipts(String keyword, CurrentUser currentUser, int page,
-			int pageSize) {
+	public PageResponse<Map<String, Object>> advanceReceipts(String keyword, Long customerId, String ownershipType,
+			Long projectId, String status, String settlementStatus, LocalDate businessDateFrom, LocalDate businessDateTo,
+			Boolean availableOnly, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:advance-receipt:view");
-		return cashPage("fin_receipt", "receipt_no", true, keyword, currentUser, page, pageSize);
+		return cashPage("fin_receipt", "receipt_no", true, keyword, customerId, ownershipType, projectId, status,
+				settlementStatus, businessDateFrom, businessDateTo, availableOnly, currentUser, page, pageSize);
 	}
 
 	@Transactional
@@ -993,7 +1171,7 @@ public class FinanceStage028Service {
 		ActionRequestContext action = mutationRequest(currentUser, "UPDATE", "FINANCE_ADVANCE_RECEIPT", id,
 				request.version(), request.idempotencyKey(), fingerprint("ADVANCE_RECEIPT_UPDATE", id, request));
 		if (action.resultResourceId() != null) {
-			return advanceReceipt(action.resultResourceId(), currentUser);
+			return replayActionResult(action, currentUser, (resourceId) -> advanceReceipt(resourceId, currentUser));
 		}
 		CashRow row = lockAdvanceReceipt(id).orElseThrow(this::receiptNotFound);
 		assertVersion(action.version(), row.version());
@@ -1022,8 +1200,9 @@ public class FinanceStage028Service {
 				id);
 		this.auditService.record(currentUser, "FINANCE_ADVANCE_RECEIPT_UPDATE", "FINANCE_RECEIPT", id,
 				row.documentNo(), servletRequest);
-		recordAction(action, "FINANCE_ADVANCE_RECEIPT", id, row.version() + 1, currentUser);
-		return advanceReceipt(id, currentUser);
+		Map<String, Object> response = advanceReceipt(id, currentUser);
+		recordAction(action, "FINANCE_ADVANCE_RECEIPT", id, row.version() + 1, currentUser, response);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
@@ -1092,10 +1271,12 @@ public class FinanceStage028Service {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> prepayments(String keyword, CurrentUser currentUser, int page,
-			int pageSize) {
+	public PageResponse<Map<String, Object>> prepayments(String keyword, Long supplierId, String ownershipType,
+			Long projectId, String status, String settlementStatus, LocalDate businessDateFrom, LocalDate businessDateTo,
+			Boolean availableOnly, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:prepayment:view");
-		return cashPage("fin_payment", "payment_no", false, keyword, currentUser, page, pageSize);
+		return cashPage("fin_payment", "payment_no", false, keyword, supplierId, ownershipType, projectId, status,
+				settlementStatus, businessDateFrom, businessDateTo, availableOnly, currentUser, page, pageSize);
 	}
 
 	@Transactional
@@ -1160,7 +1341,7 @@ public class FinanceStage028Service {
 		ActionRequestContext action = mutationRequest(currentUser, "UPDATE", "FINANCE_PREPAYMENT", id,
 				request.version(), request.idempotencyKey(), fingerprint("PREPAYMENT_UPDATE", id, request));
 		if (action.resultResourceId() != null) {
-			return prepayment(action.resultResourceId(), currentUser);
+			return replayActionResult(action, currentUser, (resourceId) -> prepayment(resourceId, currentUser));
 		}
 		CashRow row = lockPrepayment(id).orElseThrow(this::paymentNotFound);
 		assertVersion(action.version(), row.version());
@@ -1188,8 +1369,9 @@ public class FinanceStage028Service {
 				id);
 		this.auditService.record(currentUser, "FINANCE_PREPAYMENT_UPDATE", "FINANCE_PAYMENT", id, row.documentNo(),
 				servletRequest);
-		recordAction(action, "FINANCE_PREPAYMENT", id, row.version() + 1, currentUser);
-		return prepayment(id, currentUser);
+		Map<String, Object> response = prepayment(id, currentUser);
+		recordAction(action, "FINANCE_PREPAYMENT", id, row.version() + 1, currentUser, response);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
@@ -1258,27 +1440,40 @@ public class FinanceStage028Service {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> settlementFunds(String direction, Long partnerId, CurrentUser currentUser,
-			int page, int pageSize) {
+	public PageResponse<Map<String, Object>> settlementFunds(String direction, String fundType, Long fundId,
+			Long partnerId, String ownershipType, Long projectId, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:settlement-allocation:view");
 		if ("CUSTOMER".equals(direction)) {
-			return receiptFunds(partnerId, currentUser, page, pageSize);
+			if (hasText(fundType) && !"ADVANCE_RECEIPT".equals(fundType) && !"RECEIPT".equals(fundType)) {
+				return PageResponse.of(List.of(), page, limit(pageSize), 0);
+			}
+			return receiptFunds(fundId, partnerId, ownershipType, projectId, currentUser, page, pageSize);
 		}
 		if ("SUPPLIER".equals(direction)) {
-			return paymentFunds(partnerId, currentUser, page, pageSize);
+			if (hasText(fundType) && !"PREPAYMENT".equals(fundType) && !"PAYMENT".equals(fundType)) {
+				return PageResponse.of(List.of(), page, limit(pageSize), 0);
+			}
+			return paymentFunds(fundId, partnerId, ownershipType, projectId, currentUser, page, pageSize);
 		}
 		throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> settlementTargets(String direction, Long partnerId,
-			CurrentUser currentUser, int page, int pageSize) {
+	public PageResponse<Map<String, Object>> settlementTargets(String direction, String targetType, Long partnerId,
+			String ownershipType, Long projectId, CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:settlement-allocation:view");
 		if ("CUSTOMER".equals(direction)) {
-			return receivableTargets(partnerId, page, pageSize);
+			if (hasText(targetType) && !"RECEIVABLE".equals(targetType) && !"SALES_INVOICE".equals(targetType)) {
+				return PageResponse.of(List.of(), page, limit(pageSize), 0);
+			}
+			return receivableTargets(partnerId, ownershipType, projectId, page, pageSize);
 		}
 		if ("SUPPLIER".equals(direction)) {
-			return payableTargets(partnerId, page, pageSize);
+			if (hasText(targetType) && !"PAYABLE".equals(targetType) && !"PURCHASE_INVOICE".equals(targetType)
+					&& !"EXPENSE".equals(targetType)) {
+				return PageResponse.of(List.of(), page, limit(pageSize), 0);
+			}
+			return payableTargets(partnerId, ownershipType, projectId, page, pageSize);
 		}
 		throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 	}
@@ -1485,6 +1680,10 @@ public class FinanceStage028Service {
 		this.jdbcTemplate.update("update " + balanceTable
 				+ " set allocated_amount = ?, available_amount = ?, updated_at = ? where " + idColumn + " = ?",
 				allocated, available, now, row.cashSourceId());
+		String cashTable = "RECEIVABLE".equals(row.settlementSide()) ? "fin_receipt" : "fin_payment";
+		this.jdbcTemplate.update("update " + cashTable
+				+ " set updated_by = ?, updated_at = ?, version = version + 1 where id = ?",
+				currentUser.username(), now, row.cashSourceId());
 		this.jdbcTemplate.update("""
 				update fin_settlement_allocation
 				set status = 'POSTED', posted_by = ?, posted_at = ?, updated_by = ?, updated_at = ?,
@@ -1526,7 +1725,9 @@ public class FinanceStage028Service {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> voucherDrafts(String status, String sourceType, Long sourceId,
-			String keyword, CurrentUser currentUser, int page, int pageSize) {
+			String sourceNo, Long partnerId, Long projectId, Boolean balanced, LocalDate businessDateFrom,
+			LocalDate businessDateTo, LocalDate generatedAtFrom, LocalDate generatedAtTo, String keyword,
+			CurrentUser currentUser, int page, int pageSize) {
 		requireUser(currentUser, "finance:voucher-draft:view");
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
@@ -1541,6 +1742,37 @@ public class FinanceStage028Service {
 		if (sourceId != null) {
 			conditions.add("v.source_id = ?");
 			args.add(sourceId);
+		}
+		if (hasText(sourceNo)) {
+			conditions.add("""
+					(si.invoice_no ilike ? or pi.invoice_no ilike ? or e.expense_no ilike ?
+					 or r.receipt_no ilike ? or p.payment_no ilike ? or a.allocation_no ilike ?)
+					""");
+			String like = "%" + sourceNo + "%";
+			for (int i = 0; i < 6; i++) {
+				args.add(like);
+			}
+		}
+		if (partnerId != null) {
+			conditions.add("v.party_id = ?");
+			args.add(partnerId);
+		}
+		if (projectId != null) {
+			conditions.add("v.project_id = ?");
+			args.add(projectId);
+		}
+		if (balanced != null) {
+			conditions.add(Boolean.TRUE.equals(balanced) ? "v.debit_amount = v.credit_amount"
+					: "v.debit_amount <> v.credit_amount");
+		}
+		addDateRange(conditions, args, "v.business_date", businessDateFrom, businessDateTo);
+		if (generatedAtFrom != null) {
+			conditions.add("v.created_at::date >= ?");
+			args.add(generatedAtFrom);
+		}
+		if (generatedAtTo != null) {
+			conditions.add("v.created_at::date <= ?");
+			args.add(generatedAtTo);
 		}
 		if (hasText(keyword)) {
 			conditions.add("""
@@ -1734,16 +1966,121 @@ public class FinanceStage028Service {
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
+	private PageResponse<Map<String, Object>> filteredPage(String idAlias, String orderBy, String from,
+			List<String> conditions, List<Object> args, int page, int pageSize, DetailResolver resolver) {
+		String where = conditions.isEmpty() ? "" : " where " + String.join(" and ", conditions);
+		Long total = this.jdbcTemplate.queryForObject("select count(*) " + from + where, Long.class, args.toArray());
+		List<Object> pageArgs = new ArrayList<>(args);
+		pageArgs.add(limit(pageSize));
+		pageArgs.add(offset(page, pageSize));
+		List<Long> ids = this.jdbcTemplate.queryForList("select " + idAlias + ".id " + from + where + " order by "
+				+ orderBy + " limit ? offset ?", Long.class, pageArgs.toArray());
+		List<Map<String, Object>> items = ids.stream().map(resolver::resolve).toList();
+		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
+	}
+
+	private void addDateRange(List<String> conditions, List<Object> args, String column, LocalDate from,
+			LocalDate to) {
+		if (from != null) {
+			conditions.add(column + " >= ?");
+			args.add(from);
+		}
+		if (to != null) {
+			conditions.add(column + " <= ?");
+			args.add(to);
+		}
+	}
+
+	private void addReceivableSettlementCondition(List<String> conditions, String settlementStatus) {
+		if (!hasText(settlementStatus)) {
+			return;
+		}
+		switch (settlementStatus) {
+			case "UNLINKED" -> conditions.add("si.linked_receivable_id is null");
+			case "SETTLED" -> conditions.add("si.linked_receivable_id is not null and ar.unreceived_amount = 0");
+			case "PARTIALLY_SETTLED" -> conditions.add("""
+					si.linked_receivable_id is not null
+					and ar.received_amount > 0
+					and ar.unreceived_amount > 0
+					""");
+			default -> conditions.add("si.linked_receivable_id is not null and ar.unreceived_amount > 0");
+		}
+	}
+
+	private void addPayableSettlementCondition(List<String> conditions, String settlementStatus) {
+		if (!hasText(settlementStatus)) {
+			return;
+		}
+		switch (settlementStatus) {
+			case "UNLINKED" -> conditions.add("ap.id is null");
+			case "SETTLED" -> conditions.add("ap.id is not null and ap.unpaid_amount = 0");
+			case "PARTIALLY_SETTLED" -> conditions.add("""
+					ap.id is not null
+					and ap.paid_amount > 0
+					and ap.unpaid_amount > 0
+					""");
+			default -> conditions.add("ap.id is not null and ap.unpaid_amount > 0");
+		}
+	}
+
+	private void addCashStatusCondition(List<String> conditions, List<Object> args, String documentAlias,
+			String balanceAlias, String status, String settlementStatus) {
+		if (hasText(status)) {
+			if ("AVAILABLE".equals(status) || "PARTIALLY_APPLIED".equals(status) || "APPLIED".equals(status)) {
+				addCashSettlementCondition(conditions, balanceAlias, status);
+			}
+			else {
+				conditions.add(documentAlias + ".status = ?");
+				args.add(status);
+			}
+		}
+		if (hasText(settlementStatus)) {
+			addCashSettlementCondition(conditions, balanceAlias, settlementStatus);
+		}
+	}
+
+	private void addCashSettlementCondition(List<String> conditions, String balanceAlias, String settlementStatus) {
+		switch (settlementStatus) {
+			case "AVAILABLE", "UNAPPLIED" -> conditions.add(balanceAlias + ".available_amount = "
+					+ balanceAlias + ".original_amount");
+			case "APPLIED", "SETTLED" -> conditions.add(balanceAlias + ".available_amount = 0");
+			case "PARTIALLY_APPLIED", "PARTIALLY_SETTLED" -> conditions.add(balanceAlias + ".available_amount > 0 and "
+					+ balanceAlias + ".available_amount < " + balanceAlias + ".original_amount");
+			default -> conditions.add("false");
+		}
+	}
+
 	private PageResponse<Map<String, Object>> cashPage(String tableName, String numberColumn, boolean receivableSide,
-			String keyword, CurrentUser currentUser, int page, int pageSize) {
+			String keyword, Long partyId, String ownershipType, Long projectId, String status, String settlementStatus,
+			LocalDate businessDateFrom, LocalDate businessDateTo, Boolean availableOnly, CurrentUser currentUser,
+			int page, int pageSize) {
 		String balanceTable = receivableSide ? "fin_receipt_balance" : "fin_payment_balance";
 		String documentAlias = receivableSide ? "r" : "p";
 		String balanceJoinColumn = receivableSide ? "receipt_id" : "payment_id";
+		String partyColumn = receivableSide ? "customer_id" : "supplier_id";
+		String dateColumn = receivableSide ? "receipt_date" : "payment_date";
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		if (hasText(keyword)) {
 			conditions.add(documentAlias + "." + numberColumn + " ilike ?");
 			args.add("%" + keyword + "%");
+		}
+		if (partyId != null) {
+			conditions.add(documentAlias + "." + partyColumn + " = ?");
+			args.add(partyId);
+		}
+		if (hasText(ownershipType)) {
+			conditions.add("b.ownership_type = ?");
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			conditions.add("b.project_id = ?");
+			args.add(projectId);
+		}
+		addCashStatusCondition(conditions, args, documentAlias, "b", status, settlementStatus);
+		addDateRange(conditions, args, documentAlias + "." + dateColumn, businessDateFrom, businessDateTo);
+		if (Boolean.TRUE.equals(availableOnly)) {
+			conditions.add("b.available_amount > 0");
 		}
 		String where = conditions.isEmpty() ? "" : " where " + String.join(" and ", conditions);
 		String from = " from " + balanceTable + " b join " + tableName + " " + documentAlias + " on "
@@ -1762,7 +2099,7 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> purchaseReceiptCandidates(String keyword, Long sourceId, Long supplierId,
-			String ownershipType, Long projectId) {
+			String ownershipType, Long projectId, LocalDate businessDateFrom, LocalDate businessDateTo) {
 		List<Object> args = new ArrayList<>();
 		String where = " where pr.status = 'POSTED' and pl.quantity > coalesce(inv.invoiced_quantity, 0)";
 		if (hasText(keyword)) {
@@ -1787,6 +2124,14 @@ public class FinanceStage028Service {
 		if (projectId != null) {
 			where += " and po.project_id = ?";
 			args.add(projectId);
+		}
+		if (businessDateFrom != null) {
+			where += " and pr.business_date >= ?";
+			args.add(businessDateFrom);
+		}
+		if (businessDateTo != null) {
+			where += " and pr.business_date <= ?";
+			args.add(businessDateTo);
 		}
 		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'PURCHASE_RECEIPT' as source_type, pr.receipt_no as source_no, pr.id as source_id,
@@ -1824,7 +2169,7 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> outsourcingReceiptCandidates(String keyword, Long sourceId, Long supplierId,
-			String ownershipType, Long projectId) {
+			String ownershipType, Long projectId, LocalDate businessDateFrom, LocalDate businessDateTo) {
 		List<Object> args = new ArrayList<>();
 		String where = " where r.status = 'POSTED' and rl.accepted_quantity > coalesce(inv.invoiced_quantity, 0)";
 		if (hasText(keyword)) {
@@ -1849,6 +2194,14 @@ public class FinanceStage028Service {
 		if (projectId != null) {
 			where += " and r.project_id = ?";
 			args.add(projectId);
+		}
+		if (businessDateFrom != null) {
+			where += " and r.business_date >= ?";
+			args.add(businessDateFrom);
+		}
+		if (businessDateTo != null) {
+			where += " and r.business_date <= ?";
+			args.add(businessDateTo);
 		}
 		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'OUTSOURCING_RECEIPT' as source_type, r.receipt_no as source_no, r.id as source_id,
@@ -1886,13 +2239,25 @@ public class FinanceStage028Service {
 				""", args.toArray()));
 	}
 
-	private PageResponse<Map<String, Object>> receiptFunds(Long partnerId, CurrentUser currentUser, int page,
-			int pageSize) {
+	private PageResponse<Map<String, Object>> receiptFunds(Long fundId, Long partnerId, String ownershipType,
+			Long projectId, CurrentUser currentUser, int page, int pageSize) {
 		List<Object> args = new ArrayList<>();
 		String where = " where b.status = 'POSTED' and b.available_amount > 0";
+		if (fundId != null) {
+			where += " and b.receipt_id = ?";
+			args.add(fundId);
+		}
 		if (partnerId != null) {
 			where += " and b.customer_id = ?";
 			args.add(partnerId);
+		}
+		if (hasText(ownershipType)) {
+			where += " and b.ownership_type = ?";
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			where += " and b.project_id = ?";
+			args.add(projectId);
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -1923,13 +2288,25 @@ public class FinanceStage028Service {
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
-	private PageResponse<Map<String, Object>> paymentFunds(Long partnerId, CurrentUser currentUser, int page,
-			int pageSize) {
+	private PageResponse<Map<String, Object>> paymentFunds(Long fundId, Long partnerId, String ownershipType,
+			Long projectId, CurrentUser currentUser, int page, int pageSize) {
 		List<Object> args = new ArrayList<>();
 		String where = " where b.status = 'POSTED' and b.available_amount > 0";
+		if (fundId != null) {
+			where += " and b.payment_id = ?";
+			args.add(fundId);
+		}
 		if (partnerId != null) {
 			where += " and b.supplier_id = ?";
 			args.add(partnerId);
+		}
+		if (hasText(ownershipType)) {
+			where += " and b.ownership_type = ?";
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			where += " and b.project_id = ?";
+			args.add(projectId);
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -1960,14 +2337,28 @@ public class FinanceStage028Service {
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
-	private PageResponse<Map<String, Object>> receivableTargets(Long partnerId, int page, int pageSize) {
+	private PageResponse<Map<String, Object>> receivableTargets(Long partnerId, String ownershipType, Long projectId,
+			int page, int pageSize) {
 		List<Object> args = new ArrayList<>();
 		String where = " where r.status in ('CONFIRMED', 'PARTIALLY_RECEIVED') and r.unreceived_amount > 0";
 		if (partnerId != null) {
 			where += " and r.customer_id = ?";
 			args.add(partnerId);
 		}
-		Long total = this.jdbcTemplate.queryForObject("select count(*) from fin_receivable r" + where, Long.class,
+		if (hasText(ownershipType)) {
+			where += " and coalesce(case when so.project_id is null then 'PUBLIC' else 'PROJECT' end, 'PUBLIC') = ?";
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			where += " and so.project_id = ?";
+			args.add(projectId);
+		}
+		Long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_receivable r
+				left join sal_sales_shipment sh on r.source_type = 'SALES_SHIPMENT' and sh.id = r.source_id
+				left join sal_sales_order so on so.id = sh.order_id
+				""" + where, Long.class,
 				args.toArray());
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
@@ -1978,6 +2369,8 @@ public class FinanceStage028Service {
 				       r.adjusted_amount, 0::numeric as allocated_amount, r.unreceived_amount as unsettled_amount,
 				       r.status, r.source_no as source_summary, r.version
 				from fin_receivable r
+				left join sal_sales_shipment sh on r.source_type = 'SALES_SHIPMENT' and sh.id = r.source_id
+				left join sal_sales_order so on so.id = sh.order_id
 				""" + where + " " + """
 				order by r.business_date desc, r.id desc
 				limit ? offset ?
@@ -1985,15 +2378,42 @@ public class FinanceStage028Service {
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
-	private PageResponse<Map<String, Object>> payableTargets(Long partnerId, int page, int pageSize) {
+	private PageResponse<Map<String, Object>> payableTargets(Long partnerId, String ownershipType, Long projectId,
+			int page, int pageSize) {
 		List<Object> args = new ArrayList<>();
 		String where = " where p.status in ('CONFIRMED', 'PARTIALLY_PAID') and p.unpaid_amount > 0";
 		if (partnerId != null) {
 			where += " and p.supplier_id = ?";
 			args.add(partnerId);
 		}
-		Long total = this.jdbcTemplate.queryForObject("select count(*) from fin_payable p" + where, Long.class,
-				args.toArray());
+		if (hasText(ownershipType)) {
+			where += """
+					 and coalesce(case
+						when p.source_type = 'PURCHASE_RECEIPT' then po.purchase_mode
+						when p.source_type = 'EXPENSE' then e.ownership_type
+						when p.source_type = 'OUTSOURCING_SETTLEMENT' then pi.ownership_type
+						else 'PUBLIC' end, 'PUBLIC') = ?
+					""";
+			args.add(ownershipType(ownershipType));
+		}
+		if (projectId != null) {
+			where += """
+					 and case
+						when p.source_type = 'PURCHASE_RECEIPT' then po.project_id
+						when p.source_type = 'EXPENSE' then e.project_id
+						when p.source_type = 'OUTSOURCING_SETTLEMENT' then pi.project_id
+						else null end = ?
+					""";
+			args.add(projectId);
+		}
+		String from = """
+				from fin_payable p
+				left join proc_purchase_receipt pr on p.source_type = 'PURCHASE_RECEIPT' and pr.id = p.source_id
+				left join proc_purchase_order po on po.id = pr.order_id
+				left join fin_expense e on p.source_type = 'EXPENSE' and e.id = p.source_id
+				left join fin_purchase_invoice pi on p.source_type = 'OUTSOURCING_SETTLEMENT' and pi.id = p.source_id
+				""";
+		Long total = this.jdbcTemplate.queryForObject("select count(*) " + from + where, Long.class, args.toArray());
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
@@ -2002,8 +2422,7 @@ public class FinanceStage028Service {
 				       p.total_amount as original_amount, p.paid_amount as settled_amount, p.adjusted_amount,
 				       0::numeric as allocated_amount, p.unpaid_amount as unsettled_amount, p.status,
 				       p.source_no as source_summary, p.version
-				from fin_payable p
-				""" + where + " " + """
+				""" + from + where + " " + """
 				order by p.business_date desc, p.id desc
 				limit ? offset ?
 				""", pageArgs.toArray()));
@@ -2334,16 +2753,18 @@ public class FinanceStage028Service {
 				: quantity.setScale(6, RoundingMode.HALF_UP);
 	}
 
-	private BigDecimal invoicedPurchaseQuantity(Long sourceLineId, Long ignoredInvoiceId) {
+	private BigDecimal invoicedPurchaseQuantity(String sourceType, Long sourceLineId, Long ignoredInvoiceId) {
 		String sql = """
 				select coalesce(sum(l.quantity), 0)
 				from fin_purchase_invoice_line l
 				join fin_purchase_invoice i on i.id = l.purchase_invoice_id
 				where l.source_line_id = ?
+				and i.source_type = ?
 				and i.status <> 'CANCELLED'
 				""";
 		List<Object> args = new ArrayList<>();
 		args.add(sourceLineId);
+		args.add(sourceType);
 		if (ignoredInvoiceId != null) {
 			sql += " and i.id <> ?";
 			args.add(ignoredInvoiceId);
@@ -2433,7 +2854,8 @@ public class FinanceStage028Service {
 	private Optional<InvoiceRow> salesInvoiceRow(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, invoice_no as document_no, customer_id as party_id, ownership_type, project_id,
-				       source_type, source_id, source_no, invoice_date as business_date, due_date, invoice_type,
+				       source_type, source_id, source_no, external_invoice_no, remark,
+				       invoice_date as business_date, due_date, invoice_type,
 				       null::varchar as settlement_kind, null::varchar as match_status, tax_excluded_amount,
 				       tax_amount, tax_included_amount, status, linked_receivable_id, null::bigint as linked_payable_id,
 				       version
@@ -2445,7 +2867,8 @@ public class FinanceStage028Service {
 	private Optional<InvoiceRow> lockSalesInvoice(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, invoice_no as document_no, customer_id as party_id, ownership_type, project_id,
-				       source_type, source_id, source_no, invoice_date as business_date, due_date, invoice_type,
+				       source_type, source_id, source_no, external_invoice_no, remark,
+				       invoice_date as business_date, due_date, invoice_type,
 				       null::varchar as settlement_kind, null::varchar as match_status, tax_excluded_amount,
 				       tax_amount, tax_included_amount, status, linked_receivable_id, null::bigint as linked_payable_id,
 				       version
@@ -2458,7 +2881,8 @@ public class FinanceStage028Service {
 	private Optional<InvoiceRow> purchaseInvoiceRow(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, invoice_no as document_no, supplier_id as party_id, ownership_type, project_id,
-				       source_type, source_id, source_no, invoice_date as business_date, due_date, invoice_type,
+				       source_type, source_id, source_no, supplier_invoice_no as external_invoice_no, remark,
+				       invoice_date as business_date, due_date, invoice_type,
 				       settlement_kind, match_status, tax_excluded_amount, tax_amount, tax_included_amount,
 				       status, null::bigint as linked_receivable_id, linked_payable_id, version
 				from fin_purchase_invoice
@@ -2469,7 +2893,8 @@ public class FinanceStage028Service {
 	private Optional<InvoiceRow> lockPurchaseInvoice(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, invoice_no as document_no, supplier_id as party_id, ownership_type, project_id,
-				       source_type, source_id, source_no, invoice_date as business_date, due_date, invoice_type,
+				       source_type, source_id, source_no, supplier_invoice_no as external_invoice_no, remark,
+				       invoice_date as business_date, due_date, invoice_type,
 				       settlement_kind, match_status, tax_excluded_amount, tax_amount, tax_included_amount,
 				       status, null::bigint as linked_receivable_id, linked_payable_id, version
 				from fin_purchase_invoice
@@ -2621,6 +3046,66 @@ public class FinanceStage028Service {
 				where purchase_invoice_id = ?
 				order by line_no asc
 				""", invoiceId));
+	}
+
+	private List<Map<String, Object>> purchaseInvoiceMatchingRows(Long invoiceId) {
+		return this.jdbcTemplate.query("""
+				select pil.id, pil.line_no, pil.source_line_id, pil.material_id, m.code as material_code,
+				       m.name as material_name, u.name as unit_name,
+				       ol.quantity as order_quantity, ol.tax_rate as order_tax_rate,
+				       ol.tax_excluded_unit_price as order_tax_excluded_unit_price,
+				       ol.tax_included_unit_price as order_tax_included_unit_price,
+				       ol.tax_excluded_amount as order_tax_excluded_amount,
+				       ol.tax_included_amount - ol.tax_excluded_amount as order_tax_amount,
+				       ol.tax_included_amount as order_tax_included_amount,
+				       rl.quantity as receipt_quantity, ol.tax_rate as receipt_tax_rate,
+				       ol.tax_excluded_unit_price as receipt_tax_excluded_unit_price,
+				       ol.tax_included_unit_price as receipt_tax_included_unit_price,
+				       round(rl.quantity * ol.tax_excluded_unit_price, 2) as receipt_tax_excluded_amount,
+				       round(rl.quantity * (ol.tax_included_unit_price - ol.tax_excluded_unit_price), 2)
+				           as receipt_tax_amount,
+				       round(rl.quantity * ol.tax_included_unit_price, 2) as receipt_tax_included_amount,
+				       pil.quantity as invoice_quantity, pil.tax_rate as invoice_tax_rate,
+				       pil.tax_excluded_unit_price as invoice_tax_excluded_unit_price,
+				       pil.tax_included_unit_price as invoice_tax_included_unit_price,
+				       pil.tax_excluded_amount as invoice_tax_excluded_amount,
+				       pil.tax_amount as invoice_tax_amount,
+				       pil.tax_included_amount as invoice_tax_included_amount,
+				       pil.match_status
+				from fin_purchase_invoice_line pil
+				left join proc_purchase_receipt_line rl on rl.id = pil.source_line_id
+				left join proc_purchase_order_line ol on ol.id = rl.order_line_id
+				left join mst_material m on m.id = pil.material_id
+				left join mst_unit u on u.id = pil.unit_id
+				where pil.purchase_invoice_id = ?
+				order by pil.line_no asc
+				""", (rs, rowNum) -> {
+			Map<String, Object> row = new LinkedHashMap<>();
+			row.put("id", rs.getLong("id"));
+			row.put("lineNo", rs.getInt("line_no"));
+			row.put("sourceLineId", rs.getLong("source_line_id"));
+			row.put("materialId", rs.getLong("material_id"));
+			row.put("materialCode", rs.getString("material_code"));
+			row.put("materialName", rs.getString("material_name"));
+			row.put("unitName", rs.getString("unit_name"));
+			row.put("order", matchingFact(rs, "order"));
+			row.put("receipt", matchingFact(rs, "receipt"));
+			row.put("invoice", matchingFact(rs, "invoice"));
+			row.put("matchStatus", rs.getString("match_status"));
+			return row;
+		}, invoiceId);
+	}
+
+	private Map<String, Object> matchingFact(ResultSet rs, String prefix) throws SQLException {
+		Map<String, Object> fact = new LinkedHashMap<>();
+		fact.put("quantity", decimalString(rs.getBigDecimal(prefix + "_quantity")));
+		fact.put("taxRate", decimalString(rs.getBigDecimal(prefix + "_tax_rate")));
+		fact.put("taxExcludedUnitPrice", decimalString(rs.getBigDecimal(prefix + "_tax_excluded_unit_price")));
+		fact.put("taxIncludedUnitPrice", decimalString(rs.getBigDecimal(prefix + "_tax_included_unit_price")));
+		fact.put("taxExcludedAmount", decimalString(rs.getBigDecimal(prefix + "_tax_excluded_amount")));
+		fact.put("taxAmount", decimalString(rs.getBigDecimal(prefix + "_tax_amount")));
+		fact.put("taxIncludedAmount", decimalString(rs.getBigDecimal(prefix + "_tax_included_amount")));
+		return fact;
 	}
 
 	private List<ValidatedInvoiceLine> purchaseInvoiceLineRows(Long invoiceId) {
@@ -3039,7 +3524,8 @@ public class FinanceStage028Service {
 	private ActionRequestContext actionRequest(CurrentUser currentUser, String action, String resourceType,
 			Long resourceId, Long version, String idempotencyKey, String requestFingerprint) {
 		Optional<ActionRecord> existing = this.jdbcTemplate.query("""
-				select result_resource_type, result_resource_id, result_version, request_fingerprint
+				select result_resource_type, result_resource_id, result_version, request_fingerprint,
+				       result_snapshot::text as result_snapshot
 				from fin_stage028_action_idempotency
 				where operator_user_id = ?
 				and action = ?
@@ -3047,7 +3533,8 @@ public class FinanceStage028Service {
 				and resource_id = ?
 				and idempotency_key = ?
 				""", (rs, rowNum) -> new ActionRecord(rs.getString("result_resource_type"),
-				rs.getLong("result_resource_id"), rs.getLong("result_version"), rs.getString("request_fingerprint")),
+				rs.getLong("result_resource_id"), rs.getLong("result_version"), rs.getString("request_fingerprint"),
+				rs.getString("result_snapshot")),
 				currentUser.id(), action, resourceType, resourceId == null ? 0L : resourceId, idempotencyKey).stream()
 			.findFirst();
 		if (existing.isPresent()) {
@@ -3056,27 +3543,65 @@ public class FinanceStage028Service {
 				throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
 			}
 			return new ActionRequestContext(action, resourceType, resourceId, version, idempotencyKey,
-					requestFingerprint, record.resultResourceType(), record.resultResourceId(), record.resultVersion());
+					requestFingerprint, record.resultResourceType(), record.resultResourceId(), record.resultVersion(),
+					actionSnapshot(record.resultSnapshot()));
 		}
 		return new ActionRequestContext(action, resourceType, resourceId, version, idempotencyKey, requestFingerprint,
-				null, null, null);
+				null, null, null, null);
 	}
 
 	private void recordAction(ActionRequestContext action, String resultResourceType, Long resultResourceId,
 			Long resultVersion, CurrentUser currentUser) {
+		recordAction(action, resultResourceType, resultResourceId, resultVersion, currentUser, null);
+	}
+
+	private void recordAction(ActionRequestContext action, String resultResourceType, Long resultResourceId,
+			Long resultVersion, CurrentUser currentUser, Map<String, Object> resultSnapshot) {
 		try {
+			String snapshot = resultSnapshot == null ? null : json(resultSnapshot);
 			this.jdbcTemplate.update("""
 					insert into fin_stage028_action_idempotency (
 						operator_user_id, operator_username, action, resource_type, resource_id, resource_version,
-						idempotency_key, request_fingerprint, result_resource_type, result_resource_id, result_version
+						idempotency_key, request_fingerprint, result_resource_type, result_resource_id, result_version,
+						result_snapshot
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as jsonb))
 					""", currentUser.id(), currentUser.username(), action.action(), action.resourceType(),
 					action.resourceId() == null ? 0L : action.resourceId(), action.version(), action.idempotencyKey(),
-					action.requestFingerprint(), resultResourceType, resultResourceId, resultVersion);
+					action.requestFingerprint(), resultResourceType, resultResourceId, resultVersion, snapshot);
 		}
 		catch (DuplicateKeyException exception) {
 			throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private Map<String, Object> replayActionResult(ActionRequestContext action, CurrentUser currentUser,
+			DetailResolver fallback) {
+		if (action.resultSnapshot() != null) {
+			return action.resultSnapshot();
+		}
+		return fallback.resolve(action.resultResourceId());
+	}
+
+	@SuppressWarnings("unchecked")
+	private Map<String, Object> actionSnapshot(String payload) {
+		if (!hasText(payload)) {
+			return null;
+		}
+		try {
+			return this.objectMapper.readValue(payload, Map.class);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private String json(Object value) {
+		try {
+			return this.objectMapper.writeValueAsString(value);
+		}
+		catch (RuntimeException exception) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 	}
 
@@ -3165,7 +3690,7 @@ public class FinanceStage028Service {
 				BigDecimal::add)));
 	}
 
-	private List<ValidatedInvoiceLine> validateInvoiceLines(List<InvoiceLineRequest> requests,
+	private List<ValidatedInvoiceLine> validateInvoiceLines(List<InvoiceLineRequest> requests, PurchaseSource source,
 			List<PurchaseSourceLine> sourceLines, Long ignoredInvoiceId) {
 		Map<Long, PurchaseSourceLine> sourceLineById = sourceLineById(sourceLines);
 		List<ValidatedInvoiceLine> result = new ArrayList<>();
@@ -3183,7 +3708,8 @@ public class FinanceStage028Service {
 				throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 			}
 			PurchaseSourceLine sourceLine = sourceLineById.get(line.sourceLineId());
-			BigDecimal alreadyInvoiced = invoicedPurchaseQuantity(line.sourceLineId(), ignoredInvoiceId);
+			BigDecimal alreadyInvoiced = invoicedPurchaseQuantity(source.sourceType(), line.sourceLineId(),
+					ignoredInvoiceId);
 			if (alreadyInvoiced.add(line.quantity()).compareTo(sourceLine.quantity()) > 0) {
 				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_OVER_INVOICED);
 			}
@@ -3540,9 +4066,14 @@ public class FinanceStage028Service {
 		response.put("sourceType", row.sourceType());
 		response.put("sourceId", row.sourceId());
 		response.put("sourceNo", row.sourceNo());
+		response.put("sourceSummary", row.sourceNo());
 		response.put("invoiceDate", row.businessDate());
 		response.put("dueDate", row.dueDate());
 		response.put("invoiceType", row.invoiceType());
+		response.put("externalInvoiceNo", row.externalInvoiceNo());
+		response.put("supplierInvoiceNo", row.externalInvoiceNo());
+		response.put("remark", row.remark());
+		response.put("projectName", projectName(row.projectId()));
 		response.put("taxExcludedAmount", decimalString(row.taxExcludedAmount()));
 		response.put("taxAmount", decimalString(row.taxAmount()));
 		response.put("taxIncludedAmount", decimalString(row.taxIncludedAmount()));
@@ -3554,6 +4085,41 @@ public class FinanceStage028Service {
 		response.put("status", row.status());
 		response.put("version", row.version());
 		return response;
+	}
+
+	private List<Map<String, Object>> invoiceSources(InvoiceRow row) {
+		Map<String, Object> source = new LinkedHashMap<>();
+		source.put("sourceType", row.sourceType());
+		source.put("sourceId", row.sourceId());
+		source.put("sourceNo", row.sourceNo());
+		source.put("sourceSummary", row.sourceNo());
+		source.put("businessDate", row.businessDate());
+		source.put("amount", decimalString(row.taxIncludedAmount()));
+		source.put("restricted", false);
+		source.put("restrictedReasons", List.of());
+		return List.of(source);
+	}
+
+	private List<Map<String, Object>> receivableLinks(Long salesInvoiceId) {
+		return normalizeRows(this.jdbcTemplate.queryForList("""
+				select r.id as receivable_id, r.receivable_no, r.status, r.total_amount, r.received_amount,
+				       r.unreceived_amount, l.link_mode
+				from fin_sales_invoice_receivable_link l
+				join fin_receivable r on r.id = l.receivable_id
+				where l.sales_invoice_id = ?
+				order by l.id asc
+				""", salesInvoiceId));
+	}
+
+	private List<Map<String, Object>> payableLinks(Long purchaseInvoiceId) {
+		return normalizeRows(this.jdbcTemplate.queryForList("""
+				select p.id as payable_id, p.payable_no, p.status, p.total_amount, p.paid_amount, p.unpaid_amount,
+				       l.link_mode
+				from fin_purchase_invoice_payable_link l
+				join fin_payable p on p.id = l.payable_id
+				where l.purchase_invoice_id = ?
+				order by l.id asc
+				""", purchaseInvoiceId));
 	}
 
 	private Map<String, Object> cashMap(CashRow row, boolean receivableSide, CurrentUser currentUser) {
@@ -3962,7 +4528,8 @@ public class FinanceStage028Service {
 	private InvoiceRow mapInvoiceRow(ResultSet rs, int rowNum) throws SQLException {
 		return new InvoiceRow(rs.getLong("id"), rs.getString("document_no"), rs.getLong("party_id"),
 				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getString("source_type"),
-				rs.getLong("source_id"), rs.getString("source_no"), rs.getObject("business_date", LocalDate.class),
+				rs.getLong("source_id"), rs.getString("source_no"), rs.getString("external_invoice_no"),
+				rs.getString("remark"), rs.getObject("business_date", LocalDate.class),
 				rs.getObject("due_date", LocalDate.class), rs.getString("invoice_type"),
 				rs.getString("settlement_kind"), rs.getString("match_status"), rs.getBigDecimal("tax_excluded_amount"),
 				rs.getBigDecimal("tax_amount"), rs.getBigDecimal("tax_included_amount"), rs.getString("status"),
@@ -4147,8 +4714,9 @@ public class FinanceStage028Service {
 	}
 
 	private record InvoiceRow(Long id, String documentNo, Long partyId, String ownershipType, Long projectId,
-			String sourceType, Long sourceId, String sourceNo, LocalDate businessDate, LocalDate dueDate,
-			String invoiceType, String settlementKind, String matchStatus, BigDecimal taxExcludedAmount,
+			String sourceType, Long sourceId, String sourceNo, String externalInvoiceNo, String remark,
+			LocalDate businessDate, LocalDate dueDate, String invoiceType, String settlementKind, String matchStatus,
+			BigDecimal taxExcludedAmount,
 			BigDecimal taxAmount, BigDecimal taxIncludedAmount, String status, Long linkedReceivableId,
 			Long linkedPayableId, Long version) implements FinancePayableSource {
 	}
@@ -4246,11 +4814,11 @@ public class FinanceStage028Service {
 
 	private record ActionRequestContext(String action, String resourceType, Long resourceId, Long version,
 			String idempotencyKey, String requestFingerprint, String resultResourceType, Long resultResourceId,
-			Long resultVersion) {
+			Long resultVersion, Map<String, Object> resultSnapshot) {
 	}
 
 	private record ActionRecord(String resultResourceType, Long resultResourceId, Long resultVersion,
-			String requestFingerprint) {
+			String requestFingerprint, String resultSnapshot) {
 	}
 
 }

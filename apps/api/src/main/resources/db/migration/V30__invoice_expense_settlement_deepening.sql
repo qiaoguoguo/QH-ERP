@@ -514,6 +514,7 @@ create table fin_stage028_action_idempotency (
 	result_resource_type varchar(64) not null,
 	result_resource_id bigint not null,
 	result_version bigint not null,
+	result_snapshot jsonb,
 	created_at timestamptz not null default now(),
 	constraint uk_fin_stage028_action_idempotency unique (
 		operator_user_id, action, resource_type, resource_id, idempotency_key

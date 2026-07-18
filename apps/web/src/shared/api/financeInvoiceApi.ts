@@ -32,12 +32,10 @@ export interface SalesInvoiceListParams {
 
 export interface SalesInvoiceCandidateListParams {
   keyword?: string | null
+  sourceId?: ResourceId | null
   customerId?: ResourceId | null
+  ownershipType?: OwnershipType | null
   projectId?: ResourceId | null
-  contractNo?: string | null
-  orderNo?: string | null
-  shipmentDateFrom?: string | null
-  shipmentDateTo?: string | null
   page: number
   pageSize: number
 }
@@ -57,11 +55,11 @@ export interface PurchaseInvoiceListParams {
 
 export interface PurchaseInvoiceCandidateListParams {
   keyword?: string | null
+  sourceId?: ResourceId | null
   supplierId?: ResourceId | null
   ownershipType?: OwnershipType | null
+  projectId?: ResourceId | null
   sourceType?: PurchaseInvoiceSourceType | null
-  businessDateFrom?: string | null
-  businessDateTo?: string | null
   page: number
   pageSize: number
 }
@@ -108,10 +106,37 @@ export interface PurchaseInvoicePayload extends VersionedActionPayload {
 
 export interface FinanceSourceSummary {
   sourceType: string
+  sourceId?: ResourceId
   sourceNo: string
+  sourceSummary?: string | null
   summary?: string
+  businessDate?: string | null
+  amount?: FinanceAmount | null
   restricted?: boolean
   restrictedReason?: string | null
+  restrictedReasons?: string[]
+}
+
+export interface ReceivableInvoiceLink {
+  receivableId?: ResourceId
+  receivableNo: string
+  status?: string
+  totalAmount?: FinanceAmount
+  receivedAmount?: FinanceAmount
+  unreceivedAmount?: FinanceAmount
+  amount?: FinanceAmount
+  linkMode?: string
+}
+
+export interface PayableInvoiceLink {
+  payableId?: ResourceId
+  payableNo: string
+  status?: string
+  totalAmount?: FinanceAmount
+  paidAmount?: FinanceAmount
+  unpaidAmount?: FinanceAmount
+  amount?: FinanceAmount
+  linkMode?: string
 }
 
 export interface SalesInvoiceRecord {
@@ -124,6 +149,8 @@ export interface SalesInvoiceRecord {
   sourceId?: ResourceId | null
   sourceNo?: string | null
   customerName: string
+  partyName?: string | null
+  partnerName?: string | null
   ownershipType: OwnershipType
   projectId?: ResourceId | null
   projectName?: string | null
@@ -140,8 +167,9 @@ export interface SalesInvoiceRecord {
   updatedAt?: string
   version: number
   allowedActions: string[]
+  linkedReceivableId?: ResourceId | null
   sources?: FinanceSourceSummary[]
-  receivableLinks?: Array<{ receivableNo: string; amount: FinanceAmount }>
+  receivableLinks?: ReceivableInvoiceLink[]
   settlements?: Array<{ documentNo?: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
   lines?: InvoiceDetailLine[]
@@ -157,6 +185,8 @@ export interface PurchaseInvoiceRecord {
   sourceId?: ResourceId | null
   sourceNo?: string | null
   supplierName: string
+  partyName?: string | null
+  partnerName?: string | null
   invoiceType?: InvoiceType
   sourceType: PurchaseInvoiceSourceType
   ownershipType: OwnershipType
@@ -175,9 +205,10 @@ export interface PurchaseInvoiceRecord {
   differenceCount?: number
   version: number
   allowedActions: string[]
+  linkedPayableId?: ResourceId | null
   matching?: PurchaseInvoiceMatchingResult
   sources?: FinanceSourceSummary[]
-  payableLinks?: Array<{ payableNo: string; amount: FinanceAmount }>
+  payableLinks?: PayableInvoiceLink[]
   settlements?: Array<{ documentNo?: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
   lines?: InvoiceDetailLine[]
@@ -242,24 +273,40 @@ export interface SalesInvoiceCandidateLine {
 
 export type PurchaseInvoiceCandidateLine = SalesInvoiceCandidateLine
 
+export interface PurchaseInvoiceMatchingFact {
+  quantity?: FinanceAmount | null
+  taxRate?: FinanceAmount | null
+  taxExcludedUnitPrice?: FinanceAmount | null
+  taxIncludedUnitPrice?: FinanceAmount | null
+  taxExcludedAmount?: FinanceAmount | null
+  taxAmount?: FinanceAmount | null
+  taxIncludedAmount?: FinanceAmount | null
+}
+
+export interface PurchaseInvoiceMatchingRow {
+  id?: ResourceId
+  key?: string
+  lineNo?: number
+  sourceLineId?: ResourceId
+  materialCode?: string | null
+  materialName?: string | null
+  unitName?: string | null
+  order?: PurchaseInvoiceMatchingFact | null
+  receipt?: PurchaseInvoiceMatchingFact | null
+  invoice?: PurchaseInvoiceMatchingFact | null
+  matchStatus?: MatchStatus
+  differences?: Array<{
+    type: string
+    message: string
+    orderValue?: string | null
+    receiptValue?: string | null
+    invoiceValue?: string | null
+  }>
+}
+
 export interface PurchaseInvoiceMatchingResult {
   status: MatchStatus
-  rows?: Array<{
-    key?: string
-    lineNo?: number
-    materialCode?: string | null
-    materialName?: string | null
-    order?: Record<string, FinanceAmount | string | number | null | undefined>
-    receipt?: Record<string, FinanceAmount | string | number | null | undefined>
-    invoice?: Record<string, FinanceAmount | string | number | null | undefined>
-    differences?: Array<{
-      type: string
-      message: string
-      orderValue?: string | null
-      receiptValue?: string | null
-      invoiceValue?: string | null
-    }>
-  }>
+  rows?: PurchaseInvoiceMatchingRow[]
   differences: Array<{
     type: string
     message: string
@@ -303,9 +350,9 @@ export function createFinanceInvoiceApi(options: FinanceStage028ApiOptions = {})
   const salesInvoicePath = (id?: ResourceId) => `/api/admin/finance/sales-invoices${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const purchaseInvoicePath = (id?: ResourceId) => `/api/admin/finance/purchase-invoices${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const salesInvoiceQueryKeys = ['keyword', 'customerId', 'projectId', 'status', 'settlementStatus', 'invoiceType', 'invoiceDateFrom', 'invoiceDateTo', 'externalInvoiceNo', 'sourceShipmentNo', 'page', 'pageSize'] as const
-  const salesCandidateQueryKeys = ['keyword', 'customerId', 'projectId', 'contractNo', 'orderNo', 'shipmentDateFrom', 'shipmentDateTo', 'page', 'pageSize'] as const
+  const salesCandidateQueryKeys = ['keyword', 'sourceId', 'customerId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
   const purchaseInvoiceQueryKeys = ['keyword', 'supplierId', 'sourceType', 'status', 'matchStatus', 'settlementStatus', 'invoiceDateFrom', 'invoiceDateTo', 'page', 'pageSize'] as const
-  const purchaseCandidateQueryKeys = ['keyword', 'supplierId', 'ownershipType', 'sourceType', 'businessDateFrom', 'businessDateTo', 'page', 'pageSize'] as const
+  const purchaseCandidateQueryKeys = ['keyword', 'sourceType', 'sourceId', 'supplierId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
 
   return {
     salesInvoices: {

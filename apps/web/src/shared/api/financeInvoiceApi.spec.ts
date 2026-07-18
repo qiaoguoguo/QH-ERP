@@ -53,17 +53,20 @@ describe('028 发票分域 API', () => {
       page: 1,
       pageSize: 20,
     })
-    await api.salesInvoiceCandidates.list({
+    const salesCandidateParams = {
       keyword: 'SS',
+      sourceId: 501,
       customerId: 8,
-      projectId: null,
+      ownershipType: 'PROJECT' as const,
+      projectId: 18,
       contractNo: 'CT',
       orderNo: 'SO',
       shipmentDateFrom: '2026-08-01',
       shipmentDateTo: '',
       page: 1,
       pageSize: 50,
-    })
+    }
+    await api.salesInvoiceCandidates.list(salesCandidateParams)
     await api.purchaseInvoices.list({
       keyword: 'PI',
       supplierId: 9,
@@ -74,21 +77,24 @@ describe('028 发票分域 API', () => {
       page: 1,
       pageSize: 20,
     })
-    await api.purchaseInvoiceCandidates.list({
+    const purchaseCandidateParams = {
       keyword: 'PO',
+      sourceId: 601,
       supplierId: 9,
-      ownershipType: 'PROJECT',
-      sourceType: 'OUTSOURCING_RECEIPT',
+      ownershipType: 'PROJECT' as const,
+      projectId: 18,
+      sourceType: 'OUTSOURCING_RECEIPT' as const,
       businessDateFrom: '2026-08-01',
       businessDateTo: '',
       page: 1,
       pageSize: 50,
-    })
+    }
+    await api.purchaseInvoiceCandidates.list(purchaseCandidateParams)
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/finance/sales-invoices?keyword=SI&customerId=8&status=CONFIRMED&settlementStatus=PARTIALLY_SETTLED&invoiceType=SPECIAL_VAT&invoiceDateFrom=2026-08-01&externalInvoiceNo=EXT&sourceShipmentNo=SS&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
-    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/finance/sales-invoices/candidates?keyword=SS&customerId=8&contractNo=CT&orderNo=SO&shipmentDateFrom=2026-08-01&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/finance/sales-invoices/candidates?keyword=SS&sourceId=501&customerId=8&ownershipType=PROJECT&projectId=18&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/finance/purchase-invoices?keyword=PI&supplierId=9&sourceType=PURCHASE_RECEIPT&matchStatus=EXCEPTION&invoiceDateFrom=2026-08-01&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
-    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/finance/purchase-invoices/candidates?keyword=PO&supplierId=9&ownershipType=PROJECT&sourceType=OUTSOURCING_RECEIPT&businessDateFrom=2026-08-01&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/finance/purchase-invoices/candidates?keyword=PO&sourceType=OUTSOURCING_RECEIPT&sourceId=601&supplierId=9&ownershipType=PROJECT&projectId=18&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
   })
 
   it('写操作携带十进制字符串、版本和幂等键，并调用匹配与确认端点', async () => {

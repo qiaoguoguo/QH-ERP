@@ -22,7 +22,7 @@ const candidatesLoading = ref(false)
 const error = ref('')
 const submitting = ref(false)
 const candidatePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const candidateFilters = reactive({ keyword: '', contractNo: '', orderNo: '', shipmentDateFrom: '', shipmentDateTo: '' })
+const candidateFilters = reactive({ keyword: '' })
 const form = reactive({
   invoiceDate: '',
   invoiceType: 'GENERAL_VAT' as InvoiceType,
@@ -37,7 +37,14 @@ const selectedCustomerName = computed(() => customers.value.find((item) => Strin
 const selectedProjectName = computed(() => projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? '')
 const selectedCandidateBalance = computed(() => selected.value[0]?.availableAmount ?? selected.value[0]?.totalAmount ?? candidates.value[0]?.availableAmount ?? candidates.value[0]?.totalAmount ?? '0.00')
 const selectedTotalText = computed(() => selected.value.length ? formatFinanceAmount(selected.value[0].totalAmount) : '0.00')
+const readOnlyReason = computed(() => {
+  if (!isEdit.value || !detail.value) return ''
+  if (detail.value.status === 'CONFIRMED') return '确认后不可普通编辑'
+  if (!(detail.value.allowedActions ?? []).includes('UPDATE')) return '当前销售发票不可编辑'
+  return ''
+})
 const saveDisabledReason = computed(() => {
+  if (readOnlyReason.value) return readOnlyReason.value
   if (!form.invoiceDate) return '请选择开票日期'
   if (!form.customerId) return '请选择客户'
   if (form.ownershipType === 'PROJECT' && !form.projectId) return '请选择项目'
@@ -97,12 +104,10 @@ async function loadCandidates() {
   try {
     const page = await financeInvoiceApi.salesInvoiceCandidates.list({
       keyword: candidateFilters.keyword,
+      sourceId: selected.value[0]?.sourceId ?? detail.value?.sourceId ?? undefined,
       customerId: normalizeOptionalId(form.customerId),
+      ownershipType: form.ownershipType,
       projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) : undefined,
-      contractNo: candidateFilters.contractNo,
-      orderNo: candidateFilters.orderNo,
-      shipmentDateFrom: candidateFilters.shipmentDateFrom,
-      shipmentDateTo: candidateFilters.shipmentDateTo,
       page: candidatePagination.page,
       pageSize: candidatePagination.pageSize,
     })
@@ -247,8 +252,6 @@ onMounted(loadData)
 
     <el-form class="query-form" inline>
       <el-form-item label="来源关键词"><el-input v-model="candidateFilters.keyword" clearable placeholder="出库号、物料或客户" /></el-form-item>
-      <el-form-item label="合同"><el-input v-model="candidateFilters.contractNo" clearable placeholder="合同号" /></el-form-item>
-      <el-form-item label="订单"><el-input v-model="candidateFilters.orderNo" clearable placeholder="订单号" /></el-form-item>
       <el-form-item><el-button type="primary" @click="searchCandidates">查询来源</el-button></el-form-item>
     </el-form>
 

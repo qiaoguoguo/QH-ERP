@@ -24,7 +24,7 @@ const loading = ref(false)
 const sourcesLoading = ref(false)
 const submitting = ref(false)
 const sourcePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const sourceFilters = reactive({ keyword: '', businessDateFrom: '', businessDateTo: '' })
+const sourceFilters = reactive({ keyword: '' })
 const form = reactive({
   ownershipType: 'PUBLIC' as OwnershipType,
   supplierId: '' as string | number | '',
@@ -129,16 +129,17 @@ function changeSourceType() {
 }
 
 async function loadSources() {
+  if (form.sourceType === 'NONE') {
+    sources.value = []
+    sourcePagination.total = 0
+    sourcesLoading.value = false
+    return
+  }
   sourcesLoading.value = true
   try {
     const page = await financeExpenseApi.expenseSourceCandidates.list({
       keyword: sourceFilters.keyword,
-      sourceType: form.sourceType === 'NONE' ? undefined : form.sourceType,
-      supplierId: normalizeOptionalId(form.supplierId),
-      ownershipType: form.ownershipType,
-      projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) : undefined,
-      businessDateFrom: sourceFilters.businessDateFrom,
-      businessDateTo: sourceFilters.businessDateTo,
+      sourceType: form.sourceType,
       page: sourcePagination.page,
       pageSize: sourcePagination.pageSize,
     })
@@ -284,7 +285,7 @@ onMounted(loadData)
       </div>
     </el-form>
     <div class="finance-section-grid">
-      <section class="finance-section">
+      <section v-if="form.sourceType !== 'NONE'" class="finance-section">
         <span class="finance-section-title">来源候选</span>
         <el-form class="query-form" inline>
           <el-form-item label="关键词"><el-input v-model="sourceFilters.keyword" clearable placeholder="来源单号或摘要" /></el-form-item>
@@ -308,6 +309,10 @@ onMounted(loadData)
           </el-table>
         </div>
         <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="sourcePagination.total" :page-size="sourcePagination.pageSize" :current-page="sourcePagination.page" @current-change="changeSourcePage" />
+      </section>
+      <section v-else class="finance-section">
+        <span class="finance-section-title">来源候选</span>
+        <el-empty description="选择采购入库或外协收货后加载来源候选" />
       </section>
     </div>
     <div class="finance-form-footer">

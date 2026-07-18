@@ -6,16 +6,20 @@ type FinanceGenericTraceSource = {
   sourceType: string
   sourceId?: ResourceId
   sourceNo: string
+  sourceSummary?: string | null
   sourceLineNo?: number
   sourceBusinessDate?: string | null
+  businessDate?: string | null
   materialCode?: string | null
   materialName?: string | null
   unitName?: string | null
   quantity?: string | number | null
   unitPrice?: string | number | null
   sourceAmount?: string | number | null
+  amount?: string | number | null
   restricted?: boolean
   restrictedReason?: string | null
+  restrictedReasons?: string[]
   summary?: string | null
   relatedNo?: string | null
 }
@@ -47,14 +51,36 @@ function rowOrderNo(row: FinanceTraceSource) {
 }
 
 function rowBusinessDate(row: FinanceTraceSource) {
-  return row.sourceBusinessDate ?? '-'
+  return row.sourceBusinessDate ?? ('businessDate' in row ? row.businessDate : undefined) ?? '-'
 }
 
 function rowMaterialText(row: FinanceTraceSource) {
   const code = 'materialCode' in row ? row.materialCode : ''
   const name = 'materialName' in row ? row.materialName : ''
   const summary = 'summary' in row ? row.summary : ''
-  return `${code} ${name}`.trim() || summary || '来源受限或无物料明细'
+  const sourceSummary = 'sourceSummary' in row ? row.sourceSummary : ''
+  return `${code} ${name}`.trim() || summary || sourceSummary || '来源受限或无物料明细'
+}
+
+function rowRestrictedReason(row: FinanceTraceSource) {
+  if ('restrictedReason' in row && row.restrictedReason) {
+    return row.restrictedReason
+  }
+  if ('restrictedReasons' in row && row.restrictedReasons?.length) {
+    return row.restrictedReasons.join('；')
+  }
+  return '来源权限受限'
+}
+
+function rowMoney(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') {
+    return '-'
+  }
+  return formatFinanceAmount(value)
+}
+
+function rowSourceAmount(row: FinanceTraceSource) {
+  return row.sourceAmount ?? ('amount' in row ? row.amount : undefined)
 }
 </script>
 
@@ -70,7 +96,7 @@ function rowMaterialText(row: FinanceTraceSource) {
         <el-table-column prop="sourceLineNo" label="行号" width="76" />
         <el-table-column label="来源单据" min-width="170" show-overflow-tooltip>
           <template #default="{ row }">
-            <span v-if="row.restricted">{{ row.restrictedReason ?? '来源权限受限' }}</span>
+            <span v-if="row.restricted">{{ rowRestrictedReason(row) }}</span>
             <el-button
               v-else-if="row.sourceType === 'SALES_SHIPMENT' && canViewSalesShipment"
               data-test="view-source-shipment"
@@ -131,12 +157,12 @@ function rowMaterialText(row: FinanceTraceSource) {
         </el-table-column>
         <el-table-column label="单价" min-width="120" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ row.restricted ? '金额权限受限' : formatFinanceAmount(row.unitPrice) }}</span>
+            <span class="numeric-cell">{{ row.restricted ? '金额权限受限' : rowMoney(row.unitPrice) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="来源金额" min-width="130" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ row.restricted ? '金额权限受限' : formatFinanceAmount(row.sourceAmount) }}</span>
+            <span class="numeric-cell">{{ row.restricted ? '金额权限受限' : rowMoney(rowSourceAmount(row)) }}</span>
           </template>
         </el-table-column>
       </el-table>

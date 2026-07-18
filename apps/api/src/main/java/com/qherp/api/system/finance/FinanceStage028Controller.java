@@ -5,6 +5,7 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
 import java.util.Map;
 
 @RestController
@@ -29,19 +31,32 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/sales-invoices")
 	public ApiResponse<PageResponse<Map<String, Object>>> salesInvoices(@RequestParam(required = false) String keyword,
-			@RequestParam(required = false) String status, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) Long customerId, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String settlementStatus,
+			@RequestParam(required = false) String invoiceType,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate invoiceDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate invoiceDateTo,
+			@RequestParam(required = false) String externalInvoiceNo,
+			@RequestParam(required = false) String sourceShipmentNo, @AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.salesInvoices(keyword, status, currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.salesInvoices(keyword, customerId, projectId, status,
+				settlementStatus, invoiceType, invoiceDateFrom, invoiceDateTo, externalInvoiceNo, sourceShipmentNo,
+				currentUser, page, pageSize));
 	}
 
 	@GetMapping("/sales-invoices/candidates")
 	public ApiResponse<PageResponse<Map<String, Object>>> salesInvoiceCandidates(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long sourceId,
 			@RequestParam(required = false) Long customerId, @RequestParam(required = false) String ownershipType,
-			@RequestParam(required = false) Long projectId, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String contractNo,
+			@RequestParam(required = false) String orderNo,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate shipmentDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate shipmentDateTo,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.financeStage028Service.salesInvoiceCandidates(keyword, sourceId, customerId,
-				ownershipType, projectId, currentUser, page, pageSize));
+				ownershipType, projectId, contractNo, orderNo, shipmentDateFrom, shipmentDateTo, currentUser, page,
+				pageSize));
 	}
 
 	@PostMapping("/sales-invoices")
@@ -84,10 +99,14 @@ public class FinanceStage028Controller {
 	@GetMapping("/purchase-invoices")
 	public ApiResponse<PageResponse<Map<String, Object>>> purchaseInvoices(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
+			@RequestParam(required = false) Long supplierId, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) String matchStatus, @RequestParam(required = false) String settlementStatus,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate invoiceDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate invoiceDateTo,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.purchaseInvoices(keyword, status, currentUser, page,
-				pageSize));
+		return ApiResponse.ok(this.financeStage028Service.purchaseInvoices(keyword, supplierId, sourceType, status,
+				matchStatus, settlementStatus, invoiceDateFrom, invoiceDateTo, currentUser, page, pageSize));
 	}
 
 	@GetMapping("/purchase-invoices/candidates")
@@ -95,10 +114,12 @@ public class FinanceStage028Controller {
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String sourceType,
 			@RequestParam(required = false) Long sourceId, @RequestParam(required = false) Long supplierId,
 			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.financeStage028Service.purchaseInvoiceCandidates(keyword, sourceType, sourceId,
-				supplierId, ownershipType, projectId, currentUser, page, pageSize));
+				supplierId, ownershipType, projectId, businessDateFrom, businessDateTo, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/purchase-invoices")
@@ -154,9 +175,17 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/expenses")
 	public ApiResponse<PageResponse<Map<String, Object>>> expenses(@RequestParam(required = false) String keyword,
-			@RequestParam(required = false) String status, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) Long supplierId, @RequestParam(required = false) Long categoryId,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) String status,
+			@RequestParam(required = false) String settlementStatus,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
+			@RequestParam(required = false) Boolean costRestricted, @AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.expenses(keyword, status, currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.expenses(keyword, supplierId, categoryId, ownershipType,
+				projectId, sourceType, status, settlementStatus, businessDateFrom, businessDateTo, costRestricted,
+				currentUser, page, pageSize));
 	}
 
 	@GetMapping("/expenses/categories")
@@ -169,10 +198,14 @@ public class FinanceStage028Controller {
 	@GetMapping("/expenses/source-candidates")
 	public ApiResponse<PageResponse<Map<String, Object>>> expenseSourceCandidates(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long supplierId, @RequestParam(required = false) String ownershipType,
+			@RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
 		return ApiResponse.ok(this.financeStage028Service.expenseSourceCandidates(keyword, sourceType, currentUser,
-				page, pageSize));
+				supplierId, ownershipType, projectId, businessDateFrom, businessDateTo, page, pageSize));
 	}
 
 	@PostMapping("/expenses")
@@ -211,9 +244,15 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/advance-receipts")
 	public ApiResponse<PageResponse<Map<String, Object>>> advanceReceipts(
-			@RequestParam(required = false) String keyword, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long customerId,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String settlementStatus,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
+			@RequestParam(required = false) Boolean availableOnly, @AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.advanceReceipts(keyword, currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.advanceReceipts(keyword, customerId, ownershipType, projectId,
+				status, settlementStatus, businessDateFrom, businessDateTo, availableOnly, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/advance-receipts")
@@ -255,9 +294,16 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/prepayments")
 	public ApiResponse<PageResponse<Map<String, Object>>> prepayments(@RequestParam(required = false) String keyword,
-			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) Long supplierId, @RequestParam(required = false) String ownershipType,
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String status,
+			@RequestParam(required = false) String settlementStatus,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
+			@RequestParam(required = false) Boolean availableOnly, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.prepayments(keyword, currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.prepayments(keyword, supplierId, ownershipType, projectId,
+				status, settlementStatus, businessDateFrom, businessDateTo, availableOnly, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/prepayments")
@@ -297,18 +343,22 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/settlement-workbench/funds")
 	public ApiResponse<PageResponse<Map<String, Object>>> settlementFunds(@RequestParam String direction,
-			@RequestParam(required = false) Long partnerId, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) String fundType, @RequestParam(required = false) Long fundId,
+			@RequestParam(required = false) Long partnerId, @RequestParam(required = false) String ownershipType,
+			@RequestParam(required = false) Long projectId, @AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.settlementFunds(direction, partnerId, currentUser, page,
-				pageSize));
+		return ApiResponse.ok(this.financeStage028Service.settlementFunds(direction, fundType, fundId, partnerId,
+				ownershipType, projectId, currentUser, page, pageSize));
 	}
 
 	@GetMapping("/settlement-workbench/targets")
 	public ApiResponse<PageResponse<Map<String, Object>>> settlementTargets(@RequestParam String direction,
-			@RequestParam(required = false) Long partnerId, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) String targetType, @RequestParam(required = false) Long partnerId,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.settlementTargets(direction, partnerId, currentUser, page,
-				pageSize));
+		return ApiResponse.ok(this.financeStage028Service.settlementTargets(direction, targetType, partnerId,
+				ownershipType, projectId, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/settlement-workbench/allocations")
@@ -355,11 +405,18 @@ public class FinanceStage028Controller {
 	@GetMapping("/voucher-drafts")
 	public ApiResponse<PageResponse<Map<String, Object>>> voucherDrafts(@RequestParam(required = false) String status,
 			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) String sourceNo, @RequestParam(required = false) Long partnerId,
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) Boolean balanced,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate businessDateTo,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate generatedAtFrom,
+			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate generatedAtTo,
 			@RequestParam(required = false) String keyword,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.voucherDrafts(status, sourceType, sourceId, keyword,
-				currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.voucherDrafts(status, sourceType, sourceId, sourceNo,
+				partnerId, projectId, balanced, businessDateFrom, businessDateTo, generatedAtFrom, generatedAtTo,
+				keyword, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/voucher-drafts/generate")

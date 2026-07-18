@@ -3,16 +3,22 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V29'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V30'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 29; checksum = 774334682'::text,
-        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 29
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 774334682),
-        'Flyway 最新成功版本必须为 V29，checksum 必须为 774334682。'::text
+        'latest successful version = 30; checksum = 1374296472'::text,
+        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 30
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 1374296472),
+        'Flyway 最新成功版本必须为 V30，checksum 必须为 1374296472。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V29_CHECKSUM', 'migration',
+        concat('version=29;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 29 checksum = 774334682',
+        coalesce((array_agg(checksum))[1], 0) = 774334682,
+        'Flyway V29 checksum 必须保持 774334682。'
+        from flyway_schema_history where success and version = '29'
     union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) = 0,
         'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success
 
