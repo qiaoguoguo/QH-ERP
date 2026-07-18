@@ -31,6 +31,7 @@ import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -1017,13 +1018,22 @@ public class FinanceStage028Service {
 	public Map<String, Object> expense(Long id, CurrentUser currentUser) {
 		requireUser(currentUser, "finance:expense:view");
 		ExpenseRow row = expenseRow(id).orElseThrow(this::expenseNotFound);
+		String supplierName = supplier(row.partyId()).map(SupplierRow::name).orElse(null);
+		List<Map<String, Object>> lines = expenseLines(id);
+		String categoryName = expenseSummaryCategoryName(lines);
 		Map<String, Object> response = new LinkedHashMap<>();
 		response.put("id", row.id());
 		response.put("expenseNo", row.documentNo());
 		response.put("supplierId", row.partyId());
+		response.put("supplierName", supplierName);
+		response.put("partyName", supplierName);
+		response.put("partnerName", supplierName);
+		response.put("categoryName", categoryName);
+		response.put("expenseCategoryName", categoryName);
 		response.put("ownershipType", row.ownershipType());
 		response.put("projectId", row.projectId());
 		response.put("expenseDate", row.businessDate());
+		response.put("businessDate", row.businessDate());
 		response.put("dueDate", row.dueDate());
 		response.put("invoiceType", row.invoiceType());
 		response.put("taxExcludedAmount", decimalString(row.taxExcludedAmount()));
@@ -1039,7 +1049,7 @@ public class FinanceStage028Service {
 		response.put("partySettlementSnapshot", partySnapshot(row.partyId(), false,
 				hasPermission(currentUser, "finance:settlement-sensitive:view")));
 		response.put("restrictedReasons", restrictedReasons(currentUser));
-		response.put("lines", expenseLines(id));
+		response.put("lines", lines);
 		response.put("allowedActions", allowedInvoiceActions(row.status(), currentUser, "finance:expense"));
 		return response;
 	}
@@ -2510,6 +2520,15 @@ public class FinanceStage028Service {
 		return map;
 	}
 
+	private String expenseSummaryCategoryName(List<Map<String, Object>> lines) {
+		if (lines.isEmpty()) {
+			return null;
+		}
+		String first = (String) lines.get(0).get("categoryName");
+		boolean singleCategory = lines.stream().allMatch((line) -> Objects.equals(first, line.get("categoryName")));
+		return singleCategory ? first : "多费用分类";
+	}
+
 	private void insertSalesInvoiceLines(Long invoiceId, ShipmentSource source, List<SalesSourceLine> lines,
 			OffsetDateTime now) {
 		for (SalesSourceLine line : lines) {
@@ -3052,19 +3071,50 @@ public class FinanceStage028Service {
 		return this.jdbcTemplate.query("""
 				select pil.id, pil.line_no, pil.source_line_id, pil.material_id, m.code as material_code,
 				       m.name as material_name, u.name as unit_name,
-				       ol.quantity as order_quantity, ol.tax_rate as order_tax_rate,
-				       ol.tax_excluded_unit_price as order_tax_excluded_unit_price,
-				       ol.tax_included_unit_price as order_tax_included_unit_price,
-				       ol.tax_excluded_amount as order_tax_excluded_amount,
-				       ol.tax_included_amount - ol.tax_excluded_amount as order_tax_amount,
-				       ol.tax_included_amount as order_tax_included_amount,
-				       rl.quantity as receipt_quantity, ol.tax_rate as receipt_tax_rate,
-				       ol.tax_excluded_unit_price as receipt_tax_excluded_unit_price,
-				       ol.tax_included_unit_price as receipt_tax_included_unit_price,
-				       round(rl.quantity * ol.tax_excluded_unit_price, 2) as receipt_tax_excluded_amount,
-				       round(rl.quantity * (ol.tax_included_unit_price - ol.tax_excluded_unit_price), 2)
-				           as receipt_tax_amount,
-				       round(rl.quantity * ol.tax_included_unit_price, 2) as receipt_tax_included_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.quantity
+				            else oso.planned_quantity end as order_quantity,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_rate
+				            else 0::numeric end as order_tax_rate,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_excluded_unit_price
+				            else coalesce(oso.provisional_unit_cost, 0) end as order_tax_excluded_unit_price,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_included_unit_price
+				            else coalesce(oso.provisional_unit_cost, 0) end as order_tax_included_unit_price,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_excluded_amount
+				            else round(oso.planned_quantity * coalesce(oso.provisional_unit_cost, 0), 2)
+				       end as order_tax_excluded_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT'
+				            then ol.tax_included_amount - ol.tax_excluded_amount
+				            else 0::numeric end as order_tax_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_included_amount
+				            else round(oso.planned_quantity * coalesce(oso.provisional_unit_cost, 0), 2)
+				       end as order_tax_included_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then rl.quantity
+				            else osrl.accepted_quantity end as receipt_quantity,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_rate
+				            else 0::numeric end as receipt_tax_rate,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_excluded_unit_price
+				            else coalesce(osrl.unit_cost, osrl.provisional_unit_cost, osr.unit_cost,
+				                osr.provisional_unit_cost, oso.provisional_unit_cost, 0)
+				       end as receipt_tax_excluded_unit_price,
+				       case when pi.source_type = 'PURCHASE_RECEIPT' then ol.tax_included_unit_price
+				            else coalesce(osrl.unit_cost, osrl.provisional_unit_cost, osr.unit_cost,
+				                osr.provisional_unit_cost, oso.provisional_unit_cost, 0)
+				       end as receipt_tax_included_unit_price,
+				       case when pi.source_type = 'PURCHASE_RECEIPT'
+				            then round(rl.quantity * ol.tax_excluded_unit_price, 2)
+				            else round(osrl.accepted_quantity * coalesce(osrl.unit_cost,
+				                osrl.provisional_unit_cost, osr.unit_cost, osr.provisional_unit_cost,
+				                oso.provisional_unit_cost, 0), 2)
+				       end as receipt_tax_excluded_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT'
+				            then round(rl.quantity * (ol.tax_included_unit_price - ol.tax_excluded_unit_price), 2)
+				            else 0::numeric end as receipt_tax_amount,
+				       case when pi.source_type = 'PURCHASE_RECEIPT'
+				            then round(rl.quantity * ol.tax_included_unit_price, 2)
+				            else round(osrl.accepted_quantity * coalesce(osrl.unit_cost,
+				                osrl.provisional_unit_cost, osr.unit_cost, osr.provisional_unit_cost,
+				                oso.provisional_unit_cost, 0), 2)
+				       end as receipt_tax_included_amount,
 				       pil.quantity as invoice_quantity, pil.tax_rate as invoice_tax_rate,
 				       pil.tax_excluded_unit_price as invoice_tax_excluded_unit_price,
 				       pil.tax_included_unit_price as invoice_tax_included_unit_price,
@@ -3073,8 +3123,14 @@ public class FinanceStage028Service {
 				       pil.tax_included_amount as invoice_tax_included_amount,
 				       pil.match_status
 				from fin_purchase_invoice_line pil
-				left join proc_purchase_receipt_line rl on rl.id = pil.source_line_id
+				join fin_purchase_invoice pi on pi.id = pil.purchase_invoice_id
+				left join proc_purchase_receipt_line rl
+					on pi.source_type = 'PURCHASE_RECEIPT' and rl.id = pil.source_line_id
 				left join proc_purchase_order_line ol on ol.id = rl.order_line_id
+				left join mfg_outsourcing_receipt_line osrl
+					on pi.source_type = 'OUTSOURCING_RECEIPT' and osrl.id = pil.source_line_id
+				left join mfg_outsourcing_receipt osr on osr.id = osrl.receipt_id
+				left join mfg_outsourcing_order oso on oso.id = osr.outsourcing_order_id
 				left join mst_material m on m.id = pil.material_id
 				left join mst_unit u on u.id = pil.unit_id
 				where pil.purchase_invoice_id = ?
@@ -3141,13 +3197,22 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> expenseLines(Long expenseId) {
-		return normalizeRows(this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> lines = normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, expense_category, description, source_type, source_id, source_no, tax_rate,
 				       tax_excluded_amount, tax_amount, tax_included_amount
 				from fin_expense_line
 				where expense_id = ?
 				order by line_no asc
 				""", expenseId));
+		for (Map<String, Object> line : lines) {
+			String categoryCode = (String) line.get("expenseCategory");
+			String categoryName = expenseCategoryName(categoryCode);
+			line.put("categoryName", categoryName);
+			line.put("expenseCategoryName", categoryName);
+			line.put("pretaxAmount", line.get("taxExcludedAmount"));
+			line.put("totalAmount", line.get("taxIncludedAmount"));
+		}
+		return lines;
 	}
 
 	private List<Map<String, Object>> settlementAllocationLines(Long allocationId) {
@@ -3782,6 +3847,16 @@ public class FinanceStage028Service {
 		};
 	}
 
+	private String expenseCategoryName(String categoryCode) {
+		return switch (categoryCode) {
+			case "SERVICE" -> "服务费";
+			case "FREIGHT" -> "运费";
+			case "OUTSOURCING_SERVICE" -> "外协服务费";
+			case "OTHER" -> "其他费用";
+			default -> categoryCode;
+		};
+	}
+
 	private MatchResult matchResult(String settlementKind, List<PurchaseSourceLine> sourceLines,
 			List<ValidatedInvoiceLine> invoiceLines) {
 		if ("OUTSOURCING".equals(settlementKind)) {
@@ -4123,6 +4198,8 @@ public class FinanceStage028Service {
 	}
 
 	private Map<String, Object> cashMap(CashRow row, boolean receivableSide, CurrentUser currentUser) {
+		String partnerName = receivableSide ? customer(row.partyId()).map(CustomerRow::name).orElse(null)
+				: supplier(row.partyId()).map(SupplierRow::name).orElse(null);
 		Map<String, Object> response = new LinkedHashMap<>();
 		response.put("id", row.id());
 		response.put(receivableSide ? "receiptNo" : "paymentNo", row.documentNo());
@@ -4130,6 +4207,8 @@ public class FinanceStage028Service {
 		response.put("fundNo", row.documentNo());
 		response.put(receivableSide ? "customerId" : "supplierId", row.partyId());
 		response.put("partnerId", row.partyId());
+		response.put("partnerName", partnerName);
+		response.put("partyName", partnerName);
 		response.put("ownershipType", row.ownershipType());
 		response.put("projectId", row.projectId());
 		response.put(receivableSide ? "receiptDate" : "paymentDate", row.businessDate());

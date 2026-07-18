@@ -11,6 +11,7 @@ import {
   financeSourceTypeText,
   formatFinanceAmount,
   ownershipTypeText,
+  voucherBusinessCategoryText,
   voucherDraftStatusText,
 } from './financePageHelpers'
 import './Finance028Shared.css'
@@ -132,7 +133,7 @@ onMounted(loadRecord)
         <div class="table-scroll">
           <el-table :data="record.lines ?? []" empty-text="暂无分录建议">
             <el-table-column label="借贷方向" min-width="100"><template #default="{ row }">{{ row.direction === 'DEBIT' ? '借方' : '贷方' }}</template></el-table-column>
-            <el-table-column prop="businessCategory" label="业务分类" min-width="140" show-overflow-tooltip />
+            <el-table-column label="业务分类" min-width="140" show-overflow-tooltip><template #default="{ row }">{{ voucherBusinessCategoryText(row.businessCategory) }}</template></el-table-column>
             <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip />
             <el-table-column label="未税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.pretaxAmount) }}</template></el-table-column>
             <el-table-column label="税额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.taxAmount) }}</template></el-table-column>

@@ -38,6 +38,11 @@ export interface ExpenseCategoryListParams {
 export interface ExpenseSourceCandidateListParams {
   keyword?: string | null
   sourceType?: ExpenseSourceType | null
+  supplierId?: ResourceId | null
+  ownershipType?: OwnershipType | null
+  projectId?: ResourceId | null
+  businessDateFrom?: string | null
+  businessDateTo?: string | null
   page: number
   pageSize: number
 }
@@ -69,11 +74,18 @@ export interface ExpenseRecord {
   id: ResourceId
   expenseNo: string
   supplierName: string
+  supplierId?: ResourceId
+  partyName?: string | null
+  partnerName?: string | null
   categoryName: string
+  categoryId?: ResourceId
+  categorySummary?: string | null
   ownershipType: OwnershipType
+  projectId?: ResourceId | null
   projectName?: string | null
   sourceType?: ExpenseSourceType | string | null
   sourceNo?: string | null
+  sourceSummary?: string | null
   businessDate: string
   status: ExpenseStatus
   settlementStatus: SettlementStatus
@@ -84,7 +96,7 @@ export interface ExpenseRecord {
   version: number
   allowedActions: string[]
   lines?: Array<{ categoryName: string; pretaxAmount: FinanceAmount; taxRate: FinanceAmount; taxAmount: FinanceAmount; totalAmount: FinanceAmount }>
-  sources?: Array<{ sourceType: string; sourceNo: string; summary?: string; restricted?: boolean; restrictedReason?: string | null }>
+  sources?: Array<{ sourceType: string; sourceNo: string; sourceSummary?: string | null; summary?: string; restricted?: boolean; restrictedReason?: string | null }>
   payableLinks?: Array<{ payableNo: string; amount: FinanceAmount }>
   settlements?: Array<{ documentNo?: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
@@ -133,7 +145,7 @@ export function createFinanceExpenseApi(options: FinanceStage028ApiOptions = {})
   const expensePath = (id?: ResourceId) => `/api/admin/finance/expenses${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const expenseQueryKeys = ['keyword', 'supplierId', 'categoryId', 'ownershipType', 'sourceType', 'status', 'settlementStatus', 'businessDateFrom', 'businessDateTo', 'costRestricted', 'page', 'pageSize'] as const
   const categoryQueryKeys = ['keyword', 'status', 'page', 'pageSize'] as const
-  const sourceQueryKeys = ['keyword', 'sourceType', 'page', 'pageSize'] as const
+  const sourceQueryKeys = ['keyword', 'sourceType', 'supplierId', 'ownershipType', 'projectId', 'businessDateFrom', 'businessDateTo', 'page', 'pageSize'] as const
 
   return {
     expenses: {

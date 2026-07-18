@@ -5,7 +5,7 @@ import { financeExpenseApi, type ExpenseRecord } from '../../shared/api/financeE
 import { useAuthStore } from '../../stores/authStore'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, formatFinanceDate, invoiceStatusText, ownershipTypeText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
 import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import './Finance028Shared.css'
 
@@ -19,6 +19,33 @@ const actionLoading = ref(false)
 
 const canConfirm = computed(() => record.value?.allowedActions?.includes('CONFIRM') && authStore.hasPermission(financePermissions.expenseConfirm))
 const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.expenseCancel))
+
+function firstDisplayText(...values: Array<string | null | undefined>) {
+  return values.find((value) => Boolean(value?.trim())) ?? ''
+}
+
+function expenseSupplierName(expense: ExpenseRecord) {
+  return firstDisplayText(expense.supplierName, expense.partyName, expense.partnerName) || '供应商待补全'
+}
+
+function expenseCategoryName(expense: ExpenseRecord) {
+  return firstDisplayText(expense.categoryName, expense.categorySummary, expense.lines?.[0]?.categoryName) || '费用分类待补全'
+}
+
+function expenseSourceSnapshot(expense: ExpenseRecord) {
+  const sourceSummary = firstDisplayText(expense.sourceSummary)
+  if (sourceSummary) {
+    return sourceSummary
+  }
+  const source = expense.sources?.[0]
+  if (source) {
+    if (source.restricted) {
+      return source.restrictedReason ?? '来源权限受限'
+    }
+    return firstDisplayText(source.sourceSummary, source.summary, `${financeSourceTypeText(source.sourceType)} ${source.sourceNo}`)
+  }
+  return `${financeSourceTypeText(expense.sourceType ?? 'NONE')} ${expense.sourceNo ?? '无来源普通供应商费用'}`
+}
 
 async function loadRecord() {
   try {
@@ -72,16 +99,16 @@ onMounted(loadRecord)
     </template>
     <div v-if="record" class="finance-summary-strip">
       <div><span>费用状态</span><strong>{{ invoiceStatusText(record.status) }}</strong></div>
-      <div><span>供应商</span><strong>{{ record.supplierName }}</strong></div>
+      <div><span>供应商</span><strong>{{ expenseSupplierName(record) }}</strong></div>
       <div><span>项目/公共</span><strong>{{ ownershipTypeText(record.ownershipType) }} {{ record.projectName ?? '' }}</strong></div>
-      <div><span>费用分类</span><strong>{{ record.categoryName }}</strong></div>
-      <div><span>业务日期</span><strong>{{ record.businessDate }}</strong></div>
+      <div><span>费用分类</span><strong>{{ expenseCategoryName(record) }}</strong></div>
+      <div><span>业务日期</span><strong>{{ formatFinanceDate(record.businessDate) }}</strong></div>
       <div><span>价税合计</span><strong>{{ formatFinanceAmount(record.totalAmount) }}</strong></div>
       <div><span>结算状态</span><strong>{{ settlementStatusText(record.settlementStatus) }}</strong></div>
     </div>
     <div v-if="record" class="finance-section-grid">
       <section class="finance-section"><span class="finance-section-title">费用行</span><p v-for="line in record.lines" :key="line.categoryName">{{ line.categoryName }} {{ formatFinanceAmount(line.totalAmount) }}</p></section>
-      <section class="finance-section"><span class="finance-section-title">来源快照</span><p>{{ financeSourceTypeText(record.sourceType ?? 'NONE') }} {{ record.sourceNo ?? '无来源普通供应商费用' }}</p></section>
+      <section class="finance-section"><span class="finance-section-title">来源快照</span><p>{{ expenseSourceSnapshot(record) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">应付链接</span><p v-for="link in record.payableLinks" :key="link.payableNo">{{ link.payableNo }} {{ formatFinanceAmount(link.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">付款/预付核销</span><p v-if="!record.settlements?.length">暂无核销记录</p><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">非正式成本提示</span><p>028 不写库存价值、工单成本或项目利润。</p></section>

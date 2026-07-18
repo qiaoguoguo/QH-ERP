@@ -163,6 +163,15 @@ export function normalizeOptionalId(value: string | number | null | undefined) {
   return value === '' || value === null || value === undefined ? undefined : value
 }
 
+export function formatFinanceDate(value: string | null | undefined) {
+  if (!value) {
+    return '-'
+  }
+  const raw = String(value)
+  const match = raw.match(/^\d{4}-\d{2}-\d{2}/)
+  return match ? match[0] : raw
+}
+
 export function financeErrorMessage(error: unknown) {
   if (error instanceof Error && error.message) {
     return error.message
@@ -295,6 +304,23 @@ export function voucherDraftStatusText(value: string | null | undefined) {
     DRAFT: '草稿',
     READY: '待正式制证',
     CANCELLED: '已取消',
+  }
+  return value ? text[value] ?? value : '-'
+}
+
+export function voucherBusinessCategoryText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    CASH_DRAFT: '现金草稿',
+    ADVANCE_RECEIPT_DRAFT: '预收草稿',
+    PREPAYMENT_DRAFT: '预付草稿',
+    SALES_INVOICE_DRAFT: '销售发票草稿',
+    PURCHASE_INVOICE_DRAFT: '采购发票草稿',
+    EXPENSE_DRAFT: '费用草稿',
+    SETTLEMENT_ALLOCATION_DRAFT: '核销草稿',
+    RECEIVABLE_DRAFT: '应收草稿',
+    PAYABLE_DRAFT: '应付草稿',
+    RECEIPT_DRAFT: '收款草稿',
+    PAYMENT_DRAFT: '付款草稿',
   }
   return value ? text[value] ?? value : '-'
 }

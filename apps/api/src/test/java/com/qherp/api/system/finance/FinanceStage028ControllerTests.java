@@ -200,6 +200,63 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void purchaseInvoiceMatchingUsesOutsourcingRowsWhenSourceLineIdOverlapsPurchaseReceipt() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = procurementFixture();
+		long purchaseReceiptId = createPostedPurchaseReceipt(fixture, "028 外协匹配重叠标准来源", "9.000000",
+				"99.000000");
+		long outsourcingReceiptId = createPostedOutsourcingReceipt(fixture, "028 外协匹配重叠外协来源", "3.000000",
+				"12.000000");
+		long sharedLineId = nextCrossSourceLineId();
+		movePurchaseReceiptLine(purchaseReceiptId, sharedLineId);
+		moveOutsourcingReceiptLine(outsourcingReceiptId, sharedLineId);
+		long invoiceId = data(createPurchaseInvoice(admin,
+				purchaseInvoicePayload("OUTSOURCING", "OUTSOURCING_RECEIPT", outsourcingReceiptId, "3.000000",
+						"12.000000")))
+			.get("id")
+			.longValue();
+
+		JsonNode matching = data(get("/api/admin/finance/purchase-invoices/" + invoiceId + "/matching", admin));
+
+		assertThat(matching.get("status").asText()).isEqualTo("NOT_APPLICABLE");
+		JsonNode row = matching.get("rows").get(0);
+		assertThat(row.get("sourceLineId").longValue()).isEqualTo(sharedLineId);
+		assertJsonDecimalString(row.get("order"), "quantity", "3.000000");
+		assertJsonDecimalString(row.get("order"), "taxIncludedUnitPrice", "12.000000");
+		assertJsonDecimalString(row.get("receipt"), "quantity", "3.000000");
+		assertJsonDecimalString(row.get("receipt"), "taxIncludedAmount", "36.00");
+		assertJsonDecimalString(row.get("invoice"), "quantity", "3.000000");
+		assertJsonDecimalString(row.get("invoice"), "taxIncludedAmount", "36.00");
+	}
+
+	@Test
+	void purchaseInvoiceMatchingUsesOutsourcingRowsWhenSourceLineIdDoesNotOverlapPurchaseReceipt() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = procurementFixture();
+		long outsourcingReceiptId = createPostedOutsourcingReceipt(fixture, "028 外协匹配非重叠来源", "2.000000",
+				"15.000000");
+		long isolatedLineId = nextCrossSourceLineId();
+		moveOutsourcingReceiptLine(outsourcingReceiptId, isolatedLineId);
+		long invoiceId = data(createPurchaseInvoice(admin,
+				purchaseInvoicePayload("OUTSOURCING", "OUTSOURCING_RECEIPT", outsourcingReceiptId, "2.000000",
+						"15.000000")))
+			.get("id")
+			.longValue();
+
+		JsonNode matching = data(get("/api/admin/finance/purchase-invoices/" + invoiceId + "/matching", admin));
+
+		assertThat(matching.get("status").asText()).isEqualTo("NOT_APPLICABLE");
+		JsonNode row = matching.get("rows").get(0);
+		assertThat(row.get("sourceLineId").longValue()).isEqualTo(isolatedLineId);
+		assertJsonDecimalString(row.get("order"), "quantity", "2.000000");
+		assertJsonDecimalString(row.get("order"), "taxIncludedUnitPrice", "15.000000");
+		assertJsonDecimalString(row.get("receipt"), "quantity", "2.000000");
+		assertJsonDecimalString(row.get("receipt"), "taxIncludedAmount", "30.00");
+		assertJsonDecimalString(row.get("invoice"), "quantity", "2.000000");
+		assertJsonDecimalString(row.get("invoice"), "taxIncludedAmount", "30.00");
+	}
+
+	@Test
 	void projectAndPublicSupplierExpensesCreateOnlyPayableNotFormalCost() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesFixture salesFixture = fixture();
@@ -208,10 +265,15 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 		long beforeCostRecords = tableCount("mfg_cost_record");
 		long beforeValueMovements = tableCount("inv_value_movement");
 
-		long projectExpenseId = data(createExpense(admin,
-				expensePayload(supplierFixture.supplierId(), "PROJECT", projectId, "项目服务费", "120.00")))
-			.get("id")
-			.longValue();
+		JsonNode projectExpenseDraft = data(createExpense(admin,
+				expensePayload(supplierFixture.supplierId(), "PROJECT", projectId, "项目服务费", "120.00")));
+		long projectExpenseId = projectExpenseDraft.get("id").longValue();
+		assertThat(projectExpenseDraft.get("supplierName").asText()).contains("028 供应商");
+		assertThat(projectExpenseDraft.get("categoryName").asText()).isEqualTo("服务费");
+		assertThat(projectExpenseDraft.get("expenseCategoryName").asText()).isEqualTo("服务费");
+		assertThat(projectExpenseDraft.get("businessDate").asText()).isEqualTo(LocalDate.now().toString());
+		assertThat(projectExpenseDraft.get("lines").get(0).get("categoryName").asText()).isEqualTo("服务费");
+		assertJsonDecimalString(projectExpenseDraft.get("lines").get(0), "totalAmount", "120.00");
 		ResponseEntity<String> confirmedProjectExpense = exchange(HttpMethod.PUT,
 				"/api/admin/finance/expenses/" + projectExpenseId + "/confirm",
 				actionPayload(0, "EXP-PROJECT-CONFIRM-"), admin);
@@ -240,8 +302,11 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 		long firstReceivable = confirmedReceivable(admin, salesFixture, "028 预收核销一", "1.000000", "10.000000");
 		long secondReceivable = confirmedReceivable(admin, salesFixture, "028 预收核销二", "1.000000", "20.000000");
 
-		long advanceReceiptId = data(createAdvanceReceipt(admin,
-				advanceReceiptPayload(salesFixture.customerId(), "30.00", "028 预收款"))).get("id").longValue();
+		JsonNode advanceReceiptDraft = data(createAdvanceReceipt(admin,
+				advanceReceiptPayload(salesFixture.customerId(), "30.00", "028 预收款")));
+		long advanceReceiptId = advanceReceiptDraft.get("id").longValue();
+		assertThat(advanceReceiptDraft.get("partnerName").asText()).contains("028 客户");
+		assertThat(advanceReceiptDraft.get("businessDate").asText()).isEqualTo(LocalDate.now().toString());
 		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/" + advanceReceiptId + "/post",
 				actionPayload(0, "ADV-POST-"), admin));
 		long receivableAllocationId = data(createSettlementAllocation(admin,
@@ -262,8 +327,11 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 		long firstPayable = confirmedPayable(admin, procurementFixture, "028 预付核销一", "1.000000", "11.000000");
 		long secondPayable = confirmedPayable(admin, procurementFixture, "028 预付核销二", "1.000000",
 				"19.000000");
-		long prepaymentId = data(createPrepayment(admin,
-				prepaymentPayload(procurementFixture.supplierId(), "30.00", "028 预付款"))).get("id").longValue();
+		JsonNode prepaymentDraft = data(createPrepayment(admin,
+				prepaymentPayload(procurementFixture.supplierId(), "30.00", "028 预付款")));
+		long prepaymentId = prepaymentDraft.get("id").longValue();
+		assertThat(prepaymentDraft.get("partnerName").asText()).contains("028 供应商");
+		assertThat(prepaymentDraft.get("businessDate").asText()).isEqualTo(LocalDate.now().toString());
 		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/prepayments/" + prepaymentId + "/post",
 				actionPayload(0, "PRE-POST-"), admin));
 		long payableAllocationId = data(createSettlementAllocation(admin,
@@ -1873,6 +1941,32 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 		};
 		return this.jdbcTemplate.queryForObject("select id from " + tableName + " where " + parentColumn + " = ?",
 				Long.class, sourceId);
+	}
+
+	private long nextCrossSourceLineId() {
+		Long id = this.jdbcTemplate.queryForObject("""
+				select greatest(
+					coalesce((select max(id) from proc_purchase_receipt_line), 0),
+					coalesce((select max(id) from mfg_outsourcing_receipt_line), 0)
+				) + 1000
+				""", Long.class);
+		return id == null ? 1000L : id;
+	}
+
+	private void movePurchaseReceiptLine(long receiptId, long lineId) {
+		this.jdbcTemplate.update("""
+				update proc_purchase_receipt_line
+				set id = ?
+				where receipt_id = ?
+				""", lineId, receiptId);
+	}
+
+	private void moveOutsourcingReceiptLine(long receiptId, long lineId) {
+		this.jdbcTemplate.update("""
+				update mfg_outsourcing_receipt_line
+				set id = ?
+				where receipt_id = ?
+				""", lineId, receiptId);
 	}
 
 	private List<Long> purchaseReceiptLineIds(long receiptId) {

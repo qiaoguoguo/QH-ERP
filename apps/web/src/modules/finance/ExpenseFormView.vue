@@ -7,7 +7,7 @@ import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataAp
 import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { addFinanceAmounts, financeErrorMessage, financeSourceTypeText, formatFinanceAmount, normalizeOptionalId, ownershipTypeText } from './financePageHelpers'
+import { addFinanceAmounts, financeErrorMessage, financeSourceTypeText, formatFinanceAmount, formatFinanceDate, normalizeOptionalId, ownershipTypeText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const route = useRoute()
@@ -24,7 +24,11 @@ const loading = ref(false)
 const sourcesLoading = ref(false)
 const submitting = ref(false)
 const sourcePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const sourceFilters = reactive({ keyword: '' })
+const sourceFilters = reactive({
+  keyword: '',
+  businessDateFrom: '',
+  businessDateTo: '',
+})
 const form = reactive({
   ownershipType: 'PUBLIC' as OwnershipType,
   supplierId: '' as string | number | '',
@@ -109,7 +113,7 @@ function selectSource(source: ExpenseSourceCandidateRecord) {
   if (source.supplierId !== undefined) form.supplierId = source.supplierId
   if (source.ownershipType) form.ownershipType = source.ownershipType
   form.projectId = source.ownershipType === 'PROJECT' ? (source.projectId ?? '') : ''
-  if (source.businessDate && !form.businessDate) form.businessDate = source.businessDate
+  if (source.businessDate && !form.businessDate) form.businessDate = formatFinanceDate(source.businessDate)
   if (source.availableAmount && !form.pretaxAmount) form.pretaxAmount = String(source.availableAmount)
 }
 
@@ -140,6 +144,11 @@ async function loadSources() {
     const page = await financeExpenseApi.expenseSourceCandidates.list({
       keyword: sourceFilters.keyword,
       sourceType: form.sourceType,
+      supplierId: normalizeOptionalId(form.supplierId),
+      ownershipType: form.ownershipType,
+      projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) : undefined,
+      businessDateFrom: sourceFilters.businessDateFrom,
+      businessDateTo: sourceFilters.businessDateTo,
       page: sourcePagination.page,
       pageSize: sourcePagination.pageSize,
     })
@@ -289,6 +298,12 @@ onMounted(loadData)
         <span class="finance-section-title">来源候选</span>
         <el-form class="query-form" inline>
           <el-form-item label="关键词"><el-input v-model="sourceFilters.keyword" clearable placeholder="来源单号或摘要" /></el-form-item>
+          <el-form-item label="业务日期从">
+            <el-date-picker v-model="sourceFilters.businessDateFrom" name="expense-source-date-from" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="开始日期" />
+          </el-form-item>
+          <el-form-item label="业务日期到">
+            <el-date-picker v-model="sourceFilters.businessDateTo" name="expense-source-date-to" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="结束日期" />
+          </el-form-item>
           <el-form-item><el-button type="primary" @click="searchSources">查询来源</el-button></el-form-item>
         </el-form>
         <div class="table-scroll">
@@ -297,7 +312,7 @@ onMounted(loadData)
             <el-table-column prop="sourceNo" label="来源单号" min-width="150" show-overflow-tooltip />
             <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip />
             <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
-            <el-table-column prop="businessDate" label="业务日期" min-width="110" />
+            <el-table-column label="业务日期" min-width="110"><template #default="{ row }">{{ formatFinanceDate(row.businessDate) }}</template></el-table-column>
             <el-table-column label="净可用金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount) }}</template></el-table-column>
             <el-table-column label="操作" fixed="right" min-width="90">
               <template #default="{ row }">

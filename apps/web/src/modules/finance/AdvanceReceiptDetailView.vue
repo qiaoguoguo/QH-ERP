@@ -42,6 +42,22 @@ const allocationDisabledReason = computed(() => {
   return ''
 })
 
+function firstDisplayText(...values: Array<string | null | undefined>) {
+  return values.find((value) => Boolean(value?.trim())) ?? ''
+}
+
+function advancePartyName(fund: AdvanceFundRecord) {
+  return firstDisplayText(fund.customerName, fund.partnerName) || '客户待补全'
+}
+
+function fundSourceSummary(fund: AdvanceFundRecord) {
+  const summary = firstDisplayText(fund.sourceSummary, fund.fundSummary, fund.summary)
+  if (summary) {
+    return summary
+  }
+  return `${fund.advanceNo} 由收款单 ${fund.fundNo || '来源单据待补全'} 形成，不新增现金发生额。`
+}
+
 async function loadRecord() {
   loading.value = true
   error.value = ''
@@ -117,7 +133,7 @@ onMounted(loadRecord)
 
     <div v-if="record" class="finance-summary-strip">
       <div><span>资金状态</span><strong>{{ settlementStatusText(record.status) }}</strong></div>
-      <div><span>客户</span><strong>{{ record.partnerName }}</strong></div>
+      <div><span>客户</span><strong>{{ advancePartyName(record) }}</strong></div>
       <div><span>项目/公共</span><strong>{{ ownershipTypeText(record.ownershipType) }} {{ record.projectName ?? '' }}</strong></div>
       <div><span>业务日期</span><strong>{{ record.businessDate }}</strong></div>
       <div><span>收款金额</span><strong>{{ formatFinanceAmount(record.amount) }}</strong></div>
@@ -129,7 +145,7 @@ onMounted(loadRecord)
     <div v-if="record" class="finance-section-grid">
       <section class="finance-section">
         <span class="finance-section-title">资金事实</span>
-        <p>{{ record.advanceNo }} 由收款单 {{ record.fundNo }} 形成，不新增现金发生额。</p>
+        <p>{{ fundSourceSummary(record) }}</p>
       </section>
       <section class="finance-section">
         <span class="finance-section-title">可用余额</span>

@@ -362,7 +362,7 @@ describe('028 财务页面', () => {
       ownershipType: 'PROJECT',
       projectId: 188,
       projectName: '真实项目',
-      businessDate: '2026-08-05',
+      businessDate: '2026-08-05T10:30:00+08:00',
       availableAmount: '106.00',
       summary: '外协收货 OSR-001',
     }], 1, 10))
@@ -518,6 +518,10 @@ describe('028 财务页面', () => {
 
     expect(wrapper.text()).toContain('确认后不可普通编辑')
     expect(wrapper.find('[data-test="save-sales-invoice"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.findAllComponents({ name: 'ElSelect' })[0].props('disabled')).toBe(true)
+    expect(wrapper.find('input[placeholder="出库号、物料或客户"]').attributes('disabled')).toBeDefined()
+    expect(buttonsByText(wrapper, '查询来源')[0].props('disabled')).toBe(true)
+    expect(wrapper.find('[data-test="select-source-line"]').attributes('disabled')).toBeDefined()
     invoiceApiMock.salesInvoices.update.mockClear()
     await wrapper.find('[data-test="save-sales-invoice"]').trigger('click')
     await flushPromises()
@@ -635,6 +639,11 @@ describe('028 财务页面', () => {
 
     expect(wrapper.text()).toContain('确认后不可普通编辑')
     expect(wrapper.find('[data-test="save-purchase-invoice"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.findAllComponents({ name: 'ElSelect' })[0].props('disabled')).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'ElSelect' })[1].props('disabled')).toBe(true)
+    expect(wrapper.find('input[placeholder="入库、外协收货或物料"]').attributes('disabled')).toBeDefined()
+    expect(buttonsByText(wrapper, '查询来源')[0].props('disabled')).toBe(true)
+    expect(wrapper.find('[data-test="select-purchase-source-line"]').attributes('disabled')).toBeDefined()
     invoiceApiMock.purchaseInvoices.update.mockClear()
     await wrapper.find('[data-test="save-purchase-invoice"]').trigger('click')
     await flushPromises()
@@ -657,12 +666,27 @@ describe('028 财务页面', () => {
     expect(formWrapper.text()).toContain('选择采购入库或外协收货后加载来源候选')
     expect(formWrapper.text()).toContain('来源净可用金额')
     expect(formWrapper.text()).toContain('0.00')
-    await setSelectValue(formWrapper, 4, 'PURCHASE_RECEIPT')
-    await buttonsByText(formWrapper, '查询来源')[0].trigger('click')
-    await flushPromises()
-    expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenCalledWith(expect.objectContaining({ sourceType: 'PURCHASE_RECEIPT', page: 1, pageSize: 10 }))
     await setSelectValue(formWrapper, 0, 'PROJECT')
     await setSelectValue(formWrapper, 2, 188)
+    await setSelectValue(formWrapper, 4, 'PURCHASE_RECEIPT')
+    expect(formWrapper.find('input[name="expense-source-date-from"]').exists()).toBe(true)
+    expect(formWrapper.find('input[name="expense-source-date-to"]').exists()).toBe(true)
+    await formWrapper.find('input[name="expense-source-date-from"]').setValue('2026-08-01')
+    await formWrapper.find('input[name="expense-source-date-to"]').setValue('2026-08-31')
+    await buttonsByText(formWrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      sourceType: 'PURCHASE_RECEIPT',
+      supplierId: 99,
+      ownershipType: 'PROJECT',
+      projectId: 188,
+      businessDateFrom: '2026-08-01',
+      businessDateTo: '2026-08-31',
+      page: 1,
+      pageSize: 10,
+    }))
+    expect(formWrapper.text()).toContain('2026-08-05')
+    expect(formWrapper.text()).not.toContain('2026-08-05T10:30:00')
     await formWrapper.find('input[name="expense-business-date"]').setValue('2026-08-05')
     await formWrapper.find('input[name="expense-pretax-amount"]').setValue('120.00')
     await formWrapper.find('input[name="expense-tax-rate"]').setValue('0.060000')
@@ -725,12 +749,30 @@ describe('028 财务页面', () => {
     expect(prepaymentForm.find('[data-test="fund-method-select"]').exists()).toBe(true)
     expect(masterDataApiMock.suppliers.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 200 }))
 
+    settlementApiMock.advanceReceipts.get.mockResolvedValueOnce({
+      ...advanceReceipt,
+      partnerName: '',
+      customerName: '稳定客户',
+      fundNo: '',
+      sourceSummary: '收款 RC-REAL-001 已过账',
+    })
     const { wrapper: advanceDetail } = await mountFinanceView(AdvanceReceiptDetailView, ['finance:advance-receipt:view', 'finance:settlement-allocation:create'], '/finance/advance-receipts/41')
     expect(advanceDetail.text()).toContain('发起核销')
     expect(advanceDetail.text()).toContain('已核销目标')
+    expect(advanceDetail.text()).toContain('稳定客户')
+    expect(advanceDetail.text()).toContain('收款 RC-REAL-001 已过账')
 
+    settlementApiMock.prepayments.get.mockResolvedValueOnce({
+      ...prepayment,
+      partnerName: '',
+      supplierName: '稳定供应商',
+      fundNo: '',
+      sourceSummary: '付款 PM-REAL-001 已过账',
+    })
     const { wrapper: prepaymentDetail } = await mountFinanceView(PrepaymentDetailView, ['finance:prepayment:view'], '/finance/prepayments/51')
     expect(prepaymentDetail.text()).toContain('可用余额')
+    expect(prepaymentDetail.text()).toContain('稳定供应商')
+    expect(prepaymentDetail.text()).toContain('付款 PM-REAL-001 已过账')
   })
 
   it('对账核销工作台支持独立候选池、多目标选择、超额禁用和统一确认提交', async () => {
@@ -1031,11 +1073,22 @@ describe('028 财务页面', () => {
   it('费用详情和发票详情使用多态来源追溯并显示真实受限原因', async () => {
     expenseApiMock.expenses.get.mockResolvedValueOnce({
       ...expense,
+      supplierName: '',
+      partyName: '稳定费用供应商',
+      categoryName: '',
+      categorySummary: '稳定费用分类',
+      businessDate: '2026-08-05T11:22:33+08:00',
       sourceType: 'OUTSOURCING_RECEIPT',
-      sourceNo: 'OSR-001',
+      sourceNo: undefined,
+      sourceSummary: '外协收货 OSR-001 运费',
       sources: [{ sourceType: 'OUTSOURCING_RECEIPT', sourceNo: 'OSR-001', restricted: true, restrictedReason: '来源权限受限' }],
     })
     const { wrapper: expenseDetail } = await mountFinanceView(ExpenseDetailView, ['finance:expense:view'], '/finance/expenses/31')
+    expect(expenseDetail.text()).toContain('稳定费用供应商')
+    expect(expenseDetail.text()).toContain('稳定费用分类')
+    expect(expenseDetail.text()).toContain('2026-08-05')
+    expect(expenseDetail.text()).not.toContain('2026-08-05T11:22:33')
+    expect(expenseDetail.text()).toContain('外协收货 OSR-001 运费')
     expect(expenseDetail.text()).toContain('外协收货')
     expect(expenseDetail.text()).toContain('来源权限受限')
     expect(expenseDetail.text()).not.toContain('采购入库 PR-001')
@@ -1072,8 +1125,8 @@ describe('028 财务页面', () => {
       generationVersion: 3,
       sourceSummary: { sourceType: 'RECEIPT', sourceNo: 'RC-POSTED-001', summary: '收款 RC-POSTED-001', restricted: false },
       lines: [
-        { direction: 'DEBIT', businessCategory: '收款', summary: '收款形成现金', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
-        { direction: 'CREDIT', businessCategory: '预收', summary: '形成预收余额', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
+        { direction: 'DEBIT', businessCategory: 'CASH_DRAFT', summary: '收款形成现金', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
+        { direction: 'CREDIT', businessCategory: 'ADVANCE_RECEIPT_DRAFT', summary: '形成预收余额', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
       ],
     })
     const { wrapper } = await mountFinanceView(VoucherDraftDetailView, ['finance:voucher-draft:view'], '/finance/voucher-drafts/61')
@@ -1082,6 +1135,10 @@ describe('028 财务页面', () => {
     expect(wrapper.text()).toContain('贷方 120.00')
     expect(wrapper.text()).toContain('第 3 版建议')
     expect(wrapper.text()).toContain('收款 RC-POSTED-001')
+    expect(wrapper.text()).toContain('现金草稿')
+    expect(wrapper.text()).toContain('预收草稿')
+    expect(wrapper.text()).not.toContain('CASH_DRAFT')
+    expect(wrapper.text()).not.toContain('ADVANCE_RECEIPT_DRAFT')
     expect(wrapper.text()).toContain('收款形成现金')
   })
 })

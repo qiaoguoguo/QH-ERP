@@ -118,6 +118,8 @@ export interface AdvanceFundRecord {
   customerId?: ResourceId
   supplierId?: ResourceId
   partnerName: string
+  customerName?: string | null
+  supplierName?: string | null
   ownershipType: OwnershipType
   projectId?: ResourceId | null
   projectName?: string | null
@@ -131,6 +133,9 @@ export interface AdvanceFundRecord {
   version: number
   allowedActions: string[]
   restrictedReason?: string | null
+  sourceSummary?: string | null
+  fundSummary?: string | null
+  summary?: string | null
   allocations?: Array<{ targetType: string; targetNo: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
   auditSummary?: unknown[]

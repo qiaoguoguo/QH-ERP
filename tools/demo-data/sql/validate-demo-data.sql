@@ -8,10 +8,10 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 30; checksum = 1374296472'::text,
+        'latest successful version = 30; checksum = 2130342893'::text,
         (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 30
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 1374296472),
-        'Flyway 最新成功版本必须为 V30，checksum 必须为 1374296472。'::text
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 2130342893),
+        'Flyway 最新成功版本必须为 V30，checksum 必须为 2130342893。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
     union all select 'FLYWAY_V29_CHECKSUM', 'migration',
         concat('version=29;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),

@@ -56,6 +56,7 @@ const readOnlyReason = computed(() => {
   if (!(detail.value.allowedActions ?? []).includes('UPDATE')) return '当前采购发票不可编辑'
   return ''
 })
+const formReadOnly = computed(() => Boolean(readOnlyReason.value))
 const saveDisabledReason = computed(() => {
   if (readOnlyReason.value) return readOnlyReason.value
   if (!form.invoiceDate) return '请选择发票日期'
@@ -119,6 +120,12 @@ function restoreSelectedLines(record: PurchaseInvoiceRecord) {
 }
 
 async function loadCandidates() {
+  if (formReadOnly.value) {
+    candidates.value = selected.value
+    candidatePagination.total = selected.value.length
+    candidatesLoading.value = false
+    return
+  }
   candidatesLoading.value = true
   try {
     const page = await financeInvoiceApi.purchaseInvoiceCandidates.list({
@@ -166,6 +173,9 @@ async function loadData() {
 }
 
 function selectLine(line: PurchaseInvoiceCandidateLine) {
+  if (formReadOnly.value) {
+    return
+  }
   if (!selected.value.some((item) => item.sourceLineId === line.sourceLineId)) {
     selected.value = [...selected.value, line]
   }
@@ -173,11 +183,17 @@ function selectLine(line: PurchaseInvoiceCandidateLine) {
 }
 
 function searchCandidates() {
+  if (formReadOnly.value) {
+    return
+  }
   candidatePagination.page = 1
   void loadCandidates()
 }
 
 function changeCandidatePage(page: number) {
+  if (formReadOnly.value) {
+    return
+  }
   candidatePagination.page = page
   void loadCandidates()
 }
@@ -244,31 +260,31 @@ onMounted(loadData)
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
         <el-form-item label="供应商">
-          <el-select v-model="form.supplierId" filterable clearable placeholder="选择供应商" @change="searchCandidates">
+          <el-select data-test="purchase-invoice-supplier" v-model="form.supplierId" filterable clearable :disabled="formReadOnly" placeholder="选择供应商" @change="searchCandidates">
             <el-option v-for="supplier in suppliers" :key="supplier.id" :label="supplier.name" :value="supplier.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-select v-model="form.sourceType" placeholder="选择来源类型" @change="searchCandidates">
+          <el-select data-test="purchase-invoice-source-type" v-model="form.sourceType" :disabled="formReadOnly" placeholder="选择来源类型" @change="searchCandidates">
             <el-option label="标准采购发票" value="PURCHASE_RECEIPT" />
             <el-option label="外协结算" value="OUTSOURCING_RECEIPT" />
           </el-select>
         </el-form-item>
         <el-form-item label="项目/公共归属">
-          <el-select v-model="form.ownershipType" placeholder="选择归属" @change="searchCandidates">
+          <el-select v-model="form.ownershipType" :disabled="formReadOnly" placeholder="选择归属" @change="searchCandidates">
             <el-option label="公共" value="PUBLIC" />
             <el-option label="项目" value="PROJECT" />
           </el-select>
         </el-form-item>
         <el-form-item label="项目">
-          <el-select v-model="form.projectId" filterable clearable :disabled="form.ownershipType === 'PUBLIC'" placeholder="选择项目" @change="searchCandidates">
+          <el-select v-model="form.projectId" filterable clearable :disabled="formReadOnly || form.ownershipType === 'PUBLIC'" placeholder="选择项目" @change="searchCandidates">
             <el-option v-for="project in projects" :key="project.id" :label="`${project.projectNo} ${project.name}`" :value="project.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="发票日期"><el-date-picker v-model="form.invoiceDate" name="purchase-invoice-date" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择发票日期" /></el-form-item>
-        <el-form-item label="外部发票号码"><el-input v-model="form.externalInvoiceNo" clearable placeholder="填写外部发票号码" /></el-form-item>
+        <el-form-item label="发票日期"><el-date-picker v-model="form.invoiceDate" name="purchase-invoice-date" :disabled="formReadOnly" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择发票日期" /></el-form-item>
+        <el-form-item label="外部发票号码"><el-input v-model="form.externalInvoiceNo" :disabled="formReadOnly" clearable placeholder="填写外部发票号码" /></el-form-item>
         <el-form-item label="发票类型">
-          <el-select v-model="form.invoiceType" placeholder="选择发票类型">
+          <el-select v-model="form.invoiceType" :disabled="formReadOnly" placeholder="选择发票类型">
             <el-option label="增值税普通发票" value="GENERAL_VAT" />
             <el-option label="增值税专用发票" value="SPECIAL_VAT" />
             <el-option label="无票" value="NONE" />
@@ -277,8 +293,8 @@ onMounted(loadData)
       </div>
     </el-form>
     <el-form class="query-form" inline>
-      <el-form-item label="来源关键词"><el-input v-model="candidateFilters.keyword" clearable placeholder="入库、外协收货或物料" /></el-form-item>
-      <el-form-item><el-button type="primary" @click="searchCandidates">查询来源</el-button></el-form-item>
+      <el-form-item label="来源关键词"><el-input data-test="purchase-invoice-source-keyword" v-model="candidateFilters.keyword" :disabled="formReadOnly" clearable placeholder="入库、外协收货或物料" /></el-form-item>
+      <el-form-item><el-button type="primary" :disabled="formReadOnly" @click="searchCandidates">查询来源</el-button></el-form-item>
     </el-form>
     <div class="table-scroll">
       <el-table :data="candidates" :empty-text="candidatesLoading ? '来源加载中' : '当前条件下无可用采购或外协来源'">
@@ -293,7 +309,7 @@ onMounted(loadData)
         <el-table-column prop="taxRate" label="税率" min-width="100" align="right" />
         <el-table-column label="净可开余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount ?? row.totalAmount) }}</template></el-table-column>
         <el-table-column prop="totalAmount" label="含税金额" min-width="120" align="right" />
-        <el-table-column label="操作" fixed="right" min-width="90"><template #default="{ row }"><el-button data-test="select-purchase-source-line" text :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectLine(row)">{{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="90"><template #default="{ row }"><el-button data-test="select-purchase-source-line" text :disabled="formReadOnly" :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectLine(row)">{{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="candidatePagination.total" :page-size="candidatePagination.pageSize" :current-page="candidatePagination.page" @current-change="changeCandidatePage" />

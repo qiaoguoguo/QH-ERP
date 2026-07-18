@@ -204,6 +204,13 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(postedReceiptData.get("status").asText()).isEqualTo("POSTED");
 		assertThat(postedReceiptData.get("allocations").size()).isOne();
 		assertDecimal(postedReceiptData.get("allocations").get(0), "allocatedAmount", "9.00");
+		JsonNode listedReceipt = findItemByLong(
+				data(get("/api/admin/finance/receipts?receivableId=" + receivableId, admin)).get("items"), "id",
+				receiptId);
+		assertThat(listedReceipt).isNotNull();
+		assertThat(postedReceiptData.get("version").longValue()).isEqualTo(listedReceipt.get("version").longValue());
+		JsonNode receiptDetail = data(getReceipt(admin, receiptId));
+		assertThat(receiptDetail.get("version").longValue()).isEqualTo(listedReceipt.get("version").longValue());
 
 		JsonNode partial = data(getReceivable(admin, receivableId));
 		assertThat(partial.get("status").asText()).isEqualTo("PARTIALLY_RECEIVED");
@@ -273,6 +280,13 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(postedPaymentData.get("status").asText()).isEqualTo("POSTED");
 		assertThat(postedPaymentData.get("allocations").size()).isOne();
 		assertDecimal(postedPaymentData.get("allocations").get(0), "allocatedAmount", "9.00");
+		JsonNode listedPayment = findItemByLong(
+				data(get("/api/admin/finance/payments?payableId=" + payableId, admin)).get("items"), "id",
+				paymentId);
+		assertThat(listedPayment).isNotNull();
+		assertThat(postedPaymentData.get("version").longValue()).isEqualTo(listedPayment.get("version").longValue());
+		JsonNode paymentDetail = data(getPayment(admin, paymentId));
+		assertThat(paymentDetail.get("version").longValue()).isEqualTo(listedPayment.get("version").longValue());
 
 		JsonNode partial = data(getPayable(admin, payableId));
 		assertThat(partial.get("status").asText()).isEqualTo("PARTIALLY_PAID");
@@ -962,6 +976,16 @@ class FinanceAdminControllerTests extends PostgresIntegrationTest {
 			ids.add(items.get(i).get(field).longValue());
 		}
 		return ids;
+	}
+
+	private JsonNode findItemByLong(JsonNode items, String field, long value) {
+		for (int i = 0; i < items.size(); i++) {
+			JsonNode item = items.get(i);
+			if (item.has(field) && item.get(field).longValue() == value) {
+				return item;
+			}
+		}
+		return null;
 	}
 
 	private void assertItemsContain(ResponseEntity<String> response, long id) throws Exception {

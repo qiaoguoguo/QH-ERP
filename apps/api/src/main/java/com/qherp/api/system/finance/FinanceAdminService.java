@@ -342,6 +342,7 @@ public class FinanceAdminService {
 				summary.receivableNo(), summary.customerId(), summary.customerName(), summary.receiptDate(),
 				summary.amount(), summary.method(), summary.status(), summary.remark(), summary.createdByName(),
 				summary.createdAt(), summary.updatedAt(), summary.postedByName(), summary.postedAt(),
+				summary.version(),
 				receiptAllocations(id));
 	}
 
@@ -699,6 +700,7 @@ public class FinanceAdminService {
 				summary.payableNo(), summary.supplierId(), summary.supplierName(), summary.paymentDate(),
 				summary.amount(), summary.method(), summary.status(), summary.remark(), summary.createdByName(),
 				summary.createdAt(), summary.updatedAt(), summary.postedByName(), summary.postedAt(),
+				summary.version(),
 				paymentAllocations(id));
 	}
 
@@ -1869,7 +1871,7 @@ public class FinanceAdminService {
 	public record ReceiptDetailResponse(Long id, String receiptNo, Long receivableId, String receivableNo,
 			Long customerId, String customerName, LocalDate receiptDate, BigDecimal amount, String method,
 			String status, String remark, String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt,
-			String postedByName, OffsetDateTime postedAt, List<ReceiptAllocationRecord> allocations) {
+			String postedByName, OffsetDateTime postedAt, Long version, List<ReceiptAllocationRecord> allocations) {
 	}
 
 	public record ReceiptAllocationRecord(Long id, Long receiptId, String receiptNo, Long receivableId,
@@ -1908,7 +1910,7 @@ public class FinanceAdminService {
 	public record PaymentDetailResponse(Long id, String paymentNo, Long payableId, String payableNo, Long supplierId,
 			String supplierName, LocalDate paymentDate, BigDecimal amount, String method, String status, String remark,
 			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String postedByName,
-			OffsetDateTime postedAt, List<PaymentAllocationRecord> allocations) {
+			OffsetDateTime postedAt, Long version, List<PaymentAllocationRecord> allocations) {
 	}
 
 	public record PaymentAllocationRecord(Long id, Long paymentId, String paymentNo, Long payableId,
