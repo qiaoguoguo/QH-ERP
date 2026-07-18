@@ -12,7 +12,9 @@ import {
   compareFinanceAmount,
   financeErrorMessage,
   financePermissions,
+  financeMethodText,
   formatFinanceAmount,
+  formatFinanceDateTime,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -191,12 +193,16 @@ onMounted(loadRecord)
             <el-table-column label="付款金额" min-width="130" align="right">
               <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.amount) }}</span></template>
             </el-table-column>
-            <el-table-column prop="method" label="方式" min-width="120" />
+            <el-table-column label="方式" min-width="120">
+              <template #default="{ row }">{{ financeMethodText(row.method) }}</template>
+            </el-table-column>
             <el-table-column label="状态" min-width="100">
               <template #default="{ row }"><PaymentStatusTag :status="row.status" /></template>
             </el-table-column>
             <el-table-column prop="postedByName" label="过账人" min-width="110" />
-            <el-table-column prop="postedAt" label="过账时间" min-width="160" show-overflow-tooltip />
+            <el-table-column label="过账时间" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatFinanceDateTime(row.postedAt) }}</template>
+            </el-table-column>
             <el-table-column v-if="canViewPayment" label="操作" width="90" fixed="right">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-payment-summary" @click="viewPayment(row.id)">详情</el-button>

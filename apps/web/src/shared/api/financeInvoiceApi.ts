@@ -203,6 +203,7 @@ export interface PurchaseInvoiceRecord {
   totalAmount: FinanceAmount
   unsettledAmount: FinanceAmount
   differenceCount?: number
+  matchDifferencesCount?: number
   version: number
   allowedActions: string[]
   linkedPayableId?: ResourceId | null

@@ -16,7 +16,7 @@ export interface VersionedActionPayload {
 }
 
 export type OwnershipType = 'PROJECT' | 'PUBLIC'
-export type SettlementStatus = 'UNSETTLED' | 'PARTIALLY_SETTLED' | 'SETTLED' | 'PARTIALLY_APPLIED' | 'APPLIED' | 'AVAILABLE'
+export type SettlementStatus = 'UNLINKED' | 'UNSETTLED' | 'PARTIALLY_SETTLED' | 'SETTLED' | 'PARTIALLY_APPLIED' | 'APPLIED' | 'AVAILABLE'
 
 export function createFinanceStage028Transport(options: FinanceStage028ApiOptions = {}) {
   const fetcher = options.fetcher ?? ((input: string, init: RequestInit) => fetch(input, init))

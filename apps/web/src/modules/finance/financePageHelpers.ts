@@ -192,6 +192,13 @@ export function formatFinanceDate(value: string | null | undefined) {
   return match ? match[0] : raw
 }
 
+export function formatFinanceDateTime(value: string | null | undefined) {
+  if (!value) {
+    return '-'
+  }
+  return String(value).replace('T', ' ').slice(0, 16)
+}
+
 function formatFinanceBusinessDate(date: Date) {
   const parts = financeBusinessDateFormatter.formatToParts(date)
   const year = parts.find((part) => part.type === 'year')?.value
@@ -301,6 +308,7 @@ export function settlementStatusText(value: string | null | undefined) {
   const text: Record<string, string> = {
     DRAFT: '草稿',
     CONFIRMED: '已确认',
+    UNLINKED: '未关联结算',
     UNSETTLED: '未结清',
     PARTIALLY_SETTLED: '部分结清',
     SETTLED: '已结清',

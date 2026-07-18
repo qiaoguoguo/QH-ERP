@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeExpenseApi, type ExpenseRecord, type ExpenseSourceType, type ExpenseStatus } from '../../shared/api/financeExpenseApi'
+import { useAuthStore } from '../../stores/authStore'
 import type { OwnershipType } from '../../shared/api/financeStage028ApiCore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive({
   keyword: '',
   supplierId: '',
@@ -25,6 +27,7 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<ExpenseRecord[]>([])
 const error = ref('')
 const loading = ref(false)
+const canCreate = computed(() => authStore.hasPermission(financePermissions.expenseCreate))
 
 async function loadRecords() {
   loading.value = true
@@ -91,7 +94,7 @@ onMounted(loadRecords)
 
 <template>
   <MasterDataTableView title="费用单" description="记录项目/公共供应商费用归属，供后续成本和凭证阶段消费，不形成正式项目成本。">
-    <template #actions><el-button data-test="create-expense" type="primary" @click="router.push({ name: 'finance-expense-create' })">新增费用单</el-button></template>
+    <template #actions><el-button v-if="canCreate" data-test="create-expense" type="primary" @click="router.push({ name: 'finance-expense-create' })">新增费用单</el-button></template>
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="费用单、供应商或来源" /></el-form-item>

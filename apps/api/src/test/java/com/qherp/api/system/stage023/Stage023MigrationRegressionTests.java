@@ -39,7 +39,7 @@ class Stage023MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -126,7 +126,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -181,7 +181,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
@@ -234,7 +234,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -278,7 +278,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of("cost_layer_id"));
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -313,7 +313,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
@@ -341,7 +341,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':'
@@ -372,7 +372,7 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("29");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);

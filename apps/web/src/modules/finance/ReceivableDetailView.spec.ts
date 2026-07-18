@@ -100,6 +100,10 @@ describe('应收详情页', () => {
     expect(wrapper.text()).toContain('销售订单')
     expect(wrapper.text()).toContain('SO-001')
     expect(wrapper.text()).toContain('RC-001')
+    expect(wrapper.text()).toContain('银行转账')
+    expect(wrapper.text()).toContain('2026-07-10 09:00')
+    expect(wrapper.text()).not.toContain('BANK_TRANSFER')
+    expect(wrapper.text()).not.toContain('2026-07-10T09:00:00')
     expect(wrapper.text()).toContain('确认应收')
 
     await wrapper.find('[data-test="view-source-shipment"]').trigger('click')

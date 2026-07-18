@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeInvoiceApi, type InvoiceStatus, type SalesInvoiceRecord } from '../../shared/api/financeInvoiceApi'
+import { useAuthStore } from '../../stores/authStore'
 import type { SettlementStatus } from '../../shared/api/financeStage028ApiCore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive({
   keyword: '',
   status: '' as '' | InvoiceStatus,
@@ -20,6 +22,7 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<SalesInvoiceRecord[]>([])
 const loading = ref(false)
 const error = ref('')
+const canCreate = computed(() => authStore.hasPermission(financePermissions.salesInvoiceCreate))
 
 async function loadRecords() {
   loading.value = true
@@ -77,7 +80,7 @@ onMounted(loadRecords)
 <template>
   <MasterDataTableView title="销售发票" description="基于已过账销售出库和税价快照开票，不回写历史出库。">
     <template #actions>
-      <el-button data-test="create-sales-invoice" type="primary" @click="router.push({ name: 'finance-sales-invoice-create' })">
+      <el-button v-if="canCreate" data-test="create-sales-invoice" type="primary" @click="router.push({ name: 'finance-sales-invoice-create' })">
         新增销售发票
       </el-button>
     </template>

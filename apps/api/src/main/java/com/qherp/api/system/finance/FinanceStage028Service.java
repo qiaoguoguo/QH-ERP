@@ -1881,6 +1881,8 @@ public class FinanceStage028Service {
 		response.put("partyType", row.partyType());
 		response.put("partyId", row.partyId());
 		response.put("partyName", row.partyName());
+		response.put("partnerName", row.partyName());
+		response.put("partySummary", partySummary(row.partyType(), row.partyName()));
 		response.put("ownershipType", row.ownershipType());
 		response.put("projectId", row.projectId());
 		response.put("sourceNo", voucherSourceNo(row.sourceType(), row.sourceId()));
@@ -3489,6 +3491,17 @@ public class FinanceStage028Service {
 			case "SETTLEMENT_ALLOCATION" -> settlementAllocationRow(sourceId).map(SettlementAllocationRow::documentNo)
 				.orElse(null);
 			default -> null;
+		};
+	}
+
+	private String partySummary(String partyType, String partyName) {
+		if (!hasText(partyName)) {
+			return null;
+		}
+		return switch (partyType) {
+			case "CUSTOMER" -> "客户 " + partyName;
+			case "SUPPLIER" -> "供应商 " + partyName;
+			default -> partyName;
 		};
 	}
 

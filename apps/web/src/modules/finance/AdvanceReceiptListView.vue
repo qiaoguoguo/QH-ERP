@@ -1,14 +1,16 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeSettlementApi, type AdvanceFundRecord, type AdvanceFundStatus } from '../../shared/api/financeSettlementApi'
+import { useAuthStore } from '../../stores/authStore'
 import type { OwnershipType, SettlementStatus } from '../../shared/api/financeStage028ApiCore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, formatFinanceAmount, ownershipTypeText, settlementStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, formatFinanceAmount, ownershipTypeText, settlementStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive({
   keyword: '',
   customerId: '',
@@ -24,6 +26,7 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<AdvanceFundRecord[]>([])
 const error = ref('')
 const loading = ref(false)
+const canCreate = computed(() => authStore.hasPermission(financePermissions.advanceReceiptCreate))
 
 async function loadRecords() {
   loading.value = true
@@ -86,7 +89,7 @@ onMounted(loadRecords)
 
 <template>
   <MasterDataTableView title="预收款" description="展示已过账收款形成的客户未核销余额。">
-    <template #actions><el-button type="primary" @click="router.push({ name: 'finance-advance-receipt-create' })">登记预收款</el-button></template>
+    <template #actions><el-button v-if="canCreate" data-test="create-advance-receipt" type="primary" @click="router.push({ name: 'finance-advance-receipt-create' })">登记预收款</el-button></template>
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="预收单号、收款单号或客户" /></el-form-item>

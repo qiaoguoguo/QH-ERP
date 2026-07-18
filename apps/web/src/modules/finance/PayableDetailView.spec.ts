@@ -96,6 +96,10 @@ describe('应付详情页', () => {
     expect(wrapper.text()).toContain('采购入库')
     expect(wrapper.text()).toContain('采购订单')
     expect(wrapper.text()).toContain('PY-001')
+    expect(wrapper.text()).toContain('银行转账')
+    expect(wrapper.text()).toContain('2026-07-10 09:00')
+    expect(wrapper.text()).not.toContain('BANK_TRANSFER')
+    expect(wrapper.text()).not.toContain('2026-07-10T09:00:00')
     expect(wrapper.text()).toContain('确认应付')
 
     await wrapper.find('[data-test="view-source-purchase-receipt"]').trigger('click')

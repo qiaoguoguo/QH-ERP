@@ -38,6 +38,7 @@ export interface VoucherDraftRecord {
   sourceType: VoucherSourceType | string
   sourceNo: string
   businessDate: string
+  partyName?: string | null
   partnerName?: string | null
   ownershipType?: OwnershipType | null
   projectName?: string | null

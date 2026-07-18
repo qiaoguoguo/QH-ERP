@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeInvoiceApi, type SalesInvoiceRecord } from '../../shared/api/financeInvoiceApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { financeErrorMessage, financePermissions, formatFinanceAmount, invoiceStatusText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
@@ -25,7 +26,7 @@ function partyName(record: SalesInvoiceRecord) {
 }
 
 function receivableLinkText(link: NonNullable<SalesInvoiceRecord['receivableLinks']>[number]) {
-  const parts = [link.receivableNo]
+  const parts = []
   const totalAmount = link.totalAmount ?? link.amount
   if (totalAmount !== undefined && totalAmount !== null && totalAmount !== '') {
     parts.push(`总额 ${formatFinanceAmount(totalAmount)}`)
@@ -34,6 +35,17 @@ function receivableLinkText(link: NonNullable<SalesInvoiceRecord['receivableLink
     parts.push(`未收 ${formatFinanceAmount(link.unreceivedAmount)}`)
   }
   return parts.join(' ')
+}
+
+function viewReceivableLink(link: NonNullable<SalesInvoiceRecord['receivableLinks']>[number]) {
+  if (link.receivableId === undefined || link.receivableId === null) {
+    return
+  }
+  void router.push({
+    name: 'finance-receivable-detail',
+    params: { id: String(link.receivableId) },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
 }
 
 async function loadRecord() {
@@ -120,7 +132,18 @@ onMounted(loadRecord)
       <section class="finance-section">
         <span class="finance-section-title">应收链接</span>
         <p v-if="!record.receivableLinks?.length">暂无应收链接</p>
-        <p v-for="link in record.receivableLinks" :key="link.receivableNo">{{ receivableLinkText(link) }}</p>
+        <p v-for="link in record.receivableLinks" :key="link.receivableNo">
+          <el-button
+            v-if="link.receivableId !== undefined && link.receivableId !== null"
+            text
+            data-test="view-linked-receivable"
+            @click="viewReceivableLink(link)"
+          >
+            {{ link.receivableNo }}
+          </el-button>
+          <span v-else>{{ link.receivableNo }}</span>
+          <span>{{ receivableLinkText(link) }}</span>
+        </p>
       </section>
       <section class="finance-section"><span class="finance-section-title">收款/预收核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeInvoiceApi, type MatchStatus, type PurchaseInvoiceRecord, type PurchaseInvoiceSourceType } from '../../shared/api/financeInvoiceApi'
+import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, matchStatusText, ownershipTypeText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, matchStatusText, ownershipTypeText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive({
   keyword: '',
   sourceType: '' as '' | PurchaseInvoiceSourceType,
@@ -21,6 +23,7 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<PurchaseInvoiceRecord[]>([])
 const loading = ref(false)
 const error = ref('')
+const canCreate = computed(() => authStore.hasPermission(financePermissions.purchaseInvoiceCreate))
 
 async function loadRecords() {
   loading.value = true
@@ -82,7 +85,7 @@ onMounted(loadRecords)
 <template>
   <MasterDataTableView title="采购发票" description="区分标准采购发票与外协供应商结算，零容差匹配通过后衔接应付。">
     <template #actions>
-      <el-button data-test="create-purchase-invoice" type="primary" @click="router.push({ name: 'finance-purchase-invoice-create' })">新增采购发票</el-button>
+      <el-button v-if="canCreate" data-test="create-purchase-invoice" type="primary" @click="router.push({ name: 'finance-purchase-invoice-create' })">新增采购发票</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>

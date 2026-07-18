@@ -475,6 +475,23 @@ describe('028 财务页面', () => {
     expect(invoiceApiMock.salesInvoices.confirm).toHaveBeenCalledWith(11, expect.objectContaining({ version: 2, idempotencyKey: expect.any(String) }))
   })
 
+  it('财务新增类列表主操作消费对应创建权限', async () => {
+    const { wrapper: salesList } = await mountFinanceView(SalesInvoiceListView, ['finance:sales-invoice:view'], '/finance/sales-invoices')
+    expect(salesList.find('[data-test="create-sales-invoice"]').exists()).toBe(false)
+
+    const { wrapper: purchaseList } = await mountFinanceView(PurchaseInvoiceListView, ['finance:purchase-invoice:view'], '/finance/purchase-invoices')
+    expect(purchaseList.find('[data-test="create-purchase-invoice"]').exists()).toBe(false)
+
+    const { wrapper: expenseList } = await mountFinanceView(ExpenseListView, ['finance:expense:view'], '/finance/expenses')
+    expect(expenseList.find('[data-test="create-expense"]').exists()).toBe(false)
+
+    const { wrapper: advanceList } = await mountFinanceView(AdvanceReceiptListView, ['finance:advance-receipt:view'], '/finance/advance-receipts')
+    expect(buttonsByText(advanceList, '登记预收款')).toHaveLength(0)
+
+    const { wrapper: prepaymentList } = await mountFinanceView(PrepaymentListView, ['finance:prepayment:view'], '/finance/prepayments')
+    expect(buttonsByText(prepaymentList, '登记预付款')).toHaveLength(0)
+  })
+
   it('销售发票编辑从详情 partyId/sourceId/source lines 恢复主体和已选来源', async () => {
     const { wrapper } = await mountFinanceView(
       SalesInvoiceFormView,
@@ -558,6 +575,8 @@ describe('028 财务页面', () => {
       ...purchaseInvoice,
       supplierName: '',
       partyName: '后端供应商',
+      differenceCount: 0,
+      matchDifferencesCount: 4,
       sources: [{ sourceType: 'PURCHASE_RECEIPT', sourceId: 601, sourceNo: 'PR-DTO-001', sourceSummary: '采购入库 PR-DTO-001', businessDate: '2026-08-04', amount: '226.00', restricted: false, restrictedReasons: [] }],
       payableLinks: [{ payableId: 402, payableNo: 'AP-DTO-001', status: 'PARTIALLY_PAID', totalAmount: '226.00', paidAmount: '40.00', unpaidAmount: '186.00', linkMode: 'AUTO' }],
     })
@@ -566,6 +585,8 @@ describe('028 财务页面', () => {
     expect(detailWrapper.text()).toContain('后端供应商')
     expect(detailWrapper.text()).toContain('AP-DTO-001')
     expect(detailWrapper.text()).toContain('未付 186.00')
+    expect(detailWrapper.text()).toContain('差异数 4')
+    expect(detailWrapper.text()).not.toContain('差异数 0')
     expect(detailWrapper.text()).toContain('采购入库 PR-DTO-001')
     expect(detailWrapper.find('[data-test="confirm-purchase-invoice"]').attributes('disabled')).toBeDefined()
     await detailWrapper.find('[data-test="match-purchase-invoice"]').trigger('click')
@@ -583,6 +604,22 @@ describe('028 财务页面', () => {
     expect(matchingWrapper.text()).toContain('229.84')
     expect(matchingWrapper.text()).toContain('存在差异')
     expect(matchingWrapper.text()).toContain('未税单价差异')
+  })
+
+  it('发票详情应收应付编号提供可点击链接并携带返回链路', async () => {
+    const { wrapper: salesDetail, router: salesRouter } = await mountFinanceView(SalesInvoiceDetailView, ['finance:sales-invoice:view'], '/finance/sales-invoices/11')
+    await salesDetail.find('[data-test="view-linked-receivable"]').trigger('click')
+    await flushPromises()
+    expect(salesRouter.currentRoute.value.name).toBe('finance-receivable-detail')
+    expect(salesRouter.currentRoute.value.params.id).toBe('301')
+    expect(salesRouter.currentRoute.value.query.returnTo).toBe('/finance/sales-invoices/11')
+
+    const { wrapper: purchaseDetail, router: purchaseRouter } = await mountFinanceView(PurchaseInvoiceDetailView, ['finance:purchase-invoice:view'], '/finance/purchase-invoices/21')
+    await purchaseDetail.find('[data-test="view-linked-payable"]').trigger('click')
+    await flushPromises()
+    expect(purchaseRouter.currentRoute.value.name).toBe('finance-payable-detail')
+    expect(purchaseRouter.currentRoute.value.params.id).toBe('401')
+    expect(purchaseRouter.currentRoute.value.query.returnTo).toBe('/finance/purchase-invoices/21')
   })
 
   it('采购发票编辑回填供应商摘要和已选来源，候选池展示后端净可开事实', async () => {
@@ -651,10 +688,13 @@ describe('028 财务页面', () => {
   })
 
   it('费用单页面表达项目公共归属、供应商费用和非正式成本边界', async () => {
+    expenseApiMock.expenses.list.mockResolvedValueOnce(page([{ ...expense, settlementStatus: 'UNLINKED' }]))
     const { wrapper: listWrapper } = await mountFinanceView(ExpenseListView, ['finance:expense:view', 'finance:expense:create'], '/finance/expenses')
     expect(listWrapper.text()).toContain('记录项目/公共供应商费用归属')
     expect(listWrapper.text()).toContain('不形成正式项目成本')
     expect(listWrapper.text()).toContain('EXP-001')
+    expect(listWrapper.text()).toContain('未关联结算')
+    expect(listWrapper.text()).not.toContain('UNLINKED')
     expect(listWrapper.find('[data-test="reset-expenses"]').exists()).toBe(true)
 
     const { wrapper: formWrapper } = await mountFinanceView(ExpenseFormView, ['finance:expense:create'], '/finance/expenses/create')
@@ -946,6 +986,7 @@ describe('028 财务页面', () => {
   })
 
   it('凭证草稿列表从真实来源生成草稿并携带版本与幂等键', async () => {
+    voucherApiMock.voucherDrafts.list.mockResolvedValueOnce(page([{ ...voucherDraft, partnerName: '', partyName: '后端稳定往来方' }]))
     invoiceApiMock.salesInvoices.list.mockResolvedValueOnce(page([{ ...salesInvoice, status: 'CONFIRMED', allowedActions: [] }]))
     const { wrapper } = await mountFinanceView(
       VoucherDraftListView,
@@ -957,6 +998,7 @@ describe('028 财务页面', () => {
     expect(wrapper.text()).not.toContain('预付款')
     expect(wrapper.find('input[name="voucher-source-id"]').exists()).toBe(false)
     expect(wrapper.find('input[name="voucher-source-version"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('后端稳定往来方')
     await setSelectValue(wrapper, 2, 'RECEIPT')
     await buttonsByText(wrapper, '查询')[0].trigger('click')
     await flushPromises()

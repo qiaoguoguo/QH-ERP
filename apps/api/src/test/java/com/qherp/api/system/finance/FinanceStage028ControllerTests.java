@@ -1134,7 +1134,11 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 		JsonNode filtered = data(get("/api/admin/finance/voucher-drafts?sourceType=RECEIPT&sourceId="
 				+ advanceReceiptId + "&page=1&pageSize=10", admin));
 		assertThat(filtered.get("total").longValue()).isEqualTo(1);
-		assertThat(filtered.get("items").get(0).get("sourceType").asText()).isEqualTo("RECEIPT");
+		JsonNode receiptDraftItem = filtered.get("items").get(0);
+		assertThat(receiptDraftItem.get("sourceType").asText()).isEqualTo("RECEIPT");
+		assertThat(receiptDraftItem.get("partyName").asText()).contains("028 客户");
+		assertThat(receiptDraftItem.get("partnerName").asText()).contains("028 客户");
+		assertThat(receiptDraftItem.get("partySummary").asText()).contains("客户").contains("028 客户");
 	}
 
 	@Test

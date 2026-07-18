@@ -66,6 +66,10 @@ function balanceText(record: VoucherDraftRecord) {
   return record.balanced ? '借贷平衡' : '借贷不平衡'
 }
 
+function voucherPartyName(record: VoucherDraftRecord) {
+  return record.partyName || record.partnerName || '-'
+}
+
 async function loadRecords() {
   loading.value = true
   error.value = ''
@@ -360,7 +364,7 @@ onMounted(() => {
         <el-table-column label="来源类型" min-width="120"><template #default="{ row }">{{ financeSourceTypeText(row.sourceType) }}</template></el-table-column>
         <el-table-column prop="sourceNo" label="来源单号" min-width="150" show-overflow-tooltip />
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
-        <el-table-column prop="partnerName" label="往来方" min-width="150" show-overflow-tooltip />
+        <el-table-column label="往来方" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ voucherPartyName(row) }}</template></el-table-column>
         <el-table-column label="项目/公共" min-width="130"><template #default="{ row }">{{ ownershipTypeText(row.ownershipType) }} {{ row.projectName ?? '' }}</template></el-table-column>
         <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ voucherDraftStatusText(row.status) }}</template></el-table-column>
         <el-table-column label="平衡状态" min-width="120"><template #default="{ row }">{{ balanceText(row) }}</template></el-table-column>
