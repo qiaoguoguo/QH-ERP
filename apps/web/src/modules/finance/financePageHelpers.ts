@@ -2,6 +2,17 @@ import type { PayableStatus, PaymentStatus, ReceivableStatus, ReceiptStatus, Fin
 
 type TagType = '' | 'success' | 'warning' | 'info' | 'danger'
 
+const FINANCE_BUSINESS_TIME_ZONE = 'Asia/Shanghai'
+const FINANCE_DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const FINANCE_LEADING_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}/
+const FINANCE_TIME_WITH_ZONE_PATTERN = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:?\d{2})$/i
+const financeBusinessDateFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: FINANCE_BUSINESS_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
 export const financePermissions = {
   receivableView: 'finance:receivable:view',
   receivableCreate: 'finance:receivable:create',
@@ -167,9 +178,26 @@ export function formatFinanceDate(value: string | null | undefined) {
   if (!value) {
     return '-'
   }
-  const raw = String(value)
-  const match = raw.match(/^\d{4}-\d{2}-\d{2}/)
+  const raw = String(value).trim()
+  if (FINANCE_DATE_ONLY_PATTERN.test(raw)) {
+    return raw
+  }
+  if (FINANCE_TIME_WITH_ZONE_PATTERN.test(raw)) {
+    const parsed = new Date(raw)
+    if (!Number.isNaN(parsed.getTime())) {
+      return formatFinanceBusinessDate(parsed) || raw
+    }
+  }
+  const match = raw.match(FINANCE_LEADING_DATE_PATTERN)
   return match ? match[0] : raw
+}
+
+function formatFinanceBusinessDate(date: Date) {
+  const parts = financeBusinessDateFormatter.formatToParts(date)
+  const year = parts.find((part) => part.type === 'year')?.value
+  const month = parts.find((part) => part.type === 'month')?.value
+  const day = parts.find((part) => part.type === 'day')?.value
+  return year && month && day ? `${year}-${month}-${day}` : ''
 }
 
 export function financeErrorMessage(error: unknown) {

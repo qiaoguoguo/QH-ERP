@@ -362,7 +362,7 @@ describe('028 财务页面', () => {
       ownershipType: 'PROJECT',
       projectId: 188,
       projectName: '真实项目',
-      businessDate: '2026-08-05T10:30:00+08:00',
+      businessDate: '2026-07-03T16:00:00.000Z',
       availableAmount: '106.00',
       summary: '外协收货 OSR-001',
     }], 1, 10))
@@ -671,8 +671,8 @@ describe('028 财务页面', () => {
     await setSelectValue(formWrapper, 4, 'PURCHASE_RECEIPT')
     expect(formWrapper.find('input[name="expense-source-date-from"]').exists()).toBe(true)
     expect(formWrapper.find('input[name="expense-source-date-to"]').exists()).toBe(true)
-    await formWrapper.find('input[name="expense-source-date-from"]').setValue('2026-08-01')
-    await formWrapper.find('input[name="expense-source-date-to"]').setValue('2026-08-31')
+    await formWrapper.find('input[name="expense-source-date-from"]').setValue('2026-07-04')
+    await formWrapper.find('input[name="expense-source-date-to"]').setValue('2026-07-04')
     await buttonsByText(formWrapper, '查询来源')[0].trigger('click')
     await flushPromises()
     expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenLastCalledWith(expect.objectContaining({
@@ -680,13 +680,13 @@ describe('028 财务页面', () => {
       supplierId: 99,
       ownershipType: 'PROJECT',
       projectId: 188,
-      businessDateFrom: '2026-08-01',
-      businessDateTo: '2026-08-31',
+      businessDateFrom: '2026-07-04',
+      businessDateTo: '2026-07-04',
       page: 1,
       pageSize: 10,
     }))
-    expect(formWrapper.text()).toContain('2026-08-05')
-    expect(formWrapper.text()).not.toContain('2026-08-05T10:30:00')
+    expect(formWrapper.text()).toContain('2026-07-04')
+    expect(formWrapper.text()).not.toContain('2026-07-03')
     await formWrapper.find('input[name="expense-business-date"]').setValue('2026-08-05')
     await formWrapper.find('input[name="expense-pretax-amount"]').setValue('120.00')
     await formWrapper.find('input[name="expense-tax-rate"]').setValue('0.060000')
