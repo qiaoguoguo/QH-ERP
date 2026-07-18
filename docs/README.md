@@ -5,7 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接与后续规划（2026-07-18 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [项目交接与后续规划（2026-07-19 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
 - [固定五角色阶段协作与交付流程](ops/stage-collaboration-delivery-process.md)
 - [电气制造业全量演示数据基线与重建验收单](data/electrical-manufacturing-demo-data.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)
@@ -45,7 +45,7 @@
 - [订单驱动缺料与供给建议任务记录](tasks/026-order-driven-shortage-supply-advice.md)
 - [项目生产执行与外协基础任务记录](tasks/027-project-production-outsourcing-foundation.md)
 - [027A 现存问题闭环与页面规范治理任务记录（已完成）](tasks/027a-existing-issues-page-governance-remediation.md)
-- [028 发票、费用与往来深化任务记录（已冻结，开发待开始）](tasks/028-invoice-expense-settlement-deepening.md)
+- [028 发票、费用与往来深化任务记录（已完成开发与验证，交付状态见当前交接）](tasks/028-invoice-expense-settlement-deepening.md)
 
 021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。
 
@@ -74,7 +74,7 @@
 - [成本归集基础接口契约](api/cost-collection-api.md)
 - [采购管理基础接口契约](api/procurement-management-api.md)
 - [销售管理基础接口契约](api/sales-management-api.md)
-- [财务往来基础接口契约](api/financial-settlement-api.md)
+- [财务往来与 028 深化接口契约](api/financial-settlement-api.md)
 - [经营报表基础接口契约](api/business-reporting-api.md)
 - [退货退款与业务反冲接口契约](api/return-refund-reversal-api.md)
 - [业务期间与历史数据保护接口契约](api/business-period-protection-api.md)
