@@ -63,6 +63,7 @@ class FinanceStage028MigrationRegressionTests {
 		assertThat(tableCount(jdbcTemplate, "fin_purchase_invoice")).isZero();
 		assertThat(tableCount(jdbcTemplate, "fin_expense")).isZero();
 		assertThat(tableCount(jdbcTemplate, "fin_voucher_draft")).isZero();
+		assertThat(columnExists(jdbcTemplate, "fin_voucher_draft", "generation_version")).isTrue();
 		assertThat(tableCount(jdbcTemplate, "fin_receipt_balance")).isZero();
 		assertThat(tableCount(jdbcTemplate, "fin_payment_balance")).isZero();
 		assertThat(constraintExists(jdbcTemplate, "fin_receipt_allocation", "uk_fin_receipt_allocation_receipt"))
@@ -361,6 +362,19 @@ class FinanceStage028MigrationRegressionTests {
 	private boolean indexExists(JdbcTemplate jdbcTemplate, String indexName) {
 		Boolean exists = jdbcTemplate.queryForObject("select to_regclass(?) is not null", Boolean.class,
 				"public." + indexName);
+		return Boolean.TRUE.equals(exists);
+	}
+
+	private boolean columnExists(JdbcTemplate jdbcTemplate, String tableName, String columnName) {
+		Boolean exists = jdbcTemplate.queryForObject("""
+				select exists (
+					select 1
+					from information_schema.columns
+					where table_schema = 'public'
+					and table_name = ?
+					and column_name = ?
+				)
+				""", Boolean.class, tableName, columnName);
 		return Boolean.TRUE.equals(exists);
 	}
 

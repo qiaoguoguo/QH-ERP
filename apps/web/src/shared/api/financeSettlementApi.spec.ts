@@ -45,12 +45,18 @@ describe('028 预收预付与核销 API', () => {
       idempotencyKey: 'advance-idem',
     }
     const allocationPayload: SettlementAllocationPayload = {
+      version: 0,
+      settlementSide: 'RECEIVABLE',
+      cashSourceType: 'RECEIPT',
+      cashSourceId: 1,
+      businessDate: '2026-08-06',
       direction: 'CUSTOMER',
       partnerId: 8,
       ownershipType: 'PROJECT',
       projectId: 18,
       funds: [{ fundType: 'ADVANCE_RECEIPT', fundId: 1, version: 2, amount: '300.00' }],
       targets: [{ targetType: 'RECEIVABLE', targetId: 2, version: 3, amount: '300.00' }],
+      lines: [{ targetType: 'RECEIVABLE', targetId: 2, amount: '300.00' }],
       idempotencyKey: 'alloc-idem',
     }
 
@@ -63,6 +69,11 @@ describe('028 预收预付与核销 API', () => {
 
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).amount).toBe('500.00')
     expect(JSON.parse(fetcher.mock.calls[9][1].body as string).targets[0].amount).toBe('300.00')
+    expect(JSON.parse(fetcher.mock.calls[9][1].body as string)).toEqual(expect.objectContaining({
+      version: 0,
+      cashSourceType: 'RECEIPT',
+      lines: [expect.objectContaining({ targetType: 'RECEIVABLE', targetId: 2, amount: '300.00' })],
+    }))
     expect(fetcher).toHaveBeenNthCalledWith(10, '/api/admin/finance/settlement-workbench/allocations', expect.objectContaining({ method: 'POST' }))
     expect(fetcher).toHaveBeenNthCalledWith(12, '/api/admin/finance/settlement-workbench/allocations/61/post', expect.objectContaining({ method: 'PUT' }))
   })

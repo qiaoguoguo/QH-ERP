@@ -12,7 +12,7 @@ import {
 
 export type InvoiceStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED'
 export type InvoiceType = 'SPECIAL_VAT' | 'GENERAL_VAT' | 'NONE'
-export type PurchaseInvoiceSourceType = 'PURCHASE_RECEIPT' | 'OUTSOURCING_RECEIPT' | 'OUTSOURCING_ORDER'
+export type PurchaseInvoiceSourceType = 'PURCHASE_RECEIPT' | 'OUTSOURCING_RECEIPT'
 export type MatchStatus = 'UNMATCHED' | 'MATCHED' | 'EXCEPTION'
 
 export interface SalesInvoiceListParams {
@@ -96,6 +96,7 @@ export interface PurchaseInvoicePayload extends VersionedActionPayload {
   ownershipType: OwnershipType
   projectId?: ResourceId | null
   sourceLines: Array<{
+    sourceLineId?: ResourceId | null
     orderLineId?: ResourceId | null
     receiptLineId?: ResourceId | null
     outsourcingReceiptLineId?: ResourceId | null
@@ -117,8 +118,14 @@ export interface SalesInvoiceRecord {
   id: ResourceId
   invoiceNo: string
   externalInvoiceNo?: string | null
+  partyId?: ResourceId
+  customerId?: ResourceId
+  sourceType?: 'SALES_SHIPMENT' | string
+  sourceId?: ResourceId | null
+  sourceNo?: string | null
   customerName: string
   ownershipType: OwnershipType
+  projectId?: ResourceId | null
   projectName?: string | null
   contractNo?: string | null
   orderNo?: string | null
@@ -137,6 +144,7 @@ export interface SalesInvoiceRecord {
   receivableLinks?: Array<{ receivableNo: string; amount: FinanceAmount }>
   settlements?: Array<{ documentNo?: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
+  lines?: InvoiceDetailLine[]
   auditSummary?: unknown[]
 }
 
@@ -144,9 +152,15 @@ export interface PurchaseInvoiceRecord {
   id: ResourceId
   invoiceNo: string
   externalInvoiceNo?: string | null
+  partyId?: ResourceId
+  supplierId?: ResourceId
+  sourceId?: ResourceId | null
+  sourceNo?: string | null
   supplierName: string
+  invoiceType?: InvoiceType
   sourceType: PurchaseInvoiceSourceType
   ownershipType: OwnershipType
+  projectId?: ResourceId | null
   projectName?: string | null
   purchaseOrderNo?: string | null
   receiptSummary?: string | null
@@ -166,7 +180,34 @@ export interface PurchaseInvoiceRecord {
   payableLinks?: Array<{ payableNo: string; amount: FinanceAmount }>
   settlements?: Array<{ documentNo?: string; amount: FinanceAmount }>
   voucherDrafts?: Array<{ draftNo: string; status: string }>
+  lines?: InvoiceDetailLine[]
   auditSummary?: unknown[]
+}
+
+export interface InvoiceDetailLine {
+  id?: ResourceId
+  lineNo?: number
+  sourceLineId: ResourceId
+  salesOrderId?: ResourceId | null
+  salesOrderLineId?: ResourceId | null
+  purchaseOrderId?: ResourceId | null
+  purchaseOrderLineId?: ResourceId | null
+  orderLineId?: ResourceId | null
+  receiptLineId?: ResourceId | null
+  outsourcingReceiptLineId?: ResourceId | null
+  materialCode?: string | null
+  materialName?: string | null
+  unitName?: string | null
+  quantity?: FinanceAmount
+  invoiceQuantity?: FinanceAmount
+  taxRate?: FinanceAmount
+  taxExcludedUnitPrice?: FinanceAmount
+  pretaxUnitPrice?: FinanceAmount
+  taxExcludedAmount?: FinanceAmount
+  pretaxAmount?: FinanceAmount
+  taxAmount?: FinanceAmount
+  taxIncludedAmount?: FinanceAmount
+  totalAmount?: FinanceAmount
 }
 
 export interface SalesInvoiceCandidateLine {

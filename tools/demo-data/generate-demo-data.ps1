@@ -1247,10 +1247,15 @@ function Ensure-WorkOrderReleased {
             plannedStartDate = $PlannedStartDate
             plannedFinishDate = $PlannedFinishDate
             remark = $remark
+            idempotencyKey = "$RunId-WO-$Key-CREATE"
         })
     }
     if ($existing.status -eq "DRAFT") {
-        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($existing.id)/release"
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($existing.id)/release" -Body ([ordered]@{
+            version = $existing.version
+            reason = "验收演示生产工单释放"
+            idempotencyKey = "$RunId-WO-$Key-RELEASE"
+        })
     }
     $detail = Get-ItemById -Path "/api/admin/production/work-orders" -Id $existing.id
     $Manifest.AddObject("workOrder", $Key, $detail.id)
@@ -1271,6 +1276,7 @@ function Ensure-WorkOrderDraft {
             plannedStartDate = "2026-07-12"
             plannedFinishDate = "2026-07-14"
             remark = $remark
+            idempotencyKey = "$RunId-WO-$Key-CREATE"
         })
     }
     $detail = Get-ItemById -Path "/api/admin/production/work-orders" -Id $existing.id
@@ -1283,7 +1289,11 @@ function Ensure-WorkOrderCancelled {
     $detail = Ensure-WorkOrderDraft -Key $Key -Product $Product -Bom $Bom -PlannedQuantity "1.000000" `
         -IssueWarehouse $IssueWarehouse -ReceiptWarehouse $ReceiptWarehouse
     if ($detail.status -eq "DRAFT") {
-        $detail = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($detail.id)/cancel"
+        $detail = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($detail.id)/cancel" -Body ([ordered]@{
+            version = $detail.version
+            reason = "验收演示生产工单取消"
+            idempotencyKey = "$RunId-WO-$Key-CANCEL"
+        })
     }
     return Get-ItemById -Path "/api/admin/production/work-orders" -Id $detail.id
 }
@@ -1323,10 +1333,15 @@ function Ensure-ProductionExecutionPosted {
             reason = "验收演示按 BOM 领料"
             remark = $issueRemark
             lines = $IssueLines
+            idempotencyKey = "$RunId-MFG-ISSUE-$Key-CREATE"
         })
     }
     if ($issue.status -eq "DRAFT") {
-        $issue = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues/$($issue.id)/post"
+        $issue = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues/$($issue.id)/post" -Body ([ordered]@{
+            version = $issue.version
+            reason = "验收演示生产领料过账"
+            idempotencyKey = "$RunId-MFG-ISSUE-$Key-POST"
+        })
     }
 
     $reportRemark = "验收演示生产报工 $Key"
@@ -1338,10 +1353,15 @@ function Ensure-ProductionExecutionPosted {
             defectiveQuantity = "0.000000"
             reporterName = "桥合演示报工员"
             remark = $reportRemark
+            idempotencyKey = "$RunId-MFG-REPORT-$Key-CREATE"
         })
     }
     if ($report.status -eq "DRAFT") {
-        $report = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/reports/$($report.id)/post"
+        $report = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/reports/$($report.id)/post" -Body ([ordered]@{
+            version = $report.version
+            reason = "验收演示生产报工过账"
+            idempotencyKey = "$RunId-MFG-REPORT-$Key-POST"
+        })
     }
 
     $receiptRemark = "验收演示完工入库 $Key"
@@ -1353,6 +1373,7 @@ function Ensure-ProductionExecutionPosted {
             quantity = $CompletionQuantity
             provisionalUnitCost = "2200.000000"
             remark = $receiptRemark
+            idempotencyKey = "$RunId-MFG-RECEIPT-$Key-CREATE"
         }
         if ($CompletionTrackingAllocations.Count -gt 0) {
             $body.trackingAllocations = $CompletionTrackingAllocations
@@ -1360,12 +1381,20 @@ function Ensure-ProductionExecutionPosted {
         $receipt = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/production/work-orders/$($WorkOrder.id)/completion-receipts" -Body $body
     }
     if ($receipt.status -eq "DRAFT") {
-        $receipt = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/completion-receipts/$($receipt.id)/post"
+        $receipt = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/completion-receipts/$($receipt.id)/post" -Body ([ordered]@{
+            version = $receipt.version
+            reason = "验收演示完工入库过账"
+            idempotencyKey = "$RunId-MFG-RECEIPT-$Key-POST"
+        })
     }
 
     $latestWorkOrder = Get-ItemById -Path "/api/admin/production/work-orders" -Id $WorkOrder.id
     if ($latestWorkOrder.status -ne "COMPLETED" -and "$($latestWorkOrder.receivedQuantity)" -eq "$($latestWorkOrder.plannedQuantity)") {
-        $latestWorkOrder = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($latestWorkOrder.id)/complete"
+        $latestWorkOrder = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($latestWorkOrder.id)/complete" -Body ([ordered]@{
+            version = $latestWorkOrder.version
+            reason = "验收演示生产工单完工"
+            idempotencyKey = "$RunId-WO-$Key-COMPLETE"
+        })
     }
     $Manifest.AddObject("materialIssue", $Key, $issue.id)
     $Manifest.AddObject("workReport", $Key, $report.id)
@@ -1392,15 +1421,22 @@ function Ensure-ProductionIssuePosted {
         reason = "验收演示补料来源领料"
         remark = $issueRemark
         lines = $IssueLines
+        idempotencyKey = "$RunId-MFG-ISSUE-$Key-CREATE"
     }
     if ($null -eq $issue) {
         $issue = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues" -Body $body
     }
     elseif ($issue.status -eq "DRAFT") {
+        $body.version = $issue.version
+        $body.idempotencyKey = "$RunId-MFG-ISSUE-$Key-UPDATE"
         $issue = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues/$($issue.id)" -Body $body
     }
     if ($issue.status -eq "DRAFT") {
-        $issue = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues/$($issue.id)/post"
+        $issue = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues/$($issue.id)/post" -Body ([ordered]@{
+            version = $issue.version
+            reason = "验收演示生产领料过账"
+            idempotencyKey = "$RunId-MFG-ISSUE-$Key-POST"
+        })
     }
     $detail = Get-ItemById -Path "/api/admin/production/work-orders/$($WorkOrder.id)/material-issues" -Id $issue.id
     $Manifest.AddObject("materialIssue", $Key, $detail.id)
@@ -1629,6 +1665,7 @@ function Ensure-ReversalDocumentsPosted {
             businessDate = "2026-07-19"
             clientRequestId = "$RunId-MATERIAL-RETURN"
             remark = $materialReturnRemark
+            idempotencyKey = "$RunId-MATERIAL-RETURN-CREATE"
             lines = @([ordered]@{
                 sourceIssueLineId = $issueLine.id
                 quantity = "1.000000"
@@ -1643,7 +1680,11 @@ function Ensure-ReversalDocumentsPosted {
         })
     }
     if ($materialReturn.status -eq "DRAFT") {
-        $materialReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/material-returns/$($materialReturn.id)/post"
+        $materialReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/material-returns/$($materialReturn.id)/post" -Body ([ordered]@{
+            version = $materialReturn.version
+            reason = "验收演示生产退料过账"
+            idempotencyKey = "$RunId-MATERIAL-RETURN-POST"
+        })
     }
 
     $supplementRemark = "验收演示生产补料"
@@ -1657,6 +1698,7 @@ function Ensure-ReversalDocumentsPosted {
             businessDate = "2026-07-19"
             clientRequestId = "$RunId-MATERIAL-SUPPLEMENT"
             remark = $supplementRemark
+            idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-CREATE"
             lines = @([ordered]@{
                 workOrderMaterialId = $material.id
                 quantity = "1.000000"
@@ -1666,7 +1708,11 @@ function Ensure-ReversalDocumentsPosted {
         })
     }
     if ($supplement.status -eq "DRAFT") {
-        $supplement = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/material-supplements/$($supplement.id)/post"
+        $supplement = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/production/material-supplements/$($supplement.id)/post" -Body ([ordered]@{
+            version = $supplement.version
+            reason = "验收演示生产补料过账"
+            idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-POST"
+        })
     }
 
     if ($null -ne $ReceivableForAdjustment) {

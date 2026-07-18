@@ -11,7 +11,7 @@ import {
 } from './financeStage028ApiCore'
 
 export type ExpenseStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED'
-export type ExpenseSourceType = 'PURCHASE_RECEIPT' | 'OUTSOURCING_ORDER' | 'OUTSOURCING_RECEIPT' | 'NONE'
+export type ExpenseSourceType = 'PURCHASE_RECEIPT' | 'OUTSOURCING_RECEIPT' | 'NONE'
 
 export interface ExpenseListParams {
   keyword?: string | null

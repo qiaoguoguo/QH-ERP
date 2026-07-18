@@ -1,11 +1,25 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFinanceExpenseApi, type ExpensePayload } from './financeExpenseApi'
+import { createFinanceExpenseApi, type ExpensePayload, type ExpenseSourceType } from './financeExpenseApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T) {
   return { ok: true, status: 200, json: async () => ({ success: true, code: 'OK', message: '成功', data }) }
 }
 
 describe('028 费用分域 API', () => {
+  it('费用来源类型不暴露后端不支持的外协订单', () => {
+    const typeContract: {
+      outsourcingOrderDoesNotExposeAsExpenseSource: AssertTrue<'OUTSOURCING_ORDER' extends ExpenseSourceType ? false : true>
+    } = {
+      outsourcingOrderDoesNotExposeAsExpenseSource: true,
+    }
+
+    expect(typeContract).toEqual({
+      outsourcingOrderDoesNotExposeAsExpenseSource: true,
+    })
+  })
+
   it('查询费用、分类和来源候选时使用独立资源端点', async () => {
     const fetcher = vi.fn()
     Array.from({ length: 3 }).forEach(() => {
@@ -30,7 +44,7 @@ describe('028 费用分域 API', () => {
     await api.expenseCategories.list({ keyword: '运费', status: 'ENABLED', page: 1, pageSize: 100 })
     await api.expenseSourceCandidates.list({
       keyword: 'OS',
-      sourceType: 'OUTSOURCING_ORDER',
+      sourceType: 'OUTSOURCING_RECEIPT',
       supplierId: 9,
       ownershipType: 'PROJECT',
       projectId: 18,
@@ -42,7 +56,7 @@ describe('028 费用分域 API', () => {
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/finance/expenses?keyword=EXP&supplierId=9&categoryId=3&ownershipType=PROJECT&sourceType=OUTSOURCING_RECEIPT&status=DRAFT&settlementStatus=UNSETTLED&businessDateFrom=2026-08-01&costRestricted=true&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/finance/expenses/categories?keyword=%E8%BF%90%E8%B4%B9&status=ENABLED&page=1&pageSize=100', expect.objectContaining({ method: 'GET' }))
-    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/finance/expenses/source-candidates?keyword=OS&sourceType=OUTSOURCING_ORDER&supplierId=9&ownershipType=PROJECT&projectId=18&businessDateFrom=2026-08-01&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
+    expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/finance/expenses/source-candidates?keyword=OS&sourceType=OUTSOURCING_RECEIPT&supplierId=9&ownershipType=PROJECT&projectId=18&businessDateFrom=2026-08-01&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
   })
 
   it('创建、更新、确认和取消费用单时保留字符串金额与非正式成本边界', async () => {

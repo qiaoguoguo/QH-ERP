@@ -63,4 +63,65 @@ describe('028 凭证草稿 API', () => {
     expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/finance/voucher-drafts/2/ready', expect.objectContaining({ method: 'PUT' }))
     expect(fetcher).toHaveBeenNthCalledWith(8, '/api/admin/finance/voucher-drafts/2/cancel', expect.objectContaining({ method: 'PUT' }))
   })
+
+  it('详情优先消费冻结 DTO 的借贷合计、来源摘要和生成版本', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({
+      id: 3,
+      draftNo: 'VD-003',
+      sourceType: 'PAYMENT',
+      sourceId: 91,
+      sourceNo: 'PM-POSTED-001',
+      businessDate: '2026-08-06',
+      status: 'DRAFT',
+      debitTotal: '260.00',
+      creditTotal: '260.00',
+      balanced: true,
+      generationVersion: 4,
+      version: 1,
+      allowedActions: ['READY'],
+      sourceSummary: { sourceType: 'PAYMENT', sourceNo: 'PM-POSTED-001', summary: '付款 PM-POSTED-001', restricted: false },
+      lines: [
+        { direction: 'DEBIT', businessCategory: '预付', summary: '冲预付', pretaxAmount: '260.00', taxAmount: '0.00', totalAmount: '260.00' },
+      ],
+    }))
+    const api = createFinanceVoucherDraftApi({ fetcher })
+
+    const detail = await api.voucherDrafts.get(3)
+
+    expect(detail.debitTotal).toBe('260.00')
+    expect(detail.creditTotal).toBe('260.00')
+    expect(detail.generationVersion).toBe(4)
+    expect(detail.sourceSummary).toEqual(expect.objectContaining({ sourceType: 'PAYMENT', sourceNo: 'PM-POSTED-001', summary: '付款 PM-POSTED-001' }))
+    expect(detail.lines?.[0]).toEqual(expect.objectContaining({ totalAmount: '260.00' }))
+  })
+
+  it('详情兼容后端冻结的借贷金额、分录金额和来源摘要 DTO', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(apiResponse({
+      id: 2,
+      draftNo: 'VD-002',
+      sourceType: 'RECEIPT',
+      sourceId: 81,
+      sourceNo: 'RC-POSTED-001',
+      businessDate: '2026-08-06',
+      status: 'DRAFT',
+      debitAmount: '120.00',
+      creditAmount: '120.00',
+      balanced: true,
+      generationVersion: 3,
+      version: 1,
+      allowedActions: ['READY'],
+      sourceSummary: '收款 RC-POSTED-001',
+      lines: [
+        { direction: 'DEBIT', businessCategory: '收款', summary: '收款形成现金', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
+      ],
+    }))
+    const api = createFinanceVoucherDraftApi({ fetcher })
+
+    const detail = await api.voucherDrafts.get(2)
+
+    expect(detail.debitTotal).toBe('120.00')
+    expect(detail.creditTotal).toBe('120.00')
+    expect(detail.sourceSummary).toEqual(expect.objectContaining({ sourceType: 'RECEIPT', sourceNo: 'RC-POSTED-001', summary: '收款 RC-POSTED-001' }))
+    expect(detail.lines?.[0]).toEqual(expect.objectContaining({ totalAmount: '120.00', amount: '120.00' }))
+  })
 })

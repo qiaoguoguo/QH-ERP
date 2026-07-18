@@ -64,6 +64,34 @@ function fillFromCandidate(line: SalesInvoiceCandidateLine) {
   form.projectId = line.ownershipType === 'PROJECT' ? (line.projectId ?? '') : ''
 }
 
+function restoreSelectedLines(record: SalesInvoiceRecord) {
+  const recordLines = record.lines ?? []
+  selected.value = recordLines.map((line, index) => ({
+    sourceLineId: line.sourceLineId,
+    sourceType: record.sourceType ?? 'SALES_SHIPMENT',
+    sourceId: record.sourceId ?? undefined,
+    customerId: record.partyId ?? record.customerId,
+    customerName: record.customerName,
+    ownershipType: record.ownershipType,
+    projectId: record.projectId ?? null,
+    projectName: record.projectName ?? null,
+    sourceNo: record.sourceNo ?? record.sources?.[0]?.sourceNo ?? record.invoiceNo,
+    lineNo: line.lineNo ?? index + 1,
+    materialCode: line.materialCode ?? undefined,
+    materialName: line.materialName ?? undefined,
+    unitName: line.unitName ?? undefined,
+    availableQuantity: String(line.quantity ?? line.invoiceQuantity ?? ''),
+    invoicedQuantity: '0.000000',
+    invoiceQuantity: String(line.invoiceQuantity ?? line.quantity ?? ''),
+    pretaxUnitPrice: line.pretaxUnitPrice ?? line.taxExcludedUnitPrice,
+    taxRate: line.taxRate,
+    pretaxAmount: line.pretaxAmount ?? line.taxExcludedAmount,
+    taxAmount: line.taxAmount,
+    totalAmount: line.totalAmount ?? line.taxIncludedAmount,
+    availableAmount: line.totalAmount ?? line.taxIncludedAmount,
+  }))
+}
+
 async function loadCandidates() {
   candidatesLoading.value = true
   try {
@@ -98,10 +126,11 @@ async function loadData() {
       form.invoiceDate = detail.value.invoiceDate
       form.invoiceType = detail.value.invoiceType
       form.externalInvoiceNo = detail.value.externalInvoiceNo ?? ''
-      form.customerId = (detail.value as SalesInvoiceRecord & { customerId?: string | number }).customerId ?? ''
+      form.customerId = detail.value.partyId ?? detail.value.customerId ?? ''
       form.ownershipType = detail.value.ownershipType
-      form.projectId = (detail.value as SalesInvoiceRecord & { projectId?: string | number | null }).projectId ?? ''
+      form.projectId = detail.value.projectId ?? ''
       form.remark = ''
+      restoreSelectedLines(detail.value)
     }
     await loadCandidates()
   } catch (caught) {

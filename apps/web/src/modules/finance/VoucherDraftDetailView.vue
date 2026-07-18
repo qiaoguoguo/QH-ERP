@@ -28,6 +28,31 @@ const canReady = computed(() => record.value?.allowedActions?.includes('READY') 
 const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.voucherDraftCancel))
 const balanceText = computed(() => record.value?.balanced ? '借贷平衡' : '借贷不平衡')
 
+function debitTotalText(draft: VoucherDraftRecord) {
+  return (draft.debitTotal ?? (draft as VoucherDraftRecord & { debitAmount?: string }).debitAmount ?? '0.00')
+}
+
+function creditTotalText(draft: VoucherDraftRecord) {
+  return (draft.creditTotal ?? (draft as VoucherDraftRecord & { creditAmount?: string }).creditAmount ?? '0.00')
+}
+
+function lineAmountText(line: NonNullable<VoucherDraftRecord['lines']>[number]) {
+  return line.totalAmount ?? line.amount ?? line.pretaxAmount ?? '0.00'
+}
+
+function sourceSummaryText(draft: VoucherDraftRecord) {
+  if (!draft.sourceSummary) {
+    return '暂无来源摘要'
+  }
+  if (typeof draft.sourceSummary === 'string') {
+    return draft.sourceSummary
+  }
+  if (draft.sourceSummary.restricted) {
+    return draft.sourceSummary.restrictedReason ?? '来源受限'
+  }
+  return draft.sourceSummary.summary || `${financeSourceTypeText(draft.sourceSummary.sourceType)} ${draft.sourceSummary.sourceNo}`
+}
+
 async function loadRecord() {
   loading.value = true
   error.value = ''
@@ -91,8 +116,8 @@ onMounted(loadRecord)
       <div><span>状态</span><strong>{{ voucherDraftStatusText(record.status) }}</strong></div>
       <div><span>来源事件</span><strong>{{ financeSourceTypeText(record.sourceType) }} {{ record.sourceNo }}</strong></div>
       <div><span>金额平衡</span><strong>{{ balanceText }}</strong></div>
-      <div><span>借方合计</span><strong>{{ formatFinanceAmount(record.debitTotal) }}</strong></div>
-      <div><span>贷方合计</span><strong>{{ formatFinanceAmount(record.creditTotal) }}</strong></div>
+      <div><span>借方合计</span><strong>{{ formatFinanceAmount(debitTotalText(record)) }}</strong></div>
+      <div><span>贷方合计</span><strong>{{ formatFinanceAmount(creditTotalText(record)) }}</strong></div>
       <div><span>生成版本</span><strong>{{ record.generationVersion }}</strong></div>
       <div><span>项目/公共</span><strong>{{ ownershipTypeText(record.ownershipType) }} {{ record.projectName ?? '' }}</strong></div>
     </div>
@@ -111,7 +136,7 @@ onMounted(loadRecord)
             <el-table-column prop="summary" label="摘要" min-width="180" show-overflow-tooltip />
             <el-table-column label="未税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.pretaxAmount) }}</template></el-table-column>
             <el-table-column label="税额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.taxAmount) }}</template></el-table-column>
-            <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.totalAmount) }}</template></el-table-column>
+            <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(lineAmountText(row)) }}</template></el-table-column>
             <el-table-column prop="partnerName" label="往来方" min-width="150" show-overflow-tooltip />
             <el-table-column prop="projectName" label="项目" min-width="150" show-overflow-tooltip />
           </el-table>
@@ -119,7 +144,7 @@ onMounted(loadRecord)
       </section>
       <section class="finance-section">
         <span class="finance-section-title">金额平衡</span>
-        <p>{{ balanceText }}，借方 {{ formatFinanceAmount(record.debitTotal) }}，贷方 {{ formatFinanceAmount(record.creditTotal) }}。</p>
+        <p>{{ balanceText }}，借方 {{ formatFinanceAmount(debitTotalText(record)) }}，贷方 {{ formatFinanceAmount(creditTotalText(record)) }}。</p>
       </section>
       <section class="finance-section">
         <span class="finance-section-title">生成版本</span>
@@ -127,8 +152,7 @@ onMounted(loadRecord)
       </section>
       <section class="finance-section">
         <span class="finance-section-title">来源追溯</span>
-        <p v-if="record.sourceSummary?.restricted">{{ record.sourceSummary.restrictedReason ?? '来源受限' }}</p>
-        <p v-else>{{ record.sourceSummary ? `${financeSourceTypeText(record.sourceSummary.sourceType)} ${record.sourceSummary.sourceNo}` : '暂无来源摘要' }}</p>
+        <p>{{ sourceSummaryText(record) }}</p>
       </section>
       <section class="finance-section">
         <span class="finance-section-title">审计</span>

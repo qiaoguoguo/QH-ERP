@@ -169,6 +169,7 @@ export interface ReceiptSummaryRecord {
   createdByName: string
   postedByName?: string | null
   postedAt?: string | null
+  version?: number
   allocatedAmount?: FinanceAmount
   availableAmount?: FinanceAmount
   allocationTargetCount?: number
@@ -260,6 +261,7 @@ export interface PaymentSummaryRecord {
   createdByName: string
   postedByName?: string | null
   postedAt?: string | null
+  version?: number
   allocatedAmount?: FinanceAmount
   availableAmount?: FinanceAmount
   allocationTargetCount?: number

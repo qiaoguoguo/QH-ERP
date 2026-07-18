@@ -42,7 +42,12 @@ const form = reactive({
   remark: '',
 })
 
-const selectedSupplierName = computed(() => suppliers.value.find((item) => String(item.id) === String(form.supplierId))?.name ?? '')
+const selectedSupplierName = computed(() => (
+  suppliers.value.find((item) => String(item.id) === String(form.supplierId))?.name
+  ?? selected.value[0]?.supplierName
+  ?? candidates.value.find((item) => String(item.supplierId) === String(form.supplierId))?.supplierName
+  ?? ''
+))
 const selectedProjectName = computed(() => projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? '')
 const selectedCandidateBalance = computed(() => selected.value[0]?.availableAmount ?? selected.value[0]?.totalAmount ?? candidates.value[0]?.availableAmount ?? candidates.value[0]?.totalAmount ?? '0.00')
 const saveDisabledReason = computed(() => {
@@ -66,13 +71,44 @@ function fillFromCandidate(line: PurchaseInvoiceCandidateLine) {
   if (line.supplierId !== undefined) {
     form.supplierId = line.supplierId
   }
-  if (line.sourceType === 'PURCHASE_RECEIPT' || line.sourceType === 'OUTSOURCING_RECEIPT' || line.sourceType === 'OUTSOURCING_ORDER') {
+  if (line.sourceType === 'PURCHASE_RECEIPT' || line.sourceType === 'OUTSOURCING_RECEIPT') {
     form.sourceType = line.sourceType
   }
   if (line.ownershipType) {
     form.ownershipType = line.ownershipType
   }
   form.projectId = line.ownershipType === 'PROJECT' ? (line.projectId ?? '') : ''
+}
+
+function restoreSelectedLines(record: PurchaseInvoiceRecord) {
+  const recordLines = record.lines ?? []
+  selected.value = recordLines.map((line, index) => ({
+    sourceLineId: line.sourceLineId,
+    sourceType: record.sourceType,
+    sourceId: record.sourceId ?? undefined,
+    supplierId: record.partyId ?? record.supplierId,
+    supplierName: record.supplierName,
+    ownershipType: record.ownershipType,
+    projectId: record.projectId ?? null,
+    projectName: record.projectName ?? null,
+    sourceNo: record.sourceNo ?? record.sources?.[0]?.sourceNo ?? record.invoiceNo,
+    lineNo: line.lineNo ?? index + 1,
+    orderLineId: line.orderLineId ?? line.purchaseOrderLineId ?? null,
+    receiptLineId: line.receiptLineId ?? (record.sourceType === 'PURCHASE_RECEIPT' ? line.sourceLineId : null),
+    outsourcingReceiptLineId: line.outsourcingReceiptLineId ?? (record.sourceType === 'OUTSOURCING_RECEIPT' ? line.sourceLineId : null),
+    materialCode: line.materialCode ?? undefined,
+    materialName: line.materialName ?? undefined,
+    unitName: line.unitName ?? undefined,
+    availableQuantity: String(line.quantity ?? line.invoiceQuantity ?? ''),
+    invoicedQuantity: '0.000000',
+    invoiceQuantity: String(line.invoiceQuantity ?? line.quantity ?? ''),
+    pretaxUnitPrice: line.pretaxUnitPrice ?? line.taxExcludedUnitPrice,
+    taxRate: line.taxRate,
+    pretaxAmount: line.pretaxAmount ?? line.taxExcludedAmount,
+    taxAmount: line.taxAmount,
+    totalAmount: line.totalAmount ?? line.taxIncludedAmount,
+    availableAmount: line.totalAmount ?? line.taxIncludedAmount,
+  }))
 }
 
 async function loadCandidates() {
@@ -108,10 +144,11 @@ async function loadData() {
       form.invoiceDate = detail.value.invoiceDate
       form.invoiceType = (detail.value as PurchaseInvoiceRecord & { invoiceType?: InvoiceType }).invoiceType ?? 'GENERAL_VAT'
       form.externalInvoiceNo = detail.value.externalInvoiceNo ?? ''
-      form.supplierId = (detail.value as PurchaseInvoiceRecord & { supplierId?: string | number }).supplierId ?? ''
+      form.supplierId = detail.value.partyId ?? detail.value.supplierId ?? ''
       form.sourceType = detail.value.sourceType
       form.ownershipType = detail.value.ownershipType
-      form.projectId = (detail.value as PurchaseInvoiceRecord & { projectId?: string | number | null }).projectId ?? ''
+      form.projectId = detail.value.projectId ?? ''
+      restoreSelectedLines(detail.value)
     }
     await loadCandidates()
   } catch (caught) {
@@ -239,6 +276,7 @@ onMounted(loadData)
     <div class="table-scroll">
       <el-table :data="candidates" :empty-text="candidatesLoading ? '来源加载中' : '当前条件下无可用采购或外协来源'">
         <el-table-column prop="sourceNo" label="来源单号" min-width="150" />
+        <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
         <el-table-column prop="lineNo" label="行号" min-width="80" />
         <el-table-column prop="materialName" label="物料" min-width="160" show-overflow-tooltip />
         <el-table-column prop="availableQuantity" label="可开票数量" min-width="130" align="right" />

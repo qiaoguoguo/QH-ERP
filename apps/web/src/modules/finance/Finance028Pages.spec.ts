@@ -19,7 +19,7 @@ import PrepaymentDetailView from './PrepaymentDetailView.vue'
 import SettlementWorkbenchView from './SettlementWorkbenchView.vue'
 import VoucherDraftListView from './VoucherDraftListView.vue'
 import VoucherDraftDetailView from './VoucherDraftDetailView.vue'
-import { mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import { buttonsByText, mountFinanceView, page, setSelectValue } from './financeTestHelpers'
 import { useConfirmActionMock } from '../../test/setup'
 
 const invoiceApiMock = vi.hoisted(() => ({
@@ -37,10 +37,14 @@ const expenseApiMock = vi.hoisted(() => ({
 const settlementApiMock = vi.hoisted(() => ({
   advanceReceipts: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), post: vi.fn(), cancel: vi.fn() },
   prepayments: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), post: vi.fn(), cancel: vi.fn() },
-  settlementWorkbench: { funds: vi.fn(), targets: vi.fn(), get: vi.fn(), create: vi.fn(), post: vi.fn(), cancel: vi.fn() },
+  settlementWorkbench: { funds: vi.fn(), targets: vi.fn(), allocations: vi.fn(), get: vi.fn(), create: vi.fn(), post: vi.fn(), cancel: vi.fn() },
 }))
 const voucherApiMock = vi.hoisted(() => ({
   voucherDrafts: { list: vi.fn(), get: vi.fn(), generate: vi.fn(), markReady: vi.fn(), cancel: vi.fn() },
+}))
+const financeApiMock = vi.hoisted(() => ({
+  receipts: { list: vi.fn() },
+  payments: { list: vi.fn() },
 }))
 const masterDataApiMock = vi.hoisted(() => ({
   customers: { list: vi.fn() },
@@ -67,6 +71,10 @@ vi.mock('../../shared/api/financeVoucherDraftApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/financeVoucherDraftApi')>()),
   financeVoucherDraftApi: voucherApiMock,
 }))
+vi.mock('../../shared/api/financeApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/financeApi')>()),
+  financeApi: financeApiMock,
+}))
 vi.mock('../../shared/api/masterDataApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/masterDataApi')>()),
   masterDataApi: masterDataApiMock,
@@ -80,8 +88,12 @@ const salesInvoice = {
   id: 11,
   invoiceNo: 'SI-001',
   externalInvoiceNo: 'EXT-SI-001',
+  partyId: 88,
+  sourceId: 501,
+  sourceNo: 'SS-001',
   customerName: '华东客户',
   ownershipType: 'PROJECT',
+  projectId: 188,
   projectName: '项目 A',
   contractNo: 'CT-001',
   orderNo: 'SO-001',
@@ -100,6 +112,16 @@ const salesInvoice = {
   receivableLinks: [{ receivableNo: 'AR-001', amount: '113.00' }],
   settlements: [{ documentNo: 'RC-001', amount: '70.00' }],
   voucherDrafts: [{ draftNo: 'VD-001', status: 'DRAFT' }],
+  lines: [{
+    lineNo: 1,
+    sourceLineId: 1001,
+    quantity: '2.500000',
+    taxRate: '0.130000',
+    taxExcludedUnitPrice: '40.000000',
+    taxExcludedAmount: '100.00',
+    taxAmount: '13.00',
+    taxIncludedAmount: '113.00',
+  }],
   auditSummary: [],
 }
 const salesCandidate = {
@@ -153,9 +175,14 @@ const purchaseInvoice = {
   id: 21,
   invoiceNo: 'PI-001',
   externalInvoiceNo: 'EXT-PI-001',
+  partyId: 99,
+  sourceId: 601,
+  sourceNo: 'PR-001',
   supplierName: '外协供应商',
+  invoiceType: 'GENERAL_VAT',
   sourceType: 'PURCHASE_RECEIPT',
   ownershipType: 'PUBLIC',
+  projectId: null,
   purchaseOrderNo: 'PO-001',
   receiptSummary: 'PR-001',
   invoiceDate: '2026-08-04',
@@ -186,6 +213,18 @@ const purchaseInvoice = {
   payableLinks: [],
   settlements: [],
   voucherDrafts: [],
+  lines: [{
+    lineNo: 1,
+    sourceLineId: 2002,
+    purchaseOrderLineId: 2001,
+    receiptLineId: 2002,
+    quantity: '3.000000',
+    taxRate: '0.130000',
+    taxExcludedUnitPrice: '66.666667',
+    taxExcludedAmount: '200.00',
+    taxAmount: '26.00',
+    taxIncludedAmount: '226.00',
+  }],
   auditSummary: [],
 }
 const expense = {
@@ -217,8 +256,11 @@ const advanceReceipt = {
   id: 41,
   advanceNo: 'ADV-R-001',
   fundNo: 'RC-001',
+  partnerId: 88,
+  customerId: 88,
   partnerName: '华东客户',
   ownershipType: 'PROJECT',
+  projectId: 188,
   projectName: '项目 A',
   businessDate: '2026-08-06',
   amount: '500.00',
@@ -233,7 +275,7 @@ const advanceReceipt = {
   voucherDrafts: [],
   auditSummary: [],
 }
-const prepayment = { ...advanceReceipt, id: 51, advanceNo: 'ADV-P-001', fundNo: 'PM-001', partnerName: '外协供应商' }
+const prepayment = { ...advanceReceipt, id: 51, advanceNo: 'ADV-P-001', fundNo: 'PM-001', partnerId: 99, customerId: undefined, supplierId: 99, partnerName: '外协供应商' }
 const voucherDraft = {
   id: 61,
   draftNo: 'VD-001',
@@ -337,6 +379,18 @@ describe('028 财务页面', () => {
       { targetType: 'SALES_INVOICE', targetId: 11, targetNo: 'SI-001', originalAmount: '113.00', settledAmount: '70.00', adjustedAmount: '0.00', allocatedAmount: '0.00', unsettledAmount: '43.00', status: 'CONFIRMED', sourceSummary: '销售发票 SI-001', version: 2 },
       { targetType: 'RECEIVABLE', targetId: 12, targetNo: 'AR-002', originalAmount: '200.00', settledAmount: '0.00', adjustedAmount: '0.00', allocatedAmount: '0.00', unsettledAmount: '200.00', status: 'CONFIRMED', sourceSummary: '应收 AR-002', version: 3 },
     ], 1, 50))
+    settlementApiMock.settlementWorkbench.allocations.mockResolvedValue(page([{
+      id: 71,
+      allocationNo: 'ALLOC-001',
+      partnerName: '真实客户',
+      ownershipType: 'PROJECT',
+      projectName: '真实项目',
+      totalAmount: '120.00',
+      status: 'POSTED',
+      version: 2,
+      allowedActions: [],
+      lines: [],
+    }], 1, 20))
     settlementApiMock.settlementWorkbench.get.mockResolvedValue({
       id: 71,
       allocationNo: 'ALLOC-001',
@@ -361,6 +415,8 @@ describe('028 财务页面', () => {
     voucherApiMock.voucherDrafts.generate.mockResolvedValue(voucherDraft)
     voucherApiMock.voucherDrafts.markReady.mockResolvedValue({ ...voucherDraft, status: 'READY', allowedActions: [] })
     voucherApiMock.voucherDrafts.cancel.mockResolvedValue({ ...voucherDraft, status: 'CANCELLED', allowedActions: [] })
+    financeApiMock.receipts.list.mockResolvedValue(page([{ id: 81, receiptNo: 'RC-POSTED-001', receivableId: 11, receivableNo: 'AR-001', customerId: 88, customerName: '真实客户', receiptDate: '2026-08-06', amount: '500.00', method: 'BANK_TRANSFER', status: 'POSTED', createdByName: '财务用户', version: 4 }]))
+    financeApiMock.payments.list.mockResolvedValue(page([{ id: 91, paymentNo: 'PM-POSTED-001', payableId: 21, payableNo: 'AP-001', supplierId: 99, supplierName: '真实供应商', paymentDate: '2026-08-06', amount: '260.00', method: 'BANK_TRANSFER', status: 'POSTED', createdByName: '财务用户', version: 5 }]))
   })
 
   it('销售发票列表、表单和详情使用来源候选、金额字符串、allowedActions 和非历史回写文案', async () => {
@@ -403,6 +459,27 @@ describe('028 财务页面', () => {
     expect(invoiceApiMock.salesInvoices.confirm).toHaveBeenCalledWith(11, expect.objectContaining({ version: 2, idempotencyKey: expect.any(String) }))
   })
 
+  it('销售发票编辑从详情 partyId/sourceId/source lines 恢复主体和已选来源', async () => {
+    const { wrapper } = await mountFinanceView(
+      SalesInvoiceFormView,
+      ['finance:sales-invoice:view', 'finance:sales-invoice:create'],
+      '/finance/sales-invoices/11/edit',
+    )
+
+    expect(wrapper.text()).toContain('真实客户')
+    expect(wrapper.text()).toContain('SS-001')
+    expect(wrapper.text()).toContain('113.00')
+    await wrapper.find('[data-test="save-sales-invoice"]').trigger('click')
+    await flushPromises()
+
+    expect(invoiceApiMock.salesInvoices.update).toHaveBeenCalledWith('11', expect.objectContaining({
+      customerId: 88,
+      sourceId: 501,
+      version: 2,
+      sourceLines: [expect.objectContaining({ sourceLineId: 1001, invoiceQuantity: '2.500000' })],
+    }))
+  })
+
   it('采购发票与三单匹配页面展示零容差差异、外协来源和确认禁用原因', async () => {
     const { wrapper: listWrapper } = await mountFinanceView(PurchaseInvoiceListView, ['finance:purchase-invoice:view', 'finance:purchase-invoice:create'], '/finance/purchase-invoices')
     expect(listWrapper.text()).toContain('采购发票')
@@ -443,6 +520,37 @@ describe('028 财务页面', () => {
     expect(matchingWrapper.text()).toContain('未税单价差异')
   })
 
+  it('采购发票编辑回填供应商摘要和已选来源，候选池展示后端净可开事实', async () => {
+    invoiceApiMock.purchaseInvoices.get.mockResolvedValueOnce({
+      ...purchaseInvoice,
+      supplierName: '真实供应商',
+      partyId: 99,
+      sourceId: 601,
+      sourceNo: 'PR-001',
+      ownershipType: 'PROJECT',
+      projectId: 188,
+      projectName: '真实项目',
+    })
+    const { wrapper } = await mountFinanceView(
+      PurchaseInvoiceFormView,
+      ['finance:purchase-invoice:view', 'finance:purchase-invoice:create'],
+      '/finance/purchase-invoices/21/edit',
+    )
+
+    expect(wrapper.text()).toContain('真实供应商')
+    expect(wrapper.text()).toContain('PR-001')
+    expect(wrapper.text()).toContain('226.00')
+    await wrapper.find('[data-test="save-purchase-invoice"]').trigger('click')
+    await flushPromises()
+
+    expect(invoiceApiMock.purchaseInvoices.update).toHaveBeenCalledWith('21', expect.objectContaining({
+      supplierId: 99,
+      sourceId: 601,
+      version: 1,
+      sourceLines: [expect.objectContaining({ sourceLineId: 2002, receiptLineId: 2002, invoiceQuantity: '3.000000' })],
+    }))
+  })
+
   it('费用单页面表达项目公共归属、供应商费用和非正式成本边界', async () => {
     const { wrapper: listWrapper } = await mountFinanceView(ExpenseListView, ['finance:expense:view', 'finance:expense:create'], '/finance/expenses')
     expect(listWrapper.text()).toContain('记录项目/公共供应商费用归属')
@@ -455,7 +563,11 @@ describe('028 财务页面', () => {
     expect(masterDataApiMock.suppliers.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 200 }))
     expect(salesProjectApiMock.projects.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 200 }))
     expect(expenseApiMock.expenseSourceCandidates.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 10 }))
+    expect(formWrapper.text()).not.toContain('外协订单')
+    expect(formWrapper.text()).toContain('来源净可用金额')
+    expect(formWrapper.text()).toContain('0.00')
     await setSelectValue(formWrapper, 0, 'PROJECT')
+    await setSelectValue(formWrapper, 2, 188)
     await formWrapper.find('input[name="expense-business-date"]').setValue('2026-08-05')
     await formWrapper.find('input[name="expense-pretax-amount"]').setValue('120.00')
     await formWrapper.find('input[name="expense-tax-rate"]').setValue('0.060000')
@@ -465,7 +577,19 @@ describe('028 财务页面', () => {
       supplierId: 99,
       ownershipType: 'PROJECT',
       projectId: 188,
-      lines: [expect.objectContaining({ pretaxAmount: '120.00', taxRate: '0.060000' })],
+      lines: [expect.objectContaining({ sourceType: null, sourceId: null, pretaxAmount: '120.00', taxRate: '0.060000' })],
+    }))
+
+    expenseApiMock.expenses.create.mockClear()
+    const { wrapper: publicForm } = await mountFinanceView(ExpenseFormView, ['finance:expense:create'], '/finance/expenses/create')
+    await publicForm.find('input[name="expense-business-date"]').setValue('2026-08-05')
+    await publicForm.find('input[name="expense-pretax-amount"]').setValue('80.00')
+    await publicForm.find('input[name="expense-tax-rate"]').setValue('0.060000')
+    await publicForm.find('[data-test="save-expense"]').trigger('click')
+    await flushPromises()
+    expect(expenseApiMock.expenses.create).toHaveBeenCalledWith(expect.objectContaining({
+      ownershipType: 'PUBLIC',
+      projectId: null,
     }))
 
     const { wrapper: detailWrapper } = await mountFinanceView(ExpenseDetailView, ['finance:expense:view'], '/finance/expenses/31')
@@ -522,15 +646,21 @@ describe('028 财务页面', () => {
     expect(settlementApiMock.settlementWorkbench.targets).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 50 }))
     await wrapper.find('[data-test="select-settlement-fund"]').trigger('click')
     await wrapper.find('[data-test="select-settlement-target"]').trigger('click')
-    await wrapper.find('input[name="settlement-allocation-amount"]').setValue('999.00')
+    expect(wrapper.text()).not.toContain('单目标核销金额')
+    expect(wrapper.text()).not.toContain('项目 ID')
+    expect(wrapper.find('input[name="settlement-allocation-amount"]').exists()).toBe(false)
+    await wrapper.find('input[name="settlement-target-amount-11"]').setValue('999.00')
     expect(wrapper.text()).toContain('本次核销金额不能超过资金可用余额或目标未结余额')
     expect(wrapper.find('[data-test="save-settlement-allocation"]').attributes('disabled')).toBeDefined()
-    await wrapper.find('input[name="settlement-allocation-amount"]').setValue('43.00')
+    await wrapper.find('input[name="settlement-target-amount-11"]').setValue('43.00')
     await wrapper.find('[data-test="save-settlement-allocation"]').trigger('click')
     await flushPromises()
     expect(settlementApiMock.settlementWorkbench.create).toHaveBeenCalledWith(expect.objectContaining({
+      version: 0,
+      cashSourceType: 'RECEIPT',
       funds: [expect.objectContaining({ amount: '43.00' })],
       targets: [expect.objectContaining({ amount: '43.00' })],
+      lines: [expect.objectContaining({ targetType: 'SALES_INVOICE', targetId: 11, amount: '43.00' })],
     }))
   })
 
@@ -648,8 +778,14 @@ describe('028 财务页面', () => {
     await flushPromises()
 
     expect(settlementApiMock.settlementWorkbench.create).toHaveBeenCalledWith(expect.objectContaining({
+      version: 0,
+      cashSourceType: 'RECEIPT',
       funds: [expect.objectContaining({ fundId: 41, fundType: 'ADVANCE_RECEIPT', amount: '120.00' })],
       targets: [
+        expect.objectContaining({ targetId: 11, amount: '43.00' }),
+        expect.objectContaining({ targetId: 12, amount: '77.00' }),
+      ],
+      lines: [
         expect.objectContaining({ targetId: 11, amount: '43.00' }),
         expect.objectContaining({ targetId: 12, amount: '77.00' }),
       ],
@@ -669,6 +805,7 @@ describe('028 财务页面', () => {
   })
 
   it('凭证草稿列表从真实来源生成草稿并携带版本与幂等键', async () => {
+    invoiceApiMock.salesInvoices.list.mockResolvedValueOnce(page([{ ...salesInvoice, status: 'CONFIRMED', allowedActions: [] }]))
     const { wrapper } = await mountFinanceView(
       VoucherDraftListView,
       ['finance:voucher-draft:view', 'finance:voucher-draft:generate'],
@@ -677,16 +814,48 @@ describe('028 财务页面', () => {
 
     expect(wrapper.text()).not.toContain('预收款')
     expect(wrapper.text()).not.toContain('预付款')
-    await setSelectValue(wrapper, 1, 'SALES_INVOICE')
-    await wrapper.find('input[name="voucher-source-id"]').setValue('11')
-    await wrapper.find('input[name="voucher-source-version"]').setValue('2')
+    expect(wrapper.find('input[name="voucher-source-id"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="voucher-source-version"]').exists()).toBe(false)
+    await setSelectValue(wrapper, 2, 'RECEIPT')
+    await buttonsByText(wrapper, '查询')[0].trigger('click')
+    await flushPromises()
+    expect(voucherApiMock.voucherDrafts.list).toHaveBeenLastCalledWith(expect.objectContaining({ sourceType: 'RECEIPT' }))
+    await setSelectValue(wrapper, 2, 'PAYMENT')
+    await buttonsByText(wrapper, '查询')[0].trigger('click')
+    await flushPromises()
+    expect(voucherApiMock.voucherDrafts.list).toHaveBeenLastCalledWith(expect.objectContaining({ sourceType: 'PAYMENT' }))
+    expect(wrapper.text()).toContain('SI-001')
+    await setSelectValue(wrapper, 1, 'SALES_INVOICE:11')
     await wrapper.find('[data-test="generate-voucher-draft"]').trigger('click')
     await flushPromises()
 
     expect(voucherApiMock.voucherDrafts.generate).toHaveBeenCalledWith({
       sourceType: 'SALES_INVOICE',
-      sourceId: '11',
+      sourceId: 11,
       version: 2,
+      idempotencyKey: expect.any(String),
+    })
+  })
+
+  it('凭证草稿生成可通过已过账收款业务候选提交 RECEIPT 来源和版本', async () => {
+    const { wrapper } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'finance:voucher-draft:generate'],
+      '/finance/voucher-drafts',
+    )
+
+    await setSelectValue(wrapper, 0, 'RECEIPT')
+    await buttonsByText(wrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+    expect(financeApiMock.receipts.list).toHaveBeenCalledWith(expect.objectContaining({ status: 'POSTED', page: 1, pageSize: 20 }))
+    await setSelectValue(wrapper, 1, 'RECEIPT:81')
+    await wrapper.find('[data-test="generate-voucher-draft"]').trigger('click')
+    await flushPromises()
+
+    expect(voucherApiMock.voucherDrafts.generate).toHaveBeenCalledWith({
+      sourceType: 'RECEIPT',
+      sourceId: 81,
+      version: 4,
       idempotencyKey: expect.any(String),
     })
   })
@@ -723,5 +892,28 @@ describe('028 财务页面', () => {
     expect(detailWrapper.text()).toContain('来源受限')
     expect(detailWrapper.text()).not.toContain('正式科目编码')
     expect(detailWrapper.text()).not.toContain('正式凭证号')
+  })
+
+  it('凭证详情按冻结 DTO 渲染借贷合计、分录金额、来源摘要和生成版本', async () => {
+    voucherApiMock.voucherDrafts.get.mockResolvedValueOnce({
+      ...voucherDraft,
+      debitTotal: undefined,
+      creditTotal: undefined,
+      debitAmount: '120.00',
+      creditAmount: '120.00',
+      generationVersion: 3,
+      sourceSummary: { sourceType: 'RECEIPT', sourceNo: 'RC-POSTED-001', summary: '收款 RC-POSTED-001', restricted: false },
+      lines: [
+        { direction: 'DEBIT', businessCategory: '收款', summary: '收款形成现金', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
+        { direction: 'CREDIT', businessCategory: '预收', summary: '形成预收余额', amount: '120.00', sourceType: 'RECEIPT', sourceId: 81 },
+      ],
+    })
+    const { wrapper } = await mountFinanceView(VoucherDraftDetailView, ['finance:voucher-draft:view'], '/finance/voucher-drafts/61')
+
+    expect(wrapper.text()).toContain('借方 120.00')
+    expect(wrapper.text()).toContain('贷方 120.00')
+    expect(wrapper.text()).toContain('第 3 版建议')
+    expect(wrapper.text()).toContain('收款 RC-POSTED-001')
+    expect(wrapper.text()).toContain('收款形成现金')
   })
 })

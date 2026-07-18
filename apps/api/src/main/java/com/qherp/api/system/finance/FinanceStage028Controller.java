@@ -36,10 +36,12 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/sales-invoices/candidates")
 	public ApiResponse<PageResponse<Map<String, Object>>> salesInvoiceCandidates(
-			@RequestParam(required = false) String keyword, @AuthenticationPrincipal CurrentUser currentUser,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) Long customerId, @RequestParam(required = false) String ownershipType,
+			@RequestParam(required = false) Long projectId, @AuthenticationPrincipal CurrentUser currentUser,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.salesInvoiceCandidates(keyword, currentUser, page,
-				pageSize));
+		return ApiResponse.ok(this.financeStage028Service.salesInvoiceCandidates(keyword, sourceId, customerId,
+				ownershipType, projectId, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/sales-invoices")
@@ -91,10 +93,12 @@ public class FinanceStage028Controller {
 	@GetMapping("/purchase-invoices/candidates")
 	public ApiResponse<PageResponse<Map<String, Object>>> purchaseInvoiceCandidates(
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId, @RequestParam(required = false) Long supplierId,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.purchaseInvoiceCandidates(keyword, sourceType, currentUser,
-				page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.purchaseInvoiceCandidates(keyword, sourceType, sourceId,
+				supplierId, ownershipType, projectId, currentUser, page, pageSize));
 	}
 
 	@PostMapping("/purchase-invoices")
@@ -315,6 +319,17 @@ public class FinanceStage028Controller {
 				servletRequest));
 	}
 
+	@GetMapping("/settlement-workbench/allocations")
+	public ApiResponse<PageResponse<Map<String, Object>>> settlementAllocations(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String direction,
+			@RequestParam(required = false) String status, @RequestParam(required = false) Long partnerId,
+			@RequestParam(required = false) String ownershipType, @RequestParam(required = false) Long projectId,
+			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize) {
+		return ApiResponse.ok(this.financeStage028Service.settlementAllocations(keyword, direction, status,
+				partnerId, ownershipType, projectId, currentUser, page, pageSize));
+	}
+
 	@GetMapping("/settlement-workbench/allocations/{id}")
 	public ApiResponse<Map<String, Object>> settlementAllocation(@PathVariable Long id,
 			@AuthenticationPrincipal CurrentUser currentUser) {
@@ -339,9 +354,12 @@ public class FinanceStage028Controller {
 
 	@GetMapping("/voucher-drafts")
 	public ApiResponse<PageResponse<Map<String, Object>>> voucherDrafts(@RequestParam(required = false) String status,
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) Long sourceId,
+			@RequestParam(required = false) String keyword,
 			@AuthenticationPrincipal CurrentUser currentUser, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize) {
-		return ApiResponse.ok(this.financeStage028Service.voucherDrafts(status, currentUser, page, pageSize));
+		return ApiResponse.ok(this.financeStage028Service.voucherDrafts(status, sourceType, sourceId, keyword,
+				currentUser, page, pageSize));
 	}
 
 	@PostMapping("/voucher-drafts/generate")

@@ -31,7 +31,7 @@ const form = reactive({
   projectId: '' as string | number | '',
   categoryId: '' as string | number | '',
   businessDate: '',
-  sourceType: 'OUTSOURCING_RECEIPT' as ExpenseSourceType,
+  sourceType: 'NONE' as ExpenseSourceType,
   pretaxAmount: '',
   taxRate: '',
   taxAmount: '',
@@ -41,7 +41,9 @@ const form = reactive({
 })
 
 const selectedSupplierName = computed(() => suppliers.value.find((item) => String(item.id) === String(form.supplierId))?.name ?? '')
-const selectedProjectName = computed(() => projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? '')
+const selectedProjectName = computed(() => form.ownershipType === 'PROJECT'
+  ? projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? ''
+  : '')
 const selectedCategoryName = computed(() => categories.value.find((item) => String(item.id) === String(form.categoryId))?.name ?? '')
 const calculatedTaxAmount = computed(() => form.taxAmount.trim() || multiplyAmountByRate(form.pretaxAmount, form.taxRate) || '0.00')
 const calculatedTotalAmount = computed(() => form.totalAmount.trim() || addFinanceAmounts([form.pretaxAmount || '0.00', calculatedTaxAmount.value]) || '0.00')
@@ -74,10 +76,12 @@ function multiplyAmountByRate(amount: string, rate: string) {
 function fillFromDetail(record: ExpenseRecord) {
   form.supplierId = (record as ExpenseRecord & { supplierId?: string | number }).supplierId ?? ''
   form.ownershipType = record.ownershipType
-  form.projectId = (record as ExpenseRecord & { projectId?: string | number | null }).projectId ?? ''
+  form.projectId = record.ownershipType === 'PROJECT' ? ((record as ExpenseRecord & { projectId?: string | number | null }).projectId ?? '') : ''
   form.categoryId = (record as ExpenseRecord & { categoryId?: string | number }).categoryId ?? ''
   form.businessDate = record.businessDate
-  form.sourceType = (record.sourceType || 'NONE') as ExpenseSourceType
+  form.sourceType = record.sourceType === 'PURCHASE_RECEIPT' || record.sourceType === 'OUTSOURCING_RECEIPT'
+    ? record.sourceType
+    : 'NONE'
   form.pretaxAmount = String(record.pretaxAmount ?? '')
   form.taxAmount = String(record.taxAmount ?? '')
   form.totalAmount = String(record.totalAmount ?? '')
@@ -95,7 +99,7 @@ async function loadMasterData() {
   projects.value = pageItems(projectPage)
   categories.value = pageItems(categoryPage)
   if (!form.supplierId && suppliers.value[0]) form.supplierId = suppliers.value[0].id
-  if (!form.projectId && projects.value[0]) form.projectId = projects.value[0].id
+  if (form.ownershipType === 'PROJECT' && !form.projectId && projects.value[0]) form.projectId = projects.value[0].id
   if (!form.categoryId && categories.value[0]) form.categoryId = categories.value[0].id
 }
 
@@ -107,6 +111,21 @@ function selectSource(source: ExpenseSourceCandidateRecord) {
   form.projectId = source.ownershipType === 'PROJECT' ? (source.projectId ?? '') : ''
   if (source.businessDate && !form.businessDate) form.businessDate = source.businessDate
   if (source.availableAmount && !form.pretaxAmount) form.pretaxAmount = String(source.availableAmount)
+}
+
+function changeOwnership() {
+  selectedSource.value = null
+  if (form.ownershipType === 'PUBLIC') {
+    form.projectId = ''
+  } else if (!form.projectId && projects.value[0]) {
+    form.projectId = projects.value[0].id
+  }
+  searchSources()
+}
+
+function changeSourceType() {
+  selectedSource.value = null
+  searchSources()
 }
 
 async function loadSources() {
@@ -125,9 +144,6 @@ async function loadSources() {
     })
     sources.value = pageItems(page)
     sourcePagination.total = Number(page.total)
-    if (!selectedSource.value && sources.value[0]) {
-      selectSource(sources.value[0])
-    }
   } finally {
     sourcesLoading.value = false
   }
@@ -178,7 +194,7 @@ async function save() {
         expenseCategory: selectedCategoryName.value || undefined,
         categoryId: form.categoryId,
         description: form.description,
-        sourceType: selectedSource.value?.sourceType ?? (form.sourceType === 'NONE' ? null : form.sourceType),
+        sourceType: selectedSource.value?.sourceType ?? null,
         sourceId: selectedSource.value?.sourceId ?? null,
         sourceNo: selectedSource.value?.sourceNo ?? null,
         taxExcludedAmount: form.pretaxAmount.trim(),
@@ -223,7 +239,7 @@ onMounted(loadData)
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
         <el-form-item label="项目/公共归属">
-          <el-select v-model="form.ownershipType" placeholder="选择归属" @change="searchSources">
+          <el-select v-model="form.ownershipType" placeholder="选择归属" @change="changeOwnership">
             <el-option label="项目费用" value="PROJECT" />
             <el-option label="公共费用" value="PUBLIC" />
           </el-select>
@@ -247,9 +263,8 @@ onMounted(loadData)
           <el-date-picker v-model="form.businessDate" name="expense-business-date" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择业务日期" />
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-select v-model="form.sourceType" placeholder="选择来源类型" @change="searchSources">
+          <el-select v-model="form.sourceType" placeholder="选择来源类型" @change="changeSourceType">
             <el-option label="采购入库" value="PURCHASE_RECEIPT" />
-            <el-option label="外协订单" value="OUTSOURCING_ORDER" />
             <el-option label="外协收货" value="OUTSOURCING_RECEIPT" />
             <el-option label="无来源" value="NONE" />
           </el-select>

@@ -418,6 +418,32 @@ Assert-True -Condition ($generator -match 'Ensure-SalesOrderConfirmed -Key "SEMI
     -Message "销售服务只允许成品/半成品，演示销售链不得用原料或辅料绕过真实可售物料约束。"
 Assert-True -Condition ($generator -match 'Ensure-SalesOrderConfirmed -Key "SEMI-B-A" -Customer \$customers\[0\] -Project \$projectA -Contract \$mainContract') `
     -Message "带项目/合同的销售订单客户必须与项目客户一致。"
+$workOrderReleasedStart = $generator.IndexOf("function Ensure-WorkOrderReleased")
+$workOrderReleasedEnd = $generator.IndexOf("function Ensure-WorkOrderDraft", $workOrderReleasedStart)
+Assert-True -Condition ($workOrderReleasedStart -ge 0 -and $workOrderReleasedEnd -gt $workOrderReleasedStart) `
+    -Message "自测无法定位 Ensure-WorkOrderReleased 函数边界。"
+$workOrderReleasedFunction = $generator.Substring($workOrderReleasedStart, $workOrderReleasedEnd - $workOrderReleasedStart)
+Assert-ContainsInOrder -Text $workOrderReleasedFunction -Needles @(
+    'Path "/api/admin/production/work-orders" -Body ([ordered]@{',
+    'remark = $remark',
+    'idempotencyKey = "$RunId-WO-$Key-CREATE"'
+) -Message "生产工单创建必须携带基于 RunId 和业务 Key 的稳定幂等键，保证演示生成器可重放。"
+Assert-ContainsInOrder -Text $workOrderReleasedFunction -Needles @(
+    'Path "/api/admin/production/work-orders/$($existing.id)/release" -Body ([ordered]@{',
+    'version = $existing.version',
+    'reason = "验收演示生产工单释放"',
+    'idempotencyKey = "$RunId-WO-$Key-RELEASE"'
+) -Message "生产工单释放必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+$workOrderDraftStart = $generator.IndexOf("function Ensure-WorkOrderDraft")
+$workOrderDraftEnd = $generator.IndexOf("function Ensure-WorkOrderCancelled", $workOrderDraftStart)
+Assert-True -Condition ($workOrderDraftStart -ge 0 -and $workOrderDraftEnd -gt $workOrderDraftStart) `
+    -Message "自测无法定位 Ensure-WorkOrderDraft 函数边界。"
+$workOrderDraftFunction = $generator.Substring($workOrderDraftStart, $workOrderDraftEnd - $workOrderDraftStart)
+Assert-ContainsInOrder -Text $workOrderDraftFunction -Needles @(
+    'Path "/api/admin/production/work-orders" -Body ([ordered]@{',
+    'remark = $remark',
+    'idempotencyKey = "$RunId-WO-$Key-CREATE"'
+) -Message "草稿生产工单创建也必须携带稳定幂等键，避免相同 helper 重放时冲突或缺键失败。"
 Assert-True -Condition ($generator -match 'function Ensure-WorkOrderReleased' -and $generator -match '/api/admin/production/work-orders/\$\(\$existing\.id\)/release') `
     -Message "生产工单必须通过真实释放动作形成 BOM 用料快照和预留。"
 Assert-True -Condition ($generator -match 'function Ensure-ProductionExecutionPosted' -and $generator -match '/material-issues/\$\(\$issue\.id\)/post' -and $generator -match '/reports/\$\(\$report\.id\)/post' -and $generator -match '/completion-receipts/\$\(\$receipt\.id\)/post') `
@@ -461,6 +487,28 @@ Assert-True -Condition ($generator -match 'elseif \(\$salesReturn\.status -eq "D
     -Message "同库复跑遇到旧销售退货 DRAFT 时，必须用真实 PUT 契约更新为当前行数量和追踪来源后再过账。"
 Assert-True -Condition ($generator -match '/api/admin/production/material-return-sources' -and $generator -match 'sourceAllocationId = \$materialReturnAllocation\.sourceAllocationId') `
     -Message "批次生产退料必须先读取 material-return-sources 候选并提交 sourceAllocationId。"
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/production/material-returns" -Body ([ordered]@{',
+    'clientRequestId = "$RunId-MATERIAL-RETURN"',
+    'idempotencyKey = "$RunId-MATERIAL-RETURN-CREATE"'
+) -Message "生产退料创建必须同时保留自然去重 clientRequestId 和稳定幂等键。"
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/production/material-returns/$($materialReturn.id)/post" -Body ([ordered]@{',
+    'version = $materialReturn.version',
+    'reason = "验收演示生产退料过账"',
+    'idempotencyKey = "$RunId-MATERIAL-RETURN-POST"'
+) -Message "生产退料过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/production/material-supplements" -Body ([ordered]@{',
+    'clientRequestId = "$RunId-MATERIAL-SUPPLEMENT"',
+    'idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-CREATE"'
+) -Message "生产补料创建必须同时保留自然去重 clientRequestId 和稳定幂等键。"
+Assert-ContainsInOrder -Text $reversalFunction -Needles @(
+    'Path "/api/admin/production/material-supplements/$($supplement.id)/post" -Body ([ordered]@{',
+    'version = $supplement.version',
+    'reason = "验收演示生产补料过账"',
+    'idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-POST"'
+) -Message "生产补料过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
 Assert-True -Condition ($generator -match 'Ensure-ReversalDocumentsPosted -SalesShipment \$shipmentSemiA -PurchaseReceipt \$receiptMain `\s+-ProductionIssue \$productionExecution\.issue -WorkOrder \$workOrderReleased') `
     -Message "生产补料样例必须挂到 RELEASED/IN_PROGRESS 工单，不能使用已完成工单作为来源。"
 Assert-True -Condition ($generator -match 'function Ensure-ProductionIssuePosted') `

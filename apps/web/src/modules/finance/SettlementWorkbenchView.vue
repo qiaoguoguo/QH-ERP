@@ -60,7 +60,6 @@ const targets = ref<SettlementTargetRecord[]>([])
 const selectedFund = ref<AdvanceFundRecord | null>(null)
 const selectedTargets = ref<SettlementTargetRecord[]>([])
 const targetAmounts = reactive<Record<string, string>>({})
-const legacyAllocationAmount = ref('')
 const loading = ref(false)
 const error = ref('')
 const submitting = ref(false)
@@ -112,6 +111,15 @@ const canSubmit = computed(() => !submitting.value && !submitDisabledReason.valu
 const selectedFundType = computed<FundType>(() => (
   filters.fundType || (filters.direction === 'CUSTOMER' ? 'ADVANCE_RECEIPT' : 'PREPAYMENT')
 ) as FundType)
+const selectedPartnerText = computed(() => selectedFund.value?.partnerName || '选择资金后带入')
+const selectedOwnershipText = computed(() => {
+  const ownership = filters.ownershipType || selectedFund.value?.ownershipType
+  if (!ownership) {
+    return '选择资金后带入'
+  }
+  const projectName = selectedFund.value?.projectName ?? ''
+  return ownership === 'PROJECT' ? `${ownershipTypeText(ownership)} ${projectName || '待选择项目'}` : ownershipTypeText(ownership)
+})
 
 function isFundType(value: unknown): value is FundType {
   return value === 'ADVANCE_RECEIPT' || value === 'PREPAYMENT' || value === 'RECEIPT' || value === 'PAYMENT'
@@ -177,7 +185,6 @@ function searchPools() {
   targetsPagination.page = 1
   selectedFund.value = null
   selectedTargets.value = []
-  legacyAllocationAmount.value = ''
   Object.keys(targetAmounts).forEach((key) => delete targetAmounts[key])
   void loadPools()
 }
@@ -209,23 +216,10 @@ function selectTarget(record: SettlementTargetRecord) {
   }
   selectedTargets.value = [...selectedTargets.value, record]
   targetAmounts[key] = targetAmounts[key] || String(record.unsettledAmount)
-  if (selectedTargets.value.length === 1) {
-    legacyAllocationAmount.value = targetAmounts[key]
-  }
-}
-
-function syncLegacyAmount() {
-  if (selectedTargets.value.length !== 1) {
-    return
-  }
-  targetAmounts[targetKey(selectedTargets.value[0])] = legacyAllocationAmount.value
 }
 
 function changeTargetAmount(target: SettlementTargetRecord, value: unknown) {
   targetAmounts[targetKey(target)] = String(value)
-  if (selectedTargets.value.length === 1) {
-    legacyAllocationAmount.value = String(value)
-  }
 }
 
 function changeFundsPage(page: number) {
@@ -248,20 +242,33 @@ async function submitAllocation() {
   submitting.value = true
   error.value = ''
   try {
-    const fundPartnerId = (selectedFund.value as AdvanceFundRecord & { partnerId?: ResourceId }).partnerId
+    const fundPartnerId = selectedFund.value.partnerId
+      ?? selectedFund.value.customerId
+      ?? selectedFund.value.supplierId
       ?? normalizeOptionalId(filters.partnerId)
-      ?? selectedFund.value.id
+    if (fundPartnerId === undefined) {
+      error.value = '资金缺少往来方摘要，无法保存核销'
+      return
+    }
+    const ownership = filters.ownershipType || selectedFund.value.ownershipType
+    const projectId = ownership === 'PROJECT'
+      ? normalizeOptionalId(filters.projectId) ?? selectedFund.value.projectId ?? null
+      : null
+    const settlementLines = selectedTargets.value.map((target) => ({
+      targetType: target.targetType as TargetType,
+      targetId: target.targetId,
+      amount: targetAmounts[targetKey(target)].trim(),
+    }))
     const result = await financeSettlementApi.settlementWorkbench.create({
+      version: 0,
       settlementSide: filters.direction === 'CUSTOMER' ? 'RECEIVABLE' : 'PAYABLE',
-      cashSourceType: selectedFundType.value,
+      cashSourceType: filters.direction === 'CUSTOMER' ? 'RECEIPT' : 'PAYMENT',
       cashSourceId: selectedFund.value.id,
       businessDate: selectedFund.value.businessDate,
       direction: filters.direction,
       partnerId: fundPartnerId,
-      ownershipType: filters.ownershipType || selectedFund.value.ownershipType,
-      projectId: (filters.ownershipType || selectedFund.value.ownershipType) === 'PROJECT'
-        ? normalizeOptionalId(filters.projectId) ?? (selectedFund.value as AdvanceFundRecord & { projectId?: ResourceId | null }).projectId ?? null
-        : null,
+      ownershipType: ownership,
+      projectId,
       funds: [{
         fundType: selectedFundType.value,
         fundId: selectedFund.value.id,
@@ -274,6 +281,7 @@ async function submitAllocation() {
         version: target.version,
         amount: targetAmounts[targetKey(target)].trim(),
       })),
+      lines: settlementLines,
       idempotencyKey: `settlement-allocation-${Date.now()}`,
     })
     await router.push({
@@ -309,14 +317,14 @@ onMounted(loadPools)
             <el-option label="付款" value="PAYMENT" />
           </el-select>
         </el-form-item>
-        <el-form-item label="往来方"><el-input v-model="filters.partnerId" clearable placeholder="输入或从资金带入往来方" /></el-form-item>
+        <el-form-item label="往来方"><el-input :model-value="selectedPartnerText" disabled placeholder="选择资金后带入往来方" /></el-form-item>
         <el-form-item label="项目/公共">
           <el-select v-model="filters.ownershipType" clearable placeholder="全部归属" @change="searchPools">
             <el-option label="项目" value="PROJECT" />
             <el-option label="公共" value="PUBLIC" />
           </el-select>
         </el-form-item>
-        <el-form-item label="项目"><el-input v-model="filters.projectId" :disabled="filters.ownershipType === 'PUBLIC'" clearable placeholder="项目 ID 或从资金带入" /></el-form-item>
+        <el-form-item label="归属摘要"><el-input :model-value="selectedOwnershipText" disabled placeholder="选择资金后带入项目/公共" /></el-form-item>
         <el-form-item><el-button type="primary" @click="searchPools">查询</el-button></el-form-item>
       </el-form>
     </template>
@@ -400,7 +408,6 @@ onMounted(loadPools)
       <span>已选目标 {{ selectedTargets.length }} 个</span>
       <span>本次核销：{{ formatFinanceAmount(selectedTargetTotal) }}</span>
       <span>剩余可分配 {{ formatFinanceAmount(remainingAmount) }}</span>
-      <el-input v-model="legacyAllocationAmount" name="settlement-allocation-amount" placeholder="单目标核销金额" style="max-width: 180px" @input="syncLegacyAmount" />
       <span v-if="amountError" class="finance-danger-note">{{ amountError }}</span>
     </div>
   </MasterDataTableView>

@@ -1,7 +1,11 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeVoucherDraftApi, type VoucherDraftRecord, type VoucherDraftStatus, type VoucherSourceType } from '../../shared/api/financeVoucherDraftApi'
+import { financeInvoiceApi, type InvoiceStatus } from '../../shared/api/financeInvoiceApi'
+import { financeExpenseApi, type ExpenseStatus } from '../../shared/api/financeExpenseApi'
+import { financeSettlementApi } from '../../shared/api/financeSettlementApi'
+import { financeApi, type PaymentSummaryRecord, type ReceiptSummaryRecord } from '../../shared/api/financeApi'
 import { useAuthStore } from '../../stores/authStore'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -25,11 +29,30 @@ const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
 const generating = ref(false)
-const generation = reactive<{ sourceType: VoucherSourceType; sourceId: string; version: string }>({
+const sourceCandidatesLoading = ref(false)
+const generation = reactive<{ sourceType: VoucherSourceType; sourceKeyword: string; selectedKey: string }>({
   sourceType: 'SALES_INVOICE',
-  sourceId: '',
-  version: '',
+  sourceKeyword: '',
+  selectedKey: '',
 })
+
+interface VoucherSourceCandidate {
+  key: string
+  sourceType: VoucherSourceType
+  sourceId: string | number
+  sourceNo: string
+  businessDate?: string | null
+  partyName?: string | null
+  ownershipText?: string
+  amount?: string | number | null
+  version: number
+  status?: string
+  summary: string
+  disabledReason?: string
+}
+
+const sourceCandidates = ref<VoucherSourceCandidate[]>([])
+const selectedSourceCandidate = computed(() => sourceCandidates.value.find((item) => item.key === generation.selectedKey) ?? null)
 
 function balanceText(record: VoucherDraftRecord) {
   return record.balanced ? '借贷平衡' : '借贷不平衡'
@@ -87,12 +110,128 @@ function changePageSize(pageSize: number) {
   void loadRecords()
 }
 
+function sourceCandidateKey(sourceType: VoucherSourceType, sourceId: string | number) {
+  return `${sourceType}:${sourceId}`
+}
+
+function invoiceCandidate(record: { id: string | number; invoiceNo: string; customerName?: string | null; supplierName?: string | null; ownershipType?: string | null; projectName?: string | null; totalAmount?: string | number | null; version: number; status?: string }, sourceType: VoucherSourceType): VoucherSourceCandidate {
+  const partyName = sourceType === 'SALES_INVOICE' ? record.customerName : record.supplierName
+  return {
+    key: sourceCandidateKey(sourceType, record.id),
+    sourceType,
+    sourceId: record.id,
+    sourceNo: record.invoiceNo,
+    partyName,
+    ownershipText: `${ownershipTypeText(record.ownershipType)} ${record.projectName ?? ''}`.trim(),
+    amount: record.totalAmount,
+    version: record.version,
+    status: record.status,
+    summary: `${financeSourceTypeText(sourceType)} ${record.invoiceNo}${partyName ? ` ${partyName}` : ''}`,
+  }
+}
+
+function expenseCandidate(record: { id: string | number; expenseNo: string; supplierName?: string | null; ownershipType?: string | null; projectName?: string | null; totalAmount?: string | number | null; version: number; status?: string }): VoucherSourceCandidate {
+  return {
+    key: sourceCandidateKey('EXPENSE', record.id),
+    sourceType: 'EXPENSE',
+    sourceId: record.id,
+    sourceNo: record.expenseNo,
+    partyName: record.supplierName,
+    ownershipText: `${ownershipTypeText(record.ownershipType)} ${record.projectName ?? ''}`.trim(),
+    amount: record.totalAmount,
+    version: record.version,
+    status: record.status,
+    summary: `费用单 ${record.expenseNo}${record.supplierName ? ` ${record.supplierName}` : ''}`,
+  }
+}
+
+function cashCandidate(record: ReceiptSummaryRecord | PaymentSummaryRecord, sourceType: 'RECEIPT' | 'PAYMENT'): VoucherSourceCandidate {
+  const sourceNo = sourceType === 'RECEIPT'
+    ? (record as ReceiptSummaryRecord).receiptNo
+    : (record as PaymentSummaryRecord).paymentNo
+  const partyName = sourceType === 'RECEIPT'
+    ? (record as ReceiptSummaryRecord).customerName
+    : (record as PaymentSummaryRecord).supplierName
+  return {
+    key: sourceCandidateKey(sourceType, record.id),
+    sourceType,
+    sourceId: record.id,
+    sourceNo,
+    partyName,
+    ownershipText: '',
+    amount: record.amount,
+    version: record.version ?? 0,
+    status: record.status,
+    summary: `${financeSourceTypeText(sourceType)} ${sourceNo}${partyName ? ` ${partyName}` : ''}`,
+    disabledReason: record.version === undefined ? '来源缺少版本，暂不能生成凭证草稿' : undefined,
+  }
+}
+
+function allocationCandidate(record: { id: string | number; allocationNo?: string; partnerName?: string | null; ownershipType?: string | null; projectName?: string | null; totalAmount?: string | number | null; amount?: string | number | null; version: number; status?: string }): VoucherSourceCandidate {
+  const sourceNo = record.allocationNo ?? String(record.id)
+  return {
+    key: sourceCandidateKey('SETTLEMENT_ALLOCATION', record.id),
+    sourceType: 'SETTLEMENT_ALLOCATION',
+    sourceId: record.id,
+    sourceNo,
+    partyName: record.partnerName,
+    ownershipText: `${ownershipTypeText(record.ownershipType)} ${record.projectName ?? ''}`.trim(),
+    amount: record.totalAmount ?? record.amount,
+    version: record.version,
+    status: record.status,
+    summary: `核销 ${sourceNo}${record.partnerName ? ` ${record.partnerName}` : ''}`,
+  }
+}
+
+async function loadSourceCandidates() {
+  sourceCandidatesLoading.value = true
+  actionError.value = ''
+  try {
+    if (generation.sourceType === 'SALES_INVOICE') {
+      const page = await financeInvoiceApi.salesInvoices.list({ keyword: generation.sourceKeyword, status: 'CONFIRMED' as InvoiceStatus, page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map((item) => invoiceCandidate(item, 'SALES_INVOICE'))
+    } else if (generation.sourceType === 'PURCHASE_INVOICE') {
+      const page = await financeInvoiceApi.purchaseInvoices.list({ keyword: generation.sourceKeyword, status: 'CONFIRMED' as InvoiceStatus, page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map((item) => invoiceCandidate(item, 'PURCHASE_INVOICE'))
+    } else if (generation.sourceType === 'EXPENSE') {
+      const page = await financeExpenseApi.expenses.list({ keyword: generation.sourceKeyword, status: 'CONFIRMED' as ExpenseStatus, page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map(expenseCandidate)
+    } else if (generation.sourceType === 'RECEIPT') {
+      const page = await financeApi.receipts.list({ keyword: generation.sourceKeyword, status: 'POSTED', page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map((item) => cashCandidate(item, 'RECEIPT'))
+    } else if (generation.sourceType === 'PAYMENT') {
+      const page = await financeApi.payments.list({ keyword: generation.sourceKeyword, status: 'POSTED', page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map((item) => cashCandidate(item, 'PAYMENT'))
+    } else {
+      const page = await financeSettlementApi.settlementWorkbench.allocations({ keyword: generation.sourceKeyword, status: 'POSTED', page: 1, pageSize: 20 })
+      sourceCandidates.value = pageItems(page).map(allocationCandidate)
+    }
+    if (!sourceCandidates.value.some((item) => item.key === generation.selectedKey)) {
+      generation.selectedKey = ''
+    }
+  } catch (caught) {
+    sourceCandidates.value = []
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    sourceCandidatesLoading.value = false
+  }
+}
+
+function changeGenerationSourceType() {
+  generation.selectedKey = ''
+  void loadSourceCandidates()
+}
+
 async function generateDraft() {
   if (generating.value || !authStore.hasPermission(financePermissions.voucherDraftGenerate)) {
     return
   }
-  if (!generation.sourceId.trim() || !/^\d+$/.test(generation.version.trim())) {
-    actionError.value = '请填写来源 ID 和来源版本'
+  if (!selectedSourceCandidate.value) {
+    actionError.value = '请选择已确认或已过账的业务来源'
+    return
+  }
+  if (selectedSourceCandidate.value.disabledReason) {
+    actionError.value = selectedSourceCandidate.value.disabledReason
     return
   }
   if (!(await confirmAction('从当前来源生成非正式凭证草稿？'))) {
@@ -102,9 +241,9 @@ async function generateDraft() {
   actionError.value = ''
   try {
     await financeVoucherDraftApi.voucherDrafts.generate({
-      sourceType: generation.sourceType,
-      sourceId: generation.sourceId.trim(),
-      version: Number(generation.version.trim()),
+      sourceType: selectedSourceCandidate.value.sourceType,
+      sourceId: selectedSourceCandidate.value.sourceId,
+      version: selectedSourceCandidate.value.version,
       idempotencyKey: `voucher-draft-generate-${Date.now()}`,
     })
     await loadRecords()
@@ -115,13 +254,20 @@ async function generateDraft() {
   }
 }
 
-onMounted(loadRecords)
+watch(() => generation.sourceKeyword, () => {
+  generation.selectedKey = ''
+})
+
+onMounted(() => {
+  void loadRecords()
+  void loadSourceCandidates()
+})
 </script>
 
 <template>
   <MasterDataTableView title="凭证草稿" description="仅为 031 正式制证提供业务分类建议，不是正式凭证。">
     <template #actions>
-      <el-select v-model="generation.sourceType" placeholder="选择来源类型" style="width: 150px">
+      <el-select v-model="generation.sourceType" placeholder="选择来源类型" style="width: 150px" @change="changeGenerationSourceType">
         <el-option label="销售发票" value="SALES_INVOICE" />
         <el-option label="采购发票" value="PURCHASE_INVOICE" />
         <el-option label="费用单" value="EXPENSE" />
@@ -129,8 +275,28 @@ onMounted(loadRecords)
         <el-option label="付款" value="PAYMENT" />
         <el-option label="核销" value="SETTLEMENT_ALLOCATION" />
       </el-select>
-      <el-input v-model="generation.sourceId" name="voucher-source-id" clearable placeholder="来源 ID" style="width: 120px" />
-      <el-input v-model="generation.version" name="voucher-source-version" clearable placeholder="来源版本" style="width: 120px" />
+      <el-input v-model="generation.sourceKeyword" name="voucher-source-keyword" clearable placeholder="业务编号或往来方" style="width: 170px" @keyup.enter="loadSourceCandidates" />
+      <el-button :loading="sourceCandidatesLoading" @click="loadSourceCandidates">查询来源</el-button>
+      <el-select
+        v-model="generation.selectedKey"
+        data-test="voucher-source-candidate"
+        filterable
+        clearable
+        :loading="sourceCandidatesLoading"
+        placeholder="选择已确认/已过账来源"
+        style="width: 280px"
+      >
+        <el-option
+          v-for="source in sourceCandidates"
+          :key="source.key"
+          :label="`${source.sourceNo} ${source.summary}`"
+          :value="source.key"
+          :disabled="Boolean(source.disabledReason)"
+        >
+          <span>{{ source.sourceNo }} {{ source.summary }}</span>
+          <span class="finance-muted-note"> {{ source.disabledReason ?? source.ownershipText }} {{ formatFinanceAmount(source.amount) }}</span>
+        </el-option>
+      </el-select>
       <el-button data-test="generate-voucher-draft" type="primary" :loading="generating" :disabled="generating || !authStore.hasPermission(financePermissions.voucherDraftGenerate)" @click="generateDraft">从来源生成草稿</el-button>
     </template>
     <template #filters>
@@ -141,6 +307,8 @@ onMounted(loadRecords)
             <el-option label="销售发票" value="SALES_INVOICE" />
             <el-option label="采购发票" value="PURCHASE_INVOICE" />
             <el-option label="费用单" value="EXPENSE" />
+            <el-option label="收款" value="RECEIPT" />
+            <el-option label="付款" value="PAYMENT" />
             <el-option label="核销" value="SETTLEMENT_ALLOCATION" />
           </el-select>
         </el-form-item>

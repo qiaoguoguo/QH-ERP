@@ -467,6 +467,7 @@ create table fin_voucher_draft (
 	project_id bigint,
 	debit_amount numeric(18, 2) not null,
 	credit_amount numeric(18, 2) not null,
+	generation_version bigint not null default 0,
 	formal_voucher_no varchar(64),
 	posting_status varchar(32),
 	idempotency_key varchar(120),

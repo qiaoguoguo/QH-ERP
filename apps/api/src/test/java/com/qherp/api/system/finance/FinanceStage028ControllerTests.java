@@ -489,23 +489,90 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void partialSalesInvoicesExposeNetCandidatesAndReuseFullShipmentReceivable() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long shipmentId = createPostedShipment(fixture, "028 销售净候选", "5.000000", "10.000000");
+		long sourceLineId = salesShipmentLineId(shipmentId);
+		String shipmentNo = this.jdbcTemplate.queryForObject("select shipment_no from sal_sales_shipment where id = ?",
+				String.class, shipmentId);
+		createPostedShipment(fixture, "028 销售候选筛选干扰", "1.000000", "9.000000");
+
+		ResponseEntity<String> first = createSalesInvoice(admin,
+				partialSalesInvoicePayload(fixture.customerId(), sourceLineId, "2.000000", "SI-NET-A-"));
+		assertOk(first);
+		JsonNode candidates = data(get("/api/admin/finance/sales-invoices/candidates?sourceId=" + shipmentId
+				+ "&page=1&pageSize=10", admin));
+		assertThat(candidates.get("total").longValue()).isEqualTo(1);
+		JsonNode candidate = findItemByLong(candidates.get("items"), "sourceLineId", sourceLineId);
+		assertJsonDecimalString(candidate, "availableQuantity", "3.000000");
+		assertJsonDecimalString(candidate, "invoiceQuantity", "3.000000");
+		assertJsonDecimalString(candidate, "totalAmount", "30.00");
+		assertThat(candidate.get("sourceNo").asText()).isEqualTo(shipmentNo);
+
+		JsonNode confirmedFirst = data(exchange(HttpMethod.PUT, "/api/admin/finance/sales-invoices/"
+				+ data(first).get("id").longValue() + "/confirm", actionPayload(0, "SI-NET-A-CONFIRM-"), admin));
+		long receivableId = confirmedFirst.get("linkedReceivableId").longValue();
+		assertDecimal("select total_amount from fin_receivable where id = ?", receivableId, "50.00");
+		assertDecimal("select unreceived_amount from fin_receivable where id = ?", receivableId, "50.00");
+
+		ResponseEntity<String> second = createSalesInvoice(admin,
+				partialSalesInvoicePayload(fixture.customerId(), sourceLineId, "3.000000", "SI-NET-B-"));
+		assertOk(second);
+		JsonNode confirmedSecond = data(exchange(HttpMethod.PUT, "/api/admin/finance/sales-invoices/"
+				+ data(second).get("id").longValue() + "/confirm", actionPayload(0, "SI-NET-B-CONFIRM-"), admin));
+		assertThat(confirmedSecond.get("linkedReceivableId").longValue()).isEqualTo(receivableId);
+		assertDecimal("select total_amount from fin_receivable where id = ?", receivableId, "50.00");
+		assertThat(tableCount("fin_receivable", "source_id", shipmentId)).isOne();
+	}
+
+	@Test
+	void purchasePartialInvoicesUseNetCandidatesAndConfirmAgainstCumulativeFacts() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ProcurementFixture fixture = procurementFixture();
+		long receiptId = createPostedPurchaseReceipt(fixture, "028 采购净候选", "5.000000", "8.000000");
+		long sourceLineId = sourceLineId("PURCHASE_RECEIPT", receiptId);
+		createPostedPurchaseReceipt(fixture, "028 采购候选筛选干扰", "1.000000", "7.000000");
+
+		ResponseEntity<String> first = createPurchaseInvoice(admin,
+				purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT", receiptId,
+						List.of(linePayload(sourceLineId, "2.000000", "8.000000"))));
+		assertOk(first);
+		assertThat(data(first).get("matchStatus").asText()).isEqualTo("MATCHED");
+		JsonNode candidates = data(get("/api/admin/finance/purchase-invoices/candidates?sourceType=PURCHASE_RECEIPT"
+				+ "&sourceId=" + receiptId + "&page=1&pageSize=10", admin));
+		assertThat(candidates.get("total").longValue()).isEqualTo(1);
+		JsonNode candidate = findItemByLong(candidates.get("items"), "sourceLineId", sourceLineId);
+		assertJsonDecimalString(candidate, "availableQuantity", "3.000000");
+		assertJsonDecimalString(candidate, "invoiceQuantity", "3.000000");
+		assertJsonDecimalString(candidate, "totalAmount", "24.00");
+
+		JsonNode confirmedFirst = data(exchange(HttpMethod.PUT, "/api/admin/finance/purchase-invoices/"
+				+ data(first).get("id").longValue() + "/confirm", actionPayload(0, "PI-NET-A-CONFIRM-"), admin));
+		long payableId = confirmedFirst.get("linkedPayableId").longValue();
+		assertDecimal("select total_amount from fin_payable where id = ?", payableId, "40.00");
+		assertDecimal("select unpaid_amount from fin_payable where id = ?", payableId, "40.00");
+
+		ResponseEntity<String> second = createPurchaseInvoice(admin,
+				purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT", receiptId,
+						List.of(linePayload(sourceLineId, "3.000000", "8.000000"))));
+		assertOk(second);
+		assertThat(data(second).get("matchStatus").asText()).isEqualTo("MATCHED");
+		JsonNode confirmedSecond = data(exchange(HttpMethod.PUT, "/api/admin/finance/purchase-invoices/"
+				+ data(second).get("id").longValue() + "/confirm", actionPayload(0, "PI-NET-B-CONFIRM-"), admin));
+		assertThat(confirmedSecond.get("linkedPayableId").longValue()).isEqualTo(payableId);
+		assertThat(tableCount("fin_payable", "source_id", receiptId)).isOne();
+
+		assertError(createPurchaseInvoice(admin,
+				purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT", receiptId,
+						List.of(linePayload(sourceLineId, "1.000000", "8.000000")))),
+				HttpStatus.CONFLICT, "FINANCE_SOURCE_OVER_INVOICED");
+	}
+
+	@Test
 	void purchaseInvoiceZeroToleranceComparesCompleteLineSetAndAllAmounts() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = procurementFixture();
-		long receiptId = createPostedPurchaseReceiptWithTwoLines(fixture, "028 三单缺行", "1.000000",
-				"8.000000", "2.000000", "6.000000");
-		List<Long> receiptLineIds = purchaseReceiptLineIds(receiptId);
-
-		ResponseEntity<String> missingLineInvoice = createPurchaseInvoice(admin,
-				purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT", receiptId,
-						List.of(linePayload(receiptLineIds.get(0), "1.000000", "8.000000"))));
-		assertOk(missingLineInvoice);
-		long missingLineInvoiceId = data(missingLineInvoice).get("id").longValue();
-		assertThat(data(missingLineInvoice).get("matchStatus").asText()).isEqualTo("EXCEPTION");
-		assertThat(data(missingLineInvoice).get("matchDifferences").toString()).contains("MISSING_SOURCE_LINE");
-		assertError(exchange(HttpMethod.PUT, "/api/admin/finance/purchase-invoices/" + missingLineInvoiceId
-				+ "/confirm", actionPayload(0, "PI-MISS-CONFIRM-"), admin), HttpStatus.CONFLICT,
-				"FINANCE_MATCH_EXCEPTION");
 
 		long taxReceiptId = createPostedPurchaseReceipt(fixture, "028 三单税率差异", "1.000000", "8.000000");
 		ResponseEntity<String> taxMismatchInvoice = createPurchaseInvoice(admin,
@@ -601,6 +668,98 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void updateActionsReplaySameIdempotencyKeyAndRejectFingerprintConflict() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture salesFixture = fixture();
+		ProcurementFixture procurementFixture = procurementFixture();
+
+		long shipmentId = createPostedShipment(salesFixture, "028 更新幂等销售", "2.000000", "10.000000");
+		long shipmentLineId = salesShipmentLineId(shipmentId);
+		long salesInvoiceId = data(createSalesInvoice(admin,
+				partialSalesInvoicePayload(salesFixture.customerId(), shipmentLineId, "1.000000", "SI-UPD-")))
+			.get("id")
+			.longValue();
+		Map<String, Object> salesUpdate = partialSalesInvoicePayload(salesFixture.customerId(), shipmentLineId,
+				"1.000000", "SI-UPD-REPLAY-");
+		salesUpdate.put("idempotencyKey", "SI-UPD-STABLE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> updatedSalesResponse = exchange(HttpMethod.PUT, "/api/admin/finance/sales-invoices/"
+				+ salesInvoiceId, salesUpdate, admin);
+		assertOk(updatedSalesResponse);
+		ResponseEntity<String> replayedSalesResponse = exchange(HttpMethod.PUT, "/api/admin/finance/sales-invoices/"
+				+ salesInvoiceId, salesUpdate, admin);
+		assertOk(replayedSalesResponse);
+		JsonNode updatedSales = data(updatedSalesResponse);
+		JsonNode replayedSales = data(replayedSalesResponse);
+		assertThat(replayedSales.get("version").longValue()).isEqualTo(updatedSales.get("version").longValue());
+		Map<String, Object> salesConflict = new LinkedHashMap<>(salesUpdate);
+		salesConflict.put("remark", "同键不同销售更新");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/finance/sales-invoices/" + salesInvoiceId, salesConflict,
+				admin), HttpStatus.CONFLICT, "FINANCE_IDEMPOTENCY_CONFLICT");
+
+		long receiptId = createPostedPurchaseReceipt(procurementFixture, "028 更新幂等采购", "1.000000", "8.000000");
+		long receiptLineId = sourceLineId("PURCHASE_RECEIPT", receiptId);
+		long purchaseInvoiceId = data(createPurchaseInvoice(admin,
+				purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT", receiptId,
+						List.of(linePayload(receiptLineId, "1.000000", "8.000000"))))).get("id").longValue();
+		Map<String, Object> purchaseUpdate = purchaseInvoicePayloadWithLines("STANDARD_PURCHASE", "PURCHASE_RECEIPT",
+				receiptId, List.of(linePayload(receiptLineId, "1.000000", "8.000000")));
+		purchaseUpdate.put("idempotencyKey", "PI-UPD-STABLE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> updatedPurchaseResponse = exchange(HttpMethod.PUT, "/api/admin/finance/purchase-invoices/"
+				+ purchaseInvoiceId, purchaseUpdate, admin);
+		assertOk(updatedPurchaseResponse);
+		ResponseEntity<String> replayedPurchaseResponse = exchange(HttpMethod.PUT, "/api/admin/finance/purchase-invoices/"
+				+ purchaseInvoiceId, purchaseUpdate, admin);
+		assertOk(replayedPurchaseResponse);
+		JsonNode updatedPurchase = data(updatedPurchaseResponse);
+		JsonNode replayedPurchase = data(replayedPurchaseResponse);
+		assertThat(replayedPurchase.get("version").longValue()).isEqualTo(updatedPurchase.get("version").longValue());
+
+		long expenseId = data(createExpense(admin,
+				expensePayload(procurementFixture.supplierId(), "PUBLIC", null, "028 更新幂等费用", "18.00"))).get("id")
+			.longValue();
+		Map<String, Object> expenseUpdate = expensePayload(procurementFixture.supplierId(), "PUBLIC", null,
+				"028 更新幂等费用改", "18.00");
+		expenseUpdate.put("idempotencyKey", "EXP-UPD-STABLE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> updatedExpenseResponse = exchange(HttpMethod.PUT, "/api/admin/finance/expenses/"
+				+ expenseId, expenseUpdate, admin);
+		assertOk(updatedExpenseResponse);
+		ResponseEntity<String> replayedExpenseResponse = exchange(HttpMethod.PUT, "/api/admin/finance/expenses/"
+				+ expenseId, expenseUpdate, admin);
+		assertOk(replayedExpenseResponse);
+		JsonNode updatedExpense = data(updatedExpenseResponse);
+		JsonNode replayedExpense = data(replayedExpenseResponse);
+		assertThat(replayedExpense.get("version").longValue()).isEqualTo(updatedExpense.get("version").longValue());
+
+		long advanceReceiptId = data(createAdvanceReceipt(admin,
+				advanceReceiptPayload(salesFixture.customerId(), "12.00", "028 更新幂等预收"))).get("id").longValue();
+		Map<String, Object> advanceUpdate = advanceReceiptPayload(salesFixture.customerId(), "12.00", "028 预收更新");
+		advanceUpdate.put("idempotencyKey", "ADV-UPD-STABLE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> updatedAdvanceResponse = exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/"
+				+ advanceReceiptId, advanceUpdate, admin);
+		assertOk(updatedAdvanceResponse);
+		ResponseEntity<String> replayedAdvanceResponse = exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/"
+				+ advanceReceiptId, advanceUpdate, admin);
+		assertOk(replayedAdvanceResponse);
+		JsonNode updatedAdvance = data(updatedAdvanceResponse);
+		JsonNode replayedAdvance = data(replayedAdvanceResponse);
+		assertThat(replayedAdvance.get("version").longValue()).isEqualTo(updatedAdvance.get("version").longValue());
+
+		long prepaymentId = data(createPrepayment(admin,
+				prepaymentPayload(procurementFixture.supplierId(), "13.00", "028 更新幂等预付"))).get("id").longValue();
+		Map<String, Object> prepaymentUpdate = prepaymentPayload(procurementFixture.supplierId(), "13.00", "028 预付更新");
+		prepaymentUpdate.put("idempotencyKey", "PRE-UPD-STABLE-" + SEQUENCE.incrementAndGet());
+		ResponseEntity<String> updatedPrepaymentResponse = exchange(HttpMethod.PUT, "/api/admin/finance/prepayments/"
+				+ prepaymentId, prepaymentUpdate, admin);
+		assertOk(updatedPrepaymentResponse);
+		ResponseEntity<String> replayedPrepaymentResponse = exchange(HttpMethod.PUT, "/api/admin/finance/prepayments/"
+				+ prepaymentId, prepaymentUpdate, admin);
+		assertOk(replayedPrepaymentResponse);
+		JsonNode updatedPrepayment = data(updatedPrepaymentResponse);
+		JsonNode replayedPrepayment = data(replayedPrepaymentResponse);
+		assertThat(replayedPrepayment.get("version").longValue()).isEqualTo(updatedPrepayment.get("version").longValue());
+	}
+
+	@Test
 	void expensesValidatePurchaseAndOutsourcingSourcesOnServiceSide() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ProcurementFixture fixture = procurementFixture();
@@ -659,6 +818,82 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void historicalPostedCashCanGenerateVoucherWithoutCreatingAdvanceBalance() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture fixture = fixture();
+		long receiptId = insertLegacyPostedReceipt(fixture.customerId(), "028-HIST-RC-", "17.00", 4);
+
+		JsonNode advances = data(get("/api/admin/finance/advance-receipts?keyword=028-HIST-RC-&page=1&pageSize=10",
+				admin));
+		assertThat(advances.get("items")).isEmpty();
+		ResponseEntity<String> generated = exchange(HttpMethod.POST, "/api/admin/finance/voucher-drafts/generate",
+				voucherGeneratePayload("RECEIPT", receiptId, 4, "VD-HIST-RC-"), admin);
+		assertOk(generated);
+		JsonNode draft = data(generated);
+		assertThat(draft.get("sourceNo").asText()).startsWith("028-HIST-RC-");
+		assertThat(draft.get("sourceSummary").asText()).contains("收款");
+		assertThat(draft.get("generationVersion").longValue()).isEqualTo(4);
+		assertThat(tableCount("fin_receipt_balance", "receipt_id", receiptId)).isZero();
+	}
+
+	@Test
+	void settlementAllocationDetailReturnsActionTruthAndSummaryFields() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture salesFixture = fixture();
+		long receivableId = confirmedReceivable(admin, salesFixture, "028 核销详情", "1.000000", "10.000000");
+		long advanceReceiptId = data(createAdvanceReceipt(admin,
+				advanceReceiptPayload(salesFixture.customerId(), "10.00", "028 核销详情资金"))).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/" + advanceReceiptId + "/post",
+				actionPayload(0, "ADV-DETAIL-POST-"), admin));
+		long allocationId = data(createSettlementAllocation(admin,
+				receivableAllocationPayload(advanceReceiptId, receivableId, "10.00", 1, 1))).get("id").longValue();
+
+		JsonNode detail = data(get("/api/admin/finance/settlement-workbench/allocations/" + allocationId, admin));
+		assertThat(detail.has("allowedActions")).isTrue();
+		assertThat(detail.get("allowedActions").toString()).contains("POST").contains("CANCEL");
+		assertThat(detail.has("restrictedReasons")).isTrue();
+		assertThat(detail.get("restrictedReasons").isArray()).isTrue();
+		assertThat(detail.get("fundNo").asText()).startsWith("ADR-");
+		assertThat(detail.get("partnerName").asText()).contains("028 客户");
+		assertThat(detail.get("ownershipType").asText()).isEqualTo("PUBLIC");
+		assertThat(detail.get("projectName").isNull()).isTrue();
+		assertThat(detail.get("summary").asText()).contains("ADR-").contains("1 个目标");
+		assertThat(detail.get("version").longValue()).isEqualTo(0);
+	}
+
+	@Test
+	void settlementAllocationListSupportsVoucherSourceCandidates() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SalesFixture salesFixture = fixture();
+		long receivableId = confirmedReceivable(admin, salesFixture, "028 核销候选", "1.000000", "10.000000");
+		long advanceReceiptId = data(createAdvanceReceipt(admin,
+				advanceReceiptPayload(salesFixture.customerId(), "10.00", "028 核销候选资金"))).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/" + advanceReceiptId + "/post",
+				actionPayload(0, "ADV-ALC-LIST-POST-"), admin));
+		long allocationId = data(createSettlementAllocation(admin,
+				receivableAllocationPayload(advanceReceiptId, receivableId, "10.00", 1, 1))).get("id").longValue();
+		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/settlement-workbench/allocations/" + allocationId
+				+ "/post", actionPayload(0, "ALC-LIST-POST-"), admin));
+
+		ResponseEntity<String> listResponse = get("/api/admin/finance/settlement-workbench/allocations"
+				+ "?direction=CUSTOMER&status=POSTED&keyword=ALC-&page=1&pageSize=10", admin);
+		assertOk(listResponse);
+		JsonNode page = data(listResponse);
+		assertThat(page.get("total").longValue()).isGreaterThanOrEqualTo(1);
+		JsonNode item = findItemByLong(page.get("items"), "id", allocationId);
+		assertThat(item.get("allocationNo").asText()).startsWith("ALC-");
+		assertThat(item.get("status").asText()).isEqualTo("POSTED");
+		assertThat(item.get("version").longValue()).isEqualTo(1);
+		assertJsonDecimalString(item, "totalAmount", "10.00");
+		assertJsonDecimalString(item, "amount", "10.00");
+		assertThat(item.get("partnerName").asText()).contains("028 客户");
+		assertThat(item.get("fundNo").asText()).startsWith("ADR-");
+		assertThat(item.get("ownershipType").asText()).isEqualTo("PUBLIC");
+		assertThat(item.get("projectName").isNull()).isTrue();
+		assertThat(item.get("summary").asText()).contains("ADR-").contains("1 个目标");
+	}
+
+	@Test
 	void voucherDraftsCoverPostedCashAndSettlementSourcesWithStableBoundaryFields() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		SalesFixture salesFixture = fixture();
@@ -667,26 +902,35 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 				advanceReceiptPayload(salesFixture.customerId(), "10.00", "028 凭证收款来源"))).get("id").longValue();
 		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/advance-receipts/" + advanceReceiptId + "/post",
 				actionPayload(0, "ADV-VD-POST-"), admin));
+		this.jdbcTemplate.update("update fin_receipt set version = 7 where id = ?", advanceReceiptId);
 		long allocationId = data(createSettlementAllocation(admin,
-				receivableAllocationPayload(advanceReceiptId, receivableId, "10.00", 1, 1))).get("id").longValue();
+				receivableAllocationPayload(advanceReceiptId, receivableId, "10.00", 7, 1))).get("id").longValue();
 		assertOk(exchange(HttpMethod.PUT, "/api/admin/finance/settlement-workbench/allocations/" + allocationId
 				+ "/post", actionPayload(0, "ALC-VD-POST-"), admin));
 
 		ResponseEntity<String> receiptDraft = exchange(HttpMethod.POST, "/api/admin/finance/voucher-drafts/generate",
-				voucherGeneratePayload("RECEIPT", advanceReceiptId, 1, "VD-RECEIPT-"), admin);
+				voucherGeneratePayload("RECEIPT", advanceReceiptId, 7, "VD-RECEIPT-"), admin);
 		assertOk(receiptDraft);
 		assertThat(data(receiptDraft).get("sourceNo").asText()).startsWith("ADR-");
 		assertThat(data(receiptDraft).get("sourceSummary").asText()).contains("收款");
-		assertThat(data(receiptDraft).get("generationVersion").longValue()).isEqualTo(1);
+		assertThat(data(receiptDraft).get("generationVersion").longValue()).isEqualTo(7);
 		assertThat(data(receiptDraft).get("allowedActions").toString()).contains("READY");
 		assertJsonDecimalString(data(receiptDraft), "debitAmount", "10.00");
 		assertJsonDecimalString(data(receiptDraft), "creditAmount", "10.00");
+		assertJsonDecimalString(data(receiptDraft), "debitTotal", "10.00");
+		assertJsonDecimalString(data(receiptDraft), "creditTotal", "10.00");
+		assertThat(data(receiptDraft).get("balanced").asBoolean()).isTrue();
+		assertJsonDecimalString(data(receiptDraft).get("lines").get(0), "amount", "10.00");
 
 		ResponseEntity<String> allocationDraft = exchange(HttpMethod.POST, "/api/admin/finance/voucher-drafts/generate",
 				voucherGeneratePayload("SETTLEMENT_ALLOCATION", allocationId, 1, "VD-ALC-"), admin);
 		assertOk(allocationDraft);
 		assertThat(data(allocationDraft).get("sourceNo").asText()).startsWith("ALC-");
 		assertThat(data(allocationDraft).get("sourceSummary").asText()).contains("核销");
+		JsonNode filtered = data(get("/api/admin/finance/voucher-drafts?sourceType=RECEIPT&sourceId="
+				+ advanceReceiptId + "&page=1&pageSize=10", admin));
+		assertThat(filtered.get("total").longValue()).isEqualTo(1);
+		assertThat(filtered.get("items").get(0).get("sourceType").asText()).isEqualTo("RECEIPT");
 	}
 
 	@Test
@@ -1021,6 +1265,15 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 			String keyPrefix) {
 		return Map.of("sourceType", sourceType, "sourceId", sourceId, "version", version, "idempotencyKey",
 				keyPrefix + SEQUENCE.incrementAndGet());
+	}
+
+	private JsonNode findItemByLong(JsonNode items, String field, long expected) {
+		for (JsonNode item : items) {
+			if (item.has(field) && item.get(field).longValue() == expected) {
+				return item;
+			}
+		}
+		throw new AssertionError("未找到 " + field + "=" + expected + " 的候选行：" + items);
 	}
 
 	private long confirmedReceivable(AuthenticatedSession admin, SalesFixture fixture, String remark, String quantity,
@@ -1376,6 +1629,19 @@ class FinanceStage028ControllerTests extends PostgresIntegrationTest {
 	private long salesShipmentLineId(long shipmentId) {
 		return this.jdbcTemplate.queryForObject("select id from sal_sales_shipment_line where shipment_id = ?",
 				Long.class, shipmentId);
+	}
+
+	private long insertLegacyPostedReceipt(long customerId, String prefix, String amount, long version) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_receipt (
+					receipt_no, customer_id, receipt_date, amount, method, status, remark, created_by, created_at,
+					updated_by, updated_at, posted_by, posted_at, version
+				)
+				values (?, ?, ?, ?, 'BANK_TRANSFER', 'POSTED', '028 历史收款', 'test', now(), 'test', now(),
+					'test', now(), ?)
+				returning id
+				""", Long.class, prefix + SEQUENCE.incrementAndGet(), customerId, LocalDate.now(),
+				new BigDecimal(amount), version);
 	}
 
 	private ResponseEntity<String> createReceivable(AuthenticatedSession session, long sourceId, String remark) {

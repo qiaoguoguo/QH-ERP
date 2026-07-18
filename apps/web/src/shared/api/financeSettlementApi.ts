@@ -41,6 +41,17 @@ export interface SettlementPoolParams {
   pageSize: number
 }
 
+export interface SettlementAllocationListParams {
+  keyword?: string | null
+  direction?: SettlementDirection | null
+  status?: string | null
+  partnerId?: ResourceId | null
+  ownershipType?: OwnershipType | null
+  projectId?: ResourceId | null
+  page: number
+  pageSize: number
+}
+
 export interface AdvanceFundPayload extends VersionedActionPayload {
   partnerId: ResourceId
   customerId?: ResourceId | null
@@ -55,8 +66,9 @@ export interface AdvanceFundPayload extends VersionedActionPayload {
 }
 
 export interface SettlementAllocationPayload {
+  version: number
   settlementSide?: 'RECEIVABLE' | 'PAYABLE'
-  cashSourceType?: FundType | 'RECEIPT' | 'PAYMENT'
+  cashSourceType?: 'RECEIPT' | 'PAYMENT'
   cashSourceId?: ResourceId
   businessDate?: string
   direction: SettlementDirection
@@ -65,6 +77,7 @@ export interface SettlementAllocationPayload {
   projectId?: ResourceId | null
   funds: Array<{ fundType: FundType; fundId: ResourceId; version: number; amount: FinanceMoneyPayload }>
   targets: Array<{ targetType: TargetType; targetId: ResourceId; version: number; amount: FinanceMoneyPayload }>
+  lines: Array<{ targetType: TargetType; targetId: ResourceId; amount: FinanceMoneyPayload }>
   idempotencyKey: string
 }
 
@@ -101,8 +114,12 @@ export interface AdvanceFundRecord {
   id: ResourceId
   advanceNo: string
   fundNo: string
+  partnerId?: ResourceId
+  customerId?: ResourceId
+  supplierId?: ResourceId
   partnerName: string
   ownershipType: OwnershipType
+  projectId?: ResourceId | null
   projectName?: string | null
   businessDate: string
   amount: FinanceAmount
@@ -155,6 +172,7 @@ export interface FinanceSettlementApi {
   settlementWorkbench: {
     funds(params: SettlementPoolParams): Promise<PageResult<AdvanceFundRecord>>
     targets(params: SettlementPoolParams): Promise<PageResult<SettlementTargetRecord>>
+    allocations(params: SettlementAllocationListParams): Promise<PageResult<SettlementAllocationRecord>>
     get(id: ResourceId): Promise<SettlementAllocationRecord>
     create(payload: SettlementAllocationPayload): Promise<{ id: ResourceId; allocationNo?: string }>
     post(id: ResourceId, payload: VersionedActionPayload): Promise<{ id: ResourceId; allocationNo?: string }>
@@ -169,6 +187,7 @@ export function createFinanceSettlementApi(options: FinanceStage028ApiOptions = 
   const allocationPath = (id?: ResourceId) => `/api/admin/finance/settlement-workbench/allocations${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const advanceQueryKeys = ['keyword', 'customerId', 'supplierId', 'ownershipType', 'projectId', 'status', 'settlementStatus', 'businessDateFrom', 'businessDateTo', 'availableOnly', 'page', 'pageSize'] as const
   const poolQueryKeys = ['direction', 'fundType', 'fundId', 'targetType', 'partnerId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
+  const allocationQueryKeys = ['keyword', 'direction', 'status', 'partnerId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
 
   return {
     advanceReceipts: {
@@ -190,6 +209,7 @@ export function createFinanceSettlementApi(options: FinanceStage028ApiOptions = 
     settlementWorkbench: {
       funds: (params) => api.get<PageResult<AdvanceFundRecord>>('/api/admin/finance/settlement-workbench/funds', api.pickQuery(params, poolQueryKeys)),
       targets: (params) => api.get<PageResult<SettlementTargetRecord>>('/api/admin/finance/settlement-workbench/targets', api.pickQuery(params, poolQueryKeys)),
+      allocations: (params) => api.get<PageResult<SettlementAllocationRecord>>(allocationPath(), api.pickQuery(params, allocationQueryKeys)),
       get: (id) => api.get<SettlementAllocationRecord>(allocationPath(id)),
       create: (payload) => api.write<{ id: ResourceId; allocationNo?: string }>('POST', allocationPath(), payload),
       post: (id, payload) => api.write<{ id: ResourceId; allocationNo?: string }>('PUT', `${allocationPath(id)}/post`, payload),
