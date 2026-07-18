@@ -15,6 +15,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
@@ -22,10 +24,14 @@ import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -103,10 +109,10 @@ public class FinanceStage028Service {
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
-		List<Map<String, Object>> items = this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> items = normalizeRows(this.jdbcTemplate.queryForList("""
 				select sl.id as source_line_id, sh.shipment_no as source_no, sl.line_no, sl.material_id, m.code as material_code,
-				       m.name as material_name, u.name as unit_name, sl.quantity as available_quantity,
-				       sl.quantity as invoice_quantity, sl.tax_excluded_unit_price as pretax_unit_price,
+			       m.name as material_name, u.name as unit_name, sl.quantity as available_quantity,
+			       sl.quantity as invoice_quantity, sl.tax_excluded_unit_price as pretax_unit_price,
 				       sl.tax_rate, sl.tax_excluded_amount as pretax_amount, sl.tax_amount,
 				       sl.tax_included_amount as total_amount
 				from sal_sales_shipment_line sl
@@ -118,7 +124,7 @@ public class FinanceStage028Service {
 				""" + where + " " + """
 				order by sh.business_date desc, sh.id desc, sl.line_no asc
 				limit ? offset ?
-				""", pageArgs.toArray());
+				""", pageArgs.toArray()));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
@@ -135,8 +141,10 @@ public class FinanceStage028Service {
 		if (sourceId == null || !SALES_SHIPMENT.equals(sourceType)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("SALES_INVOICE_CREATE", request);
 		Optional<Long> idempotent = idempotentDocument("fin_sales_invoice", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return salesInvoice(idempotent.get(), currentUser);
 		}
@@ -145,10 +153,7 @@ public class FinanceStage028Service {
 		if (!"POSTED".equals(source.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_STATUS_INVALID);
 		}
-		if (activeDocumentExists("fin_sales_invoice", SALES_SHIPMENT, source.id())) {
-			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_DUPLICATED);
-		}
-		List<SalesSourceLine> lines = salesSourceLines(source.id(), request.sourceLines());
+		List<SalesSourceLine> lines = salesSourceLines(source.id(), request.sourceLines(), null);
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 		}
@@ -163,10 +168,10 @@ public class FinanceStage028Service {
 					insert into fin_sales_invoice (
 						invoice_no, customer_id, ownership_type, project_id, source_type, source_id, source_no,
 						invoice_date, due_date, external_invoice_no, invoice_type, tax_excluded_amount, tax_amount,
-						tax_included_amount, status, idempotency_key, party_snapshot, source_snapshot, remark,
+						tax_included_amount, status, idempotency_key, request_fingerprint, party_snapshot, source_snapshot, remark,
 						created_by, created_at, updated_by, updated_at
 					)
-					values (?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as varchar), ?, ?, ?, ?, 'DRAFT', cast(? as varchar),
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as varchar), ?, ?, ?, ?, 'DRAFT', cast(? as varchar), ?,
 						jsonb_build_object('invoiceTitle', cast(? as varchar), 'taxNo', cast(? as varchar),
 							'bankName', cast(? as varchar), 'bankAccount', cast(? as varchar)),
 						jsonb_build_object('sourceType', cast(? as varchar), 'sourceId', ?, 'sourceNo', cast(? as varchar)),
@@ -176,8 +181,8 @@ public class FinanceStage028Service {
 					SALES_SHIPMENT, source.id(), source.shipmentNo(), request.invoiceDate(), dueDate,
 					blankToNull(request.externalInvoiceNo()), invoiceType(request.invoiceType(), party.invoiceType()),
 					amounts.taxExcludedAmount(), amounts.taxAmount(), amounts.taxIncludedAmount(),
-					blankToNull(request.idempotencyKey()), party.invoiceTitle(), party.taxNo(), party.bankName(),
-					party.bankAccount(), SALES_SHIPMENT, source.id(), source.shipmentNo(),
+					blankToNull(request.idempotencyKey()), requestFingerprint, party.invoiceTitle(), party.taxNo(),
+					party.bankName(), party.bankAccount(), SALES_SHIPMENT, source.id(), source.shipmentNo(),
 					blankToNull(request.remark()), currentUser.username(), now, currentUser.username(), now);
 			insertSalesInvoiceLines(invoiceId, source, lines, now);
 			this.auditService.record(currentUser, "FINANCE_SALES_INVOICE_CREATE", "FINANCE_SALES_INVOICE", invoiceId,
@@ -204,8 +209,8 @@ public class FinanceStage028Service {
 		String sourceType = salesSourceType(request);
 		Long sourceId = salesSourceId(request);
 		LocalDate dueDate = defaultDueDate(request.dueDate(), request.invoiceDate());
-		if (sourceId == null || !SALES_SHIPMENT.equals(sourceType)
-				|| activeDocumentExistsExcept("fin_sales_invoice", SALES_SHIPMENT, sourceId, id)) {
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		if (sourceId == null || !SALES_SHIPMENT.equals(sourceType)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		ShipmentSource source = lockShipment(sourceId).orElseThrow(this::sourceNotFound);
@@ -213,7 +218,7 @@ public class FinanceStage028Service {
 		if (!"POSTED".equals(source.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_STATUS_INVALID);
 		}
-		List<SalesSourceLine> lines = salesSourceLines(source.id(), request.sourceLines());
+		List<SalesSourceLine> lines = salesSourceLines(source.id(), request.sourceLines(), id);
 		if (lines.isEmpty()) {
 			throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 		}
@@ -264,8 +269,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> confirmSalesInvoice(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:sales-invoice:confirm");
+		ActionRequestContext action = actionRequest(currentUser, "CONFIRM", "FINANCE_SALES_INVOICE", id, request);
+		if (action.resultResourceId() != null) {
+			return salesInvoice(action.resultResourceId(), currentUser);
+		}
 		InvoiceRow invoice = lockSalesInvoice(id).orElseThrow(this::invoiceNotFound);
-		assertVersion(request == null ? null : request.version(), invoice.version());
+		assertVersion(action.version(), invoice.version());
 		if (!"DRAFT".equals(invoice.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -294,6 +303,7 @@ public class FinanceStage028Service {
 				: "GENERATE_NEW", currentUser.username(), now);
 		this.auditService.record(currentUser, "FINANCE_SALES_INVOICE_CONFIRM", "FINANCE_SALES_INVOICE", id,
 				invoice.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_SALES_INVOICE", id, invoice.version() + 1, currentUser);
 		return salesInvoice(id, currentUser);
 	}
 
@@ -301,8 +311,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelSalesInvoice(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:sales-invoice:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_SALES_INVOICE", id, request);
+		if (action.resultResourceId() != null) {
+			return salesInvoice(action.resultResourceId(), currentUser);
+		}
 		InvoiceRow invoice = lockSalesInvoice(id).orElseThrow(this::invoiceNotFound);
-		assertVersion(request == null ? null : request.version(), invoice.version());
+		assertVersion(action.version(), invoice.version());
 		if (!"DRAFT".equals(invoice.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -315,6 +329,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_SALES_INVOICE_CANCEL", "FINANCE_SALES_INVOICE", id,
 				invoice.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_SALES_INVOICE", id, invoice.version() + 1, currentUser);
 		return salesInvoice(id, currentUser);
 	}
 
@@ -332,12 +347,16 @@ public class FinanceStage028Service {
 		requireUser(currentUser, "finance:purchase-invoice:view");
 		List<Map<String, Object>> items = new ArrayList<>();
 		if (!hasText(sourceType) || PURCHASE_RECEIPT.equals(sourceType)) {
-			items.addAll(purchaseReceiptCandidates(keyword, page, pageSize));
+			items.addAll(purchaseReceiptCandidates(keyword));
 		}
 		if (!hasText(sourceType) || OUTSOURCING_RECEIPT.equals(sourceType)) {
-			items.addAll(outsourcingReceiptCandidates(keyword, page, pageSize));
+			items.addAll(outsourcingReceiptCandidates(keyword));
 		}
-		return PageResponse.of(items.stream().limit(limit(pageSize)).toList(), page, limit(pageSize), items.size());
+		items.sort(candidateComparator());
+		int safePageSize = limit(pageSize);
+		int from = Math.min(offset(page, safePageSize), items.size());
+		int to = Math.min(from + safePageSize, items.size());
+		return PageResponse.of(items.subList(from, to), page, safePageSize, items.size());
 	}
 
 	@Transactional
@@ -347,8 +366,10 @@ public class FinanceStage028Service {
 		if (request == null || request.invoiceDate() == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("PURCHASE_INVOICE_CREATE", request);
 		Optional<Long> idempotent = idempotentDocument("fin_purchase_invoice", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return purchaseInvoice(idempotent.get(), currentUser);
 		}
@@ -364,12 +385,9 @@ public class FinanceStage028Service {
 		if (!"POSTED".equals(source.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_STATUS_INVALID);
 		}
-		if (activeDocumentExists("fin_purchase_invoice", source.sourceType(), source.sourceId())) {
-			throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_DUPLICATED);
-		}
 		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
 		List<ValidatedInvoiceLine> requestLines = validateInvoiceLines(purchaseRequestLines(request, source, sourceLines),
-				sourceLines);
+				sourceLines, null);
 		MatchResult matchResult = matchResult(source.settlementKind(), sourceLines, requestLines);
 		DocumentAmounts amounts = invoiceLineAmounts(requestLines);
 		this.businessPeriodGuard.assertWritable(request.invoiceDate(), BusinessPeriodOperation.CREATE,
@@ -382,11 +400,11 @@ public class FinanceStage028Service {
 					insert into fin_purchase_invoice (
 						invoice_no, supplier_id, settlement_kind, ownership_type, project_id, source_type, source_id,
 						source_no, invoice_date, due_date, supplier_invoice_no, invoice_type, match_status,
-						tax_excluded_amount, tax_amount, tax_included_amount, status, idempotency_key,
+						tax_excluded_amount, tax_amount, tax_included_amount, status, idempotency_key, request_fingerprint,
 						party_snapshot, source_snapshot, remark, created_by, created_at, updated_by, updated_at
 					)
 					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as varchar), ?, ?, ?, ?, ?, 'DRAFT',
-						cast(? as varchar),
+						cast(? as varchar), ?,
 						jsonb_build_object('invoiceTitle', cast(? as varchar), 'taxNo', cast(? as varchar),
 							'bankName', cast(? as varchar), 'bankAccount', cast(? as varchar)),
 						jsonb_build_object('sourceType', cast(? as varchar), 'sourceId', ?, 'sourceNo', cast(? as varchar)),
@@ -397,8 +415,8 @@ public class FinanceStage028Service {
 					request.invoiceDate(), dueDate, blankToNull(purchaseExternalInvoiceNo(request)),
 					invoiceType(request.invoiceType(), party.invoiceType()), matchResult.status(),
 					amounts.taxExcludedAmount(), amounts.taxAmount(), amounts.taxIncludedAmount(),
-					blankToNull(request.idempotencyKey()), party.invoiceTitle(), party.taxNo(), party.bankName(),
-					party.bankAccount(), source.sourceType(), source.sourceId(), source.sourceNo(),
+					blankToNull(request.idempotencyKey()), requestFingerprint, party.invoiceTitle(), party.taxNo(),
+					party.bankName(), party.bankAccount(), source.sourceType(), source.sourceId(), source.sourceNo(),
 					blankToNull(request.remark()), currentUser.username(), now, currentUser.username(), now);
 			insertPurchaseInvoiceLines(invoiceId, source, sourceLines, requestLines, matchResult, now);
 			insertMatchDifferences(invoiceId, matchResult.differences(), now);
@@ -427,7 +445,8 @@ public class FinanceStage028Service {
 		String sourceType = purchaseSourceType(request, settlementKind);
 		Long sourceId = purchaseSourceId(request, sourceType);
 		LocalDate dueDate = defaultDueDate(request.dueDate(), request.invoiceDate());
-		if (sourceId == null || activeDocumentExistsExcept("fin_purchase_invoice", sourceType, sourceId, id)) {
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		if (sourceId == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		PurchaseSource source = purchaseSource(settlementKind, sourceType, sourceId);
@@ -437,7 +456,7 @@ public class FinanceStage028Service {
 		}
 		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
 		List<ValidatedInvoiceLine> requestLines = validateInvoiceLines(purchaseRequestLines(request, source, sourceLines),
-				sourceLines);
+				sourceLines, id);
 		MatchResult matchResult = matchResult(source.settlementKind(), sourceLines, requestLines);
 		DocumentAmounts amounts = invoiceLineAmounts(requestLines);
 		this.businessPeriodGuard.assertWritable(request.invoiceDate(), BusinessPeriodOperation.UPDATE,
@@ -503,31 +522,23 @@ public class FinanceStage028Service {
 	public Map<String, Object> matchPurchaseInvoice(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:purchase-invoice:match");
+		ActionRequestContext action = actionRequest(currentUser, "MATCH", "FINANCE_PURCHASE_INVOICE", id, request);
+		if (action.resultResourceId() != null) {
+			return purchaseInvoice(action.resultResourceId(), currentUser);
+		}
 		InvoiceRow invoice = lockPurchaseInvoice(id).orElseThrow(this::invoiceNotFound);
-		assertVersion(request == null ? null : request.version(), invoice.version());
+		assertVersion(action.version(), invoice.version());
 		if (!"DRAFT".equals(invoice.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
 		if ("OUTSOURCING".equals(invoice.settlementKind())) {
+			recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version(), currentUser);
 			return purchaseInvoice(id, currentUser);
 		}
-		PurchaseSource source = purchaseSource(invoice.settlementKind(), invoice.sourceType(), invoice.sourceId());
-		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
-		List<ValidatedInvoiceLine> invoiceLines = purchaseInvoiceLineRows(id);
-		MatchResult result = matchResult(source.settlementKind(), sourceLines, invoiceLines);
-		OffsetDateTime now = OffsetDateTime.now();
-		this.jdbcTemplate.update("delete from fin_purchase_invoice_match_difference where purchase_invoice_id = ?", id);
-		insertMatchDifferences(id, result.differences(), now);
-		this.jdbcTemplate.update("""
-				update fin_purchase_invoice
-				set match_status = ?, matched_by = ?, matched_at = ?, updated_by = ?, updated_at = ?,
-				    version = version + 1
-				where id = ?
-				""", result.status(), currentUser.username(), now, currentUser.username(), now, id);
-		this.jdbcTemplate.update("update fin_purchase_invoice_line set match_status = ? where purchase_invoice_id = ?",
-				result.status(), id);
+		rematchPurchaseInvoice(id, invoice, currentUser.username());
 		this.auditService.record(currentUser, "FINANCE_PURCHASE_INVOICE_MATCH", "FINANCE_PURCHASE_INVOICE", id,
 				invoice.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version() + 1, currentUser);
 		return purchaseInvoice(id, currentUser);
 	}
 
@@ -535,14 +546,18 @@ public class FinanceStage028Service {
 	public Map<String, Object> confirmPurchaseInvoice(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:purchase-invoice:confirm");
+		ActionRequestContext action = actionRequest(currentUser, "CONFIRM", "FINANCE_PURCHASE_INVOICE", id, request);
+		if (action.resultResourceId() != null) {
+			return purchaseInvoice(action.resultResourceId(), currentUser);
+		}
 		InvoiceRow invoice = lockPurchaseInvoice(id).orElseThrow(this::invoiceNotFound);
-		assertVersion(request == null ? null : request.version(), invoice.version());
+		assertVersion(action.version(), invoice.version());
 		if (!"DRAFT".equals(invoice.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
 		if ("STANDARD_PURCHASE".equals(invoice.settlementKind()) && !"MATCHED".equals(invoice.matchStatus())) {
 			if ("UNMATCHED".equals(invoice.matchStatus())) {
-				matchPurchaseInvoice(id, null, currentUser, servletRequest);
+				rematchPurchaseInvoice(id, invoice, currentUser.username());
 				invoice = lockPurchaseInvoice(id).orElseThrow(this::invoiceNotFound);
 			}
 			if (!"MATCHED".equals(invoice.matchStatus())) {
@@ -583,6 +598,7 @@ public class FinanceStage028Service {
 				""", id, payableId, boundExisting ? "BIND_EXISTING" : "GENERATE_NEW", currentUser.username(), now);
 		this.auditService.record(currentUser, "FINANCE_PURCHASE_INVOICE_CONFIRM", "FINANCE_PURCHASE_INVOICE", id,
 				invoice.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version() + 1, currentUser);
 		return purchaseInvoice(id, currentUser);
 	}
 
@@ -590,8 +606,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelPurchaseInvoice(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:purchase-invoice:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_PURCHASE_INVOICE", id, request);
+		if (action.resultResourceId() != null) {
+			return purchaseInvoice(action.resultResourceId(), currentUser);
+		}
 		InvoiceRow invoice = lockPurchaseInvoice(id).orElseThrow(this::invoiceNotFound);
-		assertVersion(request == null ? null : request.version(), invoice.version());
+		assertVersion(action.version(), invoice.version());
 		if (!"DRAFT".equals(invoice.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -604,7 +624,26 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_PURCHASE_INVOICE_CANCEL", "FINANCE_PURCHASE_INVOICE", id,
 				invoice.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_PURCHASE_INVOICE", id, invoice.version() + 1, currentUser);
 		return purchaseInvoice(id, currentUser);
+	}
+
+	private void rematchPurchaseInvoice(Long id, InvoiceRow invoice, String operator) {
+		PurchaseSource source = purchaseSource(invoice.settlementKind(), invoice.sourceType(), invoice.sourceId());
+		List<PurchaseSourceLine> sourceLines = purchaseSourceLines(source);
+		List<ValidatedInvoiceLine> invoiceLines = purchaseInvoiceLineRows(id);
+		MatchResult result = matchResult(source.settlementKind(), sourceLines, invoiceLines);
+		OffsetDateTime now = OffsetDateTime.now();
+		this.jdbcTemplate.update("delete from fin_purchase_invoice_match_difference where purchase_invoice_id = ?", id);
+		insertMatchDifferences(id, result.differences(), now);
+		this.jdbcTemplate.update("""
+				update fin_purchase_invoice
+				set match_status = ?, matched_by = ?, matched_at = ?, updated_by = ?, updated_at = ?,
+				    version = version + 1
+				where id = ?
+				""", result.status(), operator, now, operator, now, id);
+		this.jdbcTemplate.update("update fin_purchase_invoice_line set match_status = ? where purchase_invoice_id = ?",
+				result.status(), id);
 	}
 
 	@Transactional(readOnly = true)
@@ -637,12 +676,16 @@ public class FinanceStage028Service {
 		requireUser(currentUser, "finance:expense:view");
 		List<Map<String, Object>> items = new ArrayList<>();
 		if (!hasText(sourceType) || PURCHASE_RECEIPT.equals(sourceType)) {
-			items.addAll(purchaseReceiptCandidates(keyword, page, pageSize));
+			items.addAll(purchaseReceiptCandidates(keyword));
 		}
 		if (!hasText(sourceType) || OUTSOURCING_RECEIPT.equals(sourceType)) {
-			items.addAll(outsourcingReceiptCandidates(keyword, page, pageSize));
+			items.addAll(outsourcingReceiptCandidates(keyword));
 		}
-		return PageResponse.of(items.stream().limit(limit(pageSize)).toList(), page, limit(pageSize), items.size());
+		items.sort(candidateComparator());
+		int safePageSize = limit(pageSize);
+		int from = Math.min(offset(page, safePageSize), items.size());
+		int to = Math.min(from + safePageSize, items.size());
+		return PageResponse.of(items.subList(from, to), page, safePageSize, items.size());
 	}
 
 	@Transactional
@@ -653,13 +696,17 @@ public class FinanceStage028Service {
 				|| request.lines() == null || request.lines().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
-		Optional<Long> idempotent = idempotentDocument("fin_expense", currentUser.username(), request.idempotencyKey());
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("EXPENSE_CREATE", request);
+		Optional<Long> idempotent = idempotentDocument("fin_expense", currentUser.username(), request.idempotencyKey(),
+				requestFingerprint);
 		if (idempotent.isPresent()) {
 			return expense(idempotent.get(), currentUser);
 		}
 		SupplierRow supplier = supplier(request.supplierId()).orElseThrow(this::sourceNotFound);
 		validateOwnership(request.ownershipType(), request.projectId(), true);
-		List<ValidatedExpenseLine> lines = validateExpenseLines(request.lines());
+		List<ValidatedExpenseLine> lines = validateExpenseLines(request.lines(), supplier.id(),
+				ownershipType(request.ownershipType()), request.projectId());
 		DocumentAmounts amounts = expenseAmounts(lines);
 		LocalDate businessDate = expenseBusinessDate(request);
 		LocalDate dueDate = defaultDueDate(request.dueDate(), businessDate);
@@ -670,10 +717,10 @@ public class FinanceStage028Service {
 		Long expenseId = this.jdbcTemplate.queryForObject("""
 				insert into fin_expense (
 					expense_no, supplier_id, ownership_type, project_id, expense_date, due_date, invoice_type,
-					tax_excluded_amount, tax_amount, tax_included_amount, status, idempotency_key, party_snapshot,
+					tax_excluded_amount, tax_amount, tax_included_amount, status, idempotency_key, request_fingerprint, party_snapshot,
 					source_snapshot, remark, created_by, created_at, updated_by, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', cast(? as varchar),
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', cast(? as varchar), ?,
 					jsonb_build_object('invoiceTitle', cast(? as varchar), 'taxNo', cast(? as varchar),
 						'bankName', cast(? as varchar), 'bankAccount', cast(? as varchar)),
 					jsonb_build_object('sourceType', 'EXPENSE'), cast(? as varchar), ?, ?, ?, ?)
@@ -681,7 +728,8 @@ public class FinanceStage028Service {
 				""", Long.class, expenseNo, supplier.id(), ownershipType(request.ownershipType()),
 				request.projectId(), businessDate, dueDate, invoiceType(request.invoiceType(),
 						party.invoiceType()), amounts.taxExcludedAmount(), amounts.taxAmount(),
-				amounts.taxIncludedAmount(), blankToNull(request.idempotencyKey()), party.invoiceTitle(),
+				amounts.taxIncludedAmount(), blankToNull(request.idempotencyKey()), requestFingerprint,
+				party.invoiceTitle(),
 				party.taxNo(), party.bankName(), party.bankAccount(), blankToNull(request.remark()),
 				currentUser.username(), now, currentUser.username(), now);
 		insertExpenseLines(expenseId, lines, now);
@@ -705,7 +753,9 @@ public class FinanceStage028Service {
 		}
 		SupplierRow supplier = supplier(request.supplierId()).orElseThrow(this::sourceNotFound);
 		validateOwnership(request.ownershipType(), request.projectId(), true);
-		List<ValidatedExpenseLine> lines = validateExpenseLines(request.lines());
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		List<ValidatedExpenseLine> lines = validateExpenseLines(request.lines(), supplier.id(),
+				ownershipType(request.ownershipType()), request.projectId());
 		DocumentAmounts amounts = expenseAmounts(lines);
 		LocalDate businessDate = expenseBusinessDate(request);
 		LocalDate dueDate = defaultDueDate(request.dueDate(), businessDate);
@@ -745,13 +795,13 @@ public class FinanceStage028Service {
 		response.put("expenseDate", row.businessDate());
 		response.put("dueDate", row.dueDate());
 		response.put("invoiceType", row.invoiceType());
-		response.put("taxExcludedAmount", row.taxExcludedAmount());
-		response.put("taxAmount", row.taxAmount());
-		response.put("taxIncludedAmount", row.taxIncludedAmount());
-		response.put("pretaxAmount", row.taxExcludedAmount());
-		response.put("totalAmount", row.taxIncludedAmount());
+		response.put("taxExcludedAmount", decimalString(row.taxExcludedAmount()));
+		response.put("taxAmount", decimalString(row.taxAmount()));
+		response.put("taxIncludedAmount", decimalString(row.taxIncludedAmount()));
+		response.put("pretaxAmount", decimalString(row.taxExcludedAmount()));
+		response.put("totalAmount", decimalString(row.taxIncludedAmount()));
 		response.put("settlementStatus", row.linkedPayableId() == null ? "UNLINKED" : "UNSETTLED");
-		response.put("unsettledAmount", row.taxIncludedAmount());
+		response.put("unsettledAmount", decimalString(row.taxIncludedAmount()));
 		response.put("status", row.status());
 		response.put("linkedPayableId", row.linkedPayableId());
 		response.put("version", row.version());
@@ -767,8 +817,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> confirmExpense(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:expense:confirm");
+		ActionRequestContext action = actionRequest(currentUser, "CONFIRM", "FINANCE_EXPENSE", id, request);
+		if (action.resultResourceId() != null) {
+			return expense(action.resultResourceId(), currentUser);
+		}
 		ExpenseRow expense = lockExpense(id).orElseThrow(this::expenseNotFound);
-		assertVersion(request == null ? null : request.version(), expense.version());
+		assertVersion(action.version(), expense.version());
 		if (!"DRAFT".equals(expense.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -785,6 +839,7 @@ public class FinanceStage028Service {
 				""", payableId, currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_EXPENSE_CONFIRM", "FINANCE_EXPENSE", id,
 				expense.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_EXPENSE", id, expense.version() + 1, currentUser);
 		return expense(id, currentUser);
 	}
 
@@ -792,8 +847,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelExpense(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:expense:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_EXPENSE", id, request);
+		if (action.resultResourceId() != null) {
+			return expense(action.resultResourceId(), currentUser);
+		}
 		ExpenseRow expense = lockExpense(id).orElseThrow(this::expenseNotFound);
-		assertVersion(request == null ? null : request.version(), expense.version());
+		assertVersion(action.version(), expense.version());
 		if (!"DRAFT".equals(expense.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -806,6 +865,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_EXPENSE_CANCEL", "FINANCE_EXPENSE", id, expense.documentNo(),
 				servletRequest);
+		recordAction(action, "FINANCE_EXPENSE", id, expense.version() + 1, currentUser);
 		return expense(id, currentUser);
 	}
 
@@ -826,13 +886,15 @@ public class FinanceStage028Service {
 				|| !hasText(request.method())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("ADVANCE_RECEIPT_CREATE", request);
 		Optional<Long> idempotent = idempotentCashDocument("fin_receipt", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return advanceReceipt(idempotent.get(), currentUser);
 		}
 		CustomerRow customer = customer(customerId).orElseThrow(this::sourceNotFound);
-		validateOwnership(request.ownershipType(), request.projectId(), false);
+		validateOwnership(request.ownershipType(), request.projectId(), true);
 		BigDecimal amount = validateMoney(request.amount());
 		this.businessPeriodGuard.assertWritable(receiptDate, BusinessPeriodOperation.CREATE,
 				"FINANCE_ADVANCE_RECEIPT", null);
@@ -856,7 +918,8 @@ public class FinanceStage028Service {
 				values (?, ?, ?, ?, ?, 0, ?, 'DRAFT', ?)
 				""", receiptId, customer.id(), ownershipType(request.ownershipType()), request.projectId(), amount,
 				amount, now);
-		insertCashIdempotency("RECEIPT", receiptId, currentUser.username(), request.idempotencyKey());
+		insertCashIdempotency("RECEIPT", receiptId, currentUser.username(), request.idempotencyKey(),
+				requestFingerprint);
 		this.auditService.record(currentUser, "FINANCE_ADVANCE_RECEIPT_CREATE", "FINANCE_RECEIPT", receiptId,
 				receiptNo, servletRequest);
 		return advanceReceipt(receiptId, currentUser);
@@ -874,11 +937,12 @@ public class FinanceStage028Service {
 		}
 		CashRow row = lockAdvanceReceipt(id).orElseThrow(this::receiptNotFound);
 		assertVersion(request.version(), row.version());
+		requireMutationMetadata(request.version(), request.idempotencyKey());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
 		CustomerRow customer = customer(customerId).orElseThrow(this::sourceNotFound);
-		validateOwnership(request.ownershipType(), request.projectId(), false);
+		validateOwnership(request.ownershipType(), request.projectId(), true);
 		BigDecimal amount = validateMoney(request.amount());
 		this.businessPeriodGuard.assertWritable(receiptDate, BusinessPeriodOperation.UPDATE,
 				"FINANCE_ADVANCE_RECEIPT", id);
@@ -913,8 +977,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> postAdvanceReceipt(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:advance-receipt:post");
+		ActionRequestContext action = actionRequest(currentUser, "POST", "FINANCE_RECEIPT", id, request);
+		if (action.resultResourceId() != null) {
+			return advanceReceipt(action.resultResourceId(), currentUser);
+		}
 		CashRow row = lockAdvanceReceipt(id).orElseThrow(this::receiptNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -931,6 +999,7 @@ public class FinanceStage028Service {
 				now, id);
 		this.auditService.record(currentUser, "FINANCE_ADVANCE_RECEIPT_POST", "FINANCE_RECEIPT", id,
 				row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_RECEIPT", id, row.version() + 1, currentUser);
 		return advanceReceipt(id, currentUser);
 	}
 
@@ -938,8 +1007,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelAdvanceReceipt(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:advance-receipt:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_RECEIPT", id, request);
+		if (action.resultResourceId() != null) {
+			return advanceReceipt(action.resultResourceId(), currentUser);
+		}
 		CashRow row = lockAdvanceReceipt(id).orElseThrow(this::receiptNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -954,6 +1027,7 @@ public class FinanceStage028Service {
 				now, id);
 		this.auditService.record(currentUser, "FINANCE_ADVANCE_RECEIPT_CANCEL", "FINANCE_RECEIPT", id,
 				row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_RECEIPT", id, row.version() + 1, currentUser);
 		return advanceReceipt(id, currentUser);
 	}
 
@@ -974,13 +1048,15 @@ public class FinanceStage028Service {
 				|| !hasText(request.method())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("PREPAYMENT_CREATE", request);
 		Optional<Long> idempotent = idempotentCashDocument("fin_payment", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return prepayment(idempotent.get(), currentUser);
 		}
 		SupplierRow supplier = supplier(supplierId).orElseThrow(this::sourceNotFound);
-		validateOwnership(request.ownershipType(), request.projectId(), false);
+		validateOwnership(request.ownershipType(), request.projectId(), true);
 		BigDecimal amount = validateMoney(request.amount());
 		this.businessPeriodGuard.assertWritable(paymentDate, BusinessPeriodOperation.CREATE, "FINANCE_PREPAYMENT",
 				null);
@@ -1004,7 +1080,8 @@ public class FinanceStage028Service {
 				values (?, ?, ?, ?, ?, 0, ?, 'DRAFT', ?)
 				""", paymentId, supplier.id(), ownershipType(request.ownershipType()), request.projectId(), amount,
 				amount, now);
-		insertCashIdempotency("PAYMENT", paymentId, currentUser.username(), request.idempotencyKey());
+		insertCashIdempotency("PAYMENT", paymentId, currentUser.username(), request.idempotencyKey(),
+				requestFingerprint);
 		this.auditService.record(currentUser, "FINANCE_PREPAYMENT_CREATE", "FINANCE_PAYMENT", paymentId, paymentNo,
 				servletRequest);
 		return prepayment(paymentId, currentUser);
@@ -1022,11 +1099,12 @@ public class FinanceStage028Service {
 		}
 		CashRow row = lockPrepayment(id).orElseThrow(this::paymentNotFound);
 		assertVersion(request.version(), row.version());
+		requireMutationMetadata(request.version(), request.idempotencyKey());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
 		SupplierRow supplier = supplier(supplierId).orElseThrow(this::sourceNotFound);
-		validateOwnership(request.ownershipType(), request.projectId(), false);
+		validateOwnership(request.ownershipType(), request.projectId(), true);
 		BigDecimal amount = validateMoney(request.amount());
 		this.businessPeriodGuard.assertWritable(paymentDate, BusinessPeriodOperation.UPDATE, "FINANCE_PREPAYMENT", id);
 		OffsetDateTime now = OffsetDateTime.now();
@@ -1060,8 +1138,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> postPrepayment(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:prepayment:post");
+		ActionRequestContext action = actionRequest(currentUser, "POST", "FINANCE_PAYMENT", id, request);
+		if (action.resultResourceId() != null) {
+			return prepayment(action.resultResourceId(), currentUser);
+		}
 		CashRow row = lockPrepayment(id).orElseThrow(this::paymentNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1078,6 +1160,7 @@ public class FinanceStage028Service {
 				now, id);
 		this.auditService.record(currentUser, "FINANCE_PREPAYMENT_POST", "FINANCE_PAYMENT", id, row.documentNo(),
 				servletRequest);
+		recordAction(action, "FINANCE_PAYMENT", id, row.version() + 1, currentUser);
 		return prepayment(id, currentUser);
 	}
 
@@ -1085,8 +1168,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelPrepayment(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:prepayment:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_PAYMENT", id, request);
+		if (action.resultResourceId() != null) {
+			return prepayment(action.resultResourceId(), currentUser);
+		}
 		CashRow row = lockPrepayment(id).orElseThrow(this::paymentNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1101,6 +1188,7 @@ public class FinanceStage028Service {
 				now, id);
 		this.auditService.record(currentUser, "FINANCE_PREPAYMENT_CANCEL", "FINANCE_PAYMENT", id, row.documentNo(),
 				servletRequest);
+		recordAction(action, "FINANCE_PAYMENT", id, row.version() + 1, currentUser);
 		return prepayment(id, currentUser);
 	}
 
@@ -1139,8 +1227,10 @@ public class FinanceStage028Service {
 				|| request.lines().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireMutationMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("SETTLEMENT_ALLOCATION_CREATE", request);
 		Optional<Long> idempotent = idempotentDocument("fin_settlement_allocation", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return settlementAllocation(idempotent.get(), currentUser);
 		}
@@ -1152,15 +1242,15 @@ public class FinanceStage028Service {
 		Long allocationId = this.jdbcTemplate.queryForObject("""
 				insert into fin_settlement_allocation (
 					allocation_no, settlement_side, cash_source_type, cash_source_id, party_id, ownership_type,
-					project_id, business_date, total_amount, status, idempotency_key, remark, created_by, created_at,
-					updated_by, updated_at
+					project_id, business_date, total_amount, status, idempotency_key, request_fingerprint, remark,
+					created_by, created_at, updated_by, updated_at
 				)
-				values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?)
 				returning id
 				""", Long.class, allocationNo, draft.settlementSide(), draft.cashSourceType(), draft.cashSourceId(),
 				draft.partyId(), draft.ownershipType(), draft.projectId(), request.businessDate(),
-				draft.totalAmount(), blankToNull(request.idempotencyKey()), blankToNull(request.remark()),
-				currentUser.username(), now, currentUser.username(), now);
+				draft.totalAmount(), blankToNull(request.idempotencyKey()), requestFingerprint,
+				blankToNull(request.remark()), currentUser.username(), now, currentUser.username(), now);
 		int lineNo = 1;
 		for (SettlementLine line : draft.lines()) {
 			this.jdbcTemplate.update("""
@@ -1189,7 +1279,7 @@ public class FinanceStage028Service {
 		response.put("ownershipType", row.ownershipType());
 		response.put("projectId", row.projectId());
 		response.put("businessDate", row.businessDate());
-		response.put("totalAmount", row.totalAmount());
+		response.put("totalAmount", decimalString(row.totalAmount()));
 		response.put("status", row.status());
 		response.put("version", row.version());
 		response.put("lines", settlementAllocationLines(id));
@@ -1200,8 +1290,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> postSettlementAllocation(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:settlement-allocation:post");
+		ActionRequestContext action = actionRequest(currentUser, "POST", "FINANCE_SETTLEMENT_ALLOCATION", id, request);
+		if (action.resultResourceId() != null) {
+			return settlementAllocation(action.resultResourceId(), currentUser);
+		}
 		SettlementAllocationRow row = lockSettlementAllocation(id).orElseThrow(this::allocationNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1216,7 +1310,9 @@ public class FinanceStage028Service {
 		for (SettlementLine line : lines) {
 			if ("RECEIVABLE".equals(row.settlementSide())) {
 				ReceivableBalance target = lockReceivableBalance(line.targetId()).orElseThrow(this::receivableNotFound);
-				if (!target.customerId().equals(row.partyId()) || line.amount().compareTo(target.openAmount()) > 0) {
+				if (!target.customerId().equals(row.partyId()) || !target.ownershipType().equals(row.ownershipType())
+						|| !sameProject(target.projectId(), row.projectId())
+						|| line.amount().compareTo(target.openAmount()) > 0) {
 					throw new BusinessException(ApiErrorCode.FINANCE_CROSS_PARTY_OR_PROJECT);
 				}
 				this.jdbcTemplate.update("""
@@ -1224,7 +1320,7 @@ public class FinanceStage028Service {
 						values (?, ?, ?)
 						""", row.cashSourceId(), line.targetId(), line.amount());
 				BigDecimal received = money(target.settledAmount().add(line.amount()));
-				BigDecimal open = money(target.totalAmount().subtract(received));
+				BigDecimal open = money(target.totalAmount().subtract(target.adjustedAmount()).subtract(received));
 				String status = open.compareTo(ZERO) == 0 ? "RECEIVED" : "PARTIALLY_RECEIVED";
 				this.jdbcTemplate.update("""
 						update fin_receivable
@@ -1235,7 +1331,9 @@ public class FinanceStage028Service {
 			}
 			else {
 				PayableBalance target = lockPayableBalance(line.targetId()).orElseThrow(this::payableNotFound);
-				if (!target.supplierId().equals(row.partyId()) || line.amount().compareTo(target.openAmount()) > 0) {
+				if (!target.supplierId().equals(row.partyId()) || !target.ownershipType().equals(row.ownershipType())
+						|| !sameProject(target.projectId(), row.projectId())
+						|| line.amount().compareTo(target.openAmount()) > 0) {
 					throw new BusinessException(ApiErrorCode.FINANCE_CROSS_PARTY_OR_PROJECT);
 				}
 				this.jdbcTemplate.update("""
@@ -1243,7 +1341,7 @@ public class FinanceStage028Service {
 						values (?, ?, ?)
 						""", row.cashSourceId(), line.targetId(), line.amount());
 				BigDecimal paid = money(target.settledAmount().add(line.amount()));
-				BigDecimal open = money(target.totalAmount().subtract(paid));
+				BigDecimal open = money(target.totalAmount().subtract(target.adjustedAmount()).subtract(paid));
 				String status = open.compareTo(ZERO) == 0 ? "PAID" : "PARTIALLY_PAID";
 				this.jdbcTemplate.update("""
 						update fin_payable
@@ -1268,6 +1366,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_SETTLEMENT_ALLOCATION_POST",
 				"FINANCE_SETTLEMENT_ALLOCATION", id, row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_SETTLEMENT_ALLOCATION", id, row.version() + 1, currentUser);
 		return settlementAllocation(id, currentUser);
 	}
 
@@ -1276,8 +1375,12 @@ public class FinanceStage028Service {
 			CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:settlement-allocation:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_SETTLEMENT_ALLOCATION", id, request);
+		if (action.resultResourceId() != null) {
+			return settlementAllocation(action.resultResourceId(), currentUser);
+		}
 		SettlementAllocationRow row = lockSettlementAllocation(id).orElseThrow(this::allocationNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1290,6 +1393,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_SETTLEMENT_ALLOCATION_CANCEL",
 				"FINANCE_SETTLEMENT_ALLOCATION", id, row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_SETTLEMENT_ALLOCATION", id, row.version() + 1, currentUser);
 		return settlementAllocation(id, currentUser);
 	}
 
@@ -1308,8 +1412,10 @@ public class FinanceStage028Service {
 		if (request == null || !hasText(request.sourceType()) || request.sourceId() == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		requireActionMetadata(request.version(), request.idempotencyKey());
+		String requestFingerprint = fingerprint("VOUCHER_DRAFT_GENERATE", request);
 		Optional<Long> idempotent = idempotentDocument("fin_voucher_draft", currentUser.username(),
-				request.idempotencyKey());
+				request.idempotencyKey(), requestFingerprint);
 		if (idempotent.isPresent()) {
 			return voucherDraft(idempotent.get(), currentUser);
 		}
@@ -1318,6 +1424,7 @@ public class FinanceStage028Service {
 			return voucherDraft(existingSource.get(), currentUser);
 		}
 		VoucherSource source = voucherSource(request.sourceType(), request.sourceId());
+		assertVersion(request.version(), source.version());
 		this.businessPeriodGuard.assertWritable(source.businessDate(), BusinessPeriodOperation.CREATE,
 				"FINANCE_VOUCHER_DRAFT", null);
 		String draftNo = nextNo("VD", VOUCHER_DRAFT_SEQUENCE);
@@ -1326,14 +1433,14 @@ public class FinanceStage028Service {
 				insert into fin_voucher_draft (
 					draft_no, source_type, source_id, status, business_date, summary, party_type, party_id,
 					party_name, ownership_type, project_id, debit_amount, credit_amount, idempotency_key,
-					created_by, created_at, updated_by, updated_at
+					request_fingerprint, created_by, created_at, updated_by, updated_at
 				)
-				values (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				values (?, ?, ?, 'DRAFT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				returning id
 				""", Long.class, draftNo, source.sourceType(), source.sourceId(), source.businessDate(),
 				source.summary(), source.partyType(), source.partyId(), source.partyName(), source.ownershipType(),
 				source.projectId(), source.amount(), source.amount(), blankToNull(request.idempotencyKey()),
-				currentUser.username(), now, currentUser.username(), now);
+				requestFingerprint, currentUser.username(), now, currentUser.username(), now);
 		this.jdbcTemplate.update("""
 				insert into fin_voucher_draft_line (
 					draft_id, line_no, direction, business_category, amount, source_type, source_id, created_at
@@ -1364,11 +1471,16 @@ public class FinanceStage028Service {
 		response.put("partyName", row.partyName());
 		response.put("ownershipType", row.ownershipType());
 		response.put("projectId", row.projectId());
-		response.put("debitAmount", row.debitAmount());
-		response.put("creditAmount", row.creditAmount());
+		response.put("sourceNo", voucherSourceNo(row.sourceType(), row.sourceId()));
+		response.put("sourceSummary", row.summary());
+		response.put("generationVersion", 1L);
+		response.put("debitAmount", decimalString(row.debitAmount()));
+		response.put("creditAmount", decimalString(row.creditAmount()));
 		response.put("formalVoucherNo", row.formalVoucherNo());
 		response.put("postingStatus", row.postingStatus());
 		response.put("version", row.version());
+		response.put("allowedActions", allowedVoucherActions(row.status(), currentUser));
+		response.put("restrictedReasons", List.of("INFORMAL_VOUCHER_DRAFT"));
 		response.put("lines", voucherDraftLines(id));
 		return response;
 	}
@@ -1377,8 +1489,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> readyVoucherDraft(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:voucher-draft:ready");
+		ActionRequestContext action = actionRequest(currentUser, "READY", "FINANCE_VOUCHER_DRAFT", id, request);
+		if (action.resultResourceId() != null) {
+			return voucherDraft(action.resultResourceId(), currentUser);
+		}
 		VoucherDraftRow row = lockVoucherDraft(id).orElseThrow(this::voucherDraftNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!"DRAFT".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1391,6 +1507,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_VOUCHER_DRAFT_READY", "FINANCE_VOUCHER_DRAFT", id,
 				row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_VOUCHER_DRAFT", id, row.version() + 1, currentUser);
 		return voucherDraft(id, currentUser);
 	}
 
@@ -1398,8 +1515,12 @@ public class FinanceStage028Service {
 	public Map<String, Object> cancelVoucherDraft(Long id, FinanceActionRequest request, CurrentUser currentUser,
 			HttpServletRequest servletRequest) {
 		requireUser(currentUser, "finance:voucher-draft:cancel");
+		ActionRequestContext action = actionRequest(currentUser, "CANCEL", "FINANCE_VOUCHER_DRAFT", id, request);
+		if (action.resultResourceId() != null) {
+			return voucherDraft(action.resultResourceId(), currentUser);
+		}
 		VoucherDraftRow row = lockVoucherDraft(id).orElseThrow(this::voucherDraftNotFound);
-		assertVersion(request == null ? null : request.version(), row.version());
+		assertVersion(action.version(), row.version());
 		if (!List.of("DRAFT", "READY").contains(row.status())) {
 			throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
 		}
@@ -1412,6 +1533,7 @@ public class FinanceStage028Service {
 				""", currentUser.username(), now, currentUser.username(), now, id);
 		this.auditService.record(currentUser, "FINANCE_VOUCHER_DRAFT_CANCEL", "FINANCE_VOUCHER_DRAFT", id,
 				row.documentNo(), servletRequest);
+		recordAction(action, "FINANCE_VOUCHER_DRAFT", id, row.version() + 1, currentUser);
 		return voucherDraft(id, currentUser);
 	}
 
@@ -1461,7 +1583,7 @@ public class FinanceStage028Service {
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
-	private List<Map<String, Object>> purchaseReceiptCandidates(String keyword, int page, int pageSize) {
+	private List<Map<String, Object>> purchaseReceiptCandidates(String keyword) {
 		List<Object> args = new ArrayList<>();
 		String where = " where pr.status = 'POSTED'";
 		if (hasText(keyword)) {
@@ -1471,12 +1593,11 @@ public class FinanceStage028Service {
 			args.add(like);
 			args.add(like);
 		}
-		args.add(limit(pageSize));
-		args.add(offset(page, pageSize));
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'PURCHASE_RECEIPT' as source_type, pr.receipt_no as source_no, pr.id as source_id,
 				       pl.id as source_line_id, pl.id as receipt_line_id, pl.line_no, s.name as supplier_name,
-				       po.order_no as summary, m.code as material_code, m.name as material_name, u.name as unit_name,
+				       po.order_no as summary, pr.business_date, m.code as material_code, m.name as material_name,
+				       u.name as unit_name,
 				       pl.quantity as available_quantity, pl.quantity as invoice_quantity,
 				       ol.tax_excluded_unit_price as pretax_unit_price, ol.tax_rate,
 				       round(pl.quantity * ol.tax_excluded_unit_price, 2) as pretax_amount,
@@ -1491,11 +1612,10 @@ public class FinanceStage028Service {
 				join mst_unit u on u.id = pl.unit_id
 				""" + where + " " + """
 				order by pr.business_date desc, pr.id desc, pl.line_no asc
-				limit ? offset ?
-				""", args.toArray());
+				""", args.toArray()));
 	}
 
-	private List<Map<String, Object>> outsourcingReceiptCandidates(String keyword, int page, int pageSize) {
+	private List<Map<String, Object>> outsourcingReceiptCandidates(String keyword) {
 		List<Object> args = new ArrayList<>();
 		String where = " where r.status = 'POSTED'";
 		if (hasText(keyword)) {
@@ -1505,12 +1625,11 @@ public class FinanceStage028Service {
 			args.add(like);
 			args.add(like);
 		}
-		args.add(limit(pageSize));
-		args.add(offset(page, pageSize));
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'OUTSOURCING_RECEIPT' as source_type, r.receipt_no as source_no, r.id as source_id,
 				       rl.id as source_line_id, rl.id as outsourcing_receipt_line_id, rl.line_no,
-				       s.name as supplier_name, o.outsourcing_order_no as summary, m.code as material_code,
+				       s.name as supplier_name, o.outsourcing_order_no as summary, r.business_date,
+				       m.code as material_code,
 				       m.name as material_name, u.name as unit_name, rl.accepted_quantity as available_quantity,
 				       rl.accepted_quantity as invoice_quantity,
 				       coalesce(rl.unit_cost, rl.provisional_unit_cost, r.unit_cost, r.provisional_unit_cost, 0)
@@ -1529,8 +1648,7 @@ public class FinanceStage028Service {
 				join mst_unit u on u.id = m.unit_id
 				""" + where + " " + """
 				order by r.business_date desc, r.id desc, rl.line_no asc
-				limit ? offset ?
-				""", args.toArray());
+				""", args.toArray()));
 	}
 
 	private PageResponse<Map<String, Object>> receiptFunds(Long partnerId, CurrentUser currentUser, int page,
@@ -1549,7 +1667,7 @@ public class FinanceStage028Service {
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
-		List<Map<String, Object>> items = this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> items = normalizeRows(this.jdbcTemplate.queryForList("""
 				select r.id, r.receipt_no as advance_no, r.receipt_no as fund_no, c.name as partner_name,
 				       b.ownership_type, p.name as project_name, r.receipt_date as business_date, r.amount,
 				       b.allocated_amount, b.available_amount,
@@ -1564,7 +1682,7 @@ public class FinanceStage028Service {
 				""" + where + " " + """
 				order by r.receipt_date desc, r.id desc
 				limit ? offset ?
-				""", pageArgs.toArray());
+				""", pageArgs.toArray()));
 		List<String> allowedActions = settlementFundActions(currentUser);
 		items.forEach((item) -> item.put("allowedActions", allowedActions));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
@@ -1586,7 +1704,7 @@ public class FinanceStage028Service {
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
-		List<Map<String, Object>> items = this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> items = normalizeRows(this.jdbcTemplate.queryForList("""
 				select pmt.id, pmt.payment_no as advance_no, pmt.payment_no as fund_no, s.name as partner_name,
 				       b.ownership_type, p.name as project_name, pmt.payment_date as business_date, pmt.amount,
 				       b.allocated_amount, b.available_amount,
@@ -1601,7 +1719,7 @@ public class FinanceStage028Service {
 				""" + where + " " + """
 				order by pmt.payment_date desc, pmt.id desc
 				limit ? offset ?
-				""", pageArgs.toArray());
+				""", pageArgs.toArray()));
 		List<String> allowedActions = settlementFundActions(currentUser);
 		items.forEach((item) -> item.put("allowedActions", allowedActions));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
@@ -1619,7 +1737,7 @@ public class FinanceStage028Service {
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
-		List<Map<String, Object>> items = this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> items = normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'RECEIVABLE' as target_type, r.id as target_id, r.receivable_no as target_no,
 				       r.total_amount as original_amount, r.received_amount as settled_amount,
 				       r.adjusted_amount, 0::numeric as allocated_amount, r.unreceived_amount as unsettled_amount,
@@ -1628,7 +1746,7 @@ public class FinanceStage028Service {
 				""" + where + " " + """
 				order by r.business_date desc, r.id desc
 				limit ? offset ?
-				""", pageArgs.toArray());
+				""", pageArgs.toArray()));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
 	}
 
@@ -1644,7 +1762,7 @@ public class FinanceStage028Service {
 		List<Object> pageArgs = new ArrayList<>(args);
 		pageArgs.add(limit(pageSize));
 		pageArgs.add(offset(page, pageSize));
-		List<Map<String, Object>> items = this.jdbcTemplate.queryForList("""
+		List<Map<String, Object>> items = normalizeRows(this.jdbcTemplate.queryForList("""
 				select 'PAYABLE' as target_type, p.id as target_id, p.payable_no as target_no,
 				       p.total_amount as original_amount, p.paid_amount as settled_amount, p.adjusted_amount,
 				       0::numeric as allocated_amount, p.unpaid_amount as unsettled_amount, p.status,
@@ -1653,8 +1771,80 @@ public class FinanceStage028Service {
 				""" + where + " " + """
 				order by p.business_date desc, p.id desc
 				limit ? offset ?
-				""", pageArgs.toArray());
+				""", pageArgs.toArray()));
 		return PageResponse.of(items, page, limit(pageSize), total == null ? 0 : total);
+	}
+
+	private Comparator<Map<String, Object>> candidateComparator() {
+		return (left, right) -> {
+			int date = Comparator.nullsLast(Comparator.<LocalDate>reverseOrder())
+				.compare(candidateDate(left), candidateDate(right));
+			if (date != 0) {
+				return date;
+			}
+			int id = Long.compare(candidateLong(right, "sourceId"), candidateLong(left, "sourceId"));
+			if (id != 0) {
+				return id;
+			}
+			return Integer.compare(candidateInt(left, "lineNo"), candidateInt(right, "lineNo"));
+		};
+	}
+
+	private LocalDate candidateDate(Map<String, Object> item) {
+		Object value = item.get("businessDate");
+		if (value instanceof LocalDate date) {
+			return date;
+		}
+		if (value instanceof java.sql.Date date) {
+			return date.toLocalDate();
+		}
+		if (value instanceof String text && hasText(text)) {
+			return LocalDate.parse(text);
+		}
+		return null;
+	}
+
+	private long candidateLong(Map<String, Object> item, String key) {
+		Object value = item.get(key);
+		return value instanceof Number number ? number.longValue() : 0L;
+	}
+
+	private int candidateInt(Map<String, Object> item, String key) {
+		Object value = item.get(key);
+		return value instanceof Number number ? number.intValue() : 0;
+	}
+
+	private List<Map<String, Object>> normalizeRows(List<Map<String, Object>> rows) {
+		return rows.stream().map(this::normalizeRow).toList();
+	}
+
+	private Map<String, Object> normalizeRow(Map<String, Object> row) {
+		Map<String, Object> result = new LinkedHashMap<>();
+		for (Map.Entry<String, Object> entry : row.entrySet()) {
+			result.put(camel(entry.getKey()), jsonValue(entry.getValue()));
+		}
+		return result;
+	}
+
+	private Object jsonValue(Object value) {
+		if (value instanceof BigDecimal decimal) {
+			return decimalString(decimal);
+		}
+		return value;
+	}
+
+	private String camel(String key) {
+		StringBuilder builder = new StringBuilder();
+		boolean upperNext = false;
+		for (char ch : key.toCharArray()) {
+			if (ch == '_') {
+				upperNext = true;
+				continue;
+			}
+			builder.append(upperNext ? Character.toUpperCase(ch) : ch);
+			upperNext = false;
+		}
+		return builder.toString();
 	}
 
 	private Map<String, Object> categoryMap(Long id, String code, String name) {
@@ -1824,36 +2014,101 @@ public class FinanceStage028Service {
 				""", this::mapSalesSourceLine, shipmentId);
 	}
 
-	private List<SalesSourceLine> salesSourceLines(Long shipmentId, List<SalesInvoiceSourceLineRequest> requests) {
+	private List<SalesSourceLine> salesSourceLines(Long shipmentId, List<SalesInvoiceSourceLineRequest> requests,
+			Long ignoredInvoiceId) {
 		List<SalesSourceLine> sourceLines = salesSourceLines(shipmentId);
 		if (requests == null || requests.isEmpty()) {
-			return sourceLines;
+			List<SalesSourceLine> remaining = new ArrayList<>();
+			for (SalesSourceLine sourceLine : sourceLines) {
+				SalesSourceLine line = salesLineForQuantity(sourceLine,
+						remainingQuantity(sourceLine.quantity(), invoicedSalesQuantity(sourceLine.id(), ignoredInvoiceId)));
+				if (line.quantity().compareTo(BigDecimal.ZERO) > 0) {
+					remaining.add(line);
+				}
+			}
+			if (remaining.isEmpty()) {
+				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_OVER_INVOICED);
+			}
+			return remaining;
 		}
 		Map<Long, SalesSourceLine> sourceLineById = new LinkedHashMap<>();
 		for (SalesSourceLine sourceLine : sourceLines) {
 			sourceLineById.put(sourceLine.id(), sourceLine);
 		}
 		List<SalesSourceLine> result = new ArrayList<>();
+		Set<Long> requestedLineIds = new HashSet<>();
 		for (SalesInvoiceSourceLineRequest request : requests) {
-			if (request == null || request.sourceLineId() == null || !sourceLineById.containsKey(request.sourceLineId())) {
+			if (request == null || request.sourceLineId() == null || !sourceLineById.containsKey(request.sourceLineId())
+					|| !requestedLineIds.add(request.sourceLineId())) {
 				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_MISMATCH);
 			}
 			SalesSourceLine sourceLine = sourceLineById.get(request.sourceLineId());
-			BigDecimal quantity = request.invoiceQuantity() == null ? sourceLine.quantity()
+			BigDecimal remainingQuantity = remainingQuantity(sourceLine.quantity(),
+					invoicedSalesQuantity(sourceLine.id(), ignoredInvoiceId));
+			BigDecimal quantity = request.invoiceQuantity() == null ? remainingQuantity
 					: validateQuantity(request.invoiceQuantity());
-			if (quantity.compareTo(sourceLine.quantity()) > 0) {
-				throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
+			if (quantity.compareTo(remainingQuantity) > 0) {
+				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_OVER_INVOICED);
 			}
-			BigDecimal taxExcludedAmount = money(quantity.multiply(sourceLine.taxExcludedUnitPrice()));
-			BigDecimal taxAmount = money(quantity.multiply(sourceLine.taxIncludedUnitPrice()
-				.subtract(sourceLine.taxExcludedUnitPrice())));
-			BigDecimal taxIncludedAmount = money(taxExcludedAmount.add(taxAmount));
-			result.add(new SalesSourceLine(sourceLine.id(), sourceLine.lineNo(), sourceLine.orderLineId(),
-					sourceLine.materialId(), sourceLine.unitId(), quantity, sourceLine.taxRate(),
-					sourceLine.taxExcludedUnitPrice(), sourceLine.taxIncludedUnitPrice(), taxExcludedAmount,
-					taxAmount, taxIncludedAmount));
+			result.add(salesLineForQuantity(sourceLine, quantity));
 		}
 		return result;
+	}
+
+	private SalesSourceLine salesLineForQuantity(SalesSourceLine sourceLine, BigDecimal quantity) {
+		BigDecimal normalizedQuantity = quantity.setScale(6, RoundingMode.HALF_UP);
+		BigDecimal taxExcludedAmount = money(normalizedQuantity.multiply(sourceLine.taxExcludedUnitPrice()));
+		BigDecimal taxAmount = money(normalizedQuantity.multiply(sourceLine.taxIncludedUnitPrice()
+			.subtract(sourceLine.taxExcludedUnitPrice())));
+		BigDecimal taxIncludedAmount = money(taxExcludedAmount.add(taxAmount));
+		return new SalesSourceLine(sourceLine.id(), sourceLine.lineNo(), sourceLine.orderLineId(),
+				sourceLine.materialId(), sourceLine.unitId(), normalizedQuantity, sourceLine.taxRate(),
+				sourceLine.taxExcludedUnitPrice(), sourceLine.taxIncludedUnitPrice(), taxExcludedAmount,
+				taxAmount, taxIncludedAmount);
+	}
+
+	private BigDecimal remainingQuantity(BigDecimal sourceQuantity, BigDecimal usedQuantity) {
+		BigDecimal remaining = sourceQuantity.subtract(usedQuantity).setScale(6, RoundingMode.HALF_UP);
+		return remaining.compareTo(BigDecimal.ZERO) < 0 ? BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP)
+				: remaining;
+	}
+
+	private BigDecimal invoicedSalesQuantity(Long sourceLineId, Long ignoredInvoiceId) {
+		String sql = """
+				select coalesce(sum(l.quantity), 0)
+				from fin_sales_invoice_line l
+				join fin_sales_invoice i on i.id = l.sales_invoice_id
+				where l.source_line_id = ?
+				and i.status <> 'CANCELLED'
+				""";
+		List<Object> args = new ArrayList<>();
+		args.add(sourceLineId);
+		if (ignoredInvoiceId != null) {
+			sql += " and i.id <> ?";
+			args.add(ignoredInvoiceId);
+		}
+		BigDecimal quantity = this.jdbcTemplate.queryForObject(sql, BigDecimal.class, args.toArray());
+		return quantity == null ? BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP)
+				: quantity.setScale(6, RoundingMode.HALF_UP);
+	}
+
+	private BigDecimal invoicedPurchaseQuantity(Long sourceLineId, Long ignoredInvoiceId) {
+		String sql = """
+				select coalesce(sum(l.quantity), 0)
+				from fin_purchase_invoice_line l
+				join fin_purchase_invoice i on i.id = l.purchase_invoice_id
+				where l.source_line_id = ?
+				and i.status <> 'CANCELLED'
+				""";
+		List<Object> args = new ArrayList<>();
+		args.add(sourceLineId);
+		if (ignoredInvoiceId != null) {
+			sql += " and i.id <> ?";
+			args.add(ignoredInvoiceId);
+		}
+		BigDecimal quantity = this.jdbcTemplate.queryForObject(sql, BigDecimal.class, args.toArray());
+		return quantity == null ? BigDecimal.ZERO.setScale(6, RoundingMode.HALF_UP)
+				: quantity.setScale(6, RoundingMode.HALF_UP);
 	}
 
 	private PurchaseSource purchaseSource(String settlementKind, String sourceType, Long sourceId) {
@@ -2089,14 +2344,14 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> salesInvoiceLines(Long invoiceId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, source_line_id, sales_order_id, sales_order_line_id, material_id, unit_id,
 				       quantity, tax_rate, tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount,
 				       tax_amount, tax_included_amount
 				from fin_sales_invoice_line
 				where sales_invoice_id = ?
 				order by line_no asc
-				""", invoiceId);
+				""", invoiceId));
 	}
 
 	private List<SalesInvoiceLineRow> salesInvoiceLineRows(Long invoiceId) {
@@ -2110,14 +2365,14 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> purchaseInvoiceLines(Long invoiceId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, source_line_id, purchase_order_id, purchase_order_line_id,
 				       outsourcing_order_id, material_id, unit_id, quantity, tax_rate, tax_excluded_unit_price,
 				       tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount, match_status
 				from fin_purchase_invoice_line
 				where purchase_invoice_id = ?
 				order by line_no asc
-				""", invoiceId);
+				""", invoiceId));
 	}
 
 	private List<ValidatedInvoiceLine> purchaseInvoiceLineRows(Long invoiceId) {
@@ -2144,31 +2399,31 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> matchDifferences(Long invoiceId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, purchase_invoice_line_id, difference_type, expected_value, actual_value, message
 				from fin_purchase_invoice_match_difference
 				where purchase_invoice_id = ?
 				order by id asc
-				""", invoiceId);
+				""", invoiceId));
 	}
 
 	private List<Map<String, Object>> expenseLines(Long expenseId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, expense_category, description, source_type, source_id, source_no, tax_rate,
 				       tax_excluded_amount, tax_amount, tax_included_amount
 				from fin_expense_line
 				where expense_id = ?
 				order by line_no asc
-				""", expenseId);
+				""", expenseId));
 	}
 
 	private List<Map<String, Object>> settlementAllocationLines(Long allocationId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, target_type, target_id, amount
 				from fin_settlement_allocation_line
 				where allocation_id = ?
 				order by line_no asc
-				""", allocationId);
+				""", allocationId));
 	}
 
 	private List<SettlementLine> settlementLineRows(Long allocationId) {
@@ -2182,12 +2437,12 @@ public class FinanceStage028Service {
 	}
 
 	private List<Map<String, Object>> voucherDraftLines(Long draftId) {
-		return this.jdbcTemplate.queryForList("""
+		return normalizeRows(this.jdbcTemplate.queryForList("""
 				select id, line_no, direction, business_category, amount, source_type, source_id
 				from fin_voucher_draft_line
 				where draft_id = ?
 				order by line_no asc
-				""", draftId);
+				""", draftId));
 	}
 
 	private SettlementDraft validateSettlementDraft(SettlementAllocationRequest request, boolean requireAvailable) {
@@ -2202,6 +2457,7 @@ public class FinanceStage028Service {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		CashBalance balance = lockCashBalance(side, request.cashSourceId());
+		validateFundVersion(request, balance);
 		List<SettlementLine> lines = new ArrayList<>();
 		BigDecimal total = ZERO;
 		for (SettlementAllocationLineRequest lineRequest : request.lines()) {
@@ -2225,13 +2481,21 @@ public class FinanceStage028Service {
 		for (SettlementLine line : lines) {
 			if ("RECEIVABLE".equals(side)) {
 				ReceivableBalance target = lockReceivableBalance(line.targetId()).orElseThrow(this::receivableNotFound);
-				if (!target.customerId().equals(balance.partyId()) || line.amount().compareTo(target.openAmount()) > 0) {
+				validateTargetVersion(request, line.targetType(), line.targetId(), target.version());
+				if (!target.customerId().equals(balance.partyId())
+						|| !target.ownershipType().equals(balance.ownershipType())
+						|| !sameProject(target.projectId(), balance.projectId())
+						|| line.amount().compareTo(target.openAmount()) > 0) {
 					throw new BusinessException(ApiErrorCode.FINANCE_CROSS_PARTY_OR_PROJECT);
 				}
 			}
 			else {
 				PayableBalance target = lockPayableBalance(line.targetId()).orElseThrow(this::payableNotFound);
-				if (!target.supplierId().equals(balance.partyId()) || line.amount().compareTo(target.openAmount()) > 0) {
+				validateTargetVersion(request, line.targetType(), line.targetId(), target.version());
+				if (!target.supplierId().equals(balance.partyId())
+						|| !target.ownershipType().equals(balance.ownershipType())
+						|| !sameProject(target.projectId(), balance.projectId())
+						|| line.amount().compareTo(target.openAmount()) > 0) {
 					throw new BusinessException(ApiErrorCode.FINANCE_CROSS_PARTY_OR_PROJECT);
 				}
 			}
@@ -2240,45 +2504,101 @@ public class FinanceStage028Service {
 				balance.ownershipType(), balance.projectId(), total, lines);
 	}
 
+	private void validateFundVersion(SettlementAllocationRequest request, CashBalance balance) {
+		if (request.funds() == null || request.funds().size() != 1) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		SettlementFundRequest fund = request.funds().get(0);
+		if (fund == null || fund.fundId() == null || fund.version() == null
+				|| !fund.fundId().equals(request.cashSourceId())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (!fund.version().equals(balance.version())) {
+			throw new BusinessException(ApiErrorCode.FINANCE_CONCURRENT_MODIFICATION);
+		}
+	}
+
+	private void validateTargetVersion(SettlementAllocationRequest request, String targetType, Long targetId,
+			Long version) {
+		if (request.targets() == null || request.targets().isEmpty()) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		Optional<SettlementTargetRequest> target = request.targets()
+			.stream()
+			.filter((item) -> item != null && targetType.equals(item.targetType()) && targetId.equals(item.targetId()))
+			.findFirst();
+		if (target.isEmpty() || target.get().version() == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (!target.get().version().equals(version)) {
+			throw new BusinessException(ApiErrorCode.FINANCE_CONCURRENT_MODIFICATION);
+		}
+	}
+
 	private CashBalance lockCashBalance(String settlementSide, Long cashSourceId) {
 		if ("RECEIVABLE".equals(settlementSide)) {
 			return this.jdbcTemplate.query("""
-					select receipt_id as id, customer_id as party_id, ownership_type, project_id, original_amount,
-					       allocated_amount, available_amount, status
-					from fin_receipt_balance
-					where receipt_id = ?
+					select b.receipt_id as id, b.customer_id as party_id, b.ownership_type, b.project_id,
+					       b.original_amount, b.allocated_amount, b.available_amount, b.status, r.version
+					from fin_receipt_balance b
+					join fin_receipt r on r.id = b.receipt_id
+					where b.receipt_id = ?
 					for update
 					""", this::mapCashBalance, cashSourceId).stream().findFirst().orElseThrow(this::receiptNotFound);
 		}
 		return this.jdbcTemplate.query("""
-				select payment_id as id, supplier_id as party_id, ownership_type, project_id, original_amount,
-				       allocated_amount, available_amount, status
-				from fin_payment_balance
-				where payment_id = ?
+				select b.payment_id as id, b.supplier_id as party_id, b.ownership_type, b.project_id,
+				       b.original_amount, b.allocated_amount, b.available_amount, b.status, p.version
+				from fin_payment_balance b
+				join fin_payment p on p.id = b.payment_id
+				where b.payment_id = ?
 				for update
 				""", this::mapCashBalance, cashSourceId).stream().findFirst().orElseThrow(this::paymentNotFound);
 	}
 
 	private Optional<ReceivableBalance> lockReceivableBalance(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, customer_id, total_amount, received_amount, unreceived_amount, status
-				from fin_receivable
-				where id = ?
-				for update
+				select r.id, r.customer_id,
+				       coalesce(case when so.project_id is null then 'PUBLIC' else 'PROJECT' end, 'PUBLIC') as ownership_type,
+				       so.project_id, r.total_amount, r.received_amount, r.adjusted_amount, r.unreceived_amount,
+				       r.status, r.version
+				from fin_receivable r
+				left join sal_sales_shipment sh on r.source_type = 'SALES_SHIPMENT' and sh.id = r.source_id
+				left join sal_sales_order so on so.id = sh.order_id
+				where r.id = ?
+				for update of r
 				""", (rs, rowNum) -> new ReceivableBalance(rs.getLong("id"), rs.getLong("customer_id"),
-				rs.getBigDecimal("total_amount"), rs.getBigDecimal("received_amount"),
-				rs.getBigDecimal("unreceived_amount"), rs.getString("status")), id).stream().findFirst();
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getBigDecimal("total_amount"),
+				rs.getBigDecimal("received_amount"), rs.getBigDecimal("adjusted_amount"),
+				rs.getBigDecimal("unreceived_amount"), rs.getString("status"), rs.getLong("version")), id).stream()
+			.findFirst();
 	}
 
 	private Optional<PayableBalance> lockPayableBalance(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, supplier_id, total_amount, paid_amount, unpaid_amount, status
-				from fin_payable
-				where id = ?
-				for update
+				select p.id, p.supplier_id,
+				       coalesce(case
+				           when p.source_type = 'PURCHASE_RECEIPT' then po.purchase_mode
+				           when p.source_type = 'EXPENSE' then e.ownership_type
+				           when p.source_type = 'OUTSOURCING_SETTLEMENT' then pi.ownership_type
+				           else 'PUBLIC' end, 'PUBLIC') as ownership_type,
+				       case
+				           when p.source_type = 'PURCHASE_RECEIPT' then po.project_id
+				           when p.source_type = 'EXPENSE' then e.project_id
+				           when p.source_type = 'OUTSOURCING_SETTLEMENT' then pi.project_id
+				           else null end as project_id,
+				       p.total_amount, p.paid_amount, p.adjusted_amount, p.unpaid_amount, p.status, p.version
+				from fin_payable p
+				left join proc_purchase_receipt pr on p.source_type = 'PURCHASE_RECEIPT' and pr.id = p.source_id
+				left join proc_purchase_order po on po.id = pr.order_id
+				left join fin_expense e on p.source_type = 'EXPENSE' and e.id = p.source_id
+				left join fin_purchase_invoice pi on p.source_type = 'OUTSOURCING_SETTLEMENT' and pi.id = p.source_id
+				where p.id = ?
+				for update of p
 				""", (rs, rowNum) -> new PayableBalance(rs.getLong("id"), rs.getLong("supplier_id"),
-				rs.getBigDecimal("total_amount"), rs.getBigDecimal("paid_amount"), rs.getBigDecimal("unpaid_amount"),
-				rs.getString("status")), id).stream().findFirst();
+				rs.getString("ownership_type"), nullableLong(rs, "project_id"), rs.getBigDecimal("total_amount"),
+				rs.getBigDecimal("paid_amount"), rs.getBigDecimal("adjusted_amount"), rs.getBigDecimal("unpaid_amount"),
+				rs.getString("status"), rs.getLong("version")), id).stream().findFirst();
 	}
 
 	private VoucherSource voucherSource(String sourceType, Long sourceId) {
@@ -2290,7 +2610,8 @@ public class FinanceStage028Service {
 			String customerName = customer(invoice.partyId()).map(CustomerRow::name).orElse(null);
 			return new VoucherSource("SALES_INVOICE", invoice.id(), invoice.businessDate(), "销售发票 "
 					+ invoice.documentNo(), "CUSTOMER", invoice.partyId(), customerName, invoice.ownershipType(),
-					invoice.projectId(), invoice.taxIncludedAmount(), "RECEIVABLE_DRAFT", "SALES_INCOME_DRAFT");
+					invoice.projectId(), invoice.taxIncludedAmount(), "RECEIVABLE_DRAFT", "SALES_INCOME_DRAFT",
+					invoice.version(), invoice.documentNo());
 		}
 		if ("PURCHASE_INVOICE".equals(sourceType)) {
 			InvoiceRow invoice = purchaseInvoiceRow(sourceId).orElseThrow(this::invoiceNotFound);
@@ -2301,7 +2622,7 @@ public class FinanceStage028Service {
 			return new VoucherSource("PURCHASE_INVOICE", invoice.id(), invoice.businessDate(), "采购发票 "
 					+ invoice.documentNo(), "SUPPLIER", invoice.partyId(), supplierName, invoice.ownershipType(),
 					invoice.projectId(), invoice.taxIncludedAmount(), "PURCHASE_SETTLEMENT_DRAFT",
-					"PAYABLE_DRAFT");
+					"PAYABLE_DRAFT", invoice.version(), invoice.documentNo());
 		}
 		if ("EXPENSE".equals(sourceType)) {
 			ExpenseRow expense = expenseRow(sourceId).orElseThrow(this::expenseNotFound);
@@ -2311,7 +2632,42 @@ public class FinanceStage028Service {
 			String supplierName = supplier(expense.partyId()).map(SupplierRow::name).orElse(null);
 			return new VoucherSource("EXPENSE", expense.id(), expense.businessDate(), "费用单 "
 					+ expense.documentNo(), "SUPPLIER", expense.partyId(), supplierName, expense.ownershipType(),
-					expense.projectId(), expense.taxIncludedAmount(), "EXPENSE_DRAFT", "PAYABLE_DRAFT");
+					expense.projectId(), expense.taxIncludedAmount(), "EXPENSE_DRAFT", "PAYABLE_DRAFT",
+					expense.version(), expense.documentNo());
+		}
+		if ("RECEIPT".equals(sourceType)) {
+			CashRow receipt = advanceReceiptRow(sourceId).orElseThrow(this::receiptNotFound);
+			if (!"POSTED".equals(receipt.status())) {
+				throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
+			}
+			String customerName = customer(receipt.partyId()).map(CustomerRow::name).orElse(null);
+			return new VoucherSource("RECEIPT", receipt.id(), receipt.businessDate(), "收款 " + receipt.documentNo(),
+					"CUSTOMER", receipt.partyId(), customerName, receipt.ownershipType(), receipt.projectId(),
+					receipt.amount(), "CASH_DRAFT", "ADVANCE_RECEIPT_DRAFT", receipt.version(), receipt.documentNo());
+		}
+		if ("PAYMENT".equals(sourceType)) {
+			CashRow payment = prepaymentRow(sourceId).orElseThrow(this::paymentNotFound);
+			if (!"POSTED".equals(payment.status())) {
+				throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
+			}
+			String supplierName = supplier(payment.partyId()).map(SupplierRow::name).orElse(null);
+			return new VoucherSource("PAYMENT", payment.id(), payment.businessDate(), "付款 " + payment.documentNo(),
+					"SUPPLIER", payment.partyId(), supplierName, payment.ownershipType(), payment.projectId(),
+					payment.amount(), "PREPAYMENT_DRAFT", "CASH_DRAFT", payment.version(), payment.documentNo());
+		}
+		if ("SETTLEMENT_ALLOCATION".equals(sourceType)) {
+			SettlementAllocationRow allocation = settlementAllocationRow(sourceId).orElseThrow(this::allocationNotFound);
+			if (!"POSTED".equals(allocation.status())) {
+				throw new BusinessException(ApiErrorCode.FINANCE_STATUS_NOT_ALLOWED);
+			}
+			boolean receivableSide = "RECEIVABLE".equals(allocation.settlementSide());
+			String partyName = receivableSide ? customer(allocation.partyId()).map(CustomerRow::name).orElse(null)
+					: supplier(allocation.partyId()).map(SupplierRow::name).orElse(null);
+			return new VoucherSource("SETTLEMENT_ALLOCATION", allocation.id(), allocation.businessDate(),
+					"核销 " + allocation.documentNo(), receivableSide ? "CUSTOMER" : "SUPPLIER", allocation.partyId(),
+					partyName, allocation.ownershipType(), allocation.projectId(), allocation.totalAmount(),
+					"SETTLEMENT_CLEARING_DRAFT", "SETTLEMENT_CLEARING_DRAFT", allocation.version(),
+					allocation.documentNo());
 		}
 		throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 	}
@@ -2323,6 +2679,19 @@ public class FinanceStage028Service {
 				where source_type = ?
 				and source_id = ?
 				""", Long.class, sourceType, sourceId).stream().findFirst();
+	}
+
+	private String voucherSourceNo(String sourceType, Long sourceId) {
+		return switch (sourceType) {
+			case "SALES_INVOICE" -> salesInvoiceRow(sourceId).map(InvoiceRow::documentNo).orElse(null);
+			case "PURCHASE_INVOICE" -> purchaseInvoiceRow(sourceId).map(InvoiceRow::documentNo).orElse(null);
+			case "EXPENSE" -> expenseRow(sourceId).map(ExpenseRow::documentNo).orElse(null);
+			case "RECEIPT" -> advanceReceiptRow(sourceId).map(CashRow::documentNo).orElse(null);
+			case "PAYMENT" -> prepaymentRow(sourceId).map(CashRow::documentNo).orElse(null);
+			case "SETTLEMENT_ALLOCATION" -> settlementAllocationRow(sourceId).map(SettlementAllocationRow::documentNo)
+				.orElse(null);
+			default -> null;
+		};
 	}
 
 	private Optional<Long> existingReceivableForShipment(Long shipmentId) {
@@ -2356,39 +2725,98 @@ public class FinanceStage028Service {
 		return count != null && count > 0;
 	}
 
-	private Optional<Long> idempotentDocument(String tableName, String operator, String key) {
-		if (!hasText(key)) {
-			return Optional.empty();
-		}
-		return this.jdbcTemplate.queryForList("select id from " + tableName
-				+ " where created_by = ? and idempotency_key = ? order by id asc limit 1", Long.class, operator,
-				key).stream().findFirst();
+	private Optional<Long> idempotentDocument(String tableName, String operator, String key, String requestFingerprint) {
+		validateIdempotencyKey(key);
+		return this.jdbcTemplate.query("select id, request_fingerprint from " + tableName
+				+ " where created_by = ? and idempotency_key = ? order by id asc limit 1",
+				(rs, rowNum) -> new IdempotentDocument(rs.getLong("id"), rs.getString("request_fingerprint")),
+				operator, key.trim()).stream().findFirst().map((document) -> {
+					if (!requestFingerprint.equals(document.requestFingerprint())) {
+						throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
+					}
+					return document.id();
+				});
 	}
 
-	private Optional<Long> idempotentCashDocument(String tableName, String operator, String key) {
-		if (!hasText(key)) {
-			return Optional.empty();
-		}
+	private Optional<Long> idempotentCashDocument(String tableName, String operator, String key,
+			String requestFingerprint) {
+		validateIdempotencyKey(key);
 		String docType = "fin_receipt".equals(tableName) ? "RECEIPT" : "PAYMENT";
-		return this.jdbcTemplate.queryForList("""
-				select document_id
+		return this.jdbcTemplate.query("""
+				select document_id, request_fingerprint
 				from fin_cash_idempotency
 				where document_type = ?
 				and created_by = ?
 				and idempotency_key = ?
 				order by document_id asc
 				limit 1
-				""", Long.class, docType, operator, key).stream().findFirst();
+				""", (rs, rowNum) -> new IdempotentDocument(rs.getLong("document_id"),
+				rs.getString("request_fingerprint")), docType, operator, key.trim()).stream().findFirst()
+			.map((document) -> {
+				if (!requestFingerprint.equals(document.requestFingerprint())) {
+					throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
+				}
+				return document.id();
+			});
 	}
 
-	private void insertCashIdempotency(String documentType, Long documentId, String operator, String key) {
-		if (!hasText(key)) {
-			return;
-		}
+	private void insertCashIdempotency(String documentType, Long documentId, String operator, String key,
+			String requestFingerprint) {
+		validateIdempotencyKey(key);
 		this.jdbcTemplate.update("""
-				insert into fin_cash_idempotency (document_type, document_id, created_by, idempotency_key, created_at)
-				values (?, ?, ?, ?, now())
-				""", documentType, documentId, operator, key);
+				insert into fin_cash_idempotency (
+					document_type, document_id, created_by, idempotency_key, request_fingerprint, created_at
+				)
+				values (?, ?, ?, ?, ?, now())
+				""", documentType, documentId, operator, key.trim(), requestFingerprint);
+	}
+
+	private ActionRequestContext actionRequest(CurrentUser currentUser, String action, String resourceType,
+			Long resourceId, FinanceActionRequest request) {
+		requireActionMetadata(request == null ? null : request.version(),
+				request == null ? null : request.idempotencyKey());
+		String idempotencyKey = request.idempotencyKey().trim();
+		String requestFingerprint = fingerprint(action, resourceType, resourceId, request.version(), request.reason());
+		Optional<ActionRecord> existing = this.jdbcTemplate.query("""
+				select result_resource_type, result_resource_id, result_version, request_fingerprint
+				from fin_stage028_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and resource_id = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new ActionRecord(rs.getString("result_resource_type"),
+				rs.getLong("result_resource_id"), rs.getLong("result_version"), rs.getString("request_fingerprint")),
+				currentUser.id(), action, resourceType, resourceId == null ? 0L : resourceId, idempotencyKey).stream()
+			.findFirst();
+		if (existing.isPresent()) {
+			ActionRecord record = existing.get();
+			if (!requestFingerprint.equals(record.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
+			}
+			return new ActionRequestContext(action, resourceType, resourceId, request.version(), idempotencyKey,
+					requestFingerprint, record.resultResourceType(), record.resultResourceId(), record.resultVersion());
+		}
+		return new ActionRequestContext(action, resourceType, resourceId, request.version(), idempotencyKey,
+				requestFingerprint, null, null, null);
+	}
+
+	private void recordAction(ActionRequestContext action, String resultResourceType, Long resultResourceId,
+			Long resultVersion, CurrentUser currentUser) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into fin_stage028_action_idempotency (
+						operator_user_id, operator_username, action, resource_type, resource_id, resource_version,
+						idempotency_key, request_fingerprint, result_resource_type, result_resource_id, result_version
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", currentUser.id(), currentUser.username(), action.action(), action.resourceType(),
+					action.resourceId() == null ? 0L : action.resourceId(), action.version(), action.idempotencyKey(),
+					action.requestFingerprint(), resultResourceType, resultResourceId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.FINANCE_IDEMPOTENCY_CONFLICT);
+		}
 	}
 
 	private PartySnapshot customerSnapshot(Long customerId) {
@@ -2469,11 +2897,13 @@ public class FinanceStage028Service {
 	}
 
 	private List<ValidatedInvoiceLine> validateInvoiceLines(List<InvoiceLineRequest> requests,
-			List<PurchaseSourceLine> sourceLines) {
+			List<PurchaseSourceLine> sourceLines, Long ignoredInvoiceId) {
 		Map<Long, PurchaseSourceLine> sourceLineById = sourceLineById(sourceLines);
 		List<ValidatedInvoiceLine> result = new ArrayList<>();
+		Set<Long> requestedLineIds = new HashSet<>();
 		for (InvoiceLineRequest request : requests) {
-			if (request == null || request.sourceLineId() == null || !sourceLineById.containsKey(request.sourceLineId())) {
+			if (request == null || request.sourceLineId() == null || !sourceLineById.containsKey(request.sourceLineId())
+					|| !requestedLineIds.add(request.sourceLineId())) {
 				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_MISMATCH);
 			}
 			ValidatedInvoiceLine line = new ValidatedInvoiceLine(request.sourceLineId(), validateQuantity(request.quantity()),
@@ -2483,12 +2913,18 @@ public class FinanceStage028Service {
 			if (line.taxExcludedAmount().add(line.taxAmount()).compareTo(line.taxIncludedAmount()) != 0) {
 				throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 			}
+			PurchaseSourceLine sourceLine = sourceLineById.get(line.sourceLineId());
+			BigDecimal alreadyInvoiced = invoicedPurchaseQuantity(line.sourceLineId(), ignoredInvoiceId);
+			if (alreadyInvoiced.add(line.quantity()).compareTo(sourceLine.quantity()) > 0) {
+				throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_OVER_INVOICED);
+			}
 			result.add(line);
 		}
 		return result;
 	}
 
-	private List<ValidatedExpenseLine> validateExpenseLines(List<ExpenseLineRequest> requests) {
+	private List<ValidatedExpenseLine> validateExpenseLines(List<ExpenseLineRequest> requests, Long supplierId,
+			String ownershipType, Long projectId) {
 		List<ValidatedExpenseLine> result = new ArrayList<>();
 		for (ExpenseLineRequest request : requests) {
 			if (request == null) {
@@ -2503,11 +2939,33 @@ public class FinanceStage028Service {
 			if (!hasText(expenseCategory)) {
 				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 			}
+			String sourceType = validateOptionalText(request.sourceType(), 64);
+			String sourceNo = validateOptionalText(request.sourceNo(), 64);
+			BigDecimal normalizedTaxIncludedAmount = validateMoney(taxIncludedAmount);
+			if (hasText(sourceType)) {
+				if (request.sourceId() == null
+						|| !(PURCHASE_RECEIPT.equals(sourceType) || OUTSOURCING_RECEIPT.equals(sourceType))) {
+					throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_MISMATCH);
+				}
+				PurchaseSource source = purchaseSource(PURCHASE_RECEIPT.equals(sourceType) ? "STANDARD_PURCHASE"
+						: "OUTSOURCING", sourceType, request.sourceId());
+				if (!"POSTED".equals(source.status()) || !source.supplierId().equals(supplierId)
+						|| !source.ownershipType().equals(ownershipType)
+						|| !sameProject(source.projectId(), projectId)) {
+					throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_MISMATCH);
+				}
+				BigDecimal sourceAmount = money(purchaseSourceLines(source).stream()
+					.map(PurchaseSourceLine::taxIncludedAmount)
+					.reduce(ZERO, BigDecimal::add));
+				if (normalizedTaxIncludedAmount.compareTo(sourceAmount) > 0) {
+					throw new BusinessException(ApiErrorCode.FINANCE_SOURCE_MISMATCH);
+				}
+				sourceNo = source.sourceNo();
+			}
 			ValidatedExpenseLine line = new ValidatedExpenseLine(validateOptionalText(expenseCategory, 64),
-					validateOptionalText(request.description(), 255), validateOptionalText(request.sourceType(), 64),
-					request.sourceId(), validateOptionalText(request.sourceNo(), 64), validateRate(request.taxRate()),
-					validateMoney(taxExcludedAmount), money(nonNull(request.taxAmount())),
-					validateMoney(taxIncludedAmount));
+					validateOptionalText(request.description(), 255), sourceType, request.sourceId(), sourceNo,
+					validateRate(request.taxRate()), validateMoney(taxExcludedAmount), money(nonNull(request.taxAmount())),
+					normalizedTaxIncludedAmount);
 			if (line.taxExcludedAmount().add(line.taxAmount()).compareTo(line.taxIncludedAmount()) != 0) {
 				throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
 			}
@@ -2536,17 +2994,36 @@ public class FinanceStage028Service {
 		}
 		Map<Long, PurchaseSourceLine> sourceLineById = sourceLineById(sourceLines);
 		List<MatchDifference> differences = new ArrayList<>();
+		Set<Long> matchedSourceLines = new HashSet<>();
 		for (ValidatedInvoiceLine line : invoiceLines) {
 			PurchaseSourceLine sourceLine = sourceLineById.get(line.sourceLineId());
 			if (sourceLine == null) {
-				differences.add(new MatchDifference(null, "SOURCE_LINE", "存在", "缺失", "发票来源行不存在"));
+				differences.add(new MatchDifference(null, "EXTRA_SOURCE_LINE", "不存在", line.sourceLineId().toString(),
+						"标准采购发票包含非当前来源行"));
+				continue;
+			}
+			if (!matchedSourceLines.add(line.sourceLineId())) {
+				differences.add(new MatchDifference(null, "DUPLICATE_SOURCE_LINE", "唯一", line.sourceLineId().toString(),
+						"标准采购发票来源行重复"));
 				continue;
 			}
 			addDifference(differences, sourceLine.id(), "QUANTITY", sourceLine.quantity(), line.quantity());
-			addDifference(differences, sourceLine.id(), "UNIT_PRICE", sourceLine.taxIncludedUnitPrice(),
+			addDifference(differences, sourceLine.id(), "TAX_RATE", sourceLine.taxRate(), line.taxRate());
+			addDifference(differences, sourceLine.id(), "TAX_EXCLUDED_UNIT_PRICE", sourceLine.taxExcludedUnitPrice(),
+					line.taxExcludedUnitPrice());
+			addDifference(differences, sourceLine.id(), "TAX_INCLUDED_UNIT_PRICE", sourceLine.taxIncludedUnitPrice(),
 					line.taxIncludedUnitPrice());
+			addDifference(differences, sourceLine.id(), "TAX_EXCLUDED_AMOUNT", sourceLine.taxExcludedAmount(),
+					line.taxExcludedAmount());
+			addDifference(differences, sourceLine.id(), "TAX_AMOUNT", sourceLine.taxAmount(), line.taxAmount());
 			addDifference(differences, sourceLine.id(), "TAX_INCLUDED_AMOUNT", sourceLine.taxIncludedAmount(),
 					line.taxIncludedAmount());
+		}
+		for (PurchaseSourceLine sourceLine : sourceLines) {
+			if (!matchedSourceLines.contains(sourceLine.id())) {
+				differences.add(new MatchDifference(null, "MISSING_SOURCE_LINE", sourceLine.id().toString(), "缺失",
+						"标准采购发票缺少来源行"));
+			}
 		}
 		return new MatchResult(differences.isEmpty() ? "MATCHED" : "EXCEPTION", differences);
 	}
@@ -2779,7 +3256,7 @@ public class FinanceStage028Service {
 		}
 		LocalDate businessDate = request.businessDate() == null ? LocalDate.now() : request.businessDate();
 		return new SettlementAllocationRequest(side, cashSourceType, fund.fundId(), businessDate,
-				request.idempotencyKey(), request.remark(), lines, request.direction(), request.partnerId(),
+				request.idempotencyKey(), request.remark(), request.version(), lines, request.direction(), request.partnerId(),
 				request.ownershipType(), request.projectId(), request.funds(), request.targets());
 	}
 
@@ -2803,14 +3280,14 @@ public class FinanceStage028Service {
 		response.put("invoiceDate", row.businessDate());
 		response.put("dueDate", row.dueDate());
 		response.put("invoiceType", row.invoiceType());
-		response.put("taxExcludedAmount", row.taxExcludedAmount());
-		response.put("taxAmount", row.taxAmount());
-		response.put("taxIncludedAmount", row.taxIncludedAmount());
-		response.put("pretaxAmount", row.taxExcludedAmount());
-		response.put("totalAmount", row.taxIncludedAmount());
+		response.put("taxExcludedAmount", decimalString(row.taxExcludedAmount()));
+		response.put("taxAmount", decimalString(row.taxAmount()));
+		response.put("taxIncludedAmount", decimalString(row.taxIncludedAmount()));
+		response.put("pretaxAmount", decimalString(row.taxExcludedAmount()));
+		response.put("totalAmount", decimalString(row.taxIncludedAmount()));
 		response.put("settlementStatus", row.linkedReceivableId() != null || row.linkedPayableId() != null
 				? "UNSETTLED" : "UNLINKED");
-		response.put("unsettledAmount", row.taxIncludedAmount());
+		response.put("unsettledAmount", decimalString(row.taxIncludedAmount()));
 		response.put("status", row.status());
 		response.put("version", row.version());
 		return response;
@@ -2828,12 +3305,12 @@ public class FinanceStage028Service {
 		response.put("projectId", row.projectId());
 		response.put(receivableSide ? "receiptDate" : "paymentDate", row.businessDate());
 		response.put("businessDate", row.businessDate());
-		response.put("amount", row.amount());
+		response.put("amount", decimalString(row.amount()));
 		response.put("method", row.method());
 		response.put("status", row.status());
-		response.put("originalAmount", row.originalAmount());
-		response.put("allocatedAmount", row.allocatedAmount());
-		response.put("availableAmount", row.availableAmount());
+		response.put("originalAmount", decimalString(row.originalAmount()));
+		response.put("allocatedAmount", decimalString(row.allocatedAmount()));
+		response.put("availableAmount", decimalString(row.availableAmount()));
 		response.put("version", row.version());
 		response.put("allowedActions", allowedCashActions(row.status(), receivableSide, currentUser));
 		return response;
@@ -2875,6 +3352,23 @@ public class FinanceStage028Service {
 			actions.add("CANCEL");
 		}
 		return actions;
+	}
+
+	private List<String> allowedVoucherActions(String status, CurrentUser currentUser) {
+		if ("DRAFT".equals(status)) {
+			List<String> actions = new ArrayList<>();
+			if (hasPermission(currentUser, "finance:voucher-draft:ready")) {
+				actions.add("READY");
+			}
+			if (hasPermission(currentUser, "finance:voucher-draft:cancel")) {
+				actions.add("CANCEL");
+			}
+			return actions;
+		}
+		if ("READY".equals(status) && hasPermission(currentUser, "finance:voucher-draft:cancel")) {
+			return List.of("CANCEL");
+		}
+		return List.of();
 	}
 
 	private List<String> settlementFundActions(CurrentUser currentUser) {
@@ -2922,6 +3416,10 @@ public class FinanceStage028Service {
 		return value;
 	}
 
+	private boolean sameProject(Long left, Long right) {
+		return left == null ? right == null : left.equals(right);
+	}
+
 	private BigDecimal validateMoney(BigDecimal value) {
 		if (value == null || value.scale() > 2 || value.compareTo(ZERO) <= 0 || integerDigits(value) > 16) {
 			throw new BusinessException(ApiErrorCode.FINANCE_AMOUNT_INVALID);
@@ -2966,6 +3464,10 @@ public class FinanceStage028Service {
 		return value.setScale(2, RoundingMode.HALF_UP);
 	}
 
+	private String decimalString(BigDecimal value) {
+		return value == null ? null : value.toPlainString();
+	}
+
 	private long integerDigits(BigDecimal value) {
 		return Math.max(0L, (long) value.precision() - value.scale());
 	}
@@ -2982,9 +3484,63 @@ public class FinanceStage028Service {
 	}
 
 	private void assertVersion(Long expectedVersion, Long actualVersion) {
-		if (expectedVersion != null && !expectedVersion.equals(actualVersion)) {
+		if (expectedVersion == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		if (!expectedVersion.equals(actualVersion)) {
 			throw new BusinessException(ApiErrorCode.FINANCE_CONCURRENT_MODIFICATION);
 		}
+	}
+
+	private void requireMutationMetadata(Long version, String idempotencyKey) {
+		if (version == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		validateIdempotencyKey(idempotencyKey);
+	}
+
+	private void requireActionMetadata(Long version, String idempotencyKey) {
+		if (version == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		validateIdempotencyKey(idempotencyKey);
+	}
+
+	private void validateIdempotencyKey(String idempotencyKey) {
+		if (!hasText(idempotencyKey) || idempotencyKey.trim().length() > 120) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private String fingerprint(String action, Object... parts) {
+		StringBuilder builder = new StringBuilder(action);
+		for (Object part : parts) {
+			builder.append('|').append(fingerprintPart(part));
+		}
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+				.digest(builder.toString().getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (Exception exception) {
+			throw new IllegalStateException(exception);
+		}
+	}
+
+	private String fingerprintPart(Object part) {
+		if (part == null) {
+			return "";
+		}
+		if (part instanceof BigDecimal decimal) {
+			return decimal.stripTrailingZeros().toPlainString();
+		}
+		if (part instanceof Iterable<?> iterable) {
+			StringBuilder builder = new StringBuilder("[");
+			for (Object value : iterable) {
+				builder.append(fingerprintPart(value)).append(',');
+			}
+			return builder.append(']').toString();
+		}
+		return part.toString().trim();
 	}
 
 	private boolean hasPermission(CurrentUser currentUser, String permissionCode) {
@@ -3111,7 +3667,8 @@ public class FinanceStage028Service {
 	private CashBalance mapCashBalance(ResultSet rs, int rowNum) throws SQLException {
 		return new CashBalance(rs.getLong("id"), rs.getLong("party_id"), rs.getString("ownership_type"),
 				nullableLong(rs, "project_id"), rs.getBigDecimal("original_amount"),
-				rs.getBigDecimal("allocated_amount"), rs.getBigDecimal("available_amount"), rs.getString("status"));
+				rs.getBigDecimal("allocated_amount"), rs.getBigDecimal("available_amount"), rs.getString("status"),
+				rs.getLong("version"));
 	}
 
 	private PartySnapshot mapPartySnapshot(ResultSet rs, int rowNum) throws SQLException {
@@ -3207,9 +3764,9 @@ public class FinanceStage028Service {
 	}
 
 	public record SettlementAllocationRequest(String settlementSide, String cashSourceType, Long cashSourceId,
-			LocalDate businessDate, String idempotencyKey, String remark, List<SettlementAllocationLineRequest> lines,
-			String direction, Long partnerId, String ownershipType, Long projectId, List<SettlementFundRequest> funds,
-			List<SettlementTargetRequest> targets) {
+			LocalDate businessDate, String idempotencyKey, String remark, Long version,
+			List<SettlementAllocationLineRequest> lines, String direction, Long partnerId, String ownershipType,
+			Long projectId, List<SettlementFundRequest> funds, List<SettlementTargetRequest> targets) {
 	}
 
 	public record SettlementAllocationLineRequest(String targetType, Long targetId, BigDecimal amount) {
@@ -3221,7 +3778,7 @@ public class FinanceStage028Service {
 	public record SettlementTargetRequest(String targetType, Long targetId, BigDecimal amount, Long version) {
 	}
 
-	public record VoucherDraftGenerateRequest(String sourceType, Long sourceId, String idempotencyKey) {
+	public record VoucherDraftGenerateRequest(String sourceType, Long sourceId, Long version, String idempotencyKey) {
 	}
 
 	public record FinanceActionRequest(Long version, String idempotencyKey, String reason) {
@@ -3321,20 +3878,34 @@ public class FinanceStage028Service {
 	}
 
 	private record CashBalance(Long id, Long partyId, String ownershipType, Long projectId, BigDecimal originalAmount,
-			BigDecimal allocatedAmount, BigDecimal availableAmount, String status) {
+			BigDecimal allocatedAmount, BigDecimal availableAmount, String status, Long version) {
 	}
 
-	private record ReceivableBalance(Long id, Long customerId, BigDecimal totalAmount, BigDecimal settledAmount,
-			BigDecimal openAmount, String status) {
+	private record ReceivableBalance(Long id, Long customerId, String ownershipType, Long projectId,
+			BigDecimal totalAmount, BigDecimal settledAmount, BigDecimal adjustedAmount, BigDecimal openAmount,
+			String status, Long version) {
 	}
 
-	private record PayableBalance(Long id, Long supplierId, BigDecimal totalAmount, BigDecimal settledAmount,
-			BigDecimal openAmount, String status) {
+	private record PayableBalance(Long id, Long supplierId, String ownershipType, Long projectId,
+			BigDecimal totalAmount, BigDecimal settledAmount, BigDecimal adjustedAmount, BigDecimal openAmount,
+			String status, Long version) {
 	}
 
 	private record VoucherSource(String sourceType, Long sourceId, LocalDate businessDate, String summary,
 			String partyType, Long partyId, String partyName, String ownershipType, Long projectId, BigDecimal amount,
-			String debitCategory, String creditCategory) {
+			String debitCategory, String creditCategory, Long version, String sourceNo) {
+	}
+
+	private record IdempotentDocument(Long id, String requestFingerprint) {
+	}
+
+	private record ActionRequestContext(String action, String resourceType, Long resourceId, Long version,
+			String idempotencyKey, String requestFingerprint, String resultResourceType, Long resultResourceId,
+			Long resultVersion) {
+	}
+
+	private record ActionRecord(String resultResourceType, Long resultResourceId, Long resultVersion,
+			String requestFingerprint) {
 	}
 
 }

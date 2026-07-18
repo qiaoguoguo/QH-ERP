@@ -8,7 +8,7 @@ import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ReceiptStatusTag from './ReceiptStatusTag.vue'
-import { financeErrorMessage, financePermissions, formatFinanceAmount, normalizeOptionalId } from './financePageHelpers'
+import { financeErrorMessage, financeMethodText, financePermissions, formatFinanceAmount, normalizeOptionalId } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
@@ -208,7 +208,7 @@ onMounted(() => {
         <el-table-column label="收款金额" min-width="140" align="right">
           <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.amount) }}</span></template>
         </el-table-column>
-        <el-table-column prop="method" label="收款方式" min-width="120" />
+        <el-table-column label="收款方式" min-width="120"><template #default="{ row }">{{ financeMethodText(row.method) }}</template></el-table-column>
         <el-table-column label="状态" min-width="100">
           <template #default="{ row }"><ReceiptStatusTag :status="row.status" /></template>
         </el-table-column>

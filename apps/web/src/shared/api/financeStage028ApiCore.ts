@@ -2,7 +2,7 @@ import { AccountPermissionApiError, type ApiEnvelope, type CsrfToken } from './a
 
 export type Fetcher = (input: string, init: RequestInit) => Promise<Response>
 export type ResourceId = string | number
-export type FinanceAmount = string | number
+export type FinanceAmount = string
 export type FinanceMoneyPayload = string
 
 export interface FinanceStage028ApiOptions {

@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { financeErrorMessage, financePermissions, formatFinanceAmount, invoiceStatusText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
+import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import './Finance028Shared.css'
 
 const route = useRoute()
@@ -17,6 +18,7 @@ const actionError = ref('')
 const loading = ref(false)
 const actionLoading = ref(false)
 const canConfirm = computed(() => Boolean(record.value?.allowedActions?.includes('CONFIRM')) && authStore.hasPermission(financePermissions.salesInvoiceConfirm))
+const canCancel = computed(() => Boolean(record.value?.allowedActions?.includes('CANCEL')) && authStore.hasPermission(financePermissions.salesInvoiceCancel))
 
 async function loadRecord() {
   loading.value = true
@@ -52,6 +54,28 @@ async function confirmInvoice() {
   }
 }
 
+async function cancelInvoice() {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  if (!(await confirmAction(`取消销售发票“${record.value.invoiceNo}”？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await financeInvoiceApi.salesInvoices.cancel(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: `cancel-sales-invoice-${record.value.id}-${Date.now()}`,
+    })
+    await loadRecord()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -60,6 +84,7 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="router.push({ name: 'finance-sales-invoices' })">返回列表</el-button>
       <el-button v-if="canConfirm" data-test="confirm-sales-invoice" type="success" :loading="actionLoading" :disabled="actionLoading" @click="confirmInvoice">确认</el-button>
+      <el-button v-if="canCancel" data-test="cancel-sales-invoice" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="cancelInvoice">取消</el-button>
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
@@ -76,10 +101,10 @@ onMounted(loadRecord)
       <div><span>只读原因</span><strong>确认后不可普通编辑</strong></div>
     </div>
     <div v-if="record" class="finance-section-grid">
-      <section class="finance-section"><span class="finance-section-title">来源摘要</span><p v-for="source in record.sources" :key="source.sourceNo">{{ source.restricted ? '无权查看来源详情' : source.summary ?? source.sourceNo }}</p></section>
       <section class="finance-section"><span class="finance-section-title">应收链接</span><p v-for="link in record.receivableLinks" :key="link.receivableNo">{{ link.receivableNo }} {{ formatFinanceAmount(link.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">收款/预收核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
     </div>
+    <FinanceSourceTracePanel v-if="record" :sources="record.sources ?? []" />
   </MasterDataTableView>
 </template>

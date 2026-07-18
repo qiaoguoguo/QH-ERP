@@ -1,78 +1,138 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   financeSettlementApi,
   type AdvanceFundRecord,
+  type FundType,
   type SettlementDirection,
   type SettlementTargetRecord,
   type TargetType,
 } from '../../shared/api/financeSettlementApi'
+import type { OwnershipType, ResourceId } from '../../shared/api/financeStage028ApiCore'
+import { useAuthStore } from '../../stores/authStore'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import {
+  addFinanceAmounts,
   compareFinanceAmount,
   financeErrorMessage,
+  financePermissions,
   financeSourceTypeText,
   formatFinanceAmount,
+  normalizeOptionalId,
   ownershipTypeText,
   settlementStatusText,
+  subtractFinanceAmounts,
 } from './financePageHelpers'
 import './Finance028Shared.css'
 
-const filters = reactive<{ direction: SettlementDirection; partnerId: string; ownershipType: 'PROJECT' | 'PUBLIC'; projectId: string }>({
-  direction: 'CUSTOMER',
-  partnerId: '8',
-  ownershipType: 'PROJECT',
-  projectId: '18',
+const route = useRoute()
+const router = useRouter()
+const authStore = useAuthStore()
+
+const queryDirection = route.query.direction === 'SUPPLIER' ? 'SUPPLIER' : 'CUSTOMER'
+const queryOwnershipType = route.query.ownershipType === 'PROJECT' || route.query.ownershipType === 'PUBLIC'
+  ? route.query.ownershipType
+  : ''
+const queryFundType = isFundType(route.query.fundType) ? route.query.fundType : ''
+
+const filters = reactive<{
+  direction: SettlementDirection
+  fundType: FundType | ''
+  fundId: string
+  partnerId: string
+  ownershipType: OwnershipType | ''
+  projectId: string
+}>({
+  direction: queryDirection,
+  fundType: queryFundType,
+  fundId: String(route.query.fundId ?? ''),
+  partnerId: String(route.query.partnerId ?? ''),
+  ownershipType: queryOwnershipType,
+  projectId: String(route.query.projectId ?? ''),
 })
 const fundsPagination = reactive({ page: 1, pageSize: 50, total: 0 })
 const targetsPagination = reactive({ page: 1, pageSize: 50, total: 0 })
 const funds = ref<AdvanceFundRecord[]>([])
 const targets = ref<SettlementTargetRecord[]>([])
 const selectedFund = ref<AdvanceFundRecord | null>(null)
-const selectedTarget = ref<SettlementTargetRecord | null>(null)
-const allocationAmount = ref('')
+const selectedTargets = ref<SettlementTargetRecord[]>([])
+const targetAmounts = reactive<Record<string, string>>({})
+const legacyAllocationAmount = ref('')
 const loading = ref(false)
 const error = ref('')
 const submitting = ref(false)
 
+const selectedTargetTotal = computed(() => {
+  const total = addFinanceAmounts(selectedTargets.value.map((target) => targetAmounts[targetKey(target)] || '0.00'))
+  return total ?? '0.00'
+})
+const remainingAmount = computed(() => {
+  if (!selectedFund.value) {
+    return '0.00'
+  }
+  return subtractFinanceAmounts(selectedFund.value.availableAmount, selectedTargetTotal.value) ?? '0.00'
+})
 const amountError = computed(() => {
-  if (!allocationAmount.value.trim() || !selectedFund.value || !selectedTarget.value) {
+  if (!selectedFund.value || selectedTargets.value.length === 0) {
     return ''
   }
-  if (!/^\d+(\.\d{1,2})?$/.test(allocationAmount.value.trim())) {
-    return '本次核销金额最多保留两位小数'
+  for (const target of selectedTargets.value) {
+    const amount = (targetAmounts[targetKey(target)] || '').trim()
+    if (!/^\d+(\.\d{1,2})?$/.test(amount)) {
+      return '本次核销金额最多保留两位小数'
+    }
+    const positive = compareFinanceAmount(amount, '0.00')
+    if (positive === null || positive !== 1) {
+      return '每个核销目标金额必须大于 0'
+    }
+    const targetCompared = compareFinanceAmount(amount, target.unsettledAmount)
+    if (targetCompared === null || targetCompared > 0) {
+      return '本次核销金额不能超过资金可用余额或目标未结余额'
+    }
   }
-  if (compareFinanceAmount(allocationAmount.value, '0.00') !== 1) {
-    return '本次核销金额必须大于 0'
-  }
-  const fundCompared = compareFinanceAmount(allocationAmount.value, selectedFund.value.availableAmount)
-  const targetCompared = compareFinanceAmount(allocationAmount.value, selectedTarget.value.unsettledAmount)
-  if (fundCompared === null || targetCompared === null) {
-    return '本次核销金额格式不正确'
-  }
-  if (fundCompared > 0 || targetCompared > 0) {
+  const fundCompared = compareFinanceAmount(selectedTargetTotal.value, selectedFund.value.availableAmount)
+  if (fundCompared === null || fundCompared > 0) {
     return '本次核销金额不能超过资金可用余额或目标未结余额'
   }
   return ''
 })
 const submitDisabledReason = computed(() => {
-  if (!selectedFund.value || !selectedTarget.value) {
-    return '请选择资金和核销目标'
+  if (!authStore.hasPermission(financePermissions.settlementAllocationCreate)) {
+    return '缺少核销保存权限，仅可查看候选池'
   }
-  if (!allocationAmount.value.trim()) {
-    return '请填写本次核销金额'
+  if (!selectedFund.value || selectedTargets.value.length === 0) {
+    return '请选择资金和核销目标'
   }
   return amountError.value
 })
 const canSubmit = computed(() => !submitting.value && !submitDisabledReason.value)
+const selectedFundType = computed<FundType>(() => (
+  filters.fundType || (filters.direction === 'CUSTOMER' ? 'ADVANCE_RECEIPT' : 'PREPAYMENT')
+) as FundType)
 
-function basePoolParams(page: number, pageSize: number) {
+function isFundType(value: unknown): value is FundType {
+  return value === 'ADVANCE_RECEIPT' || value === 'PREPAYMENT' || value === 'RECEIPT' || value === 'PAYMENT'
+}
+
+function targetKey(record: SettlementTargetRecord) {
+  return `${record.targetType}-${record.targetId}`
+}
+
+function isTargetSelected(record: SettlementTargetRecord) {
+  return selectedTargets.value.some((item) => targetKey(item) === targetKey(record))
+}
+
+function poolParams(page: number, pageSize: number) {
   return {
     direction: filters.direction,
-    partnerId: filters.partnerId ? filters.partnerId : undefined,
-    ownershipType: filters.ownershipType,
-    projectId: filters.ownershipType === 'PROJECT' && filters.projectId ? filters.projectId : undefined,
+    fundType: filters.fundType || undefined,
+    fundId: normalizeOptionalId(filters.fundId),
+    partnerId: normalizeOptionalId(filters.partnerId),
+    ownershipType: filters.ownershipType || undefined,
+    projectId: filters.ownershipType === 'PROJECT' ? normalizeOptionalId(filters.projectId) : undefined,
     page,
     pageSize,
   }
@@ -83,13 +143,14 @@ async function loadPools() {
   error.value = ''
   try {
     const [fundPage, targetPage] = await Promise.all([
-      financeSettlementApi.settlementWorkbench.funds(basePoolParams(fundsPagination.page, fundsPagination.pageSize)),
-      financeSettlementApi.settlementWorkbench.targets(basePoolParams(targetsPagination.page, targetsPagination.pageSize)),
+      financeSettlementApi.settlementWorkbench.funds(poolParams(fundsPagination.page, fundsPagination.pageSize)),
+      financeSettlementApi.settlementWorkbench.targets(poolParams(targetsPagination.page, targetsPagination.pageSize)),
     ])
     funds.value = pageItems(fundPage)
     targets.value = pageItems(targetPage)
     fundsPagination.total = Number(fundPage.total)
     targetsPagination.total = Number(targetPage.total)
+    keepVisibleSelections()
   } catch (caught) {
     funds.value = []
     targets.value = []
@@ -99,25 +160,72 @@ async function loadPools() {
   }
 }
 
+function keepVisibleSelections() {
+  if (filters.fundId && !selectedFund.value) {
+    const fund = funds.value.find((item) => String(item.id) === filters.fundId)
+    if (fund) {
+      selectFund(fund)
+    }
+  }
+  selectedTargets.value = selectedTargets.value.map((selected) => (
+    targets.value.find((target) => targetKey(target) === targetKey(selected)) ?? selected
+  ))
+}
+
 function searchPools() {
   fundsPagination.page = 1
   targetsPagination.page = 1
   selectedFund.value = null
-  selectedTarget.value = null
-  allocationAmount.value = ''
+  selectedTargets.value = []
+  legacyAllocationAmount.value = ''
+  Object.keys(targetAmounts).forEach((key) => delete targetAmounts[key])
   void loadPools()
 }
 
 function selectFund(record: AdvanceFundRecord) {
   selectedFund.value = record
-  if (!allocationAmount.value.trim()) {
-    allocationAmount.value = String(record.availableAmount)
+  filters.fundId = String(record.id)
+  if (!filters.partnerId) {
+    const partnerId = (record as AdvanceFundRecord & { partnerId?: ResourceId }).partnerId
+    if (partnerId !== undefined && partnerId !== null) {
+      filters.partnerId = String(partnerId)
+    }
+  }
+  if (!filters.ownershipType) {
+    filters.ownershipType = record.ownershipType
+  }
+  const projectId = (record as AdvanceFundRecord & { projectId?: ResourceId | null }).projectId
+  if (!filters.projectId && projectId !== undefined && projectId !== null) {
+    filters.projectId = String(projectId)
   }
 }
 
 function selectTarget(record: SettlementTargetRecord) {
-  selectedTarget.value = record
-  allocationAmount.value = String(record.unsettledAmount)
+  const key = targetKey(record)
+  if (isTargetSelected(record)) {
+    selectedTargets.value = selectedTargets.value.filter((item) => targetKey(item) !== key)
+    delete targetAmounts[key]
+    return
+  }
+  selectedTargets.value = [...selectedTargets.value, record]
+  targetAmounts[key] = targetAmounts[key] || String(record.unsettledAmount)
+  if (selectedTargets.value.length === 1) {
+    legacyAllocationAmount.value = targetAmounts[key]
+  }
+}
+
+function syncLegacyAmount() {
+  if (selectedTargets.value.length !== 1) {
+    return
+  }
+  targetAmounts[targetKey(selectedTargets.value[0])] = legacyAllocationAmount.value
+}
+
+function changeTargetAmount(target: SettlementTargetRecord, value: unknown) {
+  targetAmounts[targetKey(target)] = String(value)
+  if (selectedTargets.value.length === 1) {
+    legacyAllocationAmount.value = String(value)
+  }
 }
 
 function changeFundsPage(page: number) {
@@ -131,32 +239,48 @@ function changeTargetsPage(page: number) {
 }
 
 async function submitAllocation() {
-  if (!canSubmit.value || !selectedFund.value || !selectedTarget.value) {
+  if (!canSubmit.value || !selectedFund.value) {
+    return
+  }
+  if (!(await confirmAction('保存核销草稿？'))) {
     return
   }
   submitting.value = true
   error.value = ''
   try {
-    await financeSettlementApi.settlementWorkbench.create({
+    const fundPartnerId = (selectedFund.value as AdvanceFundRecord & { partnerId?: ResourceId }).partnerId
+      ?? normalizeOptionalId(filters.partnerId)
+      ?? selectedFund.value.id
+    const result = await financeSettlementApi.settlementWorkbench.create({
+      settlementSide: filters.direction === 'CUSTOMER' ? 'RECEIVABLE' : 'PAYABLE',
+      cashSourceType: selectedFundType.value,
+      cashSourceId: selectedFund.value.id,
+      businessDate: selectedFund.value.businessDate,
       direction: filters.direction,
-      partnerId: filters.partnerId,
-      ownershipType: filters.ownershipType,
-      projectId: filters.ownershipType === 'PROJECT' ? filters.projectId : undefined,
+      partnerId: fundPartnerId,
+      ownershipType: filters.ownershipType || selectedFund.value.ownershipType,
+      projectId: (filters.ownershipType || selectedFund.value.ownershipType) === 'PROJECT'
+        ? normalizeOptionalId(filters.projectId) ?? (selectedFund.value as AdvanceFundRecord & { projectId?: ResourceId | null }).projectId ?? null
+        : null,
       funds: [{
-        fundType: filters.direction === 'CUSTOMER' ? 'ADVANCE_RECEIPT' : 'PREPAYMENT',
+        fundType: selectedFundType.value,
         fundId: selectedFund.value.id,
         version: selectedFund.value.version,
-        amount: allocationAmount.value.trim(),
+        amount: selectedTargetTotal.value,
       }],
-      targets: [{
-        targetType: selectedTarget.value.targetType as TargetType,
-        targetId: selectedTarget.value.targetId,
-        version: selectedTarget.value.version,
-        amount: allocationAmount.value.trim(),
-      }],
+      targets: selectedTargets.value.map((target) => ({
+        targetType: target.targetType as TargetType,
+        targetId: target.targetId,
+        version: target.version,
+        amount: targetAmounts[targetKey(target)].trim(),
+      })),
       idempotencyKey: `settlement-allocation-${Date.now()}`,
     })
-    await loadPools()
+    await router.push({
+      name: 'finance-settlement-allocation-detail',
+      params: { id: String(result.id) },
+      query: route.query.returnTo ? { returnTo: String(route.query.returnTo) } : undefined,
+    })
   } catch (caught) {
     error.value = financeErrorMessage(caught)
   } finally {
@@ -170,21 +294,29 @@ onMounted(loadPools)
 <template>
   <MasterDataTableView title="对账核销工作台" description="按往来方和项目/公共归属核销资金余额与应收应付，不新增现金发生额。">
     <template #actions>
-      <el-button data-test="post-settlement-allocation" type="primary" :loading="submitting" :disabled="!canSubmit" @click="submitAllocation">保存核销草稿</el-button>
+      <el-button data-test="save-settlement-allocation" type="primary" :loading="submitting" :disabled="!canSubmit" @click="submitAllocation">保存核销草稿</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="方向">
           <el-segmented v-model="filters.direction" :options="[{ label: '客户', value: 'CUSTOMER' }, { label: '供应商', value: 'SUPPLIER' }]" @change="searchPools" />
         </el-form-item>
-        <el-form-item label="往来方"><el-input v-model="filters.partnerId" placeholder="选择往来方" /></el-form-item>
+        <el-form-item label="资金类型">
+          <el-select v-model="filters.fundType" clearable placeholder="全部资金类型" @change="searchPools">
+            <el-option label="预收款" value="ADVANCE_RECEIPT" />
+            <el-option label="预付款" value="PREPAYMENT" />
+            <el-option label="收款" value="RECEIPT" />
+            <el-option label="付款" value="PAYMENT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="往来方"><el-input v-model="filters.partnerId" clearable placeholder="输入或从资金带入往来方" /></el-form-item>
         <el-form-item label="项目/公共">
-          <el-select v-model="filters.ownershipType" placeholder="选择归属" @change="searchPools">
+          <el-select v-model="filters.ownershipType" clearable placeholder="全部归属" @change="searchPools">
             <el-option label="项目" value="PROJECT" />
             <el-option label="公共" value="PUBLIC" />
           </el-select>
         </el-form-item>
-        <el-form-item label="项目"><el-input v-model="filters.projectId" :disabled="filters.ownershipType === 'PUBLIC'" placeholder="选择项目" /></el-form-item>
+        <el-form-item label="项目"><el-input v-model="filters.projectId" :disabled="filters.ownershipType === 'PUBLIC'" clearable placeholder="项目 ID 或从资金带入" /></el-form-item>
         <el-form-item><el-button type="primary" @click="searchPools">查询</el-button></el-form-item>
       </el-form>
     </template>
@@ -201,7 +333,8 @@ onMounted(loadPools)
         <div class="table-scroll">
           <el-table :data="funds" :empty-text="loading ? '加载中' : '无可用资金'" height="260">
             <el-table-column prop="fundNo" label="资金单号" min-width="140" show-overflow-tooltip />
-            <el-table-column label="资金类型" min-width="110"><template #default>{{ filters.direction === 'CUSTOMER' ? '预收款' : '预付款' }}</template></el-table-column>
+            <el-table-column label="资金类型" min-width="110"><template #default>{{ selectedFundType === 'ADVANCE_RECEIPT' ? '预收款' : selectedFundType === 'PREPAYMENT' ? '预付款' : financeSourceTypeText(selectedFundType) }}</template></el-table-column>
+            <el-table-column prop="partnerName" label="往来方" min-width="150" show-overflow-tooltip />
             <el-table-column prop="businessDate" label="业务日期" min-width="110" />
             <el-table-column label="原金额" min-width="110" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.amount) }}</template></el-table-column>
             <el-table-column label="已核销金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.allocatedAmount) }}</template></el-table-column>
@@ -235,12 +368,24 @@ onMounted(loadPools)
             <el-table-column label="已冲减" min-width="110" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.adjustedAmount) }}</template></el-table-column>
             <el-table-column label="已核销" min-width="110" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.allocatedAmount) }}</template></el-table-column>
             <el-table-column label="未结余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.unsettledAmount) }}</template></el-table-column>
+            <el-table-column label="本次分配" min-width="150" align="right">
+              <template #default="{ row }">
+                <el-input
+                  v-if="isTargetSelected(row)"
+                  :name="`settlement-target-amount-${row.targetId}`"
+                  :model-value="targetAmounts[targetKey(row)]"
+                  placeholder="0.00"
+                  @update:model-value="changeTargetAmount(row, $event)"
+                />
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ settlementStatusText(row.status) }}</template></el-table-column>
             <el-table-column label="受限原因" min-width="130"><template #default="{ row }">{{ row.restrictedReason ?? '无' }}</template></el-table-column>
             <el-table-column label="操作" fixed="right" min-width="100">
               <template #default="{ row }">
-                <el-button data-test="select-settlement-target" size="small" text :type="selectedTarget?.targetId === row.targetId ? 'primary' : undefined" @click="selectTarget(row)">
-                  {{ selectedTarget?.targetId === row.targetId ? '已选' : '选择' }}
+                <el-button data-test="select-settlement-target" size="small" text :type="isTargetSelected(row) ? 'primary' : undefined" @click="selectTarget(row)">
+                  {{ isTargetSelected(row) ? '已选' : '选择' }}
                 </el-button>
               </template>
             </el-table-column>
@@ -251,11 +396,11 @@ onMounted(loadPools)
     </div>
 
     <div class="finance-workbench-summary">
-      <span>资金：{{ selectedFund?.fundNo ?? '未选择' }}</span>
-      <span>目标：{{ selectedTarget?.targetNo ?? '未选择' }}</span>
-      <span>剩余可分配：{{ selectedFund ? formatFinanceAmount(selectedFund.availableAmount) : '0.00' }}</span>
-      <span>目标未结：{{ selectedTarget ? formatFinanceAmount(selectedTarget.unsettledAmount) : '0.00' }}</span>
-      <el-input v-model="allocationAmount" name="settlement-allocation-amount" placeholder="本次核销金额" style="max-width: 180px" />
+      <span>来源资金：{{ selectedFund?.fundNo ?? '未选择' }}</span>
+      <span>已选目标 {{ selectedTargets.length }} 个</span>
+      <span>本次核销：{{ formatFinanceAmount(selectedTargetTotal) }}</span>
+      <span>剩余可分配 {{ formatFinanceAmount(remainingAmount) }}</span>
+      <el-input v-model="legacyAllocationAmount" name="settlement-allocation-amount" placeholder="单目标核销金额" style="max-width: 180px" @input="syncLegacyAmount" />
       <span v-if="amountError" class="finance-danger-note">{{ amountError }}</span>
     </div>
   </MasterDataTableView>

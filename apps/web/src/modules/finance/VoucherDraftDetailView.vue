@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeVoucherDraftApi, type VoucherDraftRecord } from '../../shared/api/financeVoucherDraftApi'
 import { useAuthStore } from '../../stores/authStore'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
   financeErrorMessage,
@@ -20,6 +21,8 @@ const authStore = useAuthStore()
 const record = ref<VoucherDraftRecord | null>(null)
 const loading = ref(false)
 const error = ref('')
+const actionError = ref('')
+const actionLoading = ref(false)
 
 const canReady = computed(() => record.value?.allowedActions?.includes('READY') && authStore.hasPermission(financePermissions.voucherDraftReady))
 const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.voucherDraftCancel))
@@ -37,6 +40,34 @@ async function loadRecord() {
   }
 }
 
+async function runAction(action: 'ready' | 'cancel') {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  const label = action === 'ready' ? '标记待制证' : '取消'
+  if (!(await confirmAction(`${label}凭证草稿“${record.value.draftNo}”？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    const payload = {
+      version: record.value.version,
+      idempotencyKey: `${action}-voucher-draft-${record.value.id}-${Date.now()}`,
+    }
+    if (action === 'ready') {
+      await financeVoucherDraftApi.voucherDrafts.markReady(record.value.id, payload)
+    } else {
+      await financeVoucherDraftApi.voucherDrafts.cancel(record.value.id, payload)
+    }
+    await loadRecord()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -45,11 +76,12 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="router.push({ name: 'finance-voucher-drafts' })">返回列表</el-button>
       <el-button @click="loadRecord">刷新</el-button>
-      <el-button v-if="canReady" type="success">标记待制证</el-button>
-      <el-button v-if="canCancel" type="danger">取消草稿</el-button>
+      <el-button v-if="canReady" data-test="ready-voucher-draft" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runAction('ready')">标记待制证</el-button>
+      <el-button v-if="canCancel" data-test="cancel-voucher-draft" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="runAction('cancel')">取消草稿</el-button>
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证草稿详情加载中" :closable="false" />
       <el-alert type="warning" title="非正式凭证草稿，不产生总账、会计期间或资金影响" :closable="false" />
     </template>

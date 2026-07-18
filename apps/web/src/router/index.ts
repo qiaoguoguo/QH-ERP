@@ -817,6 +817,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('../modules/finance/SettlementWorkbenchView.vue'),
   },
   {
+    path: '/finance/settlement-workbench/allocations/:id',
+    name: 'finance-settlement-allocation-detail',
+    meta: { requiresAuth: true, requiredPermission: 'finance:settlement-allocation:view' },
+    component: () => import('../modules/finance/SettlementAllocationDetailView.vue'),
+  },
+  {
     path: '/finance/voucher-drafts',
     name: 'finance-voucher-drafts',
     meta: { requiresAuth: true, requiredPermission: 'finance:voucher-draft:view' },

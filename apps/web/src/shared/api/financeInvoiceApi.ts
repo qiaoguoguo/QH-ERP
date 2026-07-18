@@ -11,7 +11,7 @@ import {
 } from './financeStage028ApiCore'
 
 export type InvoiceStatus = 'DRAFT' | 'CONFIRMED' | 'CANCELLED'
-export type InvoiceType = 'SPECIAL_VAT' | 'NORMAL_VAT' | 'NONE'
+export type InvoiceType = 'SPECIAL_VAT' | 'GENERAL_VAT' | 'NONE'
 export type PurchaseInvoiceSourceType = 'PURCHASE_RECEIPT' | 'OUTSOURCING_RECEIPT' | 'OUTSOURCING_ORDER'
 export type MatchStatus = 'UNMATCHED' | 'MATCHED' | 'EXCEPTION'
 
@@ -67,7 +67,10 @@ export interface PurchaseInvoiceCandidateListParams {
 }
 
 export interface SalesInvoicePayload extends VersionedActionPayload {
+  sourceType?: 'SALES_SHIPMENT'
+  sourceId?: ResourceId | null
   invoiceDate: string
+  dueDate?: string | null
   invoiceType: InvoiceType
   externalInvoiceNo?: string
   customerId: ResourceId
@@ -81,8 +84,12 @@ export interface SalesInvoicePayload extends VersionedActionPayload {
 }
 
 export interface PurchaseInvoicePayload extends VersionedActionPayload {
+  settlementKind?: 'STANDARD_PURCHASE' | 'OUTSOURCING'
+  sourceId?: ResourceId | null
   invoiceDate: string
+  dueDate?: string | null
   invoiceType: InvoiceType
+  supplierInvoiceNo?: string
   externalInvoiceNo?: string
   supplierId: ResourceId
   sourceType: PurchaseInvoiceSourceType
@@ -164,6 +171,18 @@ export interface PurchaseInvoiceRecord {
 
 export interface SalesInvoiceCandidateLine {
   sourceLineId: ResourceId
+  sourceType?: string
+  sourceId?: ResourceId
+  customerId?: ResourceId
+  customerName?: string
+  supplierId?: ResourceId
+  supplierName?: string
+  ownershipType?: OwnershipType
+  projectId?: ResourceId | null
+  projectName?: string | null
+  orderLineId?: ResourceId | null
+  receiptLineId?: ResourceId | null
+  outsourcingReceiptLineId?: ResourceId | null
   sourceNo: string
   lineNo?: number
   materialCode?: string
@@ -177,12 +196,29 @@ export interface SalesInvoiceCandidateLine {
   pretaxAmount?: FinanceAmount
   taxAmount?: FinanceAmount
   totalAmount?: FinanceAmount
+  availableAmount?: FinanceAmount
 }
 
 export type PurchaseInvoiceCandidateLine = SalesInvoiceCandidateLine
 
 export interface PurchaseInvoiceMatchingResult {
   status: MatchStatus
+  rows?: Array<{
+    key?: string
+    lineNo?: number
+    materialCode?: string | null
+    materialName?: string | null
+    order?: Record<string, FinanceAmount | string | number | null | undefined>
+    receipt?: Record<string, FinanceAmount | string | number | null | undefined>
+    invoice?: Record<string, FinanceAmount | string | number | null | undefined>
+    differences?: Array<{
+      type: string
+      message: string
+      orderValue?: string | null
+      receiptValue?: string | null
+      invoiceValue?: string | null
+    }>
+  }>
   differences: Array<{
     type: string
     message: string

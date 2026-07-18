@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeExpenseApi, type ExpenseRecord } from '../../shared/api/financeExpenseApi'
+import { useAuthStore } from '../../stores/authStore'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { financeErrorMessage, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, ownershipTypeText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
+import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import './Finance028Shared.css'
 
 const route = useRoute()
 const router = useRouter()
+const authStore = useAuthStore()
 const record = ref<ExpenseRecord | null>(null)
 const error = ref('')
+const actionError = ref('')
+const actionLoading = ref(false)
+
+const canConfirm = computed(() => record.value?.allowedActions?.includes('CONFIRM') && authStore.hasPermission(financePermissions.expenseConfirm))
+const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.expenseCancel))
 
 async function loadRecord() {
   try {
@@ -19,13 +28,48 @@ async function loadRecord() {
   }
 }
 
+async function runAction(action: 'confirm' | 'cancel') {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  const label = action === 'confirm' ? '确认' : '取消'
+  if (!(await confirmAction(`${label}费用单“${record.value.expenseNo}”？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    const payload = {
+      version: record.value.version,
+      idempotencyKey: `${action}-expense-${record.value.id}-${Date.now()}`,
+    }
+    if (action === 'confirm') {
+      await financeExpenseApi.expenses.confirm(record.value.id, payload)
+    } else {
+      await financeExpenseApi.expenses.cancel(record.value.id, payload)
+    }
+    await loadRecord()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
 <template>
   <MasterDataTableView title="费用单详情" description="查看费用行、来源快照、应付链接、付款核销和非正式成本提示。">
-    <template #actions><el-button @click="router.push({ name: 'finance-expenses' })">返回列表</el-button></template>
-    <template #alerts><el-alert v-if="error" type="error" :title="error" :closable="false" /></template>
+    <template #actions>
+      <el-button @click="router.push({ name: 'finance-expenses' })">返回列表</el-button>
+      <el-button v-if="canConfirm" data-test="confirm-expense" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runAction('confirm')">确认</el-button>
+      <el-button v-if="canCancel" data-test="cancel-expense" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="runAction('cancel')">取消</el-button>
+    </template>
+    <template #alerts>
+      <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
+    </template>
     <div v-if="record" class="finance-summary-strip">
       <div><span>费用状态</span><strong>{{ invoiceStatusText(record.status) }}</strong></div>
       <div><span>供应商</span><strong>{{ record.supplierName }}</strong></div>
@@ -43,5 +87,6 @@ onMounted(loadRecord)
       <section class="finance-section"><span class="finance-section-title">非正式成本提示</span><p>028 不写库存价值、工单成本或项目利润。</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-if="!record.voucherDrafts?.length">暂无凭证草稿</p><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
     </div>
+    <FinanceSourceTracePanel v-if="record" :sources="record.sources ?? []" />
   </MasterDataTableView>
 </template>

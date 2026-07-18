@@ -2,50 +2,108 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeInvoiceApi, type InvoiceType, type SalesInvoiceCandidateLine, type SalesInvoicePayload, type SalesInvoiceRecord } from '../../shared/api/financeInvoiceApi'
+import { masterDataApi, type PartnerRecord } from '../../shared/api/masterDataApi'
+import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, formatFinanceAmount } from './financePageHelpers'
+import { financeErrorMessage, formatFinanceAmount, normalizeOptionalId, ownershipTypeText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const route = useRoute()
 const router = useRouter()
 const isEdit = computed(() => route.name === 'finance-sales-invoice-edit')
+const customers = ref<PartnerRecord[]>([])
+const projects = ref<SalesProjectSummary[]>([])
 const candidates = ref<SalesInvoiceCandidateLine[]>([])
 const selected = ref<SalesInvoiceCandidateLine[]>([])
 const detail = ref<SalesInvoiceRecord | null>(null)
 const loading = ref(false)
+const candidatesLoading = ref(false)
 const error = ref('')
 const submitting = ref(false)
+const candidatePagination = reactive({ page: 1, pageSize: 10, total: 0 })
+const candidateFilters = reactive({ keyword: '', contractNo: '', orderNo: '', shipmentDateFrom: '', shipmentDateTo: '' })
 const form = reactive({
   invoiceDate: '',
-  invoiceType: 'SPECIAL_VAT' as InvoiceType,
+  invoiceType: 'GENERAL_VAT' as InvoiceType,
   externalInvoiceNo: '',
-  customerId: 8,
-  ownershipType: 'PROJECT' as const,
-  projectId: 18,
+  customerId: '' as string | number | '',
+  ownershipType: 'PUBLIC' as 'PROJECT' | 'PUBLIC',
+  projectId: '' as string | number | '',
   remark: '',
 })
+
+const selectedCustomerName = computed(() => customers.value.find((item) => String(item.id) === String(form.customerId))?.name ?? '')
+const selectedProjectName = computed(() => projects.value.find((item) => String(item.id) === String(form.projectId))?.name ?? '')
+const selectedCandidateBalance = computed(() => selected.value[0]?.availableAmount ?? selected.value[0]?.totalAmount ?? candidates.value[0]?.availableAmount ?? candidates.value[0]?.totalAmount ?? '0.00')
+const selectedTotalText = computed(() => selected.value.length ? formatFinanceAmount(selected.value[0].totalAmount) : '0.00')
+const saveDisabledReason = computed(() => {
+  if (!form.invoiceDate) return '请选择开票日期'
+  if (!form.customerId) return '请选择客户'
+  if (form.ownershipType === 'PROJECT' && !form.projectId) return '请选择项目'
+  if (selected.value.length === 0) return '请选择销售出库来源'
+  return ''
+})
+
+async function loadMasterData() {
+  const [customerPage, projectPage] = await Promise.all([
+    masterDataApi.customers.list({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 }),
+    salesProjectApi.projects.list({ keyword: '', status: 'ACTIVE', page: 1, pageSize: 200 }),
+  ])
+  customers.value = pageItems(customerPage)
+  projects.value = pageItems(projectPage)
+}
+
+function fillFromCandidate(line: SalesInvoiceCandidateLine) {
+  if (line.customerId !== undefined) {
+    form.customerId = line.customerId
+  }
+  if (line.ownershipType) {
+    form.ownershipType = line.ownershipType
+  }
+  form.projectId = line.ownershipType === 'PROJECT' ? (line.projectId ?? '') : ''
+}
+
+async function loadCandidates() {
+  candidatesLoading.value = true
+  try {
+    const page = await financeInvoiceApi.salesInvoiceCandidates.list({
+      keyword: candidateFilters.keyword,
+      customerId: normalizeOptionalId(form.customerId),
+      projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) : undefined,
+      contractNo: candidateFilters.contractNo,
+      orderNo: candidateFilters.orderNo,
+      shipmentDateFrom: candidateFilters.shipmentDateFrom,
+      shipmentDateTo: candidateFilters.shipmentDateTo,
+      page: candidatePagination.page,
+      pageSize: candidatePagination.pageSize,
+    })
+    candidates.value = pageItems(page)
+    candidatePagination.total = Number(page.total)
+    if (!form.customerId && candidates.value[0]) {
+      fillFromCandidate(candidates.value[0])
+    }
+  } finally {
+    candidatesLoading.value = false
+  }
+}
 
 async function loadData() {
   loading.value = true
   error.value = ''
   try {
+    await loadMasterData()
     if (isEdit.value) {
       detail.value = await financeInvoiceApi.salesInvoices.get(route.params.id as string)
       form.invoiceDate = detail.value.invoiceDate
+      form.invoiceType = detail.value.invoiceType
       form.externalInvoiceNo = detail.value.externalInvoiceNo ?? ''
+      form.customerId = (detail.value as SalesInvoiceRecord & { customerId?: string | number }).customerId ?? ''
+      form.ownershipType = detail.value.ownershipType
+      form.projectId = (detail.value as SalesInvoiceRecord & { projectId?: string | number | null }).projectId ?? ''
+      form.remark = ''
     }
-    candidates.value = pageItems(await financeInvoiceApi.salesInvoiceCandidates.list({
-      keyword: '',
-      customerId: undefined,
-      projectId: undefined,
-      contractNo: '',
-      orderNo: '',
-      shipmentDateFrom: '',
-      shipmentDateTo: '',
-      page: 1,
-      pageSize: 50,
-    }))
+    await loadCandidates()
   } catch (caught) {
     error.value = financeErrorMessage(caught)
   } finally {
@@ -57,21 +115,36 @@ function selectSourceLine(line: SalesInvoiceCandidateLine) {
   if (!selected.value.some((item) => item.sourceLineId === line.sourceLineId)) {
     selected.value = [...selected.value, line]
   }
+  fillFromCandidate(line)
+}
+
+function searchCandidates() {
+  candidatePagination.page = 1
+  void loadCandidates()
+}
+
+function changeCandidatePage(page: number) {
+  candidatePagination.page = page
+  void loadCandidates()
 }
 
 async function save() {
-  if (submitting.value) {
+  if (submitting.value || saveDisabledReason.value) {
     return
   }
   submitting.value = true
+  error.value = ''
   try {
+    const first = selected.value[0]
     const payload: SalesInvoicePayload = {
+      sourceType: 'SALES_SHIPMENT',
+      sourceId: first.sourceId ?? null,
       invoiceDate: form.invoiceDate,
       invoiceType: form.invoiceType,
       externalInvoiceNo: form.externalInvoiceNo,
       customerId: form.customerId,
       ownershipType: form.ownershipType,
-      projectId: form.projectId,
+      projectId: form.ownershipType === 'PROJECT' ? normalizeOptionalId(form.projectId) ?? null : null,
       sourceLines: selected.value.map((line) => ({
         sourceLineId: line.sourceLineId,
         invoiceQuantity: String(line.invoiceQuantity),
@@ -99,17 +172,34 @@ onMounted(loadData)
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="loading" type="info" title="销售发票表单加载中" :closable="false" />
+      <el-alert v-if="saveDisabledReason" type="warning" :title="saveDisabledReason" :closable="false" />
     </template>
 
     <div class="finance-summary-strip">
-      <div><span>客户</span><strong>华东客户</strong></div>
-      <div><span>项目/公共归属</span><strong>项目 A</strong></div>
-      <div><span>来源出库净可开票余额</span><strong>{{ candidates.length ? formatFinanceAmount(candidates[0].totalAmount) : '0.00' }}</strong></div>
-      <div><span>本次价税合计</span><strong>{{ selected.length ? formatFinanceAmount(selected[0].totalAmount) : '0.00' }}</strong></div>
+      <div><span>客户</span><strong>{{ selectedCustomerName || '待选择' }}</strong></div>
+      <div><span>项目/公共归属</span><strong>{{ ownershipTypeText(form.ownershipType) }} {{ selectedProjectName }}</strong></div>
+      <div><span>来源出库净可开票余额</span><strong>{{ formatFinanceAmount(selectedCandidateBalance) }}</strong></div>
+      <div><span>本次价税合计</span><strong>{{ selectedTotalText }}</strong></div>
     </div>
 
     <el-form label-position="top" class="finance-form">
       <div class="finance-form-grid">
+        <el-form-item label="客户">
+          <el-select v-model="form.customerId" filterable clearable placeholder="选择客户" @change="searchCandidates">
+            <el-option v-for="customer in customers" :key="customer.id" :label="customer.name" :value="customer.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目/公共归属">
+          <el-select v-model="form.ownershipType" placeholder="选择项目或公共" @change="searchCandidates">
+            <el-option label="公共" value="PUBLIC" />
+            <el-option label="项目" value="PROJECT" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="项目">
+          <el-select v-model="form.projectId" filterable clearable :disabled="form.ownershipType === 'PUBLIC'" placeholder="选择项目" @change="searchCandidates">
+            <el-option v-for="project in projects" :key="project.id" :label="`${project.projectNo} ${project.name}`" :value="project.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="开票日期">
           <el-date-picker v-model="form.invoiceDate" name="sales-invoice-date" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="选择开票日期" />
         </el-form-item>
@@ -118,15 +208,23 @@ onMounted(loadData)
         </el-form-item>
         <el-form-item label="发票类型">
           <el-select v-model="form.invoiceType" placeholder="选择发票类型">
+            <el-option label="增值税普通发票" value="GENERAL_VAT" />
             <el-option label="增值税专用发票" value="SPECIAL_VAT" />
-            <el-option label="增值税普通发票" value="NORMAL_VAT" />
+            <el-option label="无票" value="NONE" />
           </el-select>
         </el-form-item>
       </div>
     </el-form>
 
+    <el-form class="query-form" inline>
+      <el-form-item label="来源关键词"><el-input v-model="candidateFilters.keyword" clearable placeholder="出库号、物料或客户" /></el-form-item>
+      <el-form-item label="合同"><el-input v-model="candidateFilters.contractNo" clearable placeholder="合同号" /></el-form-item>
+      <el-form-item label="订单"><el-input v-model="candidateFilters.orderNo" clearable placeholder="订单号" /></el-form-item>
+      <el-form-item><el-button type="primary" @click="searchCandidates">查询来源</el-button></el-form-item>
+    </el-form>
+
     <div class="table-scroll">
-      <el-table :data="candidates" empty-text="当前条件下无可用销售出库来源" stripe>
+      <el-table :data="candidates" :empty-text="candidatesLoading ? '来源加载中' : '当前条件下无可用销售出库来源'" stripe>
         <el-table-column prop="sourceNo" label="出库号" min-width="150" />
         <el-table-column prop="lineNo" label="行号" min-width="80" />
         <el-table-column prop="materialName" label="物料" min-width="160" show-overflow-tooltip />
@@ -136,17 +234,21 @@ onMounted(loadData)
         <el-table-column prop="invoiceQuantity" label="本次数量" min-width="120" align="right" />
         <el-table-column prop="pretaxUnitPrice" label="未税单价" min-width="120" align="right" />
         <el-table-column prop="taxRate" label="税率" min-width="100" align="right" />
+        <el-table-column label="净可开余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount ?? row.totalAmount) }}</template></el-table-column>
         <el-table-column prop="totalAmount" label="含税金额" min-width="120" align="right" />
         <el-table-column label="操作" fixed="right" min-width="90">
           <template #default="{ row }">
-            <el-button data-test="select-source-line" text @click="selectSourceLine(row)">选择</el-button>
+            <el-button data-test="select-source-line" text :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectSourceLine(row)">
+              {{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </div>
+    <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="candidatePagination.total" :page-size="candidatePagination.pageSize" :current-page="candidatePagination.page" @current-change="changeCandidatePage" />
     <div class="finance-form-footer">
       <el-button @click="router.back()">取消</el-button>
-      <el-button data-test="save-sales-invoice" type="primary" :loading="submitting" :disabled="submitting || selected.length === 0" @click="save">保存草稿</el-button>
+      <el-button data-test="save-sales-invoice" type="primary" :loading="submitting" :disabled="submitting || Boolean(saveDisabledReason)" @click="save">保存草稿</el-button>
     </div>
   </MasterDataTableView>
 </template>

@@ -287,23 +287,28 @@ public class FinanceAdminService {
 			LocalDate dateFrom, LocalDate dateTo, Long receivableId, int page, int pageSize) {
 		QueryParts queryParts = receiptQueryParts(keyword, customerId, status, dateFrom, dateTo, receivableId);
 		long total = this.jdbcTemplate.queryForObject("""
-				select count(*)
+				select count(distinct p.id)
 				from fin_receipt p
-				join fin_receipt_allocation a on a.receipt_id = p.id
-				join fin_receivable r on r.id = a.receivable_id
 				join mst_customer c on c.id = p.customer_id
+				left join fin_receipt_allocation a on a.receipt_id = p.id
+				left join fin_receivable r on r.id = a.receivable_id
 				%s
 				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
 		List<ReceiptSummaryResponse> items = this.jdbcTemplate.query("""
-				select p.id, p.receipt_no, a.receivable_id, r.receivable_no, p.customer_id, c.name as customer_name,
+				select p.id, p.receipt_no,
+				       case when count(distinct r.id) = 1 then min(r.id) else null end as receivable_id,
+				       case when count(distinct r.id) = 1 then min(r.receivable_no) else '多目标核销' end as receivable_no,
+				       p.customer_id, c.name as customer_name,
 				       p.receipt_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
 				       p.updated_at, p.posted_by, p.posted_at
 				from fin_receipt p
-				join fin_receipt_allocation a on a.receipt_id = p.id
-				join fin_receivable r on r.id = a.receivable_id
 				join mst_customer c on c.id = p.customer_id
+				left join fin_receipt_allocation a on a.receipt_id = p.id
+				left join fin_receivable r on r.id = a.receivable_id
 				%s
+				group by p.id, p.receipt_no, p.customer_id, c.name, p.receipt_date, p.amount, p.method,
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
 				order by p.updated_at desc, p.id desc
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapReceiptSummary, args.toArray());
@@ -473,8 +478,8 @@ public class FinanceAdminService {
 				select count(*)
 				from fin_payable p
 				join mst_supplier s on s.id = p.supplier_id
-				join proc_purchase_receipt pr on pr.id = p.source_id
-				join proc_purchase_order po on po.id = pr.order_id
+				left join proc_purchase_receipt pr on p.source_type = 'PURCHASE_RECEIPT' and pr.id = p.source_id
+				left join proc_purchase_order po on po.id = pr.order_id
 				%s
 				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
@@ -487,8 +492,8 @@ public class FinanceAdminService {
 				       p.closed_by, p.closed_at
 				from fin_payable p
 				join mst_supplier s on s.id = p.supplier_id
-				join proc_purchase_receipt pr on pr.id = p.source_id
-				join proc_purchase_order po on po.id = pr.order_id
+				left join proc_purchase_receipt pr on p.source_type = 'PURCHASE_RECEIPT' and pr.id = p.source_id
+				left join proc_purchase_order po on po.id = pr.order_id
 				%s
 				order by p.updated_at desc, p.id desc
 				limit ? offset ?
@@ -638,23 +643,28 @@ public class FinanceAdminService {
 			LocalDate dateFrom, LocalDate dateTo, Long payableId, int page, int pageSize) {
 		QueryParts queryParts = paymentQueryParts(keyword, supplierId, status, dateFrom, dateTo, payableId);
 		long total = this.jdbcTemplate.queryForObject("""
-				select count(*)
+				select count(distinct p.id)
 				from fin_payment p
-				join fin_payment_allocation a on a.payment_id = p.id
-				join fin_payable py on py.id = a.payable_id
 				join mst_supplier s on s.id = p.supplier_id
+				left join fin_payment_allocation a on a.payment_id = p.id
+				left join fin_payable py on py.id = a.payable_id
 				%s
 				""".formatted(queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, pageSize, page);
 		List<PaymentSummaryResponse> items = this.jdbcTemplate.query("""
-				select p.id, p.payment_no, a.payable_id, py.payable_no, p.supplier_id, s.name as supplier_name,
+				select p.id, p.payment_no,
+				       case when count(distinct py.id) = 1 then min(py.id) else null end as payable_id,
+				       case when count(distinct py.id) = 1 then min(py.payable_no) else '多目标核销' end as payable_no,
+				       p.supplier_id, s.name as supplier_name,
 				       p.payment_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
 				       p.updated_at, p.posted_by, p.posted_at
 				from fin_payment p
-				join fin_payment_allocation a on a.payment_id = p.id
-				join fin_payable py on py.id = a.payable_id
 				join mst_supplier s on s.id = p.supplier_id
+				left join fin_payment_allocation a on a.payment_id = p.id
+				left join fin_payable py on py.id = a.payable_id
 				%s
+				group by p.id, p.payment_no, p.supplier_id, s.name, p.payment_date, p.amount, p.method,
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
 				order by p.updated_at desc, p.id desc
 				limit ? offset ?
 				""".formatted(queryParts.where()), this::mapPaymentSummary, args.toArray());
@@ -1277,14 +1287,19 @@ public class FinanceAdminService {
 
 	private Optional<ReceiptSummaryResponse> receiptSummary(Long id) {
 		return this.jdbcTemplate.query("""
-				select p.id, p.receipt_no, a.receivable_id, r.receivable_no, p.customer_id, c.name as customer_name,
+				select p.id, p.receipt_no,
+				       case when count(distinct r.id) = 1 then min(r.id) else null end as receivable_id,
+				       case when count(distinct r.id) = 1 then min(r.receivable_no) else '多目标核销' end as receivable_no,
+				       p.customer_id, c.name as customer_name,
 				       p.receipt_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
 				       p.updated_at, p.posted_by, p.posted_at
 				from fin_receipt p
-				join fin_receipt_allocation a on a.receipt_id = p.id
-				join fin_receivable r on r.id = a.receivable_id
 				join mst_customer c on c.id = p.customer_id
+				left join fin_receipt_allocation a on a.receipt_id = p.id
+				left join fin_receivable r on r.id = a.receivable_id
 				where p.id = ?
+				group by p.id, p.receipt_no, p.customer_id, c.name, p.receipt_date, p.amount, p.method,
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
 				""", this::mapReceiptSummary, id).stream().findFirst();
 	}
 
@@ -1298,22 +1313,27 @@ public class FinanceAdminService {
 				       p.closed_by, p.closed_at
 				from fin_payable p
 				join mst_supplier s on s.id = p.supplier_id
-				join proc_purchase_receipt pr on pr.id = p.source_id
-				join proc_purchase_order po on po.id = pr.order_id
+				left join proc_purchase_receipt pr on p.source_type = 'PURCHASE_RECEIPT' and pr.id = p.source_id
+				left join proc_purchase_order po on po.id = pr.order_id
 				where p.id = ?
 				""", this::mapPayableSummary, id).stream().findFirst();
 	}
 
 	private Optional<PaymentSummaryResponse> paymentSummary(Long id) {
 		return this.jdbcTemplate.query("""
-				select p.id, p.payment_no, a.payable_id, py.payable_no, p.supplier_id, s.name as supplier_name,
+				select p.id, p.payment_no,
+				       case when count(distinct py.id) = 1 then min(py.id) else null end as payable_id,
+				       case when count(distinct py.id) = 1 then min(py.payable_no) else '多目标核销' end as payable_no,
+				       p.supplier_id, s.name as supplier_name,
 				       p.payment_date, p.amount, p.method, p.status, p.remark, p.created_by, p.created_at,
 				       p.updated_at, p.posted_by, p.posted_at
 				from fin_payment p
-				join fin_payment_allocation a on a.payment_id = p.id
-				join fin_payable py on py.id = a.payable_id
 				join mst_supplier s on s.id = p.supplier_id
+				left join fin_payment_allocation a on a.payment_id = p.id
+				left join fin_payable py on py.id = a.payable_id
 				where p.id = ?
+				group by p.id, p.payment_no, p.supplier_id, s.name, p.payment_date, p.amount, p.method,
+				         p.status, p.remark, p.created_by, p.created_at, p.updated_at, p.posted_by, p.posted_at
 				""", this::mapPaymentSummary, id).stream().findFirst();
 	}
 
@@ -1570,7 +1590,7 @@ public class FinanceAdminService {
 
 	private ReceiptSummaryResponse mapReceiptSummary(ResultSet rs, int rowNum) throws SQLException {
 		return new ReceiptSummaryResponse(rs.getLong("id"), rs.getString("receipt_no"),
-				rs.getLong("receivable_id"), rs.getString("receivable_no"), rs.getLong("customer_id"),
+				nullableLong(rs, "receivable_id"), rs.getString("receivable_no"), rs.getLong("customer_id"),
 				rs.getString("customer_name"), rs.getObject("receipt_date", LocalDate.class),
 				rs.getBigDecimal("amount"), rs.getString("method"), rs.getString("status"), rs.getString("remark"),
 				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
@@ -1579,12 +1599,17 @@ public class FinanceAdminService {
 	}
 
 	private PaymentSummaryResponse mapPaymentSummary(ResultSet rs, int rowNum) throws SQLException {
-		return new PaymentSummaryResponse(rs.getLong("id"), rs.getString("payment_no"), rs.getLong("payable_id"),
+		return new PaymentSummaryResponse(rs.getLong("id"), rs.getString("payment_no"), nullableLong(rs, "payable_id"),
 				rs.getString("payable_no"), rs.getLong("supplier_id"), rs.getString("supplier_name"),
 				rs.getObject("payment_date", LocalDate.class), rs.getBigDecimal("amount"), rs.getString("method"),
 				rs.getString("status"), rs.getString("remark"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
 				rs.getString("posted_by"), rs.getObject("posted_at", OffsetDateTime.class));
+	}
+
+	private Long nullableLong(ResultSet rs, String column) throws SQLException {
+		long value = rs.getLong(column);
+		return rs.wasNull() ? null : value;
 	}
 
 	private ShipmentSource mapShipmentSource(ResultSet rs, int rowNum) throws SQLException {

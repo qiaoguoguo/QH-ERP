@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFinanceInvoiceApi, type PurchaseInvoicePayload, type SalesInvoicePayload } from './financeInvoiceApi'
+import { createFinanceInvoiceApi, type InvoiceType, type PurchaseInvoicePayload, type SalesInvoicePayload } from './financeInvoiceApi'
+import type { FinanceAmount } from './financeStage028ApiCore'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T, status = 200) {
   return {
@@ -15,6 +18,20 @@ function apiResponse<T>(data: T, status = 200) {
 }
 
 describe('028 发票分域 API', () => {
+  it('发票 DTO 使用冻结普通发票枚举和十进制字符串金额', () => {
+    const typeChecks = {
+      amountIsString: true as AssertTrue<FinanceAmount extends string ? true : false>,
+      invoiceTypeIncludesGeneralVat: true as AssertTrue<'GENERAL_VAT' extends InvoiceType ? true : false>,
+      invoiceTypeDoesNotExposeNormalVat: true as AssertTrue<'NORMAL_VAT' extends InvoiceType ? false : true>,
+    }
+
+    expect(typeChecks).toEqual({
+      amountIsString: true,
+      invoiceTypeIncludesGeneralVat: true,
+      invoiceTypeDoesNotExposeNormalVat: true,
+    })
+  })
+
   it('按独立端点查询销售和采购发票及候选来源，并过滤空查询值', async () => {
     const fetcher = vi.fn()
     Array.from({ length: 4 }).forEach(() => {

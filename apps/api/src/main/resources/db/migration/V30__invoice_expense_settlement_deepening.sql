@@ -33,6 +33,7 @@ create table fin_sales_invoice (
 	status varchar(32) not null,
 	linked_receivable_id bigint,
 	idempotency_key varchar(120),
+	request_fingerprint varchar(64),
 	party_snapshot jsonb not null default '{}'::jsonb,
 	source_snapshot jsonb not null default '{}'::jsonb,
 	remark varchar(500),
@@ -68,7 +69,7 @@ create table fin_sales_invoice (
 create unique index uk_fin_sales_invoice_idempotency
 	on fin_sales_invoice (created_by, idempotency_key)
 	where idempotency_key is not null;
-create unique index uk_fin_sales_invoice_source_confirmed
+create index idx_fin_sales_invoice_source_active
 	on fin_sales_invoice (source_type, source_id)
 	where status <> 'CANCELLED';
 create index idx_fin_sales_invoice_status_date
@@ -100,13 +101,15 @@ create table fin_sales_invoice_line (
 	constraint fk_fin_sales_invoice_line_material foreign key (material_id) references mst_material (id),
 	constraint fk_fin_sales_invoice_line_unit foreign key (unit_id) references mst_unit (id),
 	constraint uk_fin_sales_invoice_line_no unique (sales_invoice_id, line_no),
-	constraint uk_fin_sales_invoice_line_source unique (source_line_id),
 	constraint ck_fin_sales_invoice_line_values check (
 		quantity > 0 and tax_rate >= 0 and tax_excluded_unit_price >= 0 and tax_included_unit_price >= 0
 		and tax_excluded_amount >= 0 and tax_amount >= 0 and tax_included_amount >= 0
 		and tax_excluded_amount + tax_amount = tax_included_amount
 	)
 );
+
+create index idx_fin_sales_invoice_line_source
+	on fin_sales_invoice_line (source_line_id);
 
 create table fin_sales_invoice_receivable_link (
 	id bigserial primary key,
@@ -118,7 +121,6 @@ create table fin_sales_invoice_receivable_link (
 	constraint fk_fin_sales_invoice_link_invoice foreign key (sales_invoice_id) references fin_sales_invoice (id) on delete cascade,
 	constraint fk_fin_sales_invoice_link_receivable foreign key (receivable_id) references fin_receivable (id),
 	constraint uk_fin_sales_invoice_link_invoice unique (sales_invoice_id),
-	constraint uk_fin_sales_invoice_link_receivable unique (receivable_id),
 	constraint ck_fin_sales_invoice_link_mode check (link_mode in ('BIND_EXISTING', 'GENERATE_NEW'))
 );
 
@@ -144,6 +146,7 @@ create table fin_purchase_invoice (
 	status varchar(32) not null,
 	linked_payable_id bigint,
 	idempotency_key varchar(120),
+	request_fingerprint varchar(64),
 	party_snapshot jsonb not null default '{}'::jsonb,
 	source_snapshot jsonb not null default '{}'::jsonb,
 	remark varchar(500),
@@ -186,7 +189,7 @@ create table fin_purchase_invoice (
 create unique index uk_fin_purchase_invoice_idempotency
 	on fin_purchase_invoice (created_by, idempotency_key)
 	where idempotency_key is not null;
-create unique index uk_fin_purchase_invoice_source_active
+create index idx_fin_purchase_invoice_source_active
 	on fin_purchase_invoice (source_type, source_id)
 	where status <> 'CANCELLED';
 create index idx_fin_purchase_invoice_status_date
@@ -252,7 +255,6 @@ create table fin_purchase_invoice_payable_link (
 	constraint fk_fin_purchase_invoice_link_invoice foreign key (purchase_invoice_id) references fin_purchase_invoice (id) on delete cascade,
 	constraint fk_fin_purchase_invoice_link_payable foreign key (payable_id) references fin_payable (id),
 	constraint uk_fin_purchase_invoice_link_invoice unique (purchase_invoice_id),
-	constraint uk_fin_purchase_invoice_link_payable unique (payable_id),
 	constraint ck_fin_purchase_invoice_link_mode check (link_mode in ('BIND_EXISTING', 'GENERATE_NEW'))
 );
 
@@ -272,6 +274,7 @@ create table fin_expense (
 	status varchar(32) not null,
 	linked_payable_id bigint,
 	idempotency_key varchar(120),
+	request_fingerprint varchar(64),
 	party_snapshot jsonb not null default '{}'::jsonb,
 	source_snapshot jsonb not null default '{}'::jsonb,
 	remark varchar(500),
@@ -386,6 +389,7 @@ create table fin_cash_idempotency (
 	document_id bigint not null,
 	created_by varchar(64) not null,
 	idempotency_key varchar(120) not null,
+	request_fingerprint varchar(64) not null,
 	created_at timestamptz not null,
 	constraint uk_fin_cash_idempotency unique (document_type, created_by, idempotency_key),
 	constraint ck_fin_cash_idempotency_type check (document_type in ('RECEIPT', 'PAYMENT'))
@@ -404,6 +408,7 @@ create table fin_settlement_allocation (
 	total_amount numeric(18, 2) not null,
 	status varchar(32) not null,
 	idempotency_key varchar(120),
+	request_fingerprint varchar(64),
 	remark varchar(500),
 	created_by varchar(64) not null,
 	created_at timestamptz not null,
@@ -465,6 +470,7 @@ create table fin_voucher_draft (
 	formal_voucher_no varchar(64),
 	posting_status varchar(32),
 	idempotency_key varchar(120),
+	request_fingerprint varchar(64),
 	created_by varchar(64) not null,
 	created_at timestamptz not null,
 	updated_by varchar(64) not null,
@@ -493,6 +499,25 @@ create table fin_voucher_draft (
 create unique index uk_fin_voucher_draft_idempotency
 	on fin_voucher_draft (created_by, idempotency_key)
 	where idempotency_key is not null;
+
+create table fin_stage028_action_idempotency (
+	id bigserial primary key,
+	operator_user_id bigint not null,
+	operator_username varchar(64) not null,
+	action varchar(64) not null,
+	resource_type varchar(64) not null,
+	resource_id bigint not null,
+	resource_version bigint not null,
+	idempotency_key varchar(120) not null,
+	request_fingerprint varchar(64) not null,
+	result_resource_type varchar(64) not null,
+	result_resource_id bigint not null,
+	result_version bigint not null,
+	created_at timestamptz not null default now(),
+	constraint uk_fin_stage028_action_idempotency unique (
+		operator_user_id, action, resource_type, resource_id, idempotency_key
+	)
+);
 
 create table fin_voucher_draft_line (
 	id bigserial primary key,

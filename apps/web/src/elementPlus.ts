@@ -29,6 +29,7 @@ import {
   ElRadioGroup,
   ElResult,
   ElScrollbar,
+  ElSegmented,
   ElSelect,
   ElSkeleton,
   ElSubMenu,
@@ -78,6 +79,7 @@ import 'element-plus/theme-chalk/el-radio-button.css'
 import 'element-plus/theme-chalk/el-radio-group.css'
 import 'element-plus/theme-chalk/el-result.css'
 import 'element-plus/theme-chalk/el-scrollbar.css'
+import 'element-plus/theme-chalk/el-segmented.css'
 import 'element-plus/theme-chalk/el-select.css'
 import 'element-plus/theme-chalk/el-skeleton.css'
 import 'element-plus/theme-chalk/el-sub-menu.css'
@@ -123,6 +125,7 @@ const elementPlusComponents = [
   ElRadioGroup,
   ElResult,
   ElScrollbar,
+  ElSegmented,
   ElSelect,
   ElSkeleton,
   ElSubMenu,

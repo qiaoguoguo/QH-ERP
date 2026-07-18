@@ -8,7 +8,7 @@ function apiResponse<T>(data: T) {
 describe('028 预收预付与核销 API', () => {
   it('查询预收预付、资金池和目标池时使用分域端点与独立分页', async () => {
     const fetcher = vi.fn()
-    Array.from({ length: 4 }).forEach(() => {
+    Array.from({ length: 5 }).forEach(() => {
       fetcher.mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 50 }))
     })
     const api = createFinanceSettlementApi({ fetcher })
@@ -17,11 +17,13 @@ describe('028 预收预付与核销 API', () => {
     await api.prepayments.list({ keyword: 'PM', supplierId: 9, availableOnly: true, page: 1, pageSize: 20 })
     await api.settlementWorkbench.funds({ direction: 'CUSTOMER', partnerId: 8, ownershipType: 'PROJECT', projectId: 18, page: 1, pageSize: 50 })
     await api.settlementWorkbench.targets({ direction: 'CUSTOMER', partnerId: 8, ownershipType: 'PROJECT', projectId: 18, page: 1, pageSize: 50 })
+    await api.settlementWorkbench.get(61)
 
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/finance/advance-receipts?keyword=RC&customerId=8&availableOnly=true&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/finance/prepayments?keyword=PM&supplierId=9&availableOnly=true&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(3, '/api/admin/finance/settlement-workbench/funds?direction=CUSTOMER&partnerId=8&ownershipType=PROJECT&projectId=18&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/finance/settlement-workbench/targets?direction=CUSTOMER&partnerId=8&ownershipType=PROJECT&projectId=18&page=1&pageSize=50', expect.objectContaining({ method: 'GET' }))
+    expect(fetcher).toHaveBeenNthCalledWith(5, '/api/admin/finance/settlement-workbench/allocations/61', expect.objectContaining({ method: 'GET' }))
   })
 
   it('资金草稿和多目标核销写操作携带版本、幂等键与字符串金额', async () => {

@@ -1,11 +1,28 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createFinanceVoucherDraftApi } from './financeVoucherDraftApi'
+import { createFinanceVoucherDraftApi, type VoucherSourceType } from './financeVoucherDraftApi'
+
+type AssertTrue<T extends true> = T
 
 function apiResponse<T>(data: T) {
   return { ok: true, status: 200, json: async () => ({ success: true, code: 'OK', message: '成功', data }) }
 }
 
 describe('028 凭证草稿 API', () => {
+  it('凭证来源类型不包含后端不支持的预收预付业务语义', () => {
+    const typeContract: {
+      advanceReceiptDoesNotExposeAsVoucherSource: AssertTrue<'ADVANCE_RECEIPT' extends VoucherSourceType ? false : true>
+      prepaymentDoesNotExposeAsVoucherSource: AssertTrue<'PREPAYMENT' extends VoucherSourceType ? false : true>
+    } = {
+      advanceReceiptDoesNotExposeAsVoucherSource: true,
+      prepaymentDoesNotExposeAsVoucherSource: true,
+    }
+
+    expect(typeContract).toEqual({
+      advanceReceiptDoesNotExposeAsVoucherSource: true,
+      prepaymentDoesNotExposeAsVoucherSource: true,
+    })
+  })
+
   it('查询与操作凭证草稿时只使用非正式草稿端点', async () => {
     const fetcher = vi.fn()
       .mockResolvedValueOnce(apiResponse({ items: [], total: 0, page: 1, pageSize: 20 }))

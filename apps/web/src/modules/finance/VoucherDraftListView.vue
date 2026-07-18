@@ -2,12 +2,15 @@
 import { onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { financeVoucherDraftApi, type VoucherDraftRecord, type VoucherDraftStatus, type VoucherSourceType } from '../../shared/api/financeVoucherDraftApi'
+import { useAuthStore } from '../../stores/authStore'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
-import { financeErrorMessage, financeSourceTypeText, formatFinanceAmount, ownershipTypeText, voucherDraftStatusText } from './financePageHelpers'
+import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, ownershipTypeText, voucherDraftStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
 
 const router = useRouter()
+const authStore = useAuthStore()
 const filters = reactive<{ keyword: string; sourceType: '' | VoucherSourceType; status?: VoucherDraftStatus; balanced?: boolean; businessDateFrom: string; businessDateTo: string }>({
   keyword: '',
   sourceType: '',
@@ -20,6 +23,13 @@ const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<VoucherDraftRecord[]>([])
 const loading = ref(false)
 const error = ref('')
+const actionError = ref('')
+const generating = ref(false)
+const generation = reactive<{ sourceType: VoucherSourceType; sourceId: string; version: string }>({
+  sourceType: 'SALES_INVOICE',
+  sourceId: '',
+  version: '',
+})
 
 function balanceText(record: VoucherDraftRecord) {
   return record.balanced ? '借贷平衡' : '借贷不平衡'
@@ -77,13 +87,51 @@ function changePageSize(pageSize: number) {
   void loadRecords()
 }
 
+async function generateDraft() {
+  if (generating.value || !authStore.hasPermission(financePermissions.voucherDraftGenerate)) {
+    return
+  }
+  if (!generation.sourceId.trim() || !/^\d+$/.test(generation.version.trim())) {
+    actionError.value = '请填写来源 ID 和来源版本'
+    return
+  }
+  if (!(await confirmAction('从当前来源生成非正式凭证草稿？'))) {
+    return
+  }
+  generating.value = true
+  actionError.value = ''
+  try {
+    await financeVoucherDraftApi.voucherDrafts.generate({
+      sourceType: generation.sourceType,
+      sourceId: generation.sourceId.trim(),
+      version: Number(generation.version.trim()),
+      idempotencyKey: `voucher-draft-generate-${Date.now()}`,
+    })
+    await loadRecords()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    generating.value = false
+  }
+}
+
 onMounted(loadRecords)
 </script>
 
 <template>
   <MasterDataTableView title="凭证草稿" description="仅为 031 正式制证提供业务分类建议，不是正式凭证。">
     <template #actions>
-      <el-button type="primary">从来源生成草稿</el-button>
+      <el-select v-model="generation.sourceType" placeholder="选择来源类型" style="width: 150px">
+        <el-option label="销售发票" value="SALES_INVOICE" />
+        <el-option label="采购发票" value="PURCHASE_INVOICE" />
+        <el-option label="费用单" value="EXPENSE" />
+        <el-option label="收款" value="RECEIPT" />
+        <el-option label="付款" value="PAYMENT" />
+        <el-option label="核销" value="SETTLEMENT_ALLOCATION" />
+      </el-select>
+      <el-input v-model="generation.sourceId" name="voucher-source-id" clearable placeholder="来源 ID" style="width: 120px" />
+      <el-input v-model="generation.version" name="voucher-source-version" clearable placeholder="来源版本" style="width: 120px" />
+      <el-button data-test="generate-voucher-draft" type="primary" :loading="generating" :disabled="generating || !authStore.hasPermission(financePermissions.voucherDraftGenerate)" @click="generateDraft">从来源生成草稿</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>
@@ -123,6 +171,7 @@ onMounted(loadRecords)
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证草稿加载中" :closable="false" />
       <el-alert type="warning" title="凭证草稿不产生科目余额、会计期间或总账影响" :closable="false" />
     </template>

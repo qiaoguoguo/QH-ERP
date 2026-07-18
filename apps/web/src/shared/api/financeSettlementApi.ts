@@ -31,6 +31,9 @@ export interface AdvanceFundListParams {
 
 export interface SettlementPoolParams {
   direction: SettlementDirection
+  fundType?: FundType | null
+  fundId?: ResourceId | null
+  targetType?: TargetType | null
   partnerId?: ResourceId | null
   ownershipType?: OwnershipType | null
   projectId?: ResourceId | null
@@ -40,6 +43,8 @@ export interface SettlementPoolParams {
 
 export interface AdvanceFundPayload extends VersionedActionPayload {
   partnerId: ResourceId
+  customerId?: ResourceId | null
+  supplierId?: ResourceId | null
   ownershipType: OwnershipType
   projectId?: ResourceId | null
   businessDate: string
@@ -50,6 +55,10 @@ export interface AdvanceFundPayload extends VersionedActionPayload {
 }
 
 export interface SettlementAllocationPayload {
+  settlementSide?: 'RECEIVABLE' | 'PAYABLE'
+  cashSourceType?: FundType | 'RECEIPT' | 'PAYMENT'
+  cashSourceId?: ResourceId
+  businessDate?: string
   direction: SettlementDirection
   partnerId: ResourceId
   ownershipType: OwnershipType
@@ -57,6 +66,35 @@ export interface SettlementAllocationPayload {
   funds: Array<{ fundType: FundType; fundId: ResourceId; version: number; amount: FinanceMoneyPayload }>
   targets: Array<{ targetType: TargetType; targetId: ResourceId; version: number; amount: FinanceMoneyPayload }>
   idempotencyKey: string
+}
+
+export interface SettlementAllocationRecord {
+  id: ResourceId
+  allocationNo?: string
+  settlementSide?: string
+  direction?: SettlementDirection
+  cashSourceType?: string
+  cashSourceId?: ResourceId
+  fundNo?: string | null
+  partnerName?: string | null
+  ownershipType?: OwnershipType | null
+  projectName?: string | null
+  businessDate?: string | null
+  totalAmount?: FinanceAmount
+  amount?: FinanceAmount
+  status: string
+  version: number
+  allowedActions?: string[]
+  restrictedReasons?: string[]
+  lines: Array<{
+    targetType: string
+    targetId?: ResourceId
+    targetNo?: string
+    amount: FinanceAmount
+    sourceSummary?: string | null
+    restrictedReason?: string | null
+  }>
+  auditSummary?: unknown[]
 }
 
 export interface AdvanceFundRecord {
@@ -117,6 +155,7 @@ export interface FinanceSettlementApi {
   settlementWorkbench: {
     funds(params: SettlementPoolParams): Promise<PageResult<AdvanceFundRecord>>
     targets(params: SettlementPoolParams): Promise<PageResult<SettlementTargetRecord>>
+    get(id: ResourceId): Promise<SettlementAllocationRecord>
     create(payload: SettlementAllocationPayload): Promise<{ id: ResourceId; allocationNo?: string }>
     post(id: ResourceId, payload: VersionedActionPayload): Promise<{ id: ResourceId; allocationNo?: string }>
     cancel(id: ResourceId, payload: VersionedActionPayload): Promise<{ id: ResourceId; allocationNo?: string }>
@@ -129,7 +168,7 @@ export function createFinanceSettlementApi(options: FinanceStage028ApiOptions = 
   const prepaymentPath = (id?: ResourceId) => `/api/admin/finance/prepayments${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const allocationPath = (id?: ResourceId) => `/api/admin/finance/settlement-workbench/allocations${id === undefined ? '' : `/${api.encodeId(id)}`}`
   const advanceQueryKeys = ['keyword', 'customerId', 'supplierId', 'ownershipType', 'projectId', 'status', 'settlementStatus', 'businessDateFrom', 'businessDateTo', 'availableOnly', 'page', 'pageSize'] as const
-  const poolQueryKeys = ['direction', 'partnerId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
+  const poolQueryKeys = ['direction', 'fundType', 'fundId', 'targetType', 'partnerId', 'ownershipType', 'projectId', 'page', 'pageSize'] as const
 
   return {
     advanceReceipts: {
@@ -151,6 +190,7 @@ export function createFinanceSettlementApi(options: FinanceStage028ApiOptions = 
     settlementWorkbench: {
       funds: (params) => api.get<PageResult<AdvanceFundRecord>>('/api/admin/finance/settlement-workbench/funds', api.pickQuery(params, poolQueryKeys)),
       targets: (params) => api.get<PageResult<SettlementTargetRecord>>('/api/admin/finance/settlement-workbench/targets', api.pickQuery(params, poolQueryKeys)),
+      get: (id) => api.get<SettlementAllocationRecord>(allocationPath(id)),
       create: (payload) => api.write<{ id: ResourceId; allocationNo?: string }>('POST', allocationPath(), payload),
       post: (id, payload) => api.write<{ id: ResourceId; allocationNo?: string }>('PUT', `${allocationPath(id)}/post`, payload),
       cancel: (id, payload) => api.write<{ id: ResourceId; allocationNo?: string }>('PUT', `${allocationPath(id)}/cancel`, payload),

@@ -632,6 +632,7 @@ describe('账号权限路由守卫', () => {
       ['finance-prepayment-detail', '/finance/prepayments/:id', 'finance:prepayment:view'],
       ['finance-prepayment-edit', '/finance/prepayments/:id/edit', 'finance:prepayment:update'],
       ['finance-settlement-workbench', '/finance/settlement-workbench', 'finance:settlement-allocation:view'],
+      ['finance-settlement-allocation-detail', '/finance/settlement-workbench/allocations/:id', 'finance:settlement-allocation:view'],
       ['finance-voucher-drafts', '/finance/voucher-drafts', 'finance:voucher-draft:view'],
       ['finance-voucher-draft-detail', '/finance/voucher-drafts/:id', 'finance:voucher-draft:view'],
     ] as const

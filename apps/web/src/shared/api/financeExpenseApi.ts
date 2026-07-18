@@ -54,10 +54,17 @@ export interface ExpensePayload extends VersionedActionPayload {
   categoryId: ResourceId
   businessDate: string
   lines: Array<{
+    expenseCategory?: string
     categoryId: ResourceId
+    description?: string
+    sourceType?: ExpenseSourceType | string | null
+    sourceId?: ResourceId | null
+    sourceNo?: string | null
+    taxExcludedAmount?: FinanceMoneyPayload
     pretaxAmount: FinanceMoneyPayload
     taxRate: FinanceMoneyPayload
     taxAmount: FinanceMoneyPayload
+    taxIncludedAmount?: FinanceMoneyPayload
     totalAmount: FinanceMoneyPayload
   }>
   remark?: string
@@ -96,8 +103,16 @@ export interface ExpenseCategoryRecord {
 }
 
 export interface ExpenseSourceCandidateRecord {
+  sourceId?: ResourceId
   sourceType: string
   sourceNo: string
+  supplierId?: ResourceId
+  supplierName?: string
+  ownershipType?: OwnershipType
+  projectId?: ResourceId | null
+  projectName?: string | null
+  businessDate?: string | null
+  availableAmount?: FinanceAmount
   summary?: string
 }
 

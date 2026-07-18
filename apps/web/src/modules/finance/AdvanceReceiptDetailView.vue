@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeSettlementApi, type AdvanceFundRecord } from '../../shared/api/financeSettlementApi'
 import { useAuthStore } from '../../stores/authStore'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
   financeErrorMessage,
@@ -21,6 +22,8 @@ const authStore = useAuthStore()
 const record = ref<AdvanceFundRecord | null>(null)
 const loading = ref(false)
 const error = ref('')
+const actionError = ref('')
+const actionLoading = ref(false)
 
 const canEdit = computed(() => record.value?.allowedActions?.includes('UPDATE') && authStore.hasPermission(financePermissions.advanceReceiptUpdate))
 const canPost = computed(() => record.value?.allowedActions?.includes('POST') && authStore.hasPermission(financePermissions.advanceReceiptPost))
@@ -66,6 +69,34 @@ function openSettlementWorkbench() {
   })
 }
 
+async function runFundAction(action: 'post' | 'cancel') {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  const label = action === 'post' ? '过账' : '取消'
+  if (!(await confirmAction(`${label}预收款“${record.value.advanceNo}”？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    const payload = {
+      version: record.value.version,
+      idempotencyKey: `${action}-advance-receipt-${record.value.id}-${Date.now()}`,
+    }
+    if (action === 'post') {
+      await financeSettlementApi.advanceReceipts.post(record.value.id, payload)
+    } else {
+      await financeSettlementApi.advanceReceipts.cancel(record.value.id, payload)
+    }
+    await loadRecord()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -74,11 +105,12 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="router.push({ name: 'finance-advance-receipts' })">返回列表</el-button>
       <el-button v-if="canEdit" @click="router.push({ name: 'finance-advance-receipt-edit', params: { id: route.params.id } })">编辑草稿</el-button>
-      <el-button v-if="canPost" type="success">过账</el-button>
-      <el-button v-if="canCancel" type="danger">取消草稿</el-button>
+      <el-button v-if="canPost" data-test="post-advance-receipt" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runFundAction('post')">过账</el-button>
+      <el-button v-if="canCancel" data-test="cancel-advance-receipt" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="runFundAction('cancel')">取消草稿</el-button>
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="预收款详情加载中" :closable="false" />
       <el-alert v-if="allocationDisabledReason" type="warning" :title="allocationDisabledReason" :closable="false" />
     </template>

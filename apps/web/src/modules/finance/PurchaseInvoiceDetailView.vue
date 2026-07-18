@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, matchStatusText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
+import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
 import './Finance028Shared.css'
 
 const route = useRoute()
@@ -17,6 +18,8 @@ const actionError = ref('')
 const actionLoading = ref(false)
 const confirmDisabledReason = computed(() => record.value?.matchStatus === 'EXCEPTION' ? '存在三单差异，零容差规则禁止确认' : '')
 const canMatch = computed(() => Boolean(record.value?.allowedActions?.includes('MATCH')) && authStore.hasPermission(financePermissions.purchaseInvoiceMatch))
+const canConfirm = computed(() => Boolean(record.value?.allowedActions?.includes('CONFIRM')) && authStore.hasPermission(financePermissions.purchaseInvoiceConfirm))
+const canCancel = computed(() => Boolean(record.value?.allowedActions?.includes('CANCEL')) && authStore.hasPermission(financePermissions.purchaseInvoiceCancel))
 
 async function loadRecord() {
   try {
@@ -48,6 +51,37 @@ async function runMatch() {
   }
 }
 
+async function runAction(action: 'confirm' | 'cancel') {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  if (action === 'confirm' && confirmDisabledReason.value) {
+    return
+  }
+  const label = action === 'confirm' ? '确认' : '取消'
+  if (!(await confirmAction(`${label}采购发票“${record.value.invoiceNo}”？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    const payload = {
+      version: record.value.version,
+      idempotencyKey: `${action}-purchase-invoice-${record.value.id}-${Date.now()}`,
+    }
+    if (action === 'confirm') {
+      await financeInvoiceApi.purchaseInvoices.confirm(record.value.id, payload)
+    } else {
+      await financeInvoiceApi.purchaseInvoices.cancel(record.value.id, payload)
+    }
+    await loadRecord()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -56,7 +90,8 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="router.push({ name: 'finance-purchase-invoices' })">返回列表</el-button>
       <el-button v-if="canMatch" data-test="match-purchase-invoice" :loading="actionLoading" :disabled="actionLoading" @click="runMatch">执行匹配</el-button>
-      <el-button data-test="confirm-purchase-invoice" type="success" :disabled="Boolean(confirmDisabledReason)">确认</el-button>
+      <el-button v-if="canConfirm" data-test="confirm-purchase-invoice" type="success" :loading="actionLoading" :disabled="actionLoading || Boolean(confirmDisabledReason)" @click="runAction('confirm')">确认</el-button>
+      <el-button v-if="canCancel" data-test="cancel-purchase-invoice" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="runAction('cancel')">取消</el-button>
     </template>
     <template #alerts>
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
@@ -78,5 +113,6 @@ onMounted(loadRecord)
       <section class="finance-section"><span class="finance-section-title">付款/预付核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-if="!record.voucherDrafts?.length">暂无凭证草稿</p><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
     </div>
+    <FinanceSourceTracePanel v-if="record" :sources="record.sources ?? []" />
   </MasterDataTableView>
 </template>

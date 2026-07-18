@@ -182,6 +182,27 @@ export function compareFinanceAmount(left: string | number, right: string | numb
   return leftCents > rightCents ? 1 : -1
 }
 
+export function addFinanceAmounts(values: Array<string | number | null | undefined>) {
+  let total = 0n
+  for (const value of values) {
+    const cents = toFinanceCents(value ?? '0.00')
+    if (cents === null) {
+      return null
+    }
+    total += cents
+  }
+  return fromFinanceCents(total)
+}
+
+export function subtractFinanceAmounts(left: string | number, right: string | number) {
+  const leftCents = toFinanceCents(left)
+  const rightCents = toFinanceCents(right)
+  if (leftCents === null || rightCents === null) {
+    return null
+  }
+  return fromFinanceCents(leftCents - rightCents)
+}
+
 export function isPositiveFinanceAmount(value: string | number) {
   const cents = toFinanceCents(value)
   return cents !== null && cents > 0n
@@ -194,6 +215,14 @@ function toFinanceCents(value: string | number) {
   }
   const [integerPart, decimalPart = ''] = raw.split('.')
   return BigInt(integerPart || '0') * 100n + BigInt(`${decimalPart}00`.slice(0, 2))
+}
+
+function fromFinanceCents(cents: bigint) {
+  const sign = cents < 0n ? '-' : ''
+  const unsigned = cents < 0n ? -cents : cents
+  const integer = unsigned / 100n
+  const decimal = String(unsigned % 100n).padStart(2, '0')
+  return `${sign}${integer}.${decimal}`
 }
 
 export function financeSourceTypeText(value: FinanceSourceType | string) {
@@ -231,12 +260,15 @@ export function invoiceStatusText(value: string | null | undefined) {
 
 export function settlementStatusText(value: string | null | undefined) {
   const text: Record<string, string> = {
+    DRAFT: '草稿',
     UNSETTLED: '未结清',
     PARTIALLY_SETTLED: '部分结清',
     SETTLED: '已结清',
     AVAILABLE: '可用',
     PARTIALLY_APPLIED: '部分核销',
     APPLIED: '已核销',
+    POSTED: '已过账',
+    CANCELLED: '已取消',
   }
   return value ? text[value] ?? value : '-'
 }
