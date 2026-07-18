@@ -44,7 +44,7 @@
 - [023 至 025 页面治理整改任务记录](tasks/025a-page-governance-remediation.md)
 - [订单驱动缺料与供给建议任务记录](tasks/026-order-driven-shortage-supply-advice.md)
 - [项目生产执行与外协基础任务记录](tasks/027-project-production-outsourcing-foundation.md)
-- [现存问题闭环与页面规范治理任务记录](tasks/027a-existing-issues-page-governance-remediation.md)
+- [027A 现存问题闭环与页面规范治理任务记录（已完成）](tasks/027a-existing-issues-page-governance-remediation.md)
 
 021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。
 
