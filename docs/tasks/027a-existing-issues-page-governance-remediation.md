@@ -1,0 +1,274 @@
+# 027A 现存问题闭环与页面规范治理
+
+> 固定角色执行要求：本文件同时承载 027A 的目标、范围、页面矩阵、接口契约、工作包、验收矩阵、集中审查、阻断规则、变更记录和执行结果，是本阶段唯一权威说明。实现必须复用当前交接登记的产品经理、UI 设计师、前端开发、后端开发、测试五个固定长期角色线程；不得建立重复规格、独立实施计划、视觉截图目录或第六类角色。实现角色必须采用测试先行并只运行受影响定向验证，主代理只负责统筹、文档、Git 和交付判断。
+
+## 阶段状态
+
+- 阶段日期：2026-07-18。
+- 权威工作区：`C:\Users\14567\.codex\worktrees\fc50\qherp`。
+- 讨论与冻结基线：`main`、`origin/main`、远端 `main` 均为 `f0d274b17f7dc34e25d4f13ffb55376d134cd561`。
+- 实现分支：`codex/027a-existing-issues-page-governance`，从上述基线在本工作树建立。
+- 数据库版本保持 V29；本阶段不新增迁移、不修改 V1 至 V29。
+- 阶段启动前唯一预期工作树差异为当前交接文档中的固定角色线程登记；该差异属于主代理治理修改，不是业务实现。
+- 接管时 `qherp-postgres`、`qherp-minio` 容器处于退出状态，5173、18080、15432、19000、19001 均未监听；环境恢复及真实状态复核属于本阶段工作，不沿用历史在线结论。
+- 产品经理、UI 设计师、前端开发、后端开发、测试已完成唯一一轮目标讨论。五方一致推荐先独立闭合 027 页面规范治理和 020/026/027 已登记问题，交付后再启动 028。
+- 用户已授权主代理作为项目负责人自主推进现存问题与后续 028；本文件按五角色推荐方案冻结，不再就已明确范围重复请求确认。
+- 当前状态：阶段说明已冻结，尚未开始业务实现、页面整改、环境恢复或测试执行。
+
+## 背景与决策
+
+### 已确认问题
+
+1. 027 业务功能、接口、迁移、数据和既定自动化验证已经交付，但此前没有把全部新增、修改和受影响页面逐页映射到 `docs/ui/page-standards.md`；用户明确指出较多页面不合规，因此页面规范治理未闭合。
+2. 027 留有四项一般后续：缺少 `CurrentUser` 的直接服务调用未统一显式拒绝；一个前端测试挂载辅助使用 `component as never`；外协新建页部分下拉没有中文占位；`TrackingPickerDrawer` 使用的 `v-loading` 未进入选择性注册。
+3. 026 留有两项一般后续：替代料提示只返回主物料 ID，页面“主物料”可能为空；运行汇总 `sourceCounts` 与动作 `allowedActions` 的前后端类型和消费契约未完整对齐。
+4. 020 留有三项体验问题：390px 侧栏占用过多首屏；移动合同抽屉中业务动作“关闭”和关闭抽屉“关闭”文案歧义；销售项目列表同时出现大空态、表格空态和零条分页，表达重复。
+5. 当前验收环境离线，文档索引只列到 025，不能用历史服务、迁移和对象一致性结果代替当前核验。
+
+### 方案比较与采用结论
+
+1. 只修明确代码小项、页面治理仅登记清单：交付快，但无法证明 027 页面规范闭合，不采用。
+2. 建立独立 027A，把 027 页面逐页清点整改、020/026/027 已登记问题、环境恢复和必要文档同步一次闭合：范围完整且不污染 028，采用。
+3. 把治理项并入 028 或做全仓页面平台化重构：前者混淆业务阶段，后者显著扩大范围，均不采用。
+
+## 阶段单一目标
+
+在不改变 020、026、027 已交付业务事实、状态机、库存价值语义和 V29 的前提下，逐页闭合 027 页面规范治理，修复所有已明确登记的 020/026/027 一般后续，恢复可验证的主分支验收环境并同步必要文档，使 028 可以从合规页面和稳定契约基线启动。
+
+## 权威输入
+
+- `AGENTS.md`
+- `docs/handoffs/2026-07-12-project-handoff-current.md`
+- `docs/ops/stage-collaboration-delivery-process.md`
+- `docs/ui/page-standards.md`
+- `docs/tasks/020-sales-project-contract-foundation.md`
+- `docs/tasks/025a-page-governance-remediation.md`
+- `docs/tasks/026-order-driven-shortage-supply-advice.md`
+- `docs/tasks/027-project-production-outsourcing-foundation.md`
+- 当前 `main@f0d274b17f7dc34e25d4f13ffb55376d134cd561` 的页面、路由、共享组件、接口、服务和测试
+
+本文没有重复列出的页面规范仍然生效，不构成豁免。
+
+## 纳入范围
+
+### 027 页面规范治理
+
+- 对下方页面矩阵中的每个路由页面、共享状态组件和跨模块入口进行真实 1280×720 桌面清点。
+- 逐项核对页面骨架、导航与返回、标题与说明、主操作、标签置顶查询、表格横向滚动、固定或可达操作列、分页、表单分组、候选池、弹窗/抽屉、加载/空/错/无权限/只读/禁用状态和业务文案。
+- UI 设计师先记录真实差异；产品经理只确认业务优先级和阻断边界；前端按差异整改；测试独立复验。不得从静态源码或局部冒烟推导页面合规。
+- 复用既有 `page-heading`、`query-card`、`query-form`、`table-scroll`、`table-pagination`、`summary-strip`、`section-block`、`detail-list` 和页面治理断言，不新增第二套页面系统，不做全仓重构。
+
+### 027 四项一般后续
+
+- 生产与外协公开服务边界在缺少 `CurrentUser` 时必须失败关闭；不得把空用户解释为成本可见、动作可用或静默全权限。稳定错误语义为 `AUTH_FORBIDDEN`，HTTP 认证链路既有 401/403 语义保持不变。
+- 删除前端测试挂载辅助中的 `component as never`，使用真实组件类型或明确的 Vue 测试挂载类型，不降低类型检查。
+- 外协订单创建/编辑表单中的项目、供应商、物料、仓库、BOM、日期和状态类选择控件提供明确中文占位；占位必须说明可选对象或动作，不使用裸英文或空占位。
+- 将 `Loading` 指令纳入 `apps/web/src/elementPlus.ts` 的选择性注册，保留 `TrackingPickerDrawer` 的加载态并消除未解析指令告警。
+
+### 026 两项一般后续
+
+- `SubstituteHintResponse` 保留 `mainMaterialId` 并兼容性新增 `mainMaterialCode`、`mainMaterialName`；替代料字段保持 `substituteMaterialId`、`substituteMaterialCode`、`substituteMaterialName`、`substituteRate` 等既有语义。主物料与替代物料都受既有来源权限控制，未授权时不得泄露编码和名称。
+- 前端 `MaterialRequirementSubstituteHintRecord` 与后端响应同名对齐，页面直接使用主物料编码/名称；不再读取并不存在的 `materialCode/materialName/conversionRatio/hintMessage` 作为接口真相。无来源权限继续显示受限态，不把空值伪装成零或未知物料。
+- 运行详情继续在顶层返回 `sourceCounts: Record<string, number>` 与 `allowedActions: string[]`，不新增破坏兼容的包装层。`sourceCounts` 固定键保持 `salesDemand`、`bomComponent`、`projectStock`、`publicStock`、`projectPurchase`、`publicPurchase`、`workOrder`；前端详情类型必须声明并消费后端元数据，不自行重算来源数量，动作仍只以 `allowedActions` 为真相。
+- 以上只补齐展示和元数据契约，不改变 026 净算、建议状态、供给优先级、权限脱敏或历史快照。
+
+### 020 三项体验问题
+
+- 390px 设计下默认侧栏不得长期占用大部分首屏；采用适合窄屏的临时覆盖/收起模式或等价最优方案，打开、关闭和当前导航仍可达。该项需要实现和定向测试，但移动端不进入阶段浏览器验收和阻断门禁。
+- 合同抽屉的业务动作明确写为“关闭合同”，抽屉退出动作写为“收起”或同等无歧义文案；终止合同仍使用独立危险语义。
+- 销售项目列表无数据时只保留一个主空态；表格空态和零条分页不得与主空态重复出现，有数据时分页保持 `10/20/50/100`。
+
+### 环境和文档
+
+- 恢复 PostgreSQL、MinIO、API、Web 的主分支验收环境，核验实际进程归属、端口、健康、V29、失败迁移、数据库可用文件与对象存储数量一致性。
+- 同步 `docs/README.md`、027、当前交接和本文件；027 保留业务已交付事实，并在 027A 真正通过后才把页面治理状态改为闭合。
+
+## 排除范围
+
+- 不启动或实现 028 发票、费用、往来、收付款、凭证草稿能力。
+- 不新增 V30，不修改 V1 至 V29，不改变 020、026、027 状态机、业务规则、库存数量价值或成本口径。
+- 不实现自动替代料、自动跨项目挪料、工序级 MES、APS、正式在制成本、项目成本、月结或总账。
+- 不复审、不修改用户已明确保留的库存余额操作列轻微边缘裁剪。
+- 不做全仓页面重构，不整改未被 027A 修改或影响的历史页面。
+- 不采集或保存视觉截图，不建立视觉证据目录。
+- 不执行移动端、窄屏或响应式浏览器测试与验收；020 已登记窄屏体验问题仍属于设计开发修复范围，但不作为测试阻断项。
+
+## 027 页面范围与规范矩阵
+
+矩阵中的“适用门禁”是最低范围，`docs/ui/page-standards.md` 其余实际适用条款继续生效。冻结时所有结论均为“待 UI 真实清点”，不得写成通过。
+
+| 页面/状态 | 路由或入口 | 主要文件 | 最低适用门禁 | 当前结论 |
+| --- | --- | --- | --- | --- |
+| 应用壳与生产/计划导航 | 全局、`/production`、`/planning` | `App.vue`、`productionMenu.ts`、`planningMenu.ts`、两类 routes | 登录补水、菜单权限、当前激活、首个有权页、页面骨架 | 待 UI 真实清点 |
+| 缺料运行列表 | `/planning/material-requirements` | `MaterialRequirementRunListView.vue` | 标题、查询网格、日期清空、宽表、操作列、分页、空错权限态 | 待 UI 真实清点 |
+| 缺料运行详情与转换 | `/planning/material-requirements/:id` | `MaterialRequirementRunDetailView.vue` | 摘要、来源计数、动作真相、转换禁用原因、宽表、追溯抽屉、驳回弹窗 | 待 UI 真实清点 |
+| 生产工单列表 | `/production/work-orders` | `ProductionWorkOrderListView.vue` | 标题、项目/归属/来源筛选、宽表、分页、操作可达、空错权限态 | 待 UI 真实清点 |
+| 生产工单创建/编辑 | `/production/work-orders/create`、`/:id/edit` | `ProductionWorkOrderFormView.vue` | 表单分组、候选池、中文占位、必填/禁用原因、保存态、返回上下文 | 待 UI 真实清点 |
+| 生产工单详情 | `/production/work-orders/:id` | `ProductionWorkOrderDetailView.vue` 及详情子组件 | 摘要、来源、状态、动作栏、成本受限、执行记录、追溯、长表可扫描 | 待 UI 真实清点 |
+| 生产领料 | `/production/work-orders/:id/material-issues` | `ProductionMaterialIssueView.vue` | 归属/成本层候选、批序、表单错误、追踪抽屉、底部动作可达 | 待 UI 真实清点 |
+| 生产报工 | `/production/work-orders/:id/reports` | `ProductionWorkReportView.vue` | 可报数量、表单分组、错误与只读态、保存动作 | 待 UI 真实清点 |
+| 完工入库 | `/production/work-orders/:id/completion-receipts` | `ProductionCompletionReceiptView.vue` | 数量/暂估状态、批序、错误与权限态、底部动作可达 | 待 UI 真实清点 |
+| 生产退料列表 | `/production/material-returns` | `ProductionMaterialReturnListView.vue` | 查询网格、日期清空、宽表、分页、空错权限态 | 待 UI 真实清点 |
+| 生产退料创建/编辑 | `/production/material-returns/create`、`/:id/edit` | `ProductionMaterialReturnFormView.vue` | 原领料候选、表单分组、中文占位、批序、错误/禁用、保存态 | 待 UI 真实清点 |
+| 生产退料详情 | `/production/material-returns/:id` | `ProductionMaterialReturnDetailView.vue` | 原来源/归属/成本层摘要、状态、动作、明细宽表、错误权限态 | 待 UI 真实清点 |
+| 生产补料列表 | `/production/material-supplements` | `ProductionMaterialSupplementListView.vue` | 查询网格、日期清空、宽表、分页、空错权限态 | 待 UI 真实清点 |
+| 生产补料创建/编辑 | `/production/material-supplements/create`、`/:id/edit` | `ProductionMaterialSupplementFormView.vue` | 来源候选、表单分组、中文占位、批序、错误/禁用、保存态 | 待 UI 真实清点 |
+| 生产补料详情 | `/production/material-supplements/:id` | `ProductionMaterialSupplementDetailView.vue` | 归属/成本层摘要、状态、动作、明细宽表、错误权限态 | 待 UI 真实清点 |
+| 外协订单列表 | `/production/outsourcing-orders` | `ProductionOutsourcingOrderListView.vue` | 项目/供应商/物料/状态/日期查询、宽表、分页、操作可达、空错权限态 | 待 UI 真实清点 |
+| 外协订单创建/编辑 | `/production/outsourcing-orders/create`、`/:id/edit` | `ProductionOutsourcingOrderFormView.vue` | 表单分组、候选完整性、中文占位、日期、必填/禁用原因、保存态 | 待 UI 真实清点 |
+| 外协订单详情 | `/production/outsourcing-orders/:id` | `ProductionOutsourcingOrderDetailView.vue` | 项目/来源/供应商/进度摘要、动作真相、成本受限、明细宽表、空错权限态 | 待 UI 真实清点 |
+| 外协发料 | `/production/outsourcing-orders/:id/material-issues` | `ProductionOutsourcingIssueView.vue` | 来源候选、批序、宽表、表单错误、追踪抽屉、底部动作可达 | 待 UI 真实清点 |
+| 外协收货 | `/production/outsourcing-orders/:id/receipts` | `ProductionOutsourcingReceiptView.vue` | 数量/暂估/批序、宽表、错误权限态、底部动作可达 | 待 UI 真实清点 |
+| 销售项目生产/外协摘要 | `/sales/projects/:id` | `SalesProjectDetailView.vue` | 摘要状态、真实空态/受限态、目标跳转、返回上下文、宽表/长字段 | 待 UI 真实清点 |
+| 追踪选择共享抽屉 | 上述领料、退补料、外协发料/收货入口 | `TrackingPickerDrawer.vue`、`elementPlus.ts` | 加载态、空态、表格滚动、批序选择、抽屉尺寸、底部动作可达、无未解析告警 | 待 UI 真实清点 |
+
+UI 清点与整改记录必须回填本表或在本节下方追加逐页子表，至少写明检查状态、发现问题、影响状态、整改文件和最终结论；不得只写“视觉通过”。
+
+## 文件责任与接口边界
+
+### 后端工作边界
+
+- 主要实现：`apps/api/src/main/java/com/qherp/api/system/planning/MaterialRequirementPlanningService.java`、`apps/api/src/main/java/com/qherp/api/system/production/ProductionAdminService.java`、必要的外协服务入口。
+- 主要定向测试：`MaterialRequirementPlanningStage026Tests`、`ProductionAdminControllerTests`、`ProjectProductionStage027Tests`、权限相关测试；测试必须直接覆盖空 `CurrentUser` 服务边界、替代料字段、来源计数和动作元数据。
+- 不改净算主流程、建议状态机、V29、库存过账、外协状态机或公开 URL。
+
+### 前端工作边界
+
+- 027 页面：`apps/web/src/modules/planning/material-requirements/`、`apps/web/src/modules/production/`、`apps/web/src/modules/production/outsourcing/`、`apps/web/src/modules/reversal/`、`apps/web/src/modules/sales/projects/SalesProjectDetailView.vue`。
+- 共享边界：`apps/web/src/App.vue`、`apps/web/src/style.css`、`apps/web/src/elementPlus.ts`、生产/计划菜单和路由、`TrackingPickerDrawer.vue`、`pageGovernanceAssertions.ts`。
+- 020 体验：`SalesProjectListView.vue`、`SalesProjectContractDrawer.vue` 及相应规格。
+- 026 契约：`materialRequirementApi.ts`、`MaterialRequirementRunDetailView.vue` 及相应规格。
+- 不新增通用组件平台；只有两个以上本阶段页面存在同一缺口且既有共享模式不足时，才允许在当前目录提取小型辅助。
+
+## 整包工作计划
+
+### 工作包一：验收环境恢复与真实页面清点
+
+责任：测试主责环境恢复和基线证据；UI 设计师在环境可访问后完成矩阵全部真实桌面清点；产品经理只对真实差异确认业务优先级。
+
+成果：PostgreSQL、MinIO、API、Web 可访问，实际 V29/迁移/资源一致性已记录；矩阵每一行有真实问题或通过结论，且未截图。
+
+依赖：环境恢复是 UI 真实清点的前置；服务故障优先诊断，不允许改用静态猜测。
+
+### 工作包二：026/027 后端契约与鉴权闭环
+
+责任：后端开发主责实现和受影响测试。
+
+成果：主物料摘要兼容性补齐；`sourceCounts/allowedActions` 类型和真相边界完整；空 `CurrentUser` 失败关闭；既有 HTTP、权限脱敏、净算和生产外协行为不变。
+
+### 工作包三：027 页面规范与前端一般项闭环
+
+责任：前端开发主责实现和受影响测试；输入为 UI 真实逐页差异清单和本文冻结契约。
+
+成果：矩阵全部适用规范闭合，外协中文占位、`v-loading` 注册和测试挂载类型修复；不复制第二套页面样式。
+
+### 工作包四：020 体验与 026 前端契约闭环
+
+责任：前端开发在同一长期线程内主责实现和受影响测试；与工作包三按文件冲突顺序推进。
+
+成果：三项 020 体验问题实现闭合；替代料和运行元数据使用真实后端契约；移动实现不纳入浏览器验收阻断。
+
+### 工作包五：集中审查、整改、验证与文档交付
+
+责任：五个固定角色按集中审查矩阵分工；主代理合并去重、派发一次整改、维护本文/027/交接/索引并执行 Git 与交付决策。
+
+成果：唯一集中审查、一次整改、差异复审、唯一全量验证、合入推送、主分支环境和交接全部闭合。
+
+## 开发期定向验证
+
+- 后端只运行 026 规划、027 生产外协、权限和直接服务边界受影响测试；不运行全量后端。
+- 前端只运行受影响页面/API/应用壳/页面治理规格和必要类型检查；不运行全量前端或生产构建。
+- UI 只清点本阶段矩阵页面，测试只复验受影响自动化和桌面路径；不把未变化页面或移动端纳入。
+- 每个实现工作包采用测试先行：先证明旧行为未满足冻结契约，再完成最小实现并转绿；测试与实现留在同一工作包，不建立独立红测任务或提交门禁。
+
+## 集中审查矩阵
+
+- 产品经理：核对九项登记问题、业务边界、026/027 既有事实和本阶段验收矩阵，不审页面代码。
+- UI 设计师：依据真实 1280×720 页面逐项复核矩阵、状态表达、关键动作、信息密度和规范合规，不以功能可达代替合规。
+- 前端开发：交叉审查后端字段兼容、权限失败关闭、错误语义和测试覆盖，不审自己的前端实现。
+- 后端开发：交叉审查前端是否消费后端真相、是否存在字段猜算、权限泄露、第二套页面结构或未解析组件，不审自己的后端实现。
+- 测试：核对自动化覆盖、异常/权限/空错态、环境健康、迁移和回归风险。
+- 主代理只合并去重并一次性派发阻断和严重问题。一般问题默认登记后续，只有影响当前页面规范闭合或用户已明确要求的九项问题才进入本轮整改。
+
+## 验收矩阵
+
+### 页面规范
+
+- 页面矩阵每一行均有真实桌面检查范围、适用项、发现问题、整改文件和最终结论。
+- 全部列表使用标签置顶查询网格；日期清空为 `''`；业务表格位于横向滚动容器；操作列可达；需要分页的主列表支持 `10/20/50/100`。
+- 表单标题、说明、分组、候选池、中文占位、必填错误、只读/禁用原因和保存态完整。
+- 详情页的项目/公共归属、来源、状态、权限受限、成本受限和关键数量清晰可扫描。
+- 弹窗/抽屉尺寸受视口约束，内容和底部动作可达；无原生确认框、无多层遮挡、无未解析组件或指令告警。
+- 加载、空、错、无权限、只读、禁用状态不互相冒充；页面级横向溢出为 0；控制台、页面和网络无归因于本阶段的错误。
+
+### 接口与权限
+
+- 替代料响应在有权时返回主物料与替代物料 ID、编码、名称；无权时不泄露来源字段，页面显示明确受限态。
+- 运行详情的 `sourceCounts` 七个固定键与 `allowedActions` 可被前端类型消费；页面不自行重算来源或猜测动作。
+- 生产/外协直接服务边界缺少 `CurrentUser` 时稳定 `AUTH_FORBIDDEN`；不能看到成本或得到动作。
+- 已认证 HTTP 主路径、只读/分权账号、409、成本脱敏、026 净算、027 生产外协状态和库存价值行为不回归。
+
+### 020 体验与前端质量
+
+- 390px 设计实现不再让常驻侧栏占据大部分首屏；该项由结构/样式规格证明，不执行移动浏览器验收。
+- 合同业务关闭与抽屉退出文案不再同名；项目列表空数据只出现一个主空态，不显示零条分页。
+- 前端测试无 `component as never`；`TrackingPickerDrawer` 加载态已注册且没有未解析指令告警；外协选择控件中文占位完整。
+
+### 环境、迁移与文档
+
+- PostgreSQL、MinIO、API、Web 均从预期主分支工作区启动并健康；端口与进程归属正确。
+- Flyway 精确 V29、checksum `774334682`、失败迁移 0；数据库 `AVAILABLE` 文件数与 `qherp-private` 对象数相等且不少于 8，实际数量以运行结果记录，不能写死历史 18/18。
+- 027、027A、当前交接和文档索引一致；只有本阶段通过后才写“027 页面规范治理已闭合”。
+
+## 缺陷与阻断
+
+### 阻断
+
+- 核心页面不可访问、关键动作不可执行、权限绕过、成本或来源字段泄露、业务数据错误。
+- 页面矩阵没有逐页真实结论，或使用功能冒烟、静态源码、单测、截图代替规范逐项核对。
+- 页面级横向溢出、关键操作列不可达、弹窗/抽屉底部动作不可达、日期清空非法、候选池不足导致桌面路径无法验收。
+- V29/迁移/资源一致性错误，或主分支验收环境无法恢复。
+- 九项明确现存问题任一未闭合，或误纳入 028、V30、状态机、库存价值和正式成本能力。
+
+### 严重
+
+- 项目/公共归属、状态、来源、权限、成本受限或空错态表达误导，显著降低工作台判断准确性。
+- 后端元数据与前端类型不一致、空 `CurrentUser` 仍可获得动作/成本、替代料来源展示错误。
+- 页面整改扩散到未触达模块或形成第二套样式、组件、路由或接口真相。
+
+一般文案和轻微非关键布局问题默认进入后续清单；但本文件明确列出的九项问题即使原阶段为一般项，也属于 027A 必须完成项。
+
+## 唯一交付前全量验证窗口
+
+集中审查、一次整改和差异复审通过后，由固定测试角色统一执行并记录全部计划项目；发现问题时先完成所有仍可执行项目，再汇总去重并一次性派发整改：
+
+1. 显式 JDK 21 下全量后端测试。
+2. 全量前端测试。
+3. 前端类型检查和生产构建。
+4. V29 空库/存量迁移回归、历史 checksum、正式数据库失败迁移与独立验证器。
+5. PostgreSQL、MinIO、API、Web、端口、进程归属、数据库文件和对象存储一致性。
+6. 1280×720 真实桌面浏览器覆盖矩阵全部页面及本阶段相关加载、空、错、无权限、只读、禁用状态；不截图、不测试移动端。
+7. `git diff --check`、文档链接和工作树空白检查。
+
+若汇总后存在缺陷，只复验修复差异和受影响路径；不得重新执行未变化的全阶段审查。阻断或严重问题为 0、全部计划项目完成后，才允许合入、推送和通知用户验收。
+
+## 变更记录与执行记录
+
+- 2026-07-18：主代理核验当前工作树、`main`、`origin/main` 和远端 `main` 均为 `f0d274b17f7dc34e25d4f13ffb55376d134cd561`；工作树唯一差异为固定角色线程登记。
+- 2026-07-18：接管核验发现 PostgreSQL、MinIO 和正式验收端口均离线，登记为本阶段环境恢复项；历史 V29、114/114、18/18 仅为上次交付证据。
+- 2026-07-18：复用当前交接登记的五个固定长期角色完成唯一一轮目标讨论；五方一致推荐独立 027A，先闭合 027 页面规范治理和 020/026/027 已登记问题，再启动 028。
+- 2026-07-18：主代理按用户自主推进授权合并去重并冻结本文件；明确不启动 028、不新增 V30、不改变业务状态机、不复审库存余额操作列保留项、不把移动端列为测试验收阻断。
+
+## 完成定义
+
+只有同时满足以下条件，027A 才可标记完成：
+
+- 本文件全部纳入范围完成，排除项未被提前实现。
+- 页面矩阵逐页真实清点、整改和独立复验完成，没有未确认例外。
+- 九项明确现存问题全部闭合，相关定向测试通过。
+- 唯一集中审查、一次集中整改和差异复审完成，阻断/严重问题为 0。
+- 唯一交付前全量验证窗口全部项目完成并通过。
+- 功能分支提交，按项目约定合入并推送 `origin/main`；本地、远端和实际远端哈希一致。
+- 从主分支工作区启动验收服务，实际健康、V29、迁移和资源一致性通过。
+- 027、027A、交接和文档索引已同步，用户获得浏览器地址、验收范围和真实验证结果。
+- 以上全部完成后才允许启动 028 唯一五角色目标讨论。
