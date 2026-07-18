@@ -204,6 +204,7 @@ export interface PurchaseInvoiceRecord {
   unsettledAmount: FinanceAmount
   differenceCount?: number
   matchDifferencesCount?: number
+  matchDifferences?: PurchaseInvoiceMatchDifference[]
   version: number
   allowedActions: string[]
   linkedPayableId?: ResourceId | null
@@ -296,25 +297,24 @@ export interface PurchaseInvoiceMatchingRow {
   receipt?: PurchaseInvoiceMatchingFact | null
   invoice?: PurchaseInvoiceMatchingFact | null
   matchStatus?: MatchStatus
-  differences?: Array<{
-    type: string
-    message: string
-    orderValue?: string | null
-    receiptValue?: string | null
-    invoiceValue?: string | null
-  }>
+  differences?: PurchaseInvoiceMatchDifference[]
+}
+
+export interface PurchaseInvoiceMatchDifference {
+  type?: string
+  differenceType?: string
+  message: string
+  expectedValue?: string | null
+  actualValue?: string | null
+  orderValue?: string | null
+  receiptValue?: string | null
+  invoiceValue?: string | null
 }
 
 export interface PurchaseInvoiceMatchingResult {
   status: MatchStatus
   rows?: PurchaseInvoiceMatchingRow[]
-  differences: Array<{
-    type: string
-    message: string
-    orderValue?: string | null
-    receiptValue?: string | null
-    invoiceValue?: string | null
-  }>
+  differences: PurchaseInvoiceMatchDifference[]
 }
 
 export interface FinanceInvoiceApi {

@@ -38,8 +38,30 @@ function payableLinkText(link: NonNullable<PurchaseInvoiceRecord['payableLinks']
   return parts.join(' ')
 }
 
+function matchDifferences(record: PurchaseInvoiceRecord) {
+  if (record.matchStatus === 'MATCHED') {
+    return []
+  }
+  if (Array.isArray(record.matchDifferences)) {
+    return record.matchDifferences
+  }
+  if (Array.isArray(record.matching?.differences)) {
+    return record.matching.differences
+  }
+  return []
+}
+
 function matchDifferenceCount(record: PurchaseInvoiceRecord) {
-  return record.matchDifferencesCount ?? record.differenceCount ?? record.matching?.differences?.length ?? 0
+  if (record.matchStatus === 'MATCHED') {
+    return 0
+  }
+  if (Array.isArray(record.matchDifferences)) {
+    return record.matchDifferences.length
+  }
+  if (Array.isArray(record.matching?.differences)) {
+    return record.matching.differences.length
+  }
+  return record.matchDifferencesCount ?? record.differenceCount ?? 0
 }
 
 function viewPayableLink(link: NonNullable<PurchaseInvoiceRecord['payableLinks']>[number]) {
@@ -141,7 +163,7 @@ onMounted(loadRecord)
     </div>
     <div v-if="record" class="finance-section-grid">
       <section class="finance-section"><span class="finance-section-title">匹配摘要</span><p>{{ matchStatusText(record.matchStatus) }}，差异数 {{ matchDifferenceCount(record) }}</p></section>
-      <section class="finance-section"><span class="finance-section-title">三单明细</span><p v-for="diff in record.matching?.differences" :key="diff.message">{{ diff.message }}</p></section>
+      <section class="finance-section"><span class="finance-section-title">三单明细</span><p v-for="diff in matchDifferences(record)" :key="diff.message">{{ diff.message }}</p></section>
       <section class="finance-section">
         <span class="finance-section-title">应付链接</span>
         <p v-if="!record.payableLinks?.length">暂无应付链接</p>

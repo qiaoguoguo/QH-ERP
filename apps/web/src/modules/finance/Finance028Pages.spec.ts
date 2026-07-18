@@ -576,7 +576,12 @@ describe('028 财务页面', () => {
       supplierName: '',
       partyName: '后端供应商',
       differenceCount: 0,
-      matchDifferencesCount: 4,
+      matchDifferences: [
+        { type: 'TAX_EXCLUDED_UNIT_PRICE', message: '未税单价差异', expectedValue: '66.666667', actualValue: '67.800000' },
+        { type: 'TAX_INCLUDED_UNIT_PRICE', message: '含税单价差异', expectedValue: '75.333333', actualValue: '76.613333' },
+        { type: 'TAX_EXCLUDED_AMOUNT', message: '未税金额差异', expectedValue: '200.00', actualValue: '203.40' },
+        { type: 'TAX_INCLUDED_AMOUNT', message: '含税金额差异', expectedValue: '226.00', actualValue: '229.84' },
+      ],
       sources: [{ sourceType: 'PURCHASE_RECEIPT', sourceId: 601, sourceNo: 'PR-DTO-001', sourceSummary: '采购入库 PR-DTO-001', businessDate: '2026-08-04', amount: '226.00', restricted: false, restrictedReasons: [] }],
       payableLinks: [{ payableId: 402, payableNo: 'AP-DTO-001', status: 'PARTIALLY_PAID', totalAmount: '226.00', paidAmount: '40.00', unpaidAmount: '186.00', linkMode: 'AUTO' }],
     })
@@ -858,6 +863,7 @@ describe('028 财务页面', () => {
       ['finance:purchase-invoice:view', 'finance:purchase-invoice:confirm', 'finance:purchase-invoice:cancel'],
       '/finance/purchase-invoices/21',
     )
+    expect(purchaseDetail.text()).toContain('匹配通过，差异数 0')
     await purchaseDetail.find('[data-test="confirm-purchase-invoice"]').trigger('click')
     await flushPromises()
     expect(confirmActionMock).toHaveBeenCalledWith('确认采购发票“PI-001”？')
