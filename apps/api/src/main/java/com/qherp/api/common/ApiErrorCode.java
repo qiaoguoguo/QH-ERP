@@ -626,6 +626,30 @@ public enum ApiErrorCode {
 
 	COST_GENERATED_RECORD_IMMUTABLE(HttpStatus.CONFLICT, "自动生成记录来源字段不可修改"),
 
+	PROJECT_COST_PROJECT_INVALID(HttpStatus.BAD_REQUEST, "项目成本核算项目不合法"),
+
+	PROJECT_COST_SOURCE_CHANGED(HttpStatus.CONFLICT, "项目成本来源已变化，请重新计算"),
+
+	PROJECT_COST_SOURCE_UNVALUED(HttpStatus.CONFLICT, "项目成本来源未完成估值"),
+
+	PROJECT_COST_SOURCE_CROSS_PROJECT(HttpStatus.CONFLICT, "项目成本来源项目归属不一致"),
+
+	PROJECT_COST_SOURCE_BROKEN(HttpStatus.CONFLICT, "项目成本来源链路不完整"),
+
+	PROJECT_COST_LABOR_UNPRICED(HttpStatus.CONFLICT, "项目成本存在未定价人工来源"),
+
+	PROJECT_COST_DELIVERY_UNMATCHED(HttpStatus.CONFLICT, "项目成本发货与完工数量不匹配"),
+
+	PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED(HttpStatus.CONFLICT, "公共费用分配超过可用金额"),
+
+	PROJECT_COST_VERSION_CONFLICT(HttpStatus.CONFLICT, "项目成本对象版本已变化"),
+
+	PROJECT_COST_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "项目成本业务幂等键冲突"),
+
+	PROJECT_COST_ACTION_NOT_ALLOWED(HttpStatus.CONFLICT, "当前项目成本状态不允许此操作"),
+
+	PROJECT_COST_AMOUNT_FORBIDDEN(HttpStatus.FORBIDDEN, "无权查看项目成本金额"),
+
 	FINANCE_RECEIVABLE_NOT_FOUND(HttpStatus.NOT_FOUND, "应收不存在"),
 
 	FINANCE_RECEIPT_NOT_FOUND(HttpStatus.NOT_FOUND, "收款不存在"),

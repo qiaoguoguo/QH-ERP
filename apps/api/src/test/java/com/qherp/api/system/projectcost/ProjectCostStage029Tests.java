@@ -1,0 +1,833 @@
+package com.qherp.api.system.projectcost;
+
+import com.qherp.api.support.PostgresIntegrationTest;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.resttestclient.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.annotation.DirtiesContext;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
+		properties = "qherp.test.context=project-cost-stage029")
+@AutoConfigureTestRestTemplate
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
+class ProjectCostStage029Tests extends PostgresIntegrationTest {
+
+	private static final String ADMIN_PASSWORD = "Qherp@2026!";
+
+	private static final AtomicInteger SEQUENCE = new AtomicInteger();
+
+	@Autowired
+	private TestRestTemplate restTemplate;
+
+	@Autowired
+	private ObjectMapper objectMapper;
+
+	@Autowired
+	private JdbcTemplate jdbcTemplate;
+
+	@Test
+	void 项目成本核算汇总838并形成9162发货毛利且不改写上游来源() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_FULL_", true);
+		Map<String, Long> upstreamBefore = upstreamCounts();
+
+		ResponseEntity<String> calculationResponse = exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", "pc-calc-" + fixture.projectId()), admin);
+		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode calculation = data(calculationResponse);
+
+		assertThat(calculation.get("status").asText()).isEqualTo("CALCULATED");
+		assertDecimal(calculation, "projectCostTotal", "838.00");
+		assertDecimal(calculation, "wipCost", "0.00");
+		assertDecimal(calculation, "finishedCost", "0.00");
+		assertDecimal(calculation, "deliveredCost", "588.00");
+		assertDecimal(calculation, "directProjectCost", "250.00");
+		assertDecimal(calculation, "shipmentRevenue", "10000.00");
+		assertDecimal(calculation, "invoiceRevenue", "10000.00");
+		assertDecimal(calculation, "targetRevenue", "12000.00");
+		assertDecimal(calculation, "shipmentGrossMargin", "9162.00");
+		assertDecimal(calculation, "invoiceGrossMargin", "9162.00");
+		assertDecimal(calculation, "targetGrossMargin", "11162.00");
+		assertThat(calculation.get("marginCompleteness").asText()).isEqualTo("COMPLETE");
+		assertThat(calculation.get("sourceFingerprint").asText()).isNotBlank();
+		assertThat(calculation.get("isCurrent").booleanValue()).isFalse();
+		assertThat(upstreamCounts()).isEqualTo(upstreamBefore);
+
+		long calculationId = calculation.get("id").longValue();
+		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/sources",
+				admin)).get("items");
+		assertThat(sources.size()).isGreaterThanOrEqualTo(8);
+		assertThat(sumByCategory(sources, "MATERIAL")).isEqualByComparingTo("168.00");
+		assertThat(sumByCategory(sources, "LABOR")).isEqualByComparingTo("300.00");
+		assertThat(sumByCategory(sources, "OUTSOURCING")).isEqualByComparingTo("120.00");
+		assertThat(sumByCategory(sources, "PROJECT_EXPENSE")).isEqualByComparingTo("200.00");
+		assertThat(sumByCategory(sources, "MANUFACTURING_OVERHEAD")).isEqualByComparingTo("50.00");
+		assertThat(sourceKeys(sources)).hasSize(sources.size());
+		assertThat(sourceTypes(sources)).doesNotContain("MFG_COST_RECORD_MATERIAL");
+
+		JsonNode variances = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/variances",
+				admin)).get("items");
+		assertThat(hasVariance(variances, "OUTSOURCING_ACTUAL_VARIANCE")).isTrue();
+		ResponseEntity<String> globalVarianceResponse = get("/api/admin/cost/project-cost-variances?projectId="
+				+ fixture.projectId()
+				+ "&severity=WARNING&type=OUTSOURCING_ACTUAL_VARIANCE&status=OPEN&sourceRestricted=false&page=1&pageSize=20",
+				admin);
+		assertThat(globalVarianceResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode globalVariances = data(globalVarianceResponse).get("items");
+		assertThat(globalVariances.size()).isOne();
+		JsonNode globalVariance = globalVariances.get(0);
+		assertThat(globalVariance.get("calculationId").longValue()).isEqualTo(calculationId);
+		assertThat(globalVariance.get("projectId").longValue()).isEqualTo(fixture.projectId());
+		assertThat(globalVariance.get("varianceType").asText()).isEqualTo("OUTSOURCING_ACTUAL_VARIANCE");
+		assertThat(globalVariance.get("sourceRestricted").booleanValue()).isFalse();
+		assertDecimal(globalVariance, "varianceAmount", "20.00");
+
+		JsonNode entries = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/entries",
+				admin)).get("items");
+		assertThat(hasEntry(entries, "SOURCE_TO_WIP")).isTrue();
+		assertThat(hasEntry(entries, "WIP_TO_FINISHED")).isTrue();
+		assertThat(hasEntry(entries, "FINISHED_TO_DELIVERED")).isTrue();
+		assertThat(hasEntry(entries, "PROJECT_DIRECT")).isTrue();
+
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculationId + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-" + calculationId),
+				admin));
+		assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		assertThat(confirmed.get("isCurrent").booleanValue()).isTrue();
+		assertError(exchange(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/" + calculationId
+				+ "/recalculate", Map.of("version", confirmed.get("version").longValue(), "idempotencyKey",
+						"pc-recalc-readonly-" + calculationId), admin), HttpStatus.CONFLICT,
+				"PROJECT_COST_ACTION_NOT_ALLOWED");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/" + calculationId
+				+ "/cancel", Map.of("version", confirmed.get("version").longValue(), "idempotencyKey",
+						"pc-cancel-readonly-" + calculationId), admin), HttpStatus.CONFLICT,
+				"PROJECT_COST_ACTION_NOT_ALLOWED");
+		assertThat(currentCalculationIds(fixture.projectId())).containsExactly(calculationId);
+		assertThat(upstreamCounts()).isEqualTo(upstreamBefore);
+	}
+
+	@Test
+	void 确认前来源变化必须返回409并要求重新计算() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_CHANGED_", false);
+
+		ResponseEntity<String> calculationResponse = exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", "pc-calc-change-" + fixture.projectId()),
+				admin);
+		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode calculation = data(calculationResponse);
+		this.jdbcTemplate.update("update inv_value_movement set inventory_amount = 49.00 where id = ?",
+				fixture.firstValueMovementId());
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-change-" + calculation.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_SOURCE_CHANGED");
+	}
+
+	@Test
+	void 数量型人工来源不得按零计入且阻止确认() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_UNPRICED_", false);
+		this.jdbcTemplate.update("""
+				insert into mfg_cost_record (
+					record_no, work_order_id, product_material_id, cost_type, source_type,
+					source_document_type, source_document_no, source_document_id, quantity, amount, basis_type,
+					business_date, status, remark, recorded_by, recorded_at, created_by, created_at, updated_by,
+					updated_at
+				)
+				values (?, ?, ?, 'LABOR', 'AUTO_PRODUCTION', 'PRODUCTION_WORK_REPORT', ?, ?, 1.000000, null,
+					'SOURCE_QUANTITY_ONLY', date '2026-07-15', 'ACTIVE', '数量型报工', 'test', now(), 'test',
+					now(), 'test', now())
+				""", "029-UNPRICED-" + SEQUENCE.incrementAndGet(), fixture.workOrderId(),
+				fixture.productMaterialId(), "WR-UNPRICED-" + fixture.projectId(), 8_000_000L + fixture.projectId());
+
+		ResponseEntity<String> calculationResponse = exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", "pc-calc-unpriced-" + fixture.projectId()),
+				admin);
+		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode calculation = data(calculationResponse);
+
+		JsonNode variances = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculation.get("id").longValue() + "/variances", admin)).get("items");
+		assertThat(hasVariance(variances, "SOURCE_UNPRICED")).isTrue();
+		assertThat(calculation.get("marginCompleteness").asText()).isEqualTo("INCOMPLETE");
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-unpriced-" + calculation.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_LABOR_UNPRICED");
+	}
+
+	@Test
+	void 项目成本后端必须保持独立领域而不是继续堆入028财务巨型服务() throws Exception {
+		java.nio.file.Path sourceRoot = java.nio.file.Path.of("src/main/java/com/qherp/api/system");
+		java.nio.file.Path projectCostRoot = sourceRoot.resolve("projectcost");
+		assertThat(projectCostRoot.resolve("ProjectCostAdminController.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostCalculationService.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostSourceCollector.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostEntryBuilder.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostQueryService.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostAdjustmentService.java")).exists();
+		assertThat(projectCostRoot.resolve("ProjectCostErrorCode.java")).exists();
+		String finance028 = java.nio.file.Files.readString(sourceRoot.resolve("finance/FinanceStage028Service.java"));
+		assertThat(finance028).doesNotContain("ProjectCost").doesNotContain("prj_cost_");
+	}
+
+	private StageFixture createFullCostFixture(String prefix, boolean includeConfirmedAllocation) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String codePrefix = prefix + suffix + "_";
+		long unitId = insertUnit(codePrefix);
+		long warehouseId = insertWarehouse(codePrefix);
+		long customerId = insertCustomer(codePrefix);
+		long supplierId = insertSupplier(codePrefix);
+		long categoryId = insertCategory(codePrefix);
+		long productId = insertMaterial(codePrefix + "FG", categoryId, unitId, "FINISHED_GOODS");
+		long rawId = insertMaterial(codePrefix + "RAW", categoryId, unitId, "RAW_MATERIAL");
+		long projectId = insertProject(codePrefix, customerId, "12000.00");
+		long contractId = insertContract(codePrefix, projectId);
+		long bomId = insertBom(codePrefix, productId, rawId, unitId);
+		long workOrderId = insertWorkOrder(codePrefix, projectId, productId, rawId, unitId, warehouseId, bomId);
+		long issueLine1 = insertMaterialIssue(codePrefix + "ISS1", workOrderId, rawId, unitId, warehouseId,
+				"1.000000");
+		long firstValueMovementId = insertValueMovement("PRODUCTION_MATERIAL_ISSUE", issueLine1, issueLine1,
+				"PRODUCTION_ISSUE", "OUT", warehouseId, rawId, unitId, null, "1.000000", "48.00",
+				LocalDate.of(2026, 7, 10));
+		linkProductionIssueLine(issueLine1, firstValueMovementId);
+		long issueLine2 = insertMaterialIssue(codePrefix + "ISS2", workOrderId, rawId, unitId, warehouseId,
+				"1.000000");
+		long secondValueMovementId = insertValueMovement("PRODUCTION_MATERIAL_ISSUE", issueLine2, issueLine2,
+				"PRODUCTION_ISSUE", "OUT", warehouseId, rawId, unitId, null, "1.000000", "110.00",
+				LocalDate.of(2026, 7, 11));
+		linkProductionIssueLine(issueLine2, secondValueMovementId);
+		long returnLineId = insertMaterialReturn(codePrefix + "RET", workOrderId, issueLine1, rawId, unitId,
+				warehouseId, "1.000000");
+		long returnValueMovementId = insertValueMovement("PRODUCTION_MATERIAL_RETURN", returnLineId, returnLineId,
+				"PRODUCTION_MATERIAL_RETURN_IN", "IN", warehouseId, rawId, unitId, null, "1.000000", "12.00",
+				LocalDate.of(2026, 7, 12));
+		linkProductionReturnLine(returnLineId, returnValueMovementId, firstValueMovementId);
+		long supplementLineId = insertMaterialSupplement(codePrefix + "SUP", workOrderId, rawId, unitId,
+				warehouseId, "1.000000");
+		long supplementValueMovementId = insertValueMovement("PRODUCTION_MATERIAL_SUPPLEMENT", supplementLineId,
+				supplementLineId, "PRODUCTION_MATERIAL_SUPPLEMENT_OUT", "OUT", warehouseId, rawId, unitId, null,
+				"1.000000", "22.00", LocalDate.of(2026, 7, 13));
+		linkProductionSupplementLine(supplementLineId, supplementValueMovementId);
+		insertWorkOrderCost(codePrefix + "LAB", workOrderId, productId, "LABOR", "300.000000");
+		insertCompletionReceipt(codePrefix + "RCPT", workOrderId, projectId, productId, unitId, warehouseId,
+				"1.000000");
+		long expenseLineId = insertProjectExpense(codePrefix + "EXP", supplierId, projectId, "200.00");
+		long outsourcingOrderId = insertOutsourcing(codePrefix + "OUT", supplierId, projectId, productId, rawId,
+				unitId, warehouseId, "1.000000", "100.000000");
+		long outsourcingReceiptLineId = insertOutsourcingReceipt(codePrefix + "ORC", outsourcingOrderId, projectId,
+				productId, unitId, warehouseId, "1.000000", "100.000000");
+		insertPurchaseInvoice(codePrefix + "PI", supplierId, projectId, outsourcingOrderId, outsourcingReceiptLineId,
+				productId, unitId, "120.00");
+		insertSalesShipmentAndInvoice(codePrefix + "SAL", customerId, projectId, contractId, productId, unitId,
+				warehouseId, "2.000000", "10000.00");
+		insertLegacyMaterialCostRecord(codePrefix + "V7", workOrderId, productId, rawId, unitId, issueLine1);
+		if (includeConfirmedAllocation) {
+			insertConfirmedAdjustmentAllocation(codePrefix + "ADJ", projectId, expenseLineId, "50.00");
+		}
+		return new StageFixture(projectId, workOrderId, productId, firstValueMovementId);
+	}
+
+	private long insertUnit(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_unit (code, name, precision_scale, status, sort_order, created_by, created_at,
+					updated_by, updated_at)
+				values (?, ?, 6, 'ENABLED', 0, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "U", code + "单位");
+	}
+
+	private long insertWarehouse(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_warehouse (code, name, warehouse_type, status, created_by, created_at, updated_by,
+					updated_at)
+				values (?, ?, 'NORMAL', 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "WH", code + "仓库");
+	}
+
+	private long insertCustomer(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "CUS", code + "客户");
+	}
+
+	private long insertSupplier(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_supplier (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "SUP", code + "供应商");
+	}
+
+	private long insertCategory(String code) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_material_category (code, name, status, sort_order, created_by, created_at,
+					updated_by, updated_at)
+				values (?, ?, 'ENABLED', 0, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "CAT", code + "分类");
+	}
+
+	private long insertMaterial(String code, long categoryId, long unitId, String materialType) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into mst_material (code, name, specification, material_type, source_type, category_id,
+					unit_id, status, cost_category, inventory_valuation_category, inventory_value_enabled,
+					project_cost_enabled, created_by, created_at, updated_by, updated_at)
+				values (?, ?, '029规格', ?, 'PURCHASED', ?, ?, 'ENABLED', 'DIRECT_MATERIAL',
+					'VALUATED_MATERIAL', true, true, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, code + "物料", materialType, categoryId, unitId);
+	}
+
+	private long insertProject(String code, long customerId, String targetRevenue) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project (project_no, name, customer_id, owner_user_id, planned_start_date,
+					planned_finish_date, status, target_revenue, target_cost, created_by, created_at, updated_by,
+					updated_at, activated_by, activated_at)
+				values (?, ?, ?, 1, date '2026-07-01', date '2026-07-31', 'ACTIVE', ?::numeric, 0,
+					'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "PRJ", code + "项目", customerId, targetRevenue);
+	}
+
+	private long insertContract(String code, long projectId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into sal_project_contract (contract_no, project_id, contract_type, name, signed_date,
+					effective_start_date, amount, status, created_by, created_at, updated_by, updated_at,
+					activated_by, activated_at)
+				values (?, ?, 'MAIN', ?, date '2026-07-01', date '2026-07-01', 12000.00, 'EFFECTIVE',
+					'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "CON", projectId, code + "合同");
+	}
+
+	private long insertBom(String code, long productId, long rawId, long unitId) {
+		long bomId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_bom (bom_code, parent_material_id, version_code, name, base_quantity, base_unit_id,
+					status, effective_from, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'V1', ?, 1.000000, ?, 'ENABLED', date '2026-07-01', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "BOM", productId, code + "BOM", unitId);
+		this.jdbcTemplate.update("""
+				insert into mfg_bom_item (bom_id, line_no, child_material_id, unit_id, quantity, loss_rate,
+					business_unit_id, business_quantity, base_unit_id, base_quantity, quantity_basis,
+					created_at, updated_at)
+				values (?, 1, ?, ?, 1.000000, 0, ?, 1.000000, ?, 1.000000, 'BASE_UNIT', now(), now())
+				""", bomId, rawId, unitId, unitId, unitId);
+		return bomId;
+	}
+
+	private long insertWorkOrder(String code, long projectId, long productId, long rawId, long unitId,
+			long warehouseId, long bomId) {
+		long workOrderId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_work_order (work_order_no, product_material_id, bom_id, planned_quantity,
+					reported_quantity, qualified_quantity, defective_quantity, received_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_start_date, planned_finish_date, status, ownership_type,
+					project_id, created_by, created_at, updated_by, updated_at, released_by, released_at)
+				values (?, ?, ?, 1.000000, 1.000000, 1.000000, 0, 1.000000, ?, ?, date '2026-07-01',
+					date '2026-07-31', 'COMPLETED', 'PROJECT', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "WO", productId, bomId, warehouseId, warehouseId, projectId);
+		long bomItemId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_bom_item where bom_id = ? and child_material_id = ?", Long.class, bomId, rawId);
+		this.jdbcTemplate.update("""
+				insert into mfg_work_order_material (work_order_id, line_no, bom_item_id, material_id, unit_id,
+					required_quantity, issued_quantity, loss_rate, business_unit_id, business_quantity,
+					base_unit_id, base_required_quantity, quantity_basis, created_at, updated_at)
+				values (?, 1, ?, ?, ?, 1.000000, 3.000000, 0, ?, 1.000000, ?, 1.000000, 'BASE_UNIT',
+					now(), now())
+				""", workOrderId, bomItemId, rawId, unitId, unitId, unitId);
+		return workOrderId;
+	}
+
+	private long insertMaterialIssue(String no, long workOrderId, long rawId, long unitId, long warehouseId,
+			String quantity) {
+		long issueId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_issue (issue_no, work_order_id, status, business_date, reason,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at)
+				values (?, ?, 'POSTED', date '2026-07-10', '029领料', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, workOrderId);
+		long workOrderMaterialId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_work_order_material where work_order_id = ? and material_id = ?", Long.class,
+				workOrderId, rawId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_issue_line (issue_id, work_order_material_id, line_no, warehouse_id,
+					material_id, unit_id, quantity, ownership_type, project_id, created_at, updated_at)
+				select ?, ?, 1, ?, ?, ?, ?::numeric, 'PUBLIC', null, now(), now()
+				returning id
+				""", Long.class, issueId, workOrderMaterialId, warehouseId, rawId, unitId, quantity);
+	}
+
+	private long insertMaterialReturn(String no, long workOrderId, long sourceIssueLineId, long rawId, long unitId,
+			long warehouseId, String quantity) {
+		long sourceIssueId = this.jdbcTemplate.queryForObject(
+				"select issue_id from mfg_material_issue_line where id = ?", Long.class, sourceIssueLineId);
+		long returnId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_return (return_no, work_order_id, source_issue_id, warehouse_id,
+					business_date, status, created_by, created_at, updated_by, updated_at, posted_by, posted_at)
+				values (?, ?, ?, ?, date '2026-07-12', 'POSTED', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, workOrderId, sourceIssueId, warehouseId);
+		long workOrderMaterialId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_work_order_material where work_order_id = ? and material_id = ?", Long.class,
+				workOrderId, rawId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_return_line (return_id, source_issue_line_id, work_order_material_id,
+					material_id, unit_id, line_no, returnable_quantity_before, quantity, ownership_type, project_id,
+					created_at, updated_at)
+				values (?, ?, ?, ?, ?, 1, ?::numeric, ?::numeric, 'PUBLIC', null, now(), now())
+				returning id
+				""", Long.class, returnId, sourceIssueLineId, workOrderMaterialId, rawId, unitId, quantity,
+				quantity);
+	}
+
+	private long insertMaterialSupplement(String no, long workOrderId, long rawId, long unitId, long warehouseId,
+			String quantity) {
+		long supplementId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_supplement (supplement_no, work_order_id, warehouse_id, business_date,
+					status, created_by, created_at, updated_by, updated_at, posted_by, posted_at)
+				values (?, ?, ?, date '2026-07-13', 'POSTED', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, workOrderId, warehouseId);
+		long workOrderMaterialId = this.jdbcTemplate.queryForObject(
+				"select id from mfg_work_order_material where work_order_id = ? and material_id = ?", Long.class,
+				workOrderId, rawId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into mfg_material_supplement_line (supplement_id, work_order_material_id, material_id,
+					unit_id, line_no, quantity, ownership_type, project_id, created_at, updated_at)
+				values (?, ?, ?, ?, 1, ?::numeric, 'PUBLIC', null, now(), now())
+				returning id
+				""", Long.class, supplementId, workOrderMaterialId, rawId, unitId, quantity);
+	}
+
+	private long insertValueMovement(String sourceType, long sourceId, long sourceLineId, String movementType,
+			String direction, long warehouseId, long materialId, long unitId, Long projectId, String quantity,
+			String amount, LocalDate businessDate) {
+		long stockId = this.jdbcTemplate.queryForObject("""
+				insert into inv_stock_movement (movement_no, movement_type, direction, warehouse_id, material_id,
+					unit_id, quantity, before_quantity, after_quantity, source_type, source_id, source_line_id,
+					business_date, reason, operator_name, occurred_at, ownership_type, project_id,
+					valuation_state, valuation_method, unit_cost, inventory_amount, quality_status)
+				values (?, ?, ?, ?, ?, ?, ?::numeric, 0, ?::numeric, ?, ?, ?, ?, '029来源', 'test', now(),
+					?, ?, 'VALUED', 'MOVING_WEIGHTED_AVERAGE', round(?::numeric / ?::numeric, 6), ?::numeric,
+					'QUALIFIED')
+				returning id
+				""", Long.class, "029-VM-" + SEQUENCE.incrementAndGet(), movementType, direction, warehouseId,
+				materialId, unitId, quantity, quantity, sourceType, sourceId, sourceLineId, businessDate,
+				projectId == null ? "PUBLIC" : "PROJECT", projectId, amount, quantity, amount);
+		long valueId = this.jdbcTemplate.queryForObject("""
+				insert into inv_value_movement (stock_movement_id, movement_no, movement_type, direction,
+					warehouse_id, material_id, ownership_type, project_id, quantity, unit_cost, inventory_amount,
+					valuation_method, valuation_state, source_type, source_id, source_line_id, business_date)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?::numeric, round(?::numeric / ?::numeric, 6), ?::numeric,
+					'MOVING_WEIGHTED_AVERAGE', 'VALUED', ?, ?, ?, ?)
+				returning id
+				""", Long.class, stockId, "029-VMV-" + SEQUENCE.incrementAndGet(), movementType, direction,
+				warehouseId, materialId, projectId == null ? "PUBLIC" : "PROJECT", projectId, quantity, amount,
+				quantity, amount, sourceType, sourceId, sourceLineId, businessDate);
+		this.jdbcTemplate.update("update inv_stock_movement set value_movement_id = ? where id = ?", valueId,
+				stockId);
+		return valueId;
+	}
+
+	private void linkProductionIssueLine(long lineId, long valueMovementId) {
+		this.jdbcTemplate.update("update mfg_material_issue_line set value_movement_id = ? where id = ?",
+				valueMovementId, lineId);
+	}
+
+	private void linkProductionReturnLine(long lineId, long valueMovementId, long sourceValueMovementId) {
+		this.jdbcTemplate.update("""
+				update mfg_material_return_line
+				set value_movement_id = ?, source_value_movement_id = ?
+				where id = ?
+				""", valueMovementId, sourceValueMovementId, lineId);
+	}
+
+	private void linkProductionSupplementLine(long lineId, long valueMovementId) {
+		this.jdbcTemplate.update("update mfg_material_supplement_line set value_movement_id = ? where id = ?",
+				valueMovementId, lineId);
+	}
+
+	private void insertWorkOrderCost(String no, long workOrderId, long productId, String costType, String amount) {
+		this.jdbcTemplate.update("""
+				insert into mfg_cost_record (
+					record_no, work_order_id, product_material_id, cost_type, source_type, source_document_type,
+					source_document_no, source_document_id, quantity, amount, basis_type, business_date, status,
+					remark, recorded_by, recorded_at, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, 'MANUAL_ENTRY', 'MANUAL_COST_RECORD', ?, ?, 1.000000, ?::numeric,
+					'MANUAL_AMOUNT', date '2026-07-14', 'ACTIVE', '029人工', 'test', now(), 'test', now(),
+					'test', now())
+				""", no, workOrderId, productId, costType, no, 7_000_000L + SEQUENCE.incrementAndGet(), amount);
+	}
+
+	private void insertCompletionReceipt(String no, long workOrderId, long projectId, long productId, long unitId,
+			long warehouseId, String quantity) {
+		this.jdbcTemplate.update("""
+				insert into mfg_completion_receipt (receipt_no, work_order_id, status, business_date,
+					receipt_warehouse_id, quantity, ownership_type, project_id, unit_cost, valuation_state,
+					created_by, created_at, updated_by, updated_at, posted_by, posted_at)
+				values (?, ?, 'POSTED', date '2026-07-16', ?, ?::numeric, 'PROJECT', ?, 0, 'VALUED',
+					'test', now(), 'test', now(), 'test', now())
+				""", no, workOrderId, warehouseId, quantity, projectId);
+	}
+
+	private long insertProjectExpense(String no, long supplierId, long projectId, String amount) {
+		long expenseId = this.jdbcTemplate.queryForObject("""
+				insert into fin_expense (expense_no, supplier_id, ownership_type, project_id, expense_date,
+					due_date, invoice_type, currency, tax_excluded_amount, tax_amount, tax_included_amount,
+					status, created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at)
+				values (?, ?, 'PROJECT', ?, date '2026-07-18', date '2026-07-31', 'NONE', 'CNY',
+					?::numeric, 0, ?::numeric, 'CONFIRMED', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, supplierId, projectId, amount, amount);
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_expense_line (expense_id, line_no, expense_category, description,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at)
+				values (?, 1, 'PROJECT_EXPENSE', '029项目费用', ?::numeric, 0, ?::numeric, now(), now())
+				returning id
+				""", Long.class, expenseId, amount, amount);
+	}
+
+	private long insertOutsourcing(String no, long supplierId, long projectId, long productId, long rawId, long unitId,
+			long warehouseId, String quantity, String provisionalUnitCost) {
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_outsourcing_order (outsourcing_order_no, supplier_id, product_material_id,
+					planned_quantity, issued_quantity, received_quantity, issue_warehouse_id,
+					receipt_warehouse_id, planned_issue_date, planned_receipt_date, status, ownership_type,
+					project_id, provisional_unit_cost, created_by, created_at, updated_by, updated_at,
+					released_by, released_at)
+				values (?, ?, ?, ?::numeric, 0, ?::numeric, ?, ?, date '2026-07-08', date '2026-07-20',
+					'COMPLETED', 'PROJECT', ?, ?::numeric, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, supplierId, productId, quantity, quantity, warehouseId, warehouseId, projectId,
+				provisionalUnitCost);
+		this.jdbcTemplate.update("""
+				insert into mfg_outsourcing_order_material (outsourcing_order_id, line_no, material_id, unit_id,
+					required_quantity, created_at, updated_at)
+				values (?, 1, ?, ?, 1.000000, now(), now())
+				""", orderId, rawId, unitId);
+		return orderId;
+	}
+
+	private long insertOutsourcingReceipt(String no, long orderId, long projectId, long productId, long unitId,
+			long warehouseId, String quantity, String provisionalUnitCost) {
+		long receiptId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_outsourcing_receipt (receipt_no, outsourcing_order_id, status, business_date,
+					receipt_warehouse_id, quantity, rejected_quantity, provisional_unit_cost, unit_cost,
+					valuation_state, ownership_type, project_id, created_by, created_at, updated_by, updated_at,
+					posted_by, posted_at)
+				values (?, ?, 'POSTED', date '2026-07-20', ?, ?::numeric, 0, ?::numeric, ?::numeric,
+					'MANUAL_PROVISIONAL', 'PROJECT', ?, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, orderId, warehouseId, quantity, provisionalUnitCost, provisionalUnitCost,
+				projectId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into mfg_outsourcing_receipt_line (receipt_id, line_no, accepted_quantity,
+					rejected_quantity, provisional_unit_cost, unit_cost, created_at, updated_at)
+				values (?, 1, ?::numeric, 0, ?::numeric, ?::numeric, now(), now())
+				returning id
+				""", Long.class, receiptId, quantity, provisionalUnitCost, provisionalUnitCost);
+	}
+
+	private void insertPurchaseInvoice(String no, long supplierId, long projectId, long outsourcingOrderId,
+			long receiptLineId, long productId, long unitId, String amount) {
+		long receiptId = this.jdbcTemplate.queryForObject(
+				"select receipt_id from mfg_outsourcing_receipt_line where id = ?", Long.class, receiptLineId);
+		long invoiceId = this.jdbcTemplate.queryForObject("""
+				insert into fin_purchase_invoice (invoice_no, supplier_id, settlement_kind, ownership_type,
+					project_id, source_type, source_id, source_no, invoice_date, due_date, invoice_type, currency,
+					match_status, tax_excluded_amount, tax_amount, tax_included_amount, status, created_by,
+					created_at, updated_by, updated_at, confirmed_by, confirmed_at)
+				values (?, ?, 'OUTSOURCING', 'PROJECT', ?, 'OUTSOURCING_RECEIPT', ?, ?, date '2026-07-21',
+					date '2026-07-31', 'NONE', 'CNY', 'NOT_APPLICABLE', ?::numeric, 0, ?::numeric,
+					'CONFIRMED', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, supplierId, projectId, receiptId, no + "-SRC", amount, amount);
+		this.jdbcTemplate.update("""
+				insert into fin_purchase_invoice_line (purchase_invoice_id, line_no, source_line_id,
+					outsourcing_order_id, material_id, unit_id, quantity, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount, match_status,
+					created_at, updated_at)
+				values (?, 1, ?, ?, ?, ?, 1.000000, ?::numeric, ?::numeric, ?::numeric, 0, ?::numeric,
+					'NOT_APPLICABLE', now(), now())
+				""", invoiceId, receiptLineId, outsourcingOrderId, productId, unitId, amount, amount, amount,
+				amount);
+	}
+
+	private void insertSalesShipmentAndInvoice(String no, long customerId, long projectId, long contractId,
+			long productId, long unitId, long warehouseId, String quantity, String amount) {
+		long orderId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_order (order_no, customer_id, order_date, expected_ship_date, status,
+					project_id, contract_id, currency, tax_excluded_amount, tax_amount, tax_included_amount,
+					sales_fulfillment_compatible, created_by, created_at, updated_by, updated_at, confirmed_by,
+					confirmed_at)
+				values (?, ?, date '2026-07-01', date '2026-07-25', 'SHIPPED', ?, ?, 'CNY', ?::numeric,
+					0, ?::numeric, true, 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no + "SO", customerId, projectId, contractId, amount, amount);
+		long orderLineId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_order_line (order_id, line_no, material_id, unit_id, quantity,
+					shipped_quantity, unit_price, expected_ship_date, reservation_warehouse_id, price_source_type,
+					source_no, currency, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+					tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at)
+				values (?, 1, ?, ?, ?::numeric, ?::numeric, ?::numeric / ?::numeric, date '2026-07-25', ?,
+					'MANUAL', ?, 'CNY', 0, ?::numeric / ?::numeric, ?::numeric / ?::numeric, ?::numeric,
+					0, ?::numeric, now(), now())
+				returning id
+				""", Long.class, orderId, productId, unitId, quantity, quantity, amount, quantity, warehouseId,
+				no + "SO", amount, quantity, amount, quantity, amount, amount);
+		long shipmentId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_shipment (shipment_no, order_id, customer_id, warehouse_id, business_date,
+					status, created_by, created_at, updated_by, updated_at, posted_by, posted_at)
+				values (?, ?, ?, ?, date '2026-07-25', 'POSTED', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no + "SHIP", orderId, customerId, warehouseId);
+		long shipmentLineId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_shipment_line (shipment_id, line_no, order_line_id, material_id, unit_id,
+					ordered_quantity, shipped_quantity_before, remaining_quantity_before, quantity,
+					price_source_type, source_no, currency, tax_rate, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount, created_at,
+					updated_at)
+				values (?, 1, ?, ?, ?, ?::numeric, 0, ?::numeric, ?::numeric, 'MANUAL', ?, 'CNY', 0,
+					?::numeric / ?::numeric, ?::numeric / ?::numeric, ?::numeric, 0, ?::numeric, now(), now())
+				returning id
+				""", Long.class, shipmentId, orderLineId, productId, unitId, quantity, quantity, quantity,
+				no + "SO", amount, quantity, amount, quantity, amount, amount);
+		long invoiceId = this.jdbcTemplate.queryForObject("""
+				insert into fin_sales_invoice (invoice_no, customer_id, ownership_type, project_id, source_type,
+					source_id, source_no, invoice_date, due_date, invoice_type, currency, tax_excluded_amount,
+					tax_amount, tax_included_amount, status, created_by, created_at, updated_by, updated_at,
+					confirmed_by, confirmed_at)
+				values (?, ?, 'PROJECT', ?, 'SALES_SHIPMENT', ?, ?, date '2026-07-26', date '2026-07-31',
+					'NONE', 'CNY', ?::numeric, 0, ?::numeric, 'CONFIRMED', 'test', now(), 'test', now(),
+					'test', now())
+				returning id
+				""", Long.class, no + "SI", customerId, projectId, shipmentId, no + "SHIP", amount, amount);
+		this.jdbcTemplate.update("""
+				insert into fin_sales_invoice_line (sales_invoice_id, line_no, source_line_id, sales_order_id,
+					sales_order_line_id, material_id, unit_id, quantity, tax_excluded_unit_price,
+					tax_included_unit_price, tax_excluded_amount, tax_amount, tax_included_amount, created_at,
+					updated_at)
+				values (?, 1, ?, ?, ?, ?, ?, ?::numeric, ?::numeric / ?::numeric, ?::numeric / ?::numeric,
+					?::numeric, 0, ?::numeric, now(), now())
+				""", invoiceId, shipmentLineId, orderId, orderLineId, productId, unitId, quantity, amount, quantity,
+				amount, quantity, amount, amount);
+	}
+
+	private void insertLegacyMaterialCostRecord(String no, long workOrderId, long productId, long rawId, long unitId,
+			long issueLineId) {
+		long issueId = this.jdbcTemplate.queryForObject(
+				"select issue_id from mfg_material_issue_line where id = ?", Long.class, issueLineId);
+		this.jdbcTemplate.update("""
+				insert into mfg_cost_record (
+					record_no, work_order_id, product_material_id, cost_type, source_type, source_document_type,
+					source_document_no, source_document_id, source_line_id, material_id, unit_id, quantity,
+					unit_price, amount, basis_type, business_date, status, remark, recorded_by, recorded_at,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, 'MATERIAL', 'AUTO_PRODUCTION', 'PRODUCTION_MATERIAL_ISSUE', ?, ?, ?, ?, ?,
+					1.000000, 999.000000, 999.000000, 'MANUAL_UNIT_PRICE_QUANTITY', date '2026-07-10',
+					'ACTIVE', 'V7材料记录不得重复计额', 'test', now(), 'test', now(), 'test', now())
+				""", no, workOrderId, productId, no, issueId, issueLineId, rawId, unitId);
+	}
+
+	private void insertConfirmedAdjustmentAllocation(String no, long projectId, long expenseLineId, String amount) {
+		long adjustmentId = this.jdbcTemplate.queryForObject("""
+				insert into prj_cost_adjustment (adjustment_no, adjustment_type, business_date, status, reason,
+					idempotency_key, request_fingerprint, created_by, created_at, updated_by, updated_at,
+					submitted_by, submitted_at, confirmed_by, confirmed_at)
+				values (?, 'PUBLIC_EXPENSE_ALLOCATION', date '2026-07-22', 'CONFIRMED', '029公共费用分配',
+					?, 'seed', 'test', now(), 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, no, no + "-idem");
+		this.jdbcTemplate.update("""
+				insert into prj_cost_adjustment_line (adjustment_id, line_no, project_id, cost_category,
+					cost_stage, direction, amount, public_expense_line_id, reason, created_at, updated_at)
+				values (?, 1, ?, 'MANUFACTURING_OVERHEAD', 'DIRECT_PROJECT', 'INCREASE', ?::numeric, ?,
+					'公共制造费用分配', now(), now())
+				""", adjustmentId, projectId, amount, expenseLineId);
+	}
+
+	private Map<String, Long> upstreamCounts() {
+		return Map.of("inv_value_movement", tableCount("inv_value_movement"), "mfg_cost_record",
+				tableCount("mfg_cost_record"), "fin_purchase_invoice", tableCount("fin_purchase_invoice"),
+				"fin_expense", tableCount("fin_expense"));
+	}
+
+	private long tableCount(String tableName) {
+		return this.jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
+	}
+
+	private List<Long> currentCalculationIds(long projectId) {
+		return this.jdbcTemplate.queryForList("""
+				select id
+				from prj_cost_calculation
+				where project_id = ?
+				and is_current = true
+				order by id
+				""", Long.class, projectId);
+	}
+
+	private BigDecimal sumByCategory(JsonNode sources, String category) {
+		BigDecimal total = BigDecimal.ZERO;
+		for (JsonNode source : sources) {
+			if (category.equals(source.get("costCategory").asText()) && source.get("calculatedAmount").isTextual()) {
+				total = total.add(new BigDecimal(source.get("calculatedAmount").asText()));
+			}
+		}
+		return total;
+	}
+
+	private Set<String> sourceKeys(JsonNode sources) {
+		Set<String> keys = new HashSet<>();
+		for (JsonNode source : sources) {
+			keys.add(source.get("sourceType").asText() + "|" + source.get("sourceId").asText() + "|"
+					+ source.get("sourceLineId").asText() + "|" + source.get("costCategory").asText() + "|"
+					+ source.get("entryType").asText());
+		}
+		return keys;
+	}
+
+	private Set<String> sourceTypes(JsonNode sources) {
+		Set<String> types = new HashSet<>();
+		for (JsonNode source : sources) {
+			types.add(source.get("sourceType").asText());
+		}
+		return types;
+	}
+
+	private boolean hasVariance(JsonNode variances, String varianceType) {
+		for (JsonNode variance : variances) {
+			if (varianceType.equals(variance.get("varianceType").asText())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean hasEntry(JsonNode entries, String entryType) {
+		for (JsonNode entry : entries) {
+			if (entryType.equals(entry.get("entryType").asText())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private AuthenticatedSession login(String username, String password) {
+		CsrfSession csrf = csrfSession();
+		ResponseEntity<String> response = this.restTemplate.postForEntity("/api/auth/login",
+				entity(Map.of("username", username, "password", password), csrf.sessionCookie(), csrf), String.class);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		return new AuthenticatedSession(sessionCookie(response), csrf);
+	}
+
+	private CsrfSession csrfSession() {
+		ResponseEntity<String> response = this.restTemplate.getForEntity("/api/auth/csrf", String.class);
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		try {
+			JsonNode data = data(response);
+			return new CsrfSession(sessionCookie(response), data.get("token").asText(), data.get("headerName").asText());
+		}
+		catch (Exception exception) {
+			throw new AssertionError(exception);
+		}
+	}
+
+	private ResponseEntity<String> get(String path, AuthenticatedSession session) {
+		return this.restTemplate.exchange(path, HttpMethod.GET,
+				entity(null, session == null ? null : session.sessionCookie(), null), String.class);
+	}
+
+	private ResponseEntity<String> exchange(HttpMethod method, String path, Object body, AuthenticatedSession session) {
+		return this.restTemplate.exchange(path, method, entity(body, session.sessionCookie(), session.csrfSession()),
+				String.class);
+	}
+
+	private HttpEntity<Object> entity(Object body, String cookie, CsrfSession csrf) {
+		HttpHeaders headers = new HttpHeaders();
+		if (cookie != null) {
+			headers.add(HttpHeaders.COOKIE, cookie);
+		}
+		if (csrf != null) {
+			headers.add(csrf.headerName(), csrf.token());
+		}
+		return new HttpEntity<>(body, headers);
+	}
+
+	private JsonNode data(ResponseEntity<String> response) throws Exception {
+		return this.objectMapper.readTree(response.getBody()).get("data");
+	}
+
+	private String code(ResponseEntity<String> response) throws Exception {
+		return this.objectMapper.readTree(response.getBody()).get("code").asText();
+	}
+
+	private void assertError(ResponseEntity<String> response, HttpStatus status, String code) throws Exception {
+		assertThat(response.getStatusCode()).isEqualTo(status);
+		assertThat(code(response)).isEqualTo(code);
+	}
+
+	private void assertDecimal(JsonNode node, String field, String expected) {
+		assertThat(new BigDecimal(node.get(field).asText())).isEqualByComparingTo(expected);
+	}
+
+	private String sessionCookie(ResponseEntity<String> response) {
+		return response.getHeaders()
+			.getOrEmpty(HttpHeaders.SET_COOKIE)
+			.stream()
+			.filter((cookie) -> cookie.startsWith("JSESSIONID="))
+			.findFirst()
+			.map((cookie) -> cookie.split(";", 2)[0])
+			.orElseThrow();
+	}
+
+	private record CsrfSession(String sessionCookie, String token, String headerName) {
+	}
+
+	private record AuthenticatedSession(String sessionCookie, CsrfSession csrfSession) {
+	}
+
+	private record StageFixture(Long projectId, Long workOrderId, Long productMaterialId,
+			Long firstValueMovementId) {
+	}
+
+}

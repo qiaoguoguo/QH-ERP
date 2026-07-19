@@ -350,6 +350,42 @@ class PermissionAuthorizationTests extends PostgresIntegrationTest {
 		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/work-orders/1/summary", "cost:record:view");
 		assertPermissionCode(HttpMethod.POST, "/api/admin/cost/records", "cost:record:create");
 		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/records/1", "cost:record:update");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-costs", "cost:project-cost:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-costs/projects/1",
+				"cost:project-cost:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/cost/project-costs/projects/1/calculations",
+				"cost:project-cost:calculate");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-calculations/1",
+				"cost:project-cost:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-calculations/1/sources",
+				"cost:project-cost:source-view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-calculations/1/entries",
+				"cost:project-cost:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-calculations/1/variances",
+				"cost:project-cost-variance:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-variances",
+				"cost:project-cost-variance:view");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/1/recalculate",
+				"cost:project-cost:calculate");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/1/confirm",
+				"cost:project-cost:confirm");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/1/cancel",
+				"cost:project-cost:cancel");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-adjustments",
+				"cost:project-cost-adjustment:view");
+		assertPermissionCode(HttpMethod.GET, "/api/admin/cost/project-cost-adjustments/1",
+				"cost:project-cost-adjustment:view");
+		assertPermissionCode(HttpMethod.GET,
+				"/api/admin/cost/project-cost-adjustments/candidates/public-expenses",
+				"cost:project-cost-adjustment:view");
+		assertPermissionCode(HttpMethod.POST, "/api/admin/cost/project-cost-adjustments",
+				"cost:project-cost-adjustment:create");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-adjustments/1",
+				"cost:project-cost-adjustment:update");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-adjustments/1/submit",
+				"cost:project-cost-adjustment:submit");
+		assertPermissionCode(HttpMethod.PUT, "/api/admin/cost/project-cost-adjustments/1/cancel",
+				"cost:project-cost-adjustment:cancel");
 	}
 
 	@Test

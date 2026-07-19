@@ -10,6 +10,7 @@ import com.qherp.api.system.inventory.InventoryStage023AdminService;
 import com.qherp.api.system.procurement.ProcurementRequisitionService;
 import com.qherp.api.system.procurement.ProcurementSourcingService;
 import com.qherp.api.system.procurement.ProcurementAdminService;
+import com.qherp.api.system.projectcost.ProjectCostAdjustmentService;
 import com.qherp.api.system.sales.SalesAdminService;
 import com.qherp.api.system.sales.SalesFulfillmentService;
 import com.qherp.api.system.sales.SalesQuoteService;
@@ -59,6 +60,8 @@ public class PlatformApprovalService {
 
 	private final SalesFulfillmentService salesFulfillmentService;
 
+	private final ProjectCostAdjustmentService projectCostAdjustmentService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
 			BomEngineeringChangeAdminService engineeringChangeService,
@@ -68,7 +71,8 @@ public class PlatformApprovalService {
 			@Lazy ProcurementAdminService procurementAdminService,
 			@Lazy SalesAdminService salesAdminService,
 			@Lazy SalesQuoteService salesQuoteService,
-			@Lazy SalesFulfillmentService salesFulfillmentService) {
+			@Lazy SalesFulfillmentService salesFulfillmentService,
+			@Lazy ProjectCostAdjustmentService projectCostAdjustmentService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
@@ -80,6 +84,7 @@ public class PlatformApprovalService {
 		this.salesAdminService = salesAdminService;
 		this.salesQuoteService = salesQuoteService;
 		this.salesFulfillmentService = salesFulfillmentService;
+		this.projectCostAdjustmentService = projectCostAdjustmentService;
 	}
 
 	@Transactional
@@ -150,6 +155,11 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitSalesOrderShortClose(Long orderId, ApprovalSubmitRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		return submit("SALES_ORDER_SHORT_CLOSE", orderId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitProjectCostAdjustment(Long adjustmentId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("PROJECT_COST_ADJUSTMENT_CONFIRM", adjustmentId, request, operator, servletRequest);
 	}
 
 	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
@@ -512,6 +522,11 @@ public class PlatformApprovalService {
 					task.businessObjectVersion(), operator, servletRequest);
 			return;
 		}
+		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(task.sceneCode())) {
+			this.projectCostAdjustmentService.confirmFromApproval(task.businessObjectId(),
+					task.businessObjectVersion(), operator, servletRequest);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -536,6 +551,9 @@ public class PlatformApprovalService {
 		if ("SALES_ORDER_CHANGE_APPROVAL".equals(sceneCode)
 				|| "SALES_ORDER_CHANGE_CREDIT_OVERRIDE".equals(sceneCode)) {
 			this.salesFulfillmentService.reopenOrderChangeAfterApprovalTerminal(objectId, operator);
+		}
+		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
+			this.projectCostAdjustmentService.reopenAfterApprovalTerminal(objectId, operator);
 		}
 	}
 
@@ -790,6 +808,20 @@ public class PlatformApprovalService {
 				.stream()
 				.findFirst()
 				.orElseThrow(() -> new BusinessException(ApiErrorCode.SALES_ORDER_NOT_FOUND));
+		}
+		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, adjustment_no, reason,
+					       case when status in ('DRAFT', 'SUBMITTED') then 'DRAFT' else status end as approval_status,
+					       version
+					from prj_cost_adjustment
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("adjustment_no"), rs.getString("reason"), rs.getString("approval_status"),
+					rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_COST_PROJECT_INVALID));
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -1156,6 +1188,9 @@ public class PlatformApprovalService {
 		if ("SALES_ORDER_SHORT_CLOSE".equals(sceneCode)) {
 			return operator.permissions().contains("sales:order:view");
 		}
+		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
+			return operator.permissions().contains("cost:project-cost-adjustment:view");
+		}
 		return false;
 	}
 
@@ -1231,6 +1266,9 @@ public class PlatformApprovalService {
 		}
 		if ("SALES_ORDER_SHORT_CLOSE".equals(sceneCode)) {
 			return "sales:order:view";
+		}
+		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
+			return "cost:project-cost-adjustment:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

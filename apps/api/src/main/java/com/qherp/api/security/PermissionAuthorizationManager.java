@@ -568,6 +568,66 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if (!matchesBasePath(path, basePath)) {
 			return null;
 		}
+		String projectCostsPath = "/api/admin/cost/project-costs";
+		String projectCostCalculationsPath = "/api/admin/cost/project-cost-calculations";
+		String projectCostAdjustmentsPath = "/api/admin/cost/project-cost-adjustments";
+		if ("GET".equals(method) && (projectCostsPath.equals(path)
+				|| path.matches(Pattern.quote(projectCostsPath) + "/projects/\\d+"))) {
+			return "cost:project-cost:view";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote(projectCostsPath) + "/projects/\\d+/calculations")) {
+			return "cost:project-cost:calculate";
+		}
+		if ("GET".equals(method) && matchesIdPath(path, projectCostCalculationsPath)) {
+			return "cost:project-cost:view";
+		}
+		if ("GET".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/sources")) {
+			return "cost:project-cost:source-view";
+		}
+		if ("GET".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/entries")) {
+			return "cost:project-cost:view";
+		}
+		if ("GET".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/variances")) {
+			return "cost:project-cost-variance:view";
+		}
+		if ("GET".equals(method) && "/api/admin/cost/project-cost-variances".equals(path)) {
+			return "cost:project-cost-variance:view";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/recalculate")) {
+			return "cost:project-cost:calculate";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/confirm")) {
+			return "cost:project-cost:confirm";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(projectCostCalculationsPath) + "/\\d+/cancel")) {
+			return "cost:project-cost:cancel";
+		}
+		if ("GET".equals(method) && (projectCostAdjustmentsPath.equals(path)
+				|| matchesIdPath(path, projectCostAdjustmentsPath)
+				|| (projectCostAdjustmentsPath + "/candidates/public-expenses").equals(path))) {
+			return "cost:project-cost-adjustment:view";
+		}
+		if ("POST".equals(method) && projectCostAdjustmentsPath.equals(path)) {
+			return "cost:project-cost-adjustment:create";
+		}
+		if ("PUT".equals(method) && matchesIdPath(path, projectCostAdjustmentsPath)) {
+			return "cost:project-cost-adjustment:update";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(projectCostAdjustmentsPath) + "/\\d+/submit")) {
+			return "cost:project-cost-adjustment:submit";
+		}
+		if ("PUT".equals(method)
+				&& path.matches(Pattern.quote(projectCostAdjustmentsPath) + "/\\d+/cancel")) {
+			return "cost:project-cost-adjustment:cancel";
+		}
 		String recordsPath = "/api/admin/cost/records";
 		if ("GET".equals(method) && (recordsPath.equals(path) || matchesIdPath(path, recordsPath))) {
 			return "cost:record:view";

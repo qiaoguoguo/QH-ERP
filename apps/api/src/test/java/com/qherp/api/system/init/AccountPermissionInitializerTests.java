@@ -55,7 +55,8 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 
 	private static final List<String> PRODUCTION_MENU_PERMISSIONS = List.of("production");
 
-	private static final List<String> COST_MENU_PERMISSIONS = List.of("cost");
+	private static final List<String> COST_MENU_PERMISSIONS = List.of("cost", "cost:project-cost",
+			"cost:project-cost-adjustment");
 
 	private static final List<String> FINANCE_MENU_PERMISSIONS = List.of("finance");
 
@@ -307,7 +308,30 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 	private static final List<ExpectedActionPermission> COST_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("cost:record:view", "cost", "GET", "/api/admin/cost/**"),
 			new ExpectedActionPermission("cost:record:create", "cost", "POST", "/api/admin/cost/records"),
-			new ExpectedActionPermission("cost:record:update", "cost", "PUT", "/api/admin/cost/records/{id}"));
+			new ExpectedActionPermission("cost:record:update", "cost", "PUT", "/api/admin/cost/records/{id}"),
+			new ExpectedActionPermission("cost:project-cost:view", "cost:project-cost", "GET",
+					"/api/admin/cost/project-costs/**"),
+			new ExpectedActionPermission("cost:project-cost:source-view", "cost:project-cost", "GET",
+					"/api/admin/cost/project-cost-calculations/{id}/sources"),
+			new ExpectedActionPermission("cost:project-cost:amount-view", "cost:project-cost", null, null),
+			new ExpectedActionPermission("cost:project-cost:calculate", "cost:project-cost", "POST",
+					"/api/admin/cost/project-costs/projects/{projectId}/calculations"),
+			new ExpectedActionPermission("cost:project-cost:confirm", "cost:project-cost", "PUT",
+					"/api/admin/cost/project-cost-calculations/{id}/confirm"),
+			new ExpectedActionPermission("cost:project-cost:cancel", "cost:project-cost", "PUT",
+					"/api/admin/cost/project-cost-calculations/{id}/cancel"),
+			new ExpectedActionPermission("cost:project-cost-adjustment:view", "cost:project-cost-adjustment",
+					"GET", "/api/admin/cost/project-cost-adjustments/**"),
+			new ExpectedActionPermission("cost:project-cost-adjustment:create", "cost:project-cost-adjustment",
+					"POST", "/api/admin/cost/project-cost-adjustments"),
+			new ExpectedActionPermission("cost:project-cost-adjustment:update", "cost:project-cost-adjustment",
+					"PUT", "/api/admin/cost/project-cost-adjustments/{id}"),
+			new ExpectedActionPermission("cost:project-cost-adjustment:submit", "cost:project-cost-adjustment",
+					"PUT", "/api/admin/cost/project-cost-adjustments/{id}/submit"),
+			new ExpectedActionPermission("cost:project-cost-adjustment:cancel", "cost:project-cost-adjustment",
+					"PUT", "/api/admin/cost/project-cost-adjustments/{id}/cancel"),
+			new ExpectedActionPermission("cost:project-cost-variance:view", "cost:project-cost", "GET",
+					"/api/admin/cost/project-cost-variances/**"));
 
 	private static final List<ExpectedActionPermission> FINANCE_ACTION_PERMISSIONS = List.of(
 			new ExpectedActionPermission("finance:receivable:view", "finance", "GET",
@@ -990,6 +1014,18 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertErrorCode("COST_QUANTITY_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("COST_AMOUNT_INVALID", HttpStatus.BAD_REQUEST);
 		assertErrorCode("COST_GENERATED_RECORD_IMMUTABLE", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_PROJECT_INVALID", HttpStatus.BAD_REQUEST);
+		assertErrorCode("PROJECT_COST_SOURCE_CHANGED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_SOURCE_UNVALUED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_SOURCE_CROSS_PROJECT", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_SOURCE_BROKEN", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_LABOR_UNPRICED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_DELIVERY_UNMATCHED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_VERSION_CONFLICT", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_IDEMPOTENCY_CONFLICT", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_ACTION_NOT_ALLOWED", HttpStatus.CONFLICT);
+		assertErrorCode("PROJECT_COST_AMOUNT_FORBIDDEN", HttpStatus.FORBIDDEN);
 	}
 
 	@Test
