@@ -54,13 +54,9 @@ const actionLoading = ref(false)
 const sourcePagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const entryPagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const variancePagination = reactive({ page: 1, pageSize: 10, total: 0 })
-const calculationId = computed<ResourceId>(() => normalizeId(route.params.id as string))
+const routeCalculationId = computed(() => route.params.id as string)
+const calculationId = computed<ResourceId>(() => record.value?.id ?? routeCalculationId.value)
 const amountRestrictedReason = computed(() => restrictedMoneyReason(record.value))
-
-function normalizeId(value: string): ResourceId {
-  const numeric = Number(value)
-  return Number.isFinite(numeric) && String(numeric) === value ? numeric : value
-}
 
 async function loadRecord() {
   loading.value = true
@@ -89,6 +85,39 @@ async function loadSources() {
   } finally {
     sourceLoading.value = false
   }
+}
+
+function changeSourcePage(page: number) {
+  sourcePagination.page = page
+  void loadSources()
+}
+
+function changeSourcePageSize(pageSize: number) {
+  sourcePagination.pageSize = pageSize
+  sourcePagination.page = 1
+  void loadSources()
+}
+
+function changeEntryPage(page: number) {
+  entryPagination.page = page
+  void loadEntries()
+}
+
+function changeEntryPageSize(pageSize: number) {
+  entryPagination.pageSize = pageSize
+  entryPagination.page = 1
+  void loadEntries()
+}
+
+function changeVariancePage(page: number) {
+  variancePagination.page = page
+  void loadVariances()
+}
+
+function changeVariancePageSize(pageSize: number) {
+  variancePagination.pageSize = pageSize
+  variancePagination.page = 1
+  void loadVariances()
 }
 
 async function loadEntries() {
@@ -141,7 +170,12 @@ async function runAction(action: 'RECALCULATE' | 'CONFIRM' | 'CANCEL') {
     CONFIRM: `确认核算运行“${record.value.calculationNo}”？确认后将形成项目成本历史快照。`,
     CANCEL: `取消核算运行“${record.value.calculationNo}”？`,
   }
-  if (!(await confirmAction(messages[action]))) {
+  const confirmOptions = {
+    RECALCULATE: { title: '重算项目成本', type: 'warning' as const, risk: 'project-cost-recalculate' },
+    CONFIRM: { title: '确认项目成本', type: 'success' as const, risk: 'project-cost-confirm' },
+    CANCEL: { title: '取消项目成本', type: 'warning' as const, risk: 'project-cost-cancel' },
+  }
+  if (!(await confirmAction(messages[action], confirmOptions[action]))) {
     return
   }
   actionLoading.value = true
@@ -235,6 +269,16 @@ onMounted(loadAll)
               <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.sourceAmount, restrictedMoneyReason(row) || undefined) }}</span></template></el-table-column>
             </el-table>
           </div>
+          <el-pagination
+            class="table-pagination"
+            layout="total, sizes, prev, pager, next"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="sourcePagination.total"
+            :page-size="sourcePagination.pageSize"
+            :current-page="sourcePagination.page"
+            @current-change="changeSourcePage"
+            @size-change="changeSourcePageSize"
+          />
         </section>
 
         <section class="project-cost-section">
@@ -247,6 +291,16 @@ onMounted(loadAll)
               <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template></el-table-column>
             </el-table>
           </div>
+          <el-pagination
+            class="table-pagination"
+            layout="total, sizes, prev, pager, next"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="entryPagination.total"
+            :page-size="entryPagination.pageSize"
+            :current-page="entryPagination.page"
+            @current-change="changeEntryPage"
+            @size-change="changeEntryPageSize"
+          />
         </section>
 
         <section class="project-cost-section">
@@ -259,6 +313,16 @@ onMounted(loadAll)
               <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ projectCostVarianceStatusLabel(row.status) }}</template></el-table-column>
             </el-table>
           </div>
+          <el-pagination
+            class="table-pagination"
+            layout="total, sizes, prev, pager, next"
+            :page-sizes="[10, 20, 50, 100]"
+            :total="variancePagination.total"
+            :page-size="variancePagination.pageSize"
+            :current-page="variancePagination.page"
+            @current-change="changeVariancePage"
+            @size-change="changeVariancePageSize"
+          />
         </section>
 
         <section class="project-cost-section">
@@ -268,7 +332,7 @@ onMounted(loadAll)
         </section>
       </div>
 
-      <ProjectCostSourceTraceDrawer v-model="sourceDrawerOpen" :sources="sources" />
+      <ProjectCostSourceTraceDrawer v-model="sourceDrawerOpen" :calculation-id="routeCalculationId" />
     </div>
   </MasterDataTableView>
 </template>

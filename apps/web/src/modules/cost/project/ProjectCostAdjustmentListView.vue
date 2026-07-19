@@ -17,6 +17,7 @@ import {
   formatProjectCostAmount,
   projectCostActionDisabledReason,
   projectCostAdjustmentStatusLabel,
+  projectCostAdjustmentTypeLabel,
   projectCostAllowed,
   projectCostErrorMessage,
   restrictedMoneyReason,
@@ -82,7 +83,10 @@ async function runAction(record: ProjectCostAdjustmentRecord, action: 'SUBMIT' |
     return
   }
   const label = action === 'SUBMIT' ? '提交' : '取消'
-  if (!(await confirmAction(`${label}成本调整/分配“${record.adjustmentNo}”？`))) {
+  const confirmOptions = action === 'SUBMIT'
+    ? { title: '提交成本调整', type: 'warning' as const, risk: 'project-cost-adjustment-submit' }
+    : { title: '取消成本调整', type: 'warning' as const, risk: 'project-cost-adjustment-cancel' }
+  if (!(await confirmAction(`${label}成本调整/分配“${record.adjustmentNo}”？`, confirmOptions))) {
     return
   }
   actionLoadingId.value = String(record.id)
@@ -107,9 +111,7 @@ async function runAction(record: ProjectCostAdjustmentRecord, action: 'SUBMIT' |
 }
 
 function normalizeId(value: ResourceId): ResourceId {
-  const raw = String(value)
-  const numeric = Number(raw)
-  return Number.isFinite(numeric) && raw !== '' ? numeric : value
+  return value
 }
 
 function search() {
@@ -185,7 +187,7 @@ onMounted(loadRecords)
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无成本调整/分配'" stripe>
         <el-table-column prop="adjustmentNo" label="调整编号" min-width="170" show-overflow-tooltip />
-        <el-table-column label="类型" min-width="150"><template #default="{ row }">{{ row.adjustmentType === 'PUBLIC_EXPENSE_ALLOCATION' ? '公共费用分配' : '手工调整' }}</template></el-table-column>
+        <el-table-column label="类型" min-width="150"><template #default="{ row }">{{ projectCostAdjustmentTypeLabel(row.adjustmentType) }}</template></el-table-column>
         <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ projectCostAdjustmentStatusLabel(row.status) }}</template></el-table-column>
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.totalAmount, restrictedMoneyReason(row) || undefined) }}</span></template></el-table-column>

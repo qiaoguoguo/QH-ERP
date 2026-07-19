@@ -20,6 +20,7 @@ const record = ref<ProjectCostAdjustmentRecord | null>(null)
 const loading = ref(true)
 const error = ref('')
 const amountRestrictedReason = computed(() => restrictedMoneyReason(record.value))
+const adjustmentLines = computed(() => record.value?.lines ?? [])
 
 async function loadRecord() {
   loading.value = true
@@ -67,16 +68,19 @@ onMounted(loadRecord)
         <section class="project-cost-section">
           <span class="project-cost-section-title">调整行</span>
           <div class="table-scroll">
-            <el-table :data="record.lines" empty-text="暂无调整行" stripe>
+            <el-table :data="adjustmentLines" empty-text="暂无调整行" stripe>
               <el-table-column label="项目" min-width="210" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.projectNo }} {{ row.projectName }}</template>
               </el-table-column>
-              <el-table-column label="分类" min-width="120"><template #default="{ row }"><CategoryTag :category="row.category" /></template></el-table-column>
-              <el-table-column label="阶段" min-width="120"><template #default="{ row }"><StageTag :stage="row.stage" /></template></el-table-column>
+              <el-table-column label="分类" min-width="120"><template #default="{ row }"><CategoryTag :category="row.costCategory" /></template></el-table-column>
+              <el-table-column label="阶段" min-width="120"><template #default="{ row }"><StageTag :stage="row.costStage" /></template></el-table-column>
               <el-table-column label="方向" min-width="100"><template #default="{ row }">{{ row.direction === 'DECREASE' ? '减少' : '增加' }}</template></el-table-column>
               <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template></el-table-column>
+              <el-table-column label="公共费用行" min-width="130" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.publicExpenseLineId || '-' }}</template>
+              </el-table-column>
               <el-table-column prop="sourceNo" label="来源" min-width="150" show-overflow-tooltip />
-              <el-table-column prop="remark" label="备注" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
             </el-table>
           </div>
         </section>

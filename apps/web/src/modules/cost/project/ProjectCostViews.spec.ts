@@ -264,13 +264,13 @@ const adjustmentRecord: ProjectCostAdjustmentRecord = {
     projectId: 12,
     projectNo: 'SP-202607-001',
     projectName: '华东扩产项目',
-    category: 'MANUFACTURING_OVERHEAD',
-    stage: 'DIRECT_PROJECT',
+    costCategory: 'MANUFACTURING_OVERHEAD',
+    costStage: 'DIRECT_PROJECT',
     direction: 'INCREASE',
     amount: '50.000000',
-    sourceExpenseLineId: 801,
+    publicExpenseLineId: 801,
     sourceNo: 'EXP-001',
-    remark: '公共费用分配',
+    reason: '公共费用分配',
   }],
 }
 
@@ -280,10 +280,11 @@ const publicExpenseCandidate: ProjectCostPublicExpenseCandidate = {
   supplierName: '公共供应商',
   categoryName: '制造费用',
   businessDate: '2026-07-30',
-  totalAmount: '200.000000',
+  taxExcludedAmount: '200.000000',
   allocatedAmount: '150.000000',
-  remainingAmount: '50.000000',
+  availableAmount: '50.000000',
   amountVisible: true,
+  sourceVisible: true,
   restrictedReason: null,
 }
 
@@ -388,10 +389,12 @@ describe('029 项目成本页面族', () => {
     expect(wrapper.findAllComponents({ name: 'ElTableColumn' })).toHaveLength(14)
 
     await wrapper.find('input[name="project-cost-keyword"]').setValue('华东')
+    await wrapper.find('input[name="project-cost-owner-user-id"]').setValue('7')
     await wrapper.find('[data-test="search-project-costs"]').trigger('click')
     await flushPromises()
     expect(projectCostApiMock.projectCosts.list).toHaveBeenLastCalledWith(expect.objectContaining({
       keyword: '华东',
+      ownerUserId: '7',
       page: 1,
       pageSize: 10,
     }))
@@ -427,11 +430,36 @@ describe('029 项目成本页面族', () => {
     expect(wrapper.text()).toContain('目标辅助口径')
     expect(wrapper.text()).not.toContain('来源明细表')
 
+    await wrapper.find('[data-test="trace-project-cost-category"]').trigger('click')
+    await flushPromises()
+    expect(projectCostApiMock.calculations.sources).toHaveBeenLastCalledWith(91, expect.objectContaining({
+      category: 'MATERIAL',
+      page: 1,
+      pageSize: 10,
+    }))
+
     await wrapper.find('[data-test="view-cost-calculation"]').trigger('click')
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('cost-project-cost-calculation-detail')
     expect(router.currentRoute.value.params.id).toBe('91')
     expect(router.currentRoute.value.query.returnTo).toBe('/cost/project-costs/12')
+  })
+
+  it('项目详情在后端明细数组缺失时保持可访问并显示空态', async () => {
+    projectCostApiMock.projectCosts.getProject.mockResolvedValueOnce({
+      ...projectDetail,
+      categorySummaries: undefined,
+      stageSummaries: undefined,
+      calculations: undefined,
+      auditSummary: undefined,
+    })
+    const { wrapper } = await mountCostView(ProjectCostProjectDetailView, '/cost/project-costs/12')
+
+    expect(wrapper.text()).toContain('项目成本详情')
+    expect(wrapper.text()).toContain('暂无分类成本')
+    expect(wrapper.text()).toContain('暂无阶段成本')
+    expect(wrapper.text()).toContain('暂无核算运行')
+    expect(wrapper.text()).toContain('暂无审计记录')
   })
 
   it('运行详情分页加载来源、分录和差异，来源抽屉显示受限态并按动作提交指纹', async () => {
@@ -449,12 +477,18 @@ describe('029 项目成本页面族', () => {
     await wrapper.find('[data-test="open-source-trace"]').trigger('click')
     await flushPromises()
     expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('min(880px, 94vw)')
+    expect(projectCostApiMock.calculations.sources).toHaveBeenCalledTimes(2)
+    expect(projectCostApiMock.calculations.sources).toHaveBeenLastCalledWith('91', expect.objectContaining({ page: 1, pageSize: 10 }))
+    expect(wrapper.findAllComponents({ name: 'ElPagination' }).length).toBeGreaterThanOrEqual(4)
     expect(wrapper.text()).toContain('来源权限受限，仅显示脱敏摘要')
     expect(wrapper.text()).toContain('无权查看成本金额')
 
     await wrapper.find('[data-test="confirm-project-cost-calculation"]').trigger('click')
     await flushPromises()
-    expect(confirmActionMock).toHaveBeenCalledWith('确认核算运行“PCC-202607-001”？确认后将形成项目成本历史快照。')
+    expect(confirmActionMock).toHaveBeenCalledWith(
+      '确认核算运行“PCC-202607-001”？确认后将形成项目成本历史快照。',
+      expect.objectContaining({ title: '确认项目成本', type: 'success', risk: 'project-cost-confirm' }),
+    )
     expect(projectCostApiMock.calculations.confirm).toHaveBeenCalledWith(91, {
       version: 7,
       sourceFingerprint: 'fp-029',
@@ -470,10 +504,15 @@ describe('029 项目成本页面族', () => {
       pageSize: 10,
     }))
     expect(wrapper.text()).toContain('新增成本调整/分配')
+    expect(wrapper.text()).toContain('项目候选')
     expect(wrapper.text()).toContain('公共费用候选')
     expect(wrapper.text()).toContain('剩余可分配金额')
     expect(wrapper.text()).toContain('50.00')
     expect(wrapper.find('.table-scroll').exists()).toBe(true)
+    expect(projectCostApiMock.projectCosts.list).toHaveBeenCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 10,
+    }))
 
     await wrapper.find('[data-test="select-public-expense-candidate"]').trigger('click')
     await wrapper.find('input[name="project-cost-adjustment-project-id"]').setValue('12')
@@ -485,7 +524,13 @@ describe('029 项目成本页面族', () => {
       adjustmentType: 'PUBLIC_EXPENSE_ALLOCATION',
       idempotencyKey: 'project-cost-key',
       sourceFingerprint: 'candidate-801-50.000000',
-      lines: [expect.objectContaining({ amount: '50.000000', sourceExpenseLineId: 801 })],
+      lines: [expect.objectContaining({
+        amount: '50.000000',
+        costCategory: 'MANUFACTURING_OVERHEAD',
+        costStage: 'DIRECT_PROJECT',
+        publicExpenseLineId: 801,
+        reason: '公共费用分配',
+      })],
     }))
     expect(router.currentRoute.value.name).toBe('cost-project-cost-adjustment-detail')
     expect(router.currentRoute.value.params.id).toBe('301')
@@ -501,6 +546,10 @@ describe('029 项目成本页面族', () => {
 
     await list.wrapper.find('[data-test="submit-project-cost-adjustment"]').trigger('click')
     await flushPromises()
+    expect(confirmActionMock).toHaveBeenCalledWith(
+      '提交成本调整/分配“PCA-202607-001”？',
+      expect.objectContaining({ title: '提交成本调整', type: 'warning', risk: 'project-cost-adjustment-submit' }),
+    )
     expect(projectCostApiMock.adjustments.submit).toHaveBeenCalledWith(301, {
       version: 3,
       sourceFingerprint: 'adjustment-301-v3',
@@ -510,6 +559,9 @@ describe('029 项目成本页面族', () => {
     const detail = await mountCostView(ProjectCostAdjustmentDetailView, '/cost/project-cost-adjustments/301')
     expect(detail.wrapper.text()).toContain('成本调整/分配详情')
     expect(detail.wrapper.text()).toContain('公共制造费用分配')
+    expect(detail.wrapper.text()).toContain('制造费用')
+    expect(detail.wrapper.text()).toContain('直接项目')
+    expect(detail.wrapper.text()).toContain('801')
     expect(detail.wrapper.text()).toContain('审批状态')
     expect(detail.wrapper.text()).toContain('草稿')
   })
@@ -541,5 +593,14 @@ describe('029 项目成本页面族', () => {
     expect(wrapper.text()).toContain('20.00')
     expect(wrapper.text()).toContain('来源权限受限，仅显示脱敏摘要')
     expect(wrapper.text()).not.toContain('差额 0')
+
+    await wrapper.find('input[name="project-cost-variance-project-id"]').setValue('12')
+    await wrapper.find('[data-test="search-project-cost-variances"]').trigger('click')
+    await flushPromises()
+    expect(projectCostApiMock.calculations.variances).toHaveBeenLastCalledWith(undefined, expect.objectContaining({
+      projectId: '12',
+      page: 1,
+      pageSize: 10,
+    }))
   })
 })

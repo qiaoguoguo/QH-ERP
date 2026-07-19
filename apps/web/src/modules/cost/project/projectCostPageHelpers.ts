@@ -1,6 +1,7 @@
 import type { RouteLocationRaw } from 'vue-router'
 import type {
   ProjectCostAdjustmentStatus,
+  ProjectCostAdjustmentType,
   ProjectCostCategory,
   ProjectCostCalculationStatus,
   ProjectCostCompletenessStatus,
@@ -83,6 +84,12 @@ const adjustmentStatusLabels: Record<ProjectCostAdjustmentStatus, string> = {
   CANCELLED: '已取消',
 }
 
+const adjustmentTypeLabels: Record<ProjectCostAdjustmentType, string> = {
+  PROJECT_ADJUSTMENT: '项目成本调整',
+  PUBLIC_EXPENSE_ALLOCATION: '公共费用分配',
+  VARIANCE_SETTLEMENT: '差异结算',
+}
+
 const varianceTypeLabels: Record<string, string> = {
   OUTSOURCING_ESTIMATE_ACTUAL: '外协暂估差异',
   UNPRICED_LABOR: '人工未定价',
@@ -102,6 +109,8 @@ const sourceTypeLabels: Record<string, string> = {
   SALES_RETURN: '销售退货',
   ADJUSTMENT: '成本调整',
 }
+
+export const projectCostSourceTypeOptions = Object.entries(sourceTypeLabels).map(([value, label]) => ({ value, label }))
 
 export function projectCostCalculationStatusLabel(status?: string | null): string {
   return status ? calculationStatusLabels[status as ProjectCostCalculationStatus] ?? status : '-'
@@ -137,6 +146,10 @@ export function projectCostVarianceStatusLabel(status?: string | null): string {
 
 export function projectCostAdjustmentStatusLabel(status?: string | null): string {
   return status ? adjustmentStatusLabels[status as ProjectCostAdjustmentStatus] ?? status : '-'
+}
+
+export function projectCostAdjustmentTypeLabel(type?: string | null): string {
+  return type ? adjustmentTypeLabels[type as ProjectCostAdjustmentType] ?? type : '-'
 }
 
 export function projectCostVarianceTypeLabel(type?: string | null): string {
@@ -271,7 +284,8 @@ function formatDecimalString(value: unknown, scale: number, trimTrailingZeros = 
   }
   const [integerPart, fraction = ''] = normalized.unsigned.split('.')
   const firstDigits = fraction.slice(0, scale).padEnd(scale, '0')
-  const roundDigit = Number(fraction.charAt(scale) || '0')
+  const roundDigitChar = fraction.charAt(scale)
+  const roundDigit = roundDigitChar ? roundDigitChar.charCodeAt(0) - 48 : 0
   let scaled = BigInt(integerPart || '0') * 10n ** BigInt(scale) + BigInt(firstDigits || '0')
   if (roundDigit >= 5) {
     scaled += 1n

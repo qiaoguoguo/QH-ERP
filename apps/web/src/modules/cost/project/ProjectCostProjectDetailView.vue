@@ -1,12 +1,19 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { projectCostApi, type ProjectCostProjectDetail } from '../../../shared/api/projectCostApi'
+import {
+  projectCostApi,
+  type ProjectCostCategory,
+  type ProjectCostProjectDetail,
+  type ProjectCostSourceListParams,
+  type ProjectCostStage,
+} from '../../../shared/api/projectCostApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation } from '../../../shared/navigation/navigationReturn'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import CategoryTag from './CategoryTag.vue'
 import CompletenessTag from './CompletenessTag.vue'
 import ProjectCostCalculationStatusTag from './ProjectCostCalculationStatusTag.vue'
+import ProjectCostSourceTraceDrawer from './ProjectCostSourceTraceDrawer.vue'
 import StageTag from './StageTag.vue'
 import {
   formatProjectCostAmount,
@@ -22,9 +29,16 @@ import './ProjectCostShared.css'
 const route = useRoute()
 const router = useRouter()
 const record = ref<ProjectCostProjectDetail | null>(null)
+const sourceDrawerOpen = ref(false)
+const sourceTraceFilters = ref<Partial<ProjectCostSourceListParams>>({})
 const loading = ref(true)
 const error = ref('')
 const amountRestrictedReason = computed(() => restrictedMoneyReason(record.value))
+const categorySummaries = computed(() => record.value?.categorySummaries ?? [])
+const stageSummaries = computed(() => record.value?.stageSummaries ?? [])
+const calculations = computed(() => record.value?.calculations ?? [])
+const auditSummary = computed(() => record.value?.auditSummary ?? [])
+const latestCalculationId = computed(() => record.value?.latestCalculationId ?? record.value?.calculationId ?? null)
 
 async function loadRecord() {
   loading.value = true
@@ -49,6 +63,22 @@ function viewCalculation(id: string | number) {
     params: { id: String(id) },
     query: queryWithReturnTo({}, currentRouteReturnTo(route)),
   })
+}
+
+function openCategoryTrace(category: ProjectCostCategory) {
+  if (!latestCalculationId.value) {
+    return
+  }
+  sourceTraceFilters.value = { category }
+  sourceDrawerOpen.value = true
+}
+
+function openStageTrace(stage: ProjectCostStage) {
+  if (!latestCalculationId.value) {
+    return
+  }
+  sourceTraceFilters.value = { stage }
+  sourceDrawerOpen.value = true
 }
 
 onMounted(loadRecord)
@@ -111,7 +141,7 @@ onMounted(loadRecord)
             <span class="project-cost-section-title">成本分类</span>
           </div>
           <div class="table-scroll">
-            <el-table :data="record.categorySummaries" empty-text="暂无分类成本" stripe>
+            <el-table :data="categorySummaries" empty-text="暂无分类成本" stripe>
               <el-table-column label="分类" min-width="150">
                 <template #default="{ row }"><CategoryTag :category="row.category" /></template>
               </el-table-column>
@@ -119,6 +149,11 @@ onMounted(loadRecord)
                 <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template>
               </el-table-column>
               <el-table-column prop="sourceCount" label="来源数" min-width="100" />
+              <el-table-column label="操作" fixed="right" min-width="90">
+                <template #default="{ row }">
+                  <el-button size="small" text data-test="trace-project-cost-category" :disabled="!latestCalculationId" @click="openCategoryTrace(row.category)">追溯</el-button>
+                </template>
+              </el-table-column>
             </el-table>
           </div>
         </section>
@@ -126,12 +161,17 @@ onMounted(loadRecord)
         <section class="project-cost-section">
           <span class="project-cost-section-title">成本阶段</span>
           <div class="table-scroll">
-            <el-table :data="record.stageSummaries" empty-text="暂无阶段成本" stripe>
+            <el-table :data="stageSummaries" empty-text="暂无阶段成本" stripe>
               <el-table-column label="阶段" min-width="150">
                 <template #default="{ row }"><StageTag :stage="row.stage" /></template>
               </el-table-column>
               <el-table-column label="金额" min-width="150" align="right">
                 <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template>
+              </el-table-column>
+              <el-table-column label="操作" fixed="right" min-width="90">
+                <template #default="{ row }">
+                  <el-button size="small" text data-test="trace-project-cost-stage" :disabled="!latestCalculationId" @click="openStageTrace(row.stage)">追溯</el-button>
+                </template>
               </el-table-column>
             </el-table>
           </div>
@@ -162,7 +202,7 @@ onMounted(loadRecord)
         <section class="project-cost-section">
           <span class="project-cost-section-title">核算运行</span>
           <div class="table-scroll">
-            <el-table :data="record.calculations" empty-text="暂无核算运行" stripe>
+            <el-table :data="calculations" empty-text="暂无核算运行" stripe>
               <el-table-column prop="calculationNo" label="运行编号" min-width="170" show-overflow-tooltip />
               <el-table-column label="状态" min-width="110">
                 <template #default="{ row }"><ProjectCostCalculationStatusTag :status="row.status" /></template>
@@ -182,12 +222,18 @@ onMounted(loadRecord)
 
         <section class="project-cost-section">
           <span class="project-cost-section-title">审计摘要</span>
-          <p v-if="!record.auditSummary.length">暂无审计记录</p>
-          <p v-for="item in record.auditSummary" :key="`${item.action}-${item.createdAt}`">
+          <p v-if="!auditSummary.length">暂无审计记录</p>
+          <p v-for="item in auditSummary" :key="`${item.action}-${item.createdAt}`">
             {{ formatProjectCostDateTime(item.createdAt) }} · {{ item.operatorUsername }} · {{ item.action }}
           </p>
         </section>
       </div>
+
+      <ProjectCostSourceTraceDrawer
+        v-model="sourceDrawerOpen"
+        :calculation-id="latestCalculationId"
+        :initial-filters="sourceTraceFilters"
+      />
     </div>
   </MasterDataTableView>
 </template>

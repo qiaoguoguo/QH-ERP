@@ -31,6 +31,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 const filters = reactive<{
   keyword: string
+  ownerUserId: string
   projectStatus?: string
   freshnessStatus?: ProjectCostFreshnessStatus
   varianceStatus?: ProjectCostVarianceStatus
@@ -39,6 +40,7 @@ const filters = reactive<{
   cutoffDateTo: string
 }>({
   keyword: '',
+  ownerUserId: '',
   projectStatus: undefined,
   freshnessStatus: undefined,
   varianceStatus: undefined,
@@ -63,6 +65,7 @@ async function loadRecords() {
   try {
     const page = await projectCostApi.projectCosts.list({
       keyword: filters.keyword,
+      ownerUserId: filters.ownerUserId,
       projectStatus: filters.projectStatus,
       freshnessStatus: filters.freshnessStatus,
       varianceStatus: filters.varianceStatus,
@@ -90,6 +93,7 @@ function search() {
 
 function resetSearch() {
   filters.keyword = ''
+  filters.ownerUserId = ''
   filters.projectStatus = undefined
   filters.freshnessStatus = undefined
   filters.varianceStatus = undefined
@@ -180,6 +184,9 @@ onMounted(loadRecords)
       <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="project-cost-keyword" clearable placeholder="项目编号、名称、客户" />
+        </el-form-item>
+        <el-form-item label="负责人">
+          <el-input v-model="filters.ownerUserId" name="project-cost-owner-user-id" clearable placeholder="负责人 ID" />
         </el-form-item>
         <el-form-item label="项目状态">
           <el-select v-model="filters.projectStatus" clearable placeholder="全部状态">

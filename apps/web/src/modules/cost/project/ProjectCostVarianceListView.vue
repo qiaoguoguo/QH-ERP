@@ -9,6 +9,7 @@ import {
   formatProjectCostAmount,
   projectCostErrorMessage,
   projectCostMessages,
+  projectCostSourceTypeOptions,
   projectCostSourceTypeLabel,
   projectCostVarianceStatusLabel,
   projectCostVarianceTypeLabel,
@@ -18,15 +19,23 @@ import {
 import './ProjectCostShared.css'
 
 const filters = reactive<{
+  projectId: string
   varianceType: string
   severity?: ProjectCostVarianceSeverity
   status?: ProjectCostVarianceStatus
   sourceType: string
+  businessDateFrom: string
+  businessDateTo: string
+  sourceRestricted?: boolean
 }>({
+  projectId: '',
   varianceType: '',
   severity: undefined,
   status: undefined,
   sourceType: '',
+  businessDateFrom: '',
+  businessDateTo: '',
+  sourceRestricted: undefined,
 })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<ProjectCostVarianceRecord[]>([])
@@ -38,10 +47,14 @@ async function loadRecords() {
   error.value = ''
   try {
     const page = await projectCostApi.calculations.variances(undefined, {
+      projectId: filters.projectId,
       varianceType: filters.varianceType,
       severity: filters.severity,
       status: filters.status,
       sourceType: filters.sourceType,
+      businessDateFrom: filters.businessDateFrom,
+      businessDateTo: filters.businessDateTo,
+      sourceRestricted: filters.sourceRestricted,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -62,10 +75,14 @@ function search() {
 }
 
 function resetSearch() {
+  filters.projectId = ''
   filters.varianceType = ''
   filters.severity = undefined
   filters.status = undefined
   filters.sourceType = ''
+  filters.businessDateFrom = ''
+  filters.businessDateTo = ''
+  filters.sourceRestricted = undefined
   pagination.page = 1
   void loadRecords()
 }
@@ -92,6 +109,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="项目成本差异" description="跟踪项目成本核算中的暂估、未定价、来源变化和阻断差异。">
     <template #filters>
       <el-form class="query-form" label-position="top">
+        <el-form-item label="项目"><el-input v-model="filters.projectId" name="project-cost-variance-project-id" clearable placeholder="项目 ID" /></el-form-item>
         <el-form-item label="差异类型"><el-input v-model="filters.varianceType" clearable placeholder="差异类型" /></el-form-item>
         <el-form-item label="严重级别">
           <el-select v-model="filters.severity" clearable placeholder="全部级别">
@@ -107,9 +125,21 @@ onMounted(loadRecords)
             <el-option label="已替代" value="SUPERSEDED" />
           </el-select>
         </el-form-item>
-        <el-form-item label="来源类型"><el-input v-model="filters.sourceType" clearable placeholder="来源类型" /></el-form-item>
+        <el-form-item label="来源类型">
+          <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
+            <el-option v-for="option in projectCostSourceTypeOptions" :key="option.value" :label="option.label" :value="option.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="业务日期起"><el-date-picker v-model="filters.businessDateFrom" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="起始日期" /></el-form-item>
+        <el-form-item label="业务日期止"><el-date-picker v-model="filters.businessDateTo" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="截止日期" /></el-form-item>
+        <el-form-item label="受限">
+          <el-select v-model="filters.sourceRestricted" clearable placeholder="全部">
+            <el-option label="来源受限" :value="true" />
+            <el-option label="来源可见" :value="false" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="操作">
-          <el-button type="primary" @click="search">查询</el-button>
+          <el-button data-test="search-project-cost-variances" type="primary" @click="search">查询</el-button>
           <el-button @click="resetSearch">重置</el-button>
         </el-form-item>
       </el-form>

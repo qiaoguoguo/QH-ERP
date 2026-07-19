@@ -82,7 +82,11 @@ describe('项目成本核算 API', () => {
       ProjectCostAdjustmentPayload['lines'][number]['amount'] extends string ? true : false
     >,
     publicExpenseCandidateUsesDecimalStrings: true as AssertTrue<
-      ProjectCostPublicExpenseCandidate['remainingAmount'] extends string | null ? true : false
+      ProjectCostPublicExpenseCandidate['availableAmount'] extends string | null
+        ? ProjectCostPublicExpenseCandidate['taxExcludedAmount'] extends string | null
+          ? true
+          : false
+        : false
     >,
     actionsCarryVersionFingerprintAndIdempotencyKey: true as AssertTrue<
       ProjectCostActionPayload extends { version: number; sourceFingerprint?: string; idempotencyKey: string } ? true : false
@@ -166,6 +170,121 @@ describe('项目成本核算 API', () => {
     )
   })
 
+  it('显式适配真实后端 DTO 字段并保护缺失明细数组', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          projectId: 12,
+          projectNo: 'SP-001',
+          projectName: '华东扩产项目',
+          projectStatus: 'ACTIVE',
+          status: 'CALCULATED',
+          isCurrent: false,
+          marginCompleteness: 'INCOMPLETE',
+          projectCostTotal: '838.000000',
+          wipCost: '12.000000',
+          deliveredCost: '826.000000',
+          shipmentRevenue: '10000.000000',
+          shipmentGrossMargin: '9162.000000',
+          shipmentGrossMarginRate: '0.916200',
+          amountVisible: true,
+          sourceVisible: true,
+          version: 7,
+          allowedActions: ['RECALCULATE'],
+          actionDisabledReasons: {},
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        projectId: 12,
+        projectNo: 'SP-001',
+        projectName: '华东扩产项目',
+        projectStatus: 'ACTIVE',
+        status: 'CALCULATED',
+        isCurrent: true,
+        marginCompleteness: 'COMPLETE',
+        projectCostTotal: '900.000000',
+        shipmentRevenue: '10000.000000',
+        amountVisible: true,
+        sourceVisible: true,
+        version: 8,
+        allowedActions: [],
+        actionDisabledReasons: {},
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 501,
+          calculationId: 91,
+          projectId: 12,
+          costCategory: 'MATERIAL',
+          costStage: 'WIP',
+          sourceStatus: 'UNPRICED',
+          sourceType: 'INVENTORY_ISSUE',
+          sourceRestricted: true,
+          sourceSummary: '已纳入一条受限来源',
+          quantity: '80.000000',
+          unitCost: '2.100000',
+          calculatedAmount: '168.000000',
+          amountVisible: false,
+          restrictedReason: '来源权限受限，仅显示脱敏摘要',
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          expenseLineId: 801,
+          expenseNo: 'EXP-001',
+          taxExcludedAmount: '200.000000',
+          allocatedAmount: '150.000000',
+          availableAmount: '50.000000',
+          amountVisible: true,
+          sourceVisible: true,
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+    const api = createProjectCostApi({ fetcher })
+
+    await expect(api.projectCosts.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [{
+        calculationStatus: 'CALCULATED',
+        freshnessStatus: 'STALE',
+        completenessStatus: 'INCOMPLETE',
+        totalCost: '838.000000',
+        shipmentPretaxRevenue: '10000.000000',
+      }],
+    })
+    await expect(api.projectCosts.getProject(12)).resolves.toMatchObject({
+      categorySummaries: [],
+      stageSummaries: [],
+      calculations: [],
+      auditSummary: [],
+      totalCost: '900.000000',
+      shipmentPretaxRevenue: '10000.000000',
+    })
+    await expect(api.calculations.sources(91, { page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [{
+        category: 'MATERIAL',
+        stage: 'WIP',
+        unitPrice: '2.100000',
+        sourceAmount: '168.000000',
+        sourceVisible: false,
+      }],
+    })
+    await expect(api.adjustments.publicExpenseCandidates({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [{
+        taxExcludedAmount: '200.000000',
+        allocatedAmount: '150.000000',
+        availableAmount: '50.000000',
+      }],
+    })
+  })
+
   it('创建、重算、确认和取消核算运行按真实路径提交版本、来源指纹和幂等键', async () => {
     const fetcher = vi
       .fn()
@@ -217,9 +336,9 @@ describe('项目成本核算 API', () => {
 
     await api.projectCosts.getProject(12)
     await api.calculations.get(91)
-    await api.calculations.sources(91, { category: 'MATERIAL', stage: 'WIP', sourceStatus: 'PROVISIONAL', sourceType: 'INVENTORY_ISSUE', page: 2, pageSize: 20 })
+    await api.calculations.sources(91, { category: 'MATERIAL', stage: 'WIP', sourceStatus: 'PROVISIONAL', sourceType: 'INVENTORY_ISSUE', sourceRestricted: true, page: 2, pageSize: 20 })
     await api.calculations.entries(91, { category: 'MATERIAL', stage: 'FINISHED', page: 1, pageSize: 10 })
-    await api.calculations.variances(91, { severity: 'BLOCKING', status: 'OPEN', page: 1, pageSize: 10 })
+    await api.calculations.variances(91, { severity: 'BLOCKING', status: 'OPEN', projectId: 12, businessDateFrom: '2026-07-01', businessDateTo: '2026-07-31', sourceRestricted: false, page: 1, pageSize: 10 })
     await api.adjustments.list({ keyword: 'ALLOC', status: 'DRAFT', projectId: 12, page: 1, pageSize: 10 })
     await api.adjustments.publicExpenseCandidates({ keyword: '费用', supplierId: 88, businessDateFrom: '2026-07-01', businessDateTo: '2026-07-31', page: 1, pageSize: 10 })
     await api.adjustments.get(301)
@@ -227,9 +346,9 @@ describe('项目成本核算 API', () => {
     expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
       '/api/admin/cost/project-costs/projects/12',
       '/api/admin/cost/project-cost-calculations/91',
-      '/api/admin/cost/project-cost-calculations/91/sources?category=MATERIAL&stage=WIP&sourceStatus=PROVISIONAL&sourceType=INVENTORY_ISSUE&page=2&pageSize=20',
+      '/api/admin/cost/project-cost-calculations/91/sources?category=MATERIAL&stage=WIP&sourceStatus=PROVISIONAL&sourceType=INVENTORY_ISSUE&sourceRestricted=true&page=2&pageSize=20',
       '/api/admin/cost/project-cost-calculations/91/entries?category=MATERIAL&stage=FINISHED&page=1&pageSize=10',
-      '/api/admin/cost/project-cost-calculations/91/variances?severity=BLOCKING&status=OPEN&page=1&pageSize=10',
+      '/api/admin/cost/project-cost-calculations/91/variances?projectId=12&severity=BLOCKING&status=OPEN&businessDateFrom=2026-07-01&businessDateTo=2026-07-31&sourceRestricted=false&page=1&pageSize=10',
       '/api/admin/cost/project-cost-adjustments?keyword=ALLOC&status=DRAFT&projectId=12&page=1&pageSize=10',
       '/api/admin/cost/project-cost-adjustments/candidates/public-expenses?keyword=%E8%B4%B9%E7%94%A8&supplierId=88&businessDateFrom=2026-07-01&businessDateTo=2026-07-31&page=1&pageSize=10',
       '/api/admin/cost/project-cost-adjustments/301',
@@ -272,12 +391,12 @@ describe('项目成本核算 API', () => {
       idempotencyKey: 'adjustment-key',
       lines: [{
         projectId: 12,
-        category: 'MANUFACTURING_OVERHEAD',
-        stage: 'DIRECT_PROJECT',
+        costCategory: 'MANUFACTURING_OVERHEAD',
+        costStage: 'DIRECT_PROJECT',
         direction: 'INCREASE',
         amount: '50.000000',
-        sourceExpenseLineId: 8001,
-        remark: '公共费用分配',
+        publicExpenseLineId: 8001,
+        reason: '公共费用分配',
       }],
     }
 
@@ -293,7 +412,14 @@ describe('项目成本核算 API', () => {
       })
     await expect(conflictRequest).rejects.toBeInstanceOf(AccountPermissionApiError)
 
-    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0].amount).toBe('50.000000')
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0]).toMatchObject({
+      amount: '50.000000',
+      costCategory: 'MANUFACTURING_OVERHEAD',
+      costStage: 'DIRECT_PROJECT',
+      publicExpenseLineId: 8001,
+      reason: '公共费用分配',
+    })
+    expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0]).not.toHaveProperty('sourceExpenseLineId')
     expect(JSON.parse(fetcher.mock.calls[3][1].body as string).lines[0].amount).toBe('50.000000')
   })
 })
