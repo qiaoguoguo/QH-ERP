@@ -73,6 +73,32 @@ $apiPom = Get-Content -LiteralPath $apiPomPath -Raw
 $stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
 $stage023Integration = Get-Content -LiteralPath $stage023IntegrationPath -Raw
 
+$firstByRemarkStart = $generator.IndexOf("function Get-FirstByRemark")
+$firstByRemarkEnd = $generator.IndexOf("function Ensure-PurchaseOrder", $firstByRemarkStart)
+Assert-True -Condition ($firstByRemarkStart -ge 0 -and $firstByRemarkEnd -gt $firstByRemarkStart) `
+    -Message "自测无法定位 Get-FirstByRemark 函数边界。"
+$firstByRemarkFunction = $generator.Substring($firstByRemarkStart, $firstByRemarkEnd - $firstByRemarkStart)
+Assert-ContainsInOrder -Text $firstByRemarkFunction -Needles @(
+    '$queryParameters = @{} + $Query',
+    'if (-not $queryParameters.ContainsKey("keyword")) {',
+    '$queryParameters["keyword"] = $Remark',
+    'Invoke-DemoApiPage -Session $Session -Path $Path -Parameters $queryParameters',
+    'Where-Object { $_.remark -eq $Remark }'
+) -Message "按 remark 定位既有单据时必须同步传 keyword，避免正式副本重复运行只扫第一页而创建重复业务单据。"
+$stage029WindowStart = $generator.IndexOf("function Ensure-Stage029InventoryMutationWindow")
+$stage029WindowEnd = $generator.IndexOf("function Ensure-PurchaseOrder", $stage029WindowStart)
+Assert-True -Condition ($stage029WindowStart -ge 0 -and $stage029WindowEnd -gt $stage029WindowStart) `
+    -Message "Stage029Only 必须提供库存范围锁释放前置函数。"
+$stage029WindowFunction = $generator.Substring($stage029WindowStart, $stage029WindowEnd - $stage029WindowStart)
+Assert-ContainsInOrder -Text $stage029WindowFunction -Needles @(
+    '$draftReason = "验收演示未盘草稿盘点"',
+    'Path "/api/admin/inventory/stocktakes"',
+    '$draft.status -in @("DRAFT", "COUNTING", "RECONCILED")',
+    'Path "/api/admin/inventory/stocktakes/$($draft.id)/cancel"',
+    'reason = "029 增量演示释放既有全仓盘点范围锁"',
+    'idempotencyKey = "$RunId-STK-DRAFT-CANCEL-STAGE029"'
+) -Message "Stage029Only 只能通过真实盘点取消 API 释放正式 V30 副本既有范围锁，不能 SQL 改锁。"
+
 Assert-True -Condition ($apiPom -match '<artifactId>maven-surefire-plugin</artifactId>' `
         -and $apiPom -match '<qherp\.storage\.s3\.endpoint>http://127\.0\.0\.1:9</qherp\.storage\.s3\.endpoint>' `
         -and $apiPom -match '<qherp\.storage\.s3\.bucket>qherp-test-storage-unconfigured</qherp\.storage\.s3\.bucket>' `
@@ -340,8 +366,8 @@ Assert-ContainsInOrder -Text $purchaseOrderFunction -Needles @(
     'reason = "验收演示确认采购订单"',
     'idempotencyKey = "$RunId-PO-$Key-CONFIRM"'
 ) -Message "非公共采购订单仍应保留普通确认动作请求契约。"
-Assert-True -Condition (([regex]::Matches($generator, 'Ensure-PurchaseOrder -Key "\$DemoPrefix-PO-')).Count -eq 3) `
-    -Message "三张采购订单样例必须统一走 Ensure-PurchaseOrder，避免公共直采审批链漏项。"
+Assert-True -Condition (([regex]::Matches($generator, 'Ensure-PurchaseOrder -Key "\$DemoPrefix-PO-')).Count -eq 4) `
+    -Message "四张采购订单样例必须统一走 Ensure-PurchaseOrder，含 029 同 FG 公共安全库存，避免公共直采审批链漏项。"
 $purchaseReceiptStart = $generator.IndexOf("function Ensure-PurchaseReceipt")
 $purchaseReceiptEnd = $generator.IndexOf("function Process-PendingQualityInspections", $purchaseReceiptStart)
 Assert-True -Condition ($purchaseReceiptStart -ge 0 -and $purchaseReceiptEnd -gt $purchaseReceiptStart) `
@@ -363,6 +389,8 @@ Assert-True -Condition ($generator -notmatch '/api/admin/sales-project-contracts
     -Message "演示生成器不得直接调用合同 activate 绕过固定审批。"
 Assert-True -Condition ($generator -match '\$approvalRole = Ensure-Role[\s\S]*procurement:order:view[\s\S]*procurement:order:exception-approve') `
     -Message "演示审批角色必须包含采购订单查看和公共直采例外审批权限，否则无法看到并审批 TODO。"
+Assert-True -Condition ($generator -match '\$approvalRole = Ensure-Role[\s\S]*finance:expense:view') `
+    -Message "029 公共费用分配审批回调需要查看公共费用来源，演示审批角色必须包含 finance:expense:view。"
 $mainApprovalIndex = $generator.IndexOf('$mainContract = Submit-And-ActSalesContractApproval -Contract $mainContract -Action "approve" -Key "MAIN"')
 $projectActivationIndex = $generator.IndexOf('/api/admin/sales-projects/$($projectA.id)/activate')
 $supplementCreateIndex = $generator.IndexOf('$supplementContract = Ensure-SalesContract')
@@ -501,10 +529,14 @@ Assert-True -Condition ($workOrderReleasedStart -ge 0 -and $workOrderReleasedEnd
     -Message "自测无法定位 Ensure-WorkOrderReleased 函数边界。"
 $workOrderReleasedFunction = $generator.Substring($workOrderReleasedStart, $workOrderReleasedEnd - $workOrderReleasedStart)
 Assert-ContainsInOrder -Text $workOrderReleasedFunction -Needles @(
-    'Path "/api/admin/production/work-orders" -Body ([ordered]@{',
+    '$body = [ordered]@{',
     'remark = $remark',
-    'idempotencyKey = "$RunId-WO-$Key-CREATE"'
-) -Message "生产工单创建必须携带基于 RunId 和业务 Key 的稳定幂等键，保证演示生成器可重放。"
+    'idempotencyKey = "$RunId-WO-$Key-CREATE"',
+    'if ($null -ne $Project) {',
+    '$body.ownershipType = "PROJECT"',
+    '$body.projectId = $Project.id',
+    'Path "/api/admin/production/work-orders" -Body $body'
+) -Message "生产工单创建必须携带基于 RunId 和业务 Key 的稳定幂等键，并在项目工单时通过真实 API 携带项目权属。"
 Assert-ContainsInOrder -Text $workOrderReleasedFunction -Needles @(
     'Path "/api/admin/production/work-orders/$($existing.id)/release" -Body ([ordered]@{',
     'version = $existing.version',
@@ -535,6 +567,94 @@ Assert-True -Condition ($generator -match 'function Ensure-FinanceSettlementPost
     -Message "应收应付和收付款必须通过真实财务 API 生成。"
 Assert-True -Condition ($generator -notmatch 'foreach \(\$[rp] in @\(\$(receivables|payables)\)\)') `
     -Message "财务 helper 不得用 @() 包装泛型列表遍历，避免 pwsh binder 类型错误。"
+$stage029Start = $generator.IndexOf("function Ensure-Stage029ProjectCostDataset")
+$stage029End = $generator.IndexOf("function Ensure-FinanceSettlementPosted", $stage029Start)
+Assert-True -Condition ($stage029Start -ge 0 -and $stage029End -gt $stage029Start) `
+    -Message "生成器必须封装 029 项目成本最小真实数据主链，不能只保留零散 helper。"
+$stage029Function = $generator.Substring($stage029Start, $stage029End - $stage029Start)
+Assert-True -Condition ($generator -match '\[switch\]\s*\$Stage029Only') `
+    -Message "生成器必须提供 Stage029Only 增量模式，供正式 V30 副本只补齐 029 数据而不重放旧业务单据。"
+Assert-ContainsInOrder -Text $generator -Needles @(
+    '$bom029 = Ensure-Bom -Code "$DemoPrefix-BOM-029-FG-V1"',
+    'if ($Stage029Only) {',
+    'Ensure-Stage029InventoryMutationWindow | Out-Null',
+    '$stage029Dataset = Ensure-Stage029ProjectCostDataset',
+    'Stage029Only 模式仅通过真实 API 在既有 V30 演示副本增量补齐 029 最小项目成本数据',
+    '$Manifest.Save()',
+    'return',
+    'Ensure-Substitute'
+) -Message "Stage029Only 必须在 029 BOM 就绪后、旧采购/库存/生产链重放前完成 029 主链并退出。"
+Assert-True -Condition ($generator -match '\$stage029Dataset = Ensure-Stage029ProjectCostDataset') `
+    -Message "029 项目成本最小真实数据必须接入主生成流程，不能只定义未调用 helper。"
+Assert-True -Condition ($stage029Function -match 'Ensure-PurchaseOrder -Key "\$DemoPrefix-PO-029-FG-SAFETY"' `
+        -and $stage029Function -match 'Ensure-PurchaseReceipt -Key "\$DemoPrefix-PR-029-FG-SAFETY"' `
+        -and $stage029Function -match 'Process-PendingQualityInspections -SourceType "PURCHASE_RECEIPT"' `
+        -and $stage029Function -match 'Ensure-WarehouseTransferPosted -Key "029-FG-SAFETY-TO-FG"' `
+        -and $stage029Function -match '029 同 FG 公共发货安全库存' `
+        -and $stage029Function -match 'quantity = "2\.000000"') `
+    -Message "029 同 FG 公共安全库存必须以 2 件通过采购订单、收货过账、质检合格和调拨真实 API 建立，不能用 SQL 或期初绕过。"
+Assert-True -Condition ($stage029Function -notmatch 'Ensure-OutsourcingIssuePosted') `
+    -Message "029 精确 168 主链不得调用外协发料 helper，避免外协发料额外进入 MATERIAL。"
+Assert-True -Condition ($stage029Function -notmatch '029-P1-RAW-110' -and $stage029Function -notmatch '\$raw110Layer') `
+    -Message "029 材料 110 必须保留为公共库存被项目工单显式领用，不得先转项目成本层。"
+Assert-True -Condition ($generator -match 'function Get-InventoryBatch[\s\S]*\[bool\] \$OnlyAvailable = \$true[\s\S]*onlyAvailable = \$OnlyAvailable\.ToString\(\)\.ToLowerInvariant\(\)' `
+        -and $stage029Function -match 'Get-InventoryBatch -BatchNo "\$DemoPrefix-BATCH-029-RAW-110" -OnlyAvailable \$false') `
+    -Message "029 材料 110 首次运行后可用量为 0，重跑只能通过 onlyAvailable=false 取批次主键，不能要求仍有可用库存。"
+Assert-True -Condition ($stage029Function -match 'targetWarehouseId = \$RawWarehouse\.id' `
+        -and $stage029Function -match 'Get-ProjectCostLayerForBatch -Project \$projectP1 -Material \$Raw48 -Warehouse \$RawWarehouse' `
+        -and $stage029Function -match 'IssueWarehouse \$RawWarehouse' `
+        -and $stage029Function -match 'MaterialCode \$Raw48\.code -WarehouseId \$RawWarehouse\.id') `
+    -Message "029 材料 48 必须在 RawWarehouse 形成项目成本层，保证同一工单能同时合法领用 PROJECT 48 和 PUBLIC 110。"
+Assert-True -Condition ($stage029Function -match '(?s)MaterialCode \$Raw110\.code.*WarehouseId \$RawWarehouse\.id.*OwnershipType "PUBLIC"' `
+        -and $stage029Function -match '029 材料 110 领料来源必须是原料仓 PUBLIC 库存' `
+        -and $stage029Function -match '\$null -ne \$raw110IssueLine\.projectId' `
+        -and $stage029Function -match '\$null -ne \$raw110IssueLine\.costLayerId') `
+    -Message "029 材料 110 领料行必须从 RawWarehouse 以 PUBLIC 权属提交，并在运行期断言 projectId/costLayerId 为空。"
+Assert-True -Condition ($stage029Function -match 'unitPrice = "5000\.00"' `
+        -and $stage029Function -match 'quantity = "2\.000000"' `
+        -and $stage029Function -match 'Ensure-ProjectCostCalculationVerified') `
+    -Message "029 必须通过真实销售发货 2 件、单价 5000 和项目成本核算 API 证明发货收入 10000。"
+Assert-True -Condition ($stage029Function -match 'ExpectedCompleteness "INCOMPLETE"' `
+        -and $stage029Function -match 'PROJECT_COST_LABOR_UNPRICED' `
+        -and $stage029Function -match 'ExpectedTotalCost "838\.00"' `
+        -and $stage029Function -match 'ExpectedShipmentGrossMargin "9162\.00"' `
+        -and $generator -match 'DELIVERY_WITHOUT_FINISHED_COST') `
+    -Message "029 主链必须精确断言 838/9162，同时把自动报工未定价识别为 INCOMPLETE 和确认阻断。"
+$costRecordStart = $generator.IndexOf("function Ensure-CostRecord")
+$costRecordEnd = $generator.IndexOf("function Ensure-SalesInvoiceConfirmed", $costRecordStart)
+Assert-True -Condition ($costRecordStart -ge 0 -and $costRecordEnd -gt $costRecordStart) `
+    -Message "自测无法定位 Ensure-CostRecord 函数边界。"
+$costRecordFunction = $generator.Substring($costRecordStart, $costRecordEnd - $costRecordStart)
+Assert-ContainsInOrder -Text $costRecordFunction -Needles @(
+    'Get-FirstByRemark -Path "/api/admin/cost/records" -Remark $remark -Query @{',
+    'workOrderId = $WorkOrder.id',
+    'costType = $CostType',
+    'sourceType = "MANUAL_ENTRY"',
+    'dateFrom = $BusinessDate',
+    'dateTo = $BusinessDate',
+    'keyword = ""'
+) -Message "029 手工人工成本记录复跑必须用成本记录 API 的工单/类型/手工来源/日期过滤后再按 remark 匹配，不能依赖不检索 remark 的 keyword。"
+$outsourcingInvoiceStart = $generator.IndexOf("function Ensure-OutsourcingPurchaseInvoiceConfirmed")
+$outsourcingInvoiceEnd = $generator.IndexOf("function Ensure-ExpenseConfirmed", $outsourcingInvoiceStart)
+Assert-True -Condition ($outsourcingInvoiceStart -ge 0 -and $outsourcingInvoiceEnd -gt $outsourcingInvoiceStart) `
+    -Message "自测无法定位 Ensure-OutsourcingPurchaseInvoiceConfirmed 函数边界。"
+$outsourcingInvoiceFunction = $generator.Substring($outsourcingInvoiceStart, $outsourcingInvoiceEnd - $outsourcingInvoiceStart)
+Assert-ContainsInOrder -Text $outsourcingInvoiceFunction -Needles @(
+    '$externalInvoiceNo = "$DemoPrefix-PI-$Key"',
+    'Path "/api/admin/finance/purchase-invoices"',
+    'keyword = $externalInvoiceNo',
+    'Path "/api/admin/finance/purchase-invoices/candidates"',
+    'settlementKind = "OUTSOURCING"',
+    'sourceType = "OUTSOURCING_RECEIPT"',
+    'keyword = $OutsourcingReceipt.receiptNo',
+    '$_.sourceId -eq $OutsourcingReceipt.id',
+    '$candidate.sourceLineId',
+    'ownershipType = "PROJECT"',
+    'projectId = $OutsourcingReceipt.projectId',
+    'New-PurchaseInvoiceLine -SourceLineId $candidate.sourceLineId'
+) -Message "029 外协实际发票必须通过真实采购发票候选 API 获取外协收货来源行，不能读取详情 DTO 不暴露的 line.id。"
+Assert-True -Condition ($outsourcingInvoiceFunction -notmatch '\$receiptLine\.id') `
+    -Message "外协收货详情不返回行 id，生成器不得把 receipt.lines.id 当作采购发票来源行。"
 Assert-True -Condition ($generator -match 'function Ensure-ReversalDocumentsPosted' -and $generator -match '/api/admin/sales/returns' -and $generator -match '/api/admin/procurement/returns' -and $generator -match '/api/admin/production/material-returns' -and $generator -match '/api/admin/production/material-supplements') `
     -Message "销售退货、采购退货、生产退料和补料必须通过真实冲销 API 生成。"
 $reversalStart = $generator.IndexOf("function Ensure-ReversalDocumentsPosted")
