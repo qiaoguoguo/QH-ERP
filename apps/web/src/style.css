@@ -737,7 +737,7 @@ samp {
     linear-gradient(120deg, #dbeaf8 0%, #eef6ff 62%, #f8fbff 100%);
   background-position: left center, center center;
   background-repeat: no-repeat, no-repeat;
-  background-size: contain, cover;
+  background-size: cover, cover;
   padding: clamp(24px, 4vw, 64px);
 }
 

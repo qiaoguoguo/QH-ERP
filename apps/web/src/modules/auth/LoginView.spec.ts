@@ -68,13 +68,14 @@ describe('登录页', () => {
     expect(wrapper.find('[data-test="login-submit"]').exists()).toBe(true)
   })
 
-  it('登录背景完整可见且桌面登录框右对齐并保留安全间距', () => {
+  it('登录背景使用最终原图 cover 铺满且桌面登录框右对齐并保留安全间距', () => {
     const pageRule = getCssRule('.login-page')
     const panelRule = getCssRule('.login-panel')
 
     expect(pageRule).toContain('background-position: left center, center center;')
-    expect(pageRule).toContain('background-size: contain, cover;')
-    expect(pageRule).not.toContain('background-size: cover;')
+    expect(pageRule).toContain('background-size: cover, cover;')
+    expect(pageRule).not.toContain('contain')
+    expect(pageRule).not.toContain('100% 100%')
     expect(panelRule).toContain('justify-self: end;')
     expect(panelRule).toContain('margin-right: clamp(')
   })
