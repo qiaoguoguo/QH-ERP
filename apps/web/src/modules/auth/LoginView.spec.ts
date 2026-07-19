@@ -1,3 +1,5 @@
+// @ts-expect-error 当前前端 tsconfig 不包含 Node 类型，本测试只读取本地 CSS 源码。
+import { readFileSync } from 'node:fs'
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
@@ -5,6 +7,17 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import LoginView from './LoginView.vue'
 import { useAuthStore } from '../../stores/authStore'
+
+const appStyle = readFileSync('src/style.css', 'utf-8')
+
+function getCssRule(selector: string) {
+  const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = appStyle.match(new RegExp(`${escapedSelector}\\s*\\{([\\s\\S]*?)\\n\\}`))
+  if (!match) {
+    throw new Error(`未找到 CSS 规则：${selector}`)
+  }
+  return match[1]
+}
 
 function createLoginRouter() {
   return createRouter({
@@ -53,6 +66,17 @@ describe('登录页', () => {
     expect(wrapper.find('input[name="username"]').exists()).toBe(true)
     expect(wrapper.find('input[name="password"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="login-submit"]').exists()).toBe(true)
+  })
+
+  it('登录背景完整可见且桌面登录框右对齐并保留安全间距', () => {
+    const pageRule = getCssRule('.login-page')
+    const panelRule = getCssRule('.login-panel')
+
+    expect(pageRule).toContain('background-position: left center, center center;')
+    expect(pageRule).toContain('background-size: contain, cover;')
+    expect(pageRule).not.toContain('background-size: cover;')
+    expect(panelRule).toContain('justify-self: end;')
+    expect(panelRule).toContain('margin-right: clamp(')
   })
 
   it('空账号和空密码提交时显示校验提示', async () => {

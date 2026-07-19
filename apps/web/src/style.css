@@ -735,9 +735,9 @@ samp {
   background-image:
     var(--login-background-image),
     linear-gradient(120deg, #dbeaf8 0%, #eef6ff 62%, #f8fbff 100%);
-  background-position: center center;
-  background-repeat: no-repeat;
-  background-size: cover;
+  background-position: left center, center center;
+  background-repeat: no-repeat, no-repeat;
+  background-size: contain, cover;
   padding: clamp(24px, 4vw, 64px);
 }
 
@@ -752,6 +752,8 @@ samp {
 .login-panel {
   width: min(400px, 100%);
   grid-column: 2;
+  justify-self: end;
+  margin-right: clamp(16px, 2vw, 32px);
   position: relative;
   z-index: 1;
   background: rgba(248, 252, 255, 0.82);
@@ -1363,6 +1365,7 @@ body .app-main .report-filter-bar .report-date-picker {
 
   .login-panel {
     grid-column: 1;
+    margin-right: 0;
   }
 }
 
@@ -1460,6 +1463,7 @@ body .app-main .report-filter-bar .report-date-picker {
   }
 
   .login-panel {
+    justify-self: center;
     padding: 22px;
     background: rgba(249, 252, 255, 0.94);
   }
