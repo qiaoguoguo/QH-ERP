@@ -795,8 +795,11 @@ public class ProjectCostQueryService {
 	}
 
 	private boolean inventoryValuationSource(String sourceType) {
-		return List.of("PRODUCTION_MATERIAL_ISSUE", "PRODUCTION_MATERIAL_RETURN",
-				"PRODUCTION_MATERIAL_SUPPLEMENT", "PRODUCTION_OUTSOURCING_ISSUE").contains(sourceType);
+		return switch (sourceType == null ? "" : sourceType) {
+			case "PRODUCTION_MATERIAL_ISSUE", "PRODUCTION_MATERIAL_RETURN",
+					"PRODUCTION_MATERIAL_SUPPLEMENT", "PRODUCTION_OUTSOURCING_ISSUE" -> true;
+			default -> false;
+		};
 	}
 
 	private boolean hasPermission(CurrentUser currentUser, String permission) {

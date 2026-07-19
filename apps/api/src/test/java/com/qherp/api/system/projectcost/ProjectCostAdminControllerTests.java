@@ -201,6 +201,47 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void 无金额账号访问工作台项目详情和核算详情遇到空来源类型仍返回脱敏DTO() throws Exception {
+		NoAmountCalculationFixture fixture = insertNoAmountCalculationFixture("029_NO_AMOUNT_");
+		AuthenticatedSession noAmount = createUserAndLogin("pc-no-amount-calc-", "PC_NO_AMOUNT_CALC_",
+				List.of("cost:project-cost:view", "cost:project-cost:source-view", "finance:expense:view"));
+
+		ResponseEntity<String> workbenchResponse = get("/api/admin/cost/project-costs?projectId="
+				+ fixture.projectId() + "&page=1&pageSize=20", noAmount);
+		assertThat(workbenchResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode workbench = data(workbenchResponse).get("items").get(0);
+		assertThat(workbench.get("calculationId").longValue()).isEqualTo(fixture.calculationId());
+		assertMaskedCalculation(workbench);
+
+		ResponseEntity<String> projectResponse = get("/api/admin/cost/project-costs/projects/"
+				+ fixture.projectId(), noAmount);
+		assertThat(projectResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode project = data(projectResponse);
+		assertThat(project.get("latestCalculationId").longValue()).isEqualTo(fixture.calculationId());
+		assertMaskedCalculation(project);
+		assertThat(project.get("categorySummaries").get(0).get("amount").isNull()).isTrue();
+		assertThat(project.get("stageSummaries").get(0).get("amount").isNull()).isTrue();
+
+		ResponseEntity<String> calculationResponse = get("/api/admin/cost/project-cost-calculations/"
+				+ fixture.calculationId(), noAmount);
+		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode calculation = data(calculationResponse);
+		assertThat(calculation.get("id").longValue()).isEqualTo(fixture.calculationId());
+		assertMaskedCalculation(calculation);
+
+		JsonNode source = data(get("/api/admin/cost/project-cost-calculations/" + fixture.calculationId()
+				+ "/sources?sourceType=FIN_EXPENSE&page=1&pageSize=20", noAmount)).get("items").get(0);
+		assertThat(source.get("sourceType").asText()).isEqualTo("FIN_EXPENSE");
+		assertThat(source.get("sourceVisible").booleanValue()).isTrue();
+		assertThat(source.get("amountVisible").booleanValue()).isFalse();
+		assertThat(source.get("unitCost").isNull()).isTrue();
+		assertThat(source.get("unitPrice").isNull()).isTrue();
+		assertThat(source.get("sourceAmount").isNull()).isTrue();
+		assertThat(source.get("calculatedAmount").isNull()).isTrue();
+		assertThat(source.get("amount").isNull()).isTrue();
+	}
+
+	@Test
 	void 项目存在但暂无核算时详情返回合法空摘要() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		PublicExpenseFixture fixture = createPublicExpenseFixture("029_EMPTY_PROJECT_");
@@ -559,6 +600,49 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		return projectId;
 	}
 
+	private NoAmountCalculationFixture insertNoAmountCalculationFixture(String prefix) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String code = prefix + suffix + "_";
+		long customerId = this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "CUS", code + "客户");
+		long projectId = this.jdbcTemplate.queryForObject("""
+				insert into sal_project (project_no, name, customer_id, owner_user_id, planned_start_date,
+					planned_finish_date, status, target_revenue, target_cost, created_by, created_at, updated_by,
+					updated_at, activated_by, activated_at)
+				values (?, ?, ?, 1, date '2026-07-01', date '2026-07-31', 'ACTIVE', 1000.00, 0,
+					'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code + "PRJ", code + "项目", customerId);
+		long calculationId = this.jdbcTemplate.queryForObject("""
+				insert into prj_cost_calculation (
+					project_id, calculation_no, cutoff_date, status, is_current, source_fingerprint,
+					project_cost_total, wip_cost, finished_cost, delivered_cost, direct_project_cost,
+					shipment_revenue, invoice_revenue, target_revenue, shipment_gross_margin,
+					invoice_gross_margin, target_gross_margin, shipment_gross_margin_rate,
+					invoice_gross_margin_rate, target_gross_margin_rate, margin_completeness,
+					created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, date '2026-07-31', 'CALCULATED', true, ?,
+					123.45, 0, 0, 0, 123.45, 500.00, 400.00, 1000.00, 376.55, 276.55,
+					876.55, 75.310000, 69.137500, 87.655000, 'COMPLETE', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, projectId, code + "CALC", "no-amount-" + suffix);
+		this.jdbcTemplate.update("""
+				insert into prj_cost_source_line (
+					calculation_id, project_id, cost_category, cost_stage, entry_type, source_type, source_id,
+					source_line_id, source_no, source_status, business_date, quantity, unit_cost, source_amount,
+					calculated_amount, source_fingerprint, source_restricted
+				)
+				values (?, ?, 'PROJECT_EXPENSE', 'DIRECT_PROJECT', 'PROJECT_DIRECT', 'FIN_EXPENSE',
+					?, ?, ?, 'ACTUAL', date '2026-07-20', 2.000000, 61.725000, 123.45, 123.45, ?, false)
+				""", calculationId, projectId, 910_000L + suffix, 920_000L + suffix, code + "SRC",
+				"no-amount-source-" + suffix);
+		return new NoAmountCalculationFixture(projectId, calculationId);
+	}
+
 	private long calculationId(long projectId) {
 		return this.jdbcTemplate.queryForObject("""
 				select id
@@ -680,6 +764,29 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(new BigDecimal(node.get(field).asText())).isEqualByComparingTo(expected);
 	}
 
+	private void assertMaskedCalculation(JsonNode node) {
+		assertThat(node.get("amountVisible").booleanValue()).isFalse();
+		assertThat(node.get("sourceVisible").booleanValue()).isTrue();
+		assertThat(node.get("restrictedReason").asText()).contains("无权查看项目成本金额");
+		assertThat(node.get("projectCostTotal").isNull()).isTrue();
+		assertThat(node.get("totalCost").isNull()).isTrue();
+		assertThat(node.get("wipCost").isNull()).isTrue();
+		assertThat(node.get("finishedCost").isNull()).isTrue();
+		assertThat(node.get("deliveredCost").isNull()).isTrue();
+		assertThat(node.get("directProjectCost").isNull()).isTrue();
+		assertThat(node.get("shipmentRevenue").isNull()).isTrue();
+		assertThat(node.get("shipmentPretaxRevenue").isNull()).isTrue();
+		assertThat(node.get("invoiceRevenue").isNull()).isTrue();
+		assertThat(node.get("invoicePretaxRevenue").isNull()).isTrue();
+		assertThat(node.get("targetRevenue").isNull()).isTrue();
+		assertThat(node.get("shipmentGrossMargin").isNull()).isTrue();
+		assertThat(node.get("invoiceGrossMargin").isNull()).isTrue();
+		assertThat(node.get("targetGrossMargin").isNull()).isTrue();
+		assertThat(node.get("shipmentGrossMarginRate").isNull()).isTrue();
+		assertThat(node.get("invoiceGrossMarginRate").isNull()).isTrue();
+		assertThat(node.get("targetGrossMarginRate").isNull()).isTrue();
+	}
+
 	private List<String> actionCodes(JsonNode actions) {
 		List<String> codes = new ArrayList<>();
 		for (JsonNode action : actions) {
@@ -726,6 +833,9 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record PublicExpenseFixture(Long projectId, String expenseNo, Long expenseLineId) {
+	}
+
+	private record NoAmountCalculationFixture(Long projectId, Long calculationId) {
 	}
 
 	private record CsrfSession(String sessionCookie, String token, String headerName) {
