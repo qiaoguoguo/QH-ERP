@@ -742,6 +742,30 @@ public enum ApiErrorCode {
 
 	BUSINESS_PERIOD_STATUS_INVALID(HttpStatus.CONFLICT, "业务期间状态不允许当前操作"),
 
+	PERIOD_CLOSE_NOT_FOUND(HttpStatus.NOT_FOUND, "业务月结运行不存在"),
+
+	PERIOD_CLOSE_PERIOD_INVALID(HttpStatus.BAD_REQUEST, "业务月结期间不合法"),
+
+	PERIOD_CLOSE_ALREADY_CLOSED(HttpStatus.CONFLICT, "业务期间已存在当前月结版本"),
+
+	PERIOD_CLOSE_CHECK_REQUIRED(HttpStatus.CONFLICT, "业务月结关闭前必须先完成检查"),
+
+	PERIOD_CLOSE_BLOCKED(HttpStatus.CONFLICT, "业务月结存在阻断项，不能关闭"),
+
+	PERIOD_CLOSE_WARNING_ACK_REQUIRED(HttpStatus.CONFLICT, "业务月结警告需要确认并填写原因"),
+
+	PERIOD_CLOSE_SOURCE_CHANGED(HttpStatus.CONFLICT, "业务月结来源已变化，请重新检查"),
+
+	PERIOD_CLOSE_VERSION_CONFLICT(HttpStatus.CONFLICT, "业务月结版本已变化，请刷新后重试"),
+
+	PERIOD_CLOSE_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "业务月结幂等键冲突"),
+
+	PERIOD_CLOSE_ACTION_NOT_ALLOWED(HttpStatus.CONFLICT, "当前业务月结状态不允许此操作"),
+
+	PERIOD_CLOSE_REASON_REQUIRED(HttpStatus.BAD_REQUEST, "业务月结操作原因必填"),
+
+	PERIOD_CLOSE_SNAPSHOT_INCOMPLETE(HttpStatus.CONFLICT, "业务月结快照不完整"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);

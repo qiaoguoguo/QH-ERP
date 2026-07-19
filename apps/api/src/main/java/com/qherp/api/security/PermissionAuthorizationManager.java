@@ -75,6 +75,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return businessPeriodPermissionCode;
 		}
 
+		String periodClosePermissionCode = periodClosePermissionCode(method, path);
+		if (periodClosePermissionCode != null) {
+			return periodClosePermissionCode;
+		}
+
 		String stage021MasterPermissionCode = stage021MasterPermissionCode(method, path);
 		if (stage021MasterPermissionCode != null) {
 			return stage021MasterPermissionCode;
@@ -302,6 +307,29 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/unlock")) {
 			return "system:business-period:unlock";
+		}
+		return null;
+	}
+
+	private String periodClosePermissionCode(String method, String path) {
+		String basePath = "/api/admin/period-closes";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("POST".equals(method) && (basePath + "/checks").equals(path)) {
+			return "system:business-period-close:check";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/close")) {
+			return "system:business-period-close:close";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/reopen")) {
+			return "system:business-period-close:reopen";
+		}
+		if ("GET".equals(method) && path.matches(Pattern.quote(basePath) + "/\\d+/snapshot(/.*)?")) {
+			return "system:business-period-close:snapshot-view";
+		}
+		if ("GET".equals(method)) {
+			return "system:business-period-close:view";
 		}
 		return null;
 	}

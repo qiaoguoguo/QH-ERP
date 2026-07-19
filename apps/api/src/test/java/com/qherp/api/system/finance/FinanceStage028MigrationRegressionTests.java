@@ -50,7 +50,8 @@ class FinanceStage028MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 29)
@@ -413,6 +414,31 @@ class FinanceStage028MigrationRegressionTests {
 				""", (rs, rowNum) -> Map.entry(rs.getString("version"), rs.getInt("checksum")))
 			.stream()
 			.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+	}
+
+	private void assertCurrentMigrationChecksums(JdbcTemplate jdbcTemplate) {
+		assertThat(migrationChecksum(jdbcTemplate, "29")).isEqualTo(774334682);
+		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
+		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
+		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
+	}
+
+	private Integer migrationChecksum(JdbcTemplate jdbcTemplate, String version) {
+		return jdbcTemplate.queryForObject("""
+				select checksum
+				from flyway_schema_history
+				where success = true
+				  and version = ?
+				""", Integer.class, version);
+	}
+
+	private long failedMigrationCount(JdbcTemplate jdbcTemplate) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from flyway_schema_history
+				where success = false
+				""", Long.class);
 	}
 
 	private record FinanceLedgerSeed(long receivableId, long secondReceivableId, long receiptId, long payableId,

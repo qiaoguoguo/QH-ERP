@@ -3,16 +3,22 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V31'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 31; checksum = -2074547591'::text,
-        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 31
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -2074547591),
-        'Flyway 最新成功版本必须为 V31，checksum 必须为 -2074547591。'::text
+        'latest successful version = 32; checksum = 249406902'::text,
+        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 32
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 249406902),
+        'Flyway 最新成功版本必须为 V32，checksum 必须为 249406902。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V32_CHECKSUM', 'migration',
+        concat('version=32;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 32 checksum = 249406902',
+        coalesce((array_agg(checksum))[1], 0) = 249406902,
+        'Flyway V32 checksum 必须保持 249406902。'
+        from flyway_schema_history where success and version = '32'
     union all select 'FLYWAY_V31_CHECKSUM', 'migration',
         concat('version=31;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
         'version 31 checksum = -2074547591',
@@ -112,6 +118,109 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         '缺少锁定期间。' from biz_business_period where status = 'LOCKED'
     union all select 'PERIOD_AUDIT_MIN_2', 'period', count(*)::text, '>= 2', count(*) >= 2,
         '期间审计记录不足。' from biz_business_period_audit
+
+    union all select 'PERIOD_CLOSE_PERMISSIONS_V32', 'period-close', count(*)::text, '5', count(*) = 5,
+        '030 月结权限必须精确种子化 view/check/close/reopen/snapshot-view。' from sys_permission
+        where code in ('system:business-period-close:view', 'system:business-period-close:check',
+            'system:business-period-close:close', 'system:business-period-close:reopen',
+            'system:business-period-close:snapshot-view')
+    union all select 'PERIOD_CLOSE_NO_AMOUNT_PERMISSION', 'period-close', count(*)::text, '0', count(*) = 0,
+        '030 不得新增可绕开库存估值、项目成本金额和报表来源权限的月结金额总权限。' from sys_permission
+        where code = 'system:business-period-close:amount-view'
+    union all select 'PERIOD_CLOSE_CLOSED_RUN_MIN_1', 'period-close', count(*)::text, '>= 1', count(*) >= 1,
+        '演示数据必须至少包含一个 030 成功关闭版本，用于验证快照、审计和重开关系。'
+        from biz_period_close_run where status = 'CLOSED'
+    union all select 'PERIOD_CLOSE_CURRENT_CLOSED_UNIQUE', 'period-close', count(*)::text, '0', count(*) = 0,
+        '同一业务期间同一时刻只能存在一个当前 CLOSED 月结版本。'
+        from (
+            select period_id
+            from biz_period_close_run
+            where status = 'CLOSED'
+            group by period_id
+            having count(*) > 1
+        ) duplicated_current_closed
+    union all select 'PERIOD_CLOSE_LOCK_AUDIT_COMPLETE', 'period-close', count(*)::text, '0', count(*) = 0,
+        'CLOSED 月结必须同时锁定业务期间、存在主快照和成功关闭审计。'
+        from (
+            select r.id
+            from biz_period_close_run r
+            join biz_business_period p on p.id = r.period_id
+            left join biz_period_snapshot s on s.run_id = r.id and s.period_id = r.period_id
+            left join biz_period_close_audit a on a.run_id = r.id
+                and a.action = 'CLOSE'
+                and a.result = 'SUCCESS'
+            where r.status = 'CLOSED'
+                and (p.status <> 'LOCKED' or s.id is null or a.id is null)
+        ) close_without_lock_audit
+    union all select 'PERIOD_CLOSE_BLOCKERS_FAIL_CLOSED', 'period-close', count(*)::text, '0', count(*) = 0,
+        '存在阻断项、快照不完整或来源指纹为空的月结运行不得进入 CLOSED。'
+        from biz_period_close_run
+        where status = 'CLOSED'
+            and (blocking_count <> 0 or snapshot_id is null or source_fingerprint is null or source_fingerprint = '')
+    union all select 'PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_8', 'period-close', count(*)::text, '0', count(*) = 0,
+        '每个 CLOSED 快照必须精确保存八类固定经营报表基线。'
+        from (
+            select s.id
+            from biz_period_snapshot s
+            join biz_period_close_run r on r.id = s.run_id
+            left join biz_period_report_snapshot report on report.snapshot_id = s.id
+            where r.status = 'CLOSED'
+            group by s.id
+            having count(distinct report.report_code) <> 8
+                or count(*) filter (
+                    where report.report_code not in ('OVERVIEW', 'SALES_SUMMARY', 'PROCUREMENT_SUMMARY',
+                        'INVENTORY_STOCK_FLOW', 'PRODUCTION_EXECUTION', 'COST_COLLECTION',
+                        'SETTLEMENT_SUMMARY', 'EXCEPTIONS')
+                ) > 0
+        ) report_snapshot_code_violations
+    union all select 'PERIOD_CLOSE_SNAPSHOT_FINGERPRINTS_LOCKED', 'period-close', count(*)::text, '0', count(*) = 0,
+        '快照主表和报表分区必须保存非空来源指纹，支撑快照对账和不可变复验。'
+        from (
+            select s.id
+            from biz_period_snapshot s
+            join biz_period_close_run r on r.id = s.run_id
+            left join biz_period_report_snapshot report on report.snapshot_id = s.id
+            where r.status in ('CLOSED', 'REOPENED')
+            group by s.id, s.source_fingerprint
+            having s.source_fingerprint is null
+                or s.source_fingerprint = ''
+                or count(*) filter (
+                    where report.fingerprint is null or report.fingerprint = ''
+                ) > 0
+        ) snapshot_fingerprint_violations
+    union all select 'PERIOD_CLOSE_SNAPSHOT_VERSION_IMMUTABLE', 'period-close', count(*)::text, '0', count(*) = 0,
+        '同一期间同一月结版本只能有一套快照；重开不得覆盖或删除旧快照。'
+        from (
+            select period_id, revision_no
+            from biz_period_snapshot
+            group by period_id, revision_no
+            having count(*) > 1
+        ) duplicate_snapshot_versions
+    union all select 'PERIOD_CLOSE_REOPENED_KEEP_SNAPSHOT', 'period-close', count(*)::text, '0', count(*) = 0,
+        'REOPENED 历史月结必须继续保留旧快照，不能覆盖、删除或标记失效。'
+        from (
+            select r.id
+            from biz_period_close_run r
+            left join biz_period_snapshot s on s.run_id = r.id
+            where r.status = 'REOPENED'
+                and s.id is null
+        ) reopened_without_snapshot
+    union all select 'PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1', 'period-close', count(*)::text, '>= 1', count(*) >= 1,
+        '演示数据必须有只可看月结快照但无库存估值、项目成本金额和报表来源权限的脱敏验证角色。'
+        from sys_role r
+        where exists (
+            select 1 from sys_role_permission rp
+            join sys_permission p on p.id = rp.permission_id
+            where rp.role_id = r.id and p.code = 'system:business-period-close:snapshot-view'
+        )
+        and not exists (
+            select 1 from sys_role_permission rp
+            join sys_permission p on p.id = rp.permission_id
+            where rp.role_id = r.id and p.code in ('inventory:valuation:view',
+                'cost:project-cost:amount-view', 'report:sales:view', 'report:procurement:view',
+                'report:inventory:view', 'report:production:view', 'report:cost:view',
+                'report:settlement:view', 'report:exceptions:view')
+        )
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

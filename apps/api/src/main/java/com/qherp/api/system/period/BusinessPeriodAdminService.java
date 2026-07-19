@@ -152,6 +152,7 @@ public class BusinessPeriodAdminService {
 	public BusinessPeriodRecord unlock(Long id, ReasonRequest request, CurrentUser operator, HttpServletRequest servletRequest) {
 		BusinessPeriodRecord current = get(id);
 		if (current.status() != BusinessPeriodStatus.LOCKED) throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_STATUS_INVALID);
+		assertNoClosedPeriodCloseRun(id);
 		String reason = requiredReason(request);
 		this.jdbcTemplate.update("update biz_business_period set status = ?, unlocked_by = ?, unlocked_at = ?, unlock_reason = ?, updated_at = ? where id = ?",
 				BusinessPeriodStatus.OPEN.name(), operator.username(), OffsetDateTime.now(), reason, OffsetDateTime.now(), id);
@@ -240,6 +241,19 @@ public class BusinessPeriodAdminService {
 	private void writePeriodAudit(BusinessPeriodRecord period, String action, String reason, String username) {
 		this.jdbcTemplate.update("insert into biz_business_period_audit (period_id, period_code, action, reason, operator_username, created_at) values (?, ?, ?, ?, ?, ?)",
 				period.id(), period.periodCode(), action, reason, username, OffsetDateTime.now());
+	}
+
+	private void assertNoClosedPeriodCloseRun(Long periodId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from biz_period_close_run
+				where period_id = ?
+				and status = 'CLOSED'
+				""", Long.class, periodId);
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.PERIOD_CLOSE_ACTION_NOT_ALLOWED,
+					"当前业务期间已完成 030 业务月结，请通过业务月结重开");
+		}
 	}
 
 	private void audit(CurrentUser operator, String action, Long id, String summary, HttpServletRequest request) {

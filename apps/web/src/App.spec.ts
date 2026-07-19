@@ -12,6 +12,9 @@ import { reportPermissions } from './modules/reports/reportPageHelpers'
 import productionMenuSource from './navigation/productionMenu.ts?raw'
 import planningMenuSource from './navigation/planningMenu.ts?raw'
 import costMenuSource from './navigation/costMenu.ts?raw'
+import periodCloseMenuSource from './navigation/periodCloseMenu.ts?raw'
+import appMenuRegistrySource from './navigation/appMenuRegistry.ts?raw'
+import appSource from './App.vue?raw'
 import { createQhErpRouter } from './router'
 import type { AuthSession, CsrfToken } from './shared/api/accountPermissionApi'
 import { useAuthStore } from './stores/authStore'
@@ -381,6 +384,39 @@ describe('ERP 应用骨架', () => {
     expect(wrapper.text()).not.toContain('项目成本核算')
     expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
       .toContain('/cost/records')
+  })
+
+  it('有业务月结权限但后端菜单缺失时通过轻量菜单注册补齐独立入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'period_close_user', displayName: '月结用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['system:business-period-close:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(periodCloseMenuSource).toContain('/period-close/runs')
+    expect(periodCloseMenuSource).toContain('system:business-period-close:view')
+    expect(appMenuRegistrySource).toContain('applyRegisteredModuleMenus')
+    expect(appMenuRegistrySource).toContain('periodCloseChildren')
+    expect(appSource).not.toContain('ensurePeriodCloseMenu')
+    expect(appSource).not.toContain('removePeriodCloseMenus')
+    expect(wrapper.text()).toContain('业务月结')
+    expect(wrapper.text()).toContain('月结工作台')
+    expect(wrapper.find('[data-test="main-menu-icon-period-close"]').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toContain('/period-close/runs')
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/period-close')
   })
 
   it('有业务期间查看权限但后端菜单缺失时补齐系统管理入口', async () => {

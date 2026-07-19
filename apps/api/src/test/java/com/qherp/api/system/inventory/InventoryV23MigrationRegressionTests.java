@@ -36,7 +36,8 @@ class InventoryV23MigrationRegressionTests {
 	void v1v19v20v21v22v23升级到v24必须补齐预留成本层和盘点估值结构() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertReservationCostLayerSchema(jdbcTemplate);
 		assertStocktakeValuationSchema(jdbcTemplate);
 
@@ -53,7 +54,8 @@ class InventoryV23MigrationRegressionTests {
 
 			migrate(null);
 
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+			assertCurrentMigrationChecksums(jdbcTemplate);
 			assertReservationCostLayerSchema(jdbcTemplate);
 			assertStocktakeValuationSchema(jdbcTemplate);
 		}
@@ -71,7 +73,8 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isNull();
 		assertThat(queryText(jdbcTemplate, """
@@ -111,7 +114,8 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':' || coalesce(batch_id::text, 'NULL') || ':'
 					|| coalesce(serial_id::text, 'NULL') || ':' || coalesce(cost_layer_id::text, 'NULL')
@@ -145,7 +149,8 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isEqualTo(layerId);
 	}
@@ -380,6 +385,31 @@ class InventoryV23MigrationRegressionTests {
 				order by installed_rank desc
 				limit 1
 				""", String.class);
+	}
+
+	private void assertCurrentMigrationChecksums(JdbcTemplate jdbcTemplate) {
+		assertThat(migrationChecksum(jdbcTemplate, "29")).isEqualTo(774334682);
+		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
+		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
+		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
+	}
+
+	private Integer migrationChecksum(JdbcTemplate jdbcTemplate, String version) {
+		return jdbcTemplate.queryForObject("""
+				select checksum
+				from flyway_schema_history
+				where success = true
+				  and version = ?
+				""", Integer.class, version);
+	}
+
+	private long failedMigrationCount(JdbcTemplate jdbcTemplate) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from flyway_schema_history
+				where success = false
+				""", Long.class);
 	}
 
 	private String queryText(JdbcTemplate jdbcTemplate, String sql, Object... args) {

@@ -29,7 +29,8 @@ class Stage022MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(tableExists(jdbcTemplate, "platform_approval_instance")).isTrue();
 		assertThat(columnExists(jdbcTemplate, "sys_audit_log", "detail_json")).isTrue();
 		assertThat(approvalDefinitionExists(jdbcTemplate, "SALES_PROJECT_CONTRACT_ACTIVATION")).isTrue();
@@ -434,6 +435,31 @@ class Stage022MigrationRegressionTests {
 				order by installed_rank desc
 				limit 1
 				""", String.class);
+	}
+
+	private void assertCurrentMigrationChecksums(JdbcTemplate jdbcTemplate) {
+		assertThat(migrationChecksum(jdbcTemplate, "29")).isEqualTo(774334682);
+		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
+		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
+		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
+	}
+
+	private Integer migrationChecksum(JdbcTemplate jdbcTemplate, String version) {
+		return jdbcTemplate.queryForObject("""
+				select checksum
+				from flyway_schema_history
+				where success = true
+				  and version = ?
+				""", Integer.class, version);
+	}
+
+	private long failedMigrationCount(JdbcTemplate jdbcTemplate) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from flyway_schema_history
+				where success = false
+				""", Long.class);
 	}
 
 	private boolean tableExists(JdbcTemplate jdbcTemplate, String tableName) {

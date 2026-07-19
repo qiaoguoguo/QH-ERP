@@ -39,7 +39,8 @@ class Stage023MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertTablesExist(jdbcTemplate, List.of(
 				"inv_public_valuation_pool",
 				"inv_value_movement",
@@ -126,7 +127,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -181,7 +183,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(columnExists(jdbcTemplate, "inv_warehouse_transfer_line", "source_cost_layer_id")).isTrue();
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
@@ -234,7 +237,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertStockBalanceUniqueIndexesIncludeCostLayer(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -278,7 +282,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertColumnsExist(jdbcTemplate, "inv_stock_reservation", List.of("cost_layer_id"));
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
@@ -313,7 +318,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select ownership_type || ':' || coalesce(project_id::text, 'NULL') || ':'
@@ -341,7 +347,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':'
@@ -372,7 +379,8 @@ class Stage023MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertStocktakeVarianceColumnsNullable(jdbcTemplate);
 		assertValueMovementTypeLengthAllowsAllEnums(jdbcTemplate);
 		assertLegacyStocktakeDraftVarianceFieldsNull(jdbcTemplate, oldDraftLineId);
@@ -1060,6 +1068,31 @@ class Stage023MigrationRegressionTests {
 				order by installed_rank desc
 				limit 1
 				""", String.class);
+	}
+
+	private void assertCurrentMigrationChecksums(JdbcTemplate jdbcTemplate) {
+		assertThat(migrationChecksum(jdbcTemplate, "29")).isEqualTo(774334682);
+		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
+		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
+		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
+	}
+
+	private Integer migrationChecksum(JdbcTemplate jdbcTemplate, String version) {
+		return jdbcTemplate.queryForObject("""
+				select checksum
+				from flyway_schema_history
+				where success = true
+				  and version = ?
+				""", Integer.class, version);
+	}
+
+	private long failedMigrationCount(JdbcTemplate jdbcTemplate) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from flyway_schema_history
+				where success = false
+				""", Long.class);
 	}
 
 	private String queryText(JdbcTemplate jdbcTemplate, String sql, Object... args) {

@@ -51,6 +51,10 @@ import ProjectCostCalculationDetailView from '../modules/cost/project/ProjectCos
 import ProjectCostProjectDetailView from '../modules/cost/project/ProjectCostProjectDetailView.vue'
 import ProjectCostVarianceListView from '../modules/cost/project/ProjectCostVarianceListView.vue'
 import ProjectCostWorkbenchView from '../modules/cost/project/ProjectCostWorkbenchView.vue'
+import PeriodCloseCheckDetailView from '../modules/periodClose/PeriodCloseCheckDetailView.vue'
+import PeriodCloseRunDetailView from '../modules/periodClose/PeriodCloseRunDetailView.vue'
+import PeriodCloseSnapshotView from '../modules/periodClose/PeriodCloseSnapshotView.vue'
+import PeriodCloseWorkbenchView from '../modules/periodClose/PeriodCloseWorkbenchView.vue'
 import PurchaseOrderDetailView from '../modules/procurement/PurchaseOrderDetailView.vue'
 import PurchaseOrderFormView from '../modules/procurement/PurchaseOrderFormView.vue'
 import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.vue'
@@ -106,6 +110,7 @@ import { createQhErpRouter } from './index'
 import productionRouteSource from './modules/productionRoutes.ts?raw'
 import planningRouteSource from './modules/planningRoutes.ts?raw'
 import costRouteSource from './modules/costRoutes.ts?raw'
+import periodCloseRouteSource from './modules/periodCloseRoutes.ts?raw'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
 const adminSession: AuthSession = {
@@ -490,6 +495,43 @@ describe('账号权限路由守卫', () => {
     expect(costRouteSource).toContain('cost:project-cost:view')
   })
 
+  it('业务月结路由由独立模块接入并配置查看和快照权限', async () => {
+    const router = createQhErpRouter()
+    const periodCloseRoutes = [
+      ['period-close-runs', '/period-close/runs', 'system:business-period-close:view', PeriodCloseWorkbenchView],
+      ['period-close-run-detail', '/period-close/runs/:runId', 'system:business-period-close:view', PeriodCloseRunDetailView],
+      [
+        'period-close-check-detail',
+        '/period-close/runs/:runId/checks/:checkId',
+        'system:business-period-close:view',
+        PeriodCloseCheckDetailView,
+      ],
+      [
+        'period-close-run-snapshot',
+        '/period-close/runs/:runId/snapshot',
+        'system:business-period-close:snapshot-view',
+        PeriodCloseSnapshotView,
+      ],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of periodCloseRoutes) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+
+    const rootRoute = router.getRoutes().find((item) => item.path === '/period-close')
+    expect(rootRoute?.name).toBe('period-close-root')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+    expect(periodCloseRouteSource).toContain('periodCloseRouteOrder')
+    expect(periodCloseRouteSource).toContain('system:business-period-close:view')
+  })
+
   it('采购订单、采购入库和采购退货路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
     const procurementRoutes = [
@@ -751,6 +793,25 @@ describe('账号权限路由守卫', () => {
 
     expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
     expect(forbiddenRouter.currentRoute.value.query.from).toBe('/cost')
+  })
+
+  it('访问业务月结根路径时按 030 查看权限进入月结工作台', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['system:business-period-close:view'] })
+
+    await router.push('/period-close')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('period-close-runs')
+
+    const forbiddenRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await forbiddenRouter.push('/period-close')
+    await forbiddenRouter.isReady()
+
+    expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
+    expect(forbiddenRouter.currentRoute.value.query.from).toBe('/period-close')
   })
 
   it('访问采购根路径时重定向到采购订单页', async () => {

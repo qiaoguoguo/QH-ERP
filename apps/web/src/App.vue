@@ -3,6 +3,7 @@ import type { Component } from 'vue'
 import { computed, onMounted, ref, watch } from 'vue'
 import {
   Box,
+  Calendar,
   Coin,
   Collection,
   Cpu,
@@ -38,6 +39,7 @@ import { activeMenuPath } from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
 import qhLogoUrl from './assets/logo.ico'
 import { costChildren, costMenuPaths } from './navigation/costMenu'
+import { applyRegisteredModuleMenus, registeredModuleMenuPaths } from './navigation/appMenuRegistry'
 
 const route = useRoute()
 const router = useRouter()
@@ -91,7 +93,7 @@ const masterCodingRulePath = '/master/coding-rules'
 const masterWarehousePath = '/master/warehouses'
 const masterSupplierPath = '/master/suppliers'
 const masterCustomerPath = '/master/customers'
-const supportedMenuPaths = new Set([
+const supportedMenuPaths = new Set<string>(([
   '/accounts/users',
   '/system/users',
   '/accounts/roles',
@@ -138,6 +140,7 @@ const supportedMenuPaths = new Set([
   productionOutsourcingOrderPath,
   qualityInspectionPath,
   ...costMenuPaths,
+  ...registeredModuleMenuPaths,
   financeSalesInvoicePath,
   financePurchaseInvoicePath,
   financeExpensePath,
@@ -151,7 +154,7 @@ const supportedMenuPaths = new Set([
   financePaymentPath,
   financeSettlementAdjustmentPath,
   ...reportMenuPaths,
-])
+] as Array<string | null | undefined>).filter((path): path is string => typeof path === 'string' && path.length > 0))
 const masterChildren: MenuNode[] = [
   {
     id: 'master-units',
@@ -460,6 +463,7 @@ const mainMenuIconRules: Array<[RegExp, Component]> = [
   [/planning|计划|缺料/, TrendCharts],
   [/production|生产/, Cpu],
   [/cost|成本/, Coin],
+  [/period-close|业务月结|月结/, Calendar],
   [/finance|财务|往来|应收|应付/, Money],
   [/report|报表|经营/, TrendCharts],
 ]
@@ -476,7 +480,8 @@ const menuTree = computed<MenuNode[]>(() => {
   const qualityMenus = ensureQualityMenu(productionMenus)
   const costMenus = ensureCostMenu(qualityMenus)
   const financeMenus = ensureFinanceMenu(costMenus)
-  return ensureReportsMenu(financeMenus)
+  const reportMenus = ensureReportsMenu(financeMenus)
+  return applyRegisteredModuleMenus(reportMenus, (permission) => authStore.hasPermission(permission), supportedMenuPaths)
 })
 const displayName = computed(() => authStore.currentUser?.displayName ?? authStore.currentUser?.username ?? '未登录')
 const logoutError = ref('')

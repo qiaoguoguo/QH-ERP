@@ -1,0 +1,128 @@
+.period-close-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.period-close-summary-strip > div,
+.period-close-section {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-bg-color);
+}
+
+.period-close-summary-strip span,
+.period-close-muted {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.period-close-summary-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  line-height: 1.35;
+}
+
+.period-close-section-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+}
+
+.period-close-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.period-close-section-title {
+  color: var(--el-text-color-primary);
+  font-weight: 600;
+}
+
+.period-close-detail-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 0 0 16px;
+}
+
+.period-close-detail-list div {
+  min-width: 0;
+}
+
+.period-close-detail-list dt {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.period-close-detail-list dd {
+  margin: 4px 0 0;
+  color: var(--el-text-color-primary);
+  word-break: break-word;
+}
+
+.period-close-dialog-summary {
+  margin: 0 0 12px;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.period-close-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--el-text-color-regular);
+  cursor: pointer;
+  user-select: none;
+}
+
+.period-close-checkbox input {
+  width: 16px;
+  height: 16px;
+}
+
+.period-close-source-content {
+  min-width: 0;
+}
+
+.period-close-drawer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.period-close-report-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.period-close-report-chip {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-blank);
+  color: var(--el-text-color-primary);
+}
+
+.period-close-report-json {
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  white-space: pre-wrap;
+}

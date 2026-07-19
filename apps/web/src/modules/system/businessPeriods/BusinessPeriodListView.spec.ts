@@ -1,11 +1,13 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useConfirmActionMock } from '../../../test/setup'
 import { useAuthStore } from '../../../stores/authStore'
 import BusinessPeriodListView from './BusinessPeriodListView.vue'
 import type { BusinessPeriodRecord, BusinessPeriodPageResult } from '../../../shared/api/businessPeriodApi'
+import type { BusinessPeriodClosePeriodSummary } from '../../../shared/api/businessPeriodCloseApi'
 
 const confirmActionMock = useConfirmActionMock()
 
@@ -18,8 +20,18 @@ const apiMock = vi.hoisted(() => ({
   unlock: vi.fn(),
 }))
 
+const periodCloseApiMock = vi.hoisted(() => ({
+  periods: {
+    getSummary: vi.fn(),
+  },
+}))
+
 vi.mock('../../../shared/api/businessPeriodApi', () => ({
   businessPeriodApi: apiMock,
+}))
+
+vi.mock('../../../shared/api/businessPeriodCloseApi', () => ({
+  businessPeriodCloseApi: periodCloseApiMock,
 }))
 
 const openPeriod: BusinessPeriodRecord = {
@@ -70,13 +82,25 @@ function page(items: BusinessPeriodRecord[]): BusinessPeriodPageResult {
   }
 }
 
+function createTestRouter() {
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/system/business-periods', name: 'system-business-periods', component: BusinessPeriodListView },
+      { path: '/period-close/runs', name: 'period-close-runs', component: { template: '<div />' } },
+      { path: '/period-close/runs/:runId', name: 'period-close-run-detail', component: { template: '<div />' } },
+    ],
+  })
+  return router
+}
+
 function mountPeriods(permissions = [
   'system:business-period:view',
   'system:business-period:create',
   'system:business-period:update',
   'system:business-period:lock',
   'system:business-period:unlock',
-]) {
+], router = createTestRouter()) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -86,9 +110,18 @@ function mountPeriods(permissions = [
   })
   return mount(BusinessPeriodListView, {
     global: {
-      plugins: [pinia, ElementPlus],
+      plugins: [pinia, router, ElementPlus],
     },
   })
+}
+
+async function mountPeriodsWithRouter(permissions: string[]) {
+  const router = createTestRouter()
+  await router.push('/system/business-periods')
+  await router.isReady()
+  const wrapper = mountPeriods(permissions, router)
+  await flushPromises()
+  return { wrapper, router }
 }
 
 describe('业务期间管理页', () => {
@@ -100,6 +133,24 @@ describe('业务期间管理页', () => {
     apiMock.generateMonthly.mockResolvedValue([openPeriod])
     apiMock.lock.mockResolvedValue(lockedPeriod)
     apiMock.unlock.mockResolvedValue(openPeriod)
+    periodCloseApiMock.periods.getSummary.mockResolvedValue({
+      periodId: 1,
+      periodCode: '2026-07',
+      closeStatus: 'PENDING_CHECK',
+      closeStatusName: '待检查',
+      currentRunId: null,
+      currentRevisionNo: null,
+      latestCheckId: null,
+      latestCheckedAt: null,
+      blockingCount: 0,
+      warningCount: 0,
+      snapshotId: null,
+      allowedActions: ['CHECK'],
+      actionDisabledReasons: {},
+      version: 0,
+      sourceFingerprint: null,
+      versions: [],
+    } satisfies BusinessPeriodClosePeriodSummary)
   })
 
   it('展示业务期间列表、锁定状态和行操作', async () => {
@@ -222,6 +273,82 @@ describe('业务期间管理页', () => {
     expect(wrapper.find('[data-test="edit-business-period"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="lock-business-period"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="unlock-business-period"]').exists()).toBe(false)
+  })
+
+  it('有 030 查看权限时展示月结摘要并跳转运行详情保留 returnTo', async () => {
+    apiMock.list.mockResolvedValue(page([openPeriod]))
+    periodCloseApiMock.periods.getSummary.mockResolvedValue({
+      periodId: 1,
+      periodCode: '2026-07',
+      closeStatus: 'READY',
+      closeStatusName: '可月结',
+      currentRunId: 11,
+      currentRevisionNo: 1,
+      latestCheckId: 21,
+      latestCheckedAt: '2026-07-31T22:00:00+08:00',
+      blockingCount: 0,
+      warningCount: 2,
+      snapshotId: null,
+      allowedActions: ['CHECK', 'CLOSE'],
+      actionDisabledReasons: {},
+      version: 5,
+      sourceFingerprint: 'fp-030',
+      versions: [{ runId: 11, revisionNo: 1, closeStatus: 'READY' }],
+    } satisfies BusinessPeriodClosePeriodSummary)
+
+    const { wrapper, router } = await mountPeriodsWithRouter([
+      'system:business-period:view',
+      'system:business-period-close:view',
+    ])
+
+    expect(periodCloseApiMock.periods.getSummary).toHaveBeenCalledWith(1)
+    expect(wrapper.text()).toContain('月结状态')
+    expect(wrapper.text()).toContain('可月结')
+    expect(wrapper.text()).toContain('版本 1')
+    expect(wrapper.text()).toContain('阻断 0 / 警告 2')
+    expect(wrapper.find('[data-test="lock-business-period"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="view-period-close-summary"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/period-close/runs/11')
+    expect(router.currentRoute.value.query.returnTo).toBe('/system/business-periods')
+  })
+
+  it('当前 CLOSED 月结期间隐藏 016 普通解锁并引导通过 030 重开', async () => {
+    apiMock.list.mockResolvedValue(page([lockedPeriod]))
+    periodCloseApiMock.periods.getSummary.mockResolvedValue({
+      periodId: 2,
+      periodCode: '2026-06',
+      closeStatus: 'CLOSED',
+      closeStatusName: '已月结',
+      currentRunId: 22,
+      currentRevisionNo: 1,
+      latestCheckId: 21,
+      latestCheckedAt: '2026-06-30T22:00:00+08:00',
+      blockingCount: 0,
+      warningCount: 0,
+      snapshotId: 82,
+      allowedActions: ['REOPEN', 'SNAPSHOT_VIEW'],
+      actionDisabledReasons: {},
+      version: 6,
+      sourceFingerprint: 'fp-closed',
+      versions: [{ runId: 22, revisionNo: 1, closeStatus: 'CLOSED' }],
+    } satisfies BusinessPeriodClosePeriodSummary)
+
+    const { wrapper, router } = await mountPeriodsWithRouter([
+      'system:business-period:view',
+      'system:business-period:unlock',
+      'system:business-period-close:view',
+    ])
+
+    expect(wrapper.text()).toContain('已月结')
+    expect(wrapper.find('[data-test="unlock-business-period"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('请通过业务月结重开')
+
+    await wrapper.find('[data-test="view-period-close-summary"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.path).toBe('/period-close/runs/22')
   })
 
   it('后端返回锁定错误时展示可见提示并保留弹窗', async () => {

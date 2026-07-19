@@ -114,27 +114,36 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+$expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
 
-    $flywayLatestV31RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V31") `
-            -and $SqlText.Contains("latest successful version = 31; checksum = $expectedV31Checksum") `
-            -and $SqlText.Contains("= 31") `
-            -and $SqlText.Contains("checksum = $expectedV31Checksum") `
-            -and $SqlText.Contains("Flyway 最新成功版本必须为 V31，checksum 必须为 $expectedV31Checksum。") `
+    $flywayLatestV32RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V32") `
+            -and $SqlText.Contains("latest successful version = 32; checksum = $expectedV32Checksum") `
+            -and $SqlText.Contains("= 32") `
+            -and $SqlText.Contains("checksum = $expectedV32Checksum") `
+            -and $SqlText.Contains("Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。") `
+            -and (-not $SqlText.Contains("FLYWAY_LATEST_V31")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V30")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V29")) `
-            -and (-not ($SqlText -match "FLYWAY_LATEST_V2[0-9]")) `
+            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[01])")) `
+            -and (-not $SqlText.Contains("latest successful version = 31; checksum = $expectedV31Checksum")) `
             -and (-not $SqlText.Contains("latest successful version = 30; checksum = 2130342893")) `
             -and (-not $SqlText.Contains("latest successful version = 29; checksum = 774334682")) `
+            -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V31")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V30")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V29")) `
-            -and (-not $SqlText.Contains("V31_CHECKSUM_PENDING")) `
-            -and (-not ($SqlText -match ">=\s*31")) `
-            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*31")) `
-            -and (-not ($SqlText -match "version::int\s*>=\s*31")))
+            -and (-not $SqlText.Contains("V32_CHECKSUM_PENDING")) `
+            -and (-not ($SqlText -match ">=\s*32")) `
+            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*32")) `
+            -and (-not ($SqlText -match "version::int\s*>=\s*32")))
+    $flywayV32HistoricalChecksumIsStrict = ($SqlText.Contains("FLYWAY_V32_CHECKSUM") `
+            -and $SqlText.Contains("version 32 checksum = $expectedV32Checksum") `
+            -and $SqlText.Contains("version = '32'") `
+            -and $SqlText.Contains("checksum = $expectedV32Checksum") `
+            -and $SqlText.Contains("Flyway V32 checksum 必须保持 $expectedV32Checksum。"))
     $flywayV31HistoricalChecksumIsStrict = ($SqlText.Contains("FLYWAY_V31_CHECKSUM") `
             -and $SqlText.Contains("version 31 checksum = $expectedV31Checksum") `
             -and $SqlText.Contains("version = '31'") `
@@ -155,7 +164,8 @@ function Test-FlywayMigrationRulesAreStrict {
             -and $SqlText.Contains("Flyway 不能存在失败迁移记录。") `
             -and $SqlText.Contains("from flyway_schema_history where not success"))
 
-    return ($flywayLatestV31RuleIsStrict `
+    return ($flywayLatestV32RuleIsStrict `
+        -and $flywayV32HistoricalChecksumIsStrict `
         -and $flywayV31HistoricalChecksumIsStrict `
         -and $flywayV30HistoricalChecksumIsStrict `
         -and $flywayV29HistoricalChecksumIsStrict `
@@ -163,14 +173,17 @@ function Test-FlywayMigrationRulesAreStrict {
 }
 
 Assert-True -Condition (Test-FlywayMigrationRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V31，独立校验 V31/V30/V29 checksum 和失败迁移 0，不能保留旧 latest、缺失 V31 checksum 或放宽为 >= 31。"
+    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V32，独立校验 V32/V31/V30/V29 checksum 和失败迁移 0，不能保留旧 latest、缺失 V32 checksum 或放宽为 >= 32。"
 $weakenedFlywaySql = @"
-select 'FLYWAY_LATEST_V31'::text, 'migration'::text,
-    'version=31;checksum=$expectedV31Checksum',
-    'latest successful version = 31; checksum = $expectedV31Checksum',
-    max(version::int) >= 31,
-    'Flyway 最新成功版本必须为 V31，checksum 必须为 $expectedV31Checksum。'
+select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
+    'version=32;checksum=$expectedV32Checksum',
+    'latest successful version = 32; checksum = $expectedV32Checksum',
+    max(version::int) >= 32,
+    'Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。'
 from flyway_schema_history where success and version ~ '^[0-9]+$';
+union all select 'FLYWAY_V32_CHECKSUM', 'migration', 'version=32;checksum=$expectedV32Checksum',
+    'version 32 checksum = $expectedV32Checksum', checksum = $expectedV32Checksum,
+    'Flyway V32 checksum 必须保持 $expectedV32Checksum。' from flyway_schema_history where success and version = '32';
 union all select 'FLYWAY_V31_CHECKSUM', 'migration', 'version=31;checksum=$expectedV31Checksum',
     'version 31 checksum = $expectedV31Checksum', checksum = $expectedV31Checksum,
     'Flyway V31 checksum 必须保持 $expectedV31Checksum。' from flyway_schema_history where success and version = '31';
@@ -184,14 +197,14 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $weakenedFlywaySql)) `
-    -Message "自测必须拒绝把最新迁移规则弱化为 >= 31 的实现。"
-$missingV31ChecksumSql = @"
-select 'FLYWAY_LATEST_V31'::text, 'migration'::text,
-    'version=31;checksum=$expectedV31Checksum',
-    'latest successful version = 31; checksum = $expectedV31Checksum',
-    version::int = 31 and checksum = $expectedV31Checksum,
-    'Flyway 最新成功版本必须为 V31，checksum 必须为 $expectedV31Checksum。'
-from flyway_schema_history where success and version = '31';
+    -Message "自测必须拒绝把最新迁移规则弱化为 >= 32 的实现。"
+$missingV32ChecksumSql = @"
+select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
+    'version=32;checksum=$expectedV32Checksum',
+    'latest successful version = 32; checksum = $expectedV32Checksum',
+    version::int = 32 and checksum = $expectedV32Checksum,
+    'Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。'
+from flyway_schema_history where success and version = '32';
 union all select 'FLYWAY_V30_CHECKSUM', 'migration', 'version=30;checksum=2130342893',
     'version 30 checksum = 2130342893', checksum = 2130342893,
     'Flyway V30 checksum 必须保持 2130342893。' from flyway_schema_history where success and version = '30';
@@ -201,8 +214,53 @@ union all select 'FLYWAY_V29_CHECKSUM', 'migration', 'version=29;checksum=774334
 union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) = 0,
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
-Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $missingV31ChecksumSql)) `
-    -Message "自测必须拒绝缺失 FLYWAY_V31_CHECKSUM 独立校验的实现。"
+Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $missingV32ChecksumSql)) `
+    -Message "自测必须拒绝缺失 FLYWAY_V32_CHECKSUM 独立校验的实现。"
+
+function Test-PeriodCloseValidatorRulesAreStrict {
+    param([string] $SqlText)
+
+    $permissionRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_PERMISSIONS_V32") `
+            -and $SqlText.Contains("system:business-period-close:view") `
+            -and $SqlText.Contains("system:business-period-close:check") `
+            -and $SqlText.Contains("system:business-period-close:close") `
+            -and $SqlText.Contains("system:business-period-close:reopen") `
+            -and $SqlText.Contains("system:business-period-close:snapshot-view") `
+            -and $SqlText.Contains("PERIOD_CLOSE_NO_AMOUNT_PERMISSION"))
+    $currentClosedRuleIsStrict = ($SqlText.Contains("PERIOD_CLOSE_CURRENT_CLOSED_UNIQUE") `
+            -and $SqlText.Contains("where status = 'CLOSED'") `
+            -and $SqlText.Contains("having count(*) > 1"))
+    $lockAuditRuleIsStrict = ($SqlText.Contains("PERIOD_CLOSE_LOCK_AUDIT_COMPLETE") `
+            -and $SqlText.Contains("p.status <> 'LOCKED'") `
+            -and $SqlText.Contains("action = 'CLOSE'") `
+            -and $SqlText.Contains("result = 'SUCCESS'"))
+    $snapshotRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_8") `
+            -and $SqlText.Contains("count(distinct report.report_code) <> 8") `
+            -and $SqlText.Contains("OVERVIEW") `
+            -and $SqlText.Contains("SETTLEMENT_SUMMARY") `
+            -and $SqlText.Contains("PERIOD_CLOSE_SNAPSHOT_FINGERPRINTS_LOCKED") `
+            -and $SqlText.Contains("report.fingerprint is null") `
+            -and $SqlText.Contains("PERIOD_CLOSE_SNAPSHOT_VERSION_IMMUTABLE") `
+            -and $SqlText.Contains("PERIOD_CLOSE_REOPENED_KEEP_SNAPSHOT"))
+    $blockingRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_BLOCKERS_FAIL_CLOSED") `
+            -and $SqlText.Contains("blocking_count <> 0") `
+            -and $SqlText.Contains("snapshot_id is null") `
+            -and $SqlText.Contains("source_fingerprint is null"))
+    $maskingFixtureRuleIsStrict = ($SqlText.Contains("PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1") `
+            -and $SqlText.Contains("inventory:valuation:view") `
+            -and $SqlText.Contains("cost:project-cost:amount-view") `
+            -and $SqlText.Contains("report:exceptions:view"))
+
+    return ($permissionRulesAreStrict `
+        -and $currentClosedRuleIsStrict `
+        -and $lockAuditRuleIsStrict `
+        -and $snapshotRulesAreStrict `
+        -and $blockingRulesAreStrict `
+        -and $maskingFixtureRuleIsStrict)
+}
+
+Assert-True -Condition (Test-PeriodCloseValidatorRulesAreStrict -SqlText $validatorSql) `
+    -Message "正式演示数据验证器必须失败关闭当前关闭唯一、期间锁定/审计、阻断不得关闭、快照对账/不变、重开保留旧快照和权限脱敏夹具。"
 
 function Test-SelfTestMinioFileObjectConsistency {
     param(

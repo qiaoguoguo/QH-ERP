@@ -14,15 +14,23 @@ public class BusinessPeriodGuard {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	public BusinessPeriodGuard(JdbcTemplate jdbcTemplate) {
+	private final BusinessPeriodLockService lockService;
+
+	public BusinessPeriodGuard(JdbcTemplate jdbcTemplate, BusinessPeriodLockService lockService) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.lockService = lockService;
 	}
 
 	public void assertWritable(LocalDate businessDate, BusinessPeriodOperation operation, String sourceType, Long sourceId) {
 		if (businessDate == null) {
 			throw new BusinessException(ApiErrorCode.BUSINESS_PERIOD_DATE_RANGE_INVALID);
 		}
-		BusinessPeriodRow period = findPeriodByBusinessDate(businessDate).orElse(null);
+		Long periodId = this.lockService.findPeriodId(businessDate).orElse(null);
+		if (periodId == null) {
+			return;
+		}
+		this.lockService.acquireForPeriodId(periodId);
+		BusinessPeriodRow period = findPeriodById(periodId).orElse(null);
 		if (period == null || period.status() == BusinessPeriodStatus.OPEN) {
 			return;
 		}
@@ -35,13 +43,12 @@ public class BusinessPeriodGuard {
 				"业务日期 " + businessDate + " 所属期间 " + period.periodCode() + " 已锁定");
 	}
 
-	private Optional<BusinessPeriodRow> findPeriodByBusinessDate(LocalDate businessDate) {
+	private Optional<BusinessPeriodRow> findPeriodById(Long periodId) {
 		return this.jdbcTemplate.query("""
 				select id, period_code, status from biz_business_period
-				where start_date <= ? and end_date >= ?
-				order by id limit 1
+				where id = ?
 				""", rs -> rs.next() ? Optional.of(new BusinessPeriodRow(rs.getLong("id"), rs.getString("period_code"),
-				BusinessPeriodStatus.valueOf(rs.getString("status")))) : Optional.empty(), businessDate, businessDate);
+				BusinessPeriodStatus.valueOf(rs.getString("status")))) : Optional.empty(), periodId);
 	}
 
 	private record BusinessPeriodRow(Long id, String periodCode, BusinessPeriodStatus status) {

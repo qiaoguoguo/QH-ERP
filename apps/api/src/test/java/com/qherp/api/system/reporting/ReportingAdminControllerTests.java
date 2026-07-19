@@ -587,9 +587,12 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 	void unrelatedStatusParameterIsIgnoredForReportsThatDoNotSupportStatus() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 
-		assertOk(get("/api/admin/reports/overview?status=IGNORED", admin));
-		assertEmptyReportPage(get("/api/admin/reports/inventory-stock-flow?status=IGNORED", admin));
-		assertEmptyReportPage(get("/api/admin/reports/exceptions?status=IGNORED", admin));
+		assertSameReportData(get("/api/admin/reports/overview", admin),
+				get("/api/admin/reports/overview?status=IGNORED", admin));
+		assertSameReportData(get("/api/admin/reports/inventory-stock-flow", admin),
+				get("/api/admin/reports/inventory-stock-flow?status=IGNORED", admin));
+		assertSameReportData(get("/api/admin/reports/exceptions", admin),
+				get("/api/admin/reports/exceptions?status=IGNORED", admin));
 	}
 
 	@Test
@@ -1351,6 +1354,12 @@ class ReportingAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(data.get("pageSize").intValue()).isEqualTo(20);
 		assertThat(data.get("total").longValue()).isZero();
 		assertThat(data.get("totalPages").intValue()).isZero();
+	}
+
+	private void assertSameReportData(ResponseEntity<String> expected, ResponseEntity<String> actual) throws Exception {
+		assertOk(expected);
+		assertOk(actual);
+		assertThat(data(actual)).isEqualTo(data(expected));
 	}
 
 	private void assertEmptyPage(ResponseEntity<String> response) throws Exception {

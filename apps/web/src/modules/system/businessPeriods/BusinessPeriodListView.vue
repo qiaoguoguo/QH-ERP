@@ -1,20 +1,32 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   businessPeriodApi,
   type BusinessPeriodPayload,
   type BusinessPeriodRecord,
   type BusinessPeriodStatus,
 } from '../../../shared/api/businessPeriodApi'
+import {
+  businessPeriodCloseApi,
+  type BusinessPeriodClosePeriodSummary,
+} from '../../../shared/api/businessPeriodCloseApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems } from '../shared/pageHelpers'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import BusinessPeriodFormDialog from './BusinessPeriodFormDialog.vue'
 import BusinessPeriodStatusTag from './BusinessPeriodStatusTag.vue'
+import {
+  formatPeriodCloseDateTime,
+  periodCloseStatusLabel,
+} from '../../periodClose/periodClosePageHelpers'
 
 type PeriodAction = 'lock' | 'unlock'
 
 const authStore = useAuthStore()
+const route = useRoute()
+const router = useRouter()
 const filters = reactive<{
   periodCode: string
   status?: BusinessPeriodStatus
@@ -32,6 +44,7 @@ const pagination = reactive({
   total: 0,
 })
 const periods = ref<BusinessPeriodRecord[]>([])
+const periodCloseSummaries = ref<Record<string, BusinessPeriodClosePeriodSummary>>({})
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
@@ -58,6 +71,7 @@ const canCreate = computed(() => authStore.hasPermission('system:business-period
 const canUpdate = computed(() => authStore.hasPermission('system:business-period:update'))
 const canLock = computed(() => authStore.hasPermission('system:business-period:lock'))
 const canUnlock = computed(() => authStore.hasPermission('system:business-period:unlock'))
+const canViewPeriodClose = computed(() => authStore.hasPermission('system:business-period-close:view'))
 const actionTitle = computed(() => actionType.value === 'lock' ? '锁定业务期间' : '解锁业务期间')
 
 async function loadPeriods() {
@@ -74,12 +88,32 @@ async function loadPeriods() {
     })
     periods.value = pageItems(page)
     pagination.total = Number(page.total)
+    await loadPeriodCloseSummaries(periods.value)
   } catch (caught) {
     periods.value = []
+    periodCloseSummaries.value = {}
     error.value = errorMessage(caught)
   } finally {
     loading.value = false
   }
+}
+
+async function loadPeriodCloseSummaries(records: BusinessPeriodRecord[]) {
+  periodCloseSummaries.value = {}
+  if (!canViewPeriodClose.value || records.length === 0) {
+    return
+  }
+  const entries = await Promise.all(records.map(async (period) => {
+    try {
+      const summary = await businessPeriodCloseApi.periods.getSummary(period.id)
+      return [summaryKey(period.id), summary] as const
+    } catch {
+      return [summaryKey(period.id), null] as const
+    }
+  }))
+  periodCloseSummaries.value = Object.fromEntries(
+    entries.filter((entry): entry is readonly [string, BusinessPeriodClosePeriodSummary] => Boolean(entry[1])),
+  )
 }
 
 function search() {
@@ -180,6 +214,67 @@ function openAction(period: BusinessPeriodRecord, type: PeriodAction) {
   actionVisible.value = true
 }
 
+function summaryKey(periodId: string | number): string {
+  return String(periodId)
+}
+
+function closeSummary(period: BusinessPeriodRecord): BusinessPeriodClosePeriodSummary | null {
+  return periodCloseSummaries.value[summaryKey(period.id)] ?? null
+}
+
+function closeStatusText(period: BusinessPeriodRecord): string {
+  const summary = closeSummary(period)
+  if (summary) {
+    return summary.closeStatusName || periodCloseStatusLabel(summary.closeStatus)
+  }
+  if (period.status === 'LOCKED') {
+    return '已手工锁定/无月结快照'
+  }
+  return '-'
+}
+
+function closeRevisionText(period: BusinessPeriodRecord): string {
+  const revisionNo = closeSummary(period)?.currentRevisionNo
+  return revisionNo ? `版本 ${revisionNo}` : '-'
+}
+
+function closeCheckText(period: BusinessPeriodRecord): string {
+  const summary = closeSummary(period)
+  if (!summary) {
+    return '-'
+  }
+  return `阻断 ${summary.blockingCount ?? 0} / 警告 ${summary.warningCount ?? 0}`
+}
+
+function closeCheckedAtText(period: BusinessPeriodRecord): string {
+  return formatPeriodCloseDateTime(closeSummary(period)?.latestCheckedAt)
+}
+
+function hasCurrentClosedPeriodClose(period: BusinessPeriodRecord): boolean {
+  return closeSummary(period)?.closeStatus === 'CLOSED'
+}
+
+function canUnlockPeriod(period: BusinessPeriodRecord): boolean {
+  return canUnlock.value && period.status === 'LOCKED' && !hasCurrentClosedPeriodClose(period)
+}
+
+function viewPeriodClose(period: BusinessPeriodRecord) {
+  const summary = closeSummary(period)
+  const returnTo = currentRouteReturnTo(route)
+  if (summary?.currentRunId) {
+    void router.push({
+      name: 'period-close-run-detail',
+      params: { runId: String(summary.currentRunId) },
+      query: queryWithReturnTo({}, returnTo),
+    })
+    return
+  }
+  void router.push({
+    name: 'period-close-runs',
+    query: queryWithReturnTo({ periodCode: period.periodCode }, returnTo),
+  })
+}
+
 async function submitAction() {
   if (!actionTarget.value || actionSubmitting.value) {
     return
@@ -232,7 +327,7 @@ onMounted(loadPeriods)
     </header>
 
     <el-card class="query-card" shadow="never">
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="期间编码">
           <el-input v-model="filters.periodCode" name="business-period-code" clearable placeholder="例如 2026-07" />
         </el-form-item>
@@ -287,8 +382,29 @@ onMounted(loadPeriods)
           <el-table-column prop="lockedBy" label="锁定人" min-width="110" show-overflow-tooltip />
           <el-table-column prop="lockedAt" label="锁定时间" min-width="180" show-overflow-tooltip />
           <el-table-column prop="lockReason" label="锁定原因" min-width="220" show-overflow-tooltip />
+          <el-table-column v-if="canViewPeriodClose" label="月结状态" min-width="150">
+            <template #default="{ row }">{{ closeStatusText(row) }}</template>
+          </el-table-column>
+          <el-table-column v-if="canViewPeriodClose" label="月结版本" min-width="110">
+            <template #default="{ row }">{{ closeRevisionText(row) }}</template>
+          </el-table-column>
+          <el-table-column v-if="canViewPeriodClose" label="最近检查" min-width="170">
+            <template #default="{ row }">{{ closeCheckedAtText(row) }}</template>
+          </el-table-column>
+          <el-table-column v-if="canViewPeriodClose" label="检查结论" min-width="150">
+            <template #default="{ row }">{{ closeCheckText(row) }}</template>
+          </el-table-column>
           <el-table-column label="操作" fixed="right" min-width="210">
             <template #default="{ row }">
+              <el-button
+                v-if="canViewPeriodClose"
+                size="small"
+                text
+                data-test="view-period-close-summary"
+                @click="viewPeriodClose(row)"
+              >
+                月结详情
+              </el-button>
               <el-button
                 v-if="canUpdate && row.status === 'OPEN'"
                 size="small"
@@ -309,7 +425,7 @@ onMounted(loadPeriods)
                 锁定
               </el-button>
               <el-button
-                v-if="canUnlock && row.status === 'LOCKED'"
+                v-if="canUnlockPeriod(row)"
                 size="small"
                 text
                 type="primary"
@@ -318,6 +434,9 @@ onMounted(loadPeriods)
               >
                 解锁
               </el-button>
+              <span v-else-if="canUnlock && row.status === 'LOCKED' && hasCurrentClosedPeriodClose(row)" class="period-close-muted">
+                请通过业务月结重开
+              </span>
             </template>
           </el-table-column>
         </el-table>

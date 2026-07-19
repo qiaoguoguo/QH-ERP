@@ -1076,6 +1076,9 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		var userCreate = permissionRepository.findByCode("system:user:create").orElseThrow();
 		var permissionView = permissionRepository.findByCode("system:permission:view").orElseThrow();
 		var auditView = permissionRepository.findByCode("system:audit:view").orElseThrow();
+		var businessPeriodMenu = permissionRepository.findByCode("system:business-period").orElseThrow();
+		var periodCloseMenu = permissionRepository.findByCode("system:business-period-close").orElseThrow();
+		var periodCloseView = permissionRepository.findByCode("system:business-period-close:view").orElseThrow();
 
 		assertThat(systemMenu.getType()).isEqualTo(SystemPermissionType.MENU);
 		assertThat(systemMenu.getParentId()).isNull();
@@ -1100,6 +1103,20 @@ class AccountPermissionInitializerTests extends PostgresIntegrationTest {
 		assertThat(auditView.getType()).isEqualTo(SystemPermissionType.ACTION);
 		assertThat(auditView.getApiMethod()).isEqualTo("GET");
 		assertThat(auditView.getApiPath()).isEqualTo("/api/admin/audit-logs");
+
+		assertThat(businessPeriodMenu.getType()).isEqualTo(SystemPermissionType.MENU);
+		assertThat(businessPeriodMenu.getParentId()).isEqualTo(systemMenu.getId());
+		assertThat(businessPeriodMenu.getRoutePath()).isEqualTo("/system/business-periods");
+
+		assertThat(periodCloseMenu.getType()).isEqualTo(SystemPermissionType.MENU);
+		assertThat(periodCloseMenu.getParentId()).isEqualTo(systemMenu.getId());
+		assertThat(periodCloseMenu.getRoutePath()).isEqualTo("/period-close/runs");
+
+		assertThat(periodCloseView.getType()).isEqualTo(SystemPermissionType.ACTION);
+		assertThat(periodCloseView.getParentId()).isEqualTo(periodCloseMenu.getId());
+		assertThat(periodCloseView.getRoutePath()).isEqualTo("/period-close/runs");
+		assertThat(periodCloseView.getApiMethod()).isEqualTo("GET");
+		assertThat(periodCloseView.getApiPath()).isEqualTo("/api/admin/period-closes/**");
 
 		MASTER_DATA_MENU_PERMISSIONS.forEach(code -> {
 			var permission = this.permissionRepository.findByCode(code).orElseThrow();
