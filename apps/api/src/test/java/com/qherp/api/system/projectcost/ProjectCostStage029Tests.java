@@ -64,7 +64,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 
 		assertThat(calculation.get("status").asText()).isEqualTo("CALCULATED");
 		assertThat(calculation.get("calculationStatus").asText()).isEqualTo("CALCULATED");
-		assertThat(calculation.get("freshnessStatus").asText()).isEqualTo("STALE");
+		assertThat(calculation.get("freshnessStatus").asText()).isEqualTo("CURRENT");
 		assertThat(calculation.get("completenessStatus").asText()).isEqualTo("COMPLETE");
 		assertDecimal(calculation, "projectCostTotal", "838.00");
 		assertDecimal(calculation, "totalCost", "838.00");
@@ -86,6 +86,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		assertThat(upstreamRowSummaries()).isEqualTo(upstreamBefore);
 
 		long calculationId = calculation.get("id").longValue();
+		assertFreshnessAcrossCalculationDtos(admin, fixture.projectId(), calculationId, "CURRENT");
 		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/" + calculationId
 				+ "/sources?page=1&pageSize=100",
 				admin)).get("items");
@@ -132,6 +133,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				admin));
 		assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
 		assertThat(confirmed.get("isCurrent").booleanValue()).isTrue();
+		assertThat(confirmed.get("freshnessStatus").asText()).isEqualTo("CURRENT");
 		assertError(exchange(HttpMethod.PUT, "/api/admin/cost/project-cost-calculations/" + calculationId
 				+ "/recalculate", Map.of("version", confirmed.get("version").longValue(), "idempotencyKey",
 						"pc-recalc-readonly-" + calculationId), admin), HttpStatus.CONFLICT,
@@ -141,6 +143,38 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 						"pc-cancel-readonly-" + calculationId), admin), HttpStatus.CONFLICT,
 				"PROJECT_COST_ACTION_NOT_ALLOWED");
 		assertThat(currentCalculationIds(fixture.projectId())).containsExactly(calculationId);
+		assertThat(upstreamRowSummaries()).isEqualTo(upstreamBefore);
+
+		JsonNode secondCalculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", "pc-calc-second-" + fixture.projectId()),
+				admin));
+		long secondCalculationId = secondCalculation.get("id").longValue();
+		assertThat(secondCalculationId).isNotEqualTo(calculationId);
+		assertThat(secondCalculation.get("status").asText()).isEqualTo("CALCULATED");
+		assertThat(secondCalculation.get("isCurrent").booleanValue()).isFalse();
+		assertThat(secondCalculation.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+		assertFreshnessAcrossCalculationDtos(admin, fixture.projectId(), secondCalculationId, "CURRENT");
+		JsonNode firstWhileSecondCalculated = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculationId, admin));
+		assertThat(firstWhileSecondCalculated.get("isCurrent").booleanValue()).isTrue();
+		assertThat(firstWhileSecondCalculated.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+
+		JsonNode secondConfirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + secondCalculationId + "/confirm",
+				Map.of("version", secondCalculation.get("version").longValue(), "sourceFingerprint",
+						secondCalculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-second-" + secondCalculationId),
+				admin));
+		assertThat(secondConfirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		assertThat(secondConfirmed.get("isCurrent").booleanValue()).isTrue();
+		assertThat(secondConfirmed.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+		JsonNode firstAfterSecondConfirmed = data(get("/api/admin/cost/project-cost-calculations/" + calculationId,
+				admin));
+		assertThat(firstAfterSecondConfirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		assertThat(firstAfterSecondConfirmed.get("isCurrent").booleanValue()).isFalse();
+		assertThat(firstAfterSecondConfirmed.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+		assertThat(currentCalculationIds(fixture.projectId())).containsExactly(secondCalculationId);
 		assertThat(upstreamRowSummaries()).isEqualTo(upstreamBefore);
 	}
 
@@ -155,15 +189,181 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				admin);
 		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		JsonNode calculation = data(calculationResponse);
+		long calculationId = calculation.get("id").longValue();
+		assertThat(calculation.get("isCurrent").booleanValue()).isFalse();
+		assertFreshnessAcrossCalculationDtos(admin, fixture.projectId(), calculationId, "CURRENT");
+		JsonNode recalculated = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculationId + "/recalculate",
+				Map.of("version", calculation.get("version").longValue(), "idempotencyKey",
+						"pc-recalc-change-" + calculationId),
+				admin));
+		assertThat(recalculated.get("isCurrent").booleanValue()).isFalse();
+		assertThat(recalculated.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+		assertFreshnessAcrossCalculationDtos(admin, fixture.projectId(), calculationId, "CURRENT");
+
 		this.jdbcTemplate.update("update inv_value_movement set inventory_amount = 49.00 where id = ?",
 				fixture.firstValueMovementId());
+		JsonNode staleCalculation = data(get("/api/admin/cost/project-cost-calculations/" + calculationId, admin));
+		assertThat(staleCalculation.get("status").asText()).isEqualTo("CALCULATED");
+		assertThat(staleCalculation.get("isCurrent").booleanValue()).isFalse();
+		assertThat(staleCalculation.get("freshnessStatus").asText()).isEqualTo("STALE");
+		assertFreshnessAcrossCalculationDtos(admin, fixture.projectId(), calculationId, "STALE");
 
 		assertError(exchange(HttpMethod.PUT,
-				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
-				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
-						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
-						"pc-confirm-change-" + calculation.get("id").longValue()),
+				"/api/admin/cost/project-cost-calculations/" + calculationId + "/confirm",
+				Map.of("version", recalculated.get("version").longValue(), "sourceFingerprint",
+						recalculated.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-change-" + calculationId),
 				admin), HttpStatus.CONFLICT, "PROJECT_COST_SOURCE_CHANGED");
+		JsonNode staleAfterRejectedConfirm = data(get("/api/admin/cost/project-cost-calculations/" + calculationId,
+				admin));
+		assertThat(staleAfterRejectedConfirm.get("status").asText()).isEqualTo("CALCULATED");
+		assertThat(staleAfterRejectedConfirm.get("isCurrent").booleanValue()).isFalse();
+		assertThat(staleAfterRejectedConfirm.get("freshnessStatus").asText()).isEqualTo("STALE");
+	}
+
+	@Test
+	void 收入事实变化必须让核算快照过期并在确认时返回来源变化409() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		assertRevenueChangeMakesCalculationStale(admin, "029_REV_SHIP_",
+				(fixture) -> this.jdbcTemplate.update("""
+						update sal_sales_shipment_line
+						set tax_excluded_amount = tax_excluded_amount + 1.00, updated_at = now()
+						where shipment_id in (
+							select sh.id
+							from sal_sales_shipment sh
+							join sal_sales_order so on so.id = sh.order_id
+							where so.project_id = ?
+						)
+						""", fixture.projectId()));
+		assertRevenueChangeMakesCalculationStale(admin, "029_REV_INV_",
+				(fixture) -> this.jdbcTemplate.update("""
+						update fin_sales_invoice
+						set tax_excluded_amount = tax_excluded_amount + 1.00,
+						    tax_included_amount = tax_included_amount + 1.00,
+						    updated_at = now()
+						where project_id = ?
+						""", fixture.projectId()));
+		assertRevenueChangeMakesCalculationStale(admin, "029_REV_TARGET_",
+				(fixture) -> this.jdbcTemplate.update("""
+						update sal_project
+						set target_revenue = target_revenue + 1.00, updated_at = now()
+						where id = ?
+						""", fixture.projectId()));
+	}
+
+	@Test
+	void 取消较新运行后工作台和详情必须选择有效latest且合法项目仍可重新计算() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture confirmedFixture = createFullCostFixture("029_CANCEL_CONFIRMED_", false);
+		JsonNode confirmedCalculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + confirmedFixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-cancel-confirmed-" + confirmedFixture.projectId()),
+				admin));
+		JsonNode confirmed = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + confirmedCalculation.get("id").longValue()
+						+ "/confirm",
+				Map.of("version", confirmedCalculation.get("version").longValue(), "sourceFingerprint",
+						confirmedCalculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-cancel-base-" + confirmedCalculation.get("id").longValue()),
+				admin));
+		long confirmedId = confirmed.get("id").longValue();
+		JsonNode newerCalculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + confirmedFixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-cancel-newer-" + confirmedFixture.projectId()),
+				admin));
+		long newerCalculationId = newerCalculation.get("id").longValue();
+		JsonNode cancelledNewer = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + newerCalculationId + "/cancel",
+				Map.of("version", newerCalculation.get("version").longValue(), "idempotencyKey",
+						"pc-cancel-newer-" + newerCalculationId),
+				admin));
+		assertThat(cancelledNewer.get("status").asText()).isEqualTo("CANCELLED");
+		assertEffectiveLatest(admin, confirmedFixture.projectId(), confirmedId, "CONFIRMED");
+		JsonNode confirmedDetail = data(get("/api/admin/cost/project-costs/projects/"
+				+ confirmedFixture.projectId(), admin));
+		assertThat(calculationSummaryStatuses(confirmedDetail.get("calculations"))).contains("CANCELLED",
+				"CONFIRMED");
+
+		StageFixture cancelledOnlyFixture = createFullCostFixture("029_CANCEL_ONLY_", false);
+		JsonNode onlyCalculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + cancelledOnlyFixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-cancel-only-" + cancelledOnlyFixture.projectId()),
+				admin));
+		JsonNode cancelledOnly = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + onlyCalculation.get("id").longValue() + "/cancel",
+				Map.of("version", onlyCalculation.get("version").longValue(), "idempotencyKey",
+						"pc-cancel-only-" + onlyCalculation.get("id").longValue()),
+				admin));
+		assertThat(cancelledOnly.get("status").asText()).isEqualTo("CANCELLED");
+
+		JsonNode workbenchItems = data(get("/api/admin/cost/project-costs?projectId="
+				+ cancelledOnlyFixture.projectId() + "&page=1&pageSize=20", admin)).get("items");
+		assertThat(workbenchItems.size()).isOne();
+		JsonNode workbench = workbenchItems.get(0);
+		assertThat(workbench.get("calculationId").isNull()).isTrue();
+		assertThat(workbench.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(actionCodes(workbench.get("allowedActions"))).contains("CALCULATE");
+
+		JsonNode detail = data(get("/api/admin/cost/project-costs/projects/" + cancelledOnlyFixture.projectId(),
+				admin));
+		assertThat(detail.get("calculationId").isNull()).isTrue();
+		assertThat(detail.get("latestCalculationId").isNull()).isTrue();
+		assertThat(detail.get("status").asText()).isEqualTo("DRAFT");
+		assertThat(actionCodes(detail.get("allowedActions"))).contains("CALCULATE");
+		assertThat(calculationSummaryStatuses(detail.get("calculations"))).containsExactly("CANCELLED");
+	}
+
+	@Test
+	void 多项目freshness筛选必须返回准确total和分页且三个DTO口径一致() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String prefix = "029_FRESH_PAGE_" + SEQUENCE.incrementAndGet() + "_";
+		StageFixture currentA = createFullCostFixture(prefix + "A_", false);
+		StageFixture currentB = createFullCostFixture(prefix + "B_", false);
+		StageFixture currentC = createFullCostFixture(prefix + "C_", false);
+		StageFixture stale = createFullCostFixture(prefix + "STALE_", false);
+		long currentAId = calculateProject(admin, currentA.projectId(), "pc-calc-fresh-a-" + currentA.projectId());
+		long currentBId = calculateProject(admin, currentB.projectId(), "pc-calc-fresh-b-" + currentB.projectId());
+		long currentCId = calculateProject(admin, currentC.projectId(), "pc-calc-fresh-c-" + currentC.projectId());
+		long staleId = calculateProject(admin, stale.projectId(), "pc-calc-fresh-stale-" + stale.projectId());
+		this.jdbcTemplate.update("""
+				update sal_project
+				set target_revenue = target_revenue + 1.00, updated_at = now()
+				where id = ?
+				""", stale.projectId());
+
+		JsonNode currentPage1 = data(get("/api/admin/cost/project-costs?keyword=" + prefix
+				+ "&freshnessStatus=CURRENT&page=1&pageSize=2", admin));
+		assertThat(currentPage1.get("total").longValue()).isEqualTo(3);
+		assertThat(currentPage1.get("page").intValue()).isEqualTo(1);
+		assertThat(currentPage1.get("pageSize").intValue()).isEqualTo(2);
+		assertThat(currentPage1.get("totalPages").intValue()).isEqualTo(2);
+		assertThat(currentPage1.get("items").size()).isEqualTo(2);
+		assertThat(freshnessStatuses(currentPage1.get("items"))).containsOnly("CURRENT");
+
+		JsonNode currentPage2 = data(get("/api/admin/cost/project-costs?keyword=" + prefix
+				+ "&freshnessStatus=CURRENT&page=2&pageSize=2", admin));
+		assertThat(currentPage2.get("total").longValue()).isEqualTo(3);
+		assertThat(currentPage2.get("items").size()).isOne();
+		assertThat(freshnessStatuses(currentPage2.get("items"))).containsOnly("CURRENT");
+		assertThat(projectIds(currentPage1.get("items"))).doesNotContain(stale.projectId());
+		assertThat(projectIds(currentPage2.get("items"))).doesNotContain(stale.projectId());
+
+		JsonNode stalePage = data(get("/api/admin/cost/project-costs?keyword=" + prefix
+				+ "&freshnessStatus=STALE&page=1&pageSize=20", admin));
+		assertThat(stalePage.get("total").longValue()).isEqualTo(1);
+		assertThat(stalePage.get("items").size()).isOne();
+		JsonNode staleWorkbench = stalePage.get("items").get(0);
+		assertThat(staleWorkbench.get("projectId").longValue()).isEqualTo(stale.projectId());
+		assertThat(staleWorkbench.get("calculationId").longValue()).isEqualTo(staleId);
+		assertThat(staleWorkbench.get("freshnessStatus").asText()).isEqualTo("STALE");
+		assertFreshnessAcrossCalculationDtos(admin, stale.projectId(), staleId, "STALE");
+		assertFreshnessAcrossCalculationDtos(admin, currentA.projectId(), currentAId, "CURRENT");
+		assertFreshnessAcrossCalculationDtos(admin, currentB.projectId(), currentBId, "CURRENT");
+		assertFreshnessAcrossCalculationDtos(admin, currentC.projectId(), currentCId, "CURRENT");
 	}
 
 	@Test
@@ -1002,6 +1202,112 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				""", Long.class, projectId);
 	}
 
+	private long calculateProject(AuthenticatedSession session, long projectId, String idempotencyKey) throws Exception {
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + projectId + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", idempotencyKey), session));
+		assertThat(calculation.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+		return calculation.get("id").longValue();
+	}
+
+	private void assertRevenueChangeMakesCalculationStale(AuthenticatedSession session, String prefix,
+			RevenueChange revenueChange) throws Exception {
+		StageFixture fixture = createFullCostFixture(prefix, false);
+		ResponseEntity<String> calculationResponse = exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-revenue-" + fixture.projectId()),
+				session);
+		assertThat(calculationResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode calculation = data(calculationResponse);
+		long calculationId = calculation.get("id").longValue();
+		assertFreshnessAcrossCalculationDtos(session, fixture.projectId(), calculationId, "CURRENT");
+
+		revenueChange.apply(fixture);
+
+		JsonNode staleCalculation = data(get("/api/admin/cost/project-cost-calculations/" + calculationId,
+				session));
+		assertThat(staleCalculation.get("status").asText()).isEqualTo("CALCULATED");
+		assertThat(staleCalculation.get("isCurrent").booleanValue()).isFalse();
+		assertThat(staleCalculation.get("freshnessStatus").asText()).isEqualTo("STALE");
+		assertFreshnessAcrossCalculationDtos(session, fixture.projectId(), calculationId, "STALE");
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculationId + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-revenue-stale-" + calculationId),
+				session), HttpStatus.CONFLICT, "PROJECT_COST_SOURCE_CHANGED");
+	}
+
+	private void assertEffectiveLatest(AuthenticatedSession session, long projectId, long calculationId, String status)
+			throws Exception {
+		JsonNode workbenchItems = data(get("/api/admin/cost/project-costs?projectId=" + projectId
+				+ "&page=1&pageSize=20", session)).get("items");
+		assertThat(workbenchItems.size()).isOne();
+		JsonNode workbench = workbenchItems.get(0);
+		assertThat(workbench.get("calculationId").longValue()).isEqualTo(calculationId);
+		assertThat(workbench.get("status").asText()).isEqualTo(status);
+		assertThat(workbench.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+
+		JsonNode detail = data(get("/api/admin/cost/project-costs/projects/" + projectId, session));
+		assertThat(detail.get("calculationId").longValue()).isEqualTo(calculationId);
+		assertThat(detail.get("latestCalculationId").longValue()).isEqualTo(calculationId);
+		assertThat(detail.get("status").asText()).isEqualTo(status);
+		assertThat(detail.get("freshnessStatus").asText()).isEqualTo("CURRENT");
+	}
+
+	private void assertFreshnessAcrossCalculationDtos(AuthenticatedSession session, long projectId, long calculationId,
+			String expectedFreshnessStatus) throws Exception {
+		JsonNode calculation = data(get("/api/admin/cost/project-cost-calculations/" + calculationId, session));
+		assertThat(calculation.get("id").longValue()).isEqualTo(calculationId);
+		assertThat(calculation.get("freshnessStatus").asText()).isEqualTo(expectedFreshnessStatus);
+
+		JsonNode detail = data(get("/api/admin/cost/project-costs/projects/" + projectId, session));
+		assertThat(detail.get("calculationId").longValue()).isEqualTo(calculationId);
+		assertThat(detail.get("latestCalculationId").longValue()).isEqualTo(calculationId);
+		assertThat(detail.get("freshnessStatus").asText()).isEqualTo(expectedFreshnessStatus);
+
+		JsonNode workbenchItems = data(get("/api/admin/cost/project-costs?projectId=" + projectId
+				+ "&page=1&pageSize=20", session)).get("items");
+		assertThat(workbenchItems.size()).isOne();
+		JsonNode workbench = workbenchItems.get(0);
+		assertThat(workbench.get("calculationId").longValue()).isEqualTo(calculationId);
+		assertThat(workbench.get("freshnessStatus").asText()).isEqualTo(expectedFreshnessStatus);
+
+		JsonNode expectedItems = data(get("/api/admin/cost/project-costs?projectId=" + projectId
+				+ "&freshnessStatus=" + expectedFreshnessStatus + "&page=1&pageSize=20", session)).get("items");
+		assertThat(expectedItems.size()).isOne();
+		assertThat(expectedItems.get(0).get("calculationId").longValue()).isEqualTo(calculationId);
+		String oppositeFreshnessStatus = "CURRENT".equals(expectedFreshnessStatus) ? "STALE" : "CURRENT";
+		JsonNode oppositeItems = data(get("/api/admin/cost/project-costs?projectId=" + projectId
+				+ "&freshnessStatus=" + oppositeFreshnessStatus + "&page=1&pageSize=20", session)).get("items");
+		assertThat(oppositeItems.size()).isZero();
+	}
+
+	private List<String> calculationSummaryStatuses(JsonNode summaries) {
+		List<String> statuses = new java.util.ArrayList<>();
+		for (JsonNode summary : summaries) {
+			statuses.add(summary.get("status").asText());
+		}
+		return statuses;
+	}
+
+	private List<String> freshnessStatuses(JsonNode items) {
+		List<String> statuses = new java.util.ArrayList<>();
+		for (JsonNode item : items) {
+			statuses.add(item.get("freshnessStatus").asText());
+		}
+		return statuses;
+	}
+
+	private List<Long> projectIds(JsonNode items) {
+		List<Long> ids = new java.util.ArrayList<>();
+		for (JsonNode item : items) {
+			ids.add(item.get("projectId").longValue());
+		}
+		return ids;
+	}
+
 	private BigDecimal sumByCategory(JsonNode sources, String category) {
 		BigDecimal total = BigDecimal.ZERO;
 		for (JsonNode source : sources) {
@@ -1200,6 +1506,11 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 	}
 
 	private record AuthenticatedSession(String sessionCookie, CsrfSession csrfSession) {
+	}
+
+	@FunctionalInterface
+	private interface RevenueChange {
+		void apply(StageFixture fixture) throws Exception;
 	}
 
 	private record StageFixture(Long projectId, Long workOrderId, Long productMaterialId, Long rawMaterialId,

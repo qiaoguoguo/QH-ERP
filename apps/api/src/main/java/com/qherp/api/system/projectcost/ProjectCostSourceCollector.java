@@ -42,7 +42,7 @@ public class ProjectCostSourceCollector {
 		collectConfirmedAdjustments(projectId, cutoffDate, sources);
 		collectDeliveryUnmatched(projectId, cutoffDate, variances);
 		RevenueSummary revenue = revenue(projectId, cutoffDate);
-		return new CollectionResult(sources, variances, revenue, fingerprint(sources));
+		return new CollectionResult(sources, variances, revenue, fingerprint(sources, revenue));
 	}
 
 	private void collectMaterialValueMovements(Long projectId, LocalDate cutoffDate, List<SourceLineDraft> sources,
@@ -540,8 +540,8 @@ public class ProjectCostSourceCollector {
 		return value.compareTo(ONE) > 0 ? ONE : value;
 	}
 
-	private String fingerprint(List<SourceLineDraft> sources) {
-		String joined = sources.stream()
+	private String fingerprint(List<SourceLineDraft> sources, RevenueSummary revenue) {
+		String sourceFingerprint = sources.stream()
 			.sorted(Comparator.comparing(SourceLineDraft::sourceType)
 				.thenComparing(SourceLineDraft::sourceId)
 				.thenComparing((source) -> source.sourceLineId() == null ? 0L : source.sourceLineId())
@@ -553,6 +553,10 @@ public class ProjectCostSourceCollector {
 					source.entryType(), source.costStage(), plain(source.calculatedAmount()), plain(source.sourceAmount()),
 					source.sourceStatus() == null ? "" : source.sourceStatus()))
 			.reduce("", (left, right) -> left + "\n" + right);
+		String joined = String.join("\n", sourceFingerprint,
+				"REVENUE|SHIPMENT|" + plain(revenue.shipmentRevenue()),
+				"REVENUE|INVOICE|" + plain(revenue.invoiceRevenue()),
+				"REVENUE|TARGET|" + plain(revenue.targetRevenue()));
 		try {
 			MessageDigest digest = MessageDigest.getInstance("SHA-256");
 			return HexFormat.of().formatHex(digest.digest(joined.getBytes(StandardCharsets.UTF_8)));

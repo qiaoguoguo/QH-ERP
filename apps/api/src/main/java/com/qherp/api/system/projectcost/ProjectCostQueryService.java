@@ -23,28 +23,31 @@ public class ProjectCostQueryService {
 
 	private final JdbcTemplate jdbcTemplate;
 
-	public ProjectCostQueryService(JdbcTemplate jdbcTemplate) {
+	private final ProjectCostSourceCollector sourceCollector;
+
+	public ProjectCostQueryService(JdbcTemplate jdbcTemplate, ProjectCostSourceCollector sourceCollector) {
 		this.jdbcTemplate = jdbcTemplate;
+		this.sourceCollector = sourceCollector;
 	}
 
 	@Transactional(readOnly = true)
 	public PageResponse<WorkbenchResponse> calculations(ProjectCostListFilter filter, int page, int pageSize,
 			CurrentUser currentUser) {
 		QueryParts query = projectWorkbenchQuery(filter);
+		String freshnessFilter = normalizedFreshnessStatus(filter);
+		if (freshnessFilter != null) {
+			return filteredCalculations(query, freshnessFilter, page, pageSize, currentUser);
+		}
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from sal_project p
 				left join mst_customer cst on cst.id = p.customer_id
 				left join sys_user owner_user on owner_user.id = p.owner_user_id
 				left join lateral (
-					select c.*
-					from prj_cost_calculation c
-					where c.project_id = p.id
-					order by c.is_current desc, c.cutoff_date desc, c.id desc
-					limit 1
+					%s
 				) latest on true
 				%s
-				""".formatted(query.where()), Long.class, query.args().toArray());
+				""".formatted(latestCalculationLateralSql(), query.where()), Long.class, query.args().toArray());
 		List<Object> args = new ArrayList<>(query.args());
 		args.add(limit(pageSize));
 		args.add(offset(page, pageSize));
@@ -63,17 +66,90 @@ public class ProjectCostQueryService {
 				left join mst_customer cst on cst.id = p.customer_id
 				left join sys_user owner_user on owner_user.id = p.owner_user_id
 				left join lateral (
-					select c.*
-					from prj_cost_calculation c
-					where c.project_id = p.id
-					order by c.is_current desc, c.cutoff_date desc, c.id desc
-					limit 1
+					%s
 				) latest on true
 				%s
 				order by coalesce(latest.cutoff_date, p.planned_finish_date) desc, p.id desc
 				limit ? offset ?
-				""".formatted(query.where()), (rs, rowNum) -> mapWorkbench(rs, currentUser), args.toArray());
+				""".formatted(latestCalculationLateralSql(), query.where()),
+				(rs, rowNum) -> mapWorkbench(rs, currentUser), args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
+	}
+
+	private PageResponse<WorkbenchResponse> filteredCalculations(QueryParts query, String freshnessFilter, int page,
+			int pageSize, CurrentUser currentUser) {
+		List<FreshnessCandidate> candidates = this.jdbcTemplate.query("""
+				select p.id as project_id, latest.id as calculation_id, latest.cutoff_date,
+				       latest.source_fingerprint
+				from sal_project p
+				left join mst_customer cst on cst.id = p.customer_id
+				left join sys_user owner_user on owner_user.id = p.owner_user_id
+				left join lateral (
+					%s
+				) latest on true
+				%s
+				order by coalesce(latest.cutoff_date, p.planned_finish_date) desc, p.id desc
+				""".formatted(latestCalculationLateralSql(), query.where()), this::mapFreshnessCandidate,
+				query.args().toArray());
+		Map<Long, String> freshnessByCalculationId = new LinkedHashMap<>();
+		List<FreshnessCandidate> filtered = new ArrayList<>();
+		for (FreshnessCandidate candidate : candidates) {
+			String freshnessStatus = freshnessStatus(candidate);
+			if (candidate.calculationId() != null) {
+				freshnessByCalculationId.put(candidate.calculationId(), freshnessStatus);
+			}
+			if (freshnessFilter.equals(freshnessStatus)) {
+				filtered.add(candidate);
+			}
+		}
+		int limitedPageSize = limit(pageSize);
+		int fromIndex = Math.min(offset(page, pageSize), filtered.size());
+		int toIndex = Math.min(fromIndex + limitedPageSize, filtered.size());
+		List<FreshnessCandidate> pageCandidates = filtered.subList(fromIndex, toIndex);
+		List<WorkbenchResponse> items = hydrateWorkbenchCandidates(pageCandidates, freshnessByCalculationId,
+				currentUser);
+		return PageResponse.of(items, page, limitedPageSize, filtered.size());
+	}
+
+	private List<WorkbenchResponse> hydrateWorkbenchCandidates(List<FreshnessCandidate> candidates,
+			Map<Long, String> freshnessByCalculationId, CurrentUser currentUser) {
+		if (candidates.isEmpty()) {
+			return List.of();
+		}
+		List<Long> projectIds = candidates.stream().map(FreshnessCandidate::projectId).toList();
+		String placeholders = String.join(", ", projectIds.stream().map((id) -> "?").toList());
+		List<WorkbenchResponse> rows = this.jdbcTemplate.query("""
+				select p.id as project_id, p.project_no, p.name as project_name, p.status as project_status,
+				       cst.name as customer_name, owner_user.display_name as owner_display_name,
+				       latest.id as calculation_id, latest.calculation_no, latest.cutoff_date, latest.status,
+				       latest.is_current, latest.source_fingerprint, latest.project_cost_total, latest.wip_cost,
+				       latest.finished_cost, latest.delivered_cost, latest.direct_project_cost,
+				       latest.shipment_revenue, latest.invoice_revenue, latest.target_revenue,
+				       latest.shipment_gross_margin, latest.invoice_gross_margin, latest.target_gross_margin,
+				       latest.shipment_gross_margin_rate, latest.invoice_gross_margin_rate,
+				       latest.target_gross_margin_rate, latest.margin_completeness, latest.completeness_reason,
+				       latest.version, latest.created_by, latest.created_at, latest.confirmed_by, latest.confirmed_at
+				from sal_project p
+				left join mst_customer cst on cst.id = p.customer_id
+				left join sys_user owner_user on owner_user.id = p.owner_user_id
+				left join lateral (
+					%s
+				) latest on true
+				where p.id in (%s)
+				""".formatted(latestCalculationLateralSql(), placeholders),
+				(rs, rowNum) -> mapWorkbench(rs, currentUser, freshnessByCalculationId), projectIds.toArray());
+		Map<Long, WorkbenchResponse> byProjectId = new LinkedHashMap<>();
+		for (WorkbenchResponse row : rows) {
+			byProjectId.put(row.projectId(), row);
+		}
+		List<WorkbenchResponse> ordered = new ArrayList<>();
+		for (FreshnessCandidate candidate : candidates) {
+			WorkbenchResponse row = byProjectId.get(candidate.projectId());
+			if (row != null) {
+				ordered.add(row);
+			}
+		}
+		return ordered;
 	}
 
 	@Transactional(readOnly = true)
@@ -98,7 +174,8 @@ public class ProjectCostQueryService {
 					project.customerName(), project.ownerDisplayName(), project.projectStatus(),
 					amountVisible, sourceVisible, restrictedReason(amountVisible, sourceVisible),
 					allowedProjectActions(project.projectStatus(), currentUser),
-					projectActionDisabledReasons(project.projectStatus(), currentUser));
+					projectActionDisabledReasons(project.projectStatus(), currentUser),
+					calculationSummaries(projectId), auditSummary(projectId));
 		}
 		CalculationResponse calculation = calculation(latest.id(), currentUser);
 		return ProjectDetailResponse.from(calculation, categorySummaries(latest.id(), currentUser),
@@ -250,14 +327,6 @@ public class ProjectCostQueryService {
 			conditions.add("latest.status = ?");
 			args.add(filter.calculationStatus().trim().toUpperCase());
 		}
-		if (hasText(filter.freshnessStatus())) {
-			if ("CURRENT".equals(filter.freshnessStatus().trim().toUpperCase())) {
-				conditions.add("(latest.id is null or latest.is_current = true)");
-			}
-			else {
-				conditions.add("latest.id is not null and latest.is_current = false");
-			}
-		}
 		if (hasText(filter.varianceStatus())) {
 			conditions.add("""
 					exists (
@@ -389,6 +458,11 @@ public class ProjectCostQueryService {
 	}
 
 	private WorkbenchResponse mapWorkbench(ResultSet rs, CurrentUser currentUser) throws SQLException {
+		return mapWorkbench(rs, currentUser, Map.of());
+	}
+
+	private WorkbenchResponse mapWorkbench(ResultSet rs, CurrentUser currentUser,
+			Map<Long, String> freshnessByCalculationId) throws SQLException {
 		CalculationRow row = mapOptionalCalculation(rs);
 		boolean amountVisible = amountVisible(currentUser);
 		boolean sourceVisible = sourcePermissionVisible(currentUser);
@@ -406,7 +480,8 @@ public class ProjectCostQueryService {
 		return new WorkbenchResponse(projectId, rs.getString("project_no"), rs.getString("project_name"),
 				rs.getString("customer_name"), rs.getString("owner_display_name"), projectStatus,
 				calculationId, row == null ? null : row.calculationNo(), status, status,
-				row == null ? "CURRENT" : freshnessStatus(row.isCurrent()), row == null ? "COMPLETE" : row.marginCompleteness(),
+				row == null ? "CURRENT" : freshnessStatus(row, freshnessByCalculationId),
+				row == null ? "COMPLETE" : row.marginCompleteness(),
 				row == null ? "COMPLETE" : row.marginCompleteness(), row == null ? null : row.cutoffDate(),
 				amount(amountVisible, row == null ? null : row.projectCostTotal()),
 				amount(amountVisible, row == null ? null : row.projectCostTotal()),
@@ -448,7 +523,7 @@ public class ProjectCostQueryService {
 		return new CalculationResponse(row.id(), row.id(), row.projectId(), rs.getString("project_no"),
 				rs.getString("project_name"), rs.getString("customer_name"), rs.getString("owner_display_name"),
 				rs.getString("project_status"), row.calculationNo(), row.cutoffDate(), row.status(), row.status(),
-				freshnessStatus(row.isCurrent()), row.marginCompleteness(), row.marginCompleteness(),
+				freshnessStatus(row), row.marginCompleteness(), row.marginCompleteness(),
 				row.completenessReason(), row.isCurrent(), row.sourceFingerprint(),
 				amount(amountVisible, row.projectCostTotal()), amount(amountVisible, row.projectCostTotal()),
 				amount(amountVisible, row.wipCost()), amount(amountVisible, row.finishedCost()),
@@ -581,12 +656,32 @@ public class ProjectCostQueryService {
 				       confirmed_at
 				from prj_cost_calculation
 				where project_id = ?
-				order by is_current desc, cutoff_date desc, id desc
+				and status <> 'CANCELLED'
+				order by case
+					when status in ('DRAFT', 'CALCULATED') then 0
+					when status = 'CONFIRMED' and is_current = true then 1
+					else 2
+				end, cutoff_date desc, id desc
 				limit 1
 				""", (rs, rowNum) -> mapRequiredCalculation(rs), projectId)
 			.stream()
 			.findFirst()
 			.orElse(null);
+	}
+
+	private String latestCalculationLateralSql() {
+		return """
+				select c.*
+				from prj_cost_calculation c
+				where c.project_id = p.id
+				and c.status <> 'CANCELLED'
+				order by case
+					when c.status in ('DRAFT', 'CALCULATED') then 0
+					when c.status = 'CONFIRMED' and c.is_current = true then 1
+					else 2
+				end, c.cutoff_date desc, c.id desc
+				limit 1
+				""";
 	}
 
 	private ProjectRow mapProject(ResultSet rs, int rowNum) throws SQLException {
@@ -617,6 +712,13 @@ public class ProjectCostQueryService {
 				rs.getString("margin_completeness"), rs.getString("completeness_reason"), rs.getLong("version"),
 				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getString("confirmed_by"), rs.getObject("confirmed_at", OffsetDateTime.class));
+	}
+
+	private FreshnessCandidate mapFreshnessCandidate(ResultSet rs, int rowNum) throws SQLException {
+		Long calculationId = nullableLong(rs, "calculation_id");
+		return new FreshnessCandidate(rs.getLong("project_id"), calculationId,
+				calculationId == null ? null : rs.getObject("cutoff_date", LocalDate.class),
+				calculationId == null ? null : rs.getString("source_fingerprint"));
 	}
 
 	private int varianceCount(Long calculationId, String status, String severity) {
@@ -823,8 +925,37 @@ public class ProjectCostQueryService {
 		return null;
 	}
 
-	private String freshnessStatus(boolean isCurrent) {
-		return isCurrent ? "CURRENT" : "STALE";
+	private String freshnessStatus(CalculationRow row) {
+		if (row.sourceFingerprint() == null || row.cutoffDate() == null) {
+			return "STALE";
+		}
+		String currentFingerprint = this.sourceCollector.collect(row.projectId(), row.cutoffDate()).sourceFingerprint();
+		return row.sourceFingerprint().equals(currentFingerprint) ? "CURRENT" : "STALE";
+	}
+
+	private String freshnessStatus(CalculationRow row, Map<Long, String> freshnessByCalculationId) {
+		String freshnessStatus = freshnessByCalculationId.get(row.id());
+		return freshnessStatus == null ? freshnessStatus(row) : freshnessStatus;
+	}
+
+	private String freshnessStatus(FreshnessCandidate candidate) {
+		if (candidate.calculationId() == null) {
+			return "CURRENT";
+		}
+		if (candidate.sourceFingerprint() == null || candidate.cutoffDate() == null) {
+			return "STALE";
+		}
+		String currentFingerprint = this.sourceCollector.collect(candidate.projectId(), candidate.cutoffDate())
+			.sourceFingerprint();
+		return candidate.sourceFingerprint().equals(currentFingerprint) ? "CURRENT" : "STALE";
+	}
+
+	private String normalizedFreshnessStatus(ProjectCostListFilter filter) {
+		if (filter == null || !hasText(filter.freshnessStatus())) {
+			return null;
+		}
+		String status = filter.freshnessStatus().trim().toUpperCase();
+		return List.of("CURRENT", "STALE").contains(status) ? status : "STALE";
 	}
 
 	private String sourceSummary(String sourceType, String sourceNo) {
@@ -909,6 +1040,10 @@ public class ProjectCostQueryService {
 			String ownerDisplayName, String projectStatus, BigDecimal targetRevenue) {
 	}
 
+	private record FreshnessCandidate(Long projectId, Long calculationId, LocalDate cutoffDate,
+			String sourceFingerprint) {
+	}
+
 	private record CalculationRow(Long id, Long projectId, String calculationNo, LocalDate cutoffDate, String status,
 			boolean isCurrent, String sourceFingerprint, BigDecimal projectCostTotal, BigDecimal wipCost,
 			BigDecimal finishedCost, BigDecimal deliveredCost, BigDecimal directProjectCost,
@@ -971,12 +1106,13 @@ public class ProjectCostQueryService {
 
 		static ProjectDetailResponse empty(Long projectId, String projectNo, String projectName, String customerName,
 				String ownerDisplayName, String projectStatus, boolean amountVisible, boolean sourceVisible,
-				String restrictedReason, List<String> allowedActions, Map<String, String> actionDisabledReasons) {
+				String restrictedReason, List<String> allowedActions, Map<String, String> actionDisabledReasons,
+				List<CalculationSummaryResponse> calculations, List<AuditSummaryResponse> auditSummary) {
 			return new ProjectDetailResponse(projectId, projectNo, projectName, customerName, ownerDisplayName,
 					projectStatus, null, null, null, null, "DRAFT", "DRAFT", "CURRENT", "COMPLETE", "COMPLETE",
 					null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null,
 					null, null, null, null, null, 0L, amountVisible, sourceVisible, restrictedReason, 0, 0, 0, 0,
-					allowedActions, actionDisabledReasons, List.of(), List.of(), List.of(), List.of());
+					allowedActions, actionDisabledReasons, List.of(), List.of(), calculations, auditSummary);
 		}
 
 		static ProjectDetailResponse from(CalculationResponse c, List<CategorySummaryResponse> categories,
