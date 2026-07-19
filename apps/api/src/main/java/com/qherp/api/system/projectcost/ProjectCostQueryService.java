@@ -97,7 +97,8 @@ public class ProjectCostQueryService {
 			return ProjectDetailResponse.empty(project.id(), project.projectNo(), project.projectName(),
 					project.customerName(), project.ownerDisplayName(), project.projectStatus(),
 					amountVisible, sourceVisible, restrictedReason(amountVisible, sourceVisible),
-					allowedProjectActions(currentUser), actionDisabledReasons("DRAFT", currentUser));
+					allowedProjectActions(project.projectStatus(), currentUser),
+					projectActionDisabledReasons(project.projectStatus(), currentUser));
 		}
 		CalculationResponse calculation = calculation(latest.id(), currentUser);
 		return ProjectDetailResponse.from(calculation, categorySummaries(latest.id(), currentUser),
@@ -218,6 +219,7 @@ public class ProjectCostQueryService {
 		if (filter == null) {
 			filter = new ProjectCostListFilter(null, null, null, null, null, null, null, null, null, null);
 		}
+		conditions.add("p.status in ('ACTIVE', 'CLOSED')");
 		if (filter.projectId() != null) {
 			conditions.add("p.id = ?");
 			args.add(filter.projectId());
@@ -235,8 +237,14 @@ public class ProjectCostQueryService {
 			args.add(filter.ownerUserId());
 		}
 		if (hasText(filter.projectStatus())) {
-			conditions.add("p.status = ?");
-			args.add(filter.projectStatus().trim().toUpperCase());
+			String projectStatus = filter.projectStatus().trim().toUpperCase();
+			if (List.of("ACTIVE", "CLOSED").contains(projectStatus)) {
+				conditions.add("p.status = ?");
+				args.add(projectStatus);
+			}
+			else {
+				conditions.add("1 = 0");
+			}
 		}
 		if (hasText(filter.calculationStatus())) {
 			conditions.add("latest.status = ?");
@@ -387,8 +395,16 @@ public class ProjectCostQueryService {
 		Long projectId = rs.getLong("project_id");
 		Long calculationId = row == null ? null : row.id();
 		String status = row == null ? "DRAFT" : row.status();
+		String projectStatus = rs.getString("project_status");
+		Integer openVarianceCount = row == null ? 0 : varianceCount(calculationId, "OPEN", null);
+		Integer blockingVarianceCount = row == null ? 0 : varianceCount(calculationId, "OPEN", "BLOCKING");
+		Integer provisionalSourceCount = row == null ? 0 : sourceStatusCount(calculationId, "PROVISIONAL");
+		Integer unpricedSourceCount = row == null ? 0 : sourceStatusCount(calculationId, "UNPRICED");
+		CalculationActionContext actionContext = row == null ? null
+				: new CalculationActionContext(status, row.marginCompleteness(), blockingVarianceCount,
+						unpricedSourceCount, deliveryUnmatchedCount(calculationId));
 		return new WorkbenchResponse(projectId, rs.getString("project_no"), rs.getString("project_name"),
-				rs.getString("customer_name"), rs.getString("owner_display_name"), rs.getString("project_status"),
+				rs.getString("customer_name"), rs.getString("owner_display_name"), projectStatus,
 				calculationId, row == null ? null : row.calculationNo(), status, status,
 				row == null ? "CURRENT" : freshnessStatus(row.isCurrent()), row == null ? "COMPLETE" : row.marginCompleteness(),
 				row == null ? "COMPLETE" : row.marginCompleteness(), row == null ? null : row.cutoffDate(),
@@ -411,18 +427,24 @@ public class ProjectCostQueryService {
 				amount(amountVisible, row == null ? null : row.targetGrossMarginRate()),
 				row == null ? null : row.sourceFingerprint(), row == null ? 0L : row.version(), amountVisible,
 				sourceVisible, restrictedReason(amountVisible, sourceVisible),
-				row == null ? 0 : varianceCount(calculationId, "OPEN", null),
-				row == null ? 0 : varianceCount(calculationId, "OPEN", "BLOCKING"),
-				row == null ? 0 : sourceStatusCount(calculationId, "PROVISIONAL"),
-				row == null ? 0 : sourceStatusCount(calculationId, "UNPRICED"),
-				row == null ? null : row.createdAt(), allowedCalculationActions(status, currentUser),
-				actionDisabledReasons(status, currentUser));
+				openVarianceCount, blockingVarianceCount, provisionalSourceCount, unpricedSourceCount,
+				row == null ? null : row.createdAt(),
+				row == null ? allowedProjectActions(projectStatus, currentUser)
+						: allowedCalculationActions(actionContext, currentUser),
+				row == null ? projectActionDisabledReasons(projectStatus, currentUser)
+						: actionDisabledReasons(actionContext, currentUser));
 	}
 
 	private CalculationResponse mapCalculation(ResultSet rs, CurrentUser currentUser) throws SQLException {
 		CalculationRow row = mapRequiredCalculation(rs);
 		boolean amountVisible = amountVisible(currentUser);
 		boolean sourceVisible = sourcePermissionVisible(currentUser);
+		Integer openVarianceCount = varianceCount(row.id(), "OPEN", null);
+		Integer blockingVarianceCount = varianceCount(row.id(), "OPEN", "BLOCKING");
+		Integer provisionalSourceCount = sourceStatusCount(row.id(), "PROVISIONAL");
+		Integer unpricedSourceCount = sourceStatusCount(row.id(), "UNPRICED");
+		CalculationActionContext actionContext = new CalculationActionContext(row.status(), row.marginCompleteness(),
+				blockingVarianceCount, unpricedSourceCount, deliveryUnmatchedCount(row.id()));
 		return new CalculationResponse(row.id(), row.id(), row.projectId(), rs.getString("project_no"),
 				rs.getString("project_name"), rs.getString("customer_name"), rs.getString("owner_display_name"),
 				rs.getString("project_status"), row.calculationNo(), row.cutoffDate(), row.status(), row.status(),
@@ -437,20 +459,20 @@ public class ProjectCostQueryService {
 				amount(amountVisible, row.invoiceGrossMargin()), amount(amountVisible, row.targetGrossMargin()),
 				amount(amountVisible, row.shipmentGrossMarginRate()), amount(amountVisible, row.invoiceGrossMarginRate()),
 				amount(amountVisible, row.targetGrossMarginRate()), row.version(), amountVisible, sourceVisible,
-				restrictedReason(amountVisible, sourceVisible), varianceCount(row.id(), "OPEN", null),
-				varianceCount(row.id(), "OPEN", "BLOCKING"), sourceStatusCount(row.id(), "PROVISIONAL"),
-				sourceStatusCount(row.id(), "UNPRICED"), row.createdBy(), row.createdAt(), row.createdAt(),
-				row.confirmedBy(), row.confirmedAt(), allowedCalculationActions(row.status(), currentUser),
-				actionDisabledReasons(row.status(), currentUser));
+				restrictedReason(amountVisible, sourceVisible), openVarianceCount, blockingVarianceCount,
+				provisionalSourceCount, unpricedSourceCount, row.createdBy(), row.createdAt(), row.createdAt(),
+				row.confirmedBy(), row.confirmedAt(), allowedCalculationActions(actionContext, currentUser),
+				actionDisabledReasons(actionContext, currentUser));
 	}
 
 	private SourceLineResponse mapSourceLine(ResultSet rs, CurrentUser currentUser) throws SQLException {
-		boolean amountVisible = amountVisible(currentUser);
-		boolean sourceVisible = sourceVisible(currentUser, rs.getString("source_type"), rs.getBoolean("source_restricted"));
-		String restrictedReason = sourceVisible ? restrictedReason(amountVisible, true) : "来源权限受限，仅显示脱敏摘要";
+		String sourceType = rs.getString("source_type");
+		boolean amountVisible = amountVisible(currentUser, sourceType);
+		boolean sourceVisible = sourceVisible(currentUser, sourceType, rs.getBoolean("source_restricted"));
+		String restrictedReason = sourceVisible ? restrictedReason(amountVisible, true, sourceType)
+				: "来源权限受限，仅显示脱敏摘要";
 		String costCategory = rs.getString("cost_category");
 		String costStage = rs.getString("cost_stage");
-		String sourceType = rs.getString("source_type");
 		Long visibleSourceId = sourceVisible ? rs.getLong("source_id") : null;
 		if (sourceVisible) {
 			long value = rs.getLong("source_id");
@@ -634,19 +656,46 @@ public class ProjectCostQueryService {
 		return count == null ? 0 : count;
 	}
 
-	private List<String> allowedProjectActions(CurrentUser currentUser) {
-		return hasPermission(currentUser, "cost:project-cost:calculate") ? List.of("CALCULATE") : List.of();
+	private int deliveryUnmatchedCount(Long calculationId) {
+		if (calculationId == null) {
+			return 0;
+		}
+		Integer count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from prj_cost_variance
+				where calculation_id = ?
+				and status = 'OPEN'
+				and severity = 'BLOCKING'
+				and variance_type = 'DELIVERY_WITHOUT_FINISHED_COST'
+				""", Integer.class, calculationId);
+		return count == null ? 0 : count;
 	}
 
-	private List<String> allowedCalculationActions(String status, CurrentUser currentUser) {
-		if (!"CALCULATED".equals(status)) {
+	private List<String> allowedProjectActions(String projectStatus, CurrentUser currentUser) {
+		return projectCostProjectAllowed(projectStatus) && hasPermission(currentUser, "cost:project-cost:calculate")
+				? List.of("CALCULATE") : List.of();
+	}
+
+	private Map<String, String> projectActionDisabledReasons(String projectStatus, CurrentUser currentUser) {
+		Map<String, String> reasons = new LinkedHashMap<>();
+		if (!projectCostProjectAllowed(projectStatus)) {
+			reasons.put("CALCULATE", "项目状态不允许计算项目成本");
+		}
+		else if (!hasPermission(currentUser, "cost:project-cost:calculate")) {
+			reasons.put("CALCULATE", "无权计算项目成本");
+		}
+		return reasons;
+	}
+
+	private List<String> allowedCalculationActions(CalculationActionContext context, CurrentUser currentUser) {
+		if (!"CALCULATED".equals(context.status())) {
 			return List.of();
 		}
 		List<String> actions = new ArrayList<>();
 		if (hasPermission(currentUser, "cost:project-cost:calculate")) {
 			actions.add("RECALCULATE");
 		}
-		if (hasPermission(currentUser, "cost:project-cost:confirm")) {
+		if (confirmable(context) && hasPermission(currentUser, "cost:project-cost:confirm")) {
 			actions.add("CONFIRM");
 		}
 		if (hasPermission(currentUser, "cost:project-cost:cancel")) {
@@ -655,7 +704,7 @@ public class ProjectCostQueryService {
 		return actions;
 	}
 
-	private Map<String, String> actionDisabledReasons(String status, CurrentUser currentUser) {
+	private Map<String, String> actionDisabledReasons(CalculationActionContext context, CurrentUser currentUser) {
 		Map<String, String> reasons = new LinkedHashMap<>();
 		if (!hasPermission(currentUser, "cost:project-cost:calculate")) {
 			reasons.put("RECALCULATE", "无权计算项目成本");
@@ -666,16 +715,54 @@ public class ProjectCostQueryService {
 		if (!hasPermission(currentUser, "cost:project-cost:cancel")) {
 			reasons.put("CANCEL", "无权取消项目成本");
 		}
-		if (!"CALCULATED".equals(status) && !"DRAFT".equals(status)) {
+		if (!"CALCULATED".equals(context.status())) {
 			reasons.put("RECALCULATE", "当前状态不允许重算");
 			reasons.put("CONFIRM", "当前状态不允许确认");
 			reasons.put("CANCEL", "当前状态不允许取消");
 		}
+		else if (hasPermission(currentUser, "cost:project-cost:confirm") && !confirmable(context)) {
+			reasons.put("CONFIRM", confirmDisabledReason(context));
+		}
 		return reasons;
+	}
+
+	private boolean projectCostProjectAllowed(String projectStatus) {
+		return "ACTIVE".equals(projectStatus) || "CLOSED".equals(projectStatus);
+	}
+
+	private boolean confirmable(CalculationActionContext context) {
+		return context.openBlockingVarianceCount() == 0 && context.unpricedSourceCount() == 0
+				&& "COMPLETE".equals(context.completenessStatus());
+	}
+
+	private String confirmDisabledReason(CalculationActionContext context) {
+		if (context.deliveryUnmatchedCount() > 0) {
+			return "存在发货数量超过可匹配完工成本，不能确认";
+		}
+		if (context.unpricedSourceCount() > 0) {
+			return "存在未定价来源，不能确认";
+		}
+		if (context.openBlockingVarianceCount() > 0) {
+			return "存在阻断差异，不能确认";
+		}
+		if (!"COMPLETE".equals(context.completenessStatus())) {
+			return "完整性未完成，不能确认";
+		}
+		return "当前核算不可确认";
 	}
 
 	private boolean amountVisible(CurrentUser currentUser) {
 		return hasPermission(currentUser, "cost:project-cost:amount-view");
+	}
+
+	private boolean amountVisible(CurrentUser currentUser, String sourceType) {
+		if (!amountVisible(currentUser)) {
+			return false;
+		}
+		if (inventoryValuationSource(sourceType)) {
+			return hasPermission(currentUser, "inventory:valuation:view");
+		}
+		return true;
 	}
 
 	private boolean sourcePermissionVisible(CurrentUser currentUser) {
@@ -707,15 +794,27 @@ public class ProjectCostQueryService {
 		};
 	}
 
+	private boolean inventoryValuationSource(String sourceType) {
+		return List.of("PRODUCTION_MATERIAL_ISSUE", "PRODUCTION_MATERIAL_RETURN",
+				"PRODUCTION_MATERIAL_SUPPLEMENT", "PRODUCTION_OUTSOURCING_ISSUE").contains(sourceType);
+	}
+
 	private boolean hasPermission(CurrentUser currentUser, String permission) {
 		return currentUser != null && currentUser.permissions().contains(permission);
 	}
 
 	private String restrictedReason(boolean amountVisible, boolean sourceVisible) {
+		return restrictedReason(amountVisible, sourceVisible, null);
+	}
+
+	private String restrictedReason(boolean amountVisible, boolean sourceVisible, String sourceType) {
 		if (!sourceVisible) {
 			return "来源权限受限，仅显示脱敏摘要";
 		}
 		if (!amountVisible) {
+			if (inventoryValuationSource(sourceType)) {
+				return "无权查看库存估值金额";
+			}
 			return "无权查看项目成本金额";
 		}
 		return null;
@@ -815,6 +914,10 @@ public class ProjectCostQueryService {
 			BigDecimal shipmentGrossMarginRate, BigDecimal invoiceGrossMarginRate, BigDecimal targetGrossMarginRate,
 			String marginCompleteness, String completenessReason, Long version, String createdBy,
 			OffsetDateTime createdAt, String confirmedBy, OffsetDateTime confirmedAt) {
+	}
+
+	private record CalculationActionContext(String status, String completenessStatus,
+			Integer openBlockingVarianceCount, Integer unpricedSourceCount, Integer deliveryUnmatchedCount) {
 	}
 
 	public record WorkbenchResponse(Long projectId, String projectNo, String projectName, String customerName,

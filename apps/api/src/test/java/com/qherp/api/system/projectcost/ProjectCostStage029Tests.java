@@ -12,6 +12,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -45,6 +46,9 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private PasswordEncoder passwordEncoder;
 
 	@Test
 	void 项目成本核算汇总838并形成9162发货毛利且不改写上游来源() throws Exception {
@@ -190,12 +194,75 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				+ calculation.get("id").longValue() + "/variances", admin)).get("items");
 		assertThat(hasVariance(variances, "SOURCE_UNPRICED")).isTrue();
 		assertThat(calculation.get("marginCompleteness").asText()).isEqualTo("INCOMPLETE");
+		assertThat(actionCodes(calculation.get("allowedActions"))).doesNotContain("CONFIRM");
+		assertThat(calculation.get("actionDisabledReasons").get("CONFIRM").asText()).contains("未定价");
 		assertError(exchange(HttpMethod.PUT,
 				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
 				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
 						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
 						"pc-confirm-unpriced-" + calculation.get("id").longValue()),
 				admin), HttpStatus.CONFLICT, "PROJECT_COST_LABOR_UNPRICED");
+	}
+
+	@Test
+	void 净发货超过可匹配完工量必须生成阻断差异并使用稳定确认错误码() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_DELIVERY_UNMATCHED_", false);
+		this.jdbcTemplate.update("""
+				delete from mfg_completion_receipt
+				where work_order_id = ?
+				""", fixture.workOrderId());
+
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-delivery-unmatched-" + fixture.projectId()),
+				admin));
+		JsonNode variances = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculation.get("id").longValue() + "/variances", admin)).get("items");
+		JsonNode variance = findVariance(variances, "DELIVERY_WITHOUT_FINISHED_COST");
+		assertThat(variance.get("severity").asText()).isEqualTo("BLOCKING");
+		assertThat(variance.get("status").asText()).isEqualTo("OPEN");
+		assertThat(actionCodes(calculation.get("allowedActions"))).doesNotContain("CONFIRM");
+		assertThat(calculation.get("actionDisabledReasons").get("CONFIRM").asText()).contains("发货");
+
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-delivery-unmatched-" + calculation.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_DELIVERY_UNMATCHED");
+	}
+
+	@Test
+	void 材料来源金额必须叠加库存估值权限脱敏() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_MATERIAL_VALUATION_MASK_", false);
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-material-mask-" + fixture.projectId()),
+				admin));
+		AuthenticatedSession noInventoryValuation = createUserAndLogin("pc-no-inv-val-", "PC_NO_INV_VAL_",
+				List.of("cost:project-cost:view", "cost:project-cost:source-view",
+						"cost:project-cost:amount-view", "production:issue:view"));
+
+		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculation.get("id").longValue()
+				+ "/sources?sourceType=PRODUCTION_MATERIAL_ISSUE&page=1&pageSize=20",
+				noInventoryValuation)).get("items");
+		assertThat(sources.size()).isGreaterThan(0);
+		JsonNode source = sources.get(0);
+		assertThat(source.get("sourceVisible").booleanValue()).isTrue();
+		assertThat(source.get("amountVisible").booleanValue()).isFalse();
+		assertThat(source.get("sourceId").isNull()).isFalse();
+		assertThat(source.get("sourceLineId").isNull()).isFalse();
+		assertThat(source.get("quantity").isNull()).isFalse();
+		assertThat(source.get("unitCost").isNull()).isTrue();
+		assertThat(source.get("unitPrice").isNull()).isTrue();
+		assertThat(source.get("sourceAmount").isNull()).isTrue();
+		assertThat(source.get("calculatedAmount").isNull()).isTrue();
+		assertThat(source.get("amount").isNull()).isTrue();
 	}
 
 	@Test
@@ -999,6 +1066,15 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		return false;
 	}
 
+	private JsonNode findVariance(JsonNode variances, String varianceType) {
+		for (JsonNode variance : variances) {
+			if (varianceType.equals(variance.get("varianceType").asText())) {
+				return variance;
+			}
+		}
+		throw new AssertionError("未找到差异 " + varianceType);
+	}
+
 	private boolean hasEntry(JsonNode entries, String entryType) {
 		for (JsonNode entry : entries) {
 			if (entryType.equals(entry.get("entryType").asText())) {
@@ -1006,6 +1082,50 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 			}
 		}
 		return false;
+	}
+
+	private List<String> actionCodes(JsonNode actions) {
+		List<String> codes = new java.util.ArrayList<>();
+		for (JsonNode action : actions) {
+			if (action.isTextual()) {
+				codes.add(action.asText());
+			}
+			else if (action.has("code")) {
+				codes.add(action.get("code").asText());
+			}
+		}
+		return codes;
+	}
+
+	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,
+			List<String> permissionCodes) {
+		int suffix = SEQUENCE.incrementAndGet();
+		String username = usernamePrefix + suffix;
+		long roleId = this.jdbcTemplate.queryForObject("""
+				insert into sys_role (code, name, description, status, sort_order, created_by, created_at, updated_by,
+					updated_at)
+				values (?, ?, ?, 'ENABLED', 0, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, rolePrefix + suffix, "029 项目成本测试角色" + suffix, "029 项目成本测试角色");
+		long userId = this.jdbcTemplate.queryForObject("""
+				insert into sys_user (username, password_hash, display_name, status, created_by, created_at,
+					updated_by, updated_at)
+				values (?, ?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, username, this.passwordEncoder.encode(ADMIN_PASSWORD), username);
+		this.jdbcTemplate.update("""
+				insert into sys_user_role (user_id, role_id, created_by, created_at)
+				values (?, ?, 'test', now())
+				""", userId, roleId);
+		for (String permissionCode : permissionCodes) {
+			this.jdbcTemplate.update("""
+					insert into sys_role_permission (role_id, permission_id, created_by, created_at)
+					select ?, id, 'test', now()
+					from sys_permission
+					where code = ?
+					""", roleId, permissionCode);
+		}
+		return login(username, ADMIN_PASSWORD);
 	}
 
 	private AuthenticatedSession login(String username, String password) {

@@ -40,6 +40,7 @@ public class ProjectCostSourceCollector {
 		collectOutsourcing(projectId, cutoffDate, sources, variances);
 		collectProjectExpenses(projectId, cutoffDate, sources);
 		collectConfirmedAdjustments(projectId, cutoffDate, sources);
+		collectDeliveryUnmatched(projectId, cutoffDate, variances);
 		RevenueSummary revenue = revenue(projectId, cutoffDate);
 		return new CollectionResult(sources, variances, revenue, fingerprint(sources));
 	}
@@ -347,6 +348,74 @@ public class ProjectCostSourceCollector {
 		return new StageAmounts(wip, finished, delivered);
 	}
 
+	private void collectDeliveryUnmatched(Long projectId, LocalDate cutoffDate, List<VarianceDraft> variances) {
+		List<DeliveryMatchRow> rows = this.jdbcTemplate.query("""
+				with shipped as (
+					select sl.material_id, coalesce(sum(sl.quantity), 0) as shipped_quantity
+					from sal_sales_shipment_line sl
+					join sal_sales_shipment sh on sh.id = sl.shipment_id
+					join sal_sales_order so on so.id = sh.order_id
+					where so.project_id = ?
+					and sh.status = 'POSTED'
+					and sh.business_date <= ?
+					group by sl.material_id
+				),
+				returned as (
+					select sl.material_id, coalesce(sum(rl.quantity), 0) as returned_quantity
+					from sal_sales_return_line rl
+					join sal_sales_return r on r.id = rl.return_id
+					join sal_sales_shipment_line sl on sl.id = rl.source_shipment_line_id
+					join sal_sales_shipment sh on sh.id = sl.shipment_id
+					join sal_sales_order so on so.id = sh.order_id
+					where so.project_id = ?
+					and r.status = 'POSTED'
+					and r.business_date <= ?
+					group by sl.material_id
+				),
+				delivered as (
+					select s.material_id,
+					       greatest(s.shipped_quantity - coalesce(r.returned_quantity, 0), 0) as net_delivered_quantity
+					from shipped s
+					left join returned r on r.material_id = s.material_id
+				),
+				finished as (
+					select material_id, sum(finished_quantity) as finished_quantity
+					from (
+						select wo.product_material_id as material_id, coalesce(sum(r.quantity), 0) as finished_quantity
+						from mfg_completion_receipt r
+						join mfg_work_order wo on wo.id = r.work_order_id
+						where wo.project_id = ?
+						and r.status = 'POSTED'
+						and r.business_date <= ?
+						group by wo.product_material_id
+						union all
+						select o.product_material_id as material_id, coalesce(sum(rl.accepted_quantity), 0)
+							as finished_quantity
+						from mfg_outsourcing_receipt_line rl
+						join mfg_outsourcing_receipt r on r.id = rl.receipt_id
+						join mfg_outsourcing_order o on o.id = r.outsourcing_order_id
+						where o.project_id = ?
+						and r.status = 'POSTED'
+						and r.business_date <= ?
+						group by o.product_material_id
+					) f
+					group by material_id
+				)
+				select d.material_id, d.net_delivered_quantity, coalesce(f.finished_quantity, 0) as finished_quantity
+				from delivered d
+				left join finished f on f.material_id = d.material_id
+				where d.net_delivered_quantity > coalesce(f.finished_quantity, 0)
+				order by d.material_id
+				""", this::mapDeliveryMatch, projectId, cutoffDate, projectId, cutoffDate, projectId, cutoffDate,
+				projectId, cutoffDate);
+		for (DeliveryMatchRow row : rows) {
+			variances.add(new VarianceDraft(projectId, "DELIVERY_WITHOUT_FINISHED_COST", "BLOCKING", "OPEN",
+					false, null, "净发货数量 " + plain(row.netDeliveredQuantity()) + " 超过可匹配完工数量 "
+							+ plain(row.finishedQuantity()),
+					"SALES_SHIPMENT", null, row.materialId(), "DELIVERED"));
+		}
+	}
+
 	private RevenueSummary revenue(Long projectId, LocalDate cutoffDate) {
 		BigDecimal shipmentRevenue = scale(this.jdbcTemplate.queryForObject("""
 				select coalesce(sum(sl.tax_excluded_amount), 0)
@@ -531,6 +600,11 @@ public class ProjectCostSourceCollector {
 				rs.getBigDecimal("amount"));
 	}
 
+	private DeliveryMatchRow mapDeliveryMatch(ResultSet rs, int rowNum) throws SQLException {
+		return new DeliveryMatchRow(rs.getLong("material_id"), rs.getBigDecimal("net_delivered_quantity"),
+				rs.getBigDecimal("finished_quantity"));
+	}
+
 	private static BigDecimal scale(BigDecimal value) {
 		return nullToZero(value).setScale(2, RoundingMode.HALF_UP);
 	}
@@ -595,6 +669,9 @@ public class ProjectCostSourceCollector {
 
 	private record AdjustmentLineRow(Long lineId, Long adjustmentId, String adjustmentNo, LocalDate businessDate,
 			String costCategory, String costStage, String direction, BigDecimal amount) {
+	}
+
+	private record DeliveryMatchRow(Long materialId, BigDecimal netDeliveredQuantity, BigDecimal finishedQuantity) {
 	}
 
 }

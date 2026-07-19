@@ -88,8 +88,9 @@ public class ProjectCostAdjustmentService {
 	@Transactional
 	public AdjustmentResponse create(AdjustmentRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
-		validateRequest(request);
 		request = normalized(request);
+		validateRequest(request);
+		requireVisiblePublicExpenseSources(request, operator);
 		String requestFingerprint = fingerprint(request.toString());
 		AdjustmentState existing = idempotentAdjustment(operator.username(), request.idempotencyKey());
 		if (existing != null) {
@@ -175,6 +176,7 @@ public class ProjectCostAdjustmentService {
 		}
 		request = normalized(request);
 		validateRequest(request);
+		requireVisiblePublicExpenseSources(request, operator);
 		for (AdjustmentLineRequest line : request.lines()) {
 			validateAvailable(line.publicExpenseLineId(), line.amount(), id);
 		}
@@ -210,6 +212,8 @@ public class ProjectCostAdjustmentService {
 		if (!"DRAFT".equals(state.status())) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ACTION_NOT_ALLOWED);
 		}
+		validatePersistedAdjustmentMatrix(id);
+		requireVisiblePublicExpenseSources(id, operator);
 		validateAdjustmentAvailability(id, false);
 		PlatformApprovalService.ApprovalInstanceRecord approval = this.approvalService.submitProjectCostAdjustment(id,
 				new PlatformApprovalService.ApprovalSubmitRequest(state.version(), request.reason(),
@@ -257,6 +261,8 @@ public class ProjectCostAdjustmentService {
 		if (!state.version().equals(version) || !"SUBMITTED".equals(state.status())) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ACTION_NOT_ALLOWED);
 		}
+		validatePersistedAdjustmentMatrix(id);
+		requireVisiblePublicExpenseSources(id, operator);
 		validateAdjustmentAvailability(id, true);
 		this.jdbcTemplate.update("""
 				update prj_cost_adjustment
@@ -282,14 +288,19 @@ public class ProjectCostAdjustmentService {
 	}
 
 	private PublicExpenseCandidateResponse mapCandidate(ResultSet rs, CurrentUser currentUser) throws SQLException {
-		boolean amountVisible = amountVisible(currentUser);
+		boolean sourceVisible = sourceVisible(currentUser);
+		boolean amountVisible = sourceVisible && amountVisible(currentUser);
 		BigDecimal amount = scale(rs.getBigDecimal("tax_excluded_amount"));
 		BigDecimal allocated = scale(rs.getBigDecimal("allocated_amount"));
 		BigDecimal available = amount.subtract(allocated).setScale(2, RoundingMode.HALF_UP);
-		return new PublicExpenseCandidateResponse(rs.getLong("expense_id"), rs.getString("expense_no"),
-				rs.getLong("expense_line_id"), rs.getString("expense_category"), rs.getString("description"),
-				amount(amountVisible, amount), amount(amountVisible, allocated), amount(amountVisible, available),
-				amountVisible);
+		String expenseNo = rs.getString("expense_no");
+		return new PublicExpenseCandidateResponse(sourceVisible ? rs.getLong("expense_id") : null,
+				sourceVisible ? expenseNo : null, sourceVisible ? rs.getLong("expense_line_id") : null,
+				sourceVisible ? rs.getString("expense_category") : null,
+				sourceVisible ? rs.getString("description") : null, amount(amountVisible, amount),
+				amount(amountVisible, allocated), amount(amountVisible, available), amountVisible, sourceVisible,
+				sourceVisible ? (amountVisible ? null : "无权查看项目成本金额") : "费用来源权限受限，仅返回受限候选",
+				sourceVisible ? "费用单 " + expenseNo : "受限公共费用来源");
 	}
 
 	private AdjustmentResponse mapAdjustment(ResultSet rs, CurrentUser currentUser) throws SQLException {
@@ -395,8 +406,9 @@ public class ProjectCostAdjustmentService {
 				|| request.lines().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		String adjustmentType = request.adjustmentType().trim().toUpperCase();
 		if (!List.of("PROJECT_ADJUSTMENT", "PUBLIC_EXPENSE_ALLOCATION", "VARIANCE_SETTLEMENT")
-			.contains(request.adjustmentType().trim().toUpperCase())) {
+			.contains(adjustmentType)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 		for (AdjustmentLineRequest line : request.lines()) {
@@ -412,10 +424,23 @@ public class ProjectCostAdjustmentService {
 					|| !List.of("INCREASE", "DECREASE").contains(line.direction().trim().toUpperCase())) {
 				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 			}
-			if ("PUBLIC_EXPENSE_ALLOCATION".equals(request.adjustmentType().trim().toUpperCase())
-					&& line.publicExpenseLineId() == null) {
+			validateAdjustmentLineMatrix(adjustmentType, line.costCategory().trim().toUpperCase(),
+					line.costStage().trim().toUpperCase(), line.direction().trim().toUpperCase(),
+					line.publicExpenseLineId());
+		}
+	}
+
+	private void validateAdjustmentLineMatrix(String adjustmentType, String costCategory, String costStage,
+			String direction, Long publicExpenseLineId) {
+		if ("PUBLIC_EXPENSE_ALLOCATION".equals(adjustmentType)) {
+			if (publicExpenseLineId == null || !"MANUFACTURING_OVERHEAD".equals(costCategory)
+					|| !"DIRECT_PROJECT".equals(costStage) || !"INCREASE".equals(direction)) {
 				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 			}
+			return;
+		}
+		if (publicExpenseLineId != null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
 	}
 
@@ -458,6 +483,48 @@ public class ProjectCostAdjustmentService {
 		if (allocated.add(scale(amount)).compareTo(total) > 0) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED);
 		}
+	}
+
+	private void requireVisiblePublicExpenseSources(AdjustmentRequest request, CurrentUser operator) {
+		boolean hasPublicExpenseSource = request.lines()
+			.stream()
+			.anyMatch((line) -> line.publicExpenseLineId() != null);
+		if (hasPublicExpenseSource && !sourceVisible(operator)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private void requireVisiblePublicExpenseSources(Long adjustmentId, CurrentUser operator) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from prj_cost_adjustment_line
+				where adjustment_id = ?
+				and public_expense_line_id is not null
+				""", Long.class, adjustmentId);
+		if (count != null && count > 0 && !sourceVisible(operator)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private void validatePersistedAdjustmentMatrix(Long adjustmentId) {
+		String adjustmentType = this.jdbcTemplate.queryForObject("""
+				select adjustment_type
+				from prj_cost_adjustment
+				where id = ?
+				""", String.class, adjustmentId);
+		this.jdbcTemplate.query("""
+				select cost_category, cost_stage, direction, public_expense_line_id
+				from prj_cost_adjustment_line
+				where adjustment_id = ?
+				order by line_no
+				""", (rs) -> {
+			while (rs.next()) {
+				validateAdjustmentLineMatrix(adjustmentType, rs.getString("cost_category"),
+						rs.getString("cost_stage"), rs.getString("direction"),
+						nullableLong(rs, "public_expense_line_id"));
+			}
+			return null;
+		}, adjustmentId);
 	}
 
 	private void validateAdjustmentAvailability(Long adjustmentId, boolean includeCurrentSubmitted) {
@@ -654,7 +721,8 @@ public class ProjectCostAdjustmentService {
 
 	public record PublicExpenseCandidateResponse(Long expenseId, String expenseNo, Long expenseLineId,
 			String expenseCategory, String description, String taxExcludedAmount, String allocatedAmount,
-			String availableAmount, boolean amountVisible) {
+			String availableAmount, boolean amountVisible, boolean sourceVisible, String restrictedReason,
+			String sourceSummary) {
 	}
 
 	private record QueryParts(String where, List<Object> args) {

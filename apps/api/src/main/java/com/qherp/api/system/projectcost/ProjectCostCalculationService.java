@@ -196,6 +196,10 @@ public class ProjectCostCalculationService {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_SOURCE_CHANGED);
 		}
 		if (current.variances().stream()
+			.anyMatch((variance) -> "DELIVERY_WITHOUT_FINISHED_COST".equals(variance.varianceType()))) {
+			throw new BusinessException(ApiErrorCode.PROJECT_COST_DELIVERY_UNMATCHED);
+		}
+		if (current.variances().stream()
 			.anyMatch((variance) -> "SOURCE_UNPRICED".equals(variance.varianceType())
 					&& "LABOR".equals(variance.costCategory()))) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_LABOR_UNPRICED);
