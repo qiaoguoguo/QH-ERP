@@ -726,56 +726,111 @@ samp {
 .login-page {
   min-height: 100svh;
   display: grid;
-  place-items: center;
-  background:
-    radial-gradient(circle at top left, rgba(0, 212, 164, 0.12), transparent 36%),
-    linear-gradient(180deg, #ffffff 0%, var(--qherp-bg) 100%);
-  padding: 24px;
+  grid-template-columns: minmax(520px, 1fr) minmax(360px, 40vw);
+  align-items: center;
+  justify-items: center;
+  position: relative;
+  overflow: hidden;
+  background-color: #eaf4ff;
+  background-image:
+    var(--login-background-image),
+    linear-gradient(120deg, #dbeaf8 0%, #eef6ff 62%, #f8fbff 100%);
+  background-position: center center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  padding: clamp(24px, 4vw, 64px);
+}
+
+.login-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg, rgba(244, 250, 255, 0.02) 0%, rgba(238, 247, 255, 0.14) 57%, rgba(241, 248, 255, 0.34) 100%);
 }
 
 .login-panel {
-  width: min(420px, 100%);
-  background: var(--qherp-surface);
-  border: 1px solid var(--qherp-border);
-  border-radius: var(--qherp-radius-lg);
-  padding: 32px;
-  box-shadow: var(--qherp-shadow-elevated);
+  width: min(400px, 100%);
+  grid-column: 2;
+  position: relative;
+  z-index: 1;
+  background: rgba(248, 252, 255, 0.82);
+  border: 1px solid rgba(114, 157, 210, 0.52);
+  border-radius: 18px;
+  padding: 34px;
+  box-shadow: 0 28px 70px rgba(57, 89, 132, 0.24), 0 8px 24px rgba(83, 111, 150, 0.12);
+  color: #12355e;
+  -webkit-backdrop-filter: blur(18px) saturate(1.08);
+  backdrop-filter: blur(18px) saturate(1.08);
 }
 
 .login-brand {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+  margin-bottom: 18px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(120, 160, 208, 0.38);
+  border-radius: 999px;
 }
 
 .login-brand strong {
-  color: var(--qherp-text);
-  font-size: 22px;
+  color: #143b70;
+  font-size: 14px;
   font-weight: 600;
+  letter-spacing: 0;
 }
 
-.login-brand span,
 .login-subtitle {
-  color: var(--qherp-steel);
+  color: #476784;
   font-size: 13px;
+  line-height: 1.7;
 }
 
 .login-panel h1 {
-  color: var(--qherp-text);
-  font-size: 28px;
+  color: #0f315f;
+  font-size: 30px;
   font-weight: 600;
   line-height: 1.25;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 
 .login-form {
-  margin-top: 20px;
+  margin-top: 24px;
+}
+
+.login-form .el-form-item__label {
+  color: #1f426d;
+  font-weight: 500;
+}
+
+.login-form .el-input__wrapper {
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(137, 172, 213, 0.48);
+  box-shadow: none;
 }
 
 .login-submit {
   width: 100%;
+  min-height: 42px;
+  background: linear-gradient(135deg, #2458d6 0%, #7263e8 100%);
+  border: 0;
+  box-shadow: 0 12px 28px rgba(45, 85, 196, 0.24);
+  font-weight: 600;
+}
+
+.login-submit:hover,
+.login-submit:focus {
+  background: linear-gradient(135deg, #1f4fc6 0%, #6659dc 100%);
+  border: 0;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .login-panel--frosted {
+    background: rgba(249, 252, 255, 0.94);
+  }
 }
 
 .card-header {
@@ -1300,6 +1355,15 @@ body .app-main .report-filter-bar .report-date-picker {
   .report-page__header h1 {
     font-size: 24px;
   }
+
+  .login-page {
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: end;
+  }
+
+  .login-panel {
+    grid-column: 1;
+  }
 }
 
 @media (max-width: 760px) {
@@ -1359,6 +1423,15 @@ body .app-main .report-filter-bar .report-date-picker {
     font-size: 22px;
   }
 
+  .login-page {
+    justify-items: center;
+    padding: 18px;
+  }
+
+  .login-page::before {
+    background: rgba(235, 244, 255, 0.52);
+  }
+
   .query-form,
   .query-form .el-form-item,
   .query-form .el-input,
@@ -1388,6 +1461,7 @@ body .app-main .report-filter-bar .report-date-picker {
 
   .login-panel {
     padding: 22px;
+    background: rgba(249, 252, 255, 0.94);
   }
 
   .el-overlay-dialog {

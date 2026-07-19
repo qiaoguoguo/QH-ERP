@@ -36,6 +36,25 @@ describe('登录页', () => {
     vi.restoreAllMocks()
   })
 
+  it('使用齐慧电气背景和右侧雾面登录框且保留登录表单入口', async () => {
+    const { wrapper } = await mountLogin()
+
+    const page = wrapper.get('[data-test="login-page"]')
+    const panel = wrapper.get('[data-test="login-panel"]')
+
+    expect(page.classes()).toContain('login-page--qihui-background')
+    expect(page.attributes('style')).toContain('--login-background-image: url(')
+    expect(page.attributes('style')).toContain('qihui-electric-login-background')
+    expect(panel.classes()).toContain('login-panel--frosted')
+    expect(panel.text()).toContain('QH ERP 企业管理系统')
+    expect(wrapper.get('#login-title').text()).toBe('欢迎登录')
+    expect(panel.text()).toContain('企业内部管理入口')
+    expect(panel.text()).not.toContain('制造业生产管理 ERP')
+    expect(wrapper.find('input[name="username"]').exists()).toBe(true)
+    expect(wrapper.find('input[name="password"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="login-submit"]').exists()).toBe(true)
+  })
+
   it('空账号和空密码提交时显示校验提示', async () => {
     const { wrapper, store } = await mountLogin()
     vi.spyOn(store, 'login').mockResolvedValue()

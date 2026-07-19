@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import loginBackgroundUrl from '../../assets/qihui-electric-login-background.png'
 import { useAuthStore } from '../../stores/authStore'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const loginPageStyle = {
+  '--login-background-image': `url(${loginBackgroundUrl})`,
+}
 
 const form = reactive({
   username: '',
@@ -47,14 +51,17 @@ async function submit() {
 </script>
 
 <template>
-  <main class="login-page">
-    <section class="login-panel" aria-labelledby="login-title">
+  <main
+    class="login-page login-page--qihui-background"
+    data-test="login-page"
+    :style="loginPageStyle"
+  >
+    <section class="login-panel login-panel--frosted" data-test="login-panel" aria-labelledby="login-title">
       <div class="login-brand">
-        <strong>QH ERP</strong>
-        <span>制造业生产管理 ERP</span>
+        <strong>QH ERP 企业管理系统</strong>
       </div>
-      <h1 id="login-title">账号登录</h1>
-      <p class="login-subtitle">进入企业内部账号与权限基础模块</p>
+      <h1 id="login-title">欢迎登录</h1>
+      <p class="login-subtitle">企业内部管理入口，连接生产、库存、质量与财务协同。</p>
 
       <el-alert v-if="submitError" class="form-alert" type="error" :title="submitError" show-icon :closable="false" />
 
