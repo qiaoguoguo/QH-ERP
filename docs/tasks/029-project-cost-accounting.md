@@ -622,3 +622,6 @@ npm test -- ProjectCostViews.spec.ts projectCostApi.spec.ts SalesProjectDetailVi
 - 2026-07-19：从最新 `origin/main` 在当前平台隔离工作树建立 `codex/029-project-cost-accounting` 分支；本文件冻结为 029 唯一阶段说明。
 - 2026-07-19：测试实现预检发现权限初始化和精确 V31 验证器属于 029 必要受影响范围。主代理补充 `AccountPermissionInitializerTests` 定向回归及 `tools/demo-data` 精确 V31/V29/V30 校验，不改变业务范围、状态机或验收口径。
 - 2026-07-19：前端实现预检发现阶段已冻结全局差异页面，但接口清单仅列按运行查询。主代理补充 `GET /api/admin/cost/project-cost-variances` 全局分页接口；按运行查询继续保留。该修正只闭合既有页面可达性，不新增业务范围。
+- 2026-07-19：唯一一轮五角色集中审查完成。真实 `1280×720` 临时桌面环境复现工作台字段空显、项目详情崩溃和调整详情缺行；交叉审查同时发现分录/来源/差异脱敏、阶段比例、外协发料、销售退货、公共费用并发、未知外协成本和核算动作幂等缺口。主代理判定这些均为既有冻结契约的阻断或严重实现偏差，不改变 029 产品范围，进入一次集中整改。
+- 2026-07-19：集中整改统一采用阶段领域名作为后端契约：工作台、项目详情和运行详情使用各自专用 DTO，明确 `calculationStatus`、`freshnessStatus`、`marginCompleteness`、`projectCostTotal`、`shipmentRevenue` 及分类/阶段/历史/审计摘要；前端 API 层显式适配，不再把同一个计算响应冒充三个页面模型。调整行统一为 `costCategory`、`costStage`、`publicExpenseLineId`、`reason`；调整类型保持 `PROJECT_ADJUSTMENT/PUBLIC_EXPENSE_ALLOCATION/VARIANCE_SETTLEMENT`；差异严重级别统一为 `INFO/WARNING/BLOCKING`，状态保持 `OPEN/RESOLVED/SUPERSEDED`；来源状态统一为 `ACTUAL/PROVISIONAL/UNPRICED/ADJUSTED/RESTRICTED/EXCLUDED`。
+- 2026-07-19：V31 尚未进入 `main` 或正式数据库，允许在本功能分支内修正 V31 检查约束、枚举和并发索引，不新建补丁迁移；影响仅限临时审查库，正式 V30 与 V29/V30 checksum 不变。V31 稳定后必须重新计算 checksum、更新精确验证器并从正式 V30 副本重建临时库；差异复审只覆盖整改差异和受影响路径。
