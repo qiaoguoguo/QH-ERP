@@ -3,6 +3,7 @@ import { createMemoryHistory, createRouter, createWebHistory, type RouteRecordRa
 import { firstFinanceRouteByPermission } from '../modules/finance/financePageHelpers'
 import { firstReportRouteByPermission, reportRouteConfigs } from '../modules/reports/reportPageHelpers'
 import { useAuthStore } from '../stores/authStore'
+import { costRoutes, firstCostRouteByPermission } from './modules/costRoutes'
 import { firstPlanningRouteByPermission, planningRoutes } from './modules/planningRoutes'
 import { firstProductionRouteByPermission, productionRoutes } from './modules/productionRoutes'
 
@@ -650,34 +651,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true, requiredPermission: 'quality:inspection:view' },
     component: () => import('../modules/quality/QualityInspectionListView.vue'),
   },
-  {
-    path: '/cost',
-    redirect: '/cost/records',
-  },
-  {
-    path: '/cost/records',
-    name: 'cost-records',
-    meta: { requiresAuth: true, requiredPermission: 'cost:record:view' },
-    component: () => import('../modules/cost/CostRecordListView.vue'),
-  },
-  {
-    path: '/cost/records/create',
-    name: 'cost-record-create',
-    meta: { requiresAuth: true, requiredPermission: 'cost:record:create' },
-    component: () => import('../modules/cost/CostRecordFormView.vue'),
-  },
-  {
-    path: '/cost/records/:id',
-    name: 'cost-record-detail',
-    meta: { requiresAuth: true, requiredPermission: 'cost:record:view' },
-    component: () => import('../modules/cost/CostRecordDetailView.vue'),
-  },
-  {
-    path: '/cost/records/:id/edit',
-    name: 'cost-record-edit',
-    meta: { requiresAuth: true, requiredPermission: 'cost:record:update' },
-    component: () => import('../modules/cost/CostRecordFormView.vue'),
-  },
+  ...costRoutes,
   {
     path: '/finance',
     name: 'finance-root',
@@ -1016,6 +990,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return financeRoute
+    }
+
+    if (to.name === 'cost-root') {
+      const costRoute = firstCostRouteByPermission((permission) => authStore.hasPermission(permission))
+      if (!costRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return costRoute
     }
 
     if (to.name === 'sales-root') {

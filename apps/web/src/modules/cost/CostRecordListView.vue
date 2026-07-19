@@ -134,7 +134,7 @@ onMounted(loadRecords)
 </script>
 
 <template>
-  <MasterDataTableView title="成本记录" description="查询成本归集业务记录和来源追溯，不作为正式财务核算结果。">
+  <MasterDataTableView title="成本记录" description="查询成本业务记录与追溯，不是正式项目成本核算。">
     <template #actions>
       <el-button v-if="canCreate" data-test="create-cost-record" type="primary" @click="createRecord">
         新增手工成本

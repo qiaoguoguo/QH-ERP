@@ -27,6 +27,12 @@ const salesProjectApiMock = vi.hoisted(() => ({
   projectProductionSummary: vi.fn(),
 }))
 
+const projectCostApiMock = vi.hoisted(() => ({
+  projectCosts: {
+    getProject: vi.fn(),
+  },
+}))
+
 vi.mock('../../../shared/api/salesProjectApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../shared/api/salesProjectApi')>()),
   salesProjectApi: salesProjectApiMock,
@@ -35,6 +41,11 @@ vi.mock('../../../shared/api/salesProjectApi', async (importOriginal) => ({
 vi.mock('../../../shared/api/salesFulfillmentApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../shared/api/salesFulfillmentApi')>()),
   salesFulfillmentApi: salesFulfillmentApiMock,
+}))
+
+vi.mock('../../../shared/api/projectCostApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../shared/api/projectCostApi')>()),
+  projectCostApi: projectCostApiMock,
 }))
 
 vi.mock('../../../shared/api/documentPlatformApi', async (importOriginal) => ({
@@ -171,6 +182,48 @@ const productionSummary = {
   latestOutsourcingOrderNo: 'OS-027-001',
 }
 
+const projectCostSummary = {
+  projectId: 12,
+  projectNo: 'SP-202607-001',
+  projectName: '华东扩产项目',
+  customerName: '华东客户',
+  cutoffDate: '2026-07-31',
+  latestCalculationId: 91,
+  latestCalculationNo: 'PCC-202607-001',
+  calculationStatus: 'CALCULATED',
+  freshnessStatus: 'STALE',
+  completenessStatus: 'INCOMPLETE',
+  amountVisible: true,
+  sourceVisible: true,
+  restrictedReason: null,
+  totalCost: '838.000000',
+  wipCost: '12.000000',
+  finishedCost: '0.000000',
+  deliveredCost: '826.000000',
+  adjustmentAmount: '50.000000',
+  shipmentPretaxRevenue: '10000.000000',
+  shipmentGrossMargin: '9162.000000',
+  shipmentGrossMarginRate: '0.916200',
+  invoicePretaxRevenue: '0.000000',
+  invoiceGrossMargin: '0.000000',
+  targetRevenue: '100000.000000',
+  targetGrossMargin: '99162.000000',
+  openVarianceCount: 2,
+  blockingVarianceCount: 1,
+  provisionalSourceCount: 1,
+  unpricedSourceCount: 1,
+  allowedActions: ['RECALCULATE'],
+  actionDisabledReasons: {
+    CONFIRM: '来源已变化，请重算后再确认。',
+  },
+  version: 7,
+  sourceFingerprint: 'fp-029',
+  calculations: [],
+  categorySummaries: [],
+  stageSummaries: [],
+  auditSummary: [],
+}
+
 async function mountDetail(record: SalesProjectDetail = project, permissions = [
   'sales:project:view',
   'sales:project:update',
@@ -195,6 +248,7 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
     totalPages: 1,
   })
   salesProjectApiMock.projectProductionSummary.mockResolvedValue(productionSummary)
+  projectCostApiMock.projectCosts.getProject.mockResolvedValue(projectCostSummary)
   salesFulfillmentApiMock.projectFulfillment.get.mockResolvedValue(fulfillmentRecord)
   salesFulfillmentApiMock.projectFulfillment.close.mockResolvedValue({
     ...fulfillmentRecord,
@@ -219,6 +273,7 @@ async function mountDetail(record: SalesProjectDetail = project, permissions = [
       { path: '/sales/orders/:id', name: 'sales-order-detail', component: { render: () => null } },
       { path: '/production/work-orders', name: 'production-work-orders', component: { render: () => null } },
       { path: '/production/outsourcing-orders', name: 'production-outsourcing-orders', component: { render: () => null } },
+      { path: '/cost/project-costs/:projectId', name: 'cost-project-cost-detail', component: { render: () => null } },
     ],
   })
   await router.push('/sales/projects/12')
@@ -399,6 +454,56 @@ describe('销售项目详情页', () => {
     const noProduction = await mountDetail(project, ['sales:project:view'])
     expect(salesProjectApiMock.projectProductionSummary).not.toHaveBeenCalled()
     expect(noProduction.wrapper.text()).not.toContain('生产/外协摘要')
+  })
+
+  it('拥有项目成本查看权限时只在销售项目详情展示成本摘要并保留跳转', async () => {
+    const { wrapper, router } = await mountDetail(project, [
+      'sales:project:view',
+      'cost:project-cost:view',
+      'cost:project-cost:amount-view',
+    ])
+
+    expect(projectCostApiMock.projectCosts.getProject).toHaveBeenCalledWith(12)
+    expect(wrapper.text()).toContain('项目成本摘要')
+    expect(wrapper.text()).toContain('发货经营毛利')
+    expect(wrapper.text()).toContain('9162.00')
+    expect(wrapper.text()).toContain('毛利不完整：存在暂估、未定价、在制或阻断差异')
+    expect(wrapper.text()).toContain('来源已变化，请重算后再确认。')
+    expect(wrapper.text()).not.toContain('来源明细')
+    expect(wrapper.text()).not.toContain('成本分录')
+
+    await wrapper.find('[data-test="view-project-cost-detail"]').trigger('click')
+    await flushPromises()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-detail')
+    expect(router.currentRoute.value.params.projectId).toBe('12')
+    expect(router.currentRoute.value.query.returnTo).toBe('/sales/projects/12')
+  })
+
+  it('项目成本摘要金额受限时显示中文受限原因且不伪装为 0', async () => {
+    projectCostApiMock.projectCosts.getProject.mockResolvedValueOnce({
+      ...projectCostSummary,
+      amountVisible: false,
+      restrictedReason: '无权查看成本金额',
+      totalCost: null,
+      shipmentPretaxRevenue: null,
+      shipmentGrossMargin: null,
+      shipmentGrossMarginRate: null,
+    })
+    const { wrapper } = await mountDetail(project, ['sales:project:view', 'cost:project-cost:view'])
+    const costPanel = wrapper.findComponent({ name: 'SalesProjectCostSummaryPanel' })
+
+    expect(wrapper.text()).toContain('项目成本摘要')
+    expect(wrapper.text()).toContain('无权查看成本金额')
+    expect(costPanel.text()).not.toContain('0.00')
+    expect(costPanel.text()).not.toContain('发货经营毛利 0')
+  })
+
+  it('缺少项目成本查看权限时销售项目详情不请求 029 摘要', async () => {
+    projectCostApiMock.projectCosts.getProject.mockClear()
+    const { wrapper } = await mountDetail(project, ['sales:project:view'])
+
+    expect(projectCostApiMock.projectCosts.getProject).not.toHaveBeenCalled()
+    expect(wrapper.text()).not.toContain('项目成本摘要')
   })
 
   it('展示关联销售订单状态分布、列表摘要和有权限详情入口', async () => {

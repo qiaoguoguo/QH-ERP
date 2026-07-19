@@ -11,6 +11,7 @@ import { financePermissions, formatFinanceAmount, financeSourceTypeText } from '
 import { reportPermissions } from './modules/reports/reportPageHelpers'
 import productionMenuSource from './navigation/productionMenu.ts?raw'
 import planningMenuSource from './navigation/planningMenu.ts?raw'
+import costMenuSource from './navigation/costMenu.ts?raw'
 import { createQhErpRouter } from './router'
 import type { AuthSession, CsrfToken } from './shared/api/accountPermissionApi'
 import { useAuthStore } from './stores/authStore'
@@ -318,11 +319,50 @@ describe('ERP 应用骨架', () => {
       .toContain('/menu/inventory')
   })
 
-  it('有成本查看权限但后端菜单缺失时补齐成本管理入口', async () => {
+  it('有项目成本权限但后端菜单缺失时补齐 029 成本管理入口', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     useAuthStore().setSession({
       user: { id: 1, username: 'cost_admin', displayName: '成本管理员', status: 'ENABLED' },
+      menus: [],
+      permissions: [
+        'cost:project-cost:view',
+        'cost:project-cost-adjustment:view',
+        'cost:project-cost-variance:view',
+      ],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(costMenuSource).toContain('/cost/project-costs')
+    expect(costMenuSource).toContain('cost:project-cost:view')
+    expect(wrapper.text()).toContain('成本管理')
+    expect(wrapper.text()).toContain('项目成本核算')
+    expect(wrapper.text()).toContain('成本调整/分配')
+    expect(wrapper.text()).toContain('项目成本差异')
+    expect(wrapper.text()).not.toContain('成本记录')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining([
+        '/cost/project-costs',
+        '/cost/project-cost-adjustments',
+        '/cost/project-cost-variances',
+      ]))
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/cost')
+  })
+
+  it('只有 009 成本记录查看权限时仍补齐成本记录入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'cost_record_user', displayName: '成本记录员', status: 'ENABLED' },
       menus: [],
       permissions: ['cost:record:view'],
     })
@@ -338,8 +378,9 @@ describe('ERP 应用骨架', () => {
 
     expect(wrapper.text()).toContain('成本管理')
     expect(wrapper.text()).toContain('成本记录')
-    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
-      .toContain('/menu/cost')
+    expect(wrapper.text()).not.toContain('项目成本核算')
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toContain('/cost/records')
   })
 
   it('有业务期间查看权限但后端菜单缺失时补齐系统管理入口', async () => {

@@ -101,7 +101,7 @@ const RowScope = {
 const stubs = {
   MasterDataTableView: {
     props: ['title', 'description'],
-    template: '<section><header><slot name="actions" /><slot name="filters" /><slot name="alerts" /></header><slot /></section>',
+    template: '<section><header><h1>{{ title }}</h1><p>{{ description }}</p><slot name="actions" /><slot name="filters" /><slot name="alerts" /></header><slot /></section>',
   },
   CostSourceTypeTag: {
     props: ['type'],
@@ -216,6 +216,7 @@ describe('成本记录列表页', () => {
   it('展示成本记录并按权限显示新增和手工记录编辑入口', async () => {
     const { wrapper } = await mountList()
 
+    expect(wrapper.text()).toContain('业务记录与追溯，不是正式项目成本核算')
     expect(wrapper.text()).toContain('COST-001')
     expect(wrapper.text()).toContain('COST-002')
     expect(wrapper.text()).toContain('WO-001')

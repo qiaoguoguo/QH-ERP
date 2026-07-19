@@ -44,6 +44,13 @@ import MaterialRequirementRunListView from '../modules/planning/material-require
 import CostRecordDetailView from '../modules/cost/CostRecordDetailView.vue'
 import CostRecordFormView from '../modules/cost/CostRecordFormView.vue'
 import CostRecordListView from '../modules/cost/CostRecordListView.vue'
+import ProjectCostAdjustmentDetailView from '../modules/cost/project/ProjectCostAdjustmentDetailView.vue'
+import ProjectCostAdjustmentFormView from '../modules/cost/project/ProjectCostAdjustmentFormView.vue'
+import ProjectCostAdjustmentListView from '../modules/cost/project/ProjectCostAdjustmentListView.vue'
+import ProjectCostCalculationDetailView from '../modules/cost/project/ProjectCostCalculationDetailView.vue'
+import ProjectCostProjectDetailView from '../modules/cost/project/ProjectCostProjectDetailView.vue'
+import ProjectCostVarianceListView from '../modules/cost/project/ProjectCostVarianceListView.vue'
+import ProjectCostWorkbenchView from '../modules/cost/project/ProjectCostWorkbenchView.vue'
 import PurchaseOrderDetailView from '../modules/procurement/PurchaseOrderDetailView.vue'
 import PurchaseOrderFormView from '../modules/procurement/PurchaseOrderFormView.vue'
 import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.vue'
@@ -98,6 +105,7 @@ import ExceptionReportView from '../modules/reports/ExceptionReportView.vue'
 import { createQhErpRouter } from './index'
 import productionRouteSource from './modules/productionRoutes.ts?raw'
 import planningRouteSource from './modules/planningRoutes.ts?raw'
+import costRouteSource from './modules/costRoutes.ts?raw'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
 const adminSession: AuthSession = {
@@ -451,6 +459,14 @@ describe('账号权限路由守卫', () => {
   it('成本路由加载真实页面并配置对应权限', async () => {
     const router = createQhErpRouter()
     const costRoutes = [
+      ['cost-project-costs', '/cost/project-costs', 'cost:project-cost:view', ProjectCostWorkbenchView],
+      ['cost-project-cost-detail', '/cost/project-costs/:projectId', 'cost:project-cost:view', ProjectCostProjectDetailView],
+      ['cost-project-cost-calculation-detail', '/cost/project-cost-calculations/:id', 'cost:project-cost:view', ProjectCostCalculationDetailView],
+      ['cost-project-cost-adjustments', '/cost/project-cost-adjustments', 'cost:project-cost-adjustment:view', ProjectCostAdjustmentListView],
+      ['cost-project-cost-adjustment-create', '/cost/project-cost-adjustments/create', 'cost:project-cost-adjustment:create', ProjectCostAdjustmentFormView],
+      ['cost-project-cost-adjustment-detail', '/cost/project-cost-adjustments/:id', 'cost:project-cost-adjustment:view', ProjectCostAdjustmentDetailView],
+      ['cost-project-cost-adjustment-edit', '/cost/project-cost-adjustments/:id/edit', 'cost:project-cost-adjustment:update', ProjectCostAdjustmentFormView],
+      ['cost-project-cost-variances', '/cost/project-cost-variances', 'cost:project-cost-variance:view', ProjectCostVarianceListView],
       ['cost-records', '/cost/records', 'cost:record:view', CostRecordListView],
       ['cost-record-create', '/cost/records/create', 'cost:record:create', CostRecordFormView],
       ['cost-record-detail', '/cost/records/:id', 'cost:record:view', CostRecordDetailView],
@@ -466,6 +482,12 @@ describe('账号权限路由守卫', () => {
       expect(component).toBeTypeOf('function')
       await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
     }
+
+    const rootRoute = router.getRoutes().find((item) => item.path === '/cost')
+    expect(rootRoute?.name).toBe('cost-root')
+    expect(rootRoute?.meta.requiresAuth).toBe(true)
+    expect(costRouteSource).toContain('costRouteOrder')
+    expect(costRouteSource).toContain('cost:project-cost:view')
   })
 
   it('采购订单、采购入库和采购退货路由加载真实页面并配置对应权限', async () => {
@@ -688,14 +710,47 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('inventory-balances')
   })
 
-  it('访问成本根路径时重定向到成本记录页', async () => {
+  it('访问成本根路径时按项目成本、调整、差异和旧成本记录顺序进入首个可见页', async () => {
     const router = createQhErpRouter()
-    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:project-cost:view', 'cost:record:view'] })
 
     await router.push('/cost')
     await router.isReady()
 
-    expect(router.currentRoute.value.name).toBe('cost-records')
+    expect(router.currentRoute.value.name).toBe('cost-project-costs')
+
+    const adjustmentRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:project-cost-adjustment:view', 'cost:record:view'] })
+
+    await adjustmentRouter.push('/cost')
+    await adjustmentRouter.isReady()
+
+    expect(adjustmentRouter.currentRoute.value.name).toBe('cost-project-cost-adjustments')
+
+    const varianceRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:project-cost-variance:view', 'cost:record:view'] })
+
+    await varianceRouter.push('/cost')
+    await varianceRouter.isReady()
+
+    expect(varianceRouter.currentRoute.value.name).toBe('cost-project-cost-variances')
+
+    const recordRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+
+    await recordRouter.push('/cost')
+    await recordRouter.isReady()
+
+    expect(recordRouter.currentRoute.value.name).toBe('cost-records')
+
+    const forbiddenRouter = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [] })
+
+    await forbiddenRouter.push('/cost')
+    await forbiddenRouter.isReady()
+
+    expect(forbiddenRouter.currentRoute.value.name).toBe('forbidden')
+    expect(forbiddenRouter.currentRoute.value.query.from).toBe('/cost')
   })
 
   it('访问采购根路径时重定向到采购订单页', async () => {
@@ -1043,6 +1098,49 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.name).toBe('cost-records')
   })
 
+  it('已登录且拥有项目成本权限时允许访问 029 页面族', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({
+      user,
+      menus: [],
+      permissions: [
+        'cost:project-cost:view',
+        'cost:project-cost-adjustment:view',
+        'cost:project-cost-adjustment:create',
+        'cost:project-cost-adjustment:update',
+        'cost:project-cost-variance:view',
+      ],
+    })
+
+    await router.push('/cost/project-costs')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-costs')
+
+    await router.push('/cost/project-costs/12')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-detail')
+
+    await router.push('/cost/project-cost-calculations/91')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-calculation-detail')
+
+    await router.push('/cost/project-cost-adjustments')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-adjustments')
+
+    await router.push('/cost/project-cost-adjustments/create')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-adjustment-create')
+
+    await router.push('/cost/project-cost-adjustments/301/edit')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-adjustment-edit')
+
+    await router.push('/cost/project-cost-variances')
+    await router.isReady()
+    expect(router.currentRoute.value.name).toBe('cost-project-cost-variances')
+  })
+
   it('已登录且拥有采购订单查看权限时允许访问采购订单列表', async () => {
     const router = createQhErpRouter()
     useAuthStore().setSession({ user, menus: [], permissions: ['procurement:order:view'] })
@@ -1267,6 +1365,17 @@ describe('账号权限路由守卫', () => {
 
     expect(router.currentRoute.value.name).toBe('forbidden')
     expect(router.currentRoute.value.query.from).toBe('/cost/records')
+  })
+
+  it('已登录但缺少项目成本权限时访问 029 页面跳转无权限页', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: ['cost:record:view'] })
+
+    await router.push('/cost/project-costs')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('forbidden')
+    expect(router.currentRoute.value.query.from).toBe('/cost/project-costs')
   })
 
   it('已登录但缺少财务查看权限时跳转无权限页', async () => {

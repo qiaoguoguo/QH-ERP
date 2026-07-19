@@ -17,6 +17,7 @@ import { useAuthStore } from '../../../stores/authStore'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import SalesProjectContractDrawer from './SalesProjectContractDrawer.vue'
 import SalesProjectContractStatusTag from './SalesProjectContractStatusTag.vue'
+import SalesProjectCostSummaryPanel from './SalesProjectCostSummaryPanel.vue'
 import SalesProjectOperationsPanel from './SalesProjectOperationsPanel.vue'
 import SalesProjectOrderSummaryPanel from './SalesProjectOrderSummaryPanel.vue'
 import SalesProjectStatusTag from './SalesProjectStatusTag.vue'
@@ -75,6 +76,7 @@ const canClose = computed(() => record.value?.status === 'ACTIVE' && authStore.h
 const canCancel = computed(() => record.value?.status === 'DRAFT' && authStore.hasPermission('sales:project:cancel'))
 const canViewSalesOrders = computed(() => authStore.hasPermission('sales:order:view'))
 const canViewFulfillment = computed(() => authStore.hasPermission('sales:fulfillment:view'))
+const canViewProjectCost = computed(() => authStore.hasPermission('cost:project-cost:view'))
 const canViewProjectProduction = computed(() => (
   authStore.hasPermission('production:work-order:view')
   || authStore.hasPermission('production:outsourcing:view')
@@ -439,6 +441,11 @@ onMounted(loadRecord)
         :restricted="record.salesOrderSummaryRestricted"
         :contract-summary-restricted="record.contractSummaryRestricted"
         :summary="record.salesOrderSummary"
+      />
+
+      <SalesProjectCostSummaryPanel
+        v-if="canViewProjectCost"
+        :project-id="record.id"
       />
 
       <section v-if="canViewProjectProduction" class="section-block">

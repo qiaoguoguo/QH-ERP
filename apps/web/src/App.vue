@@ -37,6 +37,7 @@ import { reportMenuChildren, reportRouteConfigs } from './modules/reports/report
 import { activeMenuPath } from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
 import qhLogoUrl from './assets/logo.ico'
+import { costChildren, costMenuPaths } from './navigation/costMenu'
 
 const route = useRoute()
 const router = useRouter()
@@ -68,7 +69,6 @@ const salesReturnPath = '/sales/returns'
 const salesCreditProfilePath = '/sales/credit-profiles'
 const salesEffectiveDemandPath = '/sales/effective-demands'
 const qualityInspectionPath = '/quality/inspections'
-const costRecordPath = '/cost/records'
 const financeSalesInvoicePath = '/finance/sales-invoices'
 const financePurchaseInvoicePath = '/finance/purchase-invoices'
 const financeExpensePath = '/finance/expenses'
@@ -137,7 +137,7 @@ const supportedMenuPaths = new Set([
   productionMaterialSupplementPath,
   productionOutsourcingOrderPath,
   qualityInspectionPath,
-  costRecordPath,
+  ...costMenuPaths,
   financeSalesInvoicePath,
   financePurchaseInvoicePath,
   financeExpensePath,
@@ -893,43 +893,40 @@ function removeQualityMenus(menus: MenuNode[]): MenuNode[] {
 }
 
 function ensureCostMenu(menus: MenuNode[]): MenuNode[] {
-  if (!authStore.hasPermission('cost:record:view')) {
-    return menus.filter((menu) => menu.code !== 'cost' && menu.routePath !== costRecordPath)
+  const allowedChildren = costChildren.filter((child) => authStore.hasPermission(String(child.code)))
+  const cleanedMenus = removeCostMenus(menus)
+  if (!allowedChildren.length) {
+    return cleanedMenus
   }
 
-  const costChild: MenuNode = {
-    id: 'cost-records',
-    code: 'cost:record:view',
-    name: '成本记录',
-    routePath: costRecordPath,
-  }
-  const costIndex = menus.findIndex((menu) => menu.code === 'cost' || menu.routePath === costRecordPath)
-
-  if (costIndex === -1) {
-    return [
-      ...menus,
-      {
-        id: 'cost',
-        code: 'cost',
-        name: '成本管理',
-        routePath: null,
-        children: [costChild],
-      },
-    ]
-  }
-
-  return menus.map((menu, index) => {
-    if (index !== costIndex) {
-      return menu
-    }
-    const children = menu.children ?? []
-    const hasCostRecordChild = children.some((child) => child.routePath === costRecordPath)
-    return {
-      ...menu,
+  return [
+    ...cleanedMenus,
+    {
+      id: 'cost',
+      code: 'cost',
       name: '成本管理',
-      children: hasCostRecordChild ? children : [costChild, ...children],
-    }
-  })
+      routePath: null,
+      children: allowedChildren,
+    },
+  ]
+}
+
+function isCostMenu(menu: MenuNode): boolean {
+  const code = String(menu.code ?? '')
+  return code === 'cost'
+    || code.startsWith('cost:')
+    || (menu.routePath ? costMenuPaths.has(menu.routePath) : false)
+}
+
+function removeCostMenus(menus: MenuNode[]): MenuNode[] {
+  return menus
+    .map((menu) => ({
+      ...menu,
+      children: removeCostMenus(menu.children ?? []),
+    }))
+    .filter((menu) => !isCostMenu(menu) && (
+      (menu.routePath ? supportedMenuPaths.has(menu.routePath) : false) || Boolean(menu.children?.length)
+    ))
 }
 
 function ensureFinanceMenu(menus: MenuNode[]): MenuNode[] {

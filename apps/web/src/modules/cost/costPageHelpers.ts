@@ -80,19 +80,29 @@ export function costStatusLabel(status?: CostRecordStatus | string | null): stri
 }
 
 export function formatCostQuantity(value: unknown): string {
-  const numberValue = Number(value)
-  if (!Number.isFinite(numberValue)) {
+  if (value === null || value === undefined || value === '') {
     return '-'
   }
-  return numberValue.toFixed(6).replace(/\.?0+$/, '')
+  return formatCostDecimal(value, 6)
 }
 
 export function formatCostAmount(value: unknown): string {
-  const numberValue = Number(value)
-  if (!Number.isFinite(numberValue)) {
+  if (value === null || value === undefined || value === '') {
     return '-'
   }
-  return numberValue.toFixed(6).replace(/\.?0+$/, '')
+  return formatCostDecimal(value, 6)
+}
+
+function formatCostDecimal(value: unknown, scale: number): string {
+  const raw = String(value).trim()
+  const match = raw.match(/^([+-]?)(\d+)(?:\.(\d+))?$/)
+  if (!match) {
+    return '-'
+  }
+  const sign = match[1] === '-' ? '-' : ''
+  const integer = match[2].replace(/^0+(?=\d)/, '') || '0'
+  const fraction = (match[3] ?? '').slice(0, scale).padEnd(scale, '0').replace(/0+$/, '')
+  return `${sign}${integer}${fraction ? `.${fraction}` : ''}`
 }
 
 export function formatCostDateTime(value?: string | null): string {
