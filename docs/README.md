@@ -5,7 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接与后续规划（2026-07-19 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [项目交接与后续规划（2026-07-20 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
 - [固定五角色阶段协作与交付流程](ops/stage-collaboration-delivery-process.md)
 - [电气制造业全量演示数据基线与重建验收单](data/electrical-manufacturing-demo-data.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)
@@ -47,6 +47,7 @@
 - [027A 现存问题闭环与页面规范治理任务记录（已完成）](tasks/027a-existing-issues-page-governance-remediation.md)
 - [028 发票、费用与往来深化任务记录（已正式交付）](tasks/028-invoice-expense-settlement-deepening.md)
 - [029 项目成本核算任务记录（已正式交付）](tasks/029-project-cost-accounting.md)
+- [030 业务月结与期间快照任务记录（已正式交付）](tasks/030-business-period-snapshot.md)
 
 021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。
 

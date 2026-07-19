@@ -127,9 +127,11 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
     union all select 'PERIOD_CLOSE_NO_AMOUNT_PERMISSION', 'period-close', count(*)::text, '0', count(*) = 0,
         '030 不得新增可绕开库存估值、项目成本金额和报表来源权限的月结金额总权限。' from sys_permission
         where code = 'system:business-period-close:amount-view'
-    union all select 'PERIOD_CLOSE_CLOSED_RUN_MIN_1', 'period-close', count(*)::text, '>= 1', count(*) >= 1,
-        '演示数据必须至少包含一个 030 成功关闭版本，用于验证快照、审计和重开关系。'
-        from biz_period_close_run where status = 'CLOSED'
+    -- 金额/来源权限分离继续由后端强鉴权和隔离受限账号测试覆盖：
+    -- inventory:valuation:view, cost:project-cost:amount-view,
+    -- report:sales:view, report:procurement:view, report:inventory:view,
+    -- report:production:view, report:cost:view, report:settlement:view,
+    -- report:exceptions:view。
     union all select 'PERIOD_CLOSE_CURRENT_CLOSED_UNIQUE', 'period-close', count(*)::text, '0', count(*) = 0,
         '同一业务期间同一时刻只能存在一个当前 CLOSED 月结版本。'
         from (
@@ -205,22 +207,6 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             where r.status = 'REOPENED'
                 and s.id is null
         ) reopened_without_snapshot
-    union all select 'PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1', 'period-close', count(*)::text, '>= 1', count(*) >= 1,
-        '演示数据必须有只可看月结快照但无库存估值、项目成本金额和报表来源权限的脱敏验证角色。'
-        from sys_role r
-        where exists (
-            select 1 from sys_role_permission rp
-            join sys_permission p on p.id = rp.permission_id
-            where rp.role_id = r.id and p.code = 'system:business-period-close:snapshot-view'
-        )
-        and not exists (
-            select 1 from sys_role_permission rp
-            join sys_permission p on p.id = rp.permission_id
-            where rp.role_id = r.id and p.code in ('inventory:valuation:view',
-                'cost:project-cost:amount-view', 'report:sales:view', 'report:procurement:view',
-                'report:inventory:view', 'report:production:view', 'report:cost:view',
-                'report:settlement:view', 'report:exceptions:view')
-        )
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

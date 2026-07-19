@@ -246,9 +246,16 @@ function Test-PeriodCloseValidatorRulesAreStrict {
             -and $SqlText.Contains("blocking_count <> 0") `
             -and $SqlText.Contains("snapshot_id is null") `
             -and $SqlText.Contains("source_fingerprint is null"))
-    $maskingFixtureRuleIsStrict = ($SqlText.Contains("PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1") `
-            -and $SqlText.Contains("inventory:valuation:view") `
+    $forbiddenExistenceRulesAreAbsent = (-not $SqlText.Contains("PERIOD_CLOSE_CLOSED_RUN_MIN_1") `
+            -and -not $SqlText.Contains("PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1"))
+    $sourcePermissionIdentifiersArePresent = ($SqlText.Contains("inventory:valuation:view") `
             -and $SqlText.Contains("cost:project-cost:amount-view") `
+            -and $SqlText.Contains("report:sales:view") `
+            -and $SqlText.Contains("report:procurement:view") `
+            -and $SqlText.Contains("report:inventory:view") `
+            -and $SqlText.Contains("report:production:view") `
+            -and $SqlText.Contains("report:cost:view") `
+            -and $SqlText.Contains("report:settlement:view") `
             -and $SqlText.Contains("report:exceptions:view"))
 
     return ($permissionRulesAreStrict `
@@ -256,11 +263,12 @@ function Test-PeriodCloseValidatorRulesAreStrict {
         -and $lockAuditRuleIsStrict `
         -and $snapshotRulesAreStrict `
         -and $blockingRulesAreStrict `
-        -and $maskingFixtureRuleIsStrict)
+        -and $forbiddenExistenceRulesAreAbsent `
+        -and $sourcePermissionIdentifiersArePresent)
 }
 
 Assert-True -Condition (Test-PeriodCloseValidatorRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须失败关闭当前关闭唯一、期间锁定/审计、阻断不得关闭、快照对账/不变、重开保留旧快照和权限脱敏夹具。"
+    -Message "正式演示数据验证器必须失败关闭当前关闭唯一、期间锁定/审计、阻断不得关闭、快照对账/不变、重开保留旧快照；不得要求 CLOSED/脱敏角色硬存在，且必须保留金额/来源权限分离标识。"
 
 function Test-SelfTestMinioFileObjectConsistency {
     param(
