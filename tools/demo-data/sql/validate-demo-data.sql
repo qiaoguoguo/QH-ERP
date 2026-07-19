@@ -3,16 +3,28 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V30'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V31'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 30; checksum = 2130342893'::text,
-        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 30
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 2130342893),
-        'Flyway 最新成功版本必须为 V30，checksum 必须为 2130342893。'::text
+        'latest successful version = 31; checksum = -1120716708'::text,
+        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 31
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -1120716708),
+        'Flyway 最新成功版本必须为 V31，checksum 必须为 -1120716708。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V31_CHECKSUM', 'migration',
+        concat('version=31;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 31 checksum = -1120716708',
+        coalesce((array_agg(checksum))[1], 0) = -1120716708,
+        'Flyway V31 checksum 必须保持 -1120716708。'
+        from flyway_schema_history where success and version = '31'
+    union all select 'FLYWAY_V30_CHECKSUM', 'migration',
+        concat('version=30;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 30 checksum = 2130342893',
+        coalesce((array_agg(checksum))[1], 0) = 2130342893,
+        'Flyway V30 checksum 必须保持 2130342893。'
+        from flyway_schema_history where success and version = '30'
     union all select 'FLYWAY_V29_CHECKSUM', 'migration',
         concat('version=29;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
         'version 29 checksum = 774334682',

@@ -310,6 +310,7 @@ V31 文件固定为 `apps/api/src/main/resources/db/migration/V31__project_cost_
 - `GET /project-cost-calculations/{id}/sources`：按分类、阶段、状态、来源类型分页查询来源。
 - `GET /project-cost-calculations/{id}/entries`：分页查询成本分录。
 - `GET /project-cost-calculations/{id}/variances`：分页查询差异。
+- `GET /project-cost-variances`：全局分页差异清单；支持项目、严重级别、类型、状态和来源受限筛选。
 - `PUT /project-cost-calculations/{id}/recalculate`：携带 `version`、`idempotencyKey` 重算。
 - `PUT /project-cost-calculations/{id}/confirm`：携带 `version`、`sourceFingerprint`、`idempotencyKey` 确认。
 - `PUT /project-cost-calculations/{id}/cancel`：携带 `version`、`idempotencyKey` 取消。
@@ -450,6 +451,12 @@ V31 文件固定为 `apps/api/src/main/resources/db/migration/V31__project_cost_
 - 创建 `apps/api/src/test/java/com/qherp/api/system/projectcost/ProjectCostStage029Tests.java`，覆盖架构边界、权限种子、十进制和不回写门禁。
 - 修改受影响的最新 Flyway 版本断言，使 V31 成为合法最新版本，同时保留 V29/V30 checksum 和历史语义断言。
 
+### 交付验证工具
+
+- 修改 `tools/demo-data/sql/validate-demo-data.sql`：最新迁移精确为 V31，固化 V31 checksum，并继续严格校验 V29 `774334682`、V30 `2130342893` 和失败迁移 0。
+- 修改 `tools/demo-data/lib/demo-data-self-test.ps1`：防止最新版本规则弱化为 `>=31`，并覆盖 V29/V30/V31 精确校验。
+- 若 029 最小真实数据纳入演示数据生成器，修改 `tools/demo-data/generate-demo-data.ps1` 通过真实 API/状态机生成；禁止 SQL 直灌 029 业务事实。
+
 ### 前端
 
 - 创建 `apps/web/src/shared/api/projectCostApi.ts` 与 `projectCostApi.spec.ts`：字符串十进制、分页、动作、权限和来源契约。
@@ -526,7 +533,7 @@ V31 文件固定为 `apps/api/src/main/resources/db/migration/V31__project_cost_
 
 ```powershell
 Set-Location apps/api
-.\mvnw.cmd -Dtest=ProjectCostStage029Tests,ProjectCostV31MigrationRegressionTests,ProjectCostAdminControllerTests,CostAdminControllerTests,ProjectProductionStage027Tests,FinanceStage028ControllerTests test
+.\mvnw.cmd -Dtest=ProjectCostStage029Tests,ProjectCostV31MigrationRegressionTests,ProjectCostAdminControllerTests,AccountPermissionInitializerTests,CostAdminControllerTests,ProjectProductionStage027Tests,FinanceStage028ControllerTests test
 ```
 
 前端受影响范围：
@@ -613,3 +620,5 @@ npm test -- ProjectCostViews.spec.ts projectCostApi.spec.ts SalesProjectDetailVi
 - 2026-07-19：五角色完成唯一一轮目标讨论。共同确认新增独立 V31 项目成本核算子账、保留 009 历史语义、只读消费 023/027/028、独立权限脱敏和真实桌面页面规范门禁。
 - 2026-07-19：用户明确授权主代理自主推进、自主决策。主代理采用“多口径展示、发货未税收入为经营毛利主口径、开票辅助、目标计划对照”，不扩展为正式收入确认。
 - 2026-07-19：从最新 `origin/main` 在当前平台隔离工作树建立 `codex/029-project-cost-accounting` 分支；本文件冻结为 029 唯一阶段说明。
+- 2026-07-19：测试实现预检发现权限初始化和精确 V31 验证器属于 029 必要受影响范围。主代理补充 `AccountPermissionInitializerTests` 定向回归及 `tools/demo-data` 精确 V31/V29/V30 校验，不改变业务范围、状态机或验收口径。
+- 2026-07-19：前端实现预检发现阶段已冻结全局差异页面，但接口清单仅列按运行查询。主代理补充 `GET /api/admin/cost/project-cost-variances` 全局分页接口；按运行查询继续保留。该修正只闭合既有页面可达性，不新增业务范围。
