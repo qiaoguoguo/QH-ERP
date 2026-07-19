@@ -274,6 +274,21 @@ const adjustmentRecord: ProjectCostAdjustmentRecord = {
   }],
 }
 
+const restrictedAdjustmentRecord: ProjectCostAdjustmentRecord = {
+  ...adjustmentRecord,
+  adjustmentNo: 'PCA-RESTRICTED',
+  amountVisible: false,
+  sourceVisible: false,
+  restrictedReason: '无权查看成本金额',
+  totalAmount: null,
+  lines: [{
+    ...adjustmentRecord.lines[0],
+    amount: null,
+    publicExpenseLineId: null,
+    sourceNo: null,
+  }],
+}
+
 const publicExpenseCandidate: ProjectCostPublicExpenseCandidate = {
   expenseLineId: 801,
   expenseNo: 'EXP-001',
@@ -286,6 +301,20 @@ const publicExpenseCandidate: ProjectCostPublicExpenseCandidate = {
   amountVisible: true,
   sourceVisible: true,
   restrictedReason: null,
+}
+
+const restrictedPublicExpenseCandidate: ProjectCostPublicExpenseCandidate = {
+  ...publicExpenseCandidate,
+  expenseLineId: null,
+  expenseNo: '',
+  supplierName: null,
+  categoryName: null,
+  taxExcludedAmount: null,
+  allocatedAmount: null,
+  availableAmount: null,
+  amountVisible: false,
+  sourceVisible: false,
+  restrictedReason: '来源权限受限，仅显示脱敏摘要',
 }
 
 async function mountCostView(component: object, path: string, permissions = [
@@ -534,6 +563,37 @@ describe('029 项目成本页面族', () => {
     }))
     expect(router.currentRoute.value.name).toBe('cost-project-cost-adjustment-detail')
     expect(router.currentRoute.value.params.id).toBe('301')
+  })
+
+  it('调整表单对受限调整行显示中文权限态且不提交零金额', async () => {
+    projectCostApiMock.adjustments.get.mockResolvedValueOnce(restrictedAdjustmentRecord)
+    projectCostApiMock.adjustments.publicExpenseCandidates.mockResolvedValueOnce(page([], 1, 10))
+    const { wrapper } = await mountCostView(ProjectCostAdjustmentFormView, '/cost/project-cost-adjustments/301/edit')
+
+    expect(wrapper.text()).toContain('无权查看成本金额')
+    expect(wrapper.text()).not.toContain('0.00')
+
+    await wrapper.find('input[name="project-cost-adjustment-amount"]').setValue('0.000000')
+    await wrapper.find('[data-test="save-project-cost-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(projectCostApiMock.adjustments.update).not.toHaveBeenCalled()
+  })
+
+  it('调整表单禁止选择受限公共费用候选并阻止构造公共费用行载荷', async () => {
+    projectCostApiMock.adjustments.publicExpenseCandidates.mockResolvedValueOnce(page([restrictedPublicExpenseCandidate], 1, 10))
+    const { wrapper } = await mountCostView(ProjectCostAdjustmentFormView, '/cost/project-cost-adjustments/create')
+
+    expect(wrapper.text()).toContain('来源权限受限，仅显示脱敏摘要')
+    expect(wrapper.text()).not.toContain('0.00')
+
+    await wrapper.find('[data-test="select-public-expense-candidate"]').trigger('click')
+    await wrapper.find('input[name="project-cost-adjustment-project-id"]').setValue('12')
+    await wrapper.find('input[name="project-cost-adjustment-amount"]').setValue('10.000000')
+    await wrapper.find('[data-test="save-project-cost-adjustment"]').trigger('click')
+    await flushPromises()
+
+    expect(projectCostApiMock.adjustments.create).not.toHaveBeenCalled()
   })
 
   it('调整列表和详情按 allowedActions 展示状态动作并保留金额字符串', async () => {

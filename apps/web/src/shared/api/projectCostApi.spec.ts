@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AccountPermissionApiError, type PageResult } from './accountPermissionApi'
 import {
   createProjectCostApi,
+  type ProjectCostAdjustmentLineRecord,
   type ProjectCostActionPayload,
   type ProjectCostAdjustmentPayload,
   type ProjectCostAdjustmentRecord,
@@ -81,6 +82,9 @@ describe('项目成本核算 API', () => {
     adjustmentPayloadUsesDecimalStrings: true as AssertTrue<
       ProjectCostAdjustmentPayload['lines'][number]['amount'] extends string ? true : false
     >,
+    adjustmentLinesAllowRestrictedNullAmounts: true as AssertTrue<
+      ProjectCostAdjustmentLineRecord['amount'] extends string | null ? true : false
+    >,
     publicExpenseCandidateUsesDecimalStrings: true as AssertTrue<
       ProjectCostPublicExpenseCandidate['availableAmount'] extends string | null
         ? ProjectCostPublicExpenseCandidate['taxExcludedAmount'] extends string | null
@@ -97,6 +101,7 @@ describe('项目成本核算 API', () => {
     expect(typeContract).toMatchObject({
       actionsCarryVersionFingerprintAndIdempotencyKey: true,
       adjustmentPayloadUsesDecimalStrings: true,
+      adjustmentLinesAllowRestrictedNullAmounts: true,
       detailsExposePermissionState: true,
       publicExpenseCandidateUsesDecimalStrings: true,
       sourceAndEntryDecimalsStayStrings: true,
@@ -421,5 +426,75 @@ describe('项目成本核算 API', () => {
     })
     expect(JSON.parse(fetcher.mock.calls[1][1].body as string).lines[0]).not.toHaveProperty('sourceExpenseLineId')
     expect(JSON.parse(fetcher.mock.calls[3][1].body as string).lines[0].amount).toBe('50.000000')
+  })
+
+  it('调整详情和受限公共费用候选保留后端 null，不映射成零金额或空 ID', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        id: 301,
+        adjustmentNo: 'PCA-RESTRICTED',
+        adjustmentType: 'PUBLIC_EXPENSE_ALLOCATION',
+        status: 'DRAFT',
+        businessDate: '2026-07-31',
+        amountVisible: false,
+        sourceVisible: false,
+        restrictedReason: '无权查看成本金额',
+        totalAmount: null,
+        version: 3,
+        allowedActions: ['UPDATE'],
+        actionDisabledReasons: {},
+        lines: [{
+          id: 401,
+          projectId: 12,
+          projectNo: 'SP-001',
+          projectName: '华东扩产项目',
+          costCategory: 'MANUFACTURING_OVERHEAD',
+          costStage: 'DIRECT_PROJECT',
+          direction: 'INCREASE',
+          amount: null,
+          publicExpenseLineId: null,
+          sourceNo: null,
+          reason: '受限公共费用分配',
+        }],
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          expenseLineId: null,
+          expenseNo: null,
+          supplierName: null,
+          categoryName: null,
+          businessDate: '2026-07-30',
+          taxExcludedAmount: null,
+          allocatedAmount: null,
+          availableAmount: null,
+          amountVisible: false,
+          sourceVisible: false,
+          restrictedReason: '来源权限受限，仅显示脱敏摘要',
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+    const api = createProjectCostApi({ fetcher })
+
+    await expect(api.adjustments.get(301)).resolves.toMatchObject({
+      amountVisible: false,
+      totalAmount: null,
+      lines: [{
+        amount: null,
+        publicExpenseLineId: null,
+      }],
+    })
+    await expect(api.adjustments.publicExpenseCandidates({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [{
+        amountVisible: false,
+        sourceVisible: false,
+        restrictedReason: '来源权限受限，仅显示脱敏摘要',
+        expenseLineId: null,
+        taxExcludedAmount: null,
+        allocatedAmount: null,
+        availableAmount: null,
+      }],
+    })
   })
 })

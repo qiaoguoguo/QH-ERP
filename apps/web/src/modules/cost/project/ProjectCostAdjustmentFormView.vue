@@ -13,8 +13,10 @@ import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { pageItems, pageTotal } from '../../system/shared/pageHelpers'
 import {
   formatProjectCostAmount,
+  projectCostMessages,
   projectCostErrorMessage,
   restrictedMoneyReason,
+  restrictedSourceReason,
 } from './projectCostPageHelpers'
 import './ProjectCostShared.css'
 
@@ -43,11 +45,35 @@ const form = reactive({
   remark: '',
 })
 
+function candidateRestrictedReason(candidate: ProjectCostPublicExpenseCandidate | null | undefined): string {
+  if (!candidate) {
+    return ''
+  }
+  if (candidate.expenseLineId === null || candidate.expenseLineId === undefined || candidate.expenseLineId === '') {
+    return restrictedSourceReason(candidate) || projectCostMessages.sourceRestricted
+  }
+  return restrictedSourceReason(candidate) || restrictedMoneyReason(candidate) || ''
+}
+
+const adjustmentAmountRestrictedReason = computed(() => {
+  if (detail.value?.amountVisible === false) {
+    return restrictedMoneyReason(detail.value) || projectCostMessages.amountForbidden
+  }
+  if (detail.value?.lines[0]?.amount === null) {
+    return projectCostMessages.amountForbidden
+  }
+  return candidateRestrictedReason(selectedCandidate.value)
+})
+
+const selectedPublicExpenseLineId = computed(() =>
+  selectedCandidate.value?.expenseLineId ?? detail.value?.lines[0]?.publicExpenseLineId ?? null,
+)
+
 const fieldErrors = computed(() => ({
   projectId: form.projectId.trim() ? '' : '请填写目标项目',
   businessDate: form.businessDate ? '' : '请选择业务日期',
-  amount: /^\d+(\.\d{1,6})?$/.test(form.amount.trim()) ? '' : '请填写分配金额，最多六位小数',
-  publicExpense: selectedCandidate.value || isEdit.value ? '' : '请选择公共费用候选',
+  amount: adjustmentAmountRestrictedReason.value || (/^\d+(\.\d{1,6})?$/.test(form.amount.trim()) ? '' : '请填写分配金额，最多六位小数'),
+  publicExpense: selectedPublicExpenseLineId.value ? '' : '请选择公共费用候选',
 }))
 
 const saveDisabledReason = computed(() => {
@@ -137,6 +163,12 @@ function changeProjectCandidatePage(page: number) {
 }
 
 function selectCandidate(candidate: ProjectCostPublicExpenseCandidate) {
+  const restrictedReason = candidateRestrictedReason(candidate)
+  if (restrictedReason) {
+    selectedCandidate.value = null
+    error.value = restrictedReason
+    return
+  }
   selectedCandidate.value = candidate
   if (!form.businessDate && candidate.businessDate) {
     form.businessDate = candidate.businessDate
@@ -167,7 +199,13 @@ async function save() {
   }
   submitting.value = true
   error.value = ''
-  const candidateKey = selectedCandidate.value?.expenseLineId ?? detail.value?.lines[0]?.publicExpenseLineId ?? 'manual'
+  const publicExpenseLineId = selectedPublicExpenseLineId.value
+  if (!publicExpenseLineId) {
+    error.value = projectCostMessages.sourceRestricted
+    submitting.value = false
+    return
+  }
+  const candidateKey = publicExpenseLineId
   const payload = {
     adjustmentType: 'PUBLIC_EXPENSE_ALLOCATION' as const,
     businessDate: form.businessDate,
@@ -181,7 +219,7 @@ async function save() {
       costStage: 'DIRECT_PROJECT' as const,
       direction: 'INCREASE' as const,
       amount: form.amount.trim(),
-      publicExpenseLineId: selectedCandidate.value?.expenseLineId ?? detail.value?.lines[0]?.publicExpenseLineId ?? null,
+      publicExpenseLineId,
       reason: form.remark || '公共费用分配',
     }],
   }
@@ -211,7 +249,7 @@ onMounted(loadData)
     <section class="project-cost-summary-strip">
       <div><span>目标项目</span><strong>{{ selectedProject ? `${selectedProject.projectNo} ${selectedProject.projectName}` : (form.projectId || '待填写') }}</strong></div>
       <div><span>剩余可分配金额</span><strong>{{ formatProjectCostAmount(selectedCandidate?.availableAmount, restrictedMoneyReason(selectedCandidate) || undefined) }}</strong></div>
-      <div><span>本次分配金额</span><strong>{{ formatProjectCostAmount(form.amount || null) }}</strong></div>
+      <div><span>本次分配金额</span><strong>{{ formatProjectCostAmount(form.amount || null, adjustmentAmountRestrictedReason || undefined) }}</strong></div>
       <div><span>高风险说明</span><strong>确认前请核对公共费用来源和项目归属</strong></div>
     </section>
 
@@ -224,7 +262,7 @@ onMounted(loadData)
           <el-date-picker v-model="form.businessDate" value-on-clear="" name="project-cost-adjustment-date" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="业务日期" />
         </el-form-item>
         <el-form-item label="分配金额" :error="fieldErrors.amount || undefined">
-          <el-input v-model="form.amount" name="project-cost-adjustment-amount" placeholder="0.000000" />
+          <el-input v-model="form.amount" name="project-cost-adjustment-amount" placeholder="0.000000" :disabled="Boolean(adjustmentAmountRestrictedReason)" />
         </el-form-item>
         <el-form-item label="原因">
           <el-input v-model="form.reason" placeholder="公共制造费用分配" />
@@ -282,11 +320,11 @@ onMounted(loadData)
             <el-table-column prop="categoryName" label="费用分类" min-width="120" show-overflow-tooltip />
             <el-table-column prop="businessDate" label="业务日期" min-width="110" />
             <el-table-column label="剩余可分配金额" min-width="150" align="right">
-              <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.availableAmount, restrictedMoneyReason(row) || undefined) }}</span></template>
+              <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.availableAmount, candidateRestrictedReason(row) || restrictedMoneyReason(row) || undefined) }}</span></template>
             </el-table-column>
             <el-table-column label="操作" fixed="right" min-width="90">
               <template #default="{ row }">
-                <el-button size="small" text type="primary" data-test="select-public-expense-candidate" @click="selectCandidate(row)">选择</el-button>
+                <el-button size="small" text :type="candidateRestrictedReason(row) ? 'info' : 'primary'" :disabled="Boolean(candidateRestrictedReason(row))" data-test="select-public-expense-candidate" @click="selectCandidate(row)">{{ candidateRestrictedReason(row) ? '受限' : '选择' }}</el-button>
               </template>
             </el-table-column>
           </el-table>

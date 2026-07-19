@@ -258,7 +258,7 @@ export interface ProjectCostAdjustmentLineRecord {
   costCategory: ProjectCostCategory
   costStage: ProjectCostStage
   direction: ProjectCostAdjustmentDirection
-  amount: ProjectCostAmount
+  amount: ProjectCostAmount | null
   publicExpenseLineId?: ResourceId | null
   sourceNo?: string | null
   reason?: string | null
@@ -304,7 +304,7 @@ export interface ProjectCostPublicExpenseCandidateListParams {
 }
 
 export interface ProjectCostPublicExpenseCandidate extends ProjectCostVisibility {
-  expenseLineId: ResourceId
+  expenseLineId: ResourceId | null
   expenseNo: string
   supplierName?: string | null
   categoryName?: string | null
@@ -663,7 +663,7 @@ function mapAdjustmentLine(raw: ApiRecord): ProjectCostAdjustmentLineRecord {
     costCategory: stringValue(raw, 'costCategory', 'category') as ProjectCostCategory,
     costStage: stringValue(raw, 'costStage', 'stage') as ProjectCostStage,
     direction: stringValue(raw, 'direction') as ProjectCostAdjustmentDirection,
-    amount: amountValue(raw, 'amount') ?? '0',
+    amount: amountValue(raw, 'amount'),
     publicExpenseLineId: optionalIdValue(raw, 'publicExpenseLineId', 'sourceExpenseLineId'),
     sourceNo: optionalString(raw, 'sourceNo'),
     reason: optionalString(raw, 'reason', 'remark'),
@@ -693,7 +693,7 @@ function mapPublicExpenseCandidate(raw: ApiRecord): ProjectCostPublicExpenseCand
   return {
     ...raw,
     ...mapVisibility(raw),
-    expenseLineId: idValue(raw, 'expenseLineId', 'publicExpenseLineId'),
+    expenseLineId: optionalIdValue(raw, 'expenseLineId', 'publicExpenseLineId'),
     expenseNo: stringValue(raw, 'expenseNo'),
     supplierName: optionalString(raw, 'supplierName'),
     categoryName: optionalString(raw, 'categoryName'),
