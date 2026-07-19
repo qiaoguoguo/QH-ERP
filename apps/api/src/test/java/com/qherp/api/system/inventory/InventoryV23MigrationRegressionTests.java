@@ -36,7 +36,7 @@ class InventoryV23MigrationRegressionTests {
 	void v1v19v20v21v22v23升级到v24必须补齐预留成本层和盘点估值结构() {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 		assertReservationCostLayerSchema(jdbcTemplate);
 		assertStocktakeValuationSchema(jdbcTemplate);
 
@@ -53,7 +53,7 @@ class InventoryV23MigrationRegressionTests {
 
 			migrate(null);
 
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 			assertReservationCostLayerSchema(jdbcTemplate);
 			assertStocktakeValuationSchema(jdbcTemplate);
 		}
@@ -71,7 +71,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isNull();
 		assertThat(queryText(jdbcTemplate, """
@@ -111,7 +111,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 		assertThat(queryText(jdbcTemplate, """
 				select coalesce(parent_reservation_id::text, 'NULL') || ':' || coalesce(batch_id::text, 'NULL') || ':'
 					|| coalesce(serial_id::text, 'NULL') || ':' || coalesce(cost_layer_id::text, 'NULL')
@@ -145,7 +145,7 @@ class InventoryV23MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 		assertThat(queryLong(jdbcTemplate, "select cost_layer_id from inv_stock_reservation where id = ?",
 				reservationId)).isEqualTo(layerId);
 	}

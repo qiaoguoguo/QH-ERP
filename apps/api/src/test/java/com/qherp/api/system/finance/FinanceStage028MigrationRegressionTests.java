@@ -50,7 +50,7 @@ class FinanceStage028MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("30");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 29)
