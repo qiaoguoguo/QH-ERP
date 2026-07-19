@@ -58,7 +58,7 @@ describe('项目成本核算 API', () => {
     >,
     detailsExposePermissionState: true as AssertTrue<
       ProjectCostProjectDetail extends { amountVisible: boolean; sourceVisible: boolean; restrictedReason?: string | null }
-        ? ProjectCostCalculationDetail extends { version: number; sourceFingerprint: string; allowedActions: string[]; actionDisabledReasons: Record<string, string> }
+        ? ProjectCostCalculationDetail extends { version: number; sourceFingerprint?: string | null; allowedActions: string[]; actionDisabledReasons: Record<string, string> }
           ? true
           : false
         : false
@@ -93,7 +93,7 @@ describe('项目成本核算 API', () => {
         : false
     >,
     actionsCarryVersionFingerprintAndIdempotencyKey: true as AssertTrue<
-      ProjectCostActionPayload extends { version: number; sourceFingerprint?: string; idempotencyKey: string } ? true : false
+      ProjectCostActionPayload extends { version: number; sourceFingerprint?: string | null; idempotencyKey: string } ? true : false
     >,
   }
 

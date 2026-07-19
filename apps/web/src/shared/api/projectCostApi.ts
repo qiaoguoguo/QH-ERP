@@ -617,13 +617,14 @@ function mapSourceRecord(raw: ApiRecord): ProjectCostSourceRecord {
 }
 
 function mapEntryRecord(raw: ApiRecord): ProjectCostEntryRecord {
+  const direction = optionalString(raw, 'direction')
   return {
     ...raw,
     id: idValue(raw, 'id', 'entryId'),
     calculationId: idValue(raw, 'calculationId'),
     category: stringValue(raw, 'category', 'costCategory') as ProjectCostCategory,
     stage: stringValue(raw, 'stage', 'costStage') as ProjectCostStage,
-    direction: optionalString(raw, 'direction'),
+    ...(direction ? { direction } : {}),
     amount: amountValue(raw, 'amount'),
     description: optionalString(raw, 'description'),
     sourceCount: typeof raw.sourceCount === 'number' ? raw.sourceCount : null,

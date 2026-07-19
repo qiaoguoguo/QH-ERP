@@ -68,6 +68,19 @@ const adjustmentAmountRestrictedReason = computed(() => {
 const selectedPublicExpenseLineId = computed(() =>
   selectedCandidate.value?.expenseLineId ?? detail.value?.lines[0]?.publicExpenseLineId ?? null,
 )
+const readOnlyReason = computed(() => {
+  if (!isEdit.value || !detail.value || detail.value.status === 'DRAFT') {
+    return ''
+  }
+  if (detail.value.status === 'CONFIRMED') {
+    return '已确认调整不可编辑'
+  }
+  if (detail.value.status === 'SUBMITTED') {
+    return '已提交调整不可编辑'
+  }
+  return '当前调整不可编辑'
+})
+const isReadOnly = computed(() => Boolean(readOnlyReason.value))
 
 const fieldErrors = computed(() => ({
   projectId: form.projectId.trim() ? '' : '请填写目标项目',
@@ -77,7 +90,8 @@ const fieldErrors = computed(() => ({
 }))
 
 const saveDisabledReason = computed(() => {
-  return fieldErrors.value.projectId
+  return readOnlyReason.value
+    || fieldErrors.value.projectId
     || fieldErrors.value.businessDate
     || fieldErrors.value.publicExpense
     || fieldErrors.value.amount
@@ -147,22 +161,34 @@ async function loadData() {
 }
 
 function selectProject(candidate: ProjectCostWorkbenchRecord) {
+  if (isReadOnly.value) {
+    return
+  }
   selectedProject.value = candidate
   form.projectId = String(candidate.projectId)
 }
 
 function searchProjectCandidates() {
+  if (isReadOnly.value) {
+    return
+  }
   projectCandidatePagination.page = 1
   selectedProject.value = null
   void loadProjectCandidates()
 }
 
 function changeProjectCandidatePage(page: number) {
+  if (isReadOnly.value) {
+    return
+  }
   projectCandidatePagination.page = page
   void loadProjectCandidates()
 }
 
 function selectCandidate(candidate: ProjectCostPublicExpenseCandidate) {
+  if (isReadOnly.value) {
+    return
+  }
   const restrictedReason = candidateRestrictedReason(candidate)
   if (restrictedReason) {
     selectedCandidate.value = null
@@ -179,12 +205,18 @@ function selectCandidate(candidate: ProjectCostPublicExpenseCandidate) {
 }
 
 function searchCandidates() {
+  if (isReadOnly.value) {
+    return
+  }
   candidatePagination.page = 1
   selectedCandidate.value = null
   void loadCandidates()
 }
 
 function changeCandidatePage(page: number) {
+  if (isReadOnly.value) {
+    return
+  }
   candidatePagination.page = page
   void loadCandidates()
 }
@@ -194,7 +226,7 @@ function normalizedProjectId(): ResourceId {
 }
 
 async function save() {
-  if (submitting.value || saveDisabledReason.value) {
+  if (submitting.value || isReadOnly.value || saveDisabledReason.value) {
     return
   }
   submitting.value = true
@@ -239,10 +271,11 @@ onMounted(loadData)
 </script>
 
 <template>
-  <MasterDataTableView :title="isEdit ? '编辑成本调整/分配' : '新增成本调整/分配'" description="选择目标项目和公共费用候选，提交项目制造费用分配草稿。">
+  <MasterDataTableView :title="isReadOnly ? '查看成本调整/分配' : (isEdit ? '编辑成本调整/分配' : '新增成本调整/分配')" description="选择目标项目和公共费用候选，提交项目制造费用分配草稿。">
     <template #alerts>
       <el-alert v-if="error" class="state-alert" type="error" :title="error" :closable="false" />
       <el-alert v-if="loading" class="state-alert" type="info" title="成本调整/分配表单加载中" :closable="false" />
+      <el-alert v-if="readOnlyReason" class="state-alert" type="info" :title="readOnlyReason" :closable="false" />
       <el-alert v-if="saveDisabledReason" class="state-alert" type="warning" :title="saveDisabledReason" :closable="false" />
     </template>
 
@@ -256,19 +289,19 @@ onMounted(loadData)
     <el-form label-position="top" class="project-cost-form">
       <div class="project-cost-form-grid">
         <el-form-item label="目标项目" :error="fieldErrors.projectId || undefined">
-          <el-input v-model="form.projectId" name="project-cost-adjustment-project-id" placeholder="填写项目 ID 或编号" />
+          <el-input v-model="form.projectId" name="project-cost-adjustment-project-id" placeholder="填写项目 ID 或编号" :disabled="isReadOnly" />
         </el-form-item>
         <el-form-item label="业务日期" :error="fieldErrors.businessDate || undefined">
-          <el-date-picker v-model="form.businessDate" value-on-clear="" name="project-cost-adjustment-date" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="业务日期" />
+          <el-date-picker v-model="form.businessDate" value-on-clear="" name="project-cost-adjustment-date" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="业务日期" :disabled="isReadOnly" />
         </el-form-item>
         <el-form-item label="分配金额" :error="fieldErrors.amount || undefined">
-          <el-input v-model="form.amount" name="project-cost-adjustment-amount" placeholder="0.000000" :disabled="Boolean(adjustmentAmountRestrictedReason)" />
+          <el-input v-model="form.amount" name="project-cost-adjustment-amount" placeholder="0.000000" :disabled="isReadOnly || Boolean(adjustmentAmountRestrictedReason)" />
         </el-form-item>
         <el-form-item label="原因">
-          <el-input v-model="form.reason" placeholder="公共制造费用分配" />
+          <el-input v-model="form.reason" placeholder="公共制造费用分配" :disabled="isReadOnly" />
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="form.remark" placeholder="调整说明" />
+          <el-input v-model="form.remark" placeholder="调整说明" :disabled="isReadOnly" />
         </el-form-item>
       </div>
     </el-form>
@@ -278,8 +311,8 @@ onMounted(loadData)
         <div class="project-cost-section-heading">
           <span class="project-cost-section-title">项目候选</span>
           <div class="project-cost-inline-actions">
-            <el-input v-model="projectCandidateFilters.keyword" placeholder="项目编号、名称、客户" />
-            <el-button @click="searchProjectCandidates">查询项目</el-button>
+            <el-input v-model="projectCandidateFilters.keyword" placeholder="项目编号、名称、客户" :disabled="isReadOnly" />
+            <el-button :disabled="isReadOnly" @click="searchProjectCandidates">查询项目</el-button>
           </div>
         </div>
         <div class="table-scroll">
@@ -290,7 +323,7 @@ onMounted(loadData)
             <el-table-column prop="projectStatus" label="状态" min-width="100" />
             <el-table-column label="操作" fixed="right" min-width="90">
               <template #default="{ row }">
-                <el-button size="small" text type="primary" data-test="select-project-cost-project-candidate" @click="selectProject(row)">选择</el-button>
+                <el-button size="small" text :type="isReadOnly ? 'info' : 'primary'" :disabled="isReadOnly" data-test="select-project-cost-project-candidate" @click="selectProject(row)">{{ isReadOnly ? '只读' : '选择' }}</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -309,8 +342,8 @@ onMounted(loadData)
         <div class="project-cost-section-heading">
           <span class="project-cost-section-title">公共费用候选</span>
           <div class="project-cost-inline-actions">
-            <el-input v-model="candidateFilters.keyword" placeholder="费用号、供应商" />
-            <el-button @click="searchCandidates">查询候选</el-button>
+            <el-input v-model="candidateFilters.keyword" placeholder="费用号、供应商" :disabled="isReadOnly" />
+            <el-button :disabled="isReadOnly" @click="searchCandidates">查询候选</el-button>
           </div>
         </div>
         <div class="table-scroll">
@@ -324,7 +357,7 @@ onMounted(loadData)
             </el-table-column>
             <el-table-column label="操作" fixed="right" min-width="90">
               <template #default="{ row }">
-                <el-button size="small" text :type="candidateRestrictedReason(row) ? 'info' : 'primary'" :disabled="Boolean(candidateRestrictedReason(row))" data-test="select-public-expense-candidate" @click="selectCandidate(row)">{{ candidateRestrictedReason(row) ? '受限' : '选择' }}</el-button>
+                <el-button size="small" text :type="isReadOnly || candidateRestrictedReason(row) ? 'info' : 'primary'" :disabled="isReadOnly || Boolean(candidateRestrictedReason(row))" data-test="select-public-expense-candidate" @click="selectCandidate(row)">{{ isReadOnly ? '只读' : (candidateRestrictedReason(row) ? '受限' : '选择') }}</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -343,7 +376,7 @@ onMounted(loadData)
     <div class="project-cost-form-footer">
       <span class="project-cost-danger-note">提交审批前请确认分配金额不得超过公共费用剩余额度。</span>
       <el-button @click="router.push({ name: 'cost-project-cost-adjustments' })">取消</el-button>
-      <el-button data-test="save-project-cost-adjustment" type="primary" :loading="submitting" :disabled="Boolean(saveDisabledReason)" @click="save">保存草稿</el-button>
+      <el-button v-if="!isReadOnly" data-test="save-project-cost-adjustment" type="primary" :loading="submitting" :disabled="Boolean(saveDisabledReason)" @click="save">保存草稿</el-button>
     </div>
   </MasterDataTableView>
 </template>

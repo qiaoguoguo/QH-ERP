@@ -289,6 +289,16 @@ const restrictedAdjustmentRecord: ProjectCostAdjustmentRecord = {
   }],
 }
 
+const confirmedAdjustmentRecord: ProjectCostAdjustmentRecord = {
+  ...adjustmentRecord,
+  status: 'CONFIRMED',
+  approvalStatus: 'CONFIRMED',
+  allowedActions: [],
+  actionDisabledReasons: {
+    UPDATE: '已确认调整不可编辑',
+  },
+}
+
 const publicExpenseCandidate: ProjectCostPublicExpenseCandidate = {
   expenseLineId: 801,
   expenseNo: 'EXP-001',
@@ -594,6 +604,23 @@ describe('029 项目成本页面族', () => {
     await flushPromises()
 
     expect(projectCostApiMock.adjustments.create).not.toHaveBeenCalled()
+  })
+
+  it('已确认调整访问编辑路由时呈现只读态且没有保存动作', async () => {
+    projectCostApiMock.adjustments.get.mockResolvedValueOnce(confirmedAdjustmentRecord)
+    const { wrapper } = await mountCostView(ProjectCostAdjustmentFormView, '/cost/project-cost-adjustments/301/edit')
+
+    expect(wrapper.text()).toContain('已确认调整不可编辑')
+    expect(wrapper.find('[data-test="save-project-cost-adjustment"]').exists()).toBe(false)
+    expect(wrapper.find('input[name="project-cost-adjustment-project-id"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('input[name="project-cost-adjustment-amount"]').attributes('disabled')).toBeDefined()
+
+    const publicCandidateButton = wrapper.find('[data-test="select-public-expense-candidate"]')
+    expect(publicCandidateButton.attributes('disabled')).toBeDefined()
+    await publicCandidateButton.trigger('click')
+    await flushPromises()
+
+    expect(projectCostApiMock.adjustments.update).not.toHaveBeenCalled()
   })
 
   it('调整列表和详情按 allowedActions 展示状态动作并保留金额字符串', async () => {
