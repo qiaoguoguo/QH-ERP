@@ -8,16 +8,16 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 31; checksum = -1120716708'::text,
+        'latest successful version = 31; checksum = -2074547591'::text,
         (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 31
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -1120716708),
-        'Flyway 最新成功版本必须为 V31，checksum 必须为 -1120716708。'::text
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -2074547591),
+        'Flyway 最新成功版本必须为 V31，checksum 必须为 -2074547591。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
     union all select 'FLYWAY_V31_CHECKSUM', 'migration',
         concat('version=31;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
-        'version 31 checksum = -1120716708',
-        coalesce((array_agg(checksum))[1], 0) = -1120716708,
-        'Flyway V31 checksum 必须保持 -1120716708。'
+        'version 31 checksum = -2074547591',
+        coalesce((array_agg(checksum))[1], 0) = -2074547591,
+        'Flyway V31 checksum 必须保持 -2074547591。'
         from flyway_schema_history where success and version = '31'
     union all select 'FLYWAY_V30_CHECKSUM', 'migration',
         concat('version=30;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),

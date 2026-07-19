@@ -88,7 +88,7 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
-$expectedV31Checksum = "-1120716708"
+$expectedV31Checksum = "-2074547591"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
