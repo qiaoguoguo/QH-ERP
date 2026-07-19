@@ -46,6 +46,7 @@
 - [项目生产执行与外协基础任务记录](tasks/027-project-production-outsourcing-foundation.md)
 - [027A 现存问题闭环与页面规范治理任务记录（已完成）](tasks/027a-existing-issues-page-governance-remediation.md)
 - [028 发票、费用与往来深化任务记录（已正式交付）](tasks/028-invoice-expense-settlement-deepening.md)
+- [029 项目成本核算任务记录（已正式交付）](tasks/029-project-cost-accounting.md)
 
 021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。
 
