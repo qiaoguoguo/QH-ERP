@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDate;
+
 @RestController
 @RequestMapping("/api/admin/cost")
 public class ProjectCostAdminController {
@@ -32,15 +34,27 @@ public class ProjectCostAdminController {
 	}
 
 	@GetMapping("/project-costs")
-	public ApiResponse<PageResponse<ProjectCostQueryService.CalculationResponse>> calculations(
-			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String status,
+	public ApiResponse<PageResponse<ProjectCostQueryService.WorkbenchResponse>> calculations(
+			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String keyword,
+			@RequestParam(required = false) Long ownerUserId, @RequestParam(required = false) String projectStatus,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String calculationStatus,
+			@RequestParam(required = false) String freshnessStatus,
+			@RequestParam(required = false) String varianceStatus,
+			@RequestParam(required = false) String completenessStatus,
+			@RequestParam(required = false) LocalDate cutoffDateFrom,
+			@RequestParam(required = false) LocalDate cutoffDateTo,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.calculations(projectId, status, page, pageSize, currentUser));
+		String effectiveCalculationStatus = calculationStatus == null ? status : calculationStatus;
+		ProjectCostQueryService.ProjectCostListFilter filter =
+				new ProjectCostQueryService.ProjectCostListFilter(projectId, keyword, ownerUserId, projectStatus,
+						effectiveCalculationStatus, freshnessStatus, varianceStatus, completenessStatus,
+						cutoffDateFrom, cutoffDateTo);
+		return ApiResponse.ok(this.queryService.calculations(filter, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/project-costs/projects/{projectId}")
-	public ApiResponse<ProjectCostQueryService.CalculationResponse> projectCalculation(@PathVariable Long projectId,
+	public ApiResponse<ProjectCostQueryService.ProjectDetailResponse> projectCalculation(@PathVariable Long projectId,
 			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.queryService.projectCalculation(projectId, currentUser));
 	}
@@ -60,32 +74,57 @@ public class ProjectCostAdminController {
 
 	@GetMapping("/project-cost-calculations/{id}/sources")
 	public ApiResponse<PageResponse<ProjectCostQueryService.SourceLineResponse>> sources(@PathVariable Long id,
+			@RequestParam(required = false) String category, @RequestParam(required = false) String stage,
+			@RequestParam(required = false) String sourceStatus, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
+			@RequestParam(required = false) Boolean sourceRestricted,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "100") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.sources(id, page, pageSize, currentUser));
+		ProjectCostQueryService.SourceListFilter filter = new ProjectCostQueryService.SourceListFilter(category,
+				stage, sourceStatus, sourceType, projectId, businessDateFrom, businessDateTo, sourceRestricted);
+		return ApiResponse.ok(this.queryService.sources(id, filter, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/project-cost-calculations/{id}/entries")
 	public ApiResponse<PageResponse<ProjectCostQueryService.EntryResponse>> entries(@PathVariable Long id,
-			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "100") int pageSize) {
-		return ApiResponse.ok(this.queryService.entries(id, page, pageSize));
+			@RequestParam(required = false) String category, @RequestParam(required = false) String stage,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "100") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		ProjectCostQueryService.EntryListFilter filter = new ProjectCostQueryService.EntryListFilter(category, stage);
+		return ApiResponse.ok(this.queryService.entries(id, filter, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/project-cost-calculations/{id}/variances")
 	public ApiResponse<PageResponse<ProjectCostQueryService.VarianceResponse>> calculationVariances(
-			@PathVariable Long id, @RequestParam(defaultValue = "1") int page,
+			@PathVariable Long id, @RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) String severity, @RequestParam(required = false) String varianceType,
+			@RequestParam(required = false) String type, @RequestParam(required = false) String status,
+			@RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
+			@RequestParam(required = false) Boolean sourceRestricted, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "100") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.variances(id, page, pageSize, currentUser));
+		ProjectCostQueryService.VarianceListFilter filter = new ProjectCostQueryService.VarianceListFilter(projectId,
+				varianceType == null ? type : varianceType, severity, status, sourceType, businessDateFrom,
+				businessDateTo, sourceRestricted);
+		return ApiResponse.ok(this.queryService.variances(id, filter, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/project-cost-variances")
 	public ApiResponse<PageResponse<ProjectCostQueryService.VarianceResponse>> variances(
 			@RequestParam(required = false) Long projectId, @RequestParam(required = false) String severity,
-			@RequestParam(required = false) String type, @RequestParam(required = false) String status,
+			@RequestParam(required = false) String varianceType, @RequestParam(required = false) String type,
+			@RequestParam(required = false) String status, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
 			@RequestParam(required = false) Boolean sourceRestricted, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.variances(projectId, severity, type, status, sourceRestricted, page,
-				pageSize, currentUser));
+		ProjectCostQueryService.VarianceListFilter filter = new ProjectCostQueryService.VarianceListFilter(projectId,
+				varianceType == null ? type : varianceType, severity, status, sourceType, businessDateFrom,
+				businessDateTo, sourceRestricted);
+		return ApiResponse.ok(this.queryService.variances(null, filter, page, pageSize, currentUser));
 	}
 
 	@PutMapping("/project-cost-calculations/{id}/recalculate")
@@ -111,16 +150,27 @@ public class ProjectCostAdminController {
 
 	@GetMapping("/project-cost-adjustments/candidates/public-expenses")
 	public ApiResponse<PageResponse<ProjectCostAdjustmentService.PublicExpenseCandidateResponse>> publicExpenses(
-			@RequestParam(required = false) String keyword, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Long supplierId,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.adjustmentService.publicExpenseCandidates(keyword, page, pageSize, currentUser));
+		return ApiResponse.ok(this.adjustmentService.publicExpenseCandidates(keyword, supplierId, businessDateFrom,
+				businessDateTo, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/project-cost-adjustments")
 	public ApiResponse<PageResponse<ProjectCostAdjustmentService.AdjustmentResponse>> adjustments(
-			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String status,
+			@RequestParam(required = false) Long projectId,
+			@RequestParam(required = false) LocalDate businessDateFrom,
+			@RequestParam(required = false) LocalDate businessDateTo,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "20") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.adjustmentService.list(status, page, pageSize, currentUser));
+		ProjectCostAdjustmentService.AdjustmentListFilter filter =
+				new ProjectCostAdjustmentService.AdjustmentListFilter(keyword, status, projectId, businessDateFrom,
+						businessDateTo);
+		return ApiResponse.ok(this.adjustmentService.list(filter, page, pageSize, currentUser));
 	}
 
 	@PostMapping("/project-cost-adjustments")

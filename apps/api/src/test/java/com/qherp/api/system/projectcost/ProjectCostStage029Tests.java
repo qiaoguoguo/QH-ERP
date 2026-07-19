@@ -50,7 +50,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 	void 项目成本核算汇总838并形成9162发货毛利且不改写上游来源() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		StageFixture fixture = createFullCostFixture("029_FULL_", true);
-		Map<String, Long> upstreamBefore = upstreamCounts();
+		Map<String, String> upstreamBefore = upstreamRowSummaries();
 
 		ResponseEntity<String> calculationResponse = exchange(HttpMethod.POST,
 				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
@@ -59,12 +59,17 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		JsonNode calculation = data(calculationResponse);
 
 		assertThat(calculation.get("status").asText()).isEqualTo("CALCULATED");
+		assertThat(calculation.get("calculationStatus").asText()).isEqualTo("CALCULATED");
+		assertThat(calculation.get("freshnessStatus").asText()).isEqualTo("STALE");
+		assertThat(calculation.get("completenessStatus").asText()).isEqualTo("COMPLETE");
 		assertDecimal(calculation, "projectCostTotal", "838.00");
+		assertDecimal(calculation, "totalCost", "838.00");
 		assertDecimal(calculation, "wipCost", "0.00");
 		assertDecimal(calculation, "finishedCost", "0.00");
 		assertDecimal(calculation, "deliveredCost", "588.00");
 		assertDecimal(calculation, "directProjectCost", "250.00");
 		assertDecimal(calculation, "shipmentRevenue", "10000.00");
+		assertDecimal(calculation, "shipmentPretaxRevenue", "10000.00");
 		assertDecimal(calculation, "invoiceRevenue", "10000.00");
 		assertDecimal(calculation, "targetRevenue", "12000.00");
 		assertDecimal(calculation, "shipmentGrossMargin", "9162.00");
@@ -72,18 +77,22 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		assertDecimal(calculation, "targetGrossMargin", "11162.00");
 		assertThat(calculation.get("marginCompleteness").asText()).isEqualTo("COMPLETE");
 		assertThat(calculation.get("sourceFingerprint").asText()).isNotBlank();
+		assertThat(calculation.get("actionDisabledReasons").isObject()).isTrue();
 		assertThat(calculation.get("isCurrent").booleanValue()).isFalse();
-		assertThat(upstreamCounts()).isEqualTo(upstreamBefore);
+		assertThat(upstreamRowSummaries()).isEqualTo(upstreamBefore);
 
 		long calculationId = calculation.get("id").longValue();
-		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/sources",
+		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/" + calculationId
+				+ "/sources?page=1&pageSize=100",
 				admin)).get("items");
 		assertThat(sources.size()).isGreaterThanOrEqualTo(8);
-		assertThat(sumByCategory(sources, "MATERIAL")).isEqualByComparingTo("168.00");
+		assertThat(dbSumByCategory(calculationId, "MATERIAL")).isEqualByComparingTo("168.00");
+		assertThat(sumByCategory(sources, "MATERIAL")).as("API source material sum").isEqualByComparingTo("168.00");
 		assertThat(sumByCategory(sources, "LABOR")).isEqualByComparingTo("300.00");
 		assertThat(sumByCategory(sources, "OUTSOURCING")).isEqualByComparingTo("120.00");
 		assertThat(sumByCategory(sources, "PROJECT_EXPENSE")).isEqualByComparingTo("200.00");
 		assertThat(sumByCategory(sources, "MANUFACTURING_OVERHEAD")).isEqualByComparingTo("50.00");
+		assertThat(sourceStatuses(sources)).contains("ACTUAL", "ADJUSTED");
 		assertThat(sourceKeys(sources)).hasSize(sources.size());
 		assertThat(sourceTypes(sources)).doesNotContain("MFG_COST_RECORD_MATERIAL");
 
@@ -92,7 +101,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		assertThat(hasVariance(variances, "OUTSOURCING_ACTUAL_VARIANCE")).isTrue();
 		ResponseEntity<String> globalVarianceResponse = get("/api/admin/cost/project-cost-variances?projectId="
 				+ fixture.projectId()
-				+ "&severity=WARNING&type=OUTSOURCING_ACTUAL_VARIANCE&status=OPEN&sourceRestricted=false&page=1&pageSize=20",
+				+ "&severity=WARNING&varianceType=OUTSOURCING_ACTUAL_VARIANCE&status=OPEN&sourceRestricted=false&page=1&pageSize=20",
 				admin);
 		assertThat(globalVarianceResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		JsonNode globalVariances = data(globalVarianceResponse).get("items");
@@ -128,7 +137,7 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 						"pc-cancel-readonly-" + calculationId), admin), HttpStatus.CONFLICT,
 				"PROJECT_COST_ACTION_NOT_ALLOWED");
 		assertThat(currentCalculationIds(fixture.projectId())).containsExactly(calculationId);
-		assertThat(upstreamCounts()).isEqualTo(upstreamBefore);
+		assertThat(upstreamRowSummaries()).isEqualTo(upstreamBefore);
 	}
 
 	@Test
@@ -187,6 +196,129 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
 						"pc-confirm-unpriced-" + calculation.get("id").longValue()),
 				admin), HttpStatus.CONFLICT, "PROJECT_COST_LABOR_UNPRICED");
+	}
+
+	@Test
+	void 阶段比例必须按完工和净发货拆分且阶段转移不重复增加项目总成本() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_RATIO_", false);
+		this.jdbcTemplate.update("""
+				update mfg_work_order
+				set planned_quantity = 2.000000, updated_at = now()
+				where id = ?
+				""", fixture.workOrderId());
+
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey", "pc-calc-ratio-" + fixture.projectId()),
+				admin));
+
+		assertDecimal(calculation, "projectCostTotal", "788.00");
+		assertDecimal(calculation, "wipCost", "234.00");
+		assertDecimal(calculation, "finishedCost", "0.00");
+		assertDecimal(calculation, "deliveredCost", "354.00");
+		assertDecimal(calculation, "directProjectCost", "200.00");
+	}
+
+	@Test
+	void 外协发料纳入材料且销售退货按原发货未税单价扣减主收入() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_OUT_ISSUE_RETURN_", false);
+		insertOutsourcingMaterialIssue(fixture, "70.00");
+		insertSalesReturn(fixture.projectId(), "0.500000");
+
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-out-return-" + fixture.projectId()),
+				admin));
+
+		assertDecimal(calculation, "projectCostTotal", "858.00");
+		assertDecimal(calculation, "shipmentRevenue", "7500.00");
+		assertDecimal(calculation, "shipmentGrossMargin", "6642.00");
+		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculation.get("id").longValue() + "/sources?page=1&pageSize=100", admin)).get("items");
+		assertThat(sourceTypes(sources)).contains("PRODUCTION_OUTSOURCING_ISSUE");
+		assertThat(dbSumByCategory(calculation.get("id").longValue(), "MATERIAL")).isEqualByComparingTo("238.00");
+		assertThat(sumByCategory(sources, "MATERIAL")).as("API source material sum").isEqualByComparingTo("238.00");
+	}
+
+	@Test
+	void 外协没有实际发票且没有合法暂估时生成阻断差异并禁止确认() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_OUT_UNPRICED_", false);
+		this.jdbcTemplate.update("""
+				delete from fin_purchase_invoice_line
+				where source_line_id = ?
+				""", fixture.outsourcingReceiptLineId());
+		this.jdbcTemplate.update("""
+				delete from fin_purchase_invoice
+				where project_id = ?
+				and settlement_kind = 'OUTSOURCING'
+				""", fixture.projectId());
+		this.jdbcTemplate.update("""
+				update mfg_outsourcing_receipt_line
+				set provisional_unit_cost = null, unit_cost = null, updated_at = now()
+				where id = ?
+				""", fixture.outsourcingReceiptLineId());
+		this.jdbcTemplate.update("""
+				update mfg_outsourcing_receipt
+				set provisional_unit_cost = null, unit_cost = null, updated_at = now()
+				where id = ?
+				""", fixture.outsourcingReceiptId());
+		this.jdbcTemplate.update("""
+				update mfg_outsourcing_order
+				set provisional_unit_cost = null, updated_at = now()
+				where id = ?
+				""", fixture.outsourcingOrderId());
+
+		JsonNode calculation = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+						"pc-calc-out-unpriced-" + fixture.projectId()),
+				admin));
+		JsonNode variances = data(get("/api/admin/cost/project-cost-calculations/"
+				+ calculation.get("id").longValue() + "/variances", admin)).get("items");
+		assertThat(hasVariance(variances, "SOURCE_UNPRICED")).isTrue();
+		assertThat(hasVarianceSeverity(variances, "SOURCE_UNPRICED", "BLOCKING")).isTrue();
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + calculation.get("id").longValue() + "/confirm",
+				Map.of("version", calculation.get("version").longValue(), "sourceFingerprint",
+						calculation.get("sourceFingerprint").asText(), "idempotencyKey",
+						"pc-confirm-out-unpriced-" + calculation.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_SOURCE_UNVALUED");
+	}
+
+	@Test
+	void 核算动作幂等必须同键同载荷重放且同键异载荷返回稳定冲突() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		StageFixture fixture = createFullCostFixture("029_ACTION_IDEMPOTENT_", false);
+		Map<String, Object> payload = Map.of("cutoffDate", "2026-07-31", "idempotencyKey",
+				"pc-calc-idem-" + fixture.projectId());
+
+		JsonNode first = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations", payload,
+				admin));
+		JsonNode repeated = data(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations", payload,
+				admin));
+		assertThat(repeated.get("id").longValue()).isEqualTo(first.get("id").longValue());
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/cost/project-costs/projects/" + fixture.projectId() + "/calculations",
+				Map.of("cutoffDate", "2026-07-30", "idempotencyKey", "pc-calc-idem-" + fixture.projectId()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_IDEMPOTENCY_CONFLICT");
+
+		JsonNode recalculated = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + first.get("id").longValue() + "/recalculate",
+				Map.of("version", first.get("version").longValue(), "idempotencyKey",
+						"pc-recalc-idem-" + first.get("id").longValue()),
+				admin));
+		JsonNode recalculateRepeated = data(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-calculations/" + first.get("id").longValue() + "/recalculate",
+				Map.of("version", first.get("version").longValue(), "idempotencyKey",
+						"pc-recalc-idem-" + first.get("id").longValue()),
+				admin));
+		assertThat(recalculateRepeated.get("id").longValue()).isEqualTo(recalculated.get("id").longValue());
 	}
 
 	@Test
@@ -250,6 +382,9 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				unitId, warehouseId, "1.000000", "100.000000");
 		long outsourcingReceiptLineId = insertOutsourcingReceipt(codePrefix + "ORC", outsourcingOrderId, projectId,
 				productId, unitId, warehouseId, "1.000000", "100.000000");
+		long outsourcingReceiptId = this.jdbcTemplate.queryForObject(
+				"select receipt_id from mfg_outsourcing_receipt_line where id = ?", Long.class,
+				outsourcingReceiptLineId);
 		insertPurchaseInvoice(codePrefix + "PI", supplierId, projectId, outsourcingOrderId, outsourcingReceiptLineId,
 				productId, unitId, "120.00");
 		insertSalesShipmentAndInvoice(codePrefix + "SAL", customerId, projectId, contractId, productId, unitId,
@@ -258,7 +393,8 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		if (includeConfirmedAllocation) {
 			insertConfirmedAdjustmentAllocation(codePrefix + "ADJ", projectId, expenseLineId, "50.00");
 		}
-		return new StageFixture(projectId, workOrderId, productId, firstValueMovementId);
+		return new StageFixture(projectId, workOrderId, productId, rawId, unitId, warehouseId,
+				firstValueMovementId, outsourcingOrderId, outsourcingReceiptId, outsourcingReceiptLineId);
 	}
 
 	private long insertUnit(String code) {
@@ -652,6 +788,76 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				amount, quantity, amount, amount);
 	}
 
+	private void insertOutsourcingMaterialIssue(StageFixture fixture, String amount) {
+		long orderMaterialId = this.jdbcTemplate.queryForObject("""
+				select id
+				from mfg_outsourcing_order_material
+				where outsourcing_order_id = ?
+				and material_id = ?
+				""", Long.class, fixture.outsourcingOrderId(), fixture.rawMaterialId());
+		long issueId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_outsourcing_issue (
+					issue_no, outsourcing_order_id, status, business_date, reason, created_by, created_at,
+					updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, 'POSTED', date '2026-07-15', '029外协发料', 'test', now(), 'test', now(),
+					'test', now())
+				returning id
+				""", Long.class, "029-OUT-ISS-" + SEQUENCE.incrementAndGet(), fixture.outsourcingOrderId());
+		long lineId = this.jdbcTemplate.queryForObject("""
+				insert into mfg_outsourcing_issue_line (
+					issue_id, order_material_id, line_no, warehouse_id, material_id, unit_id, quantity,
+					ownership_type, project_id, created_at, updated_at
+				)
+				values (?, ?, 1, ?, ?, ?, 1.000000, 'PUBLIC', null, now(), now())
+				returning id
+				""", Long.class, issueId, orderMaterialId, fixture.warehouseId(), fixture.rawMaterialId(),
+				fixture.unitId());
+		long valueMovementId = insertValueMovement("PRODUCTION_OUTSOURCING_ISSUE", lineId, lineId,
+				"OUTSOURCING_ISSUE", "OUT", fixture.warehouseId(), fixture.rawMaterialId(),
+				fixture.unitId(), null, "1.000000", amount, LocalDate.of(2026, 7, 15));
+		this.jdbcTemplate.update("""
+				update mfg_outsourcing_issue_line
+				set value_movement_id = ?
+				where id = ?
+				""", valueMovementId, lineId);
+	}
+
+	private void insertSalesReturn(long projectId, String quantity) {
+		Map<String, Object> shipment = this.jdbcTemplate.queryForMap("""
+				select sh.id as shipment_id, sh.shipment_no, sh.customer_id, sh.warehouse_id,
+				       sl.id as shipment_line_id, sl.order_line_id, sl.material_id, sl.unit_id,
+				       sl.tax_excluded_unit_price
+				from sal_sales_shipment_line sl
+				join sal_sales_shipment sh on sh.id = sl.shipment_id
+				join sal_sales_order so on so.id = sh.order_id
+				where so.project_id = ?
+				order by sl.id
+				limit 1
+				""", projectId);
+		BigDecimal unitPrice = (BigDecimal) shipment.get("tax_excluded_unit_price");
+		BigDecimal amount = unitPrice.multiply(new BigDecimal(quantity)).setScale(2);
+		long returnId = this.jdbcTemplate.queryForObject("""
+				insert into sal_sales_return (
+					return_no, customer_id, source_shipment_id, source_shipment_no, warehouse_id, business_date,
+					status, total_amount, created_by, created_at, updated_by, updated_at, posted_by, posted_at
+				)
+				values (?, ?, ?, ?, ?, date '2026-07-28', 'POSTED', ?, 'test', now(), 'test', now(), 'test',
+					now())
+				returning id
+				""", Long.class, "029-SRET-" + SEQUENCE.incrementAndGet(), shipment.get("customer_id"),
+				shipment.get("shipment_id"), shipment.get("shipment_no"), shipment.get("warehouse_id"), amount);
+		this.jdbcTemplate.update("""
+				insert into sal_sales_return_line (
+					return_id, source_shipment_line_id, sales_order_line_id, material_id, unit_id, line_no,
+					returned_quantity_before, returnable_quantity_before, quantity, unit_price, amount,
+					reason, created_at, updated_at
+				)
+				values (?, ?, ?, ?, ?, 1, 0, ?::numeric, ?::numeric, ?, ?, '029销售退货', now(), now())
+				""", returnId, shipment.get("shipment_line_id"), shipment.get("order_line_id"),
+				shipment.get("material_id"), shipment.get("unit_id"), quantity, quantity, unitPrice, amount);
+	}
+
 	private void insertLegacyMaterialCostRecord(String no, long workOrderId, long productId, long rawId, long unitId,
 			long issueLineId) {
 		long issueId = this.jdbcTemplate.queryForObject(
@@ -692,6 +898,29 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 				"fin_expense", tableCount("fin_expense"));
 	}
 
+	private Map<String, String> upstreamRowSummaries() {
+		return Map.of("inv_value_movement", rowSummary("""
+				select id, inventory_amount, valuation_state, source_type, source_id, source_line_id
+				from inv_value_movement
+				"""), "mfg_cost_record", rowSummary("""
+				select id, amount, status, source_document_type, source_document_id, source_line_id, updated_at
+				from mfg_cost_record
+				"""), "fin_purchase_invoice", rowSummary("""
+				select id, tax_excluded_amount, status, source_type, source_id, linked_payable_id, updated_at
+				from fin_purchase_invoice
+				"""), "fin_expense", rowSummary("""
+				select id, tax_excluded_amount, status, ownership_type, project_id, linked_payable_id, updated_at
+				from fin_expense
+				"""));
+	}
+
+	private String rowSummary(String sql) {
+		return this.jdbcTemplate.queryForObject("""
+				select md5(coalesce(string_agg(row_to_json(t)::text, '|' order by row_to_json(t)::text), ''))
+				from (%s) t
+				""".formatted(sql), String.class);
+	}
+
 	private long tableCount(String tableName) {
 		return this.jdbcTemplate.queryForObject("select count(*) from " + tableName, Long.class);
 	}
@@ -716,6 +945,15 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		return total;
 	}
 
+	private BigDecimal dbSumByCategory(Long calculationId, String category) {
+		return this.jdbcTemplate.queryForObject("""
+				select coalesce(sum(calculated_amount), 0)
+				from prj_cost_source_line
+				where calculation_id = ?
+				and cost_category = ?
+				""", BigDecimal.class, calculationId, category);
+	}
+
 	private Set<String> sourceKeys(JsonNode sources) {
 		Set<String> keys = new HashSet<>();
 		for (JsonNode source : sources) {
@@ -734,9 +972,27 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 		return types;
 	}
 
+	private Set<String> sourceStatuses(JsonNode sources) {
+		Set<String> statuses = new HashSet<>();
+		for (JsonNode source : sources) {
+			statuses.add(source.get("sourceStatus").asText());
+		}
+		return statuses;
+	}
+
 	private boolean hasVariance(JsonNode variances, String varianceType) {
 		for (JsonNode variance : variances) {
 			if (varianceType.equals(variance.get("varianceType").asText())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean hasVarianceSeverity(JsonNode variances, String varianceType, String severity) {
+		for (JsonNode variance : variances) {
+			if (varianceType.equals(variance.get("varianceType").asText())
+					&& severity.equals(variance.get("severity").asText())) {
 				return true;
 			}
 		}
@@ -826,8 +1082,9 @@ class ProjectCostStage029Tests extends PostgresIntegrationTest {
 	private record AuthenticatedSession(String sessionCookie, CsrfSession csrfSession) {
 	}
 
-	private record StageFixture(Long projectId, Long workOrderId, Long productMaterialId,
-			Long firstValueMovementId) {
+	private record StageFixture(Long projectId, Long workOrderId, Long productMaterialId, Long rawMaterialId,
+			Long unitId, Long warehouseId, Long firstValueMovementId, Long outsourcingOrderId,
+			Long outsourcingReceiptId, Long outsourcingReceiptLineId) {
 	}
 
 }

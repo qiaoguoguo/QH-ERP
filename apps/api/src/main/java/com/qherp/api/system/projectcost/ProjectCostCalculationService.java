@@ -29,6 +29,8 @@ public class ProjectCostCalculationService {
 
 	private static final String TARGET_TYPE = "PROJECT_COST_CALCULATION";
 
+	private static final String PROJECT_TARGET_TYPE = "PROJECT";
+
 	private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2, RoundingMode.HALF_UP);
 
 	private static final DateTimeFormatter NUMBER_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
@@ -58,6 +60,15 @@ public class ProjectCostCalculationService {
 	public ProjectCostQueryService.CalculationResponse calculate(Long projectId, CalculationRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		validateProject(projectId);
+		String requestFingerprint = fingerprint("CALCULATE|" + projectId + "|" + request.cutoffDate());
+		ProjectCostActionRecord existing =
+				idempotentAction(operator, "CALCULATE", PROJECT_TARGET_TYPE, projectId, request.idempotencyKey());
+		if (existing != null) {
+			if (!requestFingerprint.equals(existing.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_IDEMPOTENCY_CONFLICT);
+			}
+			return this.queryService.calculation(existing.resultId(), operator);
+		}
 		ProjectCostSourceCollector.CollectionResult collected = this.sourceCollector.collect(projectId,
 				request.cutoffDate());
 		ProjectCostEntryBuilder.EntryBuildResult entries = this.entryBuilder.build(collected.sources(),
@@ -89,8 +100,7 @@ public class ProjectCostCalculationService {
 					grossMarginRate(metrics.invoiceGrossMargin(), collected.revenue().invoiceRevenue()),
 					grossMarginRate(metrics.targetGrossMargin(), collected.revenue().targetRevenue()),
 					metrics.marginCompleteness(), metrics.completenessReason(), request.idempotencyKey(),
-					fingerprint("CALCULATE|" + projectId + "|" + request.cutoffDate() + "|"
-							+ request.idempotencyKey()),
+					requestFingerprint,
 					operator.username(), now, operator.username(), now);
 		}
 		catch (DuplicateKeyException exception) {
@@ -99,12 +109,23 @@ public class ProjectCostCalculationService {
 		writeSnapshot(id, collected, entries);
 		this.auditService.record(operator, "PROJECT_COST_CALCULATE", TARGET_TYPE, id, projectId.toString(),
 				servletRequest);
+		recordAction(operator, "CALCULATE", PROJECT_TARGET_TYPE, projectId, request.idempotencyKey(),
+				requestFingerprint, id);
 		return this.queryService.calculation(id, operator);
 	}
 
 	@Transactional
 	public ProjectCostQueryService.CalculationResponse recalculate(Long id, VersionedActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		String requestFingerprint = fingerprint("RECALCULATE|" + id + "|" + request.version());
+		ProjectCostActionRecord existing = idempotentAction(operator, "RECALCULATE", TARGET_TYPE, id,
+				request.idempotencyKey());
+		if (existing != null) {
+			if (!requestFingerprint.equals(existing.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_IDEMPOTENCY_CONFLICT);
+			}
+			return this.queryService.calculation(existing.resultId(), operator);
+		}
 		CalculationState state = lockCalculation(id);
 		requireVersion(state, request.version());
 		if (!"CALCULATED".equals(state.status())) {
@@ -146,12 +167,23 @@ public class ProjectCostCalculationService {
 		writeSnapshot(id, collected, entries);
 		this.auditService.record(operator, "PROJECT_COST_RECALCULATE", TARGET_TYPE, id, state.calculationNo(),
 				servletRequest);
+		recordAction(operator, "RECALCULATE", TARGET_TYPE, id, request.idempotencyKey(), requestFingerprint, id);
 		return this.queryService.calculation(id, operator);
 	}
 
 	@Transactional
 	public ProjectCostQueryService.CalculationResponse confirm(Long id, ConfirmRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		String requestFingerprint =
+				fingerprint("CONFIRM|" + id + "|" + request.version() + "|" + request.sourceFingerprint());
+		ProjectCostActionRecord existing =
+				idempotentAction(operator, "CONFIRM", TARGET_TYPE, id, request.idempotencyKey());
+		if (existing != null) {
+			if (!requestFingerprint.equals(existing.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_IDEMPOTENCY_CONFLICT);
+			}
+			return this.queryService.calculation(existing.resultId(), operator);
+		}
 		CalculationState state = lockCalculation(id);
 		requireVersion(state, request.version());
 		if (!"CALCULATED".equals(state.status())) {
@@ -168,7 +200,7 @@ public class ProjectCostCalculationService {
 					&& "LABOR".equals(variance.costCategory()))) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_LABOR_UNPRICED);
 		}
-		if (current.variances().stream().anyMatch((variance) -> "ERROR".equals(variance.severity()))) {
+		if (current.variances().stream().anyMatch((variance) -> "BLOCKING".equals(variance.severity()))) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_SOURCE_UNVALUED);
 		}
 		OffsetDateTime now = OffsetDateTime.now();
@@ -190,12 +222,22 @@ public class ProjectCostCalculationService {
 		}
 		this.auditService.record(operator, "PROJECT_COST_CONFIRM", TARGET_TYPE, id, state.calculationNo(),
 				servletRequest);
+		recordAction(operator, "CONFIRM", TARGET_TYPE, id, request.idempotencyKey(), requestFingerprint, id);
 		return this.queryService.calculation(id, operator);
 	}
 
 	@Transactional
 	public ProjectCostQueryService.CalculationResponse cancel(Long id, VersionedActionRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		String requestFingerprint = fingerprint("CANCEL|" + id + "|" + request.version());
+		ProjectCostActionRecord existing =
+				idempotentAction(operator, "CANCEL", TARGET_TYPE, id, request.idempotencyKey());
+		if (existing != null) {
+			if (!requestFingerprint.equals(existing.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_IDEMPOTENCY_CONFLICT);
+			}
+			return this.queryService.calculation(existing.resultId(), operator);
+		}
 		CalculationState state = lockCalculation(id);
 		requireVersion(state, request.version());
 		if (!"CALCULATED".equals(state.status()) && !"DRAFT".equals(state.status())) {
@@ -209,6 +251,7 @@ public class ProjectCostCalculationService {
 				""", operator.username(), OffsetDateTime.now(), operator.username(), OffsetDateTime.now(), id);
 		this.auditService.record(operator, "PROJECT_COST_CANCEL", TARGET_TYPE, id, state.calculationNo(),
 				servletRequest);
+		recordAction(operator, "CANCEL", TARGET_TYPE, id, request.idempotencyKey(), requestFingerprint, id);
 		return this.queryService.calculation(id, operator);
 	}
 
@@ -224,7 +267,7 @@ public class ProjectCostCalculationService {
 		BigDecimal targetMargin = collected.revenue().targetRevenue().subtract(total).setScale(2, RoundingMode.HALF_UP);
 		boolean incomplete = wip.compareTo(BigDecimal.ZERO) > 0 || collected.variances()
 			.stream()
-			.anyMatch((variance) -> "ERROR".equals(variance.severity())
+			.anyMatch((variance) -> "BLOCKING".equals(variance.severity())
 					|| "OUTSOURCING_PROVISIONAL".equals(variance.varianceType()));
 		return new Metrics(total, wip, finished, delivered, direct, shipmentMargin, invoiceMargin, targetMargin,
 				incomplete ? "INCOMPLETE" : "COMPLETE", incomplete ? "存在未闭合来源或差异" : null);
@@ -295,6 +338,50 @@ public class ProjectCostCalculationService {
 		}
 	}
 
+	private ProjectCostActionRecord idempotentAction(CurrentUser operator, String action, String resourceType,
+			Long resourceId, String idempotencyKey) {
+		if (operator == null || operator.id() == null || !hasText(idempotencyKey)) {
+			return null;
+		}
+		return this.jdbcTemplate.query("""
+				select request_fingerprint, result_id
+				from prj_cost_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and resource_id = ?
+				and idempotency_key = ?
+				""", (rs, rowNum) -> new ProjectCostActionRecord(rs.getString("request_fingerprint"),
+				rs.getLong("result_id")), operator.id(), action, resourceType, resourceId, idempotencyKey)
+			.stream()
+			.findFirst()
+			.orElse(null);
+	}
+
+	private void recordAction(CurrentUser operator, String action, String resourceType, Long resourceId,
+			String idempotencyKey, String requestFingerprint, Long resultId) {
+		if (operator == null || operator.id() == null || !hasText(idempotencyKey)) {
+			return;
+		}
+		try {
+			this.jdbcTemplate.update("""
+					insert into prj_cost_action_idempotency (
+						operator_user_id, action, resource_type, resource_id, idempotency_key,
+						request_fingerprint, result_id
+					)
+					values (?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), action, resourceType, resourceId, idempotencyKey, requestFingerprint,
+					resultId);
+		}
+		catch (DuplicateKeyException exception) {
+			ProjectCostActionRecord existing = idempotentAction(operator, action, resourceType, resourceId,
+					idempotencyKey);
+			if (existing == null || !requestFingerprint.equals(existing.requestFingerprint())) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_IDEMPOTENCY_CONFLICT);
+			}
+		}
+	}
+
 	private CalculationState lockCalculation(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, project_id, calculation_no, cutoff_date, status, source_fingerprint, version
@@ -347,6 +434,10 @@ public class ProjectCostCalculationService {
 		}
 	}
 
+	private static boolean hasText(String value) {
+		return value != null && !value.isBlank();
+	}
+
 	public record CalculationRequest(LocalDate cutoffDate, String idempotencyKey) {
 	}
 
@@ -358,6 +449,9 @@ public class ProjectCostCalculationService {
 
 	private record CalculationState(Long id, Long projectId, String calculationNo, LocalDate cutoffDate,
 			String status, String sourceFingerprint, Long version) {
+	}
+
+	private record ProjectCostActionRecord(String requestFingerprint, Long resultId) {
 	}
 
 	private record Metrics(BigDecimal projectCostTotal, BigDecimal wipCost, BigDecimal finishedCost,

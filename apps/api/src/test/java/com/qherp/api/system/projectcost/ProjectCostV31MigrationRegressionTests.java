@@ -74,6 +74,40 @@ class ProjectCostV31MigrationRegressionTests {
 		assertThat(constraint(jdbcTemplate, "prj_cost_entry", "ck_prj_cost_entry_type"))
 			.contains("SOURCE_TO_WIP", "WIP_TO_FINISHED", "FINISHED_TO_DELIVERED", "PROJECT_DIRECT",
 					"PROJECT_ADJUSTMENT", "COST_VARIANCE");
+		assertThat(constraint(jdbcTemplate, "prj_cost_adjustment", "ck_prj_cost_adjustment_type"))
+			.contains("PROJECT_ADJUSTMENT", "PUBLIC_EXPENSE_ALLOCATION", "VARIANCE_SETTLEMENT")
+			.doesNotContain("MANUAL_ADJUSTMENT");
+		assertThat(constraint(jdbcTemplate, "prj_cost_adjustment_line", "ck_prj_cost_adjustment_line_category"))
+			.contains("ADJUSTMENT");
+		assertThat(constraint(jdbcTemplate, "prj_cost_source_line", "ck_prj_cost_source_line_status"))
+			.contains("ACTUAL", "PROVISIONAL", "UNPRICED", "ADJUSTED", "RESTRICTED", "EXCLUDED");
+		assertThat(constraint(jdbcTemplate, "prj_cost_variance", "ck_prj_cost_variance_severity"))
+			.contains("INFO", "WARNING", "BLOCKING")
+			.doesNotContain("ERROR");
+		assertThat(constraint(jdbcTemplate, "prj_cost_variance", "ck_prj_cost_variance_status"))
+			.contains("OPEN", "RESOLVED", "SUPERSEDED")
+			.doesNotContain("CLOSED");
+	}
+
+	@Test
+	void v1到v31空库迁移一次性完成并初始化项目成本权限和约束() {
+		migrate(null);
+		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
+
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("31");
+		Map<String, Integer> checksums = migrationChecksums(jdbcTemplate);
+		assertThat(checksums.get("29")).isEqualTo(774334682);
+		assertThat(checksums.get("30")).isEqualTo(2130342893);
+		for (String table : PROJECT_COST_TABLES) {
+			assertThat(tableExists(jdbcTemplate, table)).as(table).isTrue();
+		}
+		assertThat(permissionCount(jdbcTemplate, PROJECT_COST_PERMISSIONS)).isEqualTo(PROJECT_COST_PERMISSIONS.size());
+		assertThat(systemAdminPermissionCount(jdbcTemplate, PROJECT_COST_PERMISSIONS))
+			.isEqualTo(PROJECT_COST_PERMISSIONS.size());
+		assertThat(constraint(jdbcTemplate, "prj_cost_variance", "ck_prj_cost_variance_severity"))
+			.contains("BLOCKING");
+		assertThat(constraint(jdbcTemplate, "prj_cost_variance", "ck_prj_cost_variance_status"))
+			.contains("RESOLVED", "SUPERSEDED");
 	}
 
 	private Map<String, Long> upstreamCounts(JdbcTemplate jdbcTemplate) {

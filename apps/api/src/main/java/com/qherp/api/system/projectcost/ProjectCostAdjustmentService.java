@@ -26,6 +26,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
 @Service
@@ -53,9 +54,9 @@ public class ProjectCostAdjustmentService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<PublicExpenseCandidateResponse> publicExpenseCandidates(String keyword, int page, int pageSize,
-			CurrentUser currentUser) {
-		QueryParts query = publicExpenseQuery(keyword);
+	public PageResponse<PublicExpenseCandidateResponse> publicExpenseCandidates(String keyword, Long supplierId,
+			LocalDate businessDateFrom, LocalDate businessDateTo, int page, int pageSize, CurrentUser currentUser) {
+		QueryParts query = publicExpenseQuery(keyword, supplierId, businessDateFrom, businessDateTo);
 		long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from fin_expense_line l
@@ -73,7 +74,7 @@ public class ProjectCostAdjustmentService {
 					       from prj_cost_adjustment_line al
 					       join prj_cost_adjustment a on a.id = al.adjustment_id
 					       where al.public_expense_line_id = l.id
-					       and a.status = 'CONFIRMED'
+					       and a.status in ('SUBMITTED', 'CONFIRMED')
 				       ), 0) as allocated_amount
 				from fin_expense_line l
 				join fin_expense e on e.id = l.expense_id
@@ -88,6 +89,7 @@ public class ProjectCostAdjustmentService {
 	public AdjustmentResponse create(AdjustmentRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		validateRequest(request);
+		request = normalized(request);
 		String requestFingerprint = fingerprint(request.toString());
 		AdjustmentState existing = idempotentAdjustment(operator.username(), request.idempotencyKey());
 		if (existing != null) {
@@ -133,13 +135,11 @@ public class ProjectCostAdjustmentService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<AdjustmentResponse> list(String status, int page, int pageSize, CurrentUser currentUser) {
-		List<Object> args = new ArrayList<>();
-		String where = "";
-		if (hasText(status)) {
-			where = "where status = ?";
-			args.add(status.trim().toUpperCase());
-		}
+	public PageResponse<AdjustmentResponse> list(AdjustmentListFilter filter, int page, int pageSize,
+			CurrentUser currentUser) {
+		QueryParts query = adjustmentQuery(filter);
+		List<Object> args = new ArrayList<>(query.args());
+		String where = query.where();
 		long total = this.jdbcTemplate.queryForObject("select count(*) from prj_cost_adjustment " + where, Long.class,
 				args.toArray());
 		args.add(limit(pageSize));
@@ -173,6 +173,7 @@ public class ProjectCostAdjustmentService {
 		if (!"DRAFT".equals(state.status())) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ACTION_NOT_ALLOWED);
 		}
+		request = normalized(request);
 		validateRequest(request);
 		for (AdjustmentLineRequest line : request.lines()) {
 			validateAvailable(line.publicExpenseLineId(), line.amount(), id);
@@ -209,6 +210,7 @@ public class ProjectCostAdjustmentService {
 		if (!"DRAFT".equals(state.status())) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ACTION_NOT_ALLOWED);
 		}
+		validateAdjustmentAvailability(id, false);
 		PlatformApprovalService.ApprovalInstanceRecord approval = this.approvalService.submitProjectCostAdjustment(id,
 				new PlatformApprovalService.ApprovalSubmitRequest(state.version(), request.reason(),
 						request.idempotencyKey()),
@@ -255,6 +257,7 @@ public class ProjectCostAdjustmentService {
 		if (!state.version().equals(version) || !"SUBMITTED".equals(state.status())) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ACTION_NOT_ALLOWED);
 		}
+		validateAdjustmentAvailability(id, true);
 		this.jdbcTemplate.update("""
 				update prj_cost_adjustment
 				set status = 'CONFIRMED', confirmed_by = ?, confirmed_at = ?, updated_by = ?, updated_at = ?,
@@ -291,19 +294,41 @@ public class ProjectCostAdjustmentService {
 
 	private AdjustmentResponse mapAdjustment(ResultSet rs, CurrentUser currentUser) throws SQLException {
 		boolean amountVisible = amountVisible(currentUser);
+		boolean sourceVisible = sourceVisible(currentUser);
 		Long id = rs.getLong("id");
 		BigDecimal total = scale(this.jdbcTemplate.queryForObject("""
 				select coalesce(sum(amount), 0)
 				from prj_cost_adjustment_line
 				where adjustment_id = ?
 				""", BigDecimal.class, id));
+		String status = rs.getString("status");
 		return new AdjustmentResponse(id, rs.getString("adjustment_no"), rs.getString("adjustment_type"),
-				rs.getObject("business_date", LocalDate.class), rs.getString("status"), rs.getString("reason"),
+				rs.getObject("business_date", LocalDate.class), status, rs.getString("reason"),
 				amount(amountVisible, total), nullableLong(rs, "approval_instance_id"), rs.getLong("version"),
-				amountVisible, allowedActions(rs.getString("status")));
+				amountVisible, sourceVisible, sourceVisible ? null : "来源权限受限，仅显示脱敏摘要",
+				status, null, null, allowedActions(status), actionDisabledReasons(status),
+				lines(id, amountVisible, sourceVisible));
 	}
 
-	private QueryParts publicExpenseQuery(String keyword) {
+	private List<AdjustmentLineResponse> lines(Long adjustmentId, boolean amountVisible, boolean sourceVisible) {
+		return this.jdbcTemplate.query("""
+				select l.id, l.line_no, l.project_id, p.project_no, p.name as project_name, l.cost_category,
+				       l.cost_stage, l.direction, l.amount, l.public_expense_line_id, l.reason, e.expense_no
+				from prj_cost_adjustment_line l
+				join sal_project p on p.id = l.project_id
+				left join fin_expense_line el on el.id = l.public_expense_line_id
+				left join fin_expense e on e.id = el.expense_id
+				where l.adjustment_id = ?
+				order by l.line_no
+				""", (rs, rowNum) -> new AdjustmentLineResponse(rs.getLong("id"), rs.getLong("project_id"),
+				rs.getString("project_no"), rs.getString("project_name"), rs.getString("cost_category"),
+				rs.getString("cost_stage"), rs.getString("direction"), amount(amountVisible, rs.getBigDecimal("amount")),
+				sourceVisible ? nullableLong(rs, "public_expense_line_id") : null,
+				sourceVisible ? rs.getString("expense_no") : null, rs.getString("reason")), adjustmentId);
+	}
+
+	private QueryParts publicExpenseQuery(String keyword, Long supplierId, LocalDate businessDateFrom,
+			LocalDate businessDateTo) {
 		List<String> conditions = new ArrayList<>();
 		List<Object> args = new ArrayList<>();
 		conditions.add("e.status = 'CONFIRMED'");
@@ -313,7 +338,55 @@ public class ProjectCostAdjustmentService {
 			args.add("%" + keyword.trim() + "%");
 			args.add("%" + keyword.trim() + "%");
 		}
+		if (supplierId != null) {
+			conditions.add("e.supplier_id = ?");
+			args.add(supplierId);
+		}
+		if (businessDateFrom != null) {
+			conditions.add("e.expense_date >= ?");
+			args.add(businessDateFrom);
+		}
+		if (businessDateTo != null) {
+			conditions.add("e.expense_date <= ?");
+			args.add(businessDateTo);
+		}
 		return new QueryParts("where " + String.join(" and ", conditions), args);
+	}
+
+	private QueryParts adjustmentQuery(AdjustmentListFilter filter) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (filter != null) {
+			if (hasText(filter.keyword())) {
+				conditions.add("(adjustment_no ilike ? or reason ilike ?)");
+				args.add("%" + filter.keyword().trim() + "%");
+				args.add("%" + filter.keyword().trim() + "%");
+			}
+			if (hasText(filter.status())) {
+				conditions.add("status = ?");
+				args.add(filter.status().trim().toUpperCase());
+			}
+			if (filter.projectId() != null) {
+				conditions.add("""
+						exists (
+							select 1
+							from prj_cost_adjustment_line l
+							where l.adjustment_id = prj_cost_adjustment.id
+							and l.project_id = ?
+						)
+						""");
+				args.add(filter.projectId());
+			}
+			if (filter.businessDateFrom() != null) {
+				conditions.add("business_date >= ?");
+				args.add(filter.businessDateFrom());
+			}
+			if (filter.businessDateTo() != null) {
+				conditions.add("business_date <= ?");
+				args.add(filter.businessDateTo());
+			}
+		}
+		return new QueryParts(conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions), args);
 	}
 
 	private void validateRequest(AdjustmentRequest request) {
@@ -322,13 +395,44 @@ public class ProjectCostAdjustmentService {
 				|| request.lines().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		if (!List.of("PROJECT_ADJUSTMENT", "PUBLIC_EXPENSE_ALLOCATION", "VARIANCE_SETTLEMENT")
+			.contains(request.adjustmentType().trim().toUpperCase())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
 		for (AdjustmentLineRequest line : request.lines()) {
 			if (line.projectId() == null || !hasText(line.costCategory()) || !hasText(line.costStage())
 					|| !hasText(line.direction()) || line.amount() == null
 					|| line.amount().compareTo(BigDecimal.ZERO) <= 0) {
 				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 			}
+			if (!List.of("MATERIAL", "LABOR", "OUTSOURCING", "MANUFACTURING_OVERHEAD", "PROJECT_EXPENSE",
+					"ADJUSTMENT").contains(line.costCategory().trim().toUpperCase())
+					|| !List.of("WIP", "FINISHED", "DELIVERED", "DIRECT_PROJECT")
+						.contains(line.costStage().trim().toUpperCase())
+					|| !List.of("INCREASE", "DECREASE").contains(line.direction().trim().toUpperCase())) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+			if ("PUBLIC_EXPENSE_ALLOCATION".equals(request.adjustmentType().trim().toUpperCase())
+					&& line.publicExpenseLineId() == null) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
 		}
+	}
+
+	private AdjustmentRequest normalized(AdjustmentRequest request) {
+		if (request == null || request.lines() == null) {
+			return request;
+		}
+		List<AdjustmentLineRequest> lines = request.lines()
+			.stream()
+			.map((line) -> new AdjustmentLineRequest(line.projectId(),
+					line.costCategory() == null ? null : line.costCategory().trim().toUpperCase(),
+					line.costStage() == null ? null : line.costStage().trim().toUpperCase(),
+					line.direction() == null ? null : line.direction().trim().toUpperCase(), line.amount(),
+					line.publicExpenseLineId(), line.reason()))
+			.toList();
+		return new AdjustmentRequest(request.adjustmentType() == null ? null : request.adjustmentType().trim().toUpperCase(),
+				request.businessDate(), request.reason(), request.idempotencyKey(), lines);
 	}
 
 	private void validateAvailable(Long publicExpenseLineId, BigDecimal amount, Long currentAdjustmentId) {
@@ -354,6 +458,59 @@ public class ProjectCostAdjustmentService {
 		if (allocated.add(scale(amount)).compareTo(total) > 0) {
 			throw new BusinessException(ApiErrorCode.PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED);
 		}
+	}
+
+	private void validateAdjustmentAvailability(Long adjustmentId, boolean includeCurrentSubmitted) {
+		List<AllocationLine> lines = this.jdbcTemplate.query("""
+				select public_expense_line_id, sum(amount) as amount
+				from prj_cost_adjustment_line
+				where adjustment_id = ?
+				and public_expense_line_id is not null
+				group by public_expense_line_id
+				order by public_expense_line_id
+				""", (rs, rowNum) -> new AllocationLine(rs.getLong("public_expense_line_id"),
+				rs.getBigDecimal("amount")), adjustmentId);
+		for (AllocationLine line : lines) {
+			lockPublicExpenseLine(line.publicExpenseLineId());
+			BigDecimal total = scale(this.jdbcTemplate.queryForObject("""
+					select l.tax_excluded_amount
+					from fin_expense_line l
+					join fin_expense e on e.id = l.expense_id
+					where l.id = ?
+					and e.status = 'CONFIRMED'
+					and e.ownership_type = 'PUBLIC'
+					""", BigDecimal.class, line.publicExpenseLineId()));
+			String currentFilter = includeCurrentSubmitted ? "" : "and a.id <> ?";
+			List<Object> args = new ArrayList<>();
+			args.add(line.publicExpenseLineId());
+			if (!includeCurrentSubmitted) {
+				args.add(adjustmentId);
+			}
+			BigDecimal allocated = scale(this.jdbcTemplate.queryForObject("""
+					select coalesce(sum(al.amount), 0)
+					from prj_cost_adjustment_line al
+					join prj_cost_adjustment a on a.id = al.adjustment_id
+					where al.public_expense_line_id = ?
+					and a.status in ('SUBMITTED', 'CONFIRMED')
+					%s
+					""".formatted(currentFilter), BigDecimal.class, args.toArray()));
+			BigDecimal candidate = includeCurrentSubmitted ? allocated : allocated.add(scale(line.amount()));
+			if (candidate.compareTo(total) > 0) {
+				throw new BusinessException(ApiErrorCode.PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED);
+			}
+		}
+	}
+
+	private void lockPublicExpenseLine(Long publicExpenseLineId) {
+		this.jdbcTemplate.queryForObject("""
+				select l.id
+				from fin_expense_line l
+				join fin_expense e on e.id = l.expense_id
+				where l.id = ?
+				and e.status = 'CONFIRMED'
+				and e.ownership_type = 'PUBLIC'
+				for update of l
+				""", Long.class, publicExpenseLineId);
 	}
 
 	private AdjustmentState idempotentAdjustment(String username, String idempotencyKey) {
@@ -401,9 +558,16 @@ public class ProjectCostAdjustmentService {
 
 	private List<String> allowedActions(String status) {
 		if ("DRAFT".equals(status)) {
-			return List.of("SUBMIT", "CANCEL");
+			return List.of("UPDATE", "SUBMIT", "CANCEL");
 		}
 		return List.of();
+	}
+
+	private Map<String, String> actionDisabledReasons(String status) {
+		if ("DRAFT".equals(status)) {
+			return Map.of();
+		}
+		return Map.of("UPDATE", "当前状态不允许更新", "SUBMIT", "当前状态不允许提交", "CANCEL", "当前状态不允许取消");
 	}
 
 	private String nextAdjustmentNo() {
@@ -413,6 +577,10 @@ public class ProjectCostAdjustmentService {
 
 	private boolean amountVisible(CurrentUser currentUser) {
 		return currentUser != null && currentUser.permissions().contains("cost:project-cost:amount-view");
+	}
+
+	private boolean sourceVisible(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("finance:expense:view");
 	}
 
 	private String amount(boolean amountVisible, BigDecimal amount) {
@@ -468,9 +636,20 @@ public class ProjectCostAdjustmentService {
 	public record VersionedRequest(Long version, String idempotencyKey) {
 	}
 
+	public record AdjustmentListFilter(String keyword, String status, Long projectId, LocalDate businessDateFrom,
+			LocalDate businessDateTo) {
+	}
+
 	public record AdjustmentResponse(Long id, String adjustmentNo, String adjustmentType, LocalDate businessDate,
 			String status, String reason, String totalAmount, Long approvalInstanceId, Long version,
-			boolean amountVisible, List<String> allowedActions) {
+			boolean amountVisible, boolean sourceVisible, String restrictedReason, String approvalStatus,
+			String rejectedReason, String originalAdjustmentNo, List<String> allowedActions,
+			Map<String, String> actionDisabledReasons, List<AdjustmentLineResponse> lines) {
+	}
+
+	public record AdjustmentLineResponse(Long id, Long projectId, String projectNo, String projectName,
+			String costCategory, String costStage, String direction, String amount, Long publicExpenseLineId,
+			String sourceNo, String reason) {
 	}
 
 	public record PublicExpenseCandidateResponse(Long expenseId, String expenseNo, Long expenseLineId,
@@ -483,6 +662,9 @@ public class ProjectCostAdjustmentService {
 
 	private record AdjustmentState(Long id, String adjustmentNo, String status, String requestFingerprint,
 			Long version) {
+	}
+
+	private record AllocationLine(Long publicExpenseLineId, BigDecimal amount) {
 	}
 
 }

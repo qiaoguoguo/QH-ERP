@@ -78,11 +78,14 @@ create table prj_cost_source_line (
 	constraint fk_prj_cost_source_line_calculation foreign key (calculation_id) references prj_cost_calculation (id) on delete cascade,
 	constraint fk_prj_cost_source_line_project foreign key (project_id) references sal_project (id),
 	constraint ck_prj_cost_source_line_category check (
-		cost_category in ('MATERIAL', 'LABOR', 'OUTSOURCING', 'MANUFACTURING_OVERHEAD', 'PROJECT_EXPENSE')
+		cost_category in ('MATERIAL', 'LABOR', 'OUTSOURCING', 'MANUFACTURING_OVERHEAD', 'PROJECT_EXPENSE', 'ADJUSTMENT')
 	),
 	constraint ck_prj_cost_source_line_stage check (cost_stage in ('WIP', 'FINISHED', 'DELIVERED', 'DIRECT_PROJECT')),
 	constraint ck_prj_cost_source_line_entry check (
 		entry_type in ('SOURCE_TO_WIP', 'WIP_TO_FINISHED', 'FINISHED_TO_DELIVERED', 'PROJECT_DIRECT', 'PROJECT_ADJUSTMENT', 'COST_VARIANCE')
+	),
+	constraint ck_prj_cost_source_line_status check (
+		source_status is null or source_status in ('ACTUAL', 'PROVISIONAL', 'UNPRICED', 'ADJUSTED', 'RESTRICTED', 'EXCLUDED')
 	)
 );
 
@@ -156,7 +159,7 @@ create table prj_cost_adjustment (
 	version bigint not null default 0,
 	constraint uk_prj_cost_adjustment_no unique (adjustment_no),
 	constraint fk_prj_cost_adjustment_approval foreign key (approval_instance_id) references platform_approval_instance (id),
-	constraint ck_prj_cost_adjustment_type check (adjustment_type in ('PUBLIC_EXPENSE_ALLOCATION', 'MANUAL_ADJUSTMENT')),
+	constraint ck_prj_cost_adjustment_type check (adjustment_type in ('PROJECT_ADJUSTMENT', 'PUBLIC_EXPENSE_ALLOCATION', 'VARIANCE_SETTLEMENT')),
 	constraint ck_prj_cost_adjustment_status check (status in ('DRAFT', 'SUBMITTED', 'CONFIRMED', 'REJECTED', 'CANCELLED'))
 );
 
@@ -181,7 +184,7 @@ create table prj_cost_adjustment_line (
 	constraint fk_prj_cost_adjustment_line_expense_line foreign key (public_expense_line_id) references fin_expense_line (id),
 	constraint uk_prj_cost_adjustment_line_no unique (adjustment_id, line_no),
 	constraint ck_prj_cost_adjustment_line_category check (
-		cost_category in ('MATERIAL', 'LABOR', 'OUTSOURCING', 'MANUFACTURING_OVERHEAD', 'PROJECT_EXPENSE')
+		cost_category in ('MATERIAL', 'LABOR', 'OUTSOURCING', 'MANUFACTURING_OVERHEAD', 'PROJECT_EXPENSE', 'ADJUSTMENT')
 	),
 	constraint ck_prj_cost_adjustment_line_stage check (cost_stage in ('WIP', 'FINISHED', 'DELIVERED', 'DIRECT_PROJECT')),
 	constraint ck_prj_cost_adjustment_line_direction check (direction in ('INCREASE', 'DECREASE')),
@@ -212,8 +215,8 @@ create table prj_cost_variance (
 	updated_at timestamptz not null,
 	constraint fk_prj_cost_variance_calculation foreign key (calculation_id) references prj_cost_calculation (id) on delete cascade,
 	constraint fk_prj_cost_variance_project foreign key (project_id) references sal_project (id),
-	constraint ck_prj_cost_variance_severity check (severity in ('INFO', 'WARNING', 'ERROR')),
-	constraint ck_prj_cost_variance_status check (status in ('OPEN', 'CLOSED')),
+	constraint ck_prj_cost_variance_severity check (severity in ('INFO', 'WARNING', 'BLOCKING')),
+	constraint ck_prj_cost_variance_status check (status in ('OPEN', 'RESOLVED', 'SUPERSEDED')),
 	constraint ck_prj_cost_variance_amount check (variance_amount is null or variance_amount >= 0)
 );
 

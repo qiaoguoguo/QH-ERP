@@ -1,6 +1,8 @@
 package com.qherp.api.system.projectcost;
 
 import com.qherp.api.support.PostgresIntegrationTest;
+import com.qherp.api.security.CurrentUser;
+import com.qherp.api.system.user.SystemUserStatus;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.resttestclient.TestRestTemplate;
@@ -48,6 +50,9 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 	@Autowired
 	private PasswordEncoder passwordEncoder;
 
+	@Autowired
+	private ProjectCostAdjustmentService adjustmentService;
+
 	@Test
 	void 项目成本调整接口必须走冻结路径提交022审批并执行幂等和超额校验() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -71,6 +76,13 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(created.get("status").asText()).isEqualTo("DRAFT");
 		assertThat(created.get("adjustmentType").asText()).isEqualTo("PUBLIC_EXPENSE_ALLOCATION");
 		assertDecimal(created, "totalAmount", "80.00");
+		assertThat(created.get("lines").size()).isOne();
+		assertThat(created.get("lines").get(0).get("costCategory").asText()).isEqualTo("MANUFACTURING_OVERHEAD");
+		assertThat(created.get("lines").get(0).get("costStage").asText()).isEqualTo("DIRECT_PROJECT");
+		assertThat(created.get("lines").get(0).get("publicExpenseLineId").longValue())
+			.isEqualTo(fixture.expenseLineId());
+		assertThat(created.get("approvalStatus").asText()).isEqualTo("DRAFT");
+		assertThat(created.get("actionDisabledReasons").isObject()).isTrue();
 		assertThat(actionCodes(created.get("allowedActions"))).contains("SUBMIT", "CANCEL");
 
 		JsonNode repeated = data(exchange(HttpMethod.POST, "/api/admin/cost/project-cost-adjustments", payload,
@@ -90,6 +102,18 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(submitted.get("approvalInstanceId").longValue()).isGreaterThan(0);
 		assertThat(approvalScene(submitted.get("approvalInstanceId").longValue()))
 			.isEqualTo("PROJECT_COST_ADJUSTMENT_CONFIRM");
+		JsonNode occupiedCandidate = data(get(
+				"/api/admin/cost/project-cost-adjustments/candidates/public-expenses?keyword=" + fixture.expenseNo(),
+				admin)).get("items").get(0);
+		assertDecimal(occupiedCandidate, "allocatedAmount", "80.00");
+		assertDecimal(occupiedCandidate, "availableAmount", "20.00");
+		JsonNode overDraft = data(exchange(HttpMethod.POST, "/api/admin/cost/project-cost-adjustments",
+				adjustmentPayload(fixture, "30.00", "pc-adj-submitted-over-" + fixture.projectId()), admin));
+		assertError(exchange(HttpMethod.PUT,
+				"/api/admin/cost/project-cost-adjustments/" + overDraft.get("id").longValue() + "/submit",
+				Map.of("version", overDraft.get("version").longValue(), "reason", "提交后占用超额",
+						"idempotencyKey", "pc-adj-submit-over-" + overDraft.get("id").longValue()),
+				admin), HttpStatus.CONFLICT, "PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED");
 
 		PublicExpenseFixture overAllocated = createPublicExpenseFixture("029_OVER_");
 		long confirmedId = insertConfirmedAllocation(overAllocated.projectId(), overAllocated.expenseLineId(),
@@ -101,6 +125,14 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 				Map.of("version", version("prj_cost_adjustment", confirmedId), "idempotencyKey",
 						"pc-adj-confirmed-cancel-" + confirmedId),
 				admin), HttpStatus.CONFLICT, "PROJECT_COST_ACTION_NOT_ALLOWED");
+
+		long directlySubmittedId = insertSubmittedAllocation(fixture.projectId(), fixture.expenseLineId(), "30.00");
+		long directlySubmittedVersion = version("prj_cost_adjustment", directlySubmittedId);
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> this.adjustmentService.confirmFromApproval(
+				directlySubmittedId, directlySubmittedVersion, adminUser(), null))
+			.isInstanceOf(com.qherp.api.common.BusinessException.class)
+			.satisfies((exception) -> assertThat(((com.qherp.api.common.BusinessException) exception).errorCode())
+				.isEqualTo(com.qherp.api.common.ApiErrorCode.PROJECT_COST_ADJUSTMENT_OVER_ALLOCATED));
 	}
 
 	@Test
@@ -114,7 +146,8 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
 
 		AuthenticatedSession noAmount = createUserAndLogin("pc-no-amount-", "PC_NO_AMOUNT_",
-				List.of("cost:project-cost-adjustment:view", "cost:project-cost-variance:view"));
+				List.of("cost:project-cost:view", "cost:project-cost:source-view",
+						"cost:project-cost-adjustment:view", "cost:project-cost-variance:view"));
 		ResponseEntity<String> candidateResponse = get(
 				"/api/admin/cost/project-cost-adjustments/candidates/public-expenses?keyword=" + fixture.expenseNo(),
 				noAmount);
@@ -128,7 +161,7 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(candidate.get("availableAmount").isNull()).isTrue();
 
 		ResponseEntity<String> varianceResponse = get("/api/admin/cost/project-cost-variances?projectId="
-				+ varianceProjectId + "&severity=ERROR&type=SOURCE_UNPRICED&status=OPEN&sourceRestricted=true",
+				+ varianceProjectId + "&severity=BLOCKING&varianceType=SOURCE_UNPRICED&status=OPEN&sourceRestricted=true",
 				noAmount);
 		assertThat(varianceResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
 		JsonNode variances = data(varianceResponse).get("items");
@@ -137,6 +170,63 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(variance.get("amountVisible").booleanValue()).isFalse();
 		assertThat(variance.get("varianceAmount").isNull()).isTrue();
 		assertThat(variance.get("sourceRestricted").booleanValue()).isTrue();
+		assertThat(variance.get("sourceVisible").booleanValue()).isFalse();
+		assertThat(variance.get("sourceId").isNull()).isTrue();
+		assertThat(variance.get("sourceLineId").isNull()).isTrue();
+
+		long calculationId = calculationId(varianceProjectId);
+		JsonNode entries = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/entries",
+				noAmount)).get("items");
+		assertThat(entries.size()).isOne();
+		assertThat(entries.get(0).get("amountVisible").booleanValue()).isFalse();
+		assertThat(entries.get(0).get("amount").isNull()).isTrue();
+		JsonNode sources = data(get("/api/admin/cost/project-cost-calculations/" + calculationId + "/sources",
+				noAmount)).get("items");
+		assertThat(sources.size()).isOne();
+		JsonNode source = sources.get(0);
+		assertThat(source.get("sourceVisible").booleanValue()).isFalse();
+		assertThat(source.get("restrictedReason").asText()).contains("来源权限受限");
+		assertThat(source.get("sourceSummary").asText()).contains("受限来源");
+		assertThat(source.get("sourceId").isNull()).isTrue();
+		assertThat(source.get("sourceLineId").isNull()).isTrue();
+		assertThat(source.get("sourceNo").isNull()).isTrue();
+		assertThat(source.get("quantity").isNull()).isTrue();
+	}
+
+	@Test
+	void 项目存在但暂无核算时详情返回合法空摘要() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PublicExpenseFixture fixture = createPublicExpenseFixture("029_EMPTY_PROJECT_");
+
+		ResponseEntity<String> response = get("/api/admin/cost/project-costs/projects/" + fixture.projectId(), admin);
+
+		assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode detail = data(response);
+		assertThat(detail.get("projectId").longValue()).isEqualTo(fixture.projectId());
+		assertThat(detail.get("latestCalculationId").isNull()).isTrue();
+		assertThat(detail.get("calculationId").isNull()).isTrue();
+		assertThat(detail.get("categorySummaries").isArray()).isTrue();
+		assertThat(detail.get("categorySummaries").size()).isZero();
+		assertThat(detail.get("stageSummaries").size()).isZero();
+		assertThat(detail.get("calculations").size()).isZero();
+		assertThat(detail.get("auditSummary").size()).isZero();
+	}
+
+	@Test
+	void 调整类型必须使用冻结三类且支持项目调整和差异结算持久化() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		PublicExpenseFixture fixture = createPublicExpenseFixture("029_ADJ_TYPES_");
+
+		JsonNode projectAdjustment = data(exchange(HttpMethod.POST, "/api/admin/cost/project-cost-adjustments",
+				manualAdjustmentPayload(fixture, "PROJECT_ADJUSTMENT", "pc-adj-type-project-" + fixture.projectId()),
+				admin));
+		assertThat(projectAdjustment.get("adjustmentType").asText()).isEqualTo("PROJECT_ADJUSTMENT");
+		assertThat(projectAdjustment.get("lines").get(0).get("costCategory").asText()).isEqualTo("ADJUSTMENT");
+		JsonNode varianceSettlement = data(exchange(HttpMethod.POST, "/api/admin/cost/project-cost-adjustments",
+				manualAdjustmentPayload(fixture, "VARIANCE_SETTLEMENT",
+						"pc-adj-type-variance-" + fixture.projectId()),
+				admin));
+		assertThat(varianceSettlement.get("adjustmentType").asText()).isEqualTo("VARIANCE_SETTLEMENT");
 	}
 
 	private Map<String, Object> adjustmentPayload(PublicExpenseFixture fixture, String amount,
@@ -153,6 +243,24 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		payload.put("adjustmentType", "PUBLIC_EXPENSE_ALLOCATION");
 		payload.put("businessDate", "2026-07-22");
 		payload.put("reason", "029 公共制造费用分配");
+		payload.put("idempotencyKey", idempotencyKey);
+		payload.put("lines", List.of(line));
+		return payload;
+	}
+
+	private Map<String, Object> manualAdjustmentPayload(PublicExpenseFixture fixture, String adjustmentType,
+			String idempotencyKey) {
+		Map<String, Object> line = new LinkedHashMap<>();
+		line.put("projectId", fixture.projectId());
+		line.put("costCategory", "ADJUSTMENT");
+		line.put("costStage", "DIRECT_PROJECT");
+		line.put("direction", "INCREASE");
+		line.put("amount", "12.34");
+		line.put("reason", "029 冻结调整类型");
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("adjustmentType", adjustmentType);
+		payload.put("businessDate", "2026-07-22");
+		payload.put("reason", "029 冻结调整类型");
 		payload.put("idempotencyKey", idempotencyKey);
 		payload.put("lines", List.of(line));
 		return payload;
@@ -216,6 +324,25 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 		return adjustmentId;
 	}
 
+	private long insertSubmittedAllocation(long projectId, long publicExpenseLineId, String amount) {
+		long adjustmentId = this.jdbcTemplate.queryForObject("""
+				insert into prj_cost_adjustment (adjustment_no, adjustment_type, business_date, status, reason,
+					idempotency_key, request_fingerprint, created_by, created_at, updated_by, updated_at,
+					submitted_by, submitted_at)
+				values (?, 'PUBLIC_EXPENSE_ALLOCATION', date '2026-07-22', 'SUBMITTED', '029 待确认分配',
+					?, 'seed', 'test', now(), 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "029-ADJ-SUB-" + SEQUENCE.incrementAndGet(),
+				"pc-adj-submitted-" + SEQUENCE.incrementAndGet());
+		this.jdbcTemplate.update("""
+				insert into prj_cost_adjustment_line (adjustment_id, line_no, project_id, cost_category,
+					cost_stage, direction, amount, public_expense_line_id, reason, created_at, updated_at)
+				values (?, 1, ?, 'MANUFACTURING_OVERHEAD', 'DIRECT_PROJECT', 'INCREASE', ?::numeric, ?,
+					'待确认分配', now(), now())
+				""", adjustmentId, projectId, amount, publicExpenseLineId);
+		return adjustmentId;
+	}
+
 	private long insertVarianceFixture(String prefix) {
 		int suffix = SEQUENCE.incrementAndGet();
 		String code = prefix + suffix + "_";
@@ -248,10 +375,36 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 					calculation_id, project_id, variance_type, severity, status, source_restricted,
 					variance_amount, description, source_type, source_id, source_line_id, created_at, updated_at
 				)
-				values (?, ?, 'SOURCE_UNPRICED', 'ERROR', 'OPEN', true, 300.00, '未定价人工来源',
+				values (?, ?, 'SOURCE_UNPRICED', 'BLOCKING', 'OPEN', true, 300.00, '未定价人工来源',
 					'MFG_COST_RECORD', 900001, 900001, now(), now())
 				""", calculationId, projectId);
+		this.jdbcTemplate.update("""
+				insert into prj_cost_source_line (
+					calculation_id, project_id, cost_category, cost_stage, entry_type, source_type, source_id,
+					source_line_id, source_no, source_status, business_date, quantity, unit_cost, source_amount,
+					calculated_amount, source_fingerprint, source_restricted
+				)
+				values (?, ?, 'MATERIAL', 'DELIVERED', 'FINISHED_TO_DELIVERED', 'PRODUCTION_MATERIAL_ISSUE',
+					900001, 900001, 'MASK-SRC-001', 'ACTUAL', date '2026-07-10', 1.000000, 300.000000,
+					300.00, 300.00, 'mask-source', false)
+				""", calculationId, projectId);
+		this.jdbcTemplate.update("""
+				insert into prj_cost_entry (
+					calculation_id, entry_type, cost_category, cost_stage, direction, amount, description
+				)
+				values (?, 'SOURCE_TO_WIP', 'MATERIAL', 'WIP', 'INCREASE', 300.00, '脱敏分录')
+				""", calculationId);
 		return projectId;
+	}
+
+	private long calculationId(long projectId) {
+		return this.jdbcTemplate.queryForObject("""
+				select id
+				from prj_cost_calculation
+				where project_id = ?
+				order by id desc
+				limit 1
+				""", Long.class, projectId);
 	}
 
 	private String approvalScene(long approvalInstanceId) {
@@ -262,6 +415,12 @@ class ProjectCostAdminControllerTests extends PostgresIntegrationTest {
 	private long version(String tableName, long id) {
 		return this.jdbcTemplate.queryForObject("select version from " + tableName + " where id = ?", Long.class,
 				id);
+	}
+
+	private CurrentUser adminUser() {
+		return new CurrentUser(1L, "admin", "管理员", SystemUserStatus.ENABLED, List.of(), List.of(),
+				List.of("cost:project-cost-adjustment:view", "cost:project-cost-adjustment:submit",
+						"cost:project-cost:amount-view"));
 	}
 
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,
