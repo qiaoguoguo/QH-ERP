@@ -38,7 +38,7 @@ class InventoryV25MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
 	}
@@ -48,7 +48,7 @@ class InventoryV25MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
 	}
@@ -101,6 +101,8 @@ class InventoryV25MigrationRegressionTests {
 		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
 		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
 		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(migrationChecksum(jdbcTemplate, "33")).isEqualTo(612501943);
+		assertThat(migrationChecksum(jdbcTemplate, "34")).isEqualTo(-629066235);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 	}
 

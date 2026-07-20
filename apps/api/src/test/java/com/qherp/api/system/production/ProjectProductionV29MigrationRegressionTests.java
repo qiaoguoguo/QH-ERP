@@ -44,7 +44,7 @@ class ProjectProductionV29MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
@@ -107,7 +107,7 @@ class ProjectProductionV29MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(tableExists(jdbcTemplate, "mfg_outsourcing_order")).isTrue();
 		assertThat(tableExists(jdbcTemplate, "mfg_action_idempotency")).isTrue();
@@ -283,6 +283,8 @@ class ProjectProductionV29MigrationRegressionTests {
 		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
 		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
 		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(migrationChecksum(jdbcTemplate, "33")).isEqualTo(612501943);
+		assertThat(migrationChecksum(jdbcTemplate, "34")).isEqualTo(-629066235);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 	}
 

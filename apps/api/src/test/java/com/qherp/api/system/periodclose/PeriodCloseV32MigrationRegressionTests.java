@@ -27,6 +27,10 @@ class PeriodCloseV32MigrationRegressionTests {
 
 	private static final int EXPECTED_V32_CHECKSUM = 249406902;
 
+	private static final int EXPECTED_V33_CHECKSUM = 612501943;
+
+	private static final int EXPECTED_V34_CHECKSUM = -629066235;
+
 	private static final List<String> PERIOD_CLOSE_TABLES = List.of("biz_period_close_run",
 			"biz_period_close_check_run", "biz_period_close_check_item", "biz_period_snapshot",
 			"biz_period_inventory_snapshot", "biz_period_inventory_summary", "biz_period_wip_snapshot",
@@ -70,10 +74,12 @@ class PeriodCloseV32MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);
+		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
+		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 31)
@@ -87,10 +93,12 @@ class PeriodCloseV32MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		Map<String, Integer> checksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(checksums);
 		assertThat(checksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);
+		assertThat(checksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
+		assertThat(checksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
 		assertPeriodCloseSchema(jdbcTemplate);
 	}
 

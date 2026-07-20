@@ -50,7 +50,7 @@ class FinanceStage028MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
@@ -421,6 +421,8 @@ class FinanceStage028MigrationRegressionTests {
 		assertThat(migrationChecksum(jdbcTemplate, "30")).isEqualTo(2130342893);
 		assertThat(migrationChecksum(jdbcTemplate, "31")).isEqualTo(-2074547591);
 		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
+		assertThat(migrationChecksum(jdbcTemplate, "33")).isEqualTo(612501943);
+		assertThat(migrationChecksum(jdbcTemplate, "34")).isEqualTo(-629066235);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 	}
 

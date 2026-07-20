@@ -31,6 +31,8 @@ class GeneralLedgerV33MigrationRegressionTests {
 
 	private static final int EXPECTED_V33_CHECKSUM = 612501943;
 
+	private static final int EXPECTED_V34_CHECKSUM = -629066235;
+
 	private static final List<String> GL_TABLES = List.of("gl_ledger", "gl_accounting_period", "gl_account",
 			"gl_aux_dimension", "gl_aux_item", "gl_account_aux_requirement", "gl_posting_rule",
 			"gl_posting_rule_line", "gl_posting_rule_line_aux_map", "gl_voucher", "gl_voucher_line",
@@ -75,10 +77,11 @@ class GeneralLedgerV33MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
+		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 32)
@@ -97,10 +100,11 @@ class GeneralLedgerV33MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
+		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertGeneralLedgerSchema(jdbcTemplate);
 	}
