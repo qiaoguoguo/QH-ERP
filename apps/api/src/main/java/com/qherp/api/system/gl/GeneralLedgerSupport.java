@@ -36,7 +36,7 @@ final class GeneralLedgerSupport {
 	}
 
 	static int limit(int pageSize) {
-		return List.of(10, 20, 50, 100).contains(pageSize) ? pageSize : 10;
+		return List.of(5, 10, 20, 50, 100).contains(pageSize) ? pageSize : 10;
 	}
 
 	static int offset(int page, int pageSize) {

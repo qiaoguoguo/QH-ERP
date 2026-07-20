@@ -114,31 +114,40 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+$expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
 
-    $flywayLatestV32RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V32") `
-            -and $SqlText.Contains("latest successful version = 32; checksum = $expectedV32Checksum") `
-            -and $SqlText.Contains("= 32") `
-            -and $SqlText.Contains("checksum = $expectedV32Checksum") `
-            -and $SqlText.Contains("Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。") `
+    $flywayLatestV33RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V33") `
+            -and $SqlText.Contains("latest successful version = 33; checksum = $expectedV33Checksum") `
+            -and $SqlText.Contains("= 33") `
+            -and $SqlText.Contains("checksum = $expectedV33Checksum") `
+            -and $SqlText.Contains("Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。") `
+            -and (-not $SqlText.Contains("FLYWAY_LATEST_V32")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V31")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V30")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V29")) `
-            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[01])")) `
+            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-2])")) `
+            -and (-not $SqlText.Contains("latest successful version = 32; checksum = $expectedV32Checksum")) `
             -and (-not $SqlText.Contains("latest successful version = 31; checksum = $expectedV31Checksum")) `
             -and (-not $SqlText.Contains("latest successful version = 30; checksum = 2130342893")) `
             -and (-not $SqlText.Contains("latest successful version = 29; checksum = 774334682")) `
+            -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V32")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V31")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V30")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V29")) `
-            -and (-not $SqlText.Contains("V32_CHECKSUM_PENDING")) `
-            -and (-not ($SqlText -match ">=\s*32")) `
-            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*32")) `
-            -and (-not ($SqlText -match "version::int\s*>=\s*32")))
+            -and (-not $SqlText.Contains("V33_CHECKSUM_PENDING")) `
+            -and (-not ($SqlText -match ">=\s*33")) `
+            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*33")) `
+            -and (-not ($SqlText -match "version::int\s*>=\s*33")))
+    $flywayV33HistoricalChecksumIsStrict = ($SqlText.Contains("FLYWAY_V33_CHECKSUM") `
+            -and $SqlText.Contains("version 33 checksum = $expectedV33Checksum") `
+            -and $SqlText.Contains("version = '33'") `
+            -and $SqlText.Contains("checksum = $expectedV33Checksum") `
+            -and $SqlText.Contains("Flyway V33 checksum 必须保持 $expectedV33Checksum。"))
     $flywayV32HistoricalChecksumIsStrict = ($SqlText.Contains("FLYWAY_V32_CHECKSUM") `
             -and $SqlText.Contains("version 32 checksum = $expectedV32Checksum") `
             -and $SqlText.Contains("version = '32'") `
@@ -164,7 +173,8 @@ function Test-FlywayMigrationRulesAreStrict {
             -and $SqlText.Contains("Flyway 不能存在失败迁移记录。") `
             -and $SqlText.Contains("from flyway_schema_history where not success"))
 
-    return ($flywayLatestV32RuleIsStrict `
+    return ($flywayLatestV33RuleIsStrict `
+        -and $flywayV33HistoricalChecksumIsStrict `
         -and $flywayV32HistoricalChecksumIsStrict `
         -and $flywayV31HistoricalChecksumIsStrict `
         -and $flywayV30HistoricalChecksumIsStrict `
@@ -173,14 +183,17 @@ function Test-FlywayMigrationRulesAreStrict {
 }
 
 Assert-True -Condition (Test-FlywayMigrationRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V32，独立校验 V32/V31/V30/V29 checksum 和失败迁移 0，不能保留旧 latest、缺失 V32 checksum 或放宽为 >= 32。"
+    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V33，独立校验 V33/V32/V31/V30/V29 checksum 和失败迁移 0，不能保留旧 latest、缺失 V33 checksum 或放宽为 >= 33。"
 $weakenedFlywaySql = @"
-select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
-    'version=32;checksum=$expectedV32Checksum',
-    'latest successful version = 32; checksum = $expectedV32Checksum',
-    max(version::int) >= 32,
-    'Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。'
+select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
+    'version=33;checksum=$expectedV33Checksum',
+    'latest successful version = 33; checksum = $expectedV33Checksum',
+    max(version::int) >= 33,
+    'Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。'
 from flyway_schema_history where success and version ~ '^[0-9]+$';
+union all select 'FLYWAY_V33_CHECKSUM', 'migration', 'version=33;checksum=$expectedV33Checksum',
+    'version 33 checksum = $expectedV33Checksum', checksum = $expectedV33Checksum,
+    'Flyway V33 checksum 必须保持 $expectedV33Checksum。' from flyway_schema_history where success and version = '33';
 union all select 'FLYWAY_V32_CHECKSUM', 'migration', 'version=32;checksum=$expectedV32Checksum',
     'version 32 checksum = $expectedV32Checksum', checksum = $expectedV32Checksum,
     'Flyway V32 checksum 必须保持 $expectedV32Checksum。' from flyway_schema_history where success and version = '32';
@@ -197,14 +210,17 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $weakenedFlywaySql)) `
-    -Message "自测必须拒绝把最新迁移规则弱化为 >= 32 的实现。"
-$missingV32ChecksumSql = @"
-select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
-    'version=32;checksum=$expectedV32Checksum',
-    'latest successful version = 32; checksum = $expectedV32Checksum',
-    version::int = 32 and checksum = $expectedV32Checksum,
-    'Flyway 最新成功版本必须为 V32，checksum 必须为 $expectedV32Checksum。'
-from flyway_schema_history where success and version = '32';
+    -Message "自测必须拒绝把最新迁移规则弱化为 >= 33 的实现。"
+$missingV33ChecksumSql = @"
+select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
+    'version=33;checksum=$expectedV33Checksum',
+    'latest successful version = 33; checksum = $expectedV33Checksum',
+    version::int = 33 and checksum = $expectedV33Checksum,
+    'Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。'
+from flyway_schema_history where success and version = '33';
+union all select 'FLYWAY_V32_CHECKSUM', 'migration', 'version=32;checksum=$expectedV32Checksum',
+    'version 32 checksum = $expectedV32Checksum', checksum = $expectedV32Checksum,
+    'Flyway V32 checksum 必须保持 $expectedV32Checksum。' from flyway_schema_history where success and version = '32';
 union all select 'FLYWAY_V30_CHECKSUM', 'migration', 'version=30;checksum=2130342893',
     'version 30 checksum = 2130342893', checksum = 2130342893,
     'Flyway V30 checksum 必须保持 2130342893。' from flyway_schema_history where success and version = '30';
@@ -214,8 +230,62 @@ union all select 'FLYWAY_V29_CHECKSUM', 'migration', 'version=29;checksum=774334
 union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) = 0,
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
-Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $missingV32ChecksumSql)) `
-    -Message "自测必须拒绝缺失 FLYWAY_V32_CHECKSUM 独立校验的实现。"
+Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $missingV33ChecksumSql)) `
+    -Message "自测必须拒绝缺失 FLYWAY_V33_CHECKSUM 独立校验的实现。"
+
+function Test-GeneralLedgerValidatorRulesAreStrict {
+    param([string] $SqlText)
+
+    $schemaRulesAreStrict = ($SqlText.Contains("GL_TABLES_V33") `
+            -and $SqlText.Contains("count(*)::text, '19', count(*) = 19") `
+            -and $SqlText.Contains("gl_voucher_source_claim") `
+            -and $SqlText.Contains("gl_action_idempotency") `
+            -and $SqlText.Contains("gl_audit_event"))
+    $permissionRulesAreStrict = ($SqlText.Contains("GL_ACTION_PERMISSIONS_V33") `
+            -and $SqlText.Contains("count(*)::text, '23', count(*) = 23") `
+            -and $SqlText.Contains("gl:voucher:approve-post") `
+            -and $SqlText.Contains("gl:amount:view") `
+            -and $SqlText.Contains("gl:source:view") `
+            -and $SqlText.Contains("GL_SYSTEM_ADMIN_PERMISSIONS_V33"))
+    $setupRulesAreStrict = ($SqlText.Contains("GL_LEDGER_SINGLE_MAIN_CNY_V33") `
+            -and $SqlText.Contains("GL_ACCOUNT_TEMPLATE_CODES_V33") `
+            -and $SqlText.Contains("GL_AUX_DIMENSIONS_V33") `
+            -and $SqlText.Contains("GL_POSTING_RULES_V33"))
+    $approvalAndTriggerRulesAreStrict = ($SqlText.Contains("GL_APPROVAL_DEFINITION_V33") `
+            -and $SqlText.Contains("GL_VOUCHER_POST") `
+            -and $SqlText.Contains("GL_IMMUTABLE_TRIGGERS_V33") `
+            -and $SqlText.Contains("tr_gl_voucher_posted_immutable") `
+            -and $SqlText.Contains("tr_gl_ledger_entry_immutable"))
+    $dynamicRulesAreStrict = ($SqlText.Contains("GL_POSTED_VOUCHER_LEDGER_DYNAMIC") `
+            -and $SqlText.Contains("GL_LEDGER_ENTRY_LINE_DYNAMIC") `
+            -and $SqlText.Contains("GL_PERIOD_TOTALS_DYNAMIC") `
+            -and $SqlText.Contains("GL_SOURCE_CLAIMS_DYNAMIC") `
+            -and $SqlText.Contains("GL_VOUCHER_SEQUENCE_DYNAMIC") `
+            -and $SqlText.Contains("v.source_claim_id is distinct from c.id") `
+            -and $SqlText.Contains("coalesce(s.last_number, 0) <> coalesce(posted.max_number, 0)"))
+
+    return ($schemaRulesAreStrict `
+        -and $permissionRulesAreStrict `
+        -and $setupRulesAreStrict `
+        -and $approvalAndTriggerRulesAreStrict `
+        -and $dynamicRulesAreStrict)
+}
+
+Assert-True -Condition (Test-GeneralLedgerValidatorRulesAreStrict -SqlText $validatorSql) `
+    -Message "正式演示数据验证器必须保留 V33 总账表、权限、初始化、科目/辅助/规则、审批、不可变触发器和动态账簿/来源/号段门禁。"
+$weakenedGeneralLedgerSql = @"
+select 'GL_TABLES_V33'::text, 'general-ledger'::text, count(*)::text, '19', count(*) >= 19,
+    '031 必须创建总账基础表。'
+from information_schema.tables where table_schema = 'public';
+union all select 'GL_ACTION_PERMISSIONS_V33', 'general-ledger', count(*)::text, '23', count(*) >= 23,
+    '031 必须注册总账权限。'
+from sys_permission where code like 'gl:%';
+union all select 'GL_APPROVAL_DEFINITION_V33', 'general-ledger', count(*)::text, '1', count(*) >= 1,
+    '031 必须注册 GL_VOUCHER_POST。'
+from platform_approval_definition where scene_code = 'GL_VOUCHER_POST';
+"@
+Assert-True -Condition (-not (Test-GeneralLedgerValidatorRulesAreStrict -SqlText $weakenedGeneralLedgerSql)) `
+    -Message "自测必须拒绝缺少 GL 动态一致性、来源占用、号段和不可变触发器门禁的弱验证器。"
 
 function Test-PeriodCloseValidatorRulesAreStrict {
     param([string] $SqlText)

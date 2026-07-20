@@ -21,6 +21,12 @@ export interface GlVersionedActionPayload {
   reason?: string
 }
 
+export interface GlPeriodCreatePayload {
+  periodCode: string
+  version?: number
+  idempotencyKey: string
+}
+
 export interface GlLedgerRecord {
   id?: ResourceId
   ledgerCode?: string
@@ -28,6 +34,7 @@ export interface GlLedgerRecord {
   baseCurrency: 'CNY' | string
   initialized: boolean
   startPeriodCode?: string | null
+  version?: number | null
 }
 
 export interface GlAccountingPeriodRecord {
@@ -38,6 +45,7 @@ export interface GlAccountingPeriodRecord {
   status: 'OPEN' | string
   voucherCount?: number | null
   lastPostedAt?: string | null
+  version?: number | null
 }
 
 export interface GlAuxRequirement {
@@ -140,6 +148,12 @@ export interface GlVoucherRecord extends GlActionState {
   businessSourceType?: string | null
   sourceOriginalId?: ResourceId | null
   businessSourceId?: ResourceId | null
+  sourceOriginalNo?: string | null
+  businessSourceNo?: string | null
+  sourceOriginalVersion?: number | null
+  businessSourceVersion?: number | null
+  sourceOriginalFingerprint?: string | null
+  businessSourceFingerprint?: string | null
   sourceNo?: string | null
   currency?: 'CNY' | string
   debitTotal?: GlAmount | null
@@ -156,6 +170,7 @@ export interface GlVoucherRecord extends GlActionState {
 export interface GlVoucherPayload {
   voucherType: GlVoucherType | string
   voucherDate: string
+  accountingPeriodCode?: string
   summary: string
   lines: GlVoucherLineRecord[]
   idempotencyKey: string
@@ -183,6 +198,7 @@ export interface GlLedgerRow {
   restricted?: boolean | null
   restrictedReason?: string | null
   sourceSummary?: string | null
+  sourceRoute?: unknown
 }
 
 export interface GlTrialBalanceRecord {
@@ -200,6 +216,213 @@ export interface GlTrialBalanceRecord {
 }
 
 export type GlPageParams = Record<string, unknown> & { page: number; pageSize: number }
+
+type RawRecord = Record<string, unknown>
+
+function isRecord(value: unknown): value is RawRecord {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function normalizeAllowedActions(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value
+    .map((item) => {
+      if (typeof item === 'string') {
+        return item
+      }
+      if (isRecord(item) && item.enabled !== false && typeof item.code === 'string') {
+        return item.code
+      }
+      return ''
+    })
+    .filter((item) => item.length > 0)
+}
+
+function normalizeActionState<T extends RawRecord>(record: T): T & GlActionState {
+  return {
+    ...record,
+    version: Number(record.version ?? 0),
+    allowedActions: normalizeAllowedActions(record.allowedActions),
+    actionDisabledReasons: isRecord(record.actionDisabledReasons) ? (record.actionDisabledReasons as Record<string, string>) : {},
+  }
+}
+
+function normalizePageItems<T>(page: RawRecord, normalize: (item: RawRecord) => T): unknown {
+  const itemKeys = ['items', 'records', 'content'] as const
+  const normalized = { ...page }
+  itemKeys.forEach((key) => {
+    if (Array.isArray(page[key])) {
+      normalized[key] = page[key].map((item) => isRecord(item) ? normalize(item) : item)
+    }
+  })
+  return normalized
+}
+
+function normalizeRecordOrPage<T>(data: unknown, normalize: (item: RawRecord) => T): unknown {
+  if (!isRecord(data)) {
+    return data
+  }
+  if (Array.isArray(data.items) || Array.isArray(data.records) || Array.isArray(data.content)) {
+    return normalizePageItems(data, normalize)
+  }
+  return normalize(data)
+}
+
+function normalizeAuxRequirement(item: unknown): GlAuxRequirement {
+  const record = isRecord(item) ? item : {}
+  return {
+    ...record,
+    dimensionCode: String(record.dimensionCode ?? ''),
+    dimensionName: record.dimensionName as string | null | undefined,
+    requirement: String(record.requirement ?? record.requirementType ?? ''),
+  }
+}
+
+function normalizeAccount(record: RawRecord): GlAccountRecord {
+  const normalized = normalizeActionState(record)
+  return {
+    ...normalized,
+    id: normalized.id as ResourceId,
+    code: String(normalized.code ?? ''),
+    name: String(normalized.name ?? ''),
+    category: String(normalized.category ?? ''),
+    level: Number(normalized.level ?? normalized.levelNo ?? 0),
+    parentId: normalized.parentId as ResourceId | null | undefined,
+    isLeaf: Boolean(normalized.isLeaf),
+    postable: Boolean(normalized.postable),
+    balanceDirection: String(normalized.balanceDirection ?? ''),
+    enabled: normalized.enabled !== false,
+    auxiliaryRequirements: Array.isArray(normalized.auxiliaryRequirements)
+      ? normalized.auxiliaryRequirements.map(normalizeAuxRequirement)
+      : [],
+    referenced: normalized.referenced as boolean | null | undefined,
+  }
+}
+
+function normalizeAuxDimension(record: RawRecord): GlAuxDimensionRecord {
+  const normalized = normalizeActionState(record)
+  return {
+    ...normalized,
+    id: normalized.id as ResourceId,
+    code: String(normalized.code ?? ''),
+    name: String(normalized.name ?? ''),
+    dimensionType: String(normalized.dimensionType ?? ''),
+    enabled: normalized.enabled !== false,
+    itemCount: normalized.itemCount as number | null | undefined,
+  }
+}
+
+function normalizePostingRule(record: RawRecord): GlPostingRuleRecord {
+  const normalized = normalizeActionState(record)
+  return {
+    ...normalized,
+    id: normalized.id as ResourceId,
+    sourceType: String(normalized.sourceType ?? ''),
+    sourceVariant: String(normalized.sourceVariant ?? ''),
+    versionNo: Number(normalized.versionNo ?? normalized.ruleVersion ?? 0),
+    status: String(normalized.status ?? ''),
+    validationStatus: normalized.validationStatus as string | null | undefined,
+    lineCount: normalized.lineCount as number | null | undefined,
+    lines: normalized.lines as unknown[] | undefined,
+    validationSummary: normalized.validationSummary,
+  }
+}
+
+function normalizeVoucherLine(record: RawRecord): GlVoucherLineRecord {
+  return {
+    ...record,
+    lineNo: Number(record.lineNo ?? 0),
+    summary: String(record.summary ?? ''),
+    accountId: record.accountId as ResourceId,
+    accountCode: record.accountCode as string | null | undefined,
+    accountName: record.accountName as string | null | undefined,
+    debitAmount: (record.debitAmount ?? '0.00') as GlAmount,
+    creditAmount: (record.creditAmount ?? '0.00') as GlAmount,
+    auxiliaryItems: Array.isArray(record.auxiliaryItems) ? record.auxiliaryItems as GlVoucherLineRecord['auxiliaryItems'] : [],
+    normalizedFactCode: record.normalizedFactCode as string | null | undefined,
+    sourceRoute: record.sourceRoute,
+  }
+}
+
+function normalizeVoucher(record: RawRecord): GlVoucherRecord {
+  const normalized = normalizeActionState(record)
+  return {
+    ...normalized,
+    id: normalized.id as ResourceId,
+    draftNo: String(normalized.draftNo ?? ''),
+    status: String(normalized.status ?? ''),
+    sourceOriginalNo: (normalized.sourceOriginalNo as string | null | undefined) ?? (normalized.businessSourceNo as string | null | undefined),
+    sourceOriginalVersion: (normalized.sourceOriginalVersion as number | null | undefined) ?? (normalized.businessSourceVersion as number | null | undefined),
+    sourceOriginalFingerprint: (normalized.sourceOriginalFingerprint as string | null | undefined) ?? (normalized.businessSourceFingerprint as string | null | undefined),
+    lines: Array.isArray(normalized.lines) ? normalized.lines.map((line) => isRecord(line) ? normalizeVoucherLine(line) : line as GlVoucherLineRecord) : undefined,
+  }
+}
+
+function normalizeLedgerRow(record: RawRecord): GlLedgerRow {
+  return {
+    ...record,
+    accountCode: String(record.accountCode ?? ''),
+    accountName: String(record.accountName ?? ''),
+    sourceSummary: record.sourceSummary as string | null | undefined
+      ?? (record.sourceNo ? `${record.sourceType ?? '来源'} ${record.sourceNo}` : undefined),
+  }
+}
+
+function groupAmount(group: unknown, key: 'debit' | 'credit' | 'difference') {
+  if (!isRecord(group)) {
+    return undefined
+  }
+  const totalKey = `${key}Total`
+  return group[totalKey] ?? group[`${key}Amount`] ?? group[key]
+}
+
+function normalizeTrialBalance(record: RawRecord): GlTrialBalanceRecord {
+  const opening = record.opening
+  const period = record.period
+  const ending = record.ending
+  const differenceAmount = record.differenceAmount ?? groupAmount(period, 'difference') ?? groupAmount(ending, 'difference')
+  return {
+    ...record,
+    balanced: Boolean(record.balanced),
+    openingDebitTotal: (record.openingDebitTotal as GlAmount | null | undefined) ?? (groupAmount(opening, 'debit') as GlAmount | null | undefined),
+    openingCreditTotal: (record.openingCreditTotal as GlAmount | null | undefined) ?? (groupAmount(opening, 'credit') as GlAmount | null | undefined),
+    periodDebitTotal: (record.periodDebitTotal as GlAmount | null | undefined) ?? (record.periodDebit as GlAmount | null | undefined) ?? (groupAmount(period, 'debit') as GlAmount | null | undefined),
+    periodCreditTotal: (record.periodCreditTotal as GlAmount | null | undefined) ?? (record.periodCredit as GlAmount | null | undefined) ?? (groupAmount(period, 'credit') as GlAmount | null | undefined),
+    endingDebitTotal: (record.endingDebitTotal as GlAmount | null | undefined) ?? (groupAmount(ending, 'debit') as GlAmount | null | undefined),
+    endingCreditTotal: (record.endingCreditTotal as GlAmount | null | undefined) ?? (groupAmount(ending, 'credit') as GlAmount | null | undefined),
+    differenceAmount: differenceAmount as GlAmount | null | undefined,
+    differences: Array.isArray(record.differences) ? (record.differences as GlTrialBalanceRecord['differences']) : [],
+    restricted: (record.restricted as boolean | null | undefined) ?? record.amountVisible === false,
+    restrictedReason: record.restrictedReason as string | null | undefined,
+  }
+}
+
+function normalizeGlResponse(path: string, data: unknown): unknown {
+  if (!path.startsWith('/api/admin/gl')) {
+    return data
+  }
+  if (path.includes('/trial-balance')) {
+    return isRecord(data) ? normalizeTrialBalance(data) : data
+  }
+  if (path.includes('/vouchers')) {
+    return normalizeRecordOrPage(data, normalizeVoucher)
+  }
+  if (path.includes('/accounts') && !path.includes('/account-balances')) {
+    return normalizeRecordOrPage(data, normalizeAccount)
+  }
+  if (path.includes('/aux-dimensions')) {
+    return normalizeRecordOrPage(data, normalizeAuxDimension)
+  }
+  if (path.includes('/posting-rules')) {
+    return normalizeRecordOrPage(data, normalizePostingRule)
+  }
+  if (path.includes('/ledgers') || path.includes('/account-balances')) {
+    return normalizeRecordOrPage(data, normalizeLedgerRow)
+  }
+  return data
+}
 
 export function createGlApi(options: GlApiOptions = {}) {
   const fetcher = options.fetcher ?? ((input: string, init: RequestInit) => fetch(input, init))
@@ -234,7 +457,7 @@ export function createGlApi(options: GlApiOptions = {}) {
         envelope.traceId,
       )
     }
-    return envelope.data
+    return normalizeGlResponse(path, envelope.data) as T
   }
 
   const getCsrf = () => request<CsrfToken>('/api/auth/csrf', { method: 'GET' })
@@ -259,7 +482,7 @@ export function createGlApi(options: GlApiOptions = {}) {
     },
     accountingPeriods: {
       list: (params: GlPageParams) => get<PageResult<GlAccountingPeriodRecord>>('/api/admin/gl/accounting-periods', params),
-      create: (payload: GlVersionedActionPayload) => write<GlAccountingPeriodRecord>('POST', '/api/admin/gl/accounting-periods', payload),
+      create: (payload: GlPeriodCreatePayload) => write<GlAccountingPeriodRecord>('POST', '/api/admin/gl/accounting-periods', payload),
     },
     accounts: {
       list: (params: GlPageParams) => get<PageResult<GlAccountRecord>>('/api/admin/gl/accounts', params),
@@ -273,6 +496,8 @@ export function createGlApi(options: GlApiOptions = {}) {
       create: (payload: object) => write<GlAuxDimensionRecord>('POST', '/api/admin/gl/aux-dimensions', payload),
       update: (id: ResourceId, payload: object) => write<GlAuxDimensionRecord>('PUT', `/api/admin/gl/aux-dimensions/${encodeId(id)}`, payload),
       items: (id: ResourceId, params: GlPageParams) => get<PageResult<GlAuxCandidateRecord>>(`/api/admin/gl/aux-dimensions/${encodeId(id)}/items`, params),
+      createItem: (id: ResourceId, payload: object) => write<GlAuxCandidateRecord>('POST', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items`, payload),
+      updateItem: (id: ResourceId, itemId: ResourceId, payload: object) => write<GlAuxCandidateRecord>('PUT', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items/${encodeId(itemId)}`, payload),
       candidates: (code: string, params: Record<string, unknown>) => get<PageResult<GlAuxCandidateRecord>>(`/api/admin/gl/aux-dimensions/${encodeURIComponent(code)}/candidates`, params),
     },
     postingRules: {

@@ -223,8 +223,47 @@ public class GeneralLedgerVoucherService {
 	}
 
 	@Transactional
+	public Map<String, Object> withdraw(Long id, ActionRequest request, CurrentUser operator,
+			HttpServletRequest servletRequest) {
+		String fingerprint = GeneralLedgerSupport.sha256("WITHDRAW|" + id + "|" + request.version() + "|"
+				+ request.reason());
+		Long existing = actionIdempotentResult("WITHDRAW", TARGET, id, request.idempotencyKey(), fingerprint,
+				operator);
+		if (existing != null) {
+			return this.queryService.voucher(existing, operator);
+		}
+		VoucherRow voucher = lockVoucher(id);
+		requireVersion(voucher.version(), request.version());
+		if (!"SUBMITTED".equals(voucher.status())) {
+			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
+		}
+		Long approvalInstanceId = approvalInstanceId(id);
+		if (approvalInstanceId == null) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
+		}
+		Long approvalVersion = approvalInstanceVersion(approvalInstanceId);
+		this.approvalService.withdraw(approvalInstanceId,
+				new PlatformApprovalService.ApprovalActionRequest(approvalVersion,
+						request.reason() == null || request.reason().isBlank() ? "撤回凭证审批" : request.reason(),
+						request.idempotencyKey()),
+				operator, servletRequest);
+		Long resultVersion = this.jdbcTemplate.queryForObject("select version from gl_voucher where id = ?",
+				Long.class, id);
+		recordAction("WITHDRAW", TARGET, id, request.version(), request.idempotencyKey(), fingerprint, TARGET, id,
+				resultVersion, operator);
+		this.glAuditService.success(operator, "GL_VOUCHER_WITHDRAW", TARGET, id);
+		return this.queryService.voucher(id, operator);
+	}
+
+	@Transactional
 	public Map<String, Object> cancel(Long id, ActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		String fingerprint = GeneralLedgerSupport.sha256("CANCEL|" + id + "|" + request.version() + "|"
+				+ request.reason());
+		Long existing = actionIdempotentResult("CANCEL", TARGET, id, request.idempotencyKey(), fingerprint, operator);
+		if (existing != null) {
+			return this.queryService.voucher(existing, operator);
+		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
 		if (!"DRAFT".equals(voucher.status())) {
@@ -248,6 +287,10 @@ public class GeneralLedgerVoucherService {
 				set status = 'CANCELLED', updated_at = ?
 				where reversal_voucher_id = ? and status = 'DRAFT'
 				""", OffsetDateTime.now(), id);
+		Long resultVersion = this.jdbcTemplate.queryForObject("select version from gl_voucher where id = ?",
+				Long.class, id);
+		recordAction("CANCEL", TARGET, id, request.version(), request.idempotencyKey(), fingerprint, TARGET, id,
+				resultVersion, operator);
 		this.glAuditService.success(operator, "GL_VOUCHER_CANCEL", TARGET, id);
 		return this.queryService.voucher(id, operator);
 	}
@@ -255,6 +298,13 @@ public class GeneralLedgerVoucherService {
 	@Transactional
 	public Map<String, Object> refreshSource(Long id, ActionRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		String fingerprint = GeneralLedgerSupport.sha256("REFRESH_SOURCE|" + id + "|" + request.version() + "|"
+				+ request.reason());
+		Long existing = actionIdempotentResult("REFRESH_SOURCE", TARGET, id, request.idempotencyKey(), fingerprint,
+				operator);
+		if (existing != null) {
+			return this.queryService.voucher(existing, operator);
+		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
 		if (!"DRAFT".equals(voucher.status()) || !"FIN_VOUCHER_DRAFT".equals(voucher.sourceType())) {
@@ -274,6 +324,10 @@ public class GeneralLedgerVoucherService {
 				""", validated.period().id(), facts.businessDate(), draft.summary(), facts.sourceNo(), facts.version(),
 				facts.fingerprint(), validated.debitTotal(), validated.creditTotal(), operator.username(),
 				OffsetDateTime.now(), id);
+		Long resultVersion = this.jdbcTemplate.queryForObject("select version from gl_voucher where id = ?",
+				Long.class, id);
+		recordAction("REFRESH_SOURCE", TARGET, id, request.version(), request.idempotencyKey(), fingerprint, TARGET,
+				id, resultVersion, operator);
 		this.glAuditService.success(operator, "GL_VOUCHER_REFRESH_SOURCE", TARGET, id);
 		return this.queryService.voucher(id, operator);
 	}
@@ -281,6 +335,13 @@ public class GeneralLedgerVoucherService {
 	@Transactional
 	public Map<String, Object> reverse(Long originalId, ReversalRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
+		String fingerprint = GeneralLedgerSupport.sha256("REVERSAL|" + originalId + "|" + request.version() + "|"
+				+ request.voucherDate() + "|" + request.reason());
+		Long existing = actionIdempotentResult("REVERSAL", TARGET, originalId, request.idempotencyKey(), fingerprint,
+				operator);
+		if (existing != null) {
+			return this.queryService.voucher(existing, operator);
+		}
 		VoucherRow original = lockVoucher(originalId);
 		requireVersion(original.version(), request.version());
 		if (!"POSTED".equals(original.status())) {
@@ -305,9 +366,8 @@ public class GeneralLedgerVoucherService {
 				original.sourceOriginalType(), original.sourceOriginalId(), original.sourceOriginalNo(),
 				original.sourceOriginalVersion(), original.sourceOriginalFingerprint(), "GENERAL", reversalDate,
 				"冲销：" + request.reason(), period.id(), original.debitTotal(), original.creditTotal(), null, null, null,
-				request.idempotencyKey(), GeneralLedgerSupport.sha256("REVERSAL|" + originalId + "|"
-						+ request.version() + "|" + request.reason()),
-				Map.of("originalVoucherId", originalId), originalId, request.reason(), operator);
+				request.idempotencyKey(), fingerprint, Map.of("originalVoucherId", originalId), originalId,
+				request.reason(), operator);
 		insertLines(reversal.id(), reversedLines);
 		this.jdbcTemplate.update("""
 				insert into gl_voucher_reversal_link (
@@ -316,6 +376,8 @@ public class GeneralLedgerVoucherService {
 				values (?, ?, 'DRAFT', ?, ?, ?, ?)
 				""", originalId, reversal.id(), request.reason(), operator.username(), OffsetDateTime.now(),
 				OffsetDateTime.now());
+		recordAction("REVERSAL", TARGET, originalId, request.version(), request.idempotencyKey(), fingerprint, TARGET,
+				reversal.id(), reversal.version(), operator);
 		this.glAuditService.success(operator, "GL_VOUCHER_REVERSE", TARGET, reversal.id());
 		return this.queryService.voucher(reversal.id(), operator);
 	}
@@ -395,6 +457,7 @@ public class GeneralLedgerVoucherService {
 				throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
 			}
 			if (enforceOpeningLimit) {
+				ensureNoPostedGeneralBeforeOpening();
 				Long existing = existingOpeningVoucherCount(voucherId);
 				if (existing != null && existing > 0) {
 					throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
@@ -438,6 +501,18 @@ public class GeneralLedgerVoucherService {
 				and status <> 'CANCELLED'
 				and id <> ?
 				""", Long.class, voucherId);
+	}
+
+	private void ensureNoPostedGeneralBeforeOpening() {
+		Long postedGeneral = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_voucher
+				where voucher_type = 'GENERAL'
+				and status = 'POSTED'
+				""", Long.class);
+		if (postedGeneral != null && postedGeneral > 0) {
+			throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
+		}
 	}
 
 	private LineDraft validateManualLine(VoucherLineRequest line) {
@@ -492,6 +567,13 @@ public class GeneralLedgerVoucherService {
 
 	private void revalidatePersistedVoucher(Long voucherId, boolean validateSource) {
 		VoucherRow voucher = lockVoucher(voucherId);
+		if ("OPENING".equals(voucher.voucherType())) {
+			ensureNoPostedGeneralBeforeOpening();
+			Long existing = existingOpeningVoucherCount(voucherId);
+			if (existing != null && existing > 0) {
+				throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
+			}
+		}
 		for (LineDraft line : persistedLines(voucherId)) {
 			AccountSnapshot account = account(line.account().id());
 			if (!account.enabled()) {
@@ -1059,6 +1141,26 @@ public class GeneralLedgerVoucherService {
 				rs.getBigDecimal("credit_total"), rs.getString("voucher_no"), rs.getLong("version")), id).stream()
 			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_VOUCHER_NOT_FOUND));
+	}
+
+	private Long approvalInstanceId(Long voucherId) {
+		return this.jdbcTemplate.query("""
+				select approval_instance_id
+				from gl_voucher
+				where id = ?
+				""", (rs, rowNum) -> GeneralLedgerSupport.nullableLong(rs, "approval_instance_id"), voucherId)
+			.stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_VOUCHER_NOT_FOUND));
+	}
+
+	private Long approvalInstanceVersion(Long approvalInstanceId) {
+		return this.jdbcTemplate.query("""
+				select version
+				from platform_approval_instance
+				where id = ?
+				""", (rs, rowNum) -> rs.getLong("version"), approvalInstanceId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID));
 	}
 
 	private PeriodRow openPeriod(LocalDate date) {

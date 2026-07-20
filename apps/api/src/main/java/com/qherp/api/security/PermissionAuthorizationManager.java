@@ -392,6 +392,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/submit")) {
 				return "gl:voucher:submit";
 			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/withdraw")) {
+				return "gl:voucher:submit";
+			}
 			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/cancel")) {
 				return "gl:voucher:cancel";
 			}
@@ -411,6 +414,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			if ("PUT".equals(method) && matchesIdPath(path, "/api/admin/gl/vouchers")) {
 				return "gl:voucher:update";
 			}
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/gl/source-claims")) {
+			return "gl:voucher:view";
 		}
 		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/gl/ledgers")) {
 			return "gl:ledger:view";

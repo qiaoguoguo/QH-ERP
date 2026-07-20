@@ -5,7 +5,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { formatGlAmount, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
 import './GlShared.css'
 
-const filters = reactive({ periodCode: '2026-07', accountKeyword: '' })
+const filters = reactive({ periodCode: '2026-07', accountKeyword: '', auxiliaryKeyword: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<GlLedgerRow[]>([])
 const loading = ref(false)
@@ -18,6 +18,7 @@ async function loadRecords() {
     const page = await glApi.accountBalances.list({
       periodCode: filters.periodCode,
       accountKeyword: filters.accountKeyword,
+      auxiliaryKeyword: filters.auxiliaryKeyword,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -62,6 +63,7 @@ onMounted(loadRecords)
       <el-form class="query-form" inline>
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item label="科目"><el-input v-model="filters.accountKeyword" clearable placeholder="编码或名称" /></el-form-item>
+        <el-form-item label="辅助核算"><el-input v-model="filters.auxiliaryKeyword" clearable placeholder="辅助对象" /></el-form-item>
         <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
       </el-form>
     </template>

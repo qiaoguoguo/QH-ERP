@@ -868,7 +868,8 @@ public class PlatformApprovalService {
 	private ApprovalInstanceRecord toInstanceRecord(ApprovalInstanceBase instance, CurrentUser currentUser) {
 		CurrentApprovalTask currentTask = currentApprovalTask(instance, currentUser);
 		return new ApprovalInstanceRecord(instance.id(), instance.sceneCode(), instance.businessObjectType(),
-				instance.businessObjectId(), instance.businessObjectNo(), instance.businessObjectSummary(),
+				instance.businessObjectId(), instance.businessObjectNo(), visibleBusinessObjectSummary(instance,
+						currentUser),
 				instance.businessObjectVersion(), instance.status(), instance.submitReason(), instance.submittedByUserId(),
 				instance.submittedByUsername(), instance.submittedAt(), instance.completedByUsername(),
 				instance.completedAt(), instance.completedComment(), instance.version(),
@@ -880,11 +881,29 @@ public class PlatformApprovalService {
 
 	private ApprovalTaskRecord toTaskRecord(ApprovalTaskProjection task, CurrentUser currentUser) {
 		return new ApprovalTaskRecord(task.instanceId(), task.id(), task.sceneCode(), task.businessObjectType(),
-				task.businessObjectId(), task.businessObjectNo(), task.businessObjectSummary(),
+				task.businessObjectId(), task.businessObjectNo(), visibleBusinessObjectSummary(task, currentUser),
 				task.submittedByUserId(), task.submittedByUsername(), task.submittedAt(), task.stepNo(),
 				task.candidatePermissionCode(), task.status(), task.handledByUserId(), task.handledByUsername(),
 				task.handledAt(), task.comment(), task.createdAt(), task.updatedAt(), task.version(),
 				taskAvailableActions(task, currentUser));
+	}
+
+	private String visibleBusinessObjectSummary(ApprovalInstanceBase instance, CurrentUser currentUser) {
+		if ("GL_VOUCHER_POST".equals(instance.sceneCode()) && !hasSourceViewPermission(currentUser)) {
+			return "来源凭证";
+		}
+		return instance.businessObjectSummary();
+	}
+
+	private String visibleBusinessObjectSummary(ApprovalTaskProjection task, CurrentUser currentUser) {
+		if ("GL_VOUCHER_POST".equals(task.sceneCode()) && !hasSourceViewPermission(currentUser)) {
+			return "来源凭证";
+		}
+		return task.businessObjectSummary();
+	}
+
+	private boolean hasSourceViewPermission(CurrentUser currentUser) {
+		return currentUser != null && currentUser.permissions().contains("gl:source:view");
 	}
 
 	private ApprovalTaskState lockTask(Long taskId) {
@@ -965,6 +984,11 @@ public class PlatformApprovalService {
 	private void requireDetailAccess(ApprovalInstanceBase instance, CurrentUser currentUser) {
 		if (!hasBusinessViewPermission(currentUser, instance.sceneCode())) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+		if ("GL_VOUCHER_POST".equals(instance.sceneCode())
+				&& currentUser.permissions().contains("platform:approval:view")
+				&& currentUser.permissions().contains("gl:voucher:view")) {
+			return;
 		}
 		if (currentUser.id().equals(instance.submittedByUserId()) || hasHandledTask(instance.id(), currentUser.id())
 				|| hasCandidateRelation(instance, currentUser) || canCancel(instance, currentUser)) {

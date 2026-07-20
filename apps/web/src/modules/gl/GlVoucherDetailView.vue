@@ -10,6 +10,7 @@ import {
   formatGlDateTime,
   glActionAllowed,
   glActionDisabledReason,
+  glBusinessSourceMetaText,
   glBusinessSourceText,
   glErrorMessage,
   glFormalSourceText,
@@ -49,7 +50,7 @@ function amountText(value: string | null | undefined) {
 }
 
 function sourceText(voucher: GlVoucherRecord) {
-  return `${glFormalSourceText(voucher)} / ${glBusinessSourceText(voucher)}`
+  return `${glFormalSourceText(voucher)} / ${glBusinessSourceText(voucher)} / ${glBusinessSourceMetaText(voucher)}`
 }
 
 async function runVersionedAction(action: 'submit' | 'withdraw' | 'cancel') {
@@ -165,10 +166,13 @@ onMounted(loadRecord)
     <el-drawer v-model="sourceDrawerVisible" title="来源追溯" size="min(640px, 92vw)">
       <dl v-if="record" class="gl-drawer-list">
         <dt>正式来源</dt><dd>{{ record.sourceType || 'MANUAL' }}</dd>
+        <dt>正式来源号</dt><dd>{{ record.sourceNo || '-' }}</dd>
         <dt>正式来源 ID</dt><dd>{{ record.sourceId || '-' }}</dd>
         <dt>业务来源</dt><dd>{{ record.sourceOriginalType || record.businessSourceType || '-' }}</dd>
         <dt>业务来源 ID</dt><dd>{{ record.sourceOriginalId || record.businessSourceId || '-' }}</dd>
-        <dt>业务单号</dt><dd>{{ record.sourceNo || '-' }}</dd>
+        <dt>业务单号</dt><dd>{{ record.sourceOriginalNo || record.businessSourceNo || '-' }}</dd>
+        <dt>业务来源版本</dt><dd>{{ record.sourceOriginalVersion ?? record.businessSourceVersion ?? '-' }}</dd>
+        <dt>业务来源指纹</dt><dd>{{ record.sourceOriginalFingerprint || record.businessSourceFingerprint || '-' }}</dd>
       </dl>
     </el-drawer>
     <el-drawer v-model="auditDrawerVisible" title="操作日志" size="min(640px, 92vw)">

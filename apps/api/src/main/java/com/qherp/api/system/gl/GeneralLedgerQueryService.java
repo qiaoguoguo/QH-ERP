@@ -1,6 +1,7 @@
 package com.qherp.api.system.gl;
 
 import com.qherp.api.common.ApiErrorCode;
+import com.qherp.api.common.ApiErrorDetail;
 import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
@@ -25,23 +26,41 @@ public class GeneralLedgerQueryService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> vouchers(String status, String keyword, int page, int pageSize,
-			CurrentUser user) {
+	public PageResponse<Map<String, Object>> vouchers(String status, String keyword, String sourceType, Long sourceId,
+			int page, int pageSize, CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
 		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		boolean sourceVisible = GeneralLedgerSupport.hasPermission(user, "gl:source:view");
+		if (!sourceVisible && ((sourceType != null && !sourceType.isBlank()) || sourceId != null)) {
+			return PageResponse.of(List.of(), safePage, safeSize, 0);
+		}
 		List<Object> args = new ArrayList<>();
 		String where = "where true";
 		if (status != null && !status.isBlank()) {
 			where += " and v.status = ?";
 			args.add(status.trim().toUpperCase());
 		}
+		if (sourceType != null && !sourceType.isBlank()) {
+			where += " and v.source_type = ?";
+			args.add(sourceType.trim().toUpperCase());
+		}
+		if (sourceId != null) {
+			where += " and v.source_id = ?";
+			args.add(sourceId);
+		}
 		if (keyword != null && !keyword.isBlank()) {
-			where += " and (v.draft_no ilike ? or v.voucher_no ilike ? or v.summary ilike ? or v.source_no ilike ?)";
+			where += sourceVisible
+					? " and (v.draft_no ilike ? or v.voucher_no ilike ? or v.summary ilike ? or v.source_no ilike ? or v.source_original_no ilike ?)"
+					: " and (v.draft_no ilike ? or v.voucher_no ilike ? or "
+							+ "(v.source_original_type is null and v.source_type <> 'FIN_VOUCHER_DRAFT' and v.summary ilike ?))";
 			String like = "%" + keyword.trim() + "%";
 			args.add(like);
 			args.add(like);
 			args.add(like);
-			args.add(like);
+			if (sourceVisible) {
+				args.add(like);
+				args.add(like);
+			}
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -94,7 +113,8 @@ public class GeneralLedgerQueryService {
 			item.put("accountingPeriodId", rs.getLong("accounting_period_id"));
 			item.put("accountingPeriodCode", rs.getString("period_code"));
 			item.put("status", rs.getString("status"));
-			item.put("summary", rs.getString("summary"));
+			item.put("summary", visibleVoucherSummary(rs.getString("summary"), rs.getString("source_type"),
+					rs.getString("source_original_type"), sourceVisible));
 			item.put("sourceVisible", sourceVisible);
 			item.put("sourceType", sourceVisible ? rs.getString("source_type") : null);
 			item.put("sourceId", sourceVisible ? GeneralLedgerSupport.nullableLong(rs, "source_id") : null);
@@ -124,7 +144,7 @@ public class GeneralLedgerQueryService {
 			item.put("cancelledBy", rs.getString("cancelled_by"));
 			item.put("cancelledAt", rs.getObject("cancelled_at", OffsetDateTime.class));
 			item.put("version", rs.getLong("version"));
-			item.put("allowedActions", allowedActions(rs.getString("status"), user));
+			item.put("allowedActions", allowedActions(rs.getString("status"), rs.getString("submitted_by"), user));
 			item.put("actionDisabledReasons", actionDisabledReasons(rs.getString("status")));
 			if (includeLines) {
 				item.put("lines", voucherLines(id, amountVisible, sourceVisible));
@@ -134,46 +154,88 @@ public class GeneralLedgerQueryService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> generalLedger(String periodCode, int page, int pageSize,
-			CurrentUser user) {
-		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
-		PeriodRow period = period(periodCode);
-		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
-		Long total = this.jdbcTemplate.queryForObject("""
-				select count(*)
-				from gl_account_period_total t
-				where t.period_id = ?
-				""", Long.class, period.id());
-		List<Map<String, Object>> items = this.jdbcTemplate.query("""
-				select a.id as account_id, a.code, a.name, t.opening_debit, t.opening_credit, t.period_debit,
-				       t.period_credit, t.ending_debit, t.ending_credit
-				from gl_account_period_total t
-				join gl_account a on a.id = t.account_id
-				where t.period_id = ?
-				order by a.code
-				limit ? offset ?
-				""", (rs, rowNum) -> amountMap(rs.getLong("account_id"), rs.getString("code"), rs.getString("name"),
-				amountVisible, rs.getBigDecimal("opening_debit"), rs.getBigDecimal("opening_credit"),
-				rs.getBigDecimal("period_debit"), rs.getBigDecimal("period_credit"),
-				rs.getBigDecimal("ending_debit"), rs.getBigDecimal("ending_credit")), period.id(), safeSize,
-				GeneralLedgerSupport.offset(safePage, safeSize));
-		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
-	}
-
-	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> detailLedger(String periodCode, String voucherNo, int page, int pageSize,
-			CurrentUser user) {
+	public PageResponse<Map<String, Object>> generalLedger(String periodCode, String accountKeyword, Long accountId,
+			Integer level, int page, int pageSize, CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
 		int safeSize = GeneralLedgerSupport.limit(pageSize);
 		PeriodRow period = period(periodCode);
 		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
 		List<Object> args = new ArrayList<>();
 		args.add(period.id());
+		String where = "where t.period_id = ?";
+		if (accountId != null) {
+			where += " and a.id = ?";
+			args.add(accountId);
+		}
+		if (level != null) {
+			where += " and a.level_no = ?";
+			args.add(level);
+		}
+		if (accountKeyword != null && !accountKeyword.isBlank()) {
+			where += " and (a.code ilike ? or a.name ilike ?)";
+			String like = "%" + accountKeyword.trim() + "%";
+			args.add(like);
+			args.add(like);
+		}
+		Long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_account_period_total t
+				join gl_account a on a.id = t.account_id
+				%s
+				""".formatted(where), Long.class, args.toArray());
+		args.add(safeSize);
+		args.add(GeneralLedgerSupport.offset(safePage, safeSize));
+		List<Map<String, Object>> items = this.jdbcTemplate.query("""
+				select a.id as account_id, a.code, a.name, a.balance_direction, t.opening_debit, t.opening_credit,
+				       t.period_debit, t.period_credit, t.ending_debit, t.ending_credit
+				from gl_account_period_total t
+				join gl_account a on a.id = t.account_id
+				%s
+				order by a.code
+				limit ? offset ?
+				""".formatted(where), (rs, rowNum) -> amountMap(period.periodCode(), rs.getLong("account_id"),
+				rs.getString("code"), rs.getString("name"), rs.getString("balance_direction"),
+				amountVisible, rs.getBigDecimal("opening_debit"), rs.getBigDecimal("opening_credit"),
+				rs.getBigDecimal("period_debit"), rs.getBigDecimal("period_credit"),
+				rs.getBigDecimal("ending_debit"), rs.getBigDecimal("ending_credit")), args.toArray());
+		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<Map<String, Object>> detailLedger(String periodCode, String voucherNo, String accountKeyword,
+			Long accountId, String sourceType, Long sourceId, int page, int pageSize, CurrentUser user) {
+		int safePage = GeneralLedgerSupport.page(page);
+		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		PeriodRow period = period(periodCode);
+		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
+		boolean sourceVisible = GeneralLedgerSupport.hasPermission(user, "gl:source:view");
+		if (!sourceVisible && ((sourceType != null && !sourceType.isBlank()) || sourceId != null)) {
+			return PageResponse.of(List.of(), safePage, safeSize, 0);
+		}
+		List<Object> args = new ArrayList<>();
+		args.add(period.id());
 		String where = "where e.period_id = ?";
 		if (voucherNo != null && !voucherNo.isBlank()) {
 			where += " and e.voucher_no = ?";
 			args.add(voucherNo.trim());
+		}
+		if (accountId != null) {
+			where += " and e.account_id = ?";
+			args.add(accountId);
+		}
+		if (accountKeyword != null && !accountKeyword.isBlank()) {
+			where += " and (e.account_code ilike ? or e.account_name ilike ?)";
+			String like = "%" + accountKeyword.trim() + "%";
+			args.add(like);
+			args.add(like);
+		}
+		if (sourceType != null && !sourceType.isBlank()) {
+			where += " and e.source_type = ?";
+			args.add(sourceType.trim().toUpperCase());
+		}
+		if (sourceId != null) {
+			where += " and e.source_id = ?";
+			args.add(sourceId);
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -185,7 +247,11 @@ public class GeneralLedgerQueryService {
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select e.id, e.voucher_id, e.voucher_line_id, e.voucher_no, e.voucher_date, e.line_no, e.summary,
 				       e.account_id, e.account_code, e.account_name, e.debit_amount, e.credit_amount,
-				       e.source_type, e.source_id, e.source_no
+				       e.balance_direction, e.source_type, e.source_id, e.source_no,
+				       sum(case when e.balance_direction = 'DEBIT' then e.debit_amount - e.credit_amount
+				                else e.credit_amount - e.debit_amount end)
+				       over (partition by e.account_id order by e.voucher_date, e.voucher_number, e.line_no, e.id)
+				       as running_balance
 				from gl_ledger_entry e
 				%s
 				order by e.voucher_date, e.voucher_number, e.line_no
@@ -205,16 +271,29 @@ public class GeneralLedgerQueryService {
 			item.put("amountVisible", amountVisible);
 			item.put("debitAmount", amountVisible ? GeneralLedgerSupport.decimal(rs.getBigDecimal("debit_amount")) : null);
 			item.put("creditAmount", amountVisible ? GeneralLedgerSupport.decimal(rs.getBigDecimal("credit_amount")) : null);
+			item.put("runningBalance", amountVisible ? GeneralLedgerSupport.decimal(rs.getBigDecimal("running_balance")) : null);
+			item.put("balanceDirection", rs.getString("balance_direction"));
+			item.put("sourceVisible", sourceVisible);
+			item.put("sourceType", sourceVisible ? rs.getString("source_type") : null);
+			item.put("sourceId", sourceVisible ? GeneralLedgerSupport.nullableLong(rs, "source_id") : null);
+			item.put("sourceNo", sourceVisible ? rs.getString("source_no") : null);
+			item.put("sourceSummary", sourceVisible && rs.getString("source_type") != null
+					? rs.getString("source_type") + " " + rs.getString("source_no") : null);
+			item.put("sourceRoute", sourceVisible && rs.getString("source_type") != null
+					? Map.of("sourceType", rs.getString("source_type"), "sourceId",
+							GeneralLedgerSupport.nullableLong(rs, "source_id"))
+					: null);
 			item.put("restricted", !amountVisible);
+			item.put("restrictedReason", amountVisible ? null : "无权查看GL金额");
 			return item;
 		}, args.toArray());
 		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> accountBalances(String periodCode, int page, int pageSize,
-			CurrentUser user) {
-		return generalLedger(periodCode, page, pageSize, user);
+	public PageResponse<Map<String, Object>> accountBalances(String periodCode, String accountKeyword, Long accountId,
+			Integer level, int page, int pageSize, CurrentUser user) {
+		return generalLedger(periodCode, accountKeyword, accountId, level, page, pageSize, user);
 	}
 
 	@Transactional(readOnly = true)
@@ -228,7 +307,9 @@ public class GeneralLedgerQueryService {
 		BalanceGroup periodCache = aggregateCache(period.id(), "period");
 		BalanceGroup endingCache = aggregateCache(period.id(), "ending");
 		if (!opening.equals(openingCache) || !current.equals(periodCache) || !ending.equals(endingCache)) {
-			throw new BusinessException(ApiErrorCode.GL_TRIAL_BALANCE_MISMATCH);
+			throw new BusinessException(ApiErrorCode.GL_TRIAL_BALANCE_MISMATCH,
+					ApiErrorCode.GL_TRIAL_BALANCE_MISMATCH.message(),
+					ApiErrorCode.GL_TRIAL_BALANCE_MISMATCH.httpStatus(), trialMismatchDetails(period.id()));
 		}
 		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
 		Map<String, Object> result = GeneralLedgerSupport.map();
@@ -238,9 +319,71 @@ public class GeneralLedgerQueryService {
 		result.put("period", trialGroup(current, amountVisible));
 		result.put("ending", trialGroup(ending, amountVisible));
 		result.put("balanced", opening.balanced() && current.balanced() && ending.balanced());
+		result.put("openingDebitTotal", amountVisible ? GeneralLedgerSupport.decimal(opening.debit()) : null);
+		result.put("openingCreditTotal", amountVisible ? GeneralLedgerSupport.decimal(opening.credit()) : null);
 		result.put("periodDebit", amountVisible ? GeneralLedgerSupport.decimal(current.debit()) : null);
 		result.put("periodCredit", amountVisible ? GeneralLedgerSupport.decimal(current.credit()) : null);
+		result.put("periodDebitTotal", amountVisible ? GeneralLedgerSupport.decimal(current.debit()) : null);
+		result.put("periodCreditTotal", amountVisible ? GeneralLedgerSupport.decimal(current.credit()) : null);
+		result.put("endingDebitTotal", amountVisible ? GeneralLedgerSupport.decimal(ending.debit()) : null);
+		result.put("endingCreditTotal", amountVisible ? GeneralLedgerSupport.decimal(ending.credit()) : null);
+		BigDecimal difference = opening.debit().subtract(opening.credit()).abs()
+			.add(current.debit().subtract(current.credit()).abs())
+			.add(ending.debit().subtract(ending.credit()).abs());
+		result.put("differenceAmount", amountVisible ? GeneralLedgerSupport.decimal(difference) : null);
+		result.put("differences", amountVisible ? trialDifferences(period.id()) : List.of());
+		result.put("restricted", !amountVisible);
+		result.put("restrictedReason", amountVisible ? null : "无权查看GL金额");
 		return result;
+	}
+
+	@Transactional(readOnly = true)
+	public PageResponse<Map<String, Object>> sourceClaims(String sourceType, Long sourceId, int page, int pageSize,
+			CurrentUser user) {
+		if (!GeneralLedgerSupport.hasPermission(user, "gl:source:view")) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+		int safePage = GeneralLedgerSupport.page(page);
+		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		List<Object> args = new ArrayList<>();
+		String where = "where true";
+		if (sourceType != null && !sourceType.isBlank()) {
+			where += " and c.source_type = ?";
+			args.add(sourceType.trim().toUpperCase());
+		}
+		if (sourceId != null) {
+			where += " and c.source_id = ?";
+			args.add(sourceId);
+		}
+		Long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_voucher_source_claim c
+				%s
+				""".formatted(where), Long.class, args.toArray());
+		args.add(safeSize);
+		args.add(GeneralLedgerSupport.offset(safePage, safeSize));
+		List<Map<String, Object>> items = this.jdbcTemplate.query("""
+				select c.id, c.source_type, c.source_id, c.source_no, c.voucher_id, c.status,
+				       c.source_version, c.source_fingerprint, c.created_at, c.updated_at
+				from gl_voucher_source_claim c
+				%s
+				order by c.created_at desc, c.id desc
+				limit ? offset ?
+				""".formatted(where), (rs, rowNum) -> {
+			Map<String, Object> item = GeneralLedgerSupport.map();
+			item.put("id", rs.getLong("id"));
+			item.put("sourceType", rs.getString("source_type"));
+			item.put("sourceId", rs.getLong("source_id"));
+			item.put("sourceNo", rs.getString("source_no"));
+			item.put("voucherId", GeneralLedgerSupport.nullableLong(rs, "voucher_id"));
+			item.put("status", rs.getString("status"));
+			item.put("sourceVersion", rs.getLong("source_version"));
+			item.put("sourceFingerprint", rs.getString("source_fingerprint"));
+			item.put("createdAt", rs.getObject("created_at", OffsetDateTime.class));
+			item.put("updatedAt", rs.getObject("updated_at", OffsetDateTime.class));
+			return item;
+		}, args.toArray());
+		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
 	}
 
 	private List<Map<String, Object>> voucherLines(Long voucherId, boolean amountVisible, boolean sourceVisible) {
@@ -345,59 +488,129 @@ public class GeneralLedgerQueryService {
 		return item;
 	}
 
-	private List<Map<String, Object>> allowedActions(String status, CurrentUser user) {
-		List<Map<String, Object>> actions = new ArrayList<>();
+	private List<String> allowedActions(String status, String submittedBy, CurrentUser user) {
+		List<String> actions = new ArrayList<>();
 		if ("DRAFT".equals(status)) {
 			if (GeneralLedgerSupport.hasPermission(user, "gl:voucher:update")) {
-				actions.add(action("UPDATE", "维护"));
+				actions.add("UPDATE");
 			}
 			if (GeneralLedgerSupport.hasPermission(user, "gl:voucher:submit")) {
-				actions.add(action("SUBMIT", "提交"));
+				actions.add("SUBMIT");
 			}
 			if (GeneralLedgerSupport.hasPermission(user, "gl:voucher:cancel")) {
-				actions.add(action("CANCEL", "取消"));
+				actions.add("CANCEL");
 			}
 		}
+		if ("SUBMITTED".equals(status) && submittedBy != null && user != null
+				&& submittedBy.equals(user.username()) && GeneralLedgerSupport.hasPermission(user, "gl:voucher:submit")) {
+			actions.add("WITHDRAW");
+		}
 		if ("POSTED".equals(status) && GeneralLedgerSupport.hasPermission(user, "gl:voucher:reverse")) {
-			actions.add(action("REVERSE", "冲销"));
+			actions.add("REVERSE");
 		}
 		return actions;
 	}
 
-	private Map<String, Object> action(String code, String label) {
-		Map<String, Object> item = GeneralLedgerSupport.map();
-		item.put("code", code);
-		item.put("label", label);
-		item.put("enabled", true);
-		return item;
-	}
-
 	private Map<String, Object> actionDisabledReasons(String status) {
 		if ("POSTED".equals(status)) {
-			return Map.of("UPDATE", "已记账凭证不可修改", "SUBMIT", "已记账凭证不可重复提交");
+			return Map.of("UPDATE", "已记账凭证不可修改", "SUBMIT", "已记账凭证不可重复提交",
+					"CANCEL", "已记账凭证不可取消");
 		}
 		if ("SUBMITTED".equals(status)) {
-			return Map.of("UPDATE", "审批中凭证不可修改", "CANCEL", "审批中凭证不可取消");
+			return Map.of("UPDATE", "审批中凭证不可修改", "CANCEL", "审批中凭证不可取消",
+					"REVERSE", "审批中凭证不可冲销");
 		}
 		return Map.of();
 	}
 
-	private Map<String, Object> amountMap(Long accountId, String code, String name, boolean amountVisible,
-			BigDecimal openingDebit, BigDecimal openingCredit, BigDecimal periodDebit, BigDecimal periodCredit,
-			BigDecimal endingDebit, BigDecimal endingCredit) {
+	private Map<String, Object> amountMap(String periodCode, Long accountId, String code, String name,
+			String balanceDirection, boolean amountVisible, BigDecimal openingDebit, BigDecimal openingCredit,
+			BigDecimal periodDebit, BigDecimal periodCredit, BigDecimal endingDebit, BigDecimal endingCredit) {
 		Map<String, Object> item = GeneralLedgerSupport.map();
+		item.put("periodCode", periodCode);
 		item.put("accountId", accountId);
 		item.put("accountCode", code);
 		item.put("accountName", name);
+		item.put("balanceDirection", balanceDirection);
 		item.put("amountVisible", amountVisible);
 		item.put("restricted", !amountVisible);
+		item.put("restrictedReason", amountVisible ? null : "无权查看GL金额");
 		item.put("openingDebit", amountVisible ? GeneralLedgerSupport.decimal(openingDebit) : null);
 		item.put("openingCredit", amountVisible ? GeneralLedgerSupport.decimal(openingCredit) : null);
 		item.put("periodDebit", amountVisible ? GeneralLedgerSupport.decimal(periodDebit) : null);
 		item.put("periodCredit", amountVisible ? GeneralLedgerSupport.decimal(periodCredit) : null);
 		item.put("endingDebit", amountVisible ? GeneralLedgerSupport.decimal(endingDebit) : null);
 		item.put("endingCredit", amountVisible ? GeneralLedgerSupport.decimal(endingCredit) : null);
+		item.put("balanced", GeneralLedgerSupport.amount(endingDebit).compareTo(
+				GeneralLedgerSupport.amount(openingDebit).add(GeneralLedgerSupport.amount(periodDebit))) == 0
+				|| GeneralLedgerSupport.amount(endingCredit).compareTo(
+						GeneralLedgerSupport.amount(openingCredit).add(GeneralLedgerSupport.amount(periodCredit))) == 0);
 		return item;
+	}
+
+	private List<Map<String, Object>> trialDifferences(Long periodId) {
+		List<Map<String, Object>> result = new ArrayList<>();
+		addTrialDifference(result, "OPENING", "期初", aggregateLedger(periodId, true));
+		addTrialDifference(result, "PERIOD", "本期", aggregateLedger(periodId, false));
+		BalanceGroup opening = aggregateLedger(periodId, true);
+		BalanceGroup current = aggregateLedger(periodId, false);
+		addTrialDifference(result, "ENDING", "期末", new BalanceGroup(opening.debit().add(current.debit()),
+				opening.credit().add(current.credit())));
+		return result;
+	}
+
+	private List<ApiErrorDetail> trialMismatchDetails(Long periodId) {
+		return this.jdbcTemplate.query("""
+				with ledger as (
+					select account_id,
+					       coalesce(sum(debit_amount), 0) as expected_debit,
+					       coalesce(sum(credit_amount), 0) as expected_credit
+					from gl_ledger_entry
+					where period_id = ?
+					and voucher_type <> 'OPENING'
+					group by account_id
+				),
+				cache as (
+					select account_id, period_debit as actual_debit, period_credit as actual_credit
+					from gl_account_period_total
+					where period_id = ?
+				)
+				select a.code as account_code,
+				       coalesce(l.expected_debit, 0) as expected_debit,
+				       coalesce(c.actual_debit, 0) as actual_debit,
+				       coalesce(l.expected_credit, 0) as expected_credit,
+				       coalesce(c.actual_credit, 0) as actual_credit
+				from ledger l
+				full join cache c on c.account_id = l.account_id
+				join gl_account a on a.id = coalesce(l.account_id, c.account_id)
+				where coalesce(l.expected_debit, 0) <> coalesce(c.actual_debit, 0)
+				   or coalesce(l.expected_credit, 0) <> coalesce(c.actual_credit, 0)
+				order by a.code
+				limit 1
+				""", (rs, rowNum) -> List.of(
+				new ApiErrorDetail("accountCode", rs.getString("account_code")),
+				new ApiErrorDetail("expectedDebit", GeneralLedgerSupport.decimal(rs.getBigDecimal("expected_debit"))),
+				new ApiErrorDetail("actualDebit", GeneralLedgerSupport.decimal(rs.getBigDecimal("actual_debit"))),
+				new ApiErrorDetail("expectedCredit", GeneralLedgerSupport.decimal(rs.getBigDecimal("expected_credit"))),
+				new ApiErrorDetail("actualCredit", GeneralLedgerSupport.decimal(rs.getBigDecimal("actual_credit")))),
+				periodId, periodId).stream().findFirst().orElse(List.of());
+	}
+
+	private String visibleVoucherSummary(String summary, String sourceType, String sourceOriginalType,
+			boolean sourceVisible) {
+		boolean sourceBacked = "FIN_VOUCHER_DRAFT".equals(sourceType) || sourceOriginalType != null;
+		return !sourceVisible && sourceBacked ? "来源凭证" : summary;
+	}
+
+	private void addTrialDifference(List<Map<String, Object>> result, String code, String name, BalanceGroup group) {
+		Map<String, Object> item = GeneralLedgerSupport.map();
+		item.put("groupCode", code);
+		item.put("groupName", name);
+		item.put("balanced", group.balanced());
+		item.put("debitTotal", GeneralLedgerSupport.decimal(group.debit()));
+		item.put("creditTotal", GeneralLedgerSupport.decimal(group.credit()));
+		item.put("differenceAmount", GeneralLedgerSupport.decimal(group.debit().subtract(group.credit()).abs()));
+		result.add(item);
 	}
 
 	private Map<String, Object> trialGroup(BalanceGroup group, boolean amountVisible) {

@@ -68,6 +68,13 @@ public class GeneralLedgerAdminController {
 		return ApiResponse.ok(this.setupService.accounts(keyword, page, pageSize));
 	}
 
+	@GetMapping("/accounts/candidates")
+	public ApiResponse<PageResponse<Map<String, Object>>> accountCandidates(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String selectedIds,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize) {
+		return ApiResponse.ok(this.setupService.accountCandidates(keyword, selectedIds, page, pageSize));
+	}
+
 	@PostMapping("/accounts")
 	public ApiResponse<Map<String, Object>> createAccount(
 			@RequestBody GeneralLedgerSetupService.AccountRequest request,
@@ -99,11 +106,49 @@ public class GeneralLedgerAdminController {
 		return ApiResponse.ok(this.setupService.auxDimensions(page, pageSize));
 	}
 
-	@GetMapping("/aux-dimensions/{dimensionCode}/candidates")
-	public ApiResponse<PageResponse<Map<String, Object>>> auxiliaryCandidates(@PathVariable String dimensionCode,
+	@PostMapping("/aux-dimensions")
+	public ApiResponse<Map<String, Object>> createAuxDimension(
+			@RequestBody GeneralLedgerSetupService.AuxDimensionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.createAuxDimension(request, currentUser));
+	}
+
+	@PutMapping("/aux-dimensions/{id}")
+	public ApiResponse<Map<String, Object>> updateAuxDimension(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.AuxDimensionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.updateAuxDimension(id, request, currentUser));
+	}
+
+	@GetMapping("/aux-dimensions/{id}/items")
+	public ApiResponse<PageResponse<Map<String, Object>>> auxItems(@PathVariable Long id,
 			@RequestParam(required = false) String keyword, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize) {
-		return ApiResponse.ok(this.setupService.auxiliaryCandidates(dimensionCode, keyword, page, pageSize));
+		return ApiResponse.ok(this.setupService.auxItems(id, keyword, page, pageSize));
+	}
+
+	@PostMapping("/aux-dimensions/{id}/items")
+	public ApiResponse<Map<String, Object>> createAuxItem(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.AuxItemRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.createAuxItem(id, request, currentUser));
+	}
+
+	@PutMapping("/aux-dimensions/{id}/items/{itemId}")
+	public ApiResponse<Map<String, Object>> updateAuxItem(@PathVariable Long id, @PathVariable Long itemId,
+			@RequestBody GeneralLedgerSetupService.AuxItemRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.updateAuxItem(id, itemId, request, currentUser));
+	}
+
+	@GetMapping("/aux-dimensions/{dimensionCode}/candidates")
+	public ApiResponse<PageResponse<Map<String, Object>>> auxiliaryCandidates(@PathVariable String dimensionCode,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String selectedIds,
+			@RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "10") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.auxiliaryCandidates(dimensionCode, keyword, selectedIds, page,
+				pageSize, currentUser));
 	}
 
 	@GetMapping("/posting-rules")
@@ -112,11 +157,60 @@ public class GeneralLedgerAdminController {
 		return ApiResponse.ok(this.setupService.postingRules(page, pageSize));
 	}
 
+	@GetMapping("/posting-rules/{id}")
+	public ApiResponse<Map<String, Object>> postingRule(@PathVariable Long id) {
+		return ApiResponse.ok(this.setupService.postingRule(id));
+	}
+
+	@PostMapping("/posting-rules")
+	public ApiResponse<Map<String, Object>> createPostingRule(
+			@RequestBody GeneralLedgerSetupService.PostingRuleRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.createPostingRule(request, currentUser));
+	}
+
+	@PostMapping("/posting-rules/{id}/new-version")
+	public ApiResponse<Map<String, Object>> newPostingRuleVersion(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.ActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.newPostingRuleVersion(id, request, currentUser));
+	}
+
+	@PutMapping("/posting-rules/{id}")
+	public ApiResponse<Map<String, Object>> updatePostingRule(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.PostingRuleRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.updatePostingRule(id, request, currentUser));
+	}
+
+	@PostMapping("/posting-rules/{id}/validate")
+	public ApiResponse<Map<String, Object>> validatePostingRule(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.ActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.validatePostingRule(id, request, currentUser));
+	}
+
+	@PostMapping("/posting-rules/{id}/activate")
+	public ApiResponse<Map<String, Object>> activatePostingRule(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.ActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.activatePostingRule(id, request, currentUser));
+	}
+
+	@PostMapping("/posting-rules/{id}/disable")
+	public ApiResponse<Map<String, Object>> disablePostingRule(@PathVariable Long id,
+			@RequestBody GeneralLedgerSetupService.ActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.setupService.disablePostingRule(id, request, currentUser));
+	}
+
 	@GetMapping("/vouchers")
 	public ApiResponse<PageResponse<Map<String, Object>>> vouchers(@RequestParam(required = false) String status,
-			@RequestParam(required = false) String keyword, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.vouchers(status, keyword, page, pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.vouchers(status, keyword, sourceType, sourceId, page, pageSize,
+				currentUser));
 	}
 
 	@PostMapping("/vouchers")
@@ -153,6 +247,13 @@ public class GeneralLedgerAdminController {
 		return ApiResponse.ok(this.voucherService.submit(id, request, currentUser, servletRequest));
 	}
 
+	@PostMapping("/vouchers/{id}/withdraw")
+	public ApiResponse<Map<String, Object>> withdraw(@PathVariable Long id,
+			@RequestBody GeneralLedgerVoucherService.ActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser, HttpServletRequest servletRequest) {
+		return ApiResponse.ok(this.voucherService.withdraw(id, request, currentUser, servletRequest));
+	}
+
 	@PostMapping("/vouchers/{id}/cancel")
 	public ApiResponse<Map<String, Object>> cancel(@PathVariable Long id,
 			@RequestBody GeneralLedgerVoucherService.ActionRequest request,
@@ -176,23 +277,32 @@ public class GeneralLedgerAdminController {
 
 	@GetMapping("/ledgers/general")
 	public ApiResponse<PageResponse<Map<String, Object>>> generalLedger(@RequestParam String periodCode,
+			@RequestParam(required = false) String accountKeyword, @RequestParam(required = false) Long accountId,
+			@RequestParam(required = false) Integer level,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.generalLedger(periodCode, page, pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.generalLedger(periodCode, accountKeyword, accountId, level, page,
+				pageSize, currentUser));
 	}
 
 	@GetMapping("/ledgers/detail")
 	public ApiResponse<PageResponse<Map<String, Object>>> detailLedger(@RequestParam String periodCode,
-			@RequestParam(required = false) String voucherNo, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) String voucherNo, @RequestParam(required = false) String accountKeyword,
+			@RequestParam(required = false) Long accountId, @RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId, @RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.detailLedger(periodCode, voucherNo, page, pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.detailLedger(periodCode, voucherNo, accountKeyword, accountId,
+				sourceType, sourceId, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/account-balances")
 	public ApiResponse<PageResponse<Map<String, Object>>> accountBalances(@RequestParam String periodCode,
+			@RequestParam(required = false) String accountKeyword, @RequestParam(required = false) Long accountId,
+			@RequestParam(required = false) Integer level,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.accountBalances(periodCode, page, pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.accountBalances(periodCode, accountKeyword, accountId, level, page,
+				pageSize, currentUser));
 	}
 
 	@GetMapping("/trial-balance")
@@ -204,9 +314,11 @@ public class GeneralLedgerAdminController {
 	@GetMapping("/source-claims")
 	public ApiResponse<PageResponse<Map<String, Object>>> sourceClaims(
 			@RequestParam(required = false) String sourceType,
+			@RequestParam(required = false) Long sourceId,
 			@RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate ignoredDate,
-			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize) {
-		return ApiResponse.ok(PageResponse.of(java.util.List.of(), page, GeneralLedgerSupport.limit(pageSize), 0));
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.queryService.sourceClaims(sourceType, sourceId, page, pageSize, currentUser));
 	}
 
 }

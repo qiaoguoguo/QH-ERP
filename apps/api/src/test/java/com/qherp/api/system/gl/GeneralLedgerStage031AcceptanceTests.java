@@ -20,13 +20,16 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import org.assertj.core.api.SoftAssertions;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -109,12 +112,16 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		requireV33Schema();
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ensureLedgerInitialized(admin);
-		long parentReceivable = accountId(admin, "1122");
+		JsonNode customerAuxParent = data(post(admin, "/api/admin/gl/accounts",
+				accountPayload(null, "1131.AUXP" + SEQUENCE.incrementAndGet(), "031 客户辅助测试父科目",
+						"ASSET", "DEBIT", false, List.of())));
+		long parentReceivable = customerAuxParent.get("id").longValue();
 		long bankAccount = accountId(admin, "1002");
 		long revenueAccount = accountId(admin, "6001");
 		long customerId = insertCustomer("031_AUX_CUS_" + SEQUENCE.incrementAndGet());
 		JsonNode child = data(post(admin, "/api/admin/gl/accounts",
-				accountPayload(parentReceivable, "1122.031" + SEQUENCE.incrementAndGet(), "031 客户辅助应收",
+				accountPayload(parentReceivable, customerAuxParent.get("code").asText() + ".01",
+						"031 客户辅助应收",
 						"ASSET", "DEBIT", true,
 						List.of(Map.of("dimensionCode", "CUSTOMER", "requirementType", "REQUIRED")))));
 		long customerAccount = child.get("id").longValue();
@@ -264,10 +271,13 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		requireV33Schema();
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ensureLedgerInitialized(admin);
-		long parentAsset = accountId(admin, "1002");
+		JsonNode failureParent = data(post(admin, "/api/admin/gl/accounts",
+				accountPayload(null, "1131.FAIL" + SEQUENCE.incrementAndGet(), "031 审批失败测试父科目",
+						"ASSET", "DEBIT", false, List.of())));
+		long parentAsset = failureParent.get("id").longValue();
 		long revenueAccount = accountId(admin, "6001");
 		JsonNode temporaryAccount = data(post(admin, "/api/admin/gl/accounts",
-				accountPayload(parentAsset, "1002.031" + SEQUENCE.incrementAndGet(), "031 审批失败临时科目",
+				accountPayload(parentAsset, failureParent.get("code").asText() + ".01", "031 审批失败临时科目",
 						"ASSET", "DEBIT", true, List.of())));
 		long temporaryAccountId = temporaryAccount.get("id").longValue();
 		JsonNode voucher = data(post(admin, "/api/admin/gl/vouchers",
@@ -524,6 +534,500 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		}
 	}
 
+	@Test
+	@Order(14)
+	void 普通凭证已记账后新建和提交期初必须稳定阻断() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		createAndPostManualVoucher(admin, "031 普通过账后期初阻断", "33.00");
+		long bankAccount = accountId(admin, "1002");
+		long equityAccount = accountId(admin, "4001");
+
+		assertError(post(admin, "/api/admin/gl/vouchers",
+				voucherPayload("OPENING", START_DATE, "031 普通过账后不得新建期初",
+						List.of(line(1, bankAccount, "031 新建期初阻断", "1.00", null, List.of()),
+								line(2, equityAccount, "031 新建期初阻断", null, "1.00", List.of())))),
+				HttpStatus.CONFLICT, "GL_PERIOD_NOT_OPEN");
+
+		long legacyOpeningId = insertDraftVoucherBySql("OPENING", START_DATE, "031 历史遗留期初提交阻断",
+				"2.00");
+		assertError(post(admin, "/api/admin/gl/vouchers/" + legacyOpeningId + "/submit",
+				actionPayload(0, "031-opening-after-general-submit-" + legacyOpeningId)), HttpStatus.CONFLICT,
+				"GL_PERIOD_NOT_OPEN");
+	}
+
+	@Test
+	@Order(15)
+	void 来源查询必须按sourceType和sourceId精确回链且不误命中不相关凭证() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		FinanceDraftFixture firstDraft = insertReadyFinanceDraft("RECEIPT", "51.00");
+		FinanceDraftFixture secondDraft = insertReadyFinanceDraft("PAYMENT", "52.00");
+		JsonNode firstVoucher = convertFinanceDraft(admin, firstDraft, "031-source-link-first-"
+				+ firstDraft.draftId());
+		JsonNode secondVoucher = convertFinanceDraft(admin, secondDraft, "031-source-link-second-"
+				+ secondDraft.draftId());
+
+		JsonNode linked = data(get(admin, "/api/admin/gl/vouchers?sourceType=FIN_VOUCHER_DRAFT&sourceId="
+				+ firstDraft.draftId() + "&page=1&pageSize=20"));
+		assertThat(linked.get("total").longValue()).isOne();
+		assertThat(linked.get("items").get(0).get("id").longValue()).isEqualTo(firstVoucher.get("id").longValue());
+		assertThat(linked.toString()).doesNotContain(secondVoucher.get("draftNo").asText());
+
+		JsonNode claims = data(get(admin, "/api/admin/gl/source-claims?sourceType=" + firstDraft.sourceType()
+				+ "&sourceId=" + firstDraft.sourceId() + "&page=1&pageSize=20"));
+		assertThat(claims.get("total").longValue()).isOne();
+		assertThat(claims.get("items").get(0).get("voucherId").longValue()).isEqualTo(firstVoucher.get("id")
+			.longValue());
+	}
+
+	@Test
+	@Order(16)
+	void 无来源权限时关键词分页列表详情审批审计候选和错误文本均不得反推来源() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		FinanceDraftFixture draft = insertReadyFinanceDraft("SALES_INVOICE", "113.00");
+		JsonNode voucher = convertFinanceDraft(admin, draft, "031-source-mask-convert-" + draft.draftId());
+		JsonNode submitted = data(post(admin, "/api/admin/gl/vouchers/" + voucher.get("id").longValue()
+				+ "/submit", actionPayload(voucher.get("version").longValue(), "031-source-mask-submit-"
+						+ voucher.get("id").longValue())));
+		String sourceNo = submitted.get("sourceOriginalNo").asText();
+		String draftNo = submitted.get("draftNo").asText();
+		AuthenticatedSession restricted = createUserAndLogin("031-source-hidden-", "031_SOURCE_HIDDEN_",
+				List.of("gl:voucher:view", "gl:ledger:view", "gl:balance:view", "gl:auxiliary:view",
+						"platform:approval:view", "platform:todo:view", "system:audit:view"));
+
+		JsonNode keywordResult = data(get(restricted, "/api/admin/gl/vouchers?keyword=" + sourceNo
+				+ "&page=1&pageSize=20"));
+		JsonNode paged = data(get(restricted, "/api/admin/gl/vouchers?page=1&pageSize=1"));
+		JsonNode detail = data(get(restricted, "/api/admin/gl/vouchers/" + voucher.get("id").longValue()));
+		JsonNode approval = data(get(restricted, "/api/admin/approvals/" + approvalInstanceId(voucher.get("id")
+			.longValue())));
+		JsonNode audit = data(get(restricted, "/api/admin/audit-logs?targetType=GL_VOUCHER&page=1&pageSize=20"));
+		JsonNode candidates = data(get(restricted, "/api/admin/gl/aux-dimensions/CUSTOMER/candidates?page=1"
+				+ "&pageSize=20"));
+		ResponseEntity<String> duplicateError = post(restricted,
+				"/api/admin/gl/vouchers/from-finance-draft/" + draft.draftId(),
+				convertPayload(draft.version(), "031-source-hidden-duplicate-" + draft.draftId()));
+
+		SoftAssertions softly = new SoftAssertions();
+		softly.assertThat(keywordResult.get("total").longValue()).as("source keyword must not match").isZero();
+		softly.assertThat(paged.toString()).as("paged list").doesNotContain(sourceNo, draft.sourceType());
+		softly.assertThat(detail.toString()).as("detail").doesNotContain(sourceNo, draft.sourceType());
+		softly.assertThat(approval.toString()).as("approval").doesNotContain(sourceNo, draft.sourceType());
+		softly.assertThat(audit.toString()).as("audit").doesNotContain(sourceNo, draftNo, draft.sourceType());
+		softly.assertThat(candidates.toString()).as("candidate identifiers").doesNotContain("sourceId",
+				"objectId", "objectCode", "objectName");
+		softly.assertThat(duplicateError.getBody()).as("error text").doesNotContain(sourceNo, draftNo,
+				draft.sourceType());
+		softly.assertAll();
+		assertRecursiveNull(detail, sourceSensitiveFields());
+		assertRecursiveNull(paged, sourceSensitiveFields());
+	}
+
+	@Test
+	@Order(17)
+	void 审批拒绝撤回重复越权和过期任务必须失败关闭并把凭证退回草稿() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		AuthenticatedSession approver = createUserAndLogin("031-terminal-approver-", "031_TERMINAL_APPROVER_",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"gl:voucher:view", "gl:voucher:approve-post"));
+
+		JsonNode rejectDraft = createManualDraft(admin, "031 审批驳回回草稿", "61.00");
+		JsonNode rejectSubmitted = data(post(admin, "/api/admin/gl/vouchers/" + rejectDraft.get("id").longValue()
+				+ "/submit", actionPayload(rejectDraft.get("version").longValue(), "031-reject-submit-"
+						+ rejectDraft.get("id").longValue())));
+		long rejectTaskId = approvalTaskIdForVoucher(rejectDraft.get("id").longValue());
+		JsonNode rejected = data(post(approver, "/api/admin/approval-tasks/" + rejectTaskId + "/reject",
+				approvalPayload(taskVersion(rejectTaskId), "031-reject-" + rejectTaskId)));
+		assertThat(rejected.get("status").asText()).isEqualTo("REJECTED");
+		assertThat(voucherStatus(rejectDraft.get("id").longValue())).isEqualTo("DRAFT");
+		assertError(post(approver, "/api/admin/approval-tasks/" + rejectTaskId + "/reject",
+				approvalPayload(taskVersion(rejectTaskId), "031-reject-repeat-" + rejectTaskId)),
+				HttpStatus.CONFLICT, "APPROVAL_STATUS_INVALID");
+
+		JsonNode withdrawDraft = createManualDraft(admin, "031 审批撤回回草稿", "62.00");
+		JsonNode withdrawSubmitted = data(post(admin, "/api/admin/gl/vouchers/" + withdrawDraft.get("id")
+			.longValue() + "/submit", actionPayload(withdrawDraft.get("version").longValue(), "031-withdraw-submit-"
+					+ withdrawDraft.get("id").longValue())));
+		long withdrawInstanceId = withdrawSubmitted.get("approvalSummary").get("id").longValue();
+		JsonNode withdrawn = data(post(admin, "/api/admin/approvals/" + withdrawInstanceId + "/withdraw",
+				approvalPayload(withdrawSubmitted.get("approvalSummary").get("version").longValue(),
+						"031-withdraw-" + withdrawInstanceId)));
+		assertThat(withdrawn.get("status").asText()).isEqualTo("WITHDRAWN");
+		assertThat(voucherStatus(withdrawDraft.get("id").longValue())).isEqualTo("DRAFT");
+		assertError(post(admin, "/api/admin/approvals/" + withdrawInstanceId + "/withdraw",
+				approvalPayload(withdrawn.get("version").longValue(), "031-withdraw-repeat-"
+						+ withdrawInstanceId)), HttpStatus.CONFLICT, "APPROVAL_STATUS_INVALID");
+
+		JsonNode forbiddenDraft = createManualDraft(admin, "031 审批越权拒绝", "63.00");
+		data(post(admin, "/api/admin/gl/vouchers/" + forbiddenDraft.get("id").longValue() + "/submit",
+				actionPayload(forbiddenDraft.get("version").longValue(), "031-forbidden-submit-"
+						+ forbiddenDraft.get("id").longValue())));
+		long forbiddenTaskId = approvalTaskIdForVoucher(forbiddenDraft.get("id").longValue());
+		AuthenticatedSession noApprover = createUserAndLogin("031-no-approve-", "031_NO_APPROVE_",
+				List.of("platform:approval:view", "platform:todo:view", "gl:voucher:view"));
+		assertError(post(noApprover, "/api/admin/approval-tasks/" + forbiddenTaskId + "/reject",
+				approvalPayload(taskVersion(forbiddenTaskId), "031-forbidden-reject-" + forbiddenTaskId)),
+				HttpStatus.FORBIDDEN, "AUTH_FORBIDDEN");
+
+		JsonNode expiredDraft = createManualDraft(admin, "031 审批过期拒绝", "64.00");
+		data(post(admin, "/api/admin/gl/vouchers/" + expiredDraft.get("id").longValue() + "/submit",
+				actionPayload(expiredDraft.get("version").longValue(), "031-expired-submit-"
+						+ expiredDraft.get("id").longValue())));
+		long expiredTaskId = approvalTaskIdForVoucher(expiredDraft.get("id").longValue());
+		this.jdbcTemplate.update("""
+				update platform_approval_instance
+				set status = 'CANCELLED', completed_by_username = 'system', completed_at = now(),
+				    completed_comment = '031 模拟待处理任务过期终止', updated_at = now(), version = version + 1
+				where id = (
+					select instance_id from platform_approval_task where id = ?
+				)
+				""", expiredTaskId);
+		this.jdbcTemplate.update("""
+				update platform_approval_task
+				set updated_at = now(), version = version + 1
+				where id = ?
+				""", expiredTaskId);
+		assertError(post(approver, "/api/admin/approval-tasks/" + expiredTaskId + "/approve",
+				approvalPayload(taskVersion(expiredTaskId), "031-expired-approve-" + expiredTaskId)),
+				HttpStatus.CONFLICT, "APPROVAL_STATUS_INVALID");
+		assertThat(voucherStatus(expiredDraft.get("id").longValue())).isEqualTo("SUBMITTED");
+	}
+
+	@Test
+	@Order(18)
+	void 两个不同待审批凭证并发最终审批时正式号必须连续唯一且不跳号() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		JsonNode first = createManualDraft(admin, "031 并发审批一", "71.00");
+		JsonNode second = createManualDraft(admin, "031 并发审批二", "72.00");
+		data(post(admin, "/api/admin/gl/vouchers/" + first.get("id").longValue() + "/submit",
+				actionPayload(first.get("version").longValue(), "031-concurrent-post-submit-"
+						+ first.get("id").longValue())));
+		data(post(admin, "/api/admin/gl/vouchers/" + second.get("id").longValue() + "/submit",
+				actionPayload(second.get("version").longValue(), "031-concurrent-post-submit-"
+						+ second.get("id").longValue())));
+		long firstTaskId = approvalTaskIdForVoucher(first.get("id").longValue());
+		long secondTaskId = approvalTaskIdForVoucher(second.get("id").longValue());
+		long beforeSequence = voucherSequence(START_PERIOD);
+		AuthenticatedSession approver = createUserAndLogin("031-concurrent-approver-", "031_CONCURRENT_APPROVER_",
+				List.of("platform:approval:view", "platform:todo:view", "platform:message:view",
+						"gl:voucher:view", "gl:voucher:approve-post"));
+		CountDownLatch start = new CountDownLatch(1);
+		ExecutorService executor = Executors.newFixedThreadPool(2);
+		try {
+			Future<ResponseEntity<String>> firstApprove = executor.submit(() -> {
+				await(start);
+				return post(approver, "/api/admin/approval-tasks/" + firstTaskId + "/approve",
+						approvalPayload(taskVersion(firstTaskId), "031-concurrent-approve-" + firstTaskId));
+			});
+			Future<ResponseEntity<String>> secondApprove = executor.submit(() -> {
+				await(start);
+				return post(approver, "/api/admin/approval-tasks/" + secondTaskId + "/approve",
+						approvalPayload(taskVersion(secondTaskId), "031-concurrent-approve-" + secondTaskId));
+			});
+			start.countDown();
+			List<ResponseEntity<String>> responses = List.of(firstApprove.get(), secondApprove.get());
+			assertThat(responses).allSatisfy(this::assertOkUnchecked);
+		}
+		finally {
+			executor.shutdownNow();
+		}
+		JsonNode postedFirst = data(get(admin, "/api/admin/gl/vouchers/" + first.get("id").longValue()));
+		JsonNode postedSecond = data(get(admin, "/api/admin/gl/vouchers/" + second.get("id").longValue()));
+		Set<Long> numbers = new HashSet<>(List.of(voucherNumber(postedFirst), voucherNumber(postedSecond)));
+		assertThat(numbers).containsExactlyInAnyOrder(beforeSequence + 1, beforeSequence + 2);
+		assertThat(voucherSequence(START_PERIOD)).isEqualTo(beforeSequence + 2);
+	}
+
+	@Test
+	@Order(19)
+	void 取消刷新来源和冲销使用相同幂等键必须稳定重放同一结果() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+
+		JsonNode cancelDraft = createManualDraft(admin, "031 取消幂等", "81.00");
+		Map<String, Object> cancelPayload = actionPayload(cancelDraft.get("version").longValue(),
+				"031-cancel-idempotent-" + cancelDraft.get("id").longValue());
+		JsonNode cancelled = data(post(admin, "/api/admin/gl/vouchers/" + cancelDraft.get("id").longValue()
+				+ "/cancel", cancelPayload));
+		JsonNode cancelledAgain = data(post(admin, "/api/admin/gl/vouchers/" + cancelDraft.get("id").longValue()
+				+ "/cancel", cancelPayload));
+		assertThat(cancelledAgain.get("id").longValue()).isEqualTo(cancelled.get("id").longValue());
+		assertThat(cancelledAgain.get("status").asText()).isEqualTo("CANCELLED");
+
+		FinanceDraftFixture draft = insertReadyFinanceDraft("EXPENSE", "45.20");
+		JsonNode voucher = convertFinanceDraft(admin, draft, "031-refresh-idempotent-convert-" + draft.draftId());
+		Map<String, Object> refreshPayload = actionPayload(voucher.get("version").longValue(),
+				"031-refresh-idempotent-" + voucher.get("id").longValue());
+		JsonNode refreshed = data(post(admin, "/api/admin/gl/vouchers/" + voucher.get("id").longValue()
+				+ "/refresh-source", refreshPayload));
+		JsonNode refreshedAgain = data(post(admin, "/api/admin/gl/vouchers/" + voucher.get("id").longValue()
+				+ "/refresh-source", refreshPayload));
+		assertThat(refreshedAgain.get("id").longValue()).isEqualTo(refreshed.get("id").longValue());
+		assertThat(refreshedAgain.get("version").longValue()).isEqualTo(refreshed.get("version").longValue());
+
+		JsonNode posted = createAndPostManualVoucher(admin, "031 冲销幂等", "82.00");
+		Map<String, Object> reversePayload = reversalPayload(posted.get("version").longValue(),
+				START_DATE.plusDays(18), "031 冲销幂等原因", "031-reverse-idempotent-" + posted.get("id")
+					.longValue());
+		JsonNode reversal = data(post(admin, "/api/admin/gl/vouchers/" + posted.get("id").longValue()
+				+ "/reversals", reversePayload));
+		JsonNode reversalAgain = data(post(admin, "/api/admin/gl/vouchers/" + posted.get("id").longValue()
+				+ "/reversals", reversePayload));
+		assertThat(reversalAgain.get("id").longValue()).isEqualTo(reversal.get("id").longValue());
+		assertThat(reversalLinkCount(posted.get("id").longValue())).isOne();
+	}
+
+	@Test
+	@Order(20)
+	void 科目和辅助候选池不得受主列表分页或前一百条截断且已选必须回显() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		int suffix = SEQUENCE.incrementAndGet();
+		String accountParentCode = "1131.CAND" + suffix;
+		String accountPrefix = accountParentCode + ".";
+		String auxDimensionCode = "ACPOOL" + suffix;
+		String auxItemPrefix = "AUXCAND" + suffix + "-";
+		long accountParentId = insertCandidateAccountParentBySql(accountParentCode, "031 科目候选池父科目 " + suffix);
+		long selectedAccountId = 0;
+		String selectedAccountCode = null;
+		long lateAccountId = 0;
+		String lateAccountCode = null;
+		long auxDimensionId = insertCustomAuxDimensionBySql(auxDimensionCode, "031 候选池维度 " + suffix);
+		long selectedAuxItemId = 0;
+		String selectedAuxItemCode = null;
+		long lateAuxItemId = 0;
+		String lateAuxItemCode = null;
+		for (int index = 1; index <= 105; index++) {
+			String serial = "%03d".formatted(index);
+			String accountCode = accountPrefix + serial;
+			long accountId = insertCandidateAccountBySql(accountParentId, accountCode,
+					"031 科目候选池 第" + serial + "项");
+			String auxItemCode = auxItemPrefix + serial;
+			long auxItemId = insertCustomAuxItemBySql(auxDimensionId, auxItemCode,
+					"031 辅助候选池 第" + serial + "项");
+			if (index == 103) {
+				selectedAccountId = accountId;
+				selectedAccountCode = accountCode;
+				selectedAuxItemId = auxItemId;
+				selectedAuxItemCode = auxItemCode;
+			}
+			if (index == 105) {
+				lateAccountId = accountId;
+				lateAccountCode = accountCode;
+				lateAuxItemId = auxItemId;
+				lateAuxItemCode = auxItemCode;
+			}
+		}
+
+		JsonNode firstAccountPage = data(get(admin, "/api/admin/gl/accounts?keyword=" + accountPrefix
+				+ "&page=1&pageSize=5"));
+		assertThat(firstAccountPage.get("total").longValue()).isGreaterThan(100);
+		assertThat(firstAccountPage.get("items").size()).isEqualTo(5);
+		assertThat(itemsContainLong(firstAccountPage.get("items"), "id", lateAccountId)).isFalse();
+		JsonNode lateAccountCandidates = data(get(admin, "/api/admin/gl/accounts/candidates?keyword="
+				+ lateAccountCode + "&page=1&pageSize=20"));
+		assertThat(lateAccountCandidates.get("total").longValue()).isOne();
+		assertThat(itemsContainLong(lateAccountCandidates.get("items"), "accountId", lateAccountId)).isTrue();
+		assertThat(itemsContainText(lateAccountCandidates.get("items"), "accountCode", lateAccountCode)).isTrue();
+		JsonNode selectedAccountCandidates = data(get(admin, "/api/admin/gl/accounts/candidates?keyword="
+				+ "NO_MATCH_031&selectedIds=" + selectedAccountId + "&page=1&pageSize=20"));
+		assertThat(selectedAccountCandidates.get("total").longValue()).isOne();
+		assertThat(itemsContainLong(selectedAccountCandidates.get("items"), "accountId", selectedAccountId))
+			.isTrue();
+		assertThat(itemsContainText(selectedAccountCandidates.get("items"), "accountCode", selectedAccountCode))
+			.isTrue();
+
+		JsonNode firstAuxPage = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionId
+				+ "/items?keyword=" + auxItemPrefix + "&page=1&pageSize=5"));
+		assertThat(firstAuxPage.get("total").longValue()).isGreaterThan(100);
+		assertThat(firstAuxPage.get("items").size()).isEqualTo(5);
+		assertThat(itemsContainLong(firstAuxPage.get("items"), "id", lateAuxItemId)).isFalse();
+		JsonNode lateAuxCandidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionCode
+				+ "/candidates?keyword=" + lateAuxItemCode + "&page=1&pageSize=20"));
+		assertThat(lateAuxCandidates.get("total").longValue()).isOne();
+		assertThat(itemsContainLong(lateAuxCandidates.get("items"), "auxItemId", lateAuxItemId)).isTrue();
+		assertThat(itemsContainText(lateAuxCandidates.get("items"), "objectCode", lateAuxItemCode)).isTrue();
+		JsonNode selectedAuxCandidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionCode
+				+ "/candidates?keyword=NO_MATCH_031&selectedIds=" + selectedAuxItemId + "&page=1&pageSize=20"));
+		assertThat(selectedAuxCandidates.get("total").longValue()).isOne();
+		assertThat(itemsContainLong(selectedAuxCandidates.get("items"), "auxItemId", selectedAuxItemId)).isTrue();
+		assertThat(itemsContainText(selectedAuxCandidates.get("items"), "objectCode", selectedAuxItemCode))
+			.isTrue();
+	}
+
+	@Test
+	@Order(21)
+	void 自定义辅助维度项目和制证规则版本预览激活停用必须走真实接口且预览不占用来源() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		int suffix = SEQUENCE.incrementAndGet();
+		String dimensionCode = "WORKSHOP_" + suffix;
+		JsonNode dimension = data(post(admin, "/api/admin/gl/aux-dimensions", Map.of("code", dimensionCode,
+				"name", "031 自定义车间", "dimensionType", "CUSTOM", "enabled", true, "version", 0,
+				"idempotencyKey", "031-aux-dimension-" + suffix)));
+		JsonNode item = data(post(admin, "/api/admin/gl/aux-dimensions/" + dimension.get("id").longValue()
+				+ "/items", Map.of("code", "WS-" + suffix, "name", "031 装配车间", "enabled", true, "version", 0,
+						"idempotencyKey", "031-aux-item-" + suffix)));
+		JsonNode candidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + dimensionCode
+				+ "/candidates?keyword=WS-" + suffix + "&page=1&pageSize=20"));
+		assertThat(candidates.get("total").longValue()).isOne();
+		long bankAccount = accountId(admin, "1002");
+		JsonNode customAccount = data(post(admin, "/api/admin/gl/accounts",
+				accountPayload(bankAccount, "1002.WS" + suffix, "031 车间辅助银行", "ASSET", "DEBIT", true,
+						List.of(Map.of("dimensionCode", dimensionCode, "requirementType", "REQUIRED")))));
+		JsonNode customVoucher = data(post(admin, "/api/admin/gl/vouchers",
+				voucherPayload("GENERAL", START_DATE.plusDays(19), "031 自定义辅助凭证",
+						List.of(line(1, customAccount.get("id").longValue(), "031 自定义辅助借方", "9.00", null,
+								List.of(Map.of("dimensionCode", dimensionCode, "auxItemId", item.get("id")
+									.longValue()))),
+								line(2, accountId(admin, "6001"), "031 自定义辅助贷方", null, "9.00", List.of())))));
+		assertThat(recursiveValues(customVoucher, "dimensionCode")).contains(dimensionCode);
+
+		JsonNode rules = data(get(admin, "/api/admin/gl/posting-rules?page=1&pageSize=50"));
+		JsonNode activeSalesRule = findItem(rules.get("items"), "sourceType", "SALES_INVOICE");
+		JsonNode ruleDetail = data(get(admin, "/api/admin/gl/posting-rules/" + activeSalesRule.get("id")
+			.longValue()));
+		assertThat(ruleDetail.get("lines").size()).isGreaterThanOrEqualTo(2);
+		FinanceDraftFixture draft = insertReadyFinanceDraft("SALES_INVOICE", "113.00");
+		long beforeVoucherCount = tableCount("gl_voucher");
+		long beforeClaimCount = activeSourceClaimCount(draft.sourceType(), draft.sourceId());
+		JsonNode preview = data(post(admin, "/api/admin/gl/posting-rules/" + activeSalesRule.get("id")
+			.longValue() + "/validate", Map.of("sourceType", draft.sourceType(), "sourceId", draft.sourceId(),
+					"sourceVersion", draft.version(), "idempotencyKey", "031-rule-preview-" + draft.draftId())));
+		assertThat(preview.get("validationStatus").asText()).isEqualTo("VALID");
+		assertThat(tableCount("gl_voucher")).isEqualTo(beforeVoucherCount);
+		assertThat(activeSourceClaimCount(draft.sourceType(), draft.sourceId())).isEqualTo(beforeClaimCount);
+		JsonNode newVersion = data(post(admin, "/api/admin/gl/posting-rules/" + activeSalesRule.get("id")
+			.longValue() + "/new-version", actionPayload(activeSalesRule.get("version").longValue(),
+					"031-rule-new-version-" + activeSalesRule.get("id").longValue())));
+		JsonNode activated = data(post(admin, "/api/admin/gl/posting-rules/" + newVersion.get("id").longValue()
+				+ "/activate", actionPayload(newVersion.get("version").longValue(), "031-rule-activate-"
+						+ newVersion.get("id").longValue())));
+		assertThat(activated.get("status").asText()).isEqualTo("ACTIVE");
+		JsonNode disposableRule = data(post(admin, "/api/admin/gl/posting-rules",
+				Map.of("sourceType", "GL_TEST_SOURCE_" + suffix, "sourceVariant", "DEFAULT",
+						"name", "031 可停用测试规则", "description", "031 停用动作测试",
+						"effectiveFrom", START_DATE.toString(), "version", 0,
+						"idempotencyKey", "031-rule-disposable-" + suffix,
+						"lines", List.of(
+								Map.of("lineNo", 1, "normalizedFactCode", "TEST_DEBIT", "direction",
+										"DEBIT", "accountId", accountId(admin, "1002"),
+										"summaryTemplate", "031 停用测试借方", "auxiliaryMappings", List.of()),
+								Map.of("lineNo", 2, "normalizedFactCode", "TEST_CREDIT", "direction",
+										"CREDIT", "accountId", accountId(admin, "6001"),
+										"summaryTemplate", "031 停用测试贷方", "auxiliaryMappings", List.of())))));
+		JsonNode disabled = data(post(admin, "/api/admin/gl/posting-rules/" + disposableRule.get("id").longValue()
+				+ "/disable", actionPayload(disposableRule.get("version").longValue(),
+						"031-rule-disable-" + disposableRule.get("id").longValue())));
+		assertThat(disabled.get("status").asText()).isEqualTo("DISABLED");
+	}
+
+	@Test
+	@Order(22)
+	void 已引用科目必须保护关键字段停用辅助要求并返回禁用原因() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		JsonNode posted = createAndPostManualVoucher(admin, "031 科目引用保护", "91.00");
+		long referencedAccount = this.jdbcTemplate.queryForObject("""
+				select account_id
+				from gl_ledger_entry
+				where voucher_id = ?
+				order by id
+				limit 1
+				""", Long.class, posted.get("id").longValue());
+		JsonNode account = data(get(admin, "/api/admin/gl/accounts/" + referencedAccount));
+		assertThat(account.get("referenced").booleanValue()).isTrue();
+		assertThat(actionCodes(account.get("allowedActions"))).doesNotContain("DISABLE");
+		assertThat(account.get("actionDisabledReasons").toString()).contains("已引用");
+
+		assertError(exchange(admin, HttpMethod.PUT, "/api/admin/gl/accounts/" + referencedAccount,
+				accountPayload(null, account.get("code").asText(), "031 已引用科目改名", account.get("category")
+					.asText(), account.get("balanceDirection").asText(), false, List.of())),
+				HttpStatus.CONFLICT, "GL_ACCOUNT_LOCKED");
+		assertError(post(admin, "/api/admin/gl/accounts/" + referencedAccount + "/disable", Map.of()),
+				HttpStatus.CONFLICT, "GL_ACCOUNT_LOCKED");
+	}
+
+	@Test
+	@Order(23)
+	void 明细账必须返回运行余额来源过滤契约且试算差异DTO必须可定位科目() throws Exception {
+		requireV33Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		FinanceDraftFixture draft = insertReadyFinanceDraft("SALES_INVOICE", "113.00");
+		JsonNode voucher = convertFinanceDraft(admin, draft, "031-ledger-dto-convert-" + draft.draftId());
+		JsonNode posted = submitAndApprove(admin, voucher, "031-ledger-dto");
+		posted = data(get(admin, "/api/admin/gl/vouchers/" + posted.get("id").longValue()));
+		String voucherNo = posted.get("voucherNo").asText();
+		JsonNode detail = data(get(admin, "/api/admin/gl/ledgers/detail?periodCode=" + START_PERIOD
+				+ "&voucherNo=" + voucherNo + "&sourceType=" + draft.sourceType() + "&sourceId=" + draft.sourceId()
+				+ "&page=1&pageSize=20"));
+		assertThat(posted.get("lines").size()).isEqualTo(3);
+		for (JsonNode line : posted.get("lines")) {
+			assertThat(line.get("sourceVisible").booleanValue()).isTrue();
+			assertThat(line.get("sourceType").asText()).isEqualTo(draft.sourceType());
+			assertThat(line.get("sourceId").longValue()).isEqualTo(draft.sourceId());
+			assertThat(line.hasNonNull("sourceNo")).isTrue();
+			assertThat(line.get("sourceRoute").get("sourceType").asText()).isEqualTo(draft.sourceType());
+			assertThat(line.get("sourceRoute").get("sourceId").longValue()).isEqualTo(draft.sourceId());
+		}
+		assertThat(detail.get("total").longValue()).isEqualTo(3);
+		for (JsonNode item : detail.get("items")) {
+			assertThat(item.hasNonNull("runningBalance")).as(item.toString()).isTrue();
+			assertThat(item.get("sourceVisible").booleanValue()).isTrue();
+			assertThat(item.get("sourceType").asText()).isEqualTo(draft.sourceType());
+			assertThat(item.get("sourceId").longValue()).isEqualTo(draft.sourceId());
+			assertThat(item.hasNonNull("sourceNo")).isTrue();
+		}
+
+		long accountId = this.jdbcTemplate.queryForObject("""
+				select account_id
+				from gl_ledger_entry
+				where voucher_id = ?
+				order by id
+				limit 1
+				""", Long.class, posted.get("id").longValue());
+		Map<String, Object> before = this.jdbcTemplate.queryForMap("""
+				select *
+				from gl_account_period_total
+				where account_id = ?
+				and period_id = (
+					select id from gl_accounting_period where period_code = ?
+				)
+				""", accountId, START_PERIOD);
+		try {
+			this.jdbcTemplate.update("""
+					update gl_account_period_total
+					set period_debit = period_debit + 3.00
+					where account_id = ?
+					and period_id = (
+						select id from gl_accounting_period where period_code = ?
+					)
+					""", accountId, START_PERIOD);
+			ResponseEntity<String> mismatch = get(admin, "/api/admin/gl/trial-balance?periodCode="
+					+ START_PERIOD);
+			assertThat(mismatch.getStatusCode()).as(mismatch.getBody()).isEqualTo(HttpStatus.CONFLICT);
+			assertThat(mismatch.getBody()).contains("GL_TRIAL_BALANCE_MISMATCH", "accountCode",
+					"expectedDebit", "actualDebit");
+		}
+		finally {
+			restorePeriodTotal(before);
+		}
+	}
+
 	private void requireV33Schema() {
 		for (String table : GL_TABLES) {
 			assertThat(tableExists(table)).as("V33 必须创建 " + table).isTrue();
@@ -602,7 +1106,7 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		return line;
 	}
 
-	private Map<String, Object> accountPayload(long parentId, String code, String name, String category,
+	private Map<String, Object> accountPayload(Long parentId, String code, String name, String category,
 			String direction, boolean postable, List<Map<String, Object>> auxiliaryRequirements) {
 		Map<String, Object> payload = new LinkedHashMap<>();
 		payload.put("parentId", parentId);
@@ -648,6 +1152,73 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 			}
 		}
 		throw new AssertionError("未找到科目 " + code);
+	}
+
+	private long insertCandidateAccountParentBySql(String code, String name) {
+		long ledgerId = this.jdbcTemplate.queryForObject("select id from gl_ledger where code = 'MAIN'",
+				Long.class);
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_account (
+					ledger_id, parent_id, code, name, category, balance_direction, level_no, is_leaf, postable,
+					enabled, template_source, created_by, created_at, updated_by, updated_at
+				)
+				values (?, null, ?, ?, 'ASSET', 'DEBIT', 1, false, false, true, 'USER_DEFINED',
+					'test', now(), 'test', now())
+				returning id
+				""", Long.class, ledgerId, code, name);
+	}
+
+	private long insertCandidateAccountBySql(long parentId, String code, String name) {
+		long ledgerId = this.jdbcTemplate.queryForObject("select id from gl_ledger where code = 'MAIN'",
+				Long.class);
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_account (
+					ledger_id, parent_id, code, name, category, balance_direction, level_no, is_leaf, postable,
+					enabled, template_source, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, ?, 'ASSET', 'DEBIT', 2, true, true, true, 'USER_DEFINED',
+					'test', now(), 'test', now())
+				returning id
+				""", Long.class, ledgerId, parentId, code, name);
+	}
+
+	private long insertCustomAuxDimensionBySql(String code, String name) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_aux_dimension (
+					code, name, dimension_type, object_source, system_defined, enabled, sort_order, created_by,
+					created_at, updated_by, updated_at
+				)
+				values (?, ?, 'CUSTOM', null, false, true, ?, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, code, name, 9000 + SEQUENCE.incrementAndGet());
+	}
+
+	private long insertCustomAuxItemBySql(long dimensionId, String code, String name) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_aux_item (
+					dimension_id, code, name, enabled, created_by, created_at, updated_by, updated_at
+				)
+				values (?, ?, ?, true, 'test', now(), 'test', now())
+				returning id
+				""", Long.class, dimensionId, code, name);
+	}
+
+	private boolean itemsContainLong(JsonNode items, String fieldName, long expected) {
+		for (JsonNode item : items) {
+			if (item.hasNonNull(fieldName) && item.get(fieldName).longValue() == expected) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private boolean itemsContainText(JsonNode items, String fieldName, String expected) {
+		for (JsonNode item : items) {
+			if (item.hasNonNull(fieldName) && expected.equals(item.get(fieldName).asText())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private long insertCustomer(String code) {
@@ -1019,6 +1590,14 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 				Long.class, taskId);
 	}
 
+	private long approvalInstanceId(long voucherId) {
+		return this.jdbcTemplate.queryForObject("""
+				select approval_instance_id
+				from gl_voucher
+				where id = ?
+				""", Long.class, voucherId);
+	}
+
 	private String voucherStatus(long voucherId) {
 		return this.jdbcTemplate.queryForObject("select status from gl_voucher where id = ?", String.class,
 				voucherId);
@@ -1206,8 +1785,52 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		}
 	}
 
+	private List<String> sourceSensitiveFields() {
+		return List.of("sourceId", "sourceNo", "sourceVersion", "sourceFingerprint", "sourceOriginalId",
+				"sourceOriginalNo", "sourceOriginalVersion", "sourceOriginalFingerprint", "businessSourceId",
+				"businessSourceNo", "sourceRoute", "objectId", "objectCode", "objectName", "auxItemId");
+	}
+
 	private void assertDecimal(JsonNode node, String field, String expected) {
 		assertThat(new BigDecimal(node.get(field).asText())).isEqualByComparingTo(expected);
+	}
+
+	private long insertDraftVoucherBySql(String voucherType, LocalDate voucherDate, String summary, String amount) {
+		long ledgerId = this.jdbcTemplate.queryForObject("select id from gl_ledger where code = 'MAIN'",
+				Long.class);
+		long periodId = this.jdbcTemplate.queryForObject("""
+				select id
+				from gl_accounting_period
+				where period_code = ?
+				""", Long.class, START_PERIOD);
+		int suffix = SEQUENCE.incrementAndGet();
+		long voucherId = this.jdbcTemplate.queryForObject("""
+				insert into gl_voucher (
+					ledger_id, accounting_period_id, draft_no, voucher_type, voucher_date, status, summary,
+					source_type, source_payload, currency, debit_total, credit_total, idempotency_key,
+					request_fingerprint, created_by, created_at, updated_by, updated_at, version
+				)
+				values (?, ?, ?, ?, ?, 'DRAFT', ?, 'MANUAL', '{}'::jsonb, 'CNY', ?::numeric, ?::numeric,
+					?, ?, 'test', now(), 'test', now(), 0)
+				returning id
+				""", Long.class, ledgerId, periodId, "031-SQL-DRAFT-" + suffix, voucherType, voucherDate,
+				summary, amount, amount, "031-sql-draft-" + suffix, "031-sql-draft-fp-" + suffix);
+		insertSqlVoucherLine(voucherId, 1, "1002", summary + " 借方", amount, "0.00");
+		insertSqlVoucherLine(voucherId, 2, "4001", summary + " 贷方", "0.00", amount);
+		return voucherId;
+	}
+
+	private void insertSqlVoucherLine(long voucherId, int lineNo, String accountCode, String summary,
+			String debitAmount, String creditAmount) {
+		this.jdbcTemplate.update("""
+				insert into gl_voucher_line (
+					voucher_id, line_no, summary, account_id, account_code, account_name, account_category,
+					account_balance_direction, debit_amount, credit_amount, created_at
+				)
+				select ?, ?, ?, id, code, name, category, balance_direction, ?::numeric, ?::numeric, now()
+				from gl_account
+				where code = ?
+				""", voucherId, lineNo, summary, debitAmount, creditAmount, accountCode);
 	}
 
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,

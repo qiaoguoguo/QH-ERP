@@ -372,7 +372,7 @@ describe('022 平台页面', () => {
     ['INVENTORY_OWNERSHIP_CONVERSION', 2, '/inventory/ownership-conversions/2'],
     ['INVENTORY_VALUATION_ADJUSTMENT', 3, '/inventory/valuation-adjustments/3'],
     ['SALES_QUOTE', 9, '/sales/quotes/9'],
-    ['GL_VOUCHER', 91, '/gl/vouchers/91'],
+    ['GL_VOUCHER', 91, '/gl/vouchers/91?returnTo=%2Fplatform%2Fapprovals'],
   ])('审批详情为 %s 提供业务单据入口', async (objectType, objectId, expectedPath) => {
     documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
       items: [{
@@ -432,6 +432,7 @@ describe('022 平台页面', () => {
   })
 
   it('GL_VOUCHER_POST 最终审批在审批中心显示通过并记账，不提供直接 GL 编辑', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
       items: [{
         id: 91,
@@ -477,10 +478,11 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/vouchers/91')
+    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/vouchers/91?returnTo=%2Fplatform%2Fapprovals')
     expect(wrapper.text()).toContain('会计凭证')
     expect(wrapper.text()).toContain('通过并记账')
     expect(wrapper.text()).not.toContain('编辑凭证')
+    expect(warnSpy).not.toHaveBeenCalled()
 
     await wrapper.find('[data-test="approval-comment"]').setValue('复核通过')
     await wrapper.find('[data-test="approve-task"]').trigger('click')
@@ -491,6 +493,7 @@ describe('022 平台页面', () => {
       comment: '复核通过',
       idempotencyKey: expect.stringContaining('approval-approve-'),
     })
+    warnSpy.mockRestore()
   })
 
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {

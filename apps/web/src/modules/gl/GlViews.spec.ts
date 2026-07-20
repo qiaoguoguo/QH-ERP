@@ -45,6 +45,7 @@ async function mountGlView(component: object, path = '/gl', permissions: string[
   'gl:period:initialize',
   'gl:period:create',
   'gl:account:view',
+  'gl:account:create',
   'gl:account:update',
   'gl:account:disable',
   'gl:auxiliary:view',
@@ -111,7 +112,7 @@ const accountRecord = {
   enabled: true,
   auxiliaryRequirements: [{ dimensionCode: 'CUSTOMER', dimensionName: '客户', requirement: 'OPTIONAL' }],
   version: 2,
-  allowedActions: ['UPDATE'],
+  allowedActions: ['UPDATE', 'DISABLE'],
   actionDisabledReasons: { DISABLE: '已被凭证使用' },
 }
 
@@ -127,6 +128,11 @@ const voucherRecord = {
   sourceType: 'FIN_VOUCHER_DRAFT',
   sourceId: 61,
   sourceNo: 'VD-001',
+  sourceOriginalType: 'SALES_INVOICE',
+  sourceOriginalId: 11,
+  sourceOriginalNo: 'SI-001',
+  sourceOriginalVersion: 7,
+  sourceOriginalFingerprint: 'fp-si-001',
   currency: 'CNY',
   debitTotal: '120.00',
   creditTotal: '120.00',
@@ -151,9 +157,28 @@ describe('031 会计核算页面族', () => {
     confirmActionMock.mockResolvedValue(true)
     glApiMock.ledger.get.mockResolvedValue({ ledgerCode: 'MAIN', ledgerName: '总账', baseCurrency: 'CNY', initialized: true, startPeriodCode: '2026-07' })
     glApiMock.accountingPeriods.list.mockResolvedValue(page([{ id: 1, periodCode: '2026-07', startDate: '2026-07-01', endDate: '2026-07-31', status: 'OPEN', voucherCount: 2, lastPostedAt: '2026-07-20T10:00:00+08:00' }]))
+    glApiMock.accountingPeriods.create.mockResolvedValue({ id: 2, periodCode: '2026-08', startDate: '2026-08-01', endDate: '2026-08-31', status: 'OPEN' })
     glApiMock.accounts.list.mockResolvedValue(page([accountRecord]))
+    glApiMock.accounts.get.mockResolvedValue(accountRecord)
+    glApiMock.accounts.create.mockResolvedValue({ ...accountRecord, id: 100201, code: '100201', name: '新增下级科目', parentId: 1002, level: 2 })
+    glApiMock.accounts.update.mockResolvedValue({ ...accountRecord, name: '银行存款-更新' })
+    glApiMock.accounts.disable.mockResolvedValue({ ...accountRecord, enabled: false })
     glApiMock.auxDimensions.list.mockResolvedValue(page([{ id: 1, code: 'CUSTOMER', name: '客户', dimensionType: 'SYSTEM', enabled: true, itemCount: 3, version: 1, allowedActions: [], actionDisabledReasons: {} }]))
+    glApiMock.auxDimensions.items.mockResolvedValue(page([{ objectId: 88, objectCode: 'CUS-088', objectName: '齐辉客户', restricted: false }], 1, 100))
+    glApiMock.auxDimensions.candidates.mockImplementation((_code: string, params: { keyword?: string; page?: number; pageSize?: number }) => {
+      if (params.keyword === '后段') {
+        return Promise.resolve(page([{ objectId: 150, objectCode: 'CUS-150', objectName: '第 150 项客户', restricted: false }], 1, params.pageSize ?? 20))
+      }
+      return Promise.resolve(page([{ objectId: 88, objectCode: 'CUS-088', objectName: '齐辉客户', restricted: false }], 1, params.pageSize ?? 20))
+    })
+    glApiMock.auxDimensions.create.mockResolvedValue({ id: 2, code: 'REGION', name: '区域', dimensionType: 'CUSTOM', enabled: true, itemCount: 0, version: 1, allowedActions: ['UPDATE'], actionDisabledReasons: {} })
+    glApiMock.auxDimensions.update.mockResolvedValue({ id: 1, code: 'CUSTOMER', name: '客户', dimensionType: 'SYSTEM', enabled: false, itemCount: 3, version: 2, allowedActions: [], actionDisabledReasons: { UPDATE: '系统维度不可改编码' } })
     glApiMock.postingRules.list.mockResolvedValue(page([{ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', lineCount: 3, allowedActions: ['DISABLE'], actionDisabledReasons: {} }]))
+    glApiMock.postingRules.get.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', lineCount: 3, allowedActions: ['NEW_VERSION', 'VALIDATE', 'DISABLE'], actionDisabledReasons: {}, lines: [{ factCode: 'SALES_RECEIVABLE', direction: 'DEBIT', accountCode: '1122' }] })
+    glApiMock.postingRules.newVersion.mockResolvedValue({ id: 2, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 3, status: 'DRAFT', allowedActions: ['UPDATE', 'VALIDATE', 'ACTIVATE'], actionDisabledReasons: {} })
+    glApiMock.postingRules.validate.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', allowedActions: ['DISABLE'], actionDisabledReasons: {} })
+    glApiMock.postingRules.activate.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', allowedActions: ['DISABLE'], actionDisabledReasons: {} })
+    glApiMock.postingRules.disable.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'DISABLED', allowedActions: [], actionDisabledReasons: {} })
     glApiMock.vouchers.list.mockResolvedValue(page([voucherRecord]))
     glApiMock.vouchers.get.mockResolvedValue(voucherRecord)
     glApiMock.ledgers.general.mockResolvedValue(page([{ periodCode: '2026-07', accountCode: '1002', accountName: '银行存款', openingDebit: '0.00', openingCredit: '0.00', periodDebit: '120.00', periodCredit: '0.00', endingDebit: '120.00', endingCredit: '0.00', balanceDirection: 'DEBIT', balanced: true, restricted: false }]))
@@ -172,8 +197,26 @@ describe('031 会计核算页面族', () => {
     expect(wrapper.text()).toContain('不同于业务月结')
     expect(wrapper.text()).not.toContain('反关账')
     expect(wrapper.text()).not.toContain('损益结转')
+    expect(wrapper.find('input[name="gl-ledger-start-month"]').exists()).toBe(true)
     expect(wrapper.find('.query-form').exists()).toBe(true)
     expect(wrapper.find('.table-scroll').exists()).toBe(true)
+
+    await wrapper.find('input[name="gl-ledger-start-month"]').setValue('2026-07')
+    await wrapper.find('[data-test="initialize-gl-ledger"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.ledger.initialize).toHaveBeenCalledWith(expect.objectContaining({
+      startYearMonth: '2026-07',
+      idempotencyKey: expect.stringContaining('gl-ledger-init-'),
+    }))
+
+    glApiMock.ledger.get.mockResolvedValueOnce({ ledgerCode: 'MAIN', ledgerName: '总账', baseCurrency: 'CNY', initialized: true, startPeriodCode: '2026-07' })
+    const initialized = await mountGlView(GlAccountingPeriodsView, '/gl/accounting-periods')
+    await initialized.wrapper.find('[data-test="create-next-gl-period"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.accountingPeriods.create).toHaveBeenCalledWith(expect.objectContaining({
+      periodCode: '2026-08',
+      idempotencyKey: expect.stringContaining('gl-period-create-'),
+    }))
   })
 
   it('科目、辅助和规则页面按 page-standards 渲染宽表、状态和动作禁用原因', async () => {
@@ -184,16 +227,66 @@ describe('031 会计核算页面族', () => {
     expect(accounts.wrapper.text()).toContain('已被凭证使用')
     expect(accounts.wrapper.findComponent({ name: 'ElPagination' }).props('pageSizes')).toEqual([10, 20, 50, 100])
     expect(accounts.wrapper.find('.table-scroll').exists()).toBe(true)
+    await accounts.wrapper.find('[data-test="create-child-account"]').trigger('click')
+    await flushPromises()
+    expect(accounts.wrapper.text()).toContain('新增下级科目')
+    await accounts.wrapper.find('input[name="gl-account-code"]').setValue('100201')
+    await accounts.wrapper.find('input[name="gl-account-name"]').setValue('新增下级科目')
+    await accounts.wrapper.find('[data-test="save-gl-account"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.accounts.create).toHaveBeenCalledWith(expect.objectContaining({
+      parentId: 1002,
+      code: '100201',
+      name: '新增下级科目',
+      idempotencyKey: expect.stringContaining('gl-account-save-'),
+    }))
+    await accounts.wrapper.find('[data-test="disable-gl-account"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.accounts.disable).toHaveBeenCalledWith(1002, expect.objectContaining({
+      version: 2,
+      reason: expect.stringContaining('停用'),
+      idempotencyKey: expect.stringContaining('gl-account-disable-'),
+    }))
 
     const auxiliaries = await mountGlView(GlAuxiliariesView, '/gl/auxiliaries')
     expect(auxiliaries.wrapper.text()).toContain('辅助核算')
     expect(auxiliaries.wrapper.text()).toContain('候选不受主列表分页限制')
     expect(auxiliaries.wrapper.text()).toContain('客户')
+    await auxiliaries.wrapper.find('[data-test="view-aux-candidates"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.auxDimensions.candidates).toHaveBeenCalledWith('CUSTOMER', expect.objectContaining({ page: 1, pageSize: 20 }))
+    expect(auxiliaries.wrapper.text()).toContain('齐辉客户')
+    await auxiliaries.wrapper.find('input[name="gl-aux-candidate-keyword"]').setValue('后段')
+    await auxiliaries.wrapper.find('[data-test="search-aux-candidates"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.auxDimensions.candidates).toHaveBeenLastCalledWith('CUSTOMER', expect.objectContaining({ keyword: '后段', page: 1, pageSize: 20 }))
+    expect(auxiliaries.wrapper.text()).toContain('第 150 项客户')
+    await auxiliaries.wrapper.find('[data-test="create-aux-dimension"]').trigger('click')
+    await flushPromises()
+    await auxiliaries.wrapper.find('input[name="gl-aux-code"]').setValue('REGION')
+    await auxiliaries.wrapper.find('input[name="gl-aux-name"]').setValue('区域')
+    await auxiliaries.wrapper.find('[data-test="save-aux-dimension"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.auxDimensions.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'REGION',
+      name: '区域',
+      idempotencyKey: expect.stringContaining('gl-aux-save-'),
+    }))
 
     const rules = await mountGlView(GlPostingRulesView, '/gl/posting-rules')
     expect(rules.wrapper.text()).toContain('自动制证规则')
     expect(rules.wrapper.text()).toContain('SALES_INVOICE')
     expect(rules.wrapper.text()).toContain('预览不制证')
+    await rules.wrapper.find('[data-test="view-posting-rule"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.postingRules.get).toHaveBeenCalledWith(1)
+    expect(rules.wrapper.text()).toContain('SALES_RECEIVABLE')
+    await rules.wrapper.find('[data-test="validate-posting-rule"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.postingRules.validate).toHaveBeenCalledWith(1, expect.objectContaining({
+      version: 2,
+      idempotencyKey: expect.stringContaining('gl-rule-validate-'),
+    }))
   })
 
   it('凭证工作台展示正式凭证边界、allowedActions、returnTo 和受限金额语义', async () => {
@@ -221,28 +314,46 @@ describe('031 会计核算页面族', () => {
       sourceId: 61,
       sourceOriginalType: 'SALES_INVOICE',
       sourceOriginalId: 11,
-      sourceNo: 'SI-001',
+      sourceNo: 'VD-001',
+      sourceOriginalNo: 'SI-001',
+      sourceOriginalVersion: 7,
+      sourceOriginalFingerprint: 'fp-si-001',
     }
     glApiMock.vouchers.list.mockResolvedValueOnce(page([convertedVoucher]))
     const workbench = await mountGlView(GlVoucherWorkbenchView, '/gl/vouchers')
     expect(workbench.wrapper.text()).toContain('正式来源 FIN_VOUCHER_DRAFT')
     expect(workbench.wrapper.text()).toContain('业务来源 SALES_INVOICE SI-001')
+    expect(workbench.wrapper.text()).toContain('来源版本 7')
+    expect(workbench.wrapper.text()).toContain('fp-si-001')
     expect(workbench.wrapper.text()).not.toContain('FIN_VOUCHER_DRAFT SI-001')
 
     glApiMock.vouchers.get.mockResolvedValueOnce(convertedVoucher)
     const detail = await mountGlView(GlVoucherDetailView, '/gl/vouchers/91')
     expect(detail.wrapper.text()).toContain('正式来源 FIN_VOUCHER_DRAFT')
     expect(detail.wrapper.text()).toContain('业务来源 SALES_INVOICE SI-001')
+    expect(detail.wrapper.text()).toContain('业务来源版本')
+    expect(detail.wrapper.text()).toContain('fp-si-001')
     expect(detail.wrapper.text()).not.toContain('FIN_VOUCHER_DRAFT SI-001')
   })
 
-  it('凭证编辑页以分录宽表为主体，日期清空为空字符串并保存十进制字符串', async () => {
+  it('凭证编辑页以分录宽表、科目候选、辅助核算和借贷差额禁用原因完成有效草稿保存', async () => {
     glApiMock.vouchers.create.mockResolvedValueOnce({ ...voucherRecord, id: 101 })
     const { wrapper } = await mountGlView(GlVoucherFormView, '/gl/vouchers/create')
 
     expect(wrapper.text()).toContain('凭证编辑')
     expect(wrapper.text()).toContain('借方合计')
     expect(wrapper.text()).toContain('贷方合计')
+    expect(wrapper.text()).toContain('差额')
+    expect(wrapper.text()).toContain('会计期间')
+    expect(glApiMock.accounts.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 20 }))
+    await wrapper.find('input[name="gl-account-candidate-search"]').setValue('后段科目')
+    await flushPromises()
+    expect(glApiMock.accounts.list).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: '后段科目', page: 1, pageSize: 20 }))
+    expect(wrapper.find('[data-test="add-gl-voucher-line"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="remove-gl-voucher-line"]').exists()).toBe(true)
+    expect(wrapper.find('input[name="gl-line-account-1"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('1002 银行存款')
+    expect(wrapper.text()).toContain('客户 可选')
     expect(wrapper.find('[data-test="gl-voucher-lines-table"]').exists()).toBe(true)
     expect(wrapper.find('.table-scroll').exists()).toBe(true)
 
@@ -253,6 +364,7 @@ describe('031 会计核算页面族', () => {
     await flushPromises()
 
     expect(glApiMock.vouchers.create).toHaveBeenCalledWith(expect.objectContaining({
+      accountingPeriodCode: '2026-07',
       voucherDate: '',
       lines: expect.arrayContaining([
         expect.objectContaining({ debitAmount: '100.00', creditAmount: '0.00' }),
@@ -294,6 +406,9 @@ describe('031 会计核算页面族', () => {
     expect(detail.wrapper.text()).toContain('明细账')
     expect(detail.wrapper.text()).toContain('记-202607-0001')
     expect(detail.wrapper.text()).toContain('收款 RC-001')
+    expect(detail.wrapper.text()).toContain('余额方向')
+    expect(detail.wrapper.find('input[placeholder="来源类型"]').exists()).toBe(true)
+    expect(detail.wrapper.find('input[placeholder="正式凭证号"]').exists()).toBe(true)
     await detail.wrapper.find('[data-test="ledger-voucher-link"]').trigger('click')
     await flushPromises()
     expect(detail.router.currentRoute.value.query.returnTo).toBe('/gl/ledgers/detail')

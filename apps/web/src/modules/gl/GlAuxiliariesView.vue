@@ -1,15 +1,24 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { glApi, type GlAuxDimensionRecord } from '../../shared/api/glApi'
+import { glApi, type GlAuxCandidateRecord, type GlAuxDimensionRecord } from '../../shared/api/glApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
+import { createGlIdempotencyKey, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
 import './GlShared.css'
 
 const filters = reactive({ keyword: '', enabled: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<GlAuxDimensionRecord[]>([])
+const candidates = ref<GlAuxCandidateRecord[]>([])
 const loading = ref(false)
+const actionLoading = ref(false)
 const error = ref('')
+const actionError = ref('')
+const candidateDrawerVisible = ref(false)
+const dimensionDialogVisible = ref(false)
+const selectedDimension = ref<GlAuxDimensionRecord | null>(null)
+const candidateKeyword = ref('')
+const candidatePagination = reactive({ page: 1, pageSize: 20, total: 0 })
+const dimensionForm = reactive({ code: '', name: '', enabled: true, version: 0 })
 
 async function loadRecords() {
   loading.value = true
@@ -29,6 +38,96 @@ async function loadRecords() {
     error.value = glErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function openCandidates(row: GlAuxDimensionRecord) {
+  selectedDimension.value = row
+  candidateDrawerVisible.value = true
+  candidateKeyword.value = ''
+  candidatePagination.page = 1
+  await loadCandidates()
+}
+
+async function loadCandidates(append = false) {
+  if (!selectedDimension.value) {
+    return
+  }
+  actionError.value = ''
+  try {
+    const page = await glApi.auxDimensions.candidates(selectedDimension.value.code, {
+      keyword: candidateKeyword.value,
+      page: candidatePagination.page,
+      pageSize: candidatePagination.pageSize,
+    })
+    const items = glPageItems(page)
+    candidates.value = append ? [...candidates.value, ...items] : items
+    candidatePagination.total = glPageTotal(page)
+  } catch (caught) {
+    if (!append) {
+      candidates.value = []
+      candidatePagination.total = 0
+    }
+    actionError.value = glErrorMessage(caught)
+  }
+}
+
+async function searchCandidates() {
+  candidatePagination.page = 1
+  await loadCandidates()
+}
+
+async function loadMoreCandidates() {
+  if (candidates.value.length >= candidatePagination.total) {
+    return
+  }
+  candidatePagination.page += 1
+  await loadCandidates(true)
+}
+
+function openCreateDimension() {
+  selectedDimension.value = null
+  dimensionForm.code = ''
+  dimensionForm.name = ''
+  dimensionForm.enabled = true
+  dimensionForm.version = 0
+  dimensionDialogVisible.value = true
+}
+
+function openEditDimension(row: GlAuxDimensionRecord) {
+  selectedDimension.value = row
+  dimensionForm.code = row.code
+  dimensionForm.name = row.name
+  dimensionForm.enabled = row.enabled
+  dimensionForm.version = row.version
+  dimensionDialogVisible.value = true
+}
+
+async function saveDimension() {
+  if (actionLoading.value) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    const payload = {
+      code: dimensionForm.code,
+      name: dimensionForm.name,
+      enabled: dimensionForm.enabled,
+      version: dimensionForm.version,
+      idempotencyKey: createGlIdempotencyKey('gl-aux-save'),
+    }
+    if (selectedDimension.value && dimensionForm.version > 0) {
+      await glApi.auxDimensions.update(selectedDimension.value.id, payload)
+    } else {
+      await glApi.auxDimensions.create(payload)
+    }
+    dimensionDialogVisible.value = false
+    await loadRecords()
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
   }
 }
 
@@ -55,6 +154,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="辅助核算" description="配置客户、供应商、项目等辅助核算维度；候选不受主列表分页限制。">
     <template #actions>
       <el-button @click="loadRecords">刷新</el-button>
+      <el-button data-test="create-aux-dimension" type="primary" @click="openCreateDimension">新增自定义维度</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>
@@ -71,6 +171,7 @@ onMounted(loadRecords)
     <template #alerts>
       <el-alert type="info" title="客户、供应商、项目候选不受主列表分页限制，按维度接口独立查询。" :closable="false" />
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
+      <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="辅助核算加载中" :closable="false" />
     </template>
 
@@ -81,6 +182,12 @@ onMounted(loadRecords)
         <el-table-column prop="dimensionType" label="维度类型" min-width="120" />
         <el-table-column prop="itemCount" label="候选数量" min-width="100" align="right" />
         <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="180">
+          <template #default="{ row }">
+            <el-button data-test="view-aux-candidates" text @click="openCandidates(row)">候选详情</el-button>
+            <el-button data-test="edit-aux-dimension" text @click="openEditDimension(row)">维护</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
     <el-pagination
@@ -93,5 +200,43 @@ onMounted(loadRecords)
       @current-change="changePage"
       @size-change="changePageSize"
     />
+    <el-drawer v-model="candidateDrawerVisible" title="辅助候选详情" size="min(720px, 92vw)" :teleported="false">
+      <el-alert type="info" title="候选池独立查询，已选辅助项按对象编码与名称回显。" :closable="false" />
+      <el-form class="query-form" inline>
+        <el-form-item label="候选关键词">
+          <el-input v-model="candidateKeyword" name="gl-aux-candidate-keyword" clearable placeholder="编码或名称" />
+        </el-form-item>
+        <el-form-item>
+          <el-button data-test="search-aux-candidates" type="primary" @click="searchCandidates">查询候选</el-button>
+        </el-form-item>
+      </el-form>
+      <div class="table-scroll">
+        <el-table :data="candidates" empty-text="暂无候选，请调整筛选或检查权限">
+          <el-table-column prop="objectCode" label="候选编码" min-width="140" />
+          <el-table-column prop="objectName" label="候选名称" min-width="180" show-overflow-tooltip />
+          <el-table-column label="权限状态" min-width="140">
+            <template #default="{ row }">{{ row.restricted ? (row.restrictedReason || '无权查看候选') : '可选' }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <el-button v-if="candidates.length < candidatePagination.total" data-test="load-more-aux-candidates" @click="loadMoreCandidates">继续加载候选</el-button>
+    </el-drawer>
+    <el-drawer v-model="dimensionDialogVisible" title="自定义维度维护" size="min(720px, 92vw)" :teleported="false">
+      <el-form label-position="top">
+        <el-form-item label="维度编码">
+          <el-input v-model="dimensionForm.code" name="gl-aux-code" clearable placeholder="REGION" />
+        </el-form-item>
+        <el-form-item label="维度名称">
+          <el-input v-model="dimensionForm.name" name="gl-aux-name" clearable placeholder="区域" />
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch v-model="dimensionForm.enabled" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dimensionDialogVisible = false">取消</el-button>
+        <el-button data-test="save-aux-dimension" type="primary" :loading="actionLoading" @click="saveDimension">保存</el-button>
+      </template>
+    </el-drawer>
   </MasterDataTableView>
 </template>

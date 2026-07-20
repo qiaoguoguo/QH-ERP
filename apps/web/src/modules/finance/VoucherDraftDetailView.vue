@@ -89,10 +89,14 @@ async function loadLinkedGlVoucher() {
       page: 1,
       pageSize: 10,
     })
-    linkedGlVoucher.value = pageItems(page)[0] ?? null
+    linkedGlVoucher.value = pageItems(page).find((voucher) => isLinkedGlVoucher(record.value!, voucher)) ?? null
   } catch {
     linkedGlVoucher.value = null
   }
+}
+
+function isLinkedGlVoucher(draft: VoucherDraftRecord, voucher: GlVoucherRecord) {
+  return voucher.sourceType === 'FIN_VOUCHER_DRAFT' && String(voucher.sourceId) === String(draft.id)
 }
 
 async function runAction(action: 'ready' | 'cancel') {

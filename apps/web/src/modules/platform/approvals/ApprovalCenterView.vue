@@ -82,7 +82,13 @@ function businessObjectRoute(record: { objectType?: string | null, objectId?: st
     return null
   }
   const basePath = businessObjectPaths[record.objectType]
-  return basePath ? `${basePath}/${encodeURIComponent(String(record.objectId))}` : null
+  if (!basePath) {
+    return null
+  }
+  const path = `${basePath}/${encodeURIComponent(String(record.objectId))}`
+  return record.objectType === 'GL_VOUCHER'
+    ? `${path}?returnTo=${encodeURIComponent('/platform/approvals')}`
+    : path
 }
 
 function businessObjectLabel(objectType?: string | null) {
@@ -270,7 +276,7 @@ onMounted(() => {
             <el-radio-button
               v-for="scope in scopes"
               :key="scope"
-              :label="scope"
+              :value="scope"
               @click="switchScope(scope)"
             >
               {{ approvalScopeLabel(scope) }}

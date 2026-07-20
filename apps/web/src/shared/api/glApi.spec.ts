@@ -217,4 +217,101 @@ describe('glApi', () => {
       traceId: 'trace-gl-1',
     } satisfies Partial<AccountPermissionApiError>)
   })
+
+  it('归一化真实后端 DTO：动作编码、两层来源、科目/规则别名和试算三组 totals', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        id: 91,
+        draftNo: 'GLD-202607-0001',
+        status: 'DRAFT',
+        sourceType: 'FIN_VOUCHER_DRAFT',
+        sourceId: 61,
+        sourceNo: 'VD-001',
+        sourceOriginalType: 'SALES_INVOICE',
+        sourceOriginalId: 11,
+        sourceOriginalNo: 'SI-001',
+        sourceOriginalVersion: 7,
+        sourceOriginalFingerprint: 'fp-si-001',
+        version: 4,
+        allowedActions: [
+          { code: 'UPDATE', label: '维护', enabled: true },
+          { code: 'SUBMIT', label: '提交', enabled: true },
+        ],
+        actionDisabledReasons: { CANCEL: '审批中不能取消' },
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 1002,
+          code: '1002',
+          name: '银行存款',
+          category: 'ASSET',
+          levelNo: 1,
+          isLeaf: true,
+          postable: true,
+          balanceDirection: 'DEBIT',
+          enabled: true,
+          version: 3,
+          auxiliaryRequirements: [{ dimensionCode: 'CUSTOMER', dimensionName: '客户', requirementType: 'OPTIONAL' }],
+          allowedActions: [{ code: 'UPDATE', label: '维护', enabled: true }],
+          actionDisabledReasons: { DISABLE: '已被凭证使用' },
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 1,
+          sourceType: 'SALES_INVOICE',
+          sourceVariant: 'STANDARD',
+          ruleVersion: 2,
+          status: 'ACTIVE',
+          validationStatus: 'VALID',
+          lineCount: 3,
+          allowedActions: [{ code: 'DISABLE', label: '停用', enabled: true }],
+          actionDisabledReasons: {},
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        balanced: false,
+        opening: { debitTotal: '0.00', creditTotal: '0.00', differenceAmount: '0.00' },
+        period: { debitTotal: '120.00', creditTotal: '100.00', differenceAmount: '20.00' },
+        ending: { debitTotal: '120.00', creditTotal: '100.00', differenceAmount: '20.00' },
+        differences: [{ accountCode: '2221.01', accountName: '应交税费-销项税额', differenceAmount: '20.00' }],
+        amountVisible: true,
+      }))
+
+    const api = createGlApi({ fetcher })
+
+    await expect(api.vouchers.get(91)).resolves.toMatchObject({
+      sourceNo: 'VD-001',
+      sourceOriginalNo: 'SI-001',
+      sourceOriginalVersion: 7,
+      sourceOriginalFingerprint: 'fp-si-001',
+      allowedActions: ['UPDATE', 'SUBMIT'],
+      actionDisabledReasons: { CANCEL: '审批中不能取消' },
+    })
+    await expect(api.accounts.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        level: 1,
+        auxiliaryRequirements: [expect.objectContaining({ requirement: 'OPTIONAL' })],
+        allowedActions: ['UPDATE'],
+      })],
+    })
+    await expect(api.postingRules.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({ versionNo: 2, allowedActions: ['DISABLE'] })],
+    })
+    await expect(api.trialBalance.get({ periodCode: '2026-07' })).resolves.toMatchObject({
+      balanced: false,
+      openingDebitTotal: '0.00',
+      periodDebitTotal: '120.00',
+      periodCreditTotal: '100.00',
+      endingDebitTotal: '120.00',
+      differenceAmount: '20.00',
+      differences: [expect.objectContaining({ accountCode: '2221.01' })],
+    })
+  })
 })

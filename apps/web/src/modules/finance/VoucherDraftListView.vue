@@ -57,6 +57,7 @@ interface VoucherSourceCandidate {
 }
 
 const sourceCandidates = ref<VoucherSourceCandidate[]>([])
+const sourceCandidatesQueried = ref(false)
 const selectedSourceCandidate = computed(() => sourceCandidates.value.find((item) => item.key === generation.selectedKey) ?? null)
 const canQueryGlVouchers = computed(() => authStore.hasPermission('gl:voucher:view'))
 const canConvertGlVoucher = computed(() => authStore.hasPermission('gl:voucher:convert'))
@@ -117,12 +118,17 @@ async function loadLinkedGlVouchers(drafts: VoucherDraftRecord[]) {
         page: 1,
         pageSize: 10,
       })
-      return [String(draft.id), pageItems(page)[0]] as const
+      const linked = pageItems(page).find((voucher) => isLinkedGlVoucher(draft, voucher))
+      return [String(draft.id), linked] as const
     } catch {
       return [String(draft.id), undefined] as const
     }
   }))
   linkedGlVouchers.value = Object.fromEntries(entries.filter((entry): entry is readonly [string, GlVoucherRecord] => Boolean(entry[1])))
+}
+
+function isLinkedGlVoucher(draft: VoucherDraftRecord, voucher: GlVoucherRecord) {
+  return voucher.sourceType === 'FIN_VOUCHER_DRAFT' && String(voucher.sourceId) === String(draft.id)
 }
 
 function search() {
@@ -227,6 +233,7 @@ function allocationCandidate(record: { id: string | number; allocationNo?: strin
 
 async function loadSourceCandidates() {
   sourceCandidatesLoading.value = true
+  sourceCandidatesQueried.value = true
   actionError.value = ''
   try {
     if (generation.sourceType === 'SALES_INVOICE') {
@@ -388,6 +395,9 @@ onMounted(() => {
         </el-option>
       </el-select>
       <el-button data-test="generate-voucher-draft" type="primary" :loading="generating" :disabled="generateDisabled" @click="generateDraft">从来源生成草稿</el-button>
+      <span v-if="sourceCandidatesQueried && !sourceCandidatesLoading && sourceCandidates.length === 0" class="finance-muted-note">
+        暂无可生成来源，请调整筛选条件
+      </span>
     </template>
     <template #filters>
       <el-form class="query-form" inline>

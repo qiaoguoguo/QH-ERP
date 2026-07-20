@@ -6,6 +6,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
   formatGlAmount,
   glActionDisabledReason,
+  glBusinessSourceMetaText,
   glBusinessSourceText,
   glErrorMessage,
   glFormalSourceText,
@@ -61,7 +62,7 @@ function amountText(record: GlVoucherRecord, field: 'debitTotal' | 'creditTotal'
 }
 
 function sourceText(record: GlVoucherRecord) {
-  return `${glFormalSourceText(record)} / ${glBusinessSourceText(record)}`
+  return `${glFormalSourceText(record)} / ${glBusinessSourceText(record)} / ${glBusinessSourceMetaText(record)}`
 }
 
 function openDetail(record: GlVoucherRecord) {

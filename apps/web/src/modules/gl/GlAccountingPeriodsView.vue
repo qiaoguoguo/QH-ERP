@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { glApi, type GlAccountingPeriodRecord, type GlLedgerRecord } from '../../shared/api/glApi'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
@@ -23,6 +24,22 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const actionError = ref('')
+const startYearMonth = ref('2026-07')
+
+const nextPeriodCode = computed(() => {
+  const latest = [...records.value]
+    .map((item) => item.periodCode)
+    .filter((item) => /^\d{4}-\d{2}$/.test(item))
+    .sort()
+    .at(-1)
+  if (!latest) {
+    return ledger.value?.startPeriodCode || startYearMonth.value
+  }
+  const [year, month] = latest.split('-').map(Number)
+  const nextMonth = month === 12 ? 1 : month + 1
+  const nextYear = month === 12 ? year + 1 : year
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}`
+})
 
 async function loadRecords() {
   loading.value = true
@@ -52,12 +69,38 @@ async function initializeLedger() {
   if (actionLoading.value || !authStore.hasPermission(glPermissions.periodInitialize)) {
     return
   }
+  if (!(await confirmAction(`从 ${startYearMonth.value} 启用总账？`))) {
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
     ledger.value = await glApi.ledger.initialize({
-      startYearMonth: `${filters.year}-01`,
+      startYearMonth: startYearMonth.value,
       idempotencyKey: createGlIdempotencyKey('gl-ledger-init'),
+    })
+    await loadRecords()
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function createNextPeriod() {
+  if (actionLoading.value || !authStore.hasPermission(glPermissions.periodCreate)) {
+    return
+  }
+  if (!(await confirmAction(`新增会计期间 ${nextPeriodCode.value}？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    await glApi.accountingPeriods.create({
+      version: ledger.value?.version ?? 0,
+      periodCode: nextPeriodCode.value,
+      idempotencyKey: createGlIdempotencyKey('gl-period-create'),
     })
     await loadRecords()
   } catch (caught) {
@@ -92,6 +135,7 @@ onMounted(loadRecords)
       <el-button @click="loadRecords">刷新</el-button>
       <el-button
         v-if="!ledger?.initialized"
+        data-test="initialize-gl-ledger"
         type="primary"
         :loading="actionLoading"
         :disabled="actionLoading || !authStore.hasPermission(glPermissions.periodInitialize)"
@@ -99,11 +143,25 @@ onMounted(loadRecords)
       >
         初始化总账
       </el-button>
+      <el-button
+        v-if="ledger?.initialized"
+        data-test="create-next-gl-period"
+        type="primary"
+        plain
+        :loading="actionLoading"
+        :disabled="actionLoading || !authStore.hasPermission(glPermissions.periodCreate)"
+        @click="createNextPeriod"
+      >
+        新增下一期间 {{ nextPeriodCode }}
+      </el-button>
     </template>
     <template #filters>
       <el-form class="query-form" inline>
         <el-form-item label="会计年度">
           <el-input v-model="filters.year" name="gl-period-year" clearable placeholder="2026" />
+        </el-form-item>
+        <el-form-item v-if="!ledger?.initialized" label="启用首月">
+          <el-input v-model="startYearMonth" name="gl-ledger-start-month" clearable placeholder="2026-07" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="search">查询</el-button>

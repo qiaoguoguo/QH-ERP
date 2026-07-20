@@ -126,13 +126,26 @@ export function glFormalSourceText(record: Pick<GlVoucherRecord, 'sourceType' | 
   return `正式来源 ${record.sourceType || 'MANUAL'}`
 }
 
-export function glBusinessSourceText(record: Pick<GlVoucherRecord, 'businessSourceType' | 'sourceOriginalType' | 'sourceNo' | 'sourceVisible' | 'restrictedReason'>) {
+export function glBusinessSourceText(record: Pick<GlVoucherRecord, 'businessSourceType' | 'sourceOriginalType' | 'businessSourceNo' | 'sourceOriginalNo' | 'sourceVisible' | 'restrictedReason'>) {
   if (record.sourceVisible === false) {
     return record.restrictedReason || '无权查看来源'
   }
   const sourceType = record.sourceOriginalType || record.businessSourceType
-  if (!sourceType && !record.sourceNo) {
+  const sourceNo = record.sourceOriginalNo || record.businessSourceNo
+  if (!sourceType && !sourceNo) {
     return '业务来源 -'
   }
-  return `业务来源 ${[sourceType, record.sourceNo].filter(Boolean).join(' ')}`
+  return `业务来源 ${[sourceType, sourceNo].filter(Boolean).join(' ')}`
+}
+
+export function glBusinessSourceMetaText(record: Pick<GlVoucherRecord, 'sourceOriginalVersion' | 'businessSourceVersion' | 'sourceOriginalFingerprint' | 'businessSourceFingerprint' | 'sourceVisible' | 'restrictedReason'>) {
+  if (record.sourceVisible === false) {
+    return record.restrictedReason || '无权查看来源'
+  }
+  const version = record.sourceOriginalVersion ?? record.businessSourceVersion
+  const fingerprint = record.sourceOriginalFingerprint || record.businessSourceFingerprint
+  return [
+    version === null || version === undefined ? '' : `业务来源版本 ${version}`,
+    fingerprint ? `来源指纹 ${fingerprint}` : '',
+  ].filter(Boolean).join(' / ') || '来源版本 -'
 }

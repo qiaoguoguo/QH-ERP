@@ -3,12 +3,12 @@ import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { glApi, type GlLedgerRow } from '../../shared/api/glApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { formatGlAmount, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
+import { formatGlAmount, glBalanceDirectionText, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
 import './GlShared.css'
 
 const router = useRouter()
 const route = useRoute()
-const filters = reactive({ periodCode: '2026-07', accountKeyword: '' })
+const filters = reactive({ periodCode: '2026-07', accountKeyword: '', auxiliaryKeyword: '', voucherNo: '', sourceType: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<GlLedgerRow[]>([])
 const loading = ref(false)
@@ -21,6 +21,9 @@ async function loadRecords() {
     const page = await glApi.ledgers.detail({
       periodCode: filters.periodCode,
       accountKeyword: filters.accountKeyword,
+      auxiliaryKeyword: filters.auxiliaryKeyword,
+      voucherNo: filters.voucherNo,
+      sourceType: filters.sourceType,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -76,6 +79,9 @@ onMounted(loadRecords)
       <el-form class="query-form" inline>
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item label="科目"><el-input v-model="filters.accountKeyword" clearable placeholder="编码或名称" /></el-form-item>
+        <el-form-item label="辅助核算"><el-input v-model="filters.auxiliaryKeyword" clearable placeholder="辅助对象" /></el-form-item>
+        <el-form-item label="正式凭证号"><el-input v-model="filters.voucherNo" clearable placeholder="正式凭证号" /></el-form-item>
+        <el-form-item label="来源类型"><el-input v-model="filters.sourceType" clearable placeholder="来源类型" /></el-form-item>
         <el-form-item><el-button type="primary" @click="search">查询</el-button></el-form-item>
       </el-form>
     </template>
@@ -98,6 +104,7 @@ onMounted(loadRecords)
         <el-table-column label="借方" min-width="130" align="right"><template #default="{ row }">{{ amountText(row, row.debitAmount) }}</template></el-table-column>
         <el-table-column label="贷方" min-width="130" align="right"><template #default="{ row }">{{ amountText(row, row.creditAmount) }}</template></el-table-column>
         <el-table-column label="余额" min-width="130" align="right"><template #default="{ row }">{{ amountText(row, row.runningBalance) }}</template></el-table-column>
+        <el-table-column label="余额方向" min-width="100"><template #default="{ row }">{{ glBalanceDirectionText(row.balanceDirection) }}</template></el-table-column>
         <el-table-column prop="sourceSummary" label="来源追溯" min-width="180" show-overflow-tooltip />
       </el-table>
     </div>

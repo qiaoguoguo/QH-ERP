@@ -1240,6 +1240,18 @@ describe('028 财务页面', () => {
 
   it('已关联正式凭证的 028 草稿只展示查看正式凭证入口，不重复转换', async () => {
     glApiMock.vouchers.list.mockResolvedValueOnce(page([{
+      id: 90,
+      draftNo: 'GLD-202607-0000',
+      voucherNo: '记-202607-0000',
+      status: 'POSTED',
+      sourceType: 'FIN_VOUCHER_DRAFT',
+      sourceId: 999,
+      debitTotal: '999.00',
+      creditTotal: '999.00',
+      version: 2,
+      allowedActions: [],
+      actionDisabledReasons: {},
+    }, {
       id: 91,
       draftNo: 'GLD-202607-0001',
       voucherNo: '记-202607-0001',
@@ -1261,6 +1273,7 @@ describe('028 财务页面', () => {
 
     expect(wrapper.text()).toContain('已生成正式凭证')
     expect(wrapper.text()).toContain('记-202607-0001')
+    expect(wrapper.text()).not.toContain('记-202607-0000')
     expect(wrapper.text()).not.toContain('生成正式凭证草稿')
 
     await wrapper.find('[data-test="view-gl-voucher"]').trigger('click')
@@ -1268,6 +1281,23 @@ describe('028 财务页面', () => {
 
     expect(glApiMock.vouchers.fromFinanceDraft).not.toHaveBeenCalled()
     expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
+    expect(router.currentRoute.value.params.id).toBe('91')
     expect(router.currentRoute.value.query.returnTo).toBe('/finance/voucher-drafts/61')
+  })
+
+  it('来源候选为空时明确提示暂无可生成来源并引导调整筛选', async () => {
+    invoiceApiMock.salesInvoices.list.mockResolvedValue(page([]))
+    const { wrapper } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'finance:voucher-draft:generate'],
+      '/finance/voucher-drafts',
+    )
+
+    await buttonsByText(wrapper, '查询来源')[0].trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('暂无可生成来源')
+    expect(wrapper.text()).toContain('请调整筛选条件')
+    expect(wrapper.find('[data-test="generate-voucher-draft"]').attributes('disabled')).toBeDefined()
   })
 })
