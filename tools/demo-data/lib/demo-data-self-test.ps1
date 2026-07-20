@@ -123,6 +123,7 @@ $expectedV31Checksum = "-2074547591"
 $pendingV34ChecksumMarker = "V34_CHECKSUM_" + "PENDING"
 $pendingFlywayV34Rule = "FLYWAY_V34_CHECKSUM_" + "PENDING"
 $legacyAdjustedBankBalanceColumn = "adjusted_bank_" + "balance"
+$legacyFinancialCloseAuditEventTargetColumn = "target_" + "type"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
@@ -1029,6 +1030,24 @@ Assert-True -Condition ($rebuild -match 'Assert-PostgresOwner' -and $rebuild -ma
 Assert-True -Condition ($rebuild -match 'manifestPath' -and $rebuild -match 'validationPath' -and $rebuild -match 'generatedAndValidated = \$validationSucceeded') `
     -Message "重建 summary 必须在实际生成和验证成功后写 generatedAndValidated=true，并记录最终 manifest/validation 路径。"
 
+function Test-FinancialCloseAuditEventRuleUsesV34ResourceType {
+    param([string] $SqlText)
+
+    $auditEventRuleStart = $SqlText.IndexOf("from fin_close_audit_event")
+    if ($auditEventRuleStart -lt 0) {
+        return $false
+    }
+    $auditEventRuleEnd = $SqlText.IndexOf("union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC'", $auditEventRuleStart)
+    if ($auditEventRuleEnd -le $auditEventRuleStart) {
+        return $false
+    }
+    $auditEventRule = $SqlText.Substring($auditEventRuleStart, $auditEventRuleEnd - $auditEventRuleStart)
+
+    return ($auditEventRule.Contains("resource_type in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',") `
+        -and $auditEventRule.Contains("'PRJ_COST_CALCULATION', 'BIZ_PERIOD_CLOSE_RUN'") `
+        -and (-not $auditEventRule.Contains($legacyFinancialCloseAuditEventTargetColumn)))
+}
+
 function Test-FinancialCloseValidatorRulesAreStrict {
     param([string] $SqlText)
 
@@ -1070,6 +1089,7 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC") `
         -and $SqlText.Contains("join fin_close_run c on c.period_id = r.period_id") `
         -and $SqlText.Contains("join gl_accounting_period p on p.id = r.period_id") `
+        -and (Test-FinancialCloseAuditEventRuleUsesV34ResourceType -SqlText $SqlText) `
         -and $SqlText.Contains("difference_amount <> 0") `
         -and (-not $SqlText.Contains($legacyAdjustedBankBalanceColumn)) `
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC") `
@@ -1086,8 +1106,27 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $objectRuleIsDynamic)
 }
 
+Assert-True -Condition (Test-FinancialCloseAuditEventRuleUsesV34ResourceType -SqlText $validatorSql) `
+    -Message "032 验证器必须在 fin_close_audit_event 使用 V34 列 resource_type，不得引用旧目标列。"
+
 Assert-True -Condition (Test-FinancialCloseValidatorRulesAreStrict -SqlText $validatorSql) `
     -Message "正式演示数据验证器必须新增 032 表、权限、反结账审批、科目、状态/约束、不可变、动态业务事实和动态对象一致性门禁。"
+
+$legacyAuditEventSql = @"
+union all select 'FINANCIAL_CLOSE_NO_UPSTREAM_WRITE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+    '032 只能只读消费 028/029/030，并通过 031 草稿承接会计影响；032 审计不得标记对上游业务表的写动作成功。'
+    from fin_close_audit_event
+    where result = 'SUCCESS'
+    and $legacyFinancialCloseAuditEventTargetColumn in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',
+        'PRJ_COST_CALCULATION', 'BIZ_PERIOD_CLOSE_RUN')
+union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+    '已确认银行对账必须零差额，调整后银行余额与账面余额完全一致。'
+    from fin_bank_reconciliation_run
+    where status = 'CONFIRMED'
+    and difference_amount <> 0
+"@
+Assert-True -Condition (-not (Test-FinancialCloseAuditEventRuleUsesV34ResourceType -SqlText $legacyAuditEventSql)) `
+    -Message "自测必须拒绝 fin_close_audit_event 旧目标列引用。"
 
 $weakenedFinancialCloseSql = @"
 select 'FINANCIAL_CLOSE_TABLES_V34'::text, 'financial-close'::text, count(*)::text, '>= 21', count(*) >= 21,

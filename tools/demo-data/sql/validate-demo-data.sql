@@ -564,7 +564,7 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         '032 只能只读消费 028/029/030，并通过 031 草稿承接会计影响；032 审计不得标记对上游业务表的写动作成功。'
         from fin_close_audit_event
         where result = 'SUCCESS'
-        and target_type in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',
+        and resource_type in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',
             'PRJ_COST_CALCULATION', 'BIZ_PERIOD_CLOSE_RUN')
     union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '已确认银行对账必须零差额，调整后银行余额与账面余额完全一致。'
