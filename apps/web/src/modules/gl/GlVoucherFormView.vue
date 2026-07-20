@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { glApi, type GlAccountingPeriodRecord, type GlAccountRecord, type GlAuxCandidateRecord, type GlAuxRequirement, type GlVoucherLineRecord, type GlVoucherRecord } from '../../shared/api/glApi'
+import { glApi, type GlAccountingPeriodRecord, type GlAccountRecord, type GlAuxCandidateRecord, type GlAuxDimensionRecord, type GlAuxRequirement, type GlVoucherLineRecord, type GlVoucherRecord } from '../../shared/api/glApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { createGlIdempotencyKey, formatGlAmount, glErrorMessage, glPageItems } from './glPageHelpers'
 import './GlShared.css'
@@ -17,6 +17,7 @@ const accountCandidates = ref<GlAccountRecord[]>([])
 const accountKeyword = ref('')
 const accountCandidatePagination = reactive({ page: 1, pageSize: 20, total: 0 })
 const openPeriods = ref<GlAccountingPeriodRecord[]>([])
+const auxDimensions = ref<GlAuxDimensionRecord[]>([])
 const auxCandidatePools = reactive<Record<string, {
   keyword: string
   page: number
@@ -85,6 +86,7 @@ const validationReasons = computed(() => {
   return reasons
 })
 const saveDisabled = computed(() => saving.value || validationReasons.value.length > 0)
+const systemAuxDimensionCodes = new Set(['CUSTOMER', 'SUPPLIER', 'PROJECT'])
 
 function decimalToCents(value: string) {
   const raw = String(value || '0.00').trim()
@@ -138,6 +140,15 @@ async function loadPeriods() {
   try {
     const page = await glApi.accountingPeriods.list({ page: 1, pageSize: 100 })
     openPeriods.value = glPageItems(page).filter((period) => period.status === 'OPEN')
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
+  }
+}
+
+async function loadAuxDimensions() {
+  try {
+    const page = await glApi.auxDimensions.list({ enabled: 'true', page: 1, pageSize: 100 })
+    auxDimensions.value = glPageItems(page)
   } catch (caught) {
     actionError.value = glErrorMessage(caught)
   }
@@ -226,15 +237,19 @@ function selectedAuxiliary(line: GlVoucherLineRecord, dimensionCode: string) {
   return line.auxiliaryItems.find((item) => item.dimensionCode === dimensionCode)
 }
 
+function auxiliaryDisplayId(item: GlVoucherLineRecord['auxiliaryItems'][number] | undefined) {
+  return item?.objectId ?? item?.sourceId ?? item?.auxItemId ?? ''
+}
+
 function selectedAuxiliaryId(line: GlVoucherLineRecord, dimensionCode: string) {
-  return selectedAuxiliary(line, dimensionCode)?.objectId ?? ''
+  return auxiliaryDisplayId(selectedAuxiliary(line, dimensionCode))
 }
 
 function selectedAuxiliaryIds(dimensionCode: string) {
   return [...new Set(form.lines
     .flatMap((line) => line.auxiliaryItems)
-    .filter((item) => item.dimensionCode === dimensionCode && item.objectId)
-    .map((item) => String(item.objectId)))].join(',')
+    .filter((item) => item.dimensionCode === dimensionCode && auxiliaryDisplayId(item))
+    .map((item) => String(auxiliaryDisplayId(item))))].join(',')
 }
 
 function ensureAuxCandidatePool(dimensionCode: string) {
@@ -252,7 +267,7 @@ function ensureAuxCandidatePool(dimensionCode: string) {
 function mergeAuxCandidates(left: GlAuxCandidateRecord[], right: GlAuxCandidateRecord[]) {
   const seen = new Set<string>()
   return [...left, ...right].filter((item) => {
-    const key = String(item.objectId ?? '')
+    const key = String(candidateDisplayId(item) ?? '')
     if (!key || seen.has(key)) {
       return false
     }
@@ -282,7 +297,7 @@ async function loadAuxiliaryCandidates(dimensionCode: string, keyword?: string, 
     const selectedIdSet = new Set(selectedAuxiliaryIds(dimensionCode).split(',').filter(Boolean))
     pool.items = append
       ? mergeAuxCandidates(pool.items, items)
-      : mergeAuxCandidates(items, pool.items.filter((item) => selectedIdSet.has(String(item.objectId))))
+      : mergeAuxCandidates(items, pool.items.filter((item) => selectedIdSet.has(String(candidateDisplayId(item)))))
     pool.total = page.total ?? items.length
   } catch (caught) {
     if (!append) {
@@ -302,16 +317,29 @@ function loadAllAuxiliaryCandidates() {
   })
 }
 
+function isSystemAuxDimension(dimensionCode: string) {
+  const dimension = auxDimensions.value.find((item) => item.code === dimensionCode)
+  return dimension?.dimensionType === 'SYSTEM' || systemAuxDimensionCodes.has(dimensionCode)
+}
+
+function candidateDisplayId(candidate: GlAuxCandidateRecord | undefined) {
+  return candidate?.objectId ?? candidate?.sourceId ?? candidate?.auxItemId ?? candidate?.id ?? ''
+}
+
 function setLineAuxiliary(line: GlVoucherLineRecord, requirement: GlAuxRequirement, objectId: string | number | '') {
   line.auxiliaryItems = line.auxiliaryItems.filter((item) => item.dimensionCode !== requirement.dimensionCode)
   if (!objectId) {
     return
   }
-  const candidate = ensureAuxCandidatePool(requirement.dimensionCode).items.find((item) => String(item.objectId) === String(objectId))
+  const candidate = ensureAuxCandidatePool(requirement.dimensionCode).items.find((item) => String(candidateDisplayId(item)) === String(objectId))
+  const displayId = candidateDisplayId(candidate) || objectId
+  const systemDimension = isSystemAuxDimension(requirement.dimensionCode)
   line.auxiliaryItems.push({
     dimensionCode: requirement.dimensionCode,
     dimensionName: requirement.dimensionName,
-    objectId,
+    objectId: displayId,
+    sourceId: systemDimension ? (candidate?.sourceId ?? displayId) : null,
+    auxItemId: systemDimension ? null : (candidate?.auxItemId ?? displayId),
     objectCode: candidate?.objectCode ?? null,
     objectName: candidate?.objectName ?? null,
     restricted: candidate?.restricted ?? false,
@@ -328,10 +356,10 @@ function auxiliaryCandidateText(candidate: GlAuxCandidateRecord) {
 
 function selectedAuxiliaryText(line: GlVoucherLineRecord, dimensionCode: string) {
   const selected = selectedAuxiliary(line, dimensionCode)
-  if (!selected?.objectId) {
+  if (!auxiliaryDisplayId(selected)) {
     return '未选择'
   }
-  return [selected.objectCode, selected.objectName].filter(Boolean).join(' ') || String(selected.objectId)
+  return [selected?.objectCode, selected?.objectName].filter(Boolean).join(' ') || String(auxiliaryDisplayId(selected))
 }
 
 function setLineAccount(line: GlVoucherLineRecord, accountId: string | number) {
@@ -341,7 +369,7 @@ function setLineAccount(line: GlVoucherLineRecord, accountId: string | number) {
     line.accountCode = account.code
     line.accountName = account.name
     line.auxiliaryItems = line.auxiliaryItems.filter((item) =>
-      (account.auxiliaryRequirements ?? []).some((requirement) => requirement.dimensionCode === item.dimensionCode && item.objectId))
+      (account.auxiliaryRequirements ?? []).some((requirement) => requirement.dimensionCode === item.dimensionCode && auxiliaryDisplayId(item)))
     ;(account.auxiliaryRequirements ?? []).forEach((item) => {
       void loadAuxiliaryCandidates(item.dimensionCode)
     })
@@ -370,6 +398,23 @@ function removeLine(index: number) {
   })
 }
 
+function payloadAuxiliaryItems(line: GlVoucherLineRecord) {
+  return line.auxiliaryItems
+    .filter((item) => Boolean(auxiliaryDisplayId(item)))
+    .map((item) => {
+      if (isSystemAuxDimension(item.dimensionCode)) {
+        return {
+          dimensionCode: item.dimensionCode,
+          sourceId: item.sourceId ?? item.objectId,
+        }
+      }
+      return {
+        dimensionCode: item.dimensionCode,
+        auxItemId: item.auxItemId ?? item.objectId,
+      }
+    })
+}
+
 async function saveVoucher() {
   if (saving.value) {
     return
@@ -382,8 +427,12 @@ async function saveVoucher() {
       voucherDate: form.voucherDate,
       summary: form.summary,
       lines: form.lines.map((line) => ({
-        ...line,
-        auxiliaryItems: line.auxiliaryItems.filter((item) => Boolean(item.objectId)),
+        lineNo: line.lineNo,
+        summary: line.summary,
+        accountId: line.accountId,
+        debitAmount: line.debitAmount,
+        creditAmount: line.creditAmount,
+        auxiliaryItems: payloadAuxiliaryItems(line),
       })),
       idempotencyKey: createGlIdempotencyKey('gl-voucher-save'),
     }
@@ -400,6 +449,7 @@ async function saveVoucher() {
 
 onMounted(() => {
   void loadPeriods()
+  void loadAuxDimensions()
   void loadRecord().then(() => loadAccountCandidates())
 })
 </script>
@@ -510,9 +560,9 @@ onMounted(() => {
                 >
                   <el-option
                     v-for="candidate in ensureAuxCandidatePool(requirement.dimensionCode).items"
-                    :key="candidate.objectId"
+                    :key="candidateDisplayId(candidate)"
                     :label="auxiliaryCandidateText(candidate)"
-                    :value="candidate.objectId"
+                    :value="candidateDisplayId(candidate)"
                     :disabled="candidate.restricted"
                   />
                 </el-select>

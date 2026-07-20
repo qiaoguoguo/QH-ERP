@@ -31,7 +31,17 @@ export interface GlRulePreviewContext {
 }
 
 export interface GlPostingRuleValidatePayload extends GlVersionedActionPayload {
-  sourceContext?: GlRulePreviewContext
+  sourceType?: string
+  sourceId?: ResourceId
+  sourceVersion?: number | string
+}
+
+export interface GlAuxItemPayload {
+  code: string
+  name: string
+  enabled: boolean
+  version: number
+  idempotencyKey: string
 }
 
 export interface GlPeriodCreatePayload {
@@ -100,6 +110,8 @@ export interface GlAuxDimensionRecord extends GlActionState {
 export interface GlAuxCandidateRecord {
   id?: ResourceId | null
   objectId?: ResourceId | null
+  sourceId?: ResourceId | null
+  auxItemId?: ResourceId | null
   objectCode?: string | null
   objectName?: string | null
   enabled?: boolean | null
@@ -110,15 +122,29 @@ export interface GlAuxCandidateRecord {
   restrictedReason?: string | null
 }
 
+export interface GlPostingRuleLineRecord {
+  lineNo?: number | null
+  normalizedFactCode?: string | null
+  direction?: string | null
+  accountId?: ResourceId | null
+  accountCode?: string | null
+  summaryTemplate?: string | null
+  auxiliaryMappings?: unknown[]
+}
+
 export interface GlPostingRuleRecord extends GlActionState {
   id: ResourceId
+  name?: string | null
+  description?: string | null
+  effectiveFrom?: string | null
+  effectiveTo?: string | null
   sourceType: string
   sourceVariant: string
   versionNo: number
   status: 'DRAFT' | 'ACTIVE' | 'SUPERSEDED' | 'DISABLED' | string
   validationStatus?: string | null
   lineCount?: number | null
-  lines?: unknown[]
+  lines?: GlPostingRuleLineRecord[]
   validationSummary?: unknown
 }
 
@@ -135,6 +161,8 @@ export interface GlVoucherLineRecord {
     dimensionCode: string
     dimensionName?: string | null
     objectId?: ResourceId | null
+    sourceId?: ResourceId | null
+    auxItemId?: ResourceId | null
     objectCode?: string | null
     objectName?: string | null
     restricted?: boolean | null
@@ -320,11 +348,13 @@ function normalizeAccount(record: RawRecord): GlAccountRecord {
 
 function normalizeAuxCandidate(record: RawRecord): GlAuxCandidateRecord {
   const normalized = normalizeActionState(record)
-  const objectId = normalized.objectId ?? normalized.id
+  const objectId = normalized.objectId ?? normalized.sourceId ?? normalized.auxItemId ?? normalized.id
   return {
     ...normalized,
     id: normalized.id as ResourceId | null | undefined,
     objectId: objectId as ResourceId | null | undefined,
+    sourceId: normalized.sourceId as ResourceId | null | undefined,
+    auxItemId: normalized.auxItemId as ResourceId | null | undefined,
     objectCode: (normalized.objectCode ?? normalized.code) as string | null | undefined,
     objectName: (normalized.objectName ?? normalized.name) as string | null | undefined,
     enabled: normalized.enabled as boolean | null | undefined,
@@ -349,19 +379,54 @@ function normalizeAuxDimension(record: RawRecord): GlAuxDimensionRecord {
   }
 }
 
+function normalizePostingRuleLine(item: unknown): GlPostingRuleLineRecord {
+  const record = isRecord(item) ? item : {}
+  return {
+    ...record,
+    lineNo: record.lineNo as number | null | undefined,
+    normalizedFactCode: (record.normalizedFactCode ?? record.factCode) as string | null | undefined,
+    direction: record.direction as string | null | undefined,
+    accountId: record.accountId as ResourceId | null | undefined,
+    accountCode: record.accountCode as string | null | undefined,
+    summaryTemplate: record.summaryTemplate as string | null | undefined,
+    auxiliaryMappings: Array.isArray(record.auxiliaryMappings) ? record.auxiliaryMappings : [],
+  }
+}
+
 function normalizePostingRule(record: RawRecord): GlPostingRuleRecord {
   const normalized = normalizeActionState(record)
   return {
     ...normalized,
     id: normalized.id as ResourceId,
+    name: normalized.name as string | null | undefined,
+    description: normalized.description as string | null | undefined,
+    effectiveFrom: normalized.effectiveFrom as string | null | undefined,
+    effectiveTo: normalized.effectiveTo as string | null | undefined,
     sourceType: String(normalized.sourceType ?? ''),
     sourceVariant: String(normalized.sourceVariant ?? ''),
     versionNo: Number(normalized.versionNo ?? normalized.ruleVersion ?? 0),
     status: String(normalized.status ?? ''),
     validationStatus: normalized.validationStatus as string | null | undefined,
     lineCount: normalized.lineCount as number | null | undefined,
-    lines: normalized.lines as unknown[] | undefined,
+    lines: Array.isArray(normalized.lines) ? normalized.lines.map(normalizePostingRuleLine) : undefined,
     validationSummary: normalized.validationSummary,
+  }
+}
+
+function normalizeVoucherAuxiliaryItem(item: unknown): GlVoucherLineRecord['auxiliaryItems'][number] {
+  const record = isRecord(item) ? item : {}
+  const objectId = record.objectId ?? record.sourceId ?? record.auxItemId
+  return {
+    ...record,
+    dimensionCode: String(record.dimensionCode ?? ''),
+    dimensionName: record.dimensionName as string | null | undefined,
+    objectId: objectId as ResourceId | null | undefined,
+    sourceId: record.sourceId as ResourceId | null | undefined,
+    auxItemId: record.auxItemId as ResourceId | null | undefined,
+    objectCode: record.objectCode as string | null | undefined,
+    objectName: record.objectName as string | null | undefined,
+    restricted: record.restricted as boolean | null | undefined,
+    restrictedReason: record.restrictedReason as string | null | undefined,
   }
 }
 
@@ -375,7 +440,7 @@ function normalizeVoucherLine(record: RawRecord): GlVoucherLineRecord {
     accountName: record.accountName as string | null | undefined,
     debitAmount: (record.debitAmount ?? '0.00') as GlAmount,
     creditAmount: (record.creditAmount ?? '0.00') as GlAmount,
-    auxiliaryItems: Array.isArray(record.auxiliaryItems) ? record.auxiliaryItems as GlVoucherLineRecord['auxiliaryItems'] : [],
+    auxiliaryItems: Array.isArray(record.auxiliaryItems) ? record.auxiliaryItems.map(normalizeVoucherAuxiliaryItem) : [],
     normalizedFactCode: record.normalizedFactCode as string | null | undefined,
     sourceRoute: record.sourceRoute,
   }
@@ -535,8 +600,8 @@ export function createGlApi(options: GlApiOptions = {}) {
       create: (payload: object) => write<GlAuxDimensionRecord>('POST', '/api/admin/gl/aux-dimensions', payload),
       update: (id: ResourceId, payload: object) => write<GlAuxDimensionRecord>('PUT', `/api/admin/gl/aux-dimensions/${encodeId(id)}`, payload),
       items: (id: ResourceId, params: GlPageParams) => get<PageResult<GlAuxCandidateRecord>>(`/api/admin/gl/aux-dimensions/${encodeId(id)}/items`, params),
-      createItem: (id: ResourceId, payload: object) => write<GlAuxCandidateRecord>('POST', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items`, payload),
-      updateItem: (id: ResourceId, itemId: ResourceId, payload: object) => write<GlAuxCandidateRecord>('PUT', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items/${encodeId(itemId)}`, payload),
+      createItem: (id: ResourceId, payload: GlAuxItemPayload) => write<GlAuxCandidateRecord>('POST', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items`, payload),
+      updateItem: (id: ResourceId, itemId: ResourceId, payload: GlAuxItemPayload) => write<GlAuxCandidateRecord>('PUT', `/api/admin/gl/aux-dimensions/${encodeId(id)}/items/${encodeId(itemId)}`, payload),
       candidates: (code: string, params: Record<string, unknown>) => get<PageResult<GlAuxCandidateRecord>>(`/api/admin/gl/aux-dimensions/${encodeURIComponent(code)}/candidates`, params),
     },
     postingRules: {

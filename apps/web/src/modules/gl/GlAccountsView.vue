@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { glApi, type GlAccountRecord } from '../../shared/api/glApi'
+import { glApi, type GlAccountRecord, type GlAuxDimensionRecord } from '../../shared/api/glApi'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -22,6 +22,7 @@ const authStore = useAuthStore()
 const filters = reactive({ keyword: '', category: '', enabled: '', postable: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<GlAccountRecord[]>([])
+const auxDimensions = ref<GlAuxDimensionRecord[]>([])
 const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
@@ -41,13 +42,8 @@ const accountForm = reactive({
   version: 0,
   auxiliaryRequirements: [] as GlAccountRecord['auxiliaryRequirements'],
 })
-const newAuxRequirement = reactive({ dimensionCode: 'CUSTOMER', requirement: 'REQUIRED' })
-const accountAuxiliaryOptions = [
-  { code: 'CUSTOMER', name: '客户' },
-  { code: 'SUPPLIER', name: '供应商' },
-  { code: 'PROJECT', name: '项目' },
-  { code: 'CUSTOM', name: '自定义' },
-]
+const newAuxRequirement = reactive({ dimensionCode: '', requirement: 'REQUIRED' })
+const accountAuxiliaryOptions = computed(() => auxDimensions.value.map((item) => ({ code: item.code, name: item.name })))
 const accountFormLocked = computed(() => Boolean(accountForm.id && selectedAccountForForm.value && !glActionAllowed(selectedAccountForForm.value, 'UPDATE')))
 const accountFormLockedReason = computed(() => accountFormLocked.value
   ? glActionDisabledReason(selectedAccountForForm.value!, 'UPDATE') || '该科目已被引用，关键属性不可修改'
@@ -73,6 +69,18 @@ async function loadRecords() {
     error.value = glErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadAuxiliaryDimensions() {
+  try {
+    const page = await glApi.auxDimensions.list({ enabled: 'true', page: 1, pageSize: 100 })
+    auxDimensions.value = glPageItems(page)
+    if (!newAuxRequirement.dimensionCode || !auxDimensions.value.some((item) => item.code === newAuxRequirement.dimensionCode)) {
+      newAuxRequirement.dimensionCode = auxDimensions.value[0]?.code ?? ''
+    }
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
   }
 }
 
@@ -117,13 +125,17 @@ function addAuxRequirement() {
     actionError.value = accountFormLockedReason.value
     return
   }
+  if (!newAuxRequirement.dimensionCode) {
+    actionError.value = '请选择真实辅助核算维度'
+    return
+  }
   const existing = accountForm.auxiliaryRequirements.find((item) => item.dimensionCode === newAuxRequirement.dimensionCode)
   if (existing) {
     existing.requirement = newAuxRequirement.requirement
     actionError.value = ''
     return
   }
-  const option = accountAuxiliaryOptions.find((item) => item.code === newAuxRequirement.dimensionCode)
+  const option = accountAuxiliaryOptions.value.find((item) => item.code === newAuxRequirement.dimensionCode)
   accountForm.auxiliaryRequirements.push({
     dimensionCode: newAuxRequirement.dimensionCode,
     dimensionName: option?.name ?? newAuxRequirement.dimensionCode,
@@ -234,7 +246,10 @@ function changePageSize(pageSize: number) {
   void loadRecords()
 }
 
-onMounted(loadRecords)
+onMounted(() => {
+  void loadRecords()
+  void loadAuxiliaryDimensions()
+})
 </script>
 
 <template>
@@ -378,10 +393,10 @@ onMounted(loadRecords)
         </el-form-item>
         <el-form-item label="新增辅助要求">
           <div class="gl-toolbar">
-            <el-select v-model="newAuxRequirement.dimensionCode" :disabled="accountFormLocked" placeholder="辅助维度">
+            <el-select v-model="newAuxRequirement.dimensionCode" data-test="account-aux-dimension-select" :disabled="accountFormLocked" placeholder="辅助维度">
               <el-option v-for="option in accountAuxiliaryOptions" :key="option.code" :label="option.name" :value="option.code" />
             </el-select>
-            <el-select v-model="newAuxRequirement.requirement" :disabled="accountFormLocked" placeholder="必填/可选">
+            <el-select v-model="newAuxRequirement.requirement" data-test="account-aux-requirement-select" :disabled="accountFormLocked" placeholder="必填/可选">
               <el-option label="必填" value="REQUIRED" />
               <el-option label="可选" value="OPTIONAL" />
             </el-select>

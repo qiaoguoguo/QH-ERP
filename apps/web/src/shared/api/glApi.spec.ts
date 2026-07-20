@@ -385,4 +385,89 @@ describe('glApi', () => {
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/gl/accounts/candidates?keyword=%E7%AC%AC+160&selectedIds=1002%2C160&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/gl/aux-dimensions/PROJECT/candidates?keyword=%E5%B7%B2%E9%80%89&selectedIds=501&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
   })
+
+  it('写入自定义辅助项目和制证规则时只发送后端冻结 DTO 字段', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ objectId: 502, objectCode: 'REG-502', objectName: '华南区', enabled: true, version: 1 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 3, name: '采购发票默认规则', sourceType: 'PURCHASE_INVOICE', sourceVariant: 'DEFAULT', versionNo: 1, status: 'DRAFT', allowedActions: ['UPDATE'], actionDisabledReasons: {} }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 3, name: '采购发票默认规则', sourceType: 'PURCHASE_INVOICE', sourceVariant: 'DEFAULT', versionNo: 1, status: 'DRAFT', validationStatus: 'VALID', allowedActions: ['ACTIVATE'], actionDisabledReasons: {} }))
+
+    const api = createGlApi({ fetcher })
+
+    await api.auxDimensions.createItem(2, {
+      code: 'REG-502',
+      name: '华南区',
+      enabled: true,
+      version: 0,
+      idempotencyKey: 'aux-item-key',
+    })
+    await api.postingRules.create({
+      name: '采购发票默认规则',
+      description: '采购发票生成应付规则',
+      effectiveFrom: '2026-07-01',
+      effectiveTo: null,
+      sourceType: 'PURCHASE_INVOICE',
+      sourceVariant: 'DEFAULT',
+      lines: [{
+        normalizedFactCode: 'PURCHASE_PAYABLE',
+        direction: 'CREDIT',
+        accountId: 2202,
+        summaryTemplate: '确认应付',
+        auxiliaryMappings: [{ dimensionCode: 'SUPPLIER', sourceField: 'supplierId' }],
+      }],
+      version: 0,
+      idempotencyKey: 'rule-create-key',
+    })
+    await api.postingRules.validate(3, {
+      version: 1,
+      sourceType: 'PURCHASE_INVOICE',
+      sourceId: 77,
+      sourceVersion: 4,
+      idempotencyKey: 'rule-validate-key',
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/gl/aux-dimensions/2/items', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        code: 'REG-502',
+        name: '华南区',
+        enabled: true,
+        version: 0,
+        idempotencyKey: 'aux-item-key',
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/gl/posting-rules', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        name: '采购发票默认规则',
+        description: '采购发票生成应付规则',
+        effectiveFrom: '2026-07-01',
+        effectiveTo: null,
+        sourceType: 'PURCHASE_INVOICE',
+        sourceVariant: 'DEFAULT',
+        lines: [{
+          normalizedFactCode: 'PURCHASE_PAYABLE',
+          direction: 'CREDIT',
+          accountId: 2202,
+          summaryTemplate: '确认应付',
+          auxiliaryMappings: [{ dimensionCode: 'SUPPLIER', sourceField: 'supplierId' }],
+        }],
+        version: 0,
+        idempotencyKey: 'rule-create-key',
+      }),
+    }))
+    expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/gl/posting-rules/3/validate', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({
+        version: 1,
+        sourceType: 'PURCHASE_INVOICE',
+        sourceId: 77,
+        sourceVersion: 4,
+        idempotencyKey: 'rule-validate-key',
+      }),
+    }))
+  })
 })

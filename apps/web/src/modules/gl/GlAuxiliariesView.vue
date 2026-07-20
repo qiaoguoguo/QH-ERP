@@ -23,7 +23,7 @@ const selectedItem = ref<GlAuxCandidateRecord | null>(null)
 const candidateKeyword = ref('')
 const candidatePagination = reactive({ page: 1, pageSize: 20, total: 0 })
 const dimensionForm = reactive({ code: '', name: '', enabled: true, version: 0 })
-const itemForm = reactive({ objectCode: '', objectName: '', enabled: true, version: 0 })
+const itemForm = reactive({ code: '', name: '', enabled: true, version: 0 })
 const selectedDimensionIsCustom = computed(() => selectedDimension.value?.dimensionType === 'CUSTOM')
 const dimensionFormIsSystem = computed(() => selectedDimension.value?.dimensionType === 'SYSTEM')
 
@@ -123,8 +123,8 @@ function openCreateItem() {
     return
   }
   selectedItem.value = null
-  itemForm.objectCode = ''
-  itemForm.objectName = ''
+  itemForm.code = ''
+  itemForm.name = ''
   itemForm.enabled = true
   itemForm.version = 0
   itemDialogVisible.value = true
@@ -132,11 +132,15 @@ function openCreateItem() {
 
 function openEditItem(row: GlAuxCandidateRecord) {
   selectedItem.value = row
-  itemForm.objectCode = row.objectCode || ''
-  itemForm.objectName = row.objectName || ''
+  itemForm.code = row.objectCode || ''
+  itemForm.name = row.objectName || ''
   itemForm.enabled = row.enabled !== false
   itemForm.version = row.version ?? 0
   itemDialogVisible.value = true
+}
+
+function candidateItemId(row: GlAuxCandidateRecord) {
+  return row.auxItemId ?? row.objectId ?? row.id
 }
 
 async function saveCustomItem() {
@@ -148,14 +152,15 @@ async function saveCustomItem() {
   actionMessage.value = ''
   try {
     const payload = {
-      objectCode: itemForm.objectCode,
-      objectName: itemForm.objectName,
+      code: itemForm.code,
+      name: itemForm.name,
       enabled: itemForm.enabled,
       version: itemForm.version,
       idempotencyKey: createGlIdempotencyKey('gl-aux-item-save'),
     }
-    if (selectedItem.value?.objectId) {
-      await glApi.auxDimensions.updateItem(selectedDimension.value.id, selectedItem.value.objectId, payload)
+    const itemId = selectedItem.value ? candidateItemId(selectedItem.value) : null
+    if (itemId) {
+      await glApi.auxDimensions.updateItem(selectedDimension.value.id, itemId, payload)
       actionMessage.value = '自定义辅助项目已更新'
     } else {
       await glApi.auxDimensions.createItem(selectedDimension.value.id, payload)
@@ -172,7 +177,7 @@ async function saveCustomItem() {
 }
 
 async function disableCustomItem(row: GlAuxCandidateRecord) {
-  if (!selectedDimension.value || !row.objectId || actionLoading.value) {
+  if (!selectedDimension.value || !candidateItemId(row) || actionLoading.value) {
     return
   }
   const reason = glActionDisabledReason(row, 'DISABLE')
@@ -184,8 +189,8 @@ async function disableCustomItem(row: GlAuxCandidateRecord) {
     return
   }
   selectedItem.value = row
-  itemForm.objectCode = row.objectCode || ''
-  itemForm.objectName = row.objectName || ''
+  itemForm.code = row.objectCode || ''
+  itemForm.name = row.objectName || ''
   itemForm.enabled = false
   itemForm.version = row.version ?? 0
   await saveCustomItem()
@@ -350,10 +355,10 @@ onMounted(loadRecords)
     <el-drawer v-model="itemDialogVisible" title="自定义辅助项目" size="min(720px, 92vw)" :teleported="false">
       <el-form label-position="top">
         <el-form-item label="项目编码">
-          <el-input v-model="itemForm.objectCode" name="gl-aux-item-code" clearable placeholder="REG-001" />
+          <el-input v-model="itemForm.code" name="gl-aux-item-code" clearable placeholder="REG-001" />
         </el-form-item>
         <el-form-item label="项目名称">
-          <el-input v-model="itemForm.objectName" name="gl-aux-item-name" clearable placeholder="华东区" />
+          <el-input v-model="itemForm.name" name="gl-aux-item-name" clearable placeholder="华东区" />
         </el-form-item>
         <el-form-item label="启用状态">
           <el-switch v-model="itemForm.enabled" active-text="启用" inactive-text="停用" />

@@ -20,8 +20,12 @@ const ruleDialogVisible = ref(false)
 const ruleDialogTitle = ref('新增制证规则')
 const ruleForm = reactive({
   id: null as string | number | null,
+  name: '',
+  description: '',
+  effectiveFrom: '',
+  effectiveTo: '',
   sourceType: '',
-  sourceVariant: 'STANDARD',
+  sourceVariant: 'DEFAULT',
   status: 'DRAFT',
   version: 0,
   linesJson: '[]',
@@ -29,10 +33,7 @@ const ruleForm = reactive({
 const previewContext = reactive({
   sourceType: '',
   sourceId: '',
-  sourceNo: '',
   sourceVersion: '',
-  sourceFingerprint: '',
-  businessDate: '',
 })
 
 const actionCodeMap = {
@@ -91,19 +92,16 @@ async function runRuleAction(action: 'newVersion' | 'validate' | 'activate' | 'd
   actionError.value = ''
   actionMessage.value = ''
   try {
+    const sourceId = String(previewContext.sourceId || '').trim()
     const payload = {
       version: row.version ?? row.versionNo,
       idempotencyKey: createGlIdempotencyKey(`gl-rule-${action}`),
       ...(action === 'validate'
+        && sourceId
         ? {
-            sourceContext: {
-              sourceType: previewContext.sourceType || row.sourceType,
-              sourceId: previewContext.sourceId || undefined,
-              sourceNo: previewContext.sourceNo || undefined,
-              sourceVersion: previewContext.sourceVersion || undefined,
-              sourceFingerprint: previewContext.sourceFingerprint || undefined,
-              businessDate: previewContext.businessDate || undefined,
-            },
+            sourceType: previewContext.sourceType || row.sourceType,
+            sourceId,
+            sourceVersion: previewContext.sourceVersion || undefined,
           }
         : {}),
     }
@@ -130,8 +128,12 @@ async function runRuleAction(action: 'newVersion' | 'validate' | 'activate' | 'd
 
 function openCreateRule() {
   ruleForm.id = null
+  ruleForm.name = ''
+  ruleForm.description = ''
+  ruleForm.effectiveFrom = ''
+  ruleForm.effectiveTo = ''
   ruleForm.sourceType = ''
-  ruleForm.sourceVariant = 'STANDARD'
+  ruleForm.sourceVariant = 'DEFAULT'
   ruleForm.status = 'DRAFT'
   ruleForm.version = 0
   ruleForm.linesJson = '[]'
@@ -148,6 +150,10 @@ function openEditRule(row = detail.value) {
     return
   }
   ruleForm.id = row.id
+  ruleForm.name = row.name || ''
+  ruleForm.description = row.description || ''
+  ruleForm.effectiveFrom = row.effectiveFrom || ''
+  ruleForm.effectiveTo = row.effectiveTo || ''
   ruleForm.sourceType = row.sourceType
   ruleForm.sourceVariant = row.sourceVariant
   ruleForm.status = row.status
@@ -155,6 +161,22 @@ function openEditRule(row = detail.value) {
   ruleForm.linesJson = JSON.stringify(row.lines ?? [], null, 2)
   ruleDialogTitle.value = '编辑草稿规则'
   ruleDialogVisible.value = true
+}
+
+function normalizeRuleLinesForPayload(lines: unknown[]) {
+  return lines.map((line, index) => {
+    const record = line !== null && typeof line === 'object' && !Array.isArray(line)
+      ? line as Record<string, unknown>
+      : {}
+    return {
+      lineNo: record.lineNo ?? index + 1,
+      normalizedFactCode: String(record.normalizedFactCode ?? record.factCode ?? ''),
+      direction: String(record.direction ?? ''),
+      accountId: record.accountId ?? null,
+      summaryTemplate: record.summaryTemplate ? String(record.summaryTemplate) : '',
+      auxiliaryMappings: Array.isArray(record.auxiliaryMappings) ? record.auxiliaryMappings : [],
+    }
+  })
 }
 
 async function saveRule() {
@@ -165,6 +187,9 @@ async function saveRule() {
   actionError.value = ''
   actionMessage.value = ''
   try {
+    if (!ruleForm.name.trim()) {
+      throw new Error('规则名称必填')
+    }
     let lines: unknown[] = []
     try {
       const parsed = JSON.parse(ruleForm.linesJson || '[]') as unknown
@@ -173,9 +198,13 @@ async function saveRule() {
       throw new Error('规则行必须是 JSON 数组')
     }
     const payload = {
+      name: ruleForm.name.trim(),
+      description: ruleForm.description.trim() || null,
+      effectiveFrom: ruleForm.effectiveFrom || null,
+      effectiveTo: ruleForm.effectiveTo || null,
       sourceType: ruleForm.sourceType,
-      sourceVariant: ruleForm.sourceVariant,
-      lines,
+      sourceVariant: ruleForm.sourceVariant || 'DEFAULT',
+      lines: normalizeRuleLinesForPayload(lines),
       version: ruleForm.version,
       idempotencyKey: createGlIdempotencyKey('gl-rule-save'),
     }
@@ -292,18 +321,19 @@ onMounted(loadRecords)
     <el-drawer v-model="detailDrawerVisible" title="规则详情" size="min(720px, 92vw)" :teleported="false">
       <el-alert type="info" title="预览校验只检查规则，不占用来源，不生成正式凭证草稿。" :closable="false" />
       <dl v-if="detail" class="gl-drawer-list">
+        <dt>规则名称</dt><dd>{{ detail.name || '-' }}</dd>
+        <dt>规则说明</dt><dd>{{ detail.description || '-' }}</dd>
         <dt>来源类型</dt><dd>{{ detail.sourceType }}</dd>
         <dt>来源变体</dt><dd>{{ detail.sourceVariant }}</dd>
+        <dt>生效日期</dt><dd>{{ detail.effectiveFrom || '-' }} 至 {{ detail.effectiveTo || '长期' }}</dd>
         <dt>版本</dt><dd>{{ detail.versionNo }}</dd>
         <dt>状态</dt><dd>{{ detail.status }}</dd>
         <dt>校验状态</dt><dd>{{ detail.validationStatus || '-' }}</dd>
       </dl>
       <el-form class="query-form" inline label-position="top">
         <el-form-item label="预览来源类型"><el-input v-model="previewContext.sourceType" placeholder="默认使用规则来源" /></el-form-item>
-        <el-form-item label="来源编号"><el-input v-model="previewContext.sourceNo" name="gl-rule-preview-source-no" clearable placeholder="SI-001" /></el-form-item>
-        <el-form-item label="来源ID"><el-input v-model="previewContext.sourceId" clearable placeholder="来源ID" /></el-form-item>
-        <el-form-item label="来源版本"><el-input v-model="previewContext.sourceVersion" clearable placeholder="版本" /></el-form-item>
-        <el-form-item label="业务日期"><el-input v-model="previewContext.businessDate" clearable placeholder="YYYY-MM-DD" /></el-form-item>
+        <el-form-item label="来源ID"><el-input v-model="previewContext.sourceId" name="gl-rule-preview-source-id" clearable placeholder="来源ID" /></el-form-item>
+        <el-form-item label="来源版本"><el-input v-model="previewContext.sourceVersion" name="gl-rule-preview-source-version" clearable placeholder="版本" /></el-form-item>
       </el-form>
       <div class="gl-toolbar">
         <el-button data-test="edit-posting-rule" :disabled="!detail || !glActionAllowed(detail, 'UPDATE')" @click="openEditRule()">编辑草稿</el-button>
@@ -314,7 +344,7 @@ onMounted(loadRecords)
       </div>
       <div class="table-scroll">
         <el-table :data="detail?.lines ?? []" empty-text="暂无规则行">
-          <el-table-column prop="factCode" label="事实代码" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="normalizedFactCode" label="事实代码" min-width="160" show-overflow-tooltip />
           <el-table-column prop="direction" label="方向" min-width="100" />
           <el-table-column prop="accountCode" label="科目" min-width="140" show-overflow-tooltip />
           <el-table-column prop="summaryTemplate" label="摘要模板" min-width="200" show-overflow-tooltip />
@@ -323,14 +353,26 @@ onMounted(loadRecords)
     </el-drawer>
     <el-drawer v-model="ruleDialogVisible" :title="ruleDialogTitle" size="min(720px, 92vw)" :teleported="false">
       <el-form label-position="top">
+        <el-form-item label="规则名称">
+          <el-input v-model="ruleForm.name" name="gl-rule-name" clearable placeholder="采购发票默认规则" />
+        </el-form-item>
+        <el-form-item label="规则说明">
+          <el-input v-model="ruleForm.description" name="gl-rule-description" clearable placeholder="规则用途说明" />
+        </el-form-item>
         <el-form-item label="来源类型">
           <el-input v-model="ruleForm.sourceType" name="gl-rule-source-type" clearable placeholder="SALES_INVOICE" />
         </el-form-item>
         <el-form-item label="来源变体">
-          <el-input v-model="ruleForm.sourceVariant" name="gl-rule-source-variant" clearable placeholder="STANDARD" />
+          <el-input v-model="ruleForm.sourceVariant" name="gl-rule-source-variant" clearable placeholder="DEFAULT" />
+        </el-form-item>
+        <el-form-item label="生效日期">
+          <div class="gl-toolbar">
+            <el-date-picker v-model="ruleForm.effectiveFrom" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="生效开始" />
+            <el-date-picker v-model="ruleForm.effectiveTo" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="生效结束" />
+          </div>
         </el-form-item>
         <el-form-item label="规则行 JSON">
-          <el-input v-model="ruleForm.linesJson" type="textarea" :rows="8" placeholder="[]" />
+          <el-input v-model="ruleForm.linesJson" name="gl-rule-lines-json" type="textarea" :rows="8" placeholder="[]" />
         </el-form-item>
       </el-form>
       <template #footer>
