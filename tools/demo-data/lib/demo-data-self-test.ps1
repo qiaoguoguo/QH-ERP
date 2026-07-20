@@ -68,6 +68,8 @@ $validatorPath = Join-Path $Root "tools/demo-data/validate-demo-data.ps1"
 $validator = Get-Content -LiteralPath $validatorPath -Raw
 $validatorSqlPath = Join-Path $Root "tools/demo-data/sql/validate-demo-data.sql"
 $validatorSql = Get-Content -LiteralPath $validatorSqlPath -Raw
+$stage032IsolationPath = Join-Path $Root "tools/demo-data/lib/stage032-isolation-strategy.ps1"
+$stage032Isolation = if (Test-Path -LiteralPath $stage032IsolationPath) { Get-Content -LiteralPath $stage032IsolationPath -Raw } else { "" }
 $apiPomPath = Join-Path $Root "apps/api/pom.xml"
 $apiPom = Get-Content -LiteralPath $apiPomPath -Raw
 $stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
@@ -114,35 +116,42 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+$expectedV34Checksum = "-1893080635"
 $expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
+$pendingV34ChecksumMarker = "V34_CHECKSUM_" + "PENDING"
+$pendingFlywayV34Rule = "FLYWAY_V34_CHECKSUM_" + "PENDING"
+$legacyAdjustedBankBalanceColumn = "adjusted_bank_" + "balance"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
 
-    $flywayLatestV33RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V33") `
-            -and $SqlText.Contains("latest successful version = 33; checksum = $expectedV33Checksum") `
-            -and $SqlText.Contains("= 33") `
-            -and $SqlText.Contains("checksum = $expectedV33Checksum") `
-            -and $SqlText.Contains("Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。") `
+    $flywayLatestV34RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V34") `
+            -and $SqlText.Contains("latest successful version = 34; checksum = $expectedV34Checksum") `
+            -and $SqlText.Contains("= 34") `
+            -and $SqlText.Contains("checksum = $expectedV34Checksum") `
+            -and (-not $SqlText.Contains("FLYWAY_LATEST_V33")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V32")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V31")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V30")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V29")) `
-            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-2])")) `
-            -and (-not $SqlText.Contains("latest successful version = 32; checksum = $expectedV32Checksum")) `
-            -and (-not $SqlText.Contains("latest successful version = 31; checksum = $expectedV31Checksum")) `
-            -and (-not $SqlText.Contains("latest successful version = 30; checksum = 2130342893")) `
-            -and (-not $SqlText.Contains("latest successful version = 29; checksum = 774334682")) `
+            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-3])")) `
+            -and (-not $SqlText.Contains("latest successful version = 33; checksum = $expectedV33Checksum")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V32")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V31")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V30")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V29")) `
-            -and (-not $SqlText.Contains("V33_CHECKSUM_PENDING")) `
-            -and (-not ($SqlText -match ">=\s*33")) `
-            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*33")) `
-            -and (-not ($SqlText -match "version::int\s*>=\s*33")))
+            -and (-not ($SqlText -match ">=\s*34")) `
+            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*34")) `
+            -and (-not ($SqlText -match "version::int\s*>=\s*34")) `
+            -and (-not $SqlText.Contains($pendingV34ChecksumMarker)))
+    $flywayV34ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V34_CHECKSUM") `
+            -and (-not $SqlText.Contains($pendingFlywayV34Rule)) `
+            -and $SqlText.Contains("version 34 checksum = $expectedV34Checksum") `
+            -and $SqlText.Contains("version = '34'") `
+            -and $SqlText.Contains("checksum = $expectedV34Checksum") `
+            -and $SqlText.Contains("Flyway V34 checksum 必须保持 $expectedV34Checksum。"))
     $flywayV33HistoricalChecksumIsStrict = ($SqlText.Contains("FLYWAY_V33_CHECKSUM") `
             -and $SqlText.Contains("version 33 checksum = $expectedV33Checksum") `
             -and $SqlText.Contains("version = '33'") `
@@ -173,7 +182,8 @@ function Test-FlywayMigrationRulesAreStrict {
             -and $SqlText.Contains("Flyway 不能存在失败迁移记录。") `
             -and $SqlText.Contains("from flyway_schema_history where not success"))
 
-    return ($flywayLatestV33RuleIsStrict `
+    return ($flywayLatestV34RuleIsStrict `
+        -and $flywayV34ChecksumRuleIsStrict `
         -and $flywayV33HistoricalChecksumIsStrict `
         -and $flywayV32HistoricalChecksumIsStrict `
         -and $flywayV31HistoricalChecksumIsStrict `
@@ -183,14 +193,17 @@ function Test-FlywayMigrationRulesAreStrict {
 }
 
 Assert-True -Condition (Test-FlywayMigrationRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须精确要求 Flyway 最新成功版本为 V33，独立校验 V33/V32/V31/V30/V29 checksum 和失败迁移 0，不能保留旧 latest、缺失 V33 checksum 或放宽为 >= 33。"
+    -Message "正式演示数据验证器必须要求 Flyway 最新成功版本为 V34，独立校验 V34/V33/V32/V31/V30/V29 checksum 和失败迁移 0，且不得保留 V34 pending 标记。"
 $weakenedFlywaySql = @"
-select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
-    'version=33;checksum=$expectedV33Checksum',
-    'latest successful version = 33; checksum = $expectedV33Checksum',
-    max(version::int) >= 33,
-    'Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。'
+select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
+    'version=34;checksum=$expectedV34Checksum',
+    'latest successful version = 34; checksum = $expectedV34Checksum',
+    max(version::int) >= 34,
+    'latest V34 must stay exact until checksum freeze'
 from flyway_schema_history where success and version ~ '^[0-9]+$';
+union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
+    'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
+    'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
 union all select 'FLYWAY_V33_CHECKSUM', 'migration', 'version=33;checksum=$expectedV33Checksum',
     'version 33 checksum = $expectedV33Checksum', checksum = $expectedV33Checksum,
     'Flyway V33 checksum 必须保持 $expectedV33Checksum。' from flyway_schema_history where success and version = '33';
@@ -210,14 +223,17 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $weakenedFlywaySql)) `
-    -Message "自测必须拒绝把最新迁移规则弱化为 >= 33 的实现。"
+    -Message "自测必须拒绝把最新迁移规则弱化为 >= 34 的实现。"
 $missingV33ChecksumSql = @"
-select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
-    'version=33;checksum=$expectedV33Checksum',
-    'latest successful version = 33; checksum = $expectedV33Checksum',
-    version::int = 33 and checksum = $expectedV33Checksum,
-    'Flyway 最新成功版本必须为 V33，checksum 必须为 $expectedV33Checksum。'
-from flyway_schema_history where success and version = '33';
+select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
+    'version=34;checksum=$expectedV34Checksum',
+    'latest successful version = 34; checksum = $expectedV34Checksum',
+    version::int = 34 and checksum is not null,
+    'latest V34 must stay exact until checksum freeze'
+from flyway_schema_history where success and version = '34';
+union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
+    'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
+    'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
 union all select 'FLYWAY_V32_CHECKSUM', 'migration', 'version=32;checksum=$expectedV32Checksum',
     'version 32 checksum = $expectedV32Checksum', checksum = $expectedV32Checksum,
     'Flyway V32 checksum 必须保持 $expectedV32Checksum。' from flyway_schema_history where success and version = '32';
@@ -1012,5 +1028,99 @@ Assert-True -Condition ($rebuild -match 'Assert-PostgresOwner' -and $rebuild -ma
     -Message "Reset-PostgresDatabase 必须固定/白名单校验 owner 并安全引用，不能直接拼接 PostgresUser。"
 Assert-True -Condition ($rebuild -match 'manifestPath' -and $rebuild -match 'validationPath' -and $rebuild -match 'generatedAndValidated = \$validationSucceeded') `
     -Message "重建 summary 必须在实际生成和验证成功后写 generatedAndValidated=true，并记录最终 manifest/validation 路径。"
+
+function Test-FinancialCloseValidatorRulesAreStrict {
+    param([string] $SqlText)
+
+    $tableRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_TABLES_V34") `
+        -and $SqlText.Contains("count(*)::text, '21', count(*) = 21") `
+        -and $SqlText.Contains("fin_close_run") `
+        -and $SqlText.Contains("fin_close_check_run") `
+        -and $SqlText.Contains("fin_close_snapshot") `
+        -and $SqlText.Contains("fin_close_reopen_request") `
+        -and $SqlText.Contains("fin_bank_account") `
+        -and $SqlText.Contains("fin_bank_reconciliation_match") `
+        -and $SqlText.Contains("fin_tax_period_summary") `
+        -and $SqlText.Contains("fin_tax_payment_record"))
+    $permissionRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_PERMISSIONS_V34") `
+        -and $SqlText.Contains("count(*)::text, '24', count(*) = 24") `
+        -and $SqlText.Contains("financial-close:period:close") `
+        -and $SqlText.Contains("financial-close:period:reopen") `
+        -and $SqlText.Contains("financial-close:bank-sensitive:view") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_SYSTEM_ADMIN_PERMISSIONS_V34"))
+    $approvalAndAccountRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_REOPEN_APPROVAL_V34") `
+        -and $SqlText.Contains("FINANCIAL_PERIOD_REOPEN") `
+        -and $SqlText.Contains("financial-close:period:reopen") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_ACCOUNT_CODES_V34") `
+        -and $SqlText.Contains("4103") `
+        -and $SqlText.Contains("2221.03") `
+        -and $SqlText.Contains("2221.06") `
+        -and $SqlText.Contains("6801"))
+    $constraintRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_IMMUTABLE_TRIGGERS_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_STATUS_VALUES_V34") `
+        -and $SqlText.Contains("CHECKING") `
+        -and $SqlText.Contains("BLOCKED") `
+        -and $SqlText.Contains("CONSUMED") `
+        -and $SqlText.Contains("REOPENED") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC") `
+        -and $SqlText.Contains("having count(*) > 1"))
+    $dynamicRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_READY_CHECKS_CONSUMABLE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_CLOSED_PERIOD_LOCK_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_NO_UPSTREAM_WRITE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC") `
+        -and $SqlText.Contains("join fin_close_run c on c.period_id = r.period_id") `
+        -and $SqlText.Contains("join gl_accounting_period p on p.id = r.period_id") `
+        -and $SqlText.Contains("difference_amount <> 0") `
+        -and (-not $SqlText.Contains($legacyAdjustedBankBalanceColumn)) `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_DISCLAIMER_V34"))
+    $objectRuleIsDynamic = ($SqlText.Contains("FILE_OBJECTS_AVAILABLE_MIN_8") `
+        -and (-not $SqlText.Contains("count(*) = 18")) `
+        -and (-not $SqlText.Contains("MINIO_BUCKET_OBJECTS_18")))
+
+    return ($tableRulesAreStrict `
+        -and $permissionRulesAreStrict `
+        -and $approvalAndAccountRulesAreStrict `
+        -and $constraintRulesAreStrict `
+        -and $dynamicRulesAreStrict `
+        -and $objectRuleIsDynamic)
+}
+
+Assert-True -Condition (Test-FinancialCloseValidatorRulesAreStrict -SqlText $validatorSql) `
+    -Message "正式演示数据验证器必须新增 032 表、权限、反结账审批、科目、状态/约束、不可变、动态业务事实和动态对象一致性门禁。"
+
+$weakenedFinancialCloseSql = @"
+select 'FINANCIAL_CLOSE_TABLES_V34'::text, 'financial-close'::text, count(*)::text, '>= 21', count(*) >= 21,
+    'V34 必须创建财务结账相关表。' from information_schema.tables where table_schema = 'public' and table_name like 'fin_%';
+union all select 'FINANCIAL_CLOSE_PERMISSIONS_V34', 'financial-close', count(*)::text, '>= 24', count(*) >= 24,
+    '032 权限必须初始化。' from sys_permission where code like 'financial-close:%';
+union all select 'FILE_OBJECTS_AVAILABLE_MIN_8', 'attachment', count(*)::text, '18', count(*) = 18,
+    '对象数量必须为 18。' from platform_file_object where status = 'AVAILABLE';
+"@
+Assert-True -Condition (-not (Test-FinancialCloseValidatorRulesAreStrict -SqlText $weakenedFinancialCloseSql)) `
+    -Message "自测必须拒绝只按前缀宽泛计数、缺少动态事实门禁或写死 18 个对象的 032 验证器。"
+
+function Test-Stage032IsolationStrategyIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("qherp_032_review") `
+        -and $ScriptText.Contains("qherp-032-review") `
+        -and $ScriptText.Contains("qherp/qherp-private") `
+        -and $ScriptText.Contains("Assert-Stage032IsolationTarget") `
+        -and $ScriptText.Contains("Assert-Stage032FormalResourceRejected") `
+        -and $ScriptText.Contains("New-Stage032AcceptanceDataPlan") `
+        -and $ScriptText.Contains("两个月会计期间") `
+        -and $ScriptText.Contains("双人审批") `
+        -and $ScriptText.Contains("反结账") `
+        -and $ScriptText.Contains("多对多") `
+        -and $ScriptText.Contains("增值税") `
+        -and $ScriptText.Contains("所得税") `
+        -and $ScriptText.Contains("正式库禁止写入") `
+        -and (-not $ScriptText.Contains('Database = "qherp"')) `
+        -and (-not $ScriptText.Contains('MinioBucket = "qherp-private"')))
+}
+
+Assert-True -Condition ((Test-Path -LiteralPath $stage032IsolationPath) -and (Test-Stage032IsolationStrategyIsStrict -ScriptText $stage032Isolation)) `
+    -Message "032 隔离数据准备策略必须固定 qherp_032_review/qherp-032-review，拒绝正式 qherp/qherp-private，并覆盖跨期间、双人审批/反结账、对账和税额汇总。"
 
 Write-Host "demo-data-self-test 通过"

@@ -28,7 +28,7 @@
 
 ## 阶段状态
 
-- 状态：阶段说明已冻结，等待隔离分支整包开发。
+- 状态：隔离分支整包开发与开发期定向验证已完成，准备唯一一轮五角色集中审查。
 - 冻结日期：2026-07-20。
 - 用户授权：用户明确要求主代理作为项目负责人自主决策、自主推进 032 开发落地；本文件内未越出单公司制造业 ERP 路线的裁决无需重复等待确认。
 - 启动基线：当前工作树为 linked worktree、detached HEAD；`HEAD`、本地 `main`、`origin/main`、实际远端 `main` 均为 `30ad38c0948cae2f1d7a64c1f41e4b7c625a750e`。正式 Web `5173`、API `18080` 为 HTTP 200，PostgreSQL 和 MinIO 健康；Flyway 最新成功 V33、失败迁移 0；数据库 `AVAILABLE` 文件与 MinIO 对象为 18/18。
@@ -443,6 +443,9 @@ createdAt, updatedAt
 - 修改 `apps/api/src/main/java/com/qherp/api/system/gl/GeneralLedgerSetupService.java`
 - 修改 `apps/api/src/main/java/com/qherp/api/system/gl/GeneralLedgerVoucherService.java`
 - 修改 `apps/api/src/main/java/com/qherp/api/system/platform/PlatformApprovalService.java`
+- 最小修改 `apps/api/src/main/java/com/qherp/api/security/PermissionAuthorizationManager.java`
+- 最小修改 `apps/api/src/main/java/com/qherp/api/common/ApiErrorCode.java`
+- 最小修改 `apps/api/src/main/java/com/qherp/api/system/init/AccountPermissionInitializer.java`
 - 新建后端定向测试 `apps/api/src/test/java/com/qherp/api/system/financialclose/FinancialCloseControllerTests.java`
 - 新建后端定向测试 `apps/api/src/test/java/com/qherp/api/system/financialclose/FinancialCloseServiceTests.java`
 - 新建迁移测试 `apps/api/src/test/java/com/qherp/api/system/financialclose/FinancialCloseV34MigrationRegressionTests.java`
@@ -600,8 +603,17 @@ createdAt, updatedAt
 | 2026-07-20 | 期间当前态只保留 `OPEN/CLOSED` | 产品/测试曾建议把 `REOPENED` 作为状态，UI 建议当前态保持两态；长期 `REOPENED` 会混淆是否可写。 | `REOPENED` 仅作关闭运行历史，反结账后期间恢复 `OPEN`。 |
 | 2026-07-20 | 关闭不审批、反结账固定审批 | 关闭已有完整前置和事务复检；重复审批增加流程而不增加事实正确性。反结账会重新开放历史期间，风险更高。 | 关闭强权限+原因+确认+审计；反结账走 022 双人审批。 |
 | 2026-07-20 | 不纳入年末本年利润转未分配利润 | 产品讨论提出可选能力，但会引入利润分配和年度政策边界，超出“期末损益结转”最小闭环。 | 032 只做月末损益转 `4103`，年末利润分配留后续。 |
+| 2026-07-20 | 补齐后端公共接线文件所有权 | 后端 TDD 前核验发现固定管理 API、稳定错误码和长期权限初始化无法只在 `financialclose` 包内完成；原工作包清单与冻结接口存在实施矛盾。 | 工作包 A 获得对 `PermissionAuthorizationManager`、`ApiErrorCode`、`AccountPermissionInitializer` 的最小修改权限；不改变 API、权限或业务范围。 |
 
 ## 审查、整改、验证与交付记录
+
+### 整包开发与定向验证
+
+- 开发分支：`codex/032-financial-close-funds-tax-foundation`；阶段说明冻结提交：`5fc6cb04ce3f508a21cb1a182c63ce42ce3d682f`。
+- 前端工作包：9 个 032 页面及路由、菜单、API 和受影响 031/028/022 页面接线已完成；032 定向组件测试 66 项、路由守卫测试 76 项和前端类型检查通过。
+- 后端工作包：V34、独立 `financialclose` 领域、关闭/反结账、损益结转、银行对账、税务基础、权限脱敏、审计和跨域受控接线已完成；受影响后端定向套件 10 项与 V34 双路径迁移回归 2 项通过。
+- 测试工作包：`FinancialCloseStage032AcceptanceTests` 5 项通过；演示数据验证器自测和 032 隔离策略默认路径通过；正式 `qherp/qherp-private` 资源拒绝路径按预期失败关闭；V34 checksum 已精确冻结为 `-1893080635`。
+- 本节只证明开发期工作包和定向验证完成；尚未替代集中审查、差异复审或唯一交付前全量验证。
 
 ### 唯一一轮五角色集中审查
 

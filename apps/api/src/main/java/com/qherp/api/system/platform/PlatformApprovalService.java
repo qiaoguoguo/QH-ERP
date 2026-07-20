@@ -6,6 +6,7 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.bom.BomEngineeringChangeAdminService;
+import com.qherp.api.system.financialclose.FinancialCloseService;
 import com.qherp.api.system.gl.GeneralLedgerVoucherService;
 import com.qherp.api.system.inventory.InventoryStage023AdminService;
 import com.qherp.api.system.procurement.ProcurementRequisitionService;
@@ -65,6 +66,8 @@ public class PlatformApprovalService {
 
 	private final GeneralLedgerVoucherService generalLedgerVoucherService;
 
+	private final FinancialCloseService financialCloseService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
 			BomEngineeringChangeAdminService engineeringChangeService,
@@ -76,7 +79,8 @@ public class PlatformApprovalService {
 			@Lazy SalesQuoteService salesQuoteService,
 			@Lazy SalesFulfillmentService salesFulfillmentService,
 			@Lazy ProjectCostAdjustmentService projectCostAdjustmentService,
-			@Lazy GeneralLedgerVoucherService generalLedgerVoucherService) {
+			@Lazy GeneralLedgerVoucherService generalLedgerVoucherService,
+			@Lazy FinancialCloseService financialCloseService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
@@ -90,6 +94,7 @@ public class PlatformApprovalService {
 		this.salesFulfillmentService = salesFulfillmentService;
 		this.projectCostAdjustmentService = projectCostAdjustmentService;
 		this.generalLedgerVoucherService = generalLedgerVoucherService;
+		this.financialCloseService = financialCloseService;
 	}
 
 	@Transactional
@@ -170,6 +175,11 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitGlVoucherPost(Long voucherId, ApprovalSubmitRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		return submit("GL_VOUCHER_POST", voucherId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitFinancialPeriodReopen(Long requestId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("FINANCIAL_PERIOD_REOPEN", requestId, request, operator, servletRequest);
 	}
 
 	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
@@ -545,6 +555,11 @@ public class PlatformApprovalService {
 					operator, servletRequest);
 			return;
 		}
+		if ("FINANCIAL_PERIOD_REOPEN".equals(task.sceneCode())) {
+			this.financialCloseService.applyReopenFromApproval(task.businessObjectId(), task.businessObjectVersion(),
+					operator, servletRequest);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -575,6 +590,9 @@ public class PlatformApprovalService {
 		}
 		if ("GL_VOUCHER_POST".equals(sceneCode)) {
 			this.generalLedgerVoucherService.reopenAfterApprovalTerminal(objectId, operator);
+		}
+		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
+			this.financialCloseService.reopenAfterApprovalTerminal(objectId, operator);
 		}
 	}
 
@@ -847,6 +865,11 @@ public class PlatformApprovalService {
 		if ("GL_VOUCHER_POST".equals(sceneCode)) {
 			GeneralLedgerVoucherService.ApprovalSnapshot snapshot = this.generalLedgerVoucherService
 				.approvalSnapshot(objectId);
+			return new BusinessObjectSnapshot(snapshot.id(), snapshot.no(), snapshot.summary(),
+					snapshot.approvalStatus(), snapshot.version());
+		}
+		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
+			FinancialCloseService.ApprovalSnapshot snapshot = this.financialCloseService.approvalSnapshot(objectId);
 			return new BusinessObjectSnapshot(snapshot.id(), snapshot.no(), snapshot.summary(),
 					snapshot.approvalStatus(), snapshot.version());
 		}
@@ -1245,6 +1268,9 @@ public class PlatformApprovalService {
 		if ("GL_VOUCHER_POST".equals(sceneCode)) {
 			return operator.permissions().contains("gl:voucher:view");
 		}
+		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
+			return operator.permissions().contains("financial-close:period:view");
+		}
 		return false;
 	}
 
@@ -1326,6 +1352,9 @@ public class PlatformApprovalService {
 		}
 		if ("GL_VOUCHER_POST".equals(sceneCode)) {
 			return "gl:voucher:view";
+		}
+		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
+			return "financial-close:period:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

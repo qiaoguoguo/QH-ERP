@@ -85,6 +85,8 @@ async function mountGlView(component: object, path = '/gl', permissions: string[
       { path: '/gl/ledgers/detail', name: 'gl-ledger-detail', component },
       { path: '/gl/account-balances', name: 'gl-account-balances', component },
       { path: '/gl/trial-balance', name: 'gl-trial-balance', component },
+      { path: '/gl/financial-close', name: 'gl-financial-close', component: { template: '<div />' } },
+      { path: '/gl/financial-close/:runId', name: 'gl-financial-close-run-detail', component: { template: '<div />' } },
       { path: '/finance/voucher-drafts/:id', name: 'finance-voucher-draft-detail', component: { template: '<div />' } },
     ],
   })
@@ -156,7 +158,18 @@ describe('031 会计核算页面族', () => {
     vi.clearAllMocks()
     confirmActionMock.mockResolvedValue(true)
     glApiMock.ledger.get.mockResolvedValue({ ledgerCode: 'MAIN', ledgerName: '总账', baseCurrency: 'CNY', initialized: true, startPeriodCode: '2026-07' })
-    glApiMock.accountingPeriods.list.mockResolvedValue(page([{ id: 1, periodCode: '2026-07', startDate: '2026-07-01', endDate: '2026-07-31', status: 'OPEN', voucherCount: 2, lastPostedAt: '2026-07-20T10:00:00+08:00' }]))
+    glApiMock.accountingPeriods.list.mockResolvedValue(page([{
+      id: 1,
+      periodCode: '2026-07',
+      startDate: '2026-07-01',
+      endDate: '2026-07-31',
+      status: 'OPEN',
+      voucherCount: 2,
+      lastPostedAt: '2026-07-20T10:00:00+08:00',
+      financialCloseStatus: 'READY',
+      latestFinancialCloseCheckRunId: 31,
+      financialCloseDisabledReason: '业务月结前置未满足',
+    }]))
     glApiMock.accountingPeriods.create.mockResolvedValue({ id: 2, periodCode: '2026-08', startDate: '2026-08-01', endDate: '2026-08-31', status: 'OPEN' })
     glApiMock.accounts.list.mockResolvedValue(page([accountRecord]))
     glApiMock.accounts.candidates.mockImplementation((params: { keyword?: string; page?: number; pageSize?: number }) => {
@@ -228,7 +241,7 @@ describe('031 会计核算页面族', () => {
     glApiMock.trialBalance.get.mockResolvedValue({ balanced: false, openingDebitTotal: '0.00', openingCreditTotal: '0.00', periodDebitTotal: '120.00', periodCreditTotal: '100.00', endingDebitTotal: '120.00', endingCreditTotal: '100.00', differenceAmount: '20.00', differences: [{ accountCode: '2221.01', accountName: '应交税费-销项税额', differenceAmount: '20.00' }], restricted: false })
   })
 
-  it('会计期间页表达总账启用和 OPEN 期间边界，不出现 032 关闭动作', async () => {
+  it('会计期间页表达总账启用和 OPEN 期间边界，并增加 032 财务结账状态入口', async () => {
     glApiMock.ledger.get.mockResolvedValueOnce({ ledgerCode: 'MAIN', ledgerName: '总账', baseCurrency: 'CNY', initialized: false, startPeriodCode: null })
     const { wrapper } = await mountGlView(GlAccountingPeriodsView, '/gl/accounting-periods')
 
@@ -236,8 +249,7 @@ describe('031 会计核算页面族', () => {
     expect(wrapper.text()).toContain('总账未启用')
     expect(wrapper.text()).toContain('初始化总账')
     expect(wrapper.text()).toContain('不同于业务月结')
-    expect(wrapper.text()).not.toContain('反关账')
-    expect(wrapper.text()).not.toContain('损益结转')
+    expect(wrapper.text()).toContain('032 财务结账入口')
     expect(wrapper.find('input[name="gl-ledger-start-month"]').exists()).toBe(true)
     expect(wrapper.find('.query-form').exists()).toBe(true)
     expect(wrapper.find('.table-scroll').exists()).toBe(true)
@@ -252,6 +264,15 @@ describe('031 会计核算页面族', () => {
 
     glApiMock.ledger.get.mockResolvedValueOnce({ ledgerCode: 'MAIN', ledgerName: '总账', baseCurrency: 'CNY', initialized: true, startPeriodCode: '2026-07' })
     const initialized = await mountGlView(GlAccountingPeriodsView, '/gl/accounting-periods')
+    expect(initialized.wrapper.text()).toContain('财务结账状态')
+    expect(initialized.wrapper.text()).toContain('可结账')
+    expect(initialized.wrapper.text()).toContain('业务月结前置未满足')
+    expect(initialized.wrapper.text()).not.toContain('REOPENED')
+    await initialized.wrapper.find('[data-test="gl-period-financial-close-link"]').trigger('click')
+    await flushPromises()
+    expect(initialized.router.currentRoute.value.name).toBe('gl-financial-close-run-detail')
+    expect(initialized.router.currentRoute.value.query.returnTo).toBe('/gl/accounting-periods')
+
     await initialized.wrapper.find('[data-test="create-next-gl-period"]').trigger('click')
     await flushPromises()
     expect(glApiMock.accountingPeriods.create).toHaveBeenCalledWith(expect.objectContaining({
@@ -553,6 +574,32 @@ describe('031 会计核算页面族', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
     expect(router.currentRoute.value.query.returnTo).toBe('/gl/vouchers')
+  })
+
+  it('凭证工作台展示关闭期间禁用原因和 032 损益/税务来源，不混用 030 业务月结命名', async () => {
+    glApiMock.vouchers.list.mockResolvedValueOnce(page([
+      {
+        ...voucherRecord,
+        sourceType: 'PROFIT_LOSS_TRANSFER',
+        sourceNo: 'PL-202607-001',
+        sourceOriginalType: 'TAX_SUMMARY',
+        sourceOriginalNo: 'TAX-202607-001',
+        sourceOriginalVersion: 3,
+        sourceOriginalFingerprint: 'fp-tax-001',
+        allowedActions: [],
+        actionDisabledReasons: {
+          UPDATE: '期间已财务关闭，禁止编辑凭证',
+          SUBMIT: '期间已财务关闭，禁止提交凭证',
+        },
+      },
+    ]))
+    const { wrapper } = await mountGlView(GlVoucherWorkbenchView, '/gl/vouchers')
+
+    expect(wrapper.text()).toContain('正式来源 PROFIT_LOSS_TRANSFER PL-202607-001')
+    expect(wrapper.text()).toContain('业务来源 TAX_SUMMARY TAX-202607-001')
+    expect(wrapper.text()).toContain('来源指纹 fp-tax-001')
+    expect(wrapper.text()).toContain('期间已财务关闭，禁止提交凭证')
+    expect(wrapper.text()).not.toContain('业务月结关闭，禁止提交凭证')
   })
 
   it('正式凭证来源层与真实业务来源层分开展示，不混用 FIN_VOUCHER_DRAFT 和业务单号', async () => {

@@ -496,6 +496,59 @@ describe('022 平台页面', () => {
     warnSpy.mockRestore()
   })
 
+  it('FINANCIAL_PERIOD_REOPEN 审批显示通过并反结账、脱敏摘要和安全 returnTo', async () => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 92,
+        taskId: 792,
+        taskNo: 'AT-FC-001',
+        sceneCode: 'FINANCIAL_PERIOD_REOPEN',
+        objectType: 'FINANCIAL_PERIOD_REOPEN',
+        objectId: 41,
+        objectNo: 'FCR-202607-001',
+        objectName: '2026-07 反结账申请',
+        status: 'PENDING',
+        currentStepName: '双人审批',
+        applicantName: '会计',
+        assignedAt: '2026-07-20T10:00:00+08:00',
+        availableActions: [],
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 92,
+      taskId: 792,
+      taskVersion: 5,
+      sceneCode: 'FINANCIAL_PERIOD_REOPEN',
+      objectType: 'FINANCIAL_PERIOD_REOPEN',
+      objectId: 41,
+      objectNo: 'FCR-202607-001',
+      objectName: '2026-07 反结账申请',
+      status: 'SUBMITTED',
+      applicantName: '会计',
+      submittedAt: '2026-07-20T10:00:00+08:00',
+      version: 2,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ taskId: 792, stepName: '双人审批', status: 'PENDING', candidatePermission: 'financial-close:period:reopen', version: 5 }],
+      histories: [{ action: 'SUBMIT', operatorName: '会计', operatedAt: '2026-07-20T10:00:00+08:00', comment: '申请反结账；金额和来源受限' }],
+      attachmentSnapshots: [],
+    })
+
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
+    expect(wrapper.text()).toContain('反结账申请')
+    expect(wrapper.text()).toContain('通过并反结账')
+    expect(wrapper.text()).toContain('金额和来源受限')
+    expect(wrapper.text()).not.toContain('通过并记账')
+  })
+
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {
     const zeroVersionDetail = {
       id: 3,

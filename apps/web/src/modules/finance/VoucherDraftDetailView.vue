@@ -178,6 +178,7 @@ onMounted(loadRecord)
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证草稿详情加载中" :closable="false" />
       <el-alert type="warning" title="非正式凭证草稿，不产生总账、会计期间或资金影响" :closable="false" />
+      <el-alert v-if="!linkedGlVoucher" type="warning" title="会计期间已财务关闭时，生成正式凭证草稿会失败关闭且不回写 028 状态" :closable="false" />
     </template>
 
     <div v-if="record" class="finance-summary-strip">

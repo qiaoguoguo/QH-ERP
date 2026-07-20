@@ -119,11 +119,31 @@ export function glVoucherDisplayNo(record: Pick<GlVoucherRecord, 'voucherNo' | '
   return record.voucherNo || record.draftNo
 }
 
-export function glFormalSourceText(record: Pick<GlVoucherRecord, 'sourceType' | 'sourceVisible' | 'restrictedReason'>) {
+export function glFormalSourceText(record: Pick<GlVoucherRecord, 'sourceType' | 'sourceNo' | 'sourceVisible' | 'restrictedReason'>) {
   if (record.sourceVisible === false) {
     return record.restrictedReason || '无权查看来源'
   }
-  return `正式来源 ${record.sourceType || 'MANUAL'}`
+  return `正式来源 ${[record.sourceType || 'MANUAL', record.sourceNo].filter(Boolean).join(' ')}`
+}
+
+export function glCombinedActionDisabledReason(record: { actionDisabledReasons?: Record<string, string> | null }) {
+  const reasons = record.actionDisabledReasons ?? {}
+  return ['CANCEL', 'SUBMIT', 'UPDATE', 'CREATE', 'REVERSE', 'WITHDRAW']
+    .map((action) => reasons[action])
+    .find((reason): reason is string => Boolean(reason)) ?? ''
+}
+
+export function glFinancialCloseStatusText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    READY: '可结账',
+    BLOCKED: '阻断',
+    CHECKING: '检查中',
+    STALE: '已失效',
+    CONSUMED: '已关闭',
+    CLOSED: '已关闭',
+    OPEN: '开放',
+  }
+  return value ? text[value] ?? value : '-'
 }
 
 export function glBusinessSourceText(record: Pick<GlVoucherRecord, 'businessSourceType' | 'sourceOriginalType' | 'businessSourceNo' | 'sourceOriginalNo' | 'sourceVisible' | 'restrictedReason'>) {

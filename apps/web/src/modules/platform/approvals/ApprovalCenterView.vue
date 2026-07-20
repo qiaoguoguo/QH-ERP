@@ -59,7 +59,15 @@ const canApprove = computed(() => hasCurrentTaskVersion.value && (detail.value?.
 const canReject = computed(() => hasCurrentTaskVersion.value && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
-const approveButtonText = computed(() => detail.value?.sceneCode === 'GL_VOUCHER_POST' ? '通过并记账' : '通过')
+const approveButtonText = computed(() => {
+  if (detail.value?.sceneCode === 'GL_VOUCHER_POST') {
+    return '通过并记账'
+  }
+  if (detail.value?.sceneCode === 'FINANCIAL_PERIOD_REOPEN') {
+    return '通过并反结账'
+  }
+  return '通过'
+})
 
 const businessObjectPaths: Record<string, string> = {
   INVENTORY_STOCKTAKE: '/inventory/stocktakes',
@@ -67,6 +75,7 @@ const businessObjectPaths: Record<string, string> = {
   INVENTORY_VALUATION_ADJUSTMENT: '/inventory/valuation-adjustments',
   SALES_QUOTE: '/sales/quotes',
   GL_VOUCHER: '/gl/vouchers',
+  FINANCIAL_PERIOD_REOPEN: '/gl/financial-close',
 }
 
 const businessObjectLabels: Record<string, string> = {
@@ -75,6 +84,7 @@ const businessObjectLabels: Record<string, string> = {
   INVENTORY_VALUATION_ADJUSTMENT: '库存估值调整',
   SALES_QUOTE: '销售报价',
   GL_VOUCHER: '会计凭证',
+  FINANCIAL_PERIOD_REOPEN: '反结账申请',
 }
 
 function businessObjectRoute(record: { objectType?: string | null, objectId?: string | number | null }) {
@@ -84,6 +94,9 @@ function businessObjectRoute(record: { objectType?: string | null, objectId?: st
   const basePath = businessObjectPaths[record.objectType]
   if (!basePath) {
     return null
+  }
+  if (record.objectType === 'FINANCIAL_PERIOD_REOPEN') {
+    return `${basePath}?returnTo=${encodeURIComponent('/platform/approvals')}`
   }
   const path = `${basePath}/${encodeURIComponent(String(record.objectId))}`
   return record.objectType === 'GL_VOUCHER'

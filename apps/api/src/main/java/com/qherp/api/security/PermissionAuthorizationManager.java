@@ -85,6 +85,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return generalLedgerPermissionCode;
 		}
 
+		String financialClosePermissionCode = financialClosePermissionCode(method, path);
+		if (financialClosePermissionCode != null) {
+			return financialClosePermissionCode;
+		}
+
 		String stage021MasterPermissionCode = stage021MasterPermissionCode(method, path);
 		if (stage021MasterPermissionCode != null) {
 			return stage021MasterPermissionCode;
@@ -424,6 +429,120 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method)
 				&& ("/api/admin/gl/account-balances".equals(path) || "/api/admin/gl/trial-balance".equals(path))) {
 			return "gl:balance:view";
+		}
+		return null;
+	}
+
+	private String financialClosePermissionCode(String method, String path) {
+		String closePath = "/api/admin/financial-closes";
+		if (matchesBasePath(path, closePath)) {
+			if ("POST".equals(method) && path.matches(Pattern.quote(closePath) + "/periods/\\d+/checks")) {
+				return "financial-close:period:check";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote(closePath) + "/check-runs/\\d+/close")) {
+				return "financial-close:period:close";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote(closePath) + "/close-runs/\\d+/reopen-requests")) {
+				return "financial-close:period:reopen";
+			}
+			if (path.matches(Pattern.quote(closePath) + "/periods/\\d+/profit-loss-transfers(/.*)?")) {
+				if ("GET".equals(method)) {
+					return "financial-close:profit-loss:view";
+				}
+				if ("POST".equals(method)) {
+					return "financial-close:profit-loss:generate";
+				}
+			}
+			if ("GET".equals(method)) {
+				return "financial-close:period:view";
+			}
+		}
+
+		String bankAccountPath = "/api/admin/bank-accounts";
+		if (matchesBasePath(path, bankAccountPath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:bank-account:view";
+			}
+			if ("POST".equals(method) || "PUT".equals(method)) {
+				return "financial-close:bank-account:manage";
+			}
+		}
+
+		String bankStatementPath = "/api/admin/bank-statements";
+		if (matchesBasePath(path, bankStatementPath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:bank-reconciliation:view";
+			}
+			if ("POST".equals(method)) {
+				return "financial-close:bank-reconciliation:import";
+			}
+		}
+
+		String reconciliationPath = "/api/admin/bank-reconciliations";
+		if (matchesBasePath(path, reconciliationPath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:bank-reconciliation:view";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote(reconciliationPath) + "/\\d+/confirm")) {
+				return "financial-close:bank-reconciliation:confirm";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote(reconciliationPath) + "/\\d+/reopen")) {
+				return "financial-close:bank-reconciliation:reopen";
+			}
+			if ("DELETE".equals(method) && path.matches(Pattern.quote(reconciliationPath) + "/\\d+/matches")) {
+				return "financial-close:bank-reconciliation:match";
+			}
+			if ("POST".equals(method)) {
+				return "financial-close:bank-reconciliation:match";
+			}
+		}
+
+		String taxProfilePath = "/api/admin/tax-profiles";
+		if (matchesBasePath(path, taxProfilePath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:tax-profile:view";
+			}
+			if ("POST".equals(method) || "PUT".equals(method)) {
+				return "financial-close:tax-profile:manage";
+			}
+		}
+
+		String taxRatePath = "/api/admin/tax-rate-rules";
+		String taxInvoiceTypePath = "/api/admin/tax-invoice-types";
+		if (matchesBasePath(path, taxRatePath) || matchesBasePath(path, taxInvoiceTypePath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:tax-profile:view";
+			}
+			if ("POST".equals(method) || "PUT".equals(method)) {
+				return "financial-close:tax-profile:manage";
+			}
+		}
+
+		String taxSummaryPath = "/api/admin/tax-summaries";
+		if (matchesBasePath(path, taxSummaryPath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:tax-summary:view";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote(taxSummaryPath) + "/\\d+/confirm")) {
+				return "financial-close:tax-summary:confirm";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote(taxSummaryPath) + "/\\d+/voucher-drafts")) {
+				return "financial-close:tax-summary:generate-voucher";
+			}
+			if ("POST".equals(method)) {
+				return "financial-close:tax-summary:calculate";
+			}
+		}
+
+		String taxPaymentPath = "/api/admin/tax-payments";
+		if (matchesBasePath(path, taxPaymentPath)) {
+			if ("GET".equals(method)) {
+				return "financial-close:tax-payment:view";
+			}
+			if ("POST".equals(method) || "PUT".equals(method)) {
+				return "financial-close:tax-payment:manage";
+			}
 		}
 		return null;
 	}

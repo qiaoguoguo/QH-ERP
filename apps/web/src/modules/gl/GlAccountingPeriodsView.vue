@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { glApi, type GlAccountingPeriodRecord, type GlLedgerRecord } from '../../shared/api/glApi'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../stores/authStore'
@@ -7,6 +8,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
   createGlIdempotencyKey,
   glErrorMessage,
+  glFinancialCloseStatusText,
   glPageItems,
   glPageSizes,
   glPageTotal,
@@ -16,6 +18,8 @@ import {
 import './GlShared.css'
 
 const authStore = useAuthStore()
+const router = useRouter()
+const route = useRoute()
 const ledger = ref<GlLedgerRecord | null>(null)
 const records = ref<GlAccountingPeriodRecord[]>([])
 const filters = reactive({ year: '2026' })
@@ -126,11 +130,21 @@ function changePageSize(pageSize: number) {
   void loadRecords()
 }
 
+function openFinancialClose(record: GlAccountingPeriodRecord) {
+  const target = record.latestFinancialCloseCheckRunId
+    ? { name: 'gl-financial-close-run-detail', params: { runId: record.latestFinancialCloseCheckRunId } }
+    : { name: 'gl-financial-close' }
+  void router.push({
+    ...target,
+    query: { returnTo: route.fullPath || '/gl/accounting-periods' },
+  })
+}
+
 onMounted(loadRecords)
 </script>
 
 <template>
-  <MasterDataTableView title="会计期间" description="单公司、单账簿、人民币总账期间；031 仅提供 OPEN 记账归属，不提供 032 财务关账能力。">
+  <MasterDataTableView title="会计期间" description="单公司、单账簿、人民币总账期间；031 提供 OPEN 记账归属，032 财务结账入口在此承接。">
     <template #actions>
       <el-button @click="loadRecords">刷新</el-button>
       <el-button
@@ -170,7 +184,7 @@ onMounted(loadRecords)
     </template>
     <template #alerts>
       <el-alert v-if="!ledger?.initialized" type="warning" title="总账未启用，请先初始化总账" :closable="false" />
-      <el-alert type="info" title="会计期间不同于业务月结；031 不提供财务关账相关能力" :closable="false" />
+      <el-alert type="info" title="会计期间不同于业务月结；032 财务结账入口只展示财务关闭状态，反结账后期间当前态仍恢复开放。" :closable="false" />
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="会计期间加载中" :closable="false" />
@@ -190,6 +204,15 @@ onMounted(loadRecords)
         <el-table-column prop="endDate" label="结束日期" min-width="120" />
         <el-table-column label="状态" min-width="100">
           <template #default="{ row }">{{ glPeriodStatusText(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="财务结账状态" min-width="140">
+          <template #default="{ row }">{{ glFinancialCloseStatusText(row.financialCloseStatus) }}</template>
+        </el-table-column>
+        <el-table-column label="关闭入口" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">
+            <el-button data-test="gl-period-financial-close-link" text @click="openFinancialClose(row)">032 财务结账入口</el-button>
+            <span class="gl-muted">{{ row.financialCloseDisabledReason || '-' }}</span>
+          </template>
         </el-table-column>
         <el-table-column prop="voucherCount" label="凭证数" min-width="100" align="right" />
         <el-table-column prop="lastPostedAt" label="最近记账时间" min-width="180" show-overflow-tooltip />

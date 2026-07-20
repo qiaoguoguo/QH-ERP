@@ -442,6 +442,7 @@ onMounted(() => {
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证草稿加载中" :closable="false" />
       <el-alert type="warning" title="凭证草稿不产生科目余额、会计期间或总账影响" :closable="false" />
+      <el-alert type="warning" title="会计期间已财务关闭时，生成正式凭证草稿会失败关闭且不回写 028 状态" :closable="false" />
     </template>
 
     <el-empty v-if="!loading && records.length === 0" description="暂无凭证草稿" />

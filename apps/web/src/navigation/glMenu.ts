@@ -1,4 +1,5 @@
 import type { MenuNode } from '../shared/api/accountPermissionApi'
+import { financialCloseChildren } from './financialCloseMenu'
 
 export const glChildren: MenuNode[] = [
   { id: 'gl-accounting-periods', code: 'gl:period:view', name: '会计期间', routePath: '/gl/accounting-periods' },
@@ -10,6 +11,7 @@ export const glChildren: MenuNode[] = [
   { id: 'gl-ledger-detail', code: 'gl:ledger:view', name: '明细账', routePath: '/gl/ledgers/detail' },
   { id: 'gl-account-balances', code: 'gl:balance:view', name: '科目余额', routePath: '/gl/account-balances' },
   { id: 'gl-trial-balance', code: 'gl:balance:view', name: '试算平衡', routePath: '/gl/trial-balance' },
+  ...financialCloseChildren,
 ]
 
 export const glMenuPaths = new Set(glChildren.map((child) => child.routePath))

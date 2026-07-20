@@ -69,6 +69,9 @@ export interface GlAccountingPeriodRecord {
   voucherCount?: number | null
   lastPostedAt?: string | null
   version?: number | null
+  financialCloseStatus?: string | null
+  latestFinancialCloseCheckRunId?: ResourceId | null
+  financialCloseDisabledReason?: string | null
 }
 
 export interface GlAuxRequirement {

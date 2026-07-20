@@ -766,6 +766,28 @@ public enum ApiErrorCode {
 
 	PERIOD_CLOSE_SNAPSHOT_INCOMPLETE(HttpStatus.CONFLICT, "业务月结快照不完整"),
 
+	FIN_CLOSE_NOT_READY(HttpStatus.CONFLICT, "财务结账检查未就绪，不能关闭"),
+
+	FIN_CLOSE_STALE(HttpStatus.CONFLICT, "财务结账来源已变化，请重新检查"),
+
+	FIN_CLOSE_PERIOD_CLOSED(HttpStatus.CONFLICT, "会计期间已财务结账关闭，不允许写入"),
+
+	FIN_CLOSE_CONFLICT(HttpStatus.CONFLICT, "财务结账对象冲突，请刷新后重试"),
+
+	FIN_REOPEN_APPROVAL_REQUIRED(HttpStatus.CONFLICT, "财务反结账必须先通过审批"),
+
+	FIN_PROFIT_LOSS_STALE(HttpStatus.CONFLICT, "损益结转来源已变化，请重新预览"),
+
+	FIN_BANK_MATCH_AMOUNT_INVALID(HttpStatus.BAD_REQUEST, "银行对账匹配金额不合法"),
+
+	FIN_BANK_RECON_NOT_BALANCED(HttpStatus.CONFLICT, "银行对账未平衡，不能确认"),
+
+	FIN_TAX_SUMMARY_STALE(HttpStatus.CONFLICT, "税务汇总来源已变化，请重新计算"),
+
+	FIN_TAX_SOURCE_CHANGED(HttpStatus.CONFLICT, "税务来源已变化，请重新计算"),
+
+	FIN_PERMISSION_DENIED(HttpStatus.FORBIDDEN, "缺少财务结账权限"),
+
 	GL_LEDGER_ALREADY_INITIALIZED(HttpStatus.CONFLICT, "总账已启用，不能更换启用期间"),
 
 	GL_LEDGER_NOT_INITIALIZED(HttpStatus.CONFLICT, "总账尚未启用"),

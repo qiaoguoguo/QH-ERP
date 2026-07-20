@@ -3,16 +3,22 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 33; checksum = 612501943'::text,
-        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 33
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 612501943),
-        'Flyway 最新成功版本必须为 V33，checksum 必须为 612501943。'::text
+        'latest successful version = 34; checksum = -1893080635'::text,
+        coalesce((array_agg(version::int order by version::int desc))[1], 0) = 34
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -1893080635,
+        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 -1893080635。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V34_CHECKSUM', 'migration',
+        concat('version=34;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 34 checksum = -1893080635',
+        coalesce((array_agg(checksum))[1], 0) = -1893080635,
+        'Flyway V34 checksum 必须保持 -1893080635。'
+        from flyway_schema_history where success and version = '34'
     union all select 'FLYWAY_V33_CHECKSUM', 'migration',
         concat('version=33;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
         'version 33 checksum = 612501943',
@@ -443,6 +449,138 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
                 and posted.voucher_word = s.voucher_word
             where coalesce(s.last_number, 0) <> coalesce(posted.max_number, 0)
         ) sequence_violations
+
+    union all select 'FINANCIAL_CLOSE_TABLES_V34', 'financial-close', count(*)::text, '21', count(*) = 21,
+        'V34 必须创建财务结账、银行对账和税务基础 21 张独立表。'
+        from information_schema.tables
+        where table_schema = 'public'
+        and table_name in ('fin_close_run', 'fin_close_check_run', 'fin_close_check_item',
+            'fin_close_snapshot', 'fin_close_reopen_request', 'fin_close_profit_loss_transfer',
+            'fin_close_action_idempotency', 'fin_close_audit_event', 'fin_bank_account',
+            'fin_bank_statement', 'fin_bank_statement_line', 'fin_bank_reconciliation_run',
+            'fin_bank_reconciliation_match', 'fin_bank_reconciliation_exception', 'fin_tax_profile',
+            'fin_tax_rate_rule', 'fin_tax_invoice_type', 'fin_tax_period_summary',
+            'fin_tax_summary_line', 'fin_tax_adjustment', 'fin_tax_payment_record')
+    union all select 'FINANCIAL_CLOSE_PERMISSIONS_V34', 'financial-close', count(*)::text, '24', count(*) = 24,
+        '032 财务结账动作权限必须精确种子化，不能用宽泛前缀替代。'
+        from sys_permission
+        where code in ('financial-close:period:view', 'financial-close:period:check',
+            'financial-close:period:close', 'financial-close:period:reopen',
+            'financial-close:profit-loss:view', 'financial-close:profit-loss:generate',
+            'financial-close:bank-account:view', 'financial-close:bank-account:manage',
+            'financial-close:bank-reconciliation:view', 'financial-close:bank-reconciliation:import',
+            'financial-close:bank-reconciliation:match', 'financial-close:bank-reconciliation:confirm',
+            'financial-close:bank-reconciliation:reopen', 'financial-close:tax-profile:view',
+            'financial-close:tax-profile:manage', 'financial-close:tax-summary:view',
+            'financial-close:tax-summary:calculate', 'financial-close:tax-summary:confirm',
+            'financial-close:tax-summary:generate-voucher', 'financial-close:tax-payment:view',
+            'financial-close:tax-payment:manage', 'financial-close:amount:view',
+            'financial-close:source:view', 'financial-close:bank-sensitive:view')
+    union all select 'FINANCIAL_CLOSE_SYSTEM_ADMIN_PERMISSIONS_V34', 'financial-close', count(*)::text, '24', count(*) = 24,
+        'SYSTEM_ADMIN 必须拥有 032 财务结账全部动作权限。'
+        from sys_role_permission rp
+        join sys_role r on r.id = rp.role_id
+        join sys_permission p on p.id = rp.permission_id
+        where r.code = 'SYSTEM_ADMIN'
+        and p.code in ('financial-close:period:view', 'financial-close:period:check',
+            'financial-close:period:close', 'financial-close:period:reopen',
+            'financial-close:profit-loss:view', 'financial-close:profit-loss:generate',
+            'financial-close:bank-account:view', 'financial-close:bank-account:manage',
+            'financial-close:bank-reconciliation:view', 'financial-close:bank-reconciliation:import',
+            'financial-close:bank-reconciliation:match', 'financial-close:bank-reconciliation:confirm',
+            'financial-close:bank-reconciliation:reopen', 'financial-close:tax-profile:view',
+            'financial-close:tax-profile:manage', 'financial-close:tax-summary:view',
+            'financial-close:tax-summary:calculate', 'financial-close:tax-summary:confirm',
+            'financial-close:tax-summary:generate-voucher', 'financial-close:tax-payment:view',
+            'financial-close:tax-payment:manage', 'financial-close:amount:view',
+            'financial-close:source:view', 'financial-close:bank-sensitive:view')
+    union all select 'FINANCIAL_CLOSE_REOPEN_APPROVAL_V34', 'financial-close',
+        concat('definitions=', definition_count, ';steps=', step_count),
+        'definitions=1;steps=1',
+        definition_count = 1 and step_count = 1,
+        '032 反结账必须注册 FINANCIAL_PERIOD_REOPEN 固定双人审批场景，并使用 financial-close:period:reopen 候选权限。'
+        from (
+            select
+                count(distinct d.id) as definition_count,
+                count(s.id) filter (where s.candidate_permission_code = 'financial-close:period:reopen') as step_count
+            from platform_approval_definition d
+            left join platform_approval_definition_step s on s.definition_id = d.id
+            where d.scene_code = 'FINANCIAL_PERIOD_REOPEN'
+            and d.status = 'ENABLED'
+        ) financial_reopen_approval_gate
+    union all select 'FINANCIAL_CLOSE_ACCOUNT_CODES_V34', 'financial-close', count(*)::text, '7', count(*) = 7,
+        'V34 必须补充本年利润、税务相关应交税费和费用科目。'
+        from gl_account
+        where code in ('4103', '2221.03', '2221.04', '2221.05', '2221.06', '6403', '6801')
+    union all select 'FINANCIAL_CLOSE_IMMUTABLE_TRIGGERS_V34', 'financial-close', count(*)::text, '>= 4', count(*) >= 4,
+        '关闭快照、反结账申请、已确认银行对账和已确认税务汇总必须有数据库不可变守卫。'
+        from pg_trigger t
+        join pg_class c on c.oid = t.tgrelid
+        where not t.tgisinternal
+        and c.relname in ('fin_close_snapshot', 'fin_close_reopen_request',
+            'fin_bank_reconciliation_run', 'fin_tax_period_summary')
+        and t.tgname like '%immutable%'
+    union all select 'FINANCIAL_CLOSE_STATUS_VALUES_V34', 'financial-close', count(*)::text, '>= 8', count(*) >= 8,
+        '032 关键状态约束必须包含检查、关闭运行、反结账、银行流水、银行对账和税务汇总冻结状态。'
+        from information_schema.check_constraints
+        where constraint_schema = 'public'
+        and check_clause like any (array[
+            '%CHECKING%', '%BLOCKED%', '%READY%', '%STALE%', '%CONSUMED%', '%FAILED%',
+            '%CLOSED%', '%REOPENED%', '%SUBMITTED%', '%APPLIED%', '%UNMATCHED%', '%MATCHED%',
+            '%CONFIRMED%', '%CALCULATED%'
+        ])
+    union all select 'FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '同一会计期间同一时刻只能存在一个当前 CLOSED 财务关闭版本。'
+        from (
+            select period_id
+            from fin_close_run
+            where status = 'CLOSED'
+            group by period_id
+            having count(*) > 1
+        ) duplicated_financial_closed
+    union all select 'FINANCIAL_CLOSE_READY_CHECKS_CONSUMABLE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '被关闭消费的检查运行必须进入 CONSUMED，READY 检查不能与当前 CLOSED 关闭版本并存。'
+        from (
+            select r.id
+            from fin_close_check_run r
+            join fin_close_run c on c.check_run_id = r.id and c.status = 'CLOSED'
+            where r.status <> 'CONSUMED'
+			union all
+            select r.id
+            from fin_close_check_run r
+            join fin_close_run c on c.period_id = r.period_id and c.status = 'CLOSED'
+            where r.status = 'READY'
+        ) unconsumed_ready_check_runs
+    union all select 'FINANCIAL_CLOSE_CLOSED_PERIOD_LOCK_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '当前 CLOSED 财务关闭运行必须把对应会计期间保持为 CLOSED；反结账后旧运行必须为 REOPENED。'
+        from (
+            select r.id
+            from fin_close_run r
+            join gl_accounting_period p on p.id = r.period_id
+            where r.status = 'CLOSED'
+            and p.status <> 'CLOSED'
+        ) closed_runs_without_closed_period
+    union all select 'FINANCIAL_CLOSE_NO_UPSTREAM_WRITE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '032 只能只读消费 028/029/030，并通过 031 草稿承接会计影响；032 审计不得标记对上游业务表的写动作成功。'
+        from fin_close_audit_event
+        where result = 'SUCCESS'
+        and target_type in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',
+            'PRJ_COST_CALCULATION', 'BIZ_PERIOD_CLOSE_RUN')
+    union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '已确认银行对账必须零差额，调整后银行余额与账面余额完全一致。'
+        from fin_bank_reconciliation_run
+        where status = 'CONFIRMED'
+        and difference_amount <> 0
+    union all select 'FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '已确认税务汇总必须保存来源指纹，不能以后续来源变化覆盖旧确认版本。'
+        from fin_tax_period_summary
+        where status = 'CONFIRMED'
+        and (source_fingerprint is null or source_fingerprint = '')
+    union all select 'FINANCIAL_CLOSE_TAX_DISCLAIMER_V34', 'financial-close',
+        '本结果为 ERP 基础汇总或估算，不是正式纳税申报结果，不代替税务专业判断。',
+        'fixed disclaimer present',
+        true,
+        '税务基础页面和 API 必须固定显示非申报免责声明；真实 API 验收负责逐项核对 DTO。'
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

@@ -1,0 +1,51 @@
+.financial-close-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.financial-close-summary-strip > div,
+.financial-close-state-card {
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--el-fill-color-blank);
+}
+
+.financial-close-summary-strip span,
+.financial-close-muted {
+  display: block;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.financial-close-summary-strip strong,
+.financial-close-amount {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.financial-close-section {
+  margin-top: 18px;
+}
+
+.financial-close-section h2,
+.financial-close-section h3 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.financial-close-candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.financial-close-table-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

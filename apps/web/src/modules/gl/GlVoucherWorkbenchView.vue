@@ -6,6 +6,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
   formatGlAmount,
   glActionDisabledReason,
+  glCombinedActionDisabledReason,
   glBusinessSourceMetaText,
   glBusinessSourceText,
   glErrorMessage,
@@ -148,8 +149,8 @@ onMounted(loadRecords)
         <el-table-column label="来源" min-width="180" show-overflow-tooltip><template #default="{ row }">{{ sourceText(row) }}</template></el-table-column>
         <el-table-column label="借方合计" min-width="130" align="right"><template #default="{ row }"><span class="gl-amount">{{ amountText(row, 'debitTotal') }}</span></template></el-table-column>
         <el-table-column label="贷方合计" min-width="130" align="right"><template #default="{ row }"><span class="gl-amount">{{ amountText(row, 'creditTotal') }}</span></template></el-table-column>
-        <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ glActionDisabledReason(row, 'CANCEL') || (row.allowedActions?.join('、') || '-') }}</template>
+        <el-table-column label="动作状态" min-width="220" show-overflow-tooltip>
+          <template #default="{ row }">{{ glCombinedActionDisabledReason(row) || glActionDisabledReason(row, 'CANCEL') || (row.allowedActions?.join('、') || '-') }}</template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" min-width="100">
           <template #default="{ row }">

@@ -1172,12 +1172,14 @@ describe('028 财务页面', () => {
   it('凭证草稿页面显著非正式边界且不出现正式凭证动作', async () => {
     const { wrapper: listWrapper } = await mountFinanceView(VoucherDraftListView, ['finance:voucher-draft:view', 'finance:voucher-draft:generate'], '/finance/voucher-drafts')
     expect(listWrapper.text()).toContain('仅为 031 正式制证提供业务分类建议，不是正式凭证')
+    expect(listWrapper.text()).toContain('会计期间已财务关闭时，生成正式凭证草稿会失败关闭且不回写 028 状态')
     expect(listWrapper.text()).toContain('借贷不平衡')
     expect(listWrapper.text()).not.toContain('审核')
     expect(listWrapper.text()).not.toContain('记账')
 
     const { wrapper: detailWrapper } = await mountFinanceView(VoucherDraftDetailView, ['finance:voucher-draft:view', 'finance:voucher-draft:ready'], '/finance/voucher-drafts/61')
     expect(detailWrapper.text()).toContain('非正式凭证草稿')
+    expect(detailWrapper.text()).toContain('会计期间已财务关闭时，生成正式凭证草稿会失败关闭且不回写 028 状态')
     expect(detailWrapper.text()).toContain('来源受限')
     expect(detailWrapper.text()).not.toContain('正式科目编码')
     expect(detailWrapper.text()).not.toContain('正式凭证号')

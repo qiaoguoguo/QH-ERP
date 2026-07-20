@@ -63,9 +63,33 @@ public class GeneralLedgerVoucherService {
 	}
 
 	@Transactional
+	public Map<String, Object> createSystemDraft(String sourceType, Long sourceId, String sourceNo,
+			String sourceFingerprint, Long sourceVersion, LocalDate voucherDate, String summary,
+			List<VoucherLineRequest> lines, String idempotencyKey, CurrentUser operator) {
+		if (!List.of("PROFIT_LOSS_CARRYFORWARD", "TAX_SUMMARY").contains(sourceType)) {
+			throw new BusinessException(ApiErrorCode.GL_RULE_INVALID);
+		}
+		String fingerprint = GeneralLedgerSupport.sha256("SYSTEM_CREATE|" + sourceType + "|" + sourceId + "|"
+				+ sourceFingerprint + "|" + sourceVersion + "|" + voucherDate + "|" + summary + "|" + lines);
+		Long existing = actionIdempotentResult("SYSTEM_CREATE", sourceType, sourceId, idempotencyKey, fingerprint,
+				operator);
+		if (existing != null) {
+			return this.queryService.voucher(existing, operator);
+		}
+		PersistedVoucher draft = createVoucher(sourceType, sourceId, sourceNo, sourceFingerprint, sourceVersion, null,
+				null, null, null, null, "GENERAL", voucherDate, summary, lines, idempotencyKey, fingerprint, null, null,
+				operator);
+		recordAction("SYSTEM_CREATE", sourceType, sourceId, sourceVersion, idempotencyKey, fingerprint, TARGET,
+				draft.id(), draft.version(), operator);
+		this.glAuditService.success(operator, "GL_VOUCHER_SYSTEM_CREATE", TARGET, draft.id());
+		return this.queryService.voucher(draft.id(), operator);
+	}
+
+	@Transactional
 	public Map<String, Object> update(Long id, VoucherRequest request, CurrentUser operator,
 			HttpServletRequest servletRequest) {
 		VoucherRow voucher = lockVoucher(id);
+		ensurePeriodWritable(voucher.periodId());
 		if (!"DRAFT".equals(voucher.status())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -141,6 +165,7 @@ public class GeneralLedgerVoucherService {
 		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
+		ensurePeriodWritable(voucher.periodId());
 		if (!"DRAFT".equals(voucher.status())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -170,6 +195,7 @@ public class GeneralLedgerVoucherService {
 		try {
 			VoucherRow voucher = lockVoucher(id);
 			requireVersion(voucher.version(), version);
+			ensurePeriodWritable(voucher.periodId());
 			if (!"SUBMITTED".equals(voucher.status())) {
 				throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 			}
@@ -200,6 +226,7 @@ public class GeneralLedgerVoucherService {
 					set status = 'POSTED', updated_at = ?
 					where reversal_voucher_id = ?
 					""", OffsetDateTime.now(), id);
+			syncFinancialCloseVoucherStatus(voucher, operator);
 			this.glAuditService.success(operator, "GL_VOUCHER_POST", TARGET, id);
 		}
 		catch (BusinessException exception) {
@@ -214,6 +241,7 @@ public class GeneralLedgerVoucherService {
 		if (!"SUBMITTED".equals(voucher.status())) {
 			return;
 		}
+		ensurePeriodWritable(voucher.periodId());
 		this.jdbcTemplate.update("""
 				update gl_voucher
 				set status = 'DRAFT', updated_by = ?, updated_at = ?, version = version + 1
@@ -234,6 +262,7 @@ public class GeneralLedgerVoucherService {
 		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
+		ensurePeriodWritable(voucher.periodId());
 		if (!"SUBMITTED".equals(voucher.status())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -266,6 +295,7 @@ public class GeneralLedgerVoucherService {
 		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
+		ensurePeriodWritable(voucher.periodId());
 		if (!"DRAFT".equals(voucher.status())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -307,6 +337,7 @@ public class GeneralLedgerVoucherService {
 		}
 		VoucherRow voucher = lockVoucher(id);
 		requireVersion(voucher.version(), request.version());
+		ensurePeriodWritable(voucher.periodId());
 		if (!"DRAFT".equals(voucher.status()) || !"FIN_VOUCHER_DRAFT".equals(voucher.sourceType())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -344,6 +375,7 @@ public class GeneralLedgerVoucherService {
 		}
 		VoucherRow original = lockVoucher(originalId);
 		requireVersion(original.version(), request.version());
+		ensurePeriodWritable(original.periodId());
 		if (!"POSTED".equals(original.status())) {
 			throw new BusinessException(ApiErrorCode.GL_POSTED_IMMUTABLE);
 		}
@@ -1118,6 +1150,28 @@ public class GeneralLedgerVoucherService {
 		}, claimId);
 	}
 
+	private void syncFinancialCloseVoucherStatus(VoucherRow voucher, CurrentUser operator) {
+		if ("PROFIT_LOSS_CARRYFORWARD".equals(voucher.sourceType()) && voucher.sourceId() != null) {
+			this.jdbcTemplate.update("""
+					update fin_close_profit_loss_transfer
+					set status = 'POSTED', voucher_status = 'POSTED', updated_by = ?, updated_at = ?,
+					    version = version + 1
+					where id = ?
+					and voucher_id = ?
+					and status <> 'POSTED'
+					""", operator.username(), OffsetDateTime.now(), voucher.sourceId(), voucher.id());
+		}
+		if ("TAX_SUMMARY".equals(voucher.sourceType()) && voucher.sourceId() != null) {
+			this.jdbcTemplate.update("""
+					update fin_tax_period_summary
+					set updated_by = ?, updated_at = ?, version = version + 1
+					where id = ?
+					and voucher_id = ?
+					and status <> 'CONFIRMED'
+					""", operator.username(), OffsetDateTime.now(), voucher.sourceId(), voucher.id());
+		}
+	}
+
 	private VoucherRow lockVoucher(Long id) {
 		return this.jdbcTemplate.query("""
 				select v.id, v.ledger_id, v.accounting_period_id, p.period_code, p.start_date, v.draft_no,
@@ -1176,6 +1230,9 @@ public class GeneralLedgerVoucherService {
 				rs.getString("status")), periodCode).stream().findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN));
 		if (!"OPEN".equals(row.status()) || date.isBefore(row.startDate()) || date.isAfter(row.endDate())) {
+			if ("CLOSED".equals(row.status()) && !date.isBefore(row.startDate()) && !date.isAfter(row.endDate())) {
+				throw new BusinessException(ApiErrorCode.FIN_CLOSE_PERIOD_CLOSED);
+			}
 			throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
 		}
 		LedgerInfo ledger = ledgerInfo();
@@ -1183,6 +1240,20 @@ public class GeneralLedgerVoucherService {
 			throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
 		}
 		return row;
+	}
+
+	private void ensurePeriodWritable(Long periodId) {
+		String status = this.jdbcTemplate.queryForObject("""
+				select status
+				from gl_accounting_period
+				where id = ?
+				""", String.class, periodId);
+		if ("CLOSED".equals(status)) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_PERIOD_CLOSED);
+		}
+		if (!"OPEN".equals(status)) {
+			throw new BusinessException(ApiErrorCode.GL_PERIOD_NOT_OPEN);
+		}
 	}
 
 	private LedgerInfo ledgerInfo() {
