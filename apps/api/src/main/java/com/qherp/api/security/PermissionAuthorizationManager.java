@@ -479,6 +479,12 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			}
 		}
 
+		String bankStatementLinePath = "/api/admin/bank-statement-lines";
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote(bankStatementLinePath) + "/\\d+/ignore")) {
+			return "financial-close:bank-reconciliation:import";
+		}
+
 		String reconciliationPath = "/api/admin/bank-reconciliations";
 		if (matchesBasePath(path, reconciliationPath)) {
 			if ("GET".equals(method)) {

@@ -134,6 +134,20 @@ public class FinancialCloseAdminController {
 		return ApiResponse.ok(this.bankReconciliationService.account(id, currentUser));
 	}
 
+	@PutMapping("/bank-accounts/{id}")
+	public ApiResponse<Map<String, Object>> updateBankAccount(@PathVariable Long id,
+			@RequestBody FinancialCloseModels.BankAccountRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.updateAccount(id, request, currentUser));
+	}
+
+	@PostMapping("/bank-accounts/{id}/disable")
+	public ApiResponse<Map<String, Object>> disableBankAccount(@PathVariable Long id,
+			@RequestBody FinancialCloseModels.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.disableAccount(id, request, currentUser));
+	}
+
 	@GetMapping("/bank-statements")
 	public ApiResponse<PageResponse<Map<String, Object>>> bankStatements(
 			@RequestParam(required = false) Long bankAccountId, @RequestParam(defaultValue = "1") int page,
@@ -148,6 +162,33 @@ public class FinancialCloseAdminController {
 			@RequestBody FinancialCloseModels.BankStatementRequest request,
 			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.bankReconciliationService.importStatementLine(request, currentUser));
+	}
+
+	@PostMapping("/bank-statements/import-preview")
+	public ApiResponse<Map<String, Object>> previewBankStatementImport(
+			@RequestBody FinancialCloseModels.BankStatementImportRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.previewStatementImport(request, currentUser));
+	}
+
+	@PostMapping("/bank-statements/import-confirm")
+	public ApiResponse<Map<String, Object>> confirmBankStatementImport(
+			@RequestBody FinancialCloseModels.BankStatementImportRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.confirmStatementImport(request, currentUser));
+	}
+
+	@GetMapping("/bank-statements/{id}")
+	public ApiResponse<Map<String, Object>> bankStatement(@PathVariable Long id,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.statementLine(id, currentUser));
+	}
+
+	@PostMapping("/bank-statement-lines/{id}/ignore")
+	public ApiResponse<Map<String, Object>> ignoreBankStatementLine(@PathVariable Long id,
+			@RequestBody FinancialCloseModels.VersionedActionRequest request,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.bankReconciliationService.ignoreStatementLine(id, request, currentUser));
 	}
 
 	@GetMapping("/bank-reconciliations")

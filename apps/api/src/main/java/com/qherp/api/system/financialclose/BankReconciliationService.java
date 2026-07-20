@@ -11,10 +11,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 @Service
@@ -66,6 +68,66 @@ public class BankReconciliationService {
 		}
 	}
 
+	@Transactional
+	public Map<String, Object> updateAccount(Long id, FinancialCloseModels.BankAccountRequest request,
+			CurrentUser operator) {
+		AccountRow current = lockAccount(id);
+		requireVersion(current.version(), request == null ? null : request.version());
+		AccountSnapshot glAccount = glAccount(request.glAccountId());
+		if (!"1002".equals(glAccount.code()) || !"ASSET".equals(glAccount.category()) || !glAccount.enabled()
+				|| !glAccount.postable()) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		AccountNumberParts accountNumber = accountNumberParts(request.accountNo());
+		try {
+			int updated = this.jdbcTemplate.update("""
+					update fin_bank_account
+					set account_name = ?, account_type = ?, bank_name = ?, currency = 'CNY', gl_account_id = ?,
+					    account_fingerprint = ?, account_last4 = ?, account_masked = ?, opened_on = ?,
+					    updated_by = ?, updated_at = ?, version = version + 1
+					where id = ?
+					and version = ?
+					""", FinancialCloseSupport.requiredText(request.accountName(), ApiErrorCode.VALIDATION_ERROR),
+					FinancialCloseSupport.requiredText(request.accountType(), ApiErrorCode.VALIDATION_ERROR)
+						.toUpperCase(),
+					FinancialCloseSupport.requiredText(request.bankName(), ApiErrorCode.VALIDATION_ERROR),
+					request.glAccountId(), accountNumber.fingerprint(), accountNumber.last4(), accountNumber.masked(),
+					request.openedOn(), operator.username(), OffsetDateTime.now(), id, current.version());
+			if (updated != 1) {
+				throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+			}
+			this.auditService.success(operator, "FIN_BANK_ACCOUNT_UPDATE", "FIN_BANK_ACCOUNT", id);
+			return account(id, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+	}
+
+	@Transactional
+	public Map<String, Object> disableAccount(Long id, FinancialCloseModels.VersionedActionRequest request,
+			CurrentUser operator) {
+		AccountRow current = lockAccount(id);
+		requireVersion(current.version(), request == null ? null : request.version());
+		String reason = FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		if ("DISABLED".equals(current.status())) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+		int updated = this.jdbcTemplate.update("""
+				update fin_bank_account
+				set status = 'DISABLED', disabled_reason = ?, updated_by = ?, updated_at = ?,
+				    version = version + 1
+				where id = ?
+				and version = ?
+				and status = 'ENABLED'
+				""", reason, operator.username(), OffsetDateTime.now(), id, current.version());
+		if (updated != 1) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+		this.auditService.success(operator, "FIN_BANK_ACCOUNT_DISABLE", "FIN_BANK_ACCOUNT", id);
+		return account(id, operator);
+	}
+
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> accounts(int page, int pageSize, CurrentUser currentUser) {
 		int safePageSize = FinancialCloseSupport.listLimit(pageSize);
@@ -105,6 +167,8 @@ public class BankReconciliationService {
 			map.put("openedOn", rs.getObject("opened_on", LocalDate.class));
 			map.put("disabledReason", rs.getString("disabled_reason"));
 			FinancialCloseSupport.putVisibility(map, currentUser);
+			map.put("allowedActions", List.of());
+			map.put("actionDisabledReasons", Map.of());
 			map.put("createdAt", rs.getObject("created_at", OffsetDateTime.class));
 			map.put("updatedAt", rs.getObject("updated_at", OffsetDateTime.class));
 			map.put("version", rs.getLong("version"));
@@ -166,17 +230,129 @@ public class BankReconciliationService {
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from fin_bank_statement_line
-				where (? is null or bank_account_id = ?)
+				where (cast(? as bigint) is null or bank_account_id = cast(? as bigint))
 				""", Long.class, bankAccountId, bankAccountId);
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select id
 				from fin_bank_statement_line
-				where (? is null or bank_account_id = ?)
+				where (cast(? as bigint) is null or bank_account_id = cast(? as bigint))
 				order by posting_date desc, id desc
 				limit ? offset ?
 				""", (rs, rowNum) -> statementLine(rs.getLong("id"), currentUser), bankAccountId, bankAccountId,
 				safePageSize, FinancialCloseSupport.offset(page, safePageSize));
 		return PageResponse.of(items, page, safePageSize, total == null ? 0 : total);
+	}
+
+	@Transactional
+	public Map<String, Object> previewStatementImport(FinancialCloseModels.BankStatementImportRequest request,
+			CurrentUser currentUser) {
+		requireEnabledAccount(request == null ? null : request.bankAccountId());
+		ParsedImport parsed = parseImport(request, currentUser);
+		Map<String, Object> map = importResult(request.bankAccountId(), null, parsed, currentUser);
+		this.auditService.success(currentUser, "FIN_BANK_STATEMENT_IMPORT_PREVIEW", "FIN_BANK_ACCOUNT",
+				request.bankAccountId());
+		return map;
+	}
+
+	@Transactional
+	public Map<String, Object> confirmStatementImport(FinancialCloseModels.BankStatementImportRequest request,
+			CurrentUser operator) {
+		requireEnabledAccount(request == null ? null : request.bankAccountId());
+		ParsedImport parsed = parseImport(request, operator);
+		if (parsed.errorCount() > 0) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_IMPORT_CONFIRM|" + request.bankAccountId()
+				+ "|" + parsed.importFingerprint());
+		Long existingByKey = idempotentResult("BANK_STATEMENT_IMPORT_CONFIRM", "FIN_BANK_ACCOUNT",
+				request.bankAccountId(), key, requestFingerprint, operator);
+		if (existingByKey != null) {
+			return statementImportResult(existingByKey, parsed, operator);
+		}
+		Long existingStatementId = existingStatementId(request.bankAccountId(), parsed.importFingerprint());
+		if (existingStatementId != null) {
+			recordIdempotency("BANK_STATEMENT_IMPORT_CONFIRM", "FIN_BANK_ACCOUNT", request.bankAccountId(), null,
+					key, requestFingerprint, "FIN_BANK_STATEMENT", existingStatementId, null, operator);
+			return statementImportResult(existingStatementId, parsed, operator);
+		}
+		String periodCode = parsed.rows()
+			.stream()
+			.filter((row) -> "VALID".equals(row.status()))
+			.findFirst()
+			.map((row) -> FinancialCloseSupport.periodCode(row.postingDate()))
+			.orElse(null);
+		Long statementId = this.jdbcTemplate.queryForObject("""
+				insert into fin_bank_statement (
+					bank_account_id, statement_no, source_method, period_code, import_fingerprint, status, created_by
+				)
+				values (?, ?, 'IMPORT', ?, ?, 'IMPORTED', ?)
+				returning id
+				""", Long.class, request.bankAccountId(), FinancialCloseSupport.text(request.fileName()), periodCode,
+				parsed.importFingerprint(), operator.username());
+		for (ImportRow row : parsed.rows()) {
+			if (!"VALID".equals(row.status())) {
+				continue;
+			}
+			try {
+				this.jdbcTemplate.queryForObject("""
+						insert into fin_bank_statement_line (
+							statement_id, bank_account_id, transaction_date, posting_date, direction, amount,
+							counterparty_name, summary, bank_transaction_id, reference_no, dedupe_fingerprint,
+							status, source_method, created_by, updated_by
+						)
+						values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'UNMATCHED', 'IMPORT', ?, ?)
+						returning id
+						""", Long.class, statementId, request.bankAccountId(), row.transactionDate(),
+						row.postingDate(), row.direction(), row.amount(), row.counterpartyName(), row.summary(),
+						row.bankTransactionId(), row.referenceNo(), row.dedupeFingerprint(), operator.username(),
+						operator.username());
+			}
+			catch (DuplicateKeyException ignored) {
+				// 并发或重复确认时保持幂等，最终响应按已落库事实重新查询。
+			}
+		}
+		recordIdempotency("BANK_STATEMENT_IMPORT_CONFIRM", "FIN_BANK_ACCOUNT", request.bankAccountId(), null,
+				key, requestFingerprint, "FIN_BANK_STATEMENT", statementId, null, operator);
+		this.auditService.success(operator, "FIN_BANK_STATEMENT_IMPORT_CONFIRM", "FIN_BANK_STATEMENT", statementId);
+		return statementImportResult(statementId, parsed, operator);
+	}
+
+	@Transactional
+	public Map<String, Object> ignoreStatementLine(Long id, FinancialCloseModels.VersionedActionRequest request,
+			CurrentUser operator) {
+		String reason = FinancialCloseSupport.requiredText(request == null ? null : request.reason(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_STATEMENT_IGNORE|" + id + "|"
+				+ request.version() + "|" + reason);
+		Long existing = idempotentResult("BANK_STATEMENT_IGNORE", "FIN_BANK_STATEMENT_LINE", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return statementLine(existing, operator);
+		}
+		StatementLineState current = lockStatementLine(id);
+		requireVersion(current.version(), request.version());
+		if (!List.of("UNMATCHED", "PARTIALLY_MATCHED").contains(current.status())) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+		if (matchedStatementAmountAcrossRuns(id).compareTo(ZERO) > 0) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+		int updated = this.jdbcTemplate.update("""
+				update fin_bank_statement_line
+				set status = 'IGNORED', updated_by = ?, updated_at = ?, version = version + 1
+				where id = ?
+				and version = ?
+				and status in ('UNMATCHED', 'PARTIALLY_MATCHED')
+				""", operator.username(), OffsetDateTime.now(), id, current.version());
+		if (updated != 1) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+		recordIdempotency("BANK_STATEMENT_IGNORE", "FIN_BANK_STATEMENT_LINE", id, current.version(), key,
+				requestFingerprint, "FIN_BANK_STATEMENT_LINE", id, current.version() + 1, operator);
+		this.auditService.success(operator, "FIN_BANK_STATEMENT_IGNORE", "FIN_BANK_STATEMENT_LINE", id);
+		return statementLine(id, operator);
 	}
 
 	@Transactional
@@ -667,12 +843,14 @@ public class BankReconciliationService {
 		}, runId);
 	}
 
-	private Map<String, Object> statementLine(Long id, CurrentUser currentUser) {
+	@Transactional(readOnly = true)
+	public Map<String, Object> statementLine(Long id, CurrentUser currentUser) {
 		boolean amountVisible = FinancialCloseSupport.amountVisible(currentUser);
 		boolean sourceVisible = FinancialCloseSupport.sourceVisible(currentUser);
 		return this.jdbcTemplate.query("""
 				select id, statement_id, bank_account_id, transaction_date, posting_date, direction, amount,
-				       counterparty_name, summary, bank_transaction_id, reference_no, status, source_method, version
+				       counterparty_name, summary, bank_transaction_id, reference_no, status, source_method,
+				       created_at, updated_at, version
 				from fin_bank_statement_line
 				where id = ?
 				""", (rs, rowNum) -> {
@@ -691,6 +869,10 @@ public class BankReconciliationService {
 			map.put("status", rs.getString("status"));
 			map.put("sourceMethod", rs.getString("source_method"));
 			FinancialCloseSupport.putVisibility(map, currentUser);
+			map.put("allowedActions", List.of());
+			map.put("actionDisabledReasons", Map.of());
+			map.put("createdAt", rs.getObject("created_at", OffsetDateTime.class));
+			map.put("updatedAt", rs.getObject("updated_at", OffsetDateTime.class));
 			map.put("version", rs.getLong("version"));
 			return map;
 		}, id).stream().findFirst().orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
@@ -706,6 +888,273 @@ public class BankReconciliationService {
 			.stream()
 			.findFirst()
 			.orElse(null);
+	}
+
+	private ParsedImport parseImport(FinancialCloseModels.BankStatementImportRequest request, CurrentUser currentUser) {
+		if (request == null || request.bankAccountId() == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		String content = FinancialCloseSupport.text(request.csvContent()) == null
+				? FinancialCloseSupport.text(request.content()) : FinancialCloseSupport.text(request.csvContent());
+		if (content == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		List<String> physicalLines = content.lines().map(String::trim).filter((line) -> !line.isBlank()).toList();
+		if (physicalLines.size() < 2) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		Map<String, Integer> headers = importHeaders(parseCsvLine(physicalLines.get(0)));
+		String calculatedFingerprint = FinancialCloseSupport.sha256("BANK_IMPORT|" + request.bankAccountId()
+				+ "|" + String.join("\n", physicalLines));
+		String requestedFingerprint = FinancialCloseSupport.text(request.importFingerprint());
+		if (requestedFingerprint != null && !requestedFingerprint.equals(calculatedFingerprint)) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		List<ImportRow> rows = new ArrayList<>();
+		Map<String, Long> seen = new HashMap<>();
+		int valid = 0;
+		int duplicate = 0;
+		int error = 0;
+		for (int index = 1; index < physicalLines.size(); index++) {
+			List<String> columns = parseCsvLine(physicalLines.get(index));
+			List<String> errors = new ArrayList<>();
+			LocalDate transactionDate = parseDate(value(columns, headers, "transactionDate"), "transactionDate",
+					errors);
+			LocalDate postingDate = parseDate(value(columns, headers, "postingDate"), "postingDate", errors);
+			String direction = FinancialCloseSupport.text(value(columns, headers, "direction"));
+			direction = direction == null ? null : direction.toUpperCase(Locale.ROOT);
+			if (!List.of("CREDIT", "DEBIT").contains(direction)) {
+				errors.add("direction");
+			}
+			BigDecimal amount = parseAmount(value(columns, headers, "amount"), errors);
+			String counterpartyName = FinancialCloseSupport.text(value(columns, headers, "counterpartyName"));
+			String summary = FinancialCloseSupport.text(value(columns, headers, "summary"));
+			String bankTransactionId = FinancialCloseSupport.text(value(columns, headers, "bankTransactionId"));
+			String referenceNo = FinancialCloseSupport.text(value(columns, headers, "referenceNo"));
+			String dedupe = null;
+			Long existingLineId = null;
+			String status = "ERROR";
+			if (errors.isEmpty()) {
+				dedupe = statementDedupe(request.bankAccountId(), transactionDate, postingDate, direction, amount,
+						bankTransactionId, referenceNo);
+				existingLineId = existingStatementLineId(request.bankAccountId(), dedupe);
+				if (existingLineId != null || seen.containsKey(dedupe)) {
+					status = "DUPLICATE";
+					duplicate++;
+				}
+				else {
+					status = "VALID";
+					seen.put(dedupe, (long) index);
+					valid++;
+				}
+			}
+			else {
+				error++;
+			}
+			rows.add(new ImportRow(index, status, transactionDate, postingDate, direction, amount, counterpartyName,
+					summary, bankTransactionId, referenceNo, dedupe, existingLineId, errors));
+		}
+		return new ParsedImport(calculatedFingerprint, rows, rows.size(), valid, duplicate, error);
+	}
+
+	private Map<String, Object> importResult(Long bankAccountId, Long statementId, ParsedImport parsed,
+			CurrentUser currentUser) {
+		Map<String, Object> map = FinancialCloseSupport.map();
+		map.put("bankAccountId", bankAccountId);
+		map.put("statementId", statementId);
+		map.put("importFingerprint", FinancialCloseSupport.sourceVisible(currentUser)
+				? parsed.importFingerprint() : null);
+		map.put("rowCount", parsed.rowCount());
+		map.put("validCount", parsed.validCount());
+		map.put("duplicateCount", parsed.duplicateCount());
+		map.put("errorCount", parsed.errorCount());
+		map.put("lines", parsed.rows().stream().map((row) -> importRowMap(row, currentUser)).toList());
+		FinancialCloseSupport.putVisibility(map, currentUser);
+		map.put("allowedActions", List.of());
+		map.put("actionDisabledReasons", Map.of());
+		return map;
+	}
+
+	private Map<String, Object> statementImportResult(Long statementId, ParsedImport parsed, CurrentUser currentUser) {
+		Long bankAccountId = this.jdbcTemplate.queryForObject("""
+				select bank_account_id
+				from fin_bank_statement
+				where id = ?
+				""", Long.class, statementId);
+		List<Map<String, Object>> lines = this.jdbcTemplate.query("""
+				select id
+				from fin_bank_statement_line
+				where statement_id = ?
+				order by id
+				""", (rs, rowNum) -> statementLine(rs.getLong("id"), currentUser), statementId);
+		Map<String, Object> map = importResult(bankAccountId, statementId, parsed, currentUser);
+		map.put("importedCount", lines.size());
+		map.put("lines", lines);
+		return map;
+	}
+
+	private Map<String, Object> importRowMap(ImportRow row, CurrentUser currentUser) {
+		boolean amountVisible = FinancialCloseSupport.amountVisible(currentUser);
+		boolean sourceVisible = FinancialCloseSupport.sourceVisible(currentUser);
+		Map<String, Object> map = FinancialCloseSupport.map();
+		map.put("rowNo", row.rowNo());
+		map.put("status", row.status());
+		map.put("transactionDate", row.transactionDate());
+		map.put("postingDate", row.postingDate());
+		map.put("direction", row.direction());
+		map.put("amount", FinancialCloseSupport.visibleDecimal(row.amount(), amountVisible));
+		map.put("counterpartyName", row.counterpartyName());
+		map.put("summary", row.summary());
+		map.put("bankTransactionId", sourceVisible ? row.bankTransactionId() : null);
+		map.put("referenceNo", sourceVisible ? row.referenceNo() : null);
+		map.put("dedupeFingerprint", sourceVisible ? row.dedupeFingerprint() : null);
+		map.put("existingLineId", sourceVisible ? row.existingLineId() : null);
+		map.put("duplicate", "DUPLICATE".equals(row.status()));
+		map.put("errors", row.errors());
+		FinancialCloseSupport.putVisibility(map, currentUser);
+		return map;
+	}
+
+	private Map<String, Integer> importHeaders(List<String> headers) {
+		Map<String, Integer> result = new HashMap<>();
+		for (int index = 0; index < headers.size(); index++) {
+			result.put(normalizeHeader(headers.get(index)), index);
+		}
+		for (String required : List.of("transactionDate", "postingDate", "direction", "amount")) {
+			if (!result.containsKey(normalizeHeader(required))) {
+				throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+			}
+		}
+		return result;
+	}
+
+	private String value(List<String> columns, Map<String, Integer> headers, String name) {
+		Integer index = headers.get(normalizeHeader(name));
+		if (index == null || index >= columns.size()) {
+			return null;
+		}
+		return columns.get(index);
+	}
+
+	private String normalizeHeader(String header) {
+		return header == null ? "" : header.replaceAll("[^A-Za-z0-9]", "").toLowerCase(Locale.ROOT);
+	}
+
+	private List<String> parseCsvLine(String line) {
+		List<String> values = new ArrayList<>();
+		StringBuilder current = new StringBuilder();
+		boolean quoted = false;
+		for (int index = 0; index < line.length(); index++) {
+			char character = line.charAt(index);
+			if (character == '"') {
+				if (quoted && index + 1 < line.length() && line.charAt(index + 1) == '"') {
+					current.append('"');
+					index++;
+				}
+				else {
+					quoted = !quoted;
+				}
+			}
+			else if (character == ',' && !quoted) {
+				values.add(current.toString().trim());
+				current.setLength(0);
+			}
+			else {
+				current.append(character);
+			}
+		}
+		values.add(current.toString().trim());
+		return values;
+	}
+
+	private LocalDate parseDate(String value, String fieldName, List<String> errors) {
+		String text = FinancialCloseSupport.text(value);
+		if (text == null) {
+			errors.add(fieldName);
+			return null;
+		}
+		try {
+			return LocalDate.parse(text);
+		}
+		catch (DateTimeParseException exception) {
+			errors.add(fieldName);
+			return null;
+		}
+	}
+
+	private BigDecimal parseAmount(String value, List<String> errors) {
+		String text = FinancialCloseSupport.text(value);
+		if (text == null) {
+			errors.add("amount");
+			return ZERO;
+		}
+		try {
+			BigDecimal amount = FinancialCloseSupport.amount(new BigDecimal(text));
+			if (!FinancialCloseSupport.positive(amount)) {
+				errors.add("amount");
+			}
+			return amount;
+		}
+		catch (NumberFormatException exception) {
+			errors.add("amount");
+			return ZERO;
+		}
+	}
+
+	private Long existingStatementId(Long bankAccountId, String importFingerprint) {
+		return this.jdbcTemplate.query("""
+				select id
+				from fin_bank_statement
+				where bank_account_id = ?
+				and import_fingerprint = ?
+				""", (rs, rowNum) -> rs.getLong("id"), bankAccountId, importFingerprint).stream().findFirst()
+			.orElse(null);
+	}
+
+	private Long existingStatementLineId(Long bankAccountId, String dedupe) {
+		return this.jdbcTemplate.query("""
+				select id
+				from fin_bank_statement_line
+				where bank_account_id = ?
+				and dedupe_fingerprint = ?
+				""", (rs, rowNum) -> rs.getLong("id"), bankAccountId, dedupe).stream().findFirst().orElse(null);
+	}
+
+	private Long idempotentResult(String action, String resourceType, Long resourceId, String key,
+			String requestFingerprint, CurrentUser operator) {
+		return this.jdbcTemplate.query("""
+				select request_fingerprint, result_resource_id
+				from fin_close_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and coalesce(resource_id, 0) = coalesce(?, 0)
+				and idempotency_key = ?
+				""", (rs, rowNum) -> {
+			if (!requestFingerprint.equals(rs.getString("request_fingerprint"))) {
+				throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+			}
+			return rs.getLong("result_resource_id");
+		}, operator.id(), action, resourceType, resourceId, key).stream().findFirst().orElse(null);
+	}
+
+	private void recordIdempotency(String action, String resourceType, Long resourceId, Long resourceVersion,
+			String key, String requestFingerprint, String resultResourceType, Long resultResourceId,
+			Long resultVersion, CurrentUser operator) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into fin_close_action_idempotency (
+						operator_user_id, operator_username, action, resource_type, resource_id, resource_version,
+						idempotency_key, request_fingerprint, result_resource_type, result_resource_id,
+						result_version
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), operator.username(), action, resourceType, resourceId, resourceVersion,
+					key, requestFingerprint, resultResourceType, resultResourceId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			idempotentResult(action, resourceType, resourceId, key, requestFingerprint, operator);
+		}
 	}
 
 	private RunRow run(Long id) {
@@ -912,6 +1361,49 @@ public class BankReconciliationService {
 		}
 	}
 
+	private AccountRow lockAccount(Long id) {
+		if (id == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return this.jdbcTemplate.query("""
+				select id, status, version
+				from fin_bank_account
+				where id = ?
+				for update
+				""", (rs, rowNum) -> new AccountRow(rs.getLong("id"), rs.getString("status"),
+				rs.getLong("version")), id).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
+	}
+
+	private void requireEnabledAccount(Long id) {
+		if (id == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		String status = this.jdbcTemplate.query("""
+				select status
+				from fin_bank_account
+				where id = ?
+				""", (rs, rowNum) -> rs.getString("status"), id).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
+		if (!"ENABLED".equals(status)) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+	}
+
+	private StatementLineState lockStatementLine(Long id) {
+		if (id == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return this.jdbcTemplate.query("""
+				select id, status, version
+				from fin_bank_statement_line
+				where id = ?
+				for update
+				""", (rs, rowNum) -> new StatementLineState(rs.getLong("id"), rs.getString("status"),
+				rs.getLong("version")), id).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
+	}
+
 	private String sourceFingerprint(Long periodId, Long bankAccountId) {
 		String source = this.jdbcTemplate.queryForObject("""
 				select coalesce(string_agg(source_key, ',' order by source_key), '')
@@ -935,13 +1427,35 @@ public class BankReconciliationService {
 
 	private String statementDedupe(FinancialCloseModels.BankStatementRequest request, String direction,
 			BigDecimal amount) {
-		String explicit = FinancialCloseSupport.text(request.bankTransactionId());
+		return statementDedupe(request.bankAccountId(), request.transactionDate(), request.postingDate(), direction,
+				amount, request.bankTransactionId(), request.referenceNo());
+	}
+
+	private String statementDedupe(Long bankAccountId, LocalDate transactionDate, LocalDate postingDate,
+			String direction, BigDecimal amount, String bankTransactionId, String referenceNo) {
+		String explicit = FinancialCloseSupport.text(bankTransactionId);
 		if (explicit != null) {
-			return FinancialCloseSupport.sha256("BANK_LINE|" + request.bankAccountId() + "|" + explicit);
+			return FinancialCloseSupport.sha256("BANK_LINE|" + bankAccountId + "|" + explicit);
 		}
-		return FinancialCloseSupport.sha256("BANK_LINE|" + request.bankAccountId() + "|" + request.transactionDate()
-				+ "|" + request.postingDate() + "|" + direction + "|" + FinancialCloseSupport.decimal(amount) + "|"
-				+ FinancialCloseSupport.text(request.referenceNo()));
+		return FinancialCloseSupport.sha256("BANK_LINE|" + bankAccountId + "|" + transactionDate
+				+ "|" + postingDate + "|" + direction + "|" + FinancialCloseSupport.decimal(amount) + "|"
+				+ FinancialCloseSupport.text(referenceNo));
+	}
+
+	private BigDecimal matchedStatementAmountAcrossRuns(Long statementLineId) {
+		return queryAmount("""
+				select coalesce(sum(match_amount), 0)
+				from fin_bank_reconciliation_match
+				where statement_line_id = ?
+				""", statementLineId);
+	}
+
+	private AccountNumberParts accountNumberParts(String accountNo) {
+		String normalizedAccountNo = normalizeAccountNo(accountNo);
+		String fingerprint = FinancialCloseSupport.sha256("BANK_ACCOUNT|" + normalizedAccountNo);
+		String last4 = normalizedAccountNo.length() <= 4 ? normalizedAccountNo
+				: normalizedAccountNo.substring(normalizedAccountNo.length() - 4);
+		return new AccountNumberParts(fingerprint, last4, "****" + last4);
 	}
 
 	private String normalizeAccountNo(String accountNo) {
@@ -1008,6 +1522,12 @@ public class BankReconciliationService {
 			Long glAccountId) {
 	}
 
+	private record AccountRow(Long id, String status, Long version) {
+	}
+
+	private record AccountNumberParts(String fingerprint, String last4, String masked) {
+	}
+
 	private record Period(Long id, String periodCode, LocalDate startDate, LocalDate endDate) {
 	}
 
@@ -1023,6 +1543,18 @@ public class BankReconciliationService {
 	}
 
 	private record ResolvedMatch(Long statementLineId, Long ledgerEntryId, BigDecimal amount) {
+	}
+
+	private record StatementLineState(Long id, String status, Long version) {
+	}
+
+	private record ParsedImport(String importFingerprint, List<ImportRow> rows, int rowCount, int validCount,
+			int duplicateCount, int errorCount) {
+	}
+
+	private record ImportRow(int rowNo, String status, LocalDate transactionDate, LocalDate postingDate,
+			String direction, BigDecimal amount, String counterpartyName, String summary, String bankTransactionId,
+			String referenceNo, String dedupeFingerprint, Long existingLineId, List<String> errors) {
 	}
 
 	private record ReconciliationMetrics(BigDecimal bankEndingBalance, BigDecimal glEndingBalance,

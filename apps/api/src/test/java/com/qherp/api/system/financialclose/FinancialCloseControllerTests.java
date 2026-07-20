@@ -136,6 +136,128 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void 冻结银行账户流水API必须支持编辑停用CSV预览确认详情和忽略() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+
+		long editableAccountId = createBankAccount(admin, "6222 8888 0000 0421");
+		JsonNode editableAccount = data(get("/api/admin/bank-accounts/" + editableAccountId, admin));
+		JsonNode updatedAccount = data(exchange(HttpMethod.PUT, "/api/admin/bank-accounts/" + editableAccountId,
+				Map.of("accountName", "032 更新基本户", "accountType", "BASIC", "bankName", "032 更新银行",
+						"currency", "CNY", "glAccountId", accountId("1002"), "openedOn", "2026-07-02",
+						"accountNo", "6222 8888 0000 0421", "version", editableAccount.get("version").longValue(),
+						"idempotencyKey", "032-bank-update-" + SEQUENCE.incrementAndGet()),
+				admin));
+		assertThat(updatedAccount.get("accountName").asText()).isEqualTo("032 更新基本户");
+		assertThat(updatedAccount.get("version").longValue()).isGreaterThan(editableAccount.get("version")
+			.longValue());
+		assertThat(auditCount("FIN_BANK_ACCOUNT_UPDATE", "FIN_BANK_ACCOUNT", editableAccountId)).isEqualTo(1);
+
+		JsonNode disabledAccount = data(exchange(HttpMethod.POST,
+				"/api/admin/bank-accounts/" + editableAccountId + "/disable",
+				Map.of("version", updatedAccount.get("version").longValue(), "reason", "集中审查前停用验证",
+						"idempotencyKey", "032-bank-disable-" + SEQUENCE.incrementAndGet()),
+				admin));
+		assertThat(disabledAccount.get("status").asText()).isEqualTo("DISABLED");
+		assertThat(disabledAccount.get("disabledReason").asText()).isEqualTo("集中审查前停用验证");
+		assertThat(auditCount("FIN_BANK_ACCOUNT_DISABLE", "FIN_BANK_ACCOUNT", editableAccountId)).isEqualTo(1);
+
+		long bankAccountId = createBankAccount(admin, "6222 8888 0000 1421");
+		JsonNode duplicateSource = data(exchange(HttpMethod.POST, "/api/admin/bank-statements",
+				Map.of("bankAccountId", bankAccountId, "transactionDate", "2026-07-15", "postingDate",
+						"2026-07-15", "direction", "CREDIT", "amount", "88.00", "counterpartyName",
+						"032 重复客户", "summary", "既有重复流水", "bankTransactionId", "032-CSV-DUP",
+						"referenceNo", "032-CSV-DUP-REF",
+						"idempotencyKey", "032-existing-line-" + SEQUENCE.incrementAndGet()),
+				admin));
+		int lineCountBeforePreview = bankStatementLineCount(bankAccountId);
+		String previewCsv = """
+				transactionDate,postingDate,direction,amount,counterpartyName,summary,bankTransactionId,referenceNo
+				2026-07-16,2026-07-16,CREDIT,300.00,032 新客户,CSV 有效流水,032-CSV-NEW,032-CSV-NEW-REF
+				2026-07-15,2026-07-15,CREDIT,88.00,032 重复客户,CSV 重复流水,032-CSV-DUP,032-CSV-DUP-REF
+				错误日期,2026-07-17,CREDIT,10.00,032 错误客户,CSV 错误流水,032-CSV-BAD,032-CSV-BAD-REF
+				""";
+		JsonNode preview = data(exchange(HttpMethod.POST, "/api/admin/bank-statements/import-preview",
+				Map.of("bankAccountId", bankAccountId, "fileName", "032-bank-preview.csv", "csvContent",
+						previewCsv, "idempotencyKey", "032-bank-preview-" + SEQUENCE.incrementAndGet()),
+				admin));
+		assertVisibilityFlags(preview, true, true, true);
+		assertThat(preview.get("rowCount").intValue()).isEqualTo(3);
+		assertThat(preview.get("validCount").intValue()).isEqualTo(1);
+		assertThat(preview.get("duplicateCount").intValue()).isEqualTo(1);
+		assertThat(preview.get("errorCount").intValue()).isEqualTo(1);
+		assertThat(recursiveValues(preview.get("lines"), "status")).contains("VALID", "DUPLICATE", "ERROR");
+		assertThat(bankStatementLineCount(bankAccountId)).isEqualTo(lineCountBeforePreview);
+
+		String confirmCsv = """
+				transactionDate,postingDate,direction,amount,counterpartyName,summary,bankTransactionId,referenceNo
+				2026-07-16,2026-07-16,CREDIT,300.00,032 新客户,CSV 有效流水,032-CSV-NEW,032-CSV-NEW-REF
+				2026-07-15,2026-07-15,CREDIT,88.00,032 重复客户,CSV 重复流水,032-CSV-DUP,032-CSV-DUP-REF
+				""";
+		String confirmKey = "032-bank-confirm-" + SEQUENCE.incrementAndGet();
+		JsonNode confirmed = data(exchange(HttpMethod.POST, "/api/admin/bank-statements/import-confirm",
+				Map.of("bankAccountId", bankAccountId, "fileName", "032-bank-confirm.csv", "csvContent",
+						confirmCsv, "idempotencyKey", confirmKey),
+				admin));
+		assertThat(confirmed.get("importedCount").intValue()).isEqualTo(1);
+		assertThat(confirmed.get("duplicateCount").intValue()).isEqualTo(1);
+		assertThat(bankStatementLineCount(bankAccountId)).isEqualTo(lineCountBeforePreview + 1);
+		JsonNode importedLine = confirmed.get("lines").get(0);
+		assertThat(importedLine.get("sourceMethod").asText()).isEqualTo("IMPORT");
+		assertThat(importedLine.get("amount").asText()).isEqualTo("300.00");
+
+		JsonNode replay = data(exchange(HttpMethod.POST, "/api/admin/bank-statements/import-confirm",
+				Map.of("bankAccountId", bankAccountId, "fileName", "032-bank-confirm.csv", "csvContent",
+						confirmCsv, "idempotencyKey", confirmKey),
+				admin));
+		assertThat(replay.get("statementId").longValue()).isEqualTo(confirmed.get("statementId").longValue());
+		assertThat(bankStatementLineCount(bankAccountId)).isEqualTo(lineCountBeforePreview + 1);
+
+		JsonNode allStatements = data(get("/api/admin/bank-statements?page=1&pageSize=10", admin));
+		assertThat(itemById(allStatements.get("items"), importedLine.get("id").longValue()).get("status")
+			.asText()).isEqualTo("UNMATCHED");
+		JsonNode filteredStatements = data(get("/api/admin/bank-statements?bankAccountId=" + bankAccountId
+				+ "&page=1&pageSize=10", admin));
+		assertThat(itemById(filteredStatements.get("items"), importedLine.get("id").longValue()).get("status")
+			.asText()).isEqualTo("UNMATCHED");
+
+		AuthenticatedSession viewer = createUserAndLogin("032-bank-detail-viewer-", "032_BANK_DETAIL_VIEWER_",
+				List.of("financial-close:bank-reconciliation:view"));
+		JsonNode maskedDetail = data(get("/api/admin/bank-statements/" + importedLine.get("id").longValue(),
+				viewer));
+		assertVisibilityFlags(maskedDetail, false, false, false);
+		assertNullFields(maskedDetail, List.of("amount", "bankTransactionId", "referenceNo"));
+
+		JsonNode importedDetail = data(get("/api/admin/bank-statements/" + importedLine.get("id").longValue(),
+				admin));
+		String ignoreKey = "032-bank-ignore-" + SEQUENCE.incrementAndGet();
+		JsonNode ignored = data(exchange(HttpMethod.POST,
+				"/api/admin/bank-statement-lines/" + importedLine.get("id").longValue() + "/ignore",
+				Map.of("version", importedDetail.get("version").longValue(), "reason", "CSV 技术重复行忽略",
+						"idempotencyKey", ignoreKey),
+				admin));
+		assertThat(ignored.get("status").asText()).isEqualTo("IGNORED");
+		assertThat(auditCount("FIN_BANK_STATEMENT_IGNORE", "FIN_BANK_STATEMENT_LINE",
+				importedLine.get("id").longValue())).isEqualTo(1);
+		JsonNode ignoreReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/bank-statement-lines/" + importedLine.get("id").longValue() + "/ignore",
+				Map.of("version", importedDetail.get("version").longValue(), "reason", "CSV 技术重复行忽略",
+						"idempotencyKey", ignoreKey),
+				admin));
+		assertThat(ignoreReplay.get("id").longValue()).isEqualTo(ignored.get("id").longValue());
+
+		this.jdbcTemplate.update("update fin_bank_statement_line set status = 'MATCHED' where id = ?",
+				duplicateSource.get("id").longValue());
+		JsonNode matchedLine = data(get("/api/admin/bank-statements/" + duplicateSource.get("id").longValue(),
+				admin));
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/bank-statement-lines/" + duplicateSource.get("id").longValue() + "/ignore",
+				Map.of("version", matchedLine.get("version").longValue(), "reason", "已匹配流水不得忽略",
+						"idempotencyKey", "032-bank-ignore-matched-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+	}
+
+	@Test
 	void 缺少金额权限时税务汇总和缴纳台账必须统一后端脱敏() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		ensureLedgerInitialized(admin);
@@ -343,6 +465,26 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 
 	private long accountId(String code) {
 		return this.jdbcTemplate.queryForObject("select id from gl_account where code = ?", Long.class, code);
+	}
+
+	private int bankStatementLineCount(long bankAccountId) {
+		Integer count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_bank_statement_line
+				where bank_account_id = ?
+				""", Integer.class, bankAccountId);
+		return count == null ? 0 : count;
+	}
+
+	private int auditCount(String action, String resourceType, long resourceId) {
+		Integer count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_close_audit_event
+				where action = ?
+				and resource_type = ?
+				and resource_id = ?
+				""", Integer.class, action, resourceType, resourceId);
+		return count == null ? 0 : count;
 	}
 
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,

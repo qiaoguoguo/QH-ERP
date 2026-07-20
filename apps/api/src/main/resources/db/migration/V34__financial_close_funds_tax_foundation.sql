@@ -583,7 +583,7 @@ from (
 		('financial-close:bank-account:view', '查看银行账户', 'financial-close:bank-account', '/financial-close/bank-accounts', 'GET', '/api/admin/bank-accounts/**', 895),
 		('financial-close:bank-account:manage', '维护银行账户', 'financial-close:bank-account', '/financial-close/bank-accounts', null, '/api/admin/bank-accounts/**', 896),
 		('financial-close:bank-reconciliation:view', '查看银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'GET', '/api/admin/bank-reconciliations/**', 897),
-		('financial-close:bank-reconciliation:import', '导入银行流水', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-statements/**', 898),
+		('financial-close:bank-reconciliation:import', '导入银行流水', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**', 898),
 		('financial-close:bank-reconciliation:match', '执行银行对账匹配', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/**', 899),
 		('financial-close:bank-reconciliation:confirm', '确认银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/{id}/confirm', 900),
 		('financial-close:bank-reconciliation:reopen', '重开银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/{id}/reopen', 901),

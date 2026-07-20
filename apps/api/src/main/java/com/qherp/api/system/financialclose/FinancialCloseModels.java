@@ -33,6 +33,10 @@ public final class FinancialCloseModels {
 			String referenceNo, String idempotencyKey) {
 	}
 
+	public record BankStatementImportRequest(Long bankAccountId, String fileName, String csvContent, String content,
+			String importFingerprint, String idempotencyKey) {
+	}
+
 	public record BankReconciliationRequest(Long periodId, Long bankAccountId, String idempotencyKey) {
 	}
 

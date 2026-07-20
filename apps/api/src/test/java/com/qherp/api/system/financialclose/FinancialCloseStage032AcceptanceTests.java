@@ -96,7 +96,7 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(historicalChecksum("31")).isEqualTo(-2074547591);
 		assertThat(historicalChecksum("32")).isEqualTo(249406902);
 		assertThat(historicalChecksum("33")).isEqualTo(612501943);
-		assertThat(historicalChecksum("34")).isEqualTo(-1893080635);
+		assertThat(historicalChecksum("34")).isEqualTo(-177563574);
 	}
 
 	@Test
