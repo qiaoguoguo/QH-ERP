@@ -1,6 +1,6 @@
 # 演示数据生成、重建与验证工具
 
-本目录用于全量电气制造业演示数据的安全重建、真实 API 生成和独立验收。`validate-demo-data.ps1` 只读 PostgreSQL、后端健康接口和 MinIO bucket；`rebuild-acceptance.ps1` 是唯一允许正式清理/重建的入口；`generate-demo-data.ps1` 的正式模式不能脱离重建入口独立运行。029 还提供面向正式 V30 副本的 `Stage029Only` 隔离增量模式；030 的完整状态夹具只在隔离真实 API 环境准备，正式自然前迁不得为验收补造关闭、重开、快照或专用角色。031 已正式完成 V33 交付验证，正式库已由 V32 自然前迁至 V33；032 已在功能分支完成 V34 和完整验证器 170/170，但正式库尚未迁移或部署 V34，不得为验收补造财务关闭、银行对账、税务汇总或凭证事实。
+本目录用于全量电气制造业演示数据的安全重建、真实 API 生成和独立验收。`validate-demo-data.ps1` 只读 PostgreSQL、后端健康接口和 MinIO bucket；`rebuild-acceptance.ps1` 是唯一允许正式清理/重建的入口；`generate-demo-data.ps1` 的正式模式不能脱离重建入口独立运行。029 还提供面向正式 V30 副本的 `Stage029Only` 隔离增量模式；030 的完整状态夹具只在隔离真实 API 环境准备，正式自然前迁不得为验收补造关闭、重开、快照或专用角色。032 已正式完成 V34 部署和完整验证器 170/170；正式库未补造财务关闭、银行对账、税务汇总或凭证事实。
 
 生成器和重建入口依赖 PowerShell 7；验证器同时兼容 Windows PowerShell 5.1 与 PowerShell 7。所有密码只允许通过当前进程环境变量或受控本地配置注入，不写入仓库、manifest 或重建摘要；下面的占位符不得替换成真实密码后留存在命令历史中。
 
@@ -40,7 +40,7 @@ pwsh -NoProfile -File .\tools\demo-data\rebuild-acceptance.ps1 `
   -RunGeneratorAndValidate
 ```
 
-正式运行前应先停止已知的 QH ERP 18080 进程；脚本不会接管或复用来源不明的旧进程。成功摘要中的 `workerDisabledApi` 和 `workerEnabledApi` 分别记录实际监听 PID、启动器 PID、启动/停止时间、仓库、提交、数据库、bucket、worker 模式、日志、健康结果和登录就绪结果；摘要还分别记录两阶段 manifest 及最终验证文件。031 正式交付后的 `generatedAndValidated=true` 只应在 worker-disabled 生成成功、该阶段干净停止、worker-enabled 生成成功且验证器达到正式含 MinIO 精确门禁 142/142 后写入；032 功能分支的 `170/170` 是隔离 V34 和交付前全量验证门禁，不能倒推为正式环境已经完成 V34 重建。任一步失败都会清理当前受管进程并保留错误摘要，不得把正式环境声明为已重建。
+正式运行前应先停止已知的 QH ERP 18080 进程；脚本不会接管或复用来源不明的旧进程。成功摘要中的 `workerDisabledApi` 和 `workerEnabledApi` 分别记录实际监听 PID、启动器 PID、启动/停止时间、仓库、提交、数据库、bucket、worker 模式、日志、健康结果和登录就绪结果；摘要还分别记录两阶段 manifest 及最终验证文件。032 正式交付后的 `generatedAndValidated=true` 只应在 worker-disabled 生成成功、该阶段干净停止、worker-enabled 生成成功且验证器达到正式含 MinIO 精确门禁 170/170 后写入；当前正式 V34 部署验证器已达到 170/170。任一步失败都会清理当前受管进程并保留错误摘要，不得把正式环境声明为已重建。
 
 ## 独立验证入口
 
@@ -84,7 +84,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\demo-data\validate-demo-da
 
 规则位于 `tools/demo-data/sql/validate-demo-data.sql` 和 `tools/demo-data/validate-demo-data.ps1`，覆盖：
 
-- Flyway V29/V30/V31/V32/V33/V34 精确版本与 checksum（`774334682`、`2130342893`、`-2074547591`、`249406902`、`612501943`、`-629066235`）以及失败迁移检查；正式主线未部署 V34 时，V34 规则只适用于 032 功能分支或隔离验证环境。
+- Flyway V29/V30/V31/V32/V33/V34 精确版本与 checksum（`774334682`、`2130342893`、`-2074547591`、`249406902`、`612501943`、`-629066235`）以及失败迁移检查。
 - 账号、角色、权限、系统管理员和停用账号。
 - 单位、仓库、客户、供应商、物料、追踪方式、单位换算、结算税务资料和编码规则。
 - BOM、BOM 明细、替代料、ECO 当前/未来/历史治理样例。
@@ -97,7 +97,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\demo-data\validate-demo-da
 - 031 MAIN/CNY、会计期间、科目模板、辅助核算、7 条 ACTIVE 过账规则、17 条活动规则行、9 个活动辅助映射、同来源变体唯一 ACTIVE、正式凭证、028 READY 来源转换、非自审审批、连续编号、POSTED 不可变、冲销、总账、明细账、科目余额、试算平衡、权限和来源遮蔽。
 - 032 财务关闭九项检查、OPEN/CLOSED 当前态、关闭和 022 双人审批反结账、损益结转到 `4103`、银行账户/流水/显式候选/多对多/四类未达、税务档案/有效期税率/票种/汇总/失效/缴纳更正、税务非申报边界、权限脱敏、幂等和来源新鲜度。
 - 固定审批、消息、附件、审批快照、打印模板、文档任务、导入失败明细和审计。
-- PostgreSQL/MinIO 容器健康、后端健康接口，以及 MinIO bucket 对象总数与数据库 `AVAILABLE` 文件对象数严格一致且不少于 8。031 功能分支隔离验证历史证据为 140/140；当前正式含 MinIO 验收门禁为 142/142；032 功能分支完整验证器为 170/170。对象数量只作为单次运行事实记录，不作为长期固定契约。
+- PostgreSQL/MinIO 容器健康、后端健康接口，以及 MinIO bucket 对象总数与数据库 `AVAILABLE` 文件对象数严格一致且不少于 8。当前正式 V34 完整验证器为 170/170；本次正式核验对象为 18/18。对象数量只作为单次运行事实记录，不作为长期固定契约。
 
 ## 红色基线说明
 
