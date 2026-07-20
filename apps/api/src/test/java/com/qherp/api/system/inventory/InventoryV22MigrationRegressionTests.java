@@ -35,7 +35,7 @@ class InventoryV22MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertBalanceIndexesContainCostLayer(jdbcTemplate);
 	}
@@ -55,7 +55,7 @@ class InventoryV22MigrationRegressionTests {
 
 			migrate(null);
 
-			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+			assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
 			assertCurrentMigrationChecksums(jdbcTemplate);
 			assertThat(count(jdbcTemplate, "inv_stock_balance")).isEqualTo(before);
 			assertBalanceIndexesContainCostLayer(jdbcTemplate);

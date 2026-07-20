@@ -29,7 +29,7 @@ class Stage022MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(tableExists(jdbcTemplate, "platform_approval_instance")).isTrue();
 		assertThat(columnExists(jdbcTemplate, "sys_audit_log", "detail_json")).isTrue();

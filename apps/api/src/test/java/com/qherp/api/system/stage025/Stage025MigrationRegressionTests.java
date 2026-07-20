@@ -37,7 +37,7 @@ class Stage025MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertTablesExist(jdbcTemplate, List.of(
 				"sal_sales_quote",
@@ -140,7 +140,7 @@ class Stage025MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("32");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("33");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(constraintExists(jdbcTemplate, "sal_sales_order_line",
 				"uk_sal_sales_order_line_material")).isFalse();

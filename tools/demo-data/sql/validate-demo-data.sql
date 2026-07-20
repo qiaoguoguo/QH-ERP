@@ -258,15 +258,43 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             from gl_aux_dimension
         ) aux_gate
     union all select 'GL_POSTING_RULES_V33', 'general-ledger',
-        concat('activeRules=', active_rule_count, ';lines=', line_count, ';auxMaps=', aux_map_count),
-        'activeRules=7;lines=17;auxMaps=9',
-        active_rule_count = 7 and line_count = 17 and aux_map_count = 9,
-        'V33 必须预置六类 028 来源转换所需活动制证规则、规则行和辅助映射。'
+        concat('activeRules=', active_rule_count, ';activeLines=', active_line_count,
+            ';activeAuxMaps=', active_aux_map_count, ';activePairViolations=', active_pair_violation_count,
+            ';activeRuleViolations=', active_rule_violation_count),
+        'activeRules=7;activeLines=17;activeAuxMaps=9;activePairViolations=0;activeRuleViolations=0',
+        active_rule_count = 7 and active_line_count = 17 and active_aux_map_count = 9
+            and active_pair_violation_count = 0 and active_rule_violation_count = 0,
+        'V33 必须精确预置七条活动制证规则及其 17 条活动规则行、9 条活动辅助映射，并验证活动规则业务版本和乐观锁版本合法；合法 DRAFT/INACTIVE 历史版本不得污染活动规则种子计数。'
         from (
             select
                 (select count(*) from gl_posting_rule where status = 'ACTIVE') as active_rule_count,
-                (select count(*) from gl_posting_rule_line) as line_count,
-                (select count(*) from gl_posting_rule_line_aux_map) as aux_map_count
+                (select count(*)
+                    from gl_posting_rule_line l
+                    join gl_posting_rule r on r.id = l.rule_id
+                    where r.status = 'ACTIVE') as active_line_count,
+                (select count(*)
+                    from gl_posting_rule_line_aux_map m
+                    join gl_posting_rule_line l on l.id = m.rule_line_id
+                    join gl_posting_rule r on r.id = l.rule_id
+                    where r.status = 'ACTIVE') as active_aux_map_count,
+                (select count(*)
+                    from (
+                        select source_type, source_variant, count(*) as active_count
+                        from gl_posting_rule
+                        where status = 'ACTIVE'
+                        group by source_type, source_variant
+                        having count(*) <> 1
+                    ) duplicated_active_rules) as active_pair_violation_count,
+                (select count(*)
+                    from gl_posting_rule r
+                    where r.status = 'ACTIVE'
+                    and (r.activated_by is null
+                        or r.activated_at is null
+                        or r.effective_from is null
+                        or r.rule_version < 1
+                        or r.version < 0
+                        or r.source_type not in ('SALES_INVOICE', 'PURCHASE_INVOICE', 'EXPENSE', 'RECEIPT', 'PAYMENT', 'SETTLEMENT_ALLOCATION')
+                        or r.source_variant not in ('DEFAULT', 'RECEIVABLE', 'PAYABLE'))) as active_rule_violation_count
         ) posting_rule_gate
     union all select 'GL_ACTION_PERMISSIONS_V33', 'general-ledger', count(*)::text, '23', count(*) = 23,
         '031 总账动作权限必须精确种子化。'

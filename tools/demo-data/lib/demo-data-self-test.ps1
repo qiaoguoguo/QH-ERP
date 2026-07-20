@@ -233,6 +233,28 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $missingV33ChecksumSql)) `
     -Message "自测必须拒绝缺失 FLYWAY_V33_CHECKSUM 独立校验的实现。"
 
+function Test-GeneralLedgerPostingRuleSeedGateIsStrict {
+    param([string] $SqlText)
+
+    return ($SqlText.Contains("GL_POSTING_RULES_V33") `
+        -and $SqlText.Contains("activeLines=") `
+        -and $SqlText.Contains("activeAuxMaps=") `
+        -and $SqlText.Contains("activePairViolations=") `
+        -and $SqlText.Contains("activeRuleViolations=") `
+        -and $SqlText.Contains("active_rule_count = 7 and active_line_count = 17 and active_aux_map_count = 9") `
+        -and $SqlText.Contains("active_pair_violation_count = 0 and active_rule_violation_count = 0") `
+        -and $SqlText.Contains("join gl_posting_rule r on r.id = l.rule_id") `
+        -and $SqlText.Contains("join gl_posting_rule_line l on l.id = m.rule_line_id") `
+        -and $SqlText.Contains("where r.status = 'ACTIVE'") `
+        -and $SqlText.Contains("having count(*) <> 1") `
+        -and $SqlText.Contains("source_type not in ('SALES_INVOICE', 'PURCHASE_INVOICE', 'EXPENSE', 'RECEIPT', 'PAYMENT', 'SETTLEMENT_ALLOCATION')") `
+        -and $SqlText.Contains("source_variant not in ('DEFAULT', 'RECEIVABLE', 'PAYABLE')") `
+        -and $SqlText.Contains("r.rule_version < 1") `
+        -and $SqlText.Contains("r.version < 0") `
+        -and (-not $SqlText.Contains("(select count(*) from gl_posting_rule_line) as line_count")) `
+        -and (-not $SqlText.Contains("(select count(*) from gl_posting_rule_line_aux_map) as aux_map_count")))
+}
+
 function Test-GeneralLedgerValidatorRulesAreStrict {
     param([string] $SqlText)
 
@@ -250,7 +272,7 @@ function Test-GeneralLedgerValidatorRulesAreStrict {
     $setupRulesAreStrict = ($SqlText.Contains("GL_LEDGER_SINGLE_MAIN_CNY_V33") `
             -and $SqlText.Contains("GL_ACCOUNT_TEMPLATE_CODES_V33") `
             -and $SqlText.Contains("GL_AUX_DIMENSIONS_V33") `
-            -and $SqlText.Contains("GL_POSTING_RULES_V33"))
+            -and (Test-GeneralLedgerPostingRuleSeedGateIsStrict -SqlText $SqlText))
     $approvalAndTriggerRulesAreStrict = ($SqlText.Contains("GL_APPROVAL_DEFINITION_V33") `
             -and $SqlText.Contains("GL_VOUCHER_POST") `
             -and $SqlText.Contains("GL_IMMUTABLE_TRIGGERS_V33") `
@@ -286,6 +308,86 @@ from platform_approval_definition where scene_code = 'GL_VOUCHER_POST';
 "@
 Assert-True -Condition (-not (Test-GeneralLedgerValidatorRulesAreStrict -SqlText $weakenedGeneralLedgerSql)) `
     -Message "自测必须拒绝缺少 GL 动态一致性、来源占用、号段和不可变触发器门禁的弱验证器。"
+$draftCountingGeneralLedgerSql = @"
+select 'GL_LEDGER_SINGLE_MAIN_CNY_V33', 'general-ledger', count(*)::text, '1', count(*) = 1,
+    '031 必须初始化单一人民币主账簿。' from gl_ledger where code = 'MAIN' and base_currency = 'CNY';
+union all select 'GL_ACCOUNT_TEMPLATE_CODES_V33', 'general-ledger', count(*)::text, '>= 30', count(*) >= 30,
+    'V33 必须预置制造业基础科目模板。' from gl_account;
+union all select 'GL_AUX_DIMENSIONS_V33', 'general-ledger', count(*)::text, 'system=3;enabled=3',
+    count(*)::text, count(*) = 3, 'V33 必须预置客户、供应商、项目三个启用的系统辅助核算维度。' from gl_aux_dimension;
+union all select 'GL_POSTING_RULES_V33', 'general-ledger',
+    concat('activeRules=', active_rule_count, ';lines=', line_count, ';auxMaps=', aux_map_count),
+    'activeRules=7;lines=17;auxMaps=9',
+    active_rule_count = 7 and line_count = 17 and aux_map_count = 9,
+    'V33 必须预置六类 028 来源转换所需活动制证规则、规则行和辅助映射。'
+    from (
+        select
+            (select count(*) from gl_posting_rule where status = 'ACTIVE') as active_rule_count,
+            (select count(*) from gl_posting_rule_line) as line_count,
+            (select count(*) from gl_posting_rule_line_aux_map) as aux_map_count
+    ) posting_rule_gate;
+union all select 'GL_ACTION_PERMISSIONS_V33', 'general-ledger', count(*)::text, '23', count(*) = 23,
+    '031 总账动作权限必须精确种子化。' from sys_permission where code like 'gl:%';
+union all select 'GL_SYSTEM_ADMIN_PERMISSIONS_V33', 'general-ledger', count(*)::text, '31', count(*) = 31,
+    'SYSTEM_ADMIN 必须拥有 V33 会计核算菜单和动作权限。' from sys_role_permission rp;
+union all select 'GL_APPROVAL_DEFINITION_V33', 'general-ledger', count(*)::text, '1', count(*) = 1,
+    '031 必须注册 GL_VOUCHER_POST。' from platform_approval_definition where scene_code = 'GL_VOUCHER_POST';
+union all select 'GL_IMMUTABLE_TRIGGERS_V33', 'general-ledger', count(*)::text, '2', count(*) = 2,
+    'POSTED 总账数据必须存在数据库不可变触发器。' from pg_trigger;
+union all select 'GL_POSTED_VOUCHER_LEDGER_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+    'POSTED 凭证必须有账簿分录。' from gl_voucher;
+union all select 'GL_LEDGER_ENTRY_LINE_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+    '账簿分录必须和凭证明细一致。' from gl_ledger_entry;
+union all select 'GL_PERIOD_TOTALS_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+    '期间借贷发生额必须平衡。' from gl_ledger_entry;
+union all select 'GL_SOURCE_CLAIMS_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+    '来源占用必须和凭证一致。' from gl_voucher v where v.source_claim_id is distinct from c.id;
+union all select 'GL_VOUCHER_SEQUENCE_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+    '凭证号段必须和已记账最大号一致。' from gl_voucher_sequence s where coalesce(s.last_number, 0) <> coalesce(posted.max_number, 0);
+"@
+Assert-True -Condition (-not (Test-GeneralLedgerPostingRuleSeedGateIsStrict -SqlText $draftCountingGeneralLedgerSql)) `
+    -Message "自测必须拒绝把合法 DRAFT/INACTIVE 规则行和辅助映射计入 ACTIVE 种子数量的验证器。"
+$versionBlindGeneralLedgerSql = @"
+select 'GL_POSTING_RULES_V33', 'general-ledger',
+    concat('activeRules=', active_rule_count, ';activeLines=', active_line_count,
+        ';activeAuxMaps=', active_aux_map_count, ';activePairViolations=', active_pair_violation_count,
+        ';activeRuleViolations=', active_rule_violation_count),
+    'activeRules=7;activeLines=17;activeAuxMaps=9;activePairViolations=0;activeRuleViolations=0',
+    active_rule_count = 7 and active_line_count = 17 and active_aux_map_count = 9
+        and active_pair_violation_count = 0 and active_rule_violation_count = 0,
+    'V33 必须精确预置七条活动制证规则及其 17 条活动规则行、9 条活动辅助映射；合法 DRAFT/INACTIVE 历史版本不得污染活动规则种子计数。'
+    from (
+        select
+            (select count(*) from gl_posting_rule where status = 'ACTIVE') as active_rule_count,
+            (select count(*)
+                from gl_posting_rule_line l
+                join gl_posting_rule r on r.id = l.rule_id
+                where r.status = 'ACTIVE') as active_line_count,
+            (select count(*)
+                from gl_posting_rule_line_aux_map m
+                join gl_posting_rule_line l on l.id = m.rule_line_id
+                join gl_posting_rule r on r.id = l.rule_id
+                where r.status = 'ACTIVE') as active_aux_map_count,
+            (select count(*)
+                from (
+                    select source_type, source_variant, count(*) as active_count
+                    from gl_posting_rule
+                    where status = 'ACTIVE'
+                    group by source_type, source_variant
+                    having count(*) <> 1
+                ) duplicated_active_rules) as active_pair_violation_count,
+            (select count(*)
+                from gl_posting_rule r
+                where r.status = 'ACTIVE'
+                and (r.activated_by is null
+                    or r.activated_at is null
+                    or r.effective_from is null
+                    or r.source_type not in ('SALES_INVOICE', 'PURCHASE_INVOICE', 'EXPENSE', 'RECEIPT', 'PAYMENT', 'SETTLEMENT_ALLOCATION')
+                    or r.source_variant not in ('DEFAULT', 'RECEIVABLE', 'PAYABLE'))) as active_rule_violation_count
+    ) posting_rule_gate;
+"@
+Assert-True -Condition (-not (Test-GeneralLedgerPostingRuleSeedGateIsStrict -SqlText $versionBlindGeneralLedgerSql)) `
+    -Message "自测必须拒绝缺少 rule_version >= 1 和乐观锁 version >= 0 检查的 ACTIVE 制证规则门禁。"
 
 function Test-PeriodCloseValidatorRulesAreStrict {
     param([string] $SqlText)
