@@ -752,8 +752,8 @@ public class GeneralLedgerSetupService {
 		if (request != null && request.version() != null) {
 			requireVersion(rule.version(), request.version());
 		}
-		ruleValidationSummary(id, request);
-		return postingRule(id);
+		Map<String, Object> validationSummary = ruleValidationSummary(id, request);
+		return postingRuleMap(rule, true, null, validationSummary);
 	}
 
 	@Transactional
@@ -797,29 +797,35 @@ public class GeneralLedgerSetupService {
 	}
 
 	private Map<String, Object> postingRuleMap(PostingRuleRow rule, boolean includeLines, Long lineCount) {
-			Map<String, Object> item = GeneralLedgerSupport.map();
-			item.put("id", rule.id());
-			item.put("sourceType", rule.sourceType());
-			item.put("sourceVariant", rule.sourceVariant());
-			item.put("ruleVersion", rule.ruleVersion());
-			item.put("versionNo", rule.ruleVersion());
-			item.put("status", rule.status());
-			item.put("name", rule.name());
-			item.put("effectiveFrom", rule.effectiveFrom());
-			item.put("effectiveTo", rule.effectiveTo());
-			item.put("lineCount", lineCount == null ? ruleLineCount(rule.id()) : lineCount);
-			Map<String, Object> validationSummary = "DISABLED".equals(rule.status()) ? null
-					: ruleValidationSummaryOrNull(rule.id());
-			item.put("validationStatus", "DISABLED".equals(rule.status()) ? "SKIPPED"
-					: validationSummary == null ? "INVALID" : "VALID");
-			item.put("validationSummary", validationSummary);
-			item.put("allowedActions", ruleAllowedActions(rule.status()));
-			item.put("actionDisabledReasons", ruleDisabledReasons(rule.status()));
-			item.put("version", rule.version());
-			if (includeLines) {
-				item.put("lines", ruleLines(rule.id()));
-			}
-			return item;
+		return postingRuleMap(rule, includeLines, lineCount, null);
+	}
+
+	private Map<String, Object> postingRuleMap(PostingRuleRow rule, boolean includeLines, Long lineCount,
+			Map<String, Object> validationSummaryOverride) {
+		Map<String, Object> item = GeneralLedgerSupport.map();
+		item.put("id", rule.id());
+		item.put("sourceType", rule.sourceType());
+		item.put("sourceVariant", rule.sourceVariant());
+		item.put("ruleVersion", rule.ruleVersion());
+		item.put("versionNo", rule.ruleVersion());
+		item.put("status", rule.status());
+		item.put("name", rule.name());
+		item.put("effectiveFrom", rule.effectiveFrom());
+		item.put("effectiveTo", rule.effectiveTo());
+		item.put("lineCount", lineCount == null ? ruleLineCount(rule.id()) : lineCount);
+		Map<String, Object> validationSummary = "DISABLED".equals(rule.status()) ? null
+				: validationSummaryOverride == null ? ruleValidationSummaryOrNull(rule.id())
+						: validationSummaryOverride;
+		item.put("validationStatus", "DISABLED".equals(rule.status()) ? "SKIPPED"
+				: validationSummary == null ? "INVALID" : "VALID");
+		item.put("validationSummary", validationSummary);
+		item.put("allowedActions", ruleAllowedActions(rule.status()));
+		item.put("actionDisabledReasons", ruleDisabledReasons(rule.status()));
+		item.put("version", rule.version());
+		if (includeLines) {
+			item.put("lines", ruleLines(rule.id()));
+		}
+		return item;
 	}
 
 	private void replaceAuxiliaryRequirements(Long accountId, List<AuxiliaryRequirementRequest> requirements,
@@ -1221,6 +1227,7 @@ public class GeneralLedgerSetupService {
 		if (debit.compareTo(credit) != 0) {
 			return null;
 		}
+		boolean sourcePreview = request != null && request.sourceId() != null;
 		Map<String, Object> summary = GeneralLedgerSupport.map();
 		summary.put("balanced", true);
 		summary.put("lineCount", lines.size());
@@ -1228,20 +1235,53 @@ public class GeneralLedgerSetupService {
 		summary.put("debitTotal", GeneralLedgerSupport.decimal(debit));
 		summary.put("creditTotal", GeneralLedgerSupport.decimal(credit));
 		summary.put("previewOnly", true);
-		summary.put("sourcePreview", request != null && request.sourceId() != null);
+		summary.put("sourcePreview", sourcePreview);
+		if (sourcePreview) {
+			summary.put("previewLines", rulePreviewLines(expectedFacts, lines));
+		}
 		return summary;
 	}
 
 	private List<RuleLineValidationRow> ruleValidationLines(Long ruleId) {
 		return this.jdbcTemplate.query("""
-				select l.id, l.normalized_fact_code, l.direction, l.account_id, a.enabled, a.postable, a.is_leaf
+				select l.id, l.line_no, l.normalized_fact_code, l.direction, l.account_id, a.code as account_code,
+				       a.name as account_name, l.summary_template, a.enabled, a.postable, a.is_leaf
 				from gl_posting_rule_line l
 				join gl_account a on a.id = l.account_id
 				where l.rule_id = ?
 				order by l.line_no, l.id
-				""", (rs, rowNum) -> new RuleLineValidationRow(rs.getLong("id"),
+				""", (rs, rowNum) -> new RuleLineValidationRow(rs.getLong("id"), rs.getInt("line_no"),
 				rs.getString("normalized_fact_code"), rs.getString("direction"), rs.getLong("account_id"),
+				rs.getString("account_code"), rs.getString("account_name"), rs.getString("summary_template"),
 				rs.getBoolean("enabled"), rs.getBoolean("postable"), rs.getBoolean("is_leaf")), ruleId);
+	}
+
+	private List<Map<String, Object>> rulePreviewLines(List<FactSpec> expectedFacts,
+			List<RuleLineValidationRow> lines) {
+		List<Map<String, Object>> result = new ArrayList<>();
+		for (FactSpec fact : expectedFacts) {
+			RuleLineValidationRow line = lines.stream()
+				.filter((candidate) -> fact.factCode().equals(candidate.normalizedFactCode())
+						&& fact.direction().equals(candidate.direction()))
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_RULE_INVALID));
+			Map<String, Object> item = GeneralLedgerSupport.map();
+			item.put("lineNo", line.lineNo());
+			item.put("normalizedFactCode", line.normalizedFactCode());
+			item.put("direction", line.direction());
+			item.put("accountId", line.accountId());
+			item.put("accountCode", line.accountCode());
+			item.put("accountName", line.accountName());
+			item.put("summaryTemplate", line.summaryTemplate());
+			item.put("amount", GeneralLedgerSupport.decimal(fact.amount()));
+			item.put("debitAmount", "DEBIT".equals(line.direction()) ? GeneralLedgerSupport.decimal(fact.amount())
+					: "0.00");
+			item.put("creditAmount", "CREDIT".equals(line.direction()) ? GeneralLedgerSupport.decimal(fact.amount())
+					: "0.00");
+			item.put("auxiliaryMappings", ruleAuxMappings(line.id()));
+			result.add(item);
+		}
+		return result;
 	}
 
 	private boolean requiredAuxiliaryMappingsSatisfied(RuleLineValidationRow line, FactSpec fact) {
@@ -1297,11 +1337,14 @@ public class GeneralLedgerSetupService {
 
 	private List<FactSpec> previewFacts(PostingRuleRow rule, ActionRequest request) {
 		SourcePreview preview = sourcePreview(rule.sourceType(), request.sourceId());
-		if (preview == null || !rule.sourceVariant().equals(preview.sourceVariant())) {
-			return List.of();
+		if (preview == null) {
+			throw new BusinessException(ApiErrorCode.GL_SOURCE_NOT_READY);
+		}
+		if (!rule.sourceVariant().equals(preview.sourceVariant())) {
+			throw new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED);
 		}
 		if (request.sourceVersion() != null && !request.sourceVersion().equals(preview.sourceVersion())) {
-			return List.of();
+			throw new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED);
 		}
 		return preview.facts().stream()
 			.filter((fact) -> fact.amount().compareTo(BigDecimal.ZERO) > 0)
@@ -1643,8 +1686,9 @@ public class GeneralLedgerSetupService {
 			String status, String name, LocalDate effectiveFrom, LocalDate effectiveTo, Long version) {
 	}
 
-	private record RuleLineValidationRow(Long id, String normalizedFactCode, String direction, Long accountId,
-			boolean enabled, boolean postable, boolean leaf) {
+	private record RuleLineValidationRow(Long id, Integer lineNo, String normalizedFactCode, String direction,
+			Long accountId, String accountCode, String accountName, String summaryTemplate, boolean enabled,
+			boolean postable, boolean leaf) {
 	}
 
 	private record FactSpec(String factCode, String direction, BigDecimal amount, boolean customerAvailable,

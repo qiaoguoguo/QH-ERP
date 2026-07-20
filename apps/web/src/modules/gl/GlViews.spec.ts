@@ -411,6 +411,132 @@ describe('031 会计核算页面族', () => {
     expect(rules.wrapper.text()).toContain('预览校验完成')
   })
 
+  it('制证规则有效来源预览展示后端实际分录建议，空建议和错误来源不残留旧结果', async () => {
+    glApiMock.postingRules.validate
+      .mockResolvedValueOnce({
+        id: 1,
+        name: '销售发票默认规则',
+        description: '销售确认规则',
+        effectiveFrom: '2026-07-01',
+        effectiveTo: null,
+        sourceType: 'SALES_INVOICE',
+        sourceVariant: 'DEFAULT',
+        versionNo: 2,
+        version: 4,
+        status: 'ACTIVE',
+        validationStatus: 'VALID',
+        lineCount: 3,
+        allowedActions: ['VALIDATE', 'DISABLE'],
+        actionDisabledReasons: {},
+        lines: [{ normalizedFactCode: 'SALES_RECEIVABLE', direction: 'DEBIT', accountCode: '1122', summaryTemplate: '确认应收账款' }],
+        validationSummary: {
+          sourcePreview: true,
+          previewOnly: true,
+          factCount: 3,
+          lineCount: 3,
+          debitTotal: '113.00',
+          creditTotal: '113.00',
+          previewLines: [
+            {
+              lineNo: 1,
+              normalizedFactCode: 'SALES_RECEIVABLE',
+              direction: 'DEBIT',
+              accountCode: '1122',
+              accountName: '应收账款',
+              summaryTemplate: '确认应收账款',
+              amount: '113.00',
+              debitAmount: '113.00',
+              creditAmount: '0.00',
+              auxiliaryMappings: [{ dimensionCode: 'CUSTOMER', mappingType: 'SOURCE_CUSTOMER' }],
+            },
+            {
+              lineNo: 2,
+              normalizedFactCode: 'SALES_REVENUE',
+              direction: 'CREDIT',
+              accountCode: '6001',
+              accountName: '主营业务收入',
+              summaryTemplate: '确认主营业务收入',
+              amount: '100.00',
+              debitAmount: '0.00',
+              creditAmount: '100.00',
+              auxiliaryMappings: [],
+            },
+            {
+              lineNo: 3,
+              normalizedFactCode: 'OUTPUT_VAT',
+              direction: 'CREDIT',
+              accountCode: '2221.02',
+              accountName: '应交税费-销项税额',
+              summaryTemplate: '确认销项税额',
+              amount: '13.00',
+              debitAmount: '0.00',
+              creditAmount: '13.00',
+              auxiliaryMappings: [],
+            },
+          ],
+        },
+      })
+      .mockResolvedValueOnce({
+        id: 1,
+        name: '销售发票默认规则',
+        sourceType: 'SALES_INVOICE',
+        sourceVariant: 'DEFAULT',
+        versionNo: 2,
+        version: 5,
+        status: 'ACTIVE',
+        validationStatus: 'VALID',
+        allowedActions: ['VALIDATE', 'DISABLE'],
+        actionDisabledReasons: {},
+        lines: [],
+        validationSummary: {
+          sourcePreview: true,
+          debitTotal: '0.00',
+          creditTotal: '0.00',
+          previewLines: [],
+        },
+      })
+      .mockRejectedValueOnce(new Error('来源会计事实已变化，请刷新后重试'))
+    const { wrapper } = await mountGlView(GlPostingRulesView, '/gl/posting-rules')
+
+    await wrapper.find('[data-test="view-posting-rule"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('input[name="gl-rule-preview-source-id"]').setValue('11')
+    await wrapper.find('input[name="gl-rule-preview-source-version"]').setValue('7')
+    await wrapper.findAll('[data-test="validate-posting-rule"]').at(-1)!.trigger('click')
+    await flushPromises()
+
+    expect(glApiMock.postingRules.validate).toHaveBeenCalledWith(1, expect.objectContaining({
+      sourceType: 'SALES_INVOICE',
+      sourceId: '11',
+      sourceVersion: '7',
+    }))
+    const preview = wrapper.find('[data-test="posting-rule-source-preview"]')
+    expect(preview.exists()).toBe(true)
+    expect(preview.text()).toContain('来源预览')
+    expect(preview.text()).toContain('分录建议')
+    expect(preview.text()).toContain('SALES_INVOICE / 11 / 7')
+    expect(preview.text()).toContain('借方合计')
+    expect(preview.text()).toContain('113.00')
+    expect(preview.text()).toContain('1122 应收账款')
+    expect(preview.text()).toContain('借方')
+    expect(preview.text()).toContain('确认应收账款')
+    expect(preview.text()).toContain('CUSTOMER SOURCE_CUSTOMER')
+
+    await wrapper.find('input[name="gl-rule-preview-source-id"]').setValue('12')
+    await wrapper.findAll('[data-test="validate-posting-rule"]').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="posting-rule-source-preview"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('来源预览未返回分录建议')
+    expect(wrapper.text()).not.toContain('确认应收账款')
+
+    await wrapper.find('input[name="gl-rule-preview-source-version"]').setValue('8')
+    await wrapper.findAll('[data-test="validate-posting-rule"]').at(-1)!.trigger('click')
+    await flushPromises()
+    expect(wrapper.text()).toContain('来源会计事实已变化，请刷新后重试')
+    expect(wrapper.find('[data-test="posting-rule-source-preview"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('确认应收账款')
+  })
+
   it('凭证工作台展示正式凭证边界、allowedActions、returnTo 和受限金额语义', async () => {
     glApiMock.vouchers.list.mockResolvedValueOnce(page([{ ...voucherRecord, amountVisible: false, debitTotal: null, creditTotal: null, restrictedReason: '无权查看GL金额', allowedActions: ['SUBMIT'], actionDisabledReasons: { CANCEL: '审批中不能取消' } }]))
     const { wrapper, router } = await mountGlView(GlVoucherWorkbenchView, '/gl/vouchers')

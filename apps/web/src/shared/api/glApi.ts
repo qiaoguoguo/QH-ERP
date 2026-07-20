@@ -132,6 +132,33 @@ export interface GlPostingRuleLineRecord {
   auxiliaryMappings?: unknown[]
 }
 
+export interface GlPostingRulePreviewLineRecord {
+  lineNo?: number | null
+  normalizedFactCode?: string | null
+  direction?: string | null
+  accountId?: ResourceId | null
+  accountCode?: string | null
+  accountName?: string | null
+  summary?: string | null
+  summaryTemplate?: string | null
+  amount?: GlAmount | null
+  debitAmount?: GlAmount | null
+  creditAmount?: GlAmount | null
+  auxiliaryMappings?: unknown[]
+  auxiliaryValues?: unknown[]
+}
+
+export interface GlPostingRuleValidationSummary {
+  balanced?: boolean | null
+  sourcePreview?: boolean | null
+  previewOnly?: boolean | null
+  lineCount?: number | null
+  factCount?: number | null
+  debitTotal?: GlAmount | null
+  creditTotal?: GlAmount | null
+  previewLines?: GlPostingRulePreviewLineRecord[]
+}
+
 export interface GlPostingRuleRecord extends GlActionState {
   id: ResourceId
   name?: string | null
@@ -145,7 +172,7 @@ export interface GlPostingRuleRecord extends GlActionState {
   validationStatus?: string | null
   lineCount?: number | null
   lines?: GlPostingRuleLineRecord[]
-  validationSummary?: unknown
+  validationSummary?: GlPostingRuleValidationSummary | null
 }
 
 export interface GlVoucherLineRecord {
@@ -393,6 +420,43 @@ function normalizePostingRuleLine(item: unknown): GlPostingRuleLineRecord {
   }
 }
 
+function normalizePostingRulePreviewLine(item: unknown): GlPostingRulePreviewLineRecord {
+  const record = isRecord(item) ? item : {}
+  return {
+    ...record,
+    lineNo: record.lineNo as number | null | undefined,
+    normalizedFactCode: (record.normalizedFactCode ?? record.factCode) as string | null | undefined,
+    direction: record.direction as string | null | undefined,
+    accountId: record.accountId as ResourceId | null | undefined,
+    accountCode: record.accountCode as string | null | undefined,
+    accountName: record.accountName as string | null | undefined,
+    summary: record.summary as string | null | undefined,
+    summaryTemplate: record.summaryTemplate as string | null | undefined,
+    amount: record.amount as GlAmount | null | undefined,
+    debitAmount: record.debitAmount as GlAmount | null | undefined,
+    creditAmount: record.creditAmount as GlAmount | null | undefined,
+    auxiliaryMappings: Array.isArray(record.auxiliaryMappings) ? record.auxiliaryMappings : [],
+    auxiliaryValues: Array.isArray(record.auxiliaryValues) ? record.auxiliaryValues : [],
+  }
+}
+
+function normalizePostingRuleValidationSummary(summary: unknown): GlPostingRuleValidationSummary | null {
+  if (!isRecord(summary)) {
+    return null
+  }
+  return {
+    ...summary,
+    balanced: summary.balanced as boolean | null | undefined,
+    sourcePreview: summary.sourcePreview as boolean | null | undefined,
+    previewOnly: summary.previewOnly as boolean | null | undefined,
+    lineCount: summary.lineCount as number | null | undefined,
+    factCount: summary.factCount as number | null | undefined,
+    debitTotal: summary.debitTotal as GlAmount | null | undefined,
+    creditTotal: summary.creditTotal as GlAmount | null | undefined,
+    previewLines: Array.isArray(summary.previewLines) ? summary.previewLines.map(normalizePostingRulePreviewLine) : [],
+  }
+}
+
 function normalizePostingRule(record: RawRecord): GlPostingRuleRecord {
   const normalized = normalizeActionState(record)
   return {
@@ -409,7 +473,7 @@ function normalizePostingRule(record: RawRecord): GlPostingRuleRecord {
     validationStatus: normalized.validationStatus as string | null | undefined,
     lineCount: normalized.lineCount as number | null | undefined,
     lines: Array.isArray(normalized.lines) ? normalized.lines.map(normalizePostingRuleLine) : undefined,
-    validationSummary: normalized.validationSummary,
+    validationSummary: normalizePostingRuleValidationSummary(normalized.validationSummary),
   }
 }
 

@@ -401,18 +401,61 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 		assertThat(draftVersion.get("status").asText()).isEqualTo("DRAFT");
 		assertThat(draftVersion.get("versionNo").intValue()).isEqualTo(2);
 
+		JsonNode savedDraft = data(exchange(HttpMethod.PUT,
+				"/api/admin/gl/posting-rules/" + draftVersion.get("id").longValue(),
+				Map.of("sourceType", "SALES_INVOICE", "sourceVariant", "DEFAULT", "name", "销售发票默认规则",
+						"description", "复制草稿来源预览回归", "effectiveFrom", "2026-01-01", "version",
+						draftVersion.get("version").longValue(), "idempotencyKey",
+						"gl-rule-update-" + draftVersion.get("id").longValue(), "lines",
+						salesInvoicePostingRuleLines()),
+				admin));
+		assertThat(savedDraft.get("status").asText()).isEqualTo("DRAFT");
+
+		SalesInvoiceFixture previewSource = insertConfirmedSalesInvoice("100.00", "13.00", "113.00");
+		JsonNode sourceValidated = data(exchange(HttpMethod.POST,
+				"/api/admin/gl/posting-rules/" + savedDraft.get("id").longValue() + "/validate",
+				Map.of("version", savedDraft.get("version").longValue(), "idempotencyKey",
+						"gl-rule-source-validate-" + savedDraft.get("id").longValue(), "sourceType",
+						"SALES_INVOICE", "sourceId", previewSource.invoiceId(), "sourceVersion",
+						previewSource.version()),
+				admin));
+		assertThat(sourceValidated.get("validationStatus").asText()).isEqualTo("VALID");
+		assertThat(sourceValidated.get("validationSummary").get("sourcePreview").booleanValue()).isTrue();
+		assertThat(sourceValidated.get("validationSummary").get("factCount").intValue()).isEqualTo(3);
+		assertThat(sourceValidated.get("validationSummary").get("previewLines").size()).isEqualTo(3);
+		assertThat(sourceValidated.get("validationSummary").get("previewLines").get(0).get("normalizedFactCode").asText())
+			.isEqualTo("SALES_RECEIVABLE");
+		assertThat(sourceValidated.get("validationSummary").get("previewLines").get(0).get("amount").asText())
+			.isEqualTo("113.00");
+		assertThat(sourceClaimCount("SALES_INVOICE", previewSource.invoiceId())).isZero();
+		assertThat(voucherCountByOriginalSource("SALES_INVOICE", previewSource.invoiceId())).isZero();
+
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/gl/posting-rules/" + savedDraft.get("id").longValue() + "/validate",
+				Map.of("version", savedDraft.get("version").longValue(), "idempotencyKey",
+						"gl-rule-missing-source-validate-" + savedDraft.get("id").longValue(), "sourceType",
+						"SALES_INVOICE", "sourceId", 99999999L, "sourceVersion", 1L),
+				admin), HttpStatus.CONFLICT, "GL_SOURCE_NOT_READY");
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/gl/posting-rules/" + savedDraft.get("id").longValue() + "/validate",
+				Map.of("version", savedDraft.get("version").longValue(), "idempotencyKey",
+						"gl-rule-changed-source-validate-" + savedDraft.get("id").longValue(), "sourceType",
+						"SALES_INVOICE", "sourceId", previewSource.invoiceId(), "sourceVersion",
+						previewSource.version() + 1),
+				admin), HttpStatus.CONFLICT, "GL_SOURCE_CHANGED");
+
 		JsonNode validated = data(exchange(HttpMethod.POST,
-				"/api/admin/gl/posting-rules/" + draftVersion.get("id").longValue() + "/validate",
-				Map.of("version", draftVersion.get("version").longValue(), "idempotencyKey",
-						"gl-rule-validate-" + draftVersion.get("id").longValue()),
+				"/api/admin/gl/posting-rules/" + savedDraft.get("id").longValue() + "/validate",
+				Map.of("version", savedDraft.get("version").longValue(), "idempotencyKey",
+						"gl-rule-validate-" + savedDraft.get("id").longValue()),
 				admin));
 		assertThat(validated.get("validationStatus").asText()).isEqualTo("VALID");
 		assertThat(validated.get("validationSummary").get("balanced").booleanValue()).isTrue();
 
 		JsonNode activated = data(exchange(HttpMethod.POST,
-				"/api/admin/gl/posting-rules/" + draftVersion.get("id").longValue() + "/activate",
+				"/api/admin/gl/posting-rules/" + savedDraft.get("id").longValue() + "/activate",
 				Map.of("version", validated.get("version").longValue(), "idempotencyKey",
-						"gl-rule-activate-" + draftVersion.get("id").longValue()),
+						"gl-rule-activate-" + savedDraft.get("id").longValue()),
 				admin));
 		assertThat(activated.get("status").asText()).isEqualTo("ACTIVE");
 		assertThat(activeRuleCount("SALES_INVOICE", "DEFAULT")).isOne();
@@ -671,6 +714,26 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 		return count == null ? 0 : count;
 	}
 
+	private long sourceClaimCount(String sourceType, Long sourceId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_voucher_source_claim
+				where source_type = ?
+				and source_id = ?
+				""", Long.class, sourceType, sourceId);
+		return count == null ? 0 : count;
+	}
+
+	private long voucherCountByOriginalSource(String sourceType, Long sourceId) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_voucher
+				where source_original_type = ?
+				and source_original_id = ?
+				""", Long.class, sourceType, sourceId);
+		return count == null ? 0 : count;
+	}
+
 	private void ensureLedgerInitialized(AuthenticatedSession admin) throws Exception {
 		ResponseEntity<String> response = exchange(HttpMethod.POST, "/api/admin/gl/ledger/initialize",
 				Map.of("startYearMonth", "2026-07", "idempotencyKey", "gl-init-shared"), admin);
@@ -768,6 +831,42 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 				       (?, 2, 'CREDIT', 'SALES_INCOME_DRAFT', 113.00, 'SALES_INVOICE', ?, now())
 				""", draftId, invoiceId, draftId, invoiceId);
 		return new FinanceDraftFixture(draftId, 1L, invoiceNo);
+	}
+
+	private SalesInvoiceFixture insertConfirmedSalesInvoice(String taxExcludedAmount, String taxAmount,
+			String taxIncludedAmount) {
+		int suffix = SEQUENCE.incrementAndGet();
+		Long customerId = this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "GL-RULE-CUS-" + suffix, "GL 规则客户" + suffix);
+		Long invoiceId = this.jdbcTemplate.queryForObject("""
+				insert into fin_sales_invoice (
+					invoice_no, customer_id, ownership_type, source_type, source_id, source_no, invoice_date,
+					due_date, invoice_type, currency, tax_excluded_amount, tax_amount, tax_included_amount,
+					status, party_snapshot, source_snapshot, created_by, created_at, updated_by, updated_at,
+					confirmed_by, confirmed_at, version
+				)
+				values (?, ?, 'PUBLIC', 'SALES_SHIPMENT', ?, ?, '2026-07-12', '2026-08-11', 'SPECIAL_VAT',
+					'CNY', ?::numeric, ?::numeric, ?::numeric, 'CONFIRMED', '{}'::jsonb, '{}'::jsonb,
+					'test', now(), 'test', now(), 'test', now(), 1)
+				returning id
+				""", Long.class, "GL-RULE-SI-" + suffix, customerId, suffix, "GL-RULE-SHIP-" + suffix,
+				taxExcludedAmount, taxAmount, taxIncludedAmount);
+		return new SalesInvoiceFixture(invoiceId, 1L);
+	}
+
+	private List<Map<String, Object>> salesInvoicePostingRuleLines() {
+		return List.of(
+				Map.of("lineNo", 1, "normalizedFactCode", "SALES_RECEIVABLE", "direction", "DEBIT",
+						"accountId", accountId("1122"), "summaryTemplate", "确认应收账款", "auxiliaryMappings",
+						List.of(Map.of("dimensionCode", "CUSTOMER", "mappingType", "SOURCE_CUSTOMER"))),
+				Map.of("lineNo", 2, "normalizedFactCode", "SALES_REVENUE", "direction", "CREDIT",
+						"accountId", accountId("6001"), "summaryTemplate", "确认主营业务收入", "auxiliaryMappings",
+						List.of()),
+				Map.of("lineNo", 3, "normalizedFactCode", "OUTPUT_VAT", "direction", "CREDIT", "accountId",
+						accountId("2221.02"), "summaryTemplate", "确认销项税额", "auxiliaryMappings", List.of()));
 	}
 
 	private JsonNode lineByFact(JsonNode voucher, String factCode) {
@@ -983,6 +1082,9 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 	}
 
 	private record FinanceDraftFixture(Long draftId, Long draftVersion, String invoiceNo) {
+	}
+
+	private record SalesInvoiceFixture(Long invoiceId, Long version) {
 	}
 
 }

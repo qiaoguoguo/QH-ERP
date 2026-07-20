@@ -393,7 +393,34 @@ describe('glApi', () => {
       .mockResolvedValueOnce(apiResponse(csrf))
       .mockResolvedValueOnce(apiResponse({ id: 3, name: '采购发票默认规则', sourceType: 'PURCHASE_INVOICE', sourceVariant: 'DEFAULT', versionNo: 1, status: 'DRAFT', allowedActions: ['UPDATE'], actionDisabledReasons: {} }))
       .mockResolvedValueOnce(apiResponse(csrf))
-      .mockResolvedValueOnce(apiResponse({ id: 3, name: '采购发票默认规则', sourceType: 'PURCHASE_INVOICE', sourceVariant: 'DEFAULT', versionNo: 1, status: 'DRAFT', validationStatus: 'VALID', allowedActions: ['ACTIVATE'], actionDisabledReasons: {} }))
+      .mockResolvedValueOnce(apiResponse({
+        id: 3,
+        name: '采购发票默认规则',
+        sourceType: 'PURCHASE_INVOICE',
+        sourceVariant: 'DEFAULT',
+        versionNo: 1,
+        status: 'DRAFT',
+        validationStatus: 'VALID',
+        allowedActions: ['ACTIVATE'],
+        actionDisabledReasons: {},
+        validationSummary: {
+          sourcePreview: true,
+          debitTotal: '113.00',
+          creditTotal: '113.00',
+          previewLines: [{
+            lineNo: 1,
+            normalizedFactCode: 'PURCHASE_PAYABLE',
+            direction: 'CREDIT',
+            accountCode: '2202',
+            accountName: '应付账款',
+            summaryTemplate: '确认应付',
+            amount: '113.00',
+            debitAmount: '0.00',
+            creditAmount: '113.00',
+            auxiliaryMappings: [{ dimensionCode: 'SUPPLIER', mappingType: 'SOURCE_SUPPLIER' }],
+          }],
+        },
+      }))
 
     const api = createGlApi({ fetcher })
 
@@ -421,12 +448,26 @@ describe('glApi', () => {
       version: 0,
       idempotencyKey: 'rule-create-key',
     })
-    await api.postingRules.validate(3, {
+    const validated = await api.postingRules.validate(3, {
       version: 1,
       sourceType: 'PURCHASE_INVOICE',
       sourceId: 77,
       sourceVersion: 4,
       idempotencyKey: 'rule-validate-key',
+    })
+    expect(validated).toMatchObject({
+      validationSummary: {
+        sourcePreview: true,
+        debitTotal: '113.00',
+        creditTotal: '113.00',
+        previewLines: [expect.objectContaining({
+          lineNo: 1,
+          normalizedFactCode: 'PURCHASE_PAYABLE',
+          direction: 'CREDIT',
+          accountCode: '2202',
+          amount: '113.00',
+        })],
+      },
     })
 
     expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/gl/aux-dimensions/2/items', expect.objectContaining({
