@@ -35,12 +35,16 @@ final class GeneralLedgerSupport {
 		return Math.max(page, 1);
 	}
 
-	static int limit(int pageSize) {
+	static int listLimit(int pageSize) {
+		return List.of(10, 20, 50, 100).contains(pageSize) ? pageSize : 10;
+	}
+
+	static int candidateLimit(int pageSize) {
 		return List.of(5, 10, 20, 50, 100).contains(pageSize) ? pageSize : 10;
 	}
 
 	static int offset(int page, int pageSize) {
-		return (page(page) - 1) * limit(pageSize);
+		return (page(page) - 1) * pageSize;
 	}
 
 	static String text(String value) {

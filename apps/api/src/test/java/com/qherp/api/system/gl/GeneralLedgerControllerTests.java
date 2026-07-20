@@ -498,6 +498,115 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 				admin), HttpStatus.CONFLICT, "GL_IDEMPOTENCY_CONFLICT");
 	}
 
+	@Test
+	@Order(12)
+	void vouchersLedgersAndBalancesConsumeFrozenFilters() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		ensureAccountingPeriod(admin, "2026-08");
+		postGeneralVoucher(admin, "2026-07-23", "七月期间过滤凭证", "17.00");
+		postGeneralVoucher(admin, "2026-08-02", "八月期间过滤凭证", "18.00");
+		JsonNode sourcePosted = postFinanceDraftVoucher(admin, insertReadySalesVoucherDraft());
+
+		JsonNode augustVouchers = data(get("/api/admin/gl/vouchers?periodCode=2026-08&page=1&pageSize=10", admin));
+		assertThat(augustVouchers.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : augustVouchers.get("items")) {
+			assertThat(item.get("accountingPeriodCode").asText()).isEqualTo("2026-08");
+		}
+
+		JsonNode generalMissingAux = data(get("/api/admin/gl/ledgers/general?periodCode=2026-07&accountKeyword=1122"
+				+ "&auxiliaryKeyword=不存在的辅助对象&page=1&pageSize=10", admin));
+		assertThat(generalMissingAux.get("total").longValue()).isZero();
+
+		JsonNode generalOutOfRange = data(get("/api/admin/gl/ledgers/general?periodCode=2026-07"
+				+ "&accountCodeFrom=9999&accountCodeTo=9999&page=1&pageSize=10", admin));
+		assertThat(generalOutOfRange.get("total").longValue()).isZero();
+
+		JsonNode detailMissingAux = data(get("/api/admin/gl/ledgers/detail?periodCode=2026-07&voucherNo="
+				+ sourcePosted.get("voucherNo").asText()
+				+ "&sourceType=SALES_INVOICE&auxiliaryKeyword=不存在的辅助对象&page=1&pageSize=10", admin));
+		assertThat(detailMissingAux.get("total").longValue()).isZero();
+
+		JsonNode balancesMissingAux = data(get("/api/admin/gl/account-balances?periodCode=2026-07&accountKeyword=1122"
+				+ "&auxiliaryKeyword=不存在的辅助对象&page=1&pageSize=10", admin));
+		assertThat(balancesMissingAux.get("total").longValue()).isZero();
+	}
+
+	@Test
+	@Order(13)
+	void settingsListsConsumeFiltersAndKeepCandidatePageSizeSeparate() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+
+		JsonNode accounts = data(get("/api/admin/gl/accounts?category=ASSET&enabled=true&postable=true"
+				+ "&page=1&pageSize=5", admin));
+		assertThat(accounts.get("pageSize").intValue()).isEqualTo(10);
+		for (JsonNode item : accounts.get("items")) {
+			assertThat(item.get("category").asText()).isEqualTo("ASSET");
+			assertThat(item.get("enabled").booleanValue()).isTrue();
+			assertThat(item.get("postable").booleanValue()).isTrue();
+		}
+
+		JsonNode accountCandidates = data(get("/api/admin/gl/accounts/candidates?keyword=1&page=1&pageSize=5",
+				admin));
+		assertThat(accountCandidates.get("pageSize").intValue()).isEqualTo(5);
+
+		JsonNode auxDimensions = data(get("/api/admin/gl/aux-dimensions?keyword=客户&enabled=true&page=1&pageSize=10",
+				admin));
+		assertThat(auxDimensions.get("total").longValue()).isEqualTo(1L);
+		assertThat(auxDimensions.get("items").get(0).get("code").asText()).isEqualTo("CUSTOMER");
+
+		JsonNode postingRules = data(get("/api/admin/gl/posting-rules?sourceType=SALES_INVOICE&status=ACTIVE"
+				+ "&page=1&pageSize=5", admin));
+		assertThat(postingRules.get("pageSize").intValue()).isEqualTo(10);
+		for (JsonNode item : postingRules.get("items")) {
+			assertThat(item.get("sourceType").asText()).isEqualTo("SALES_INVOICE");
+			assertThat(item.get("status").asText()).isEqualTo("ACTIVE");
+		}
+	}
+
+	@Test
+	@Order(14)
+	void postingRuleValidationRejectsMissingFactsBeforeActivation() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		String variant = "BROKEN_" + SEQUENCE.incrementAndGet();
+
+		JsonNode draftRule = data(exchange(HttpMethod.POST, "/api/admin/gl/posting-rules",
+				Map.of("sourceType", "SALES_INVOICE", "sourceVariant", variant, "name", "缺失事实映射规则",
+						"effectiveFrom", "2026-01-01", "idempotencyKey", "gl-broken-rule-" + variant,
+						"lines", List.of(Map.of("lineNo", 1, "normalizedFactCode", "SALES_RECEIVABLE",
+								"direction", "DEBIT", "accountId", accountId("1002"),
+								"summaryTemplate", "错误规则仅一行"))),
+				admin));
+
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/gl/posting-rules/" + draftRule.get("id").longValue() + "/validate",
+				Map.of("version", draftRule.get("version").longValue(), "idempotencyKey",
+						"gl-broken-rule-validate-" + variant),
+				admin), HttpStatus.BAD_REQUEST, "GL_RULE_INVALID");
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/gl/posting-rules/" + draftRule.get("id").longValue() + "/activate",
+				Map.of("version", draftRule.get("version").longValue(), "idempotencyKey",
+						"gl-broken-rule-activate-" + variant),
+				admin), HttpStatus.BAD_REQUEST, "GL_RULE_INVALID");
+	}
+
+	@Test
+	@Order(15)
+	void trialBalanceDifferencesAreAccountLevelRows() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		postGeneralVoucher(admin, "2026-07-24", "试算差异科目定位", "19.00");
+
+		JsonNode trial = data(get("/api/admin/gl/trial-balance?periodCode=2026-07", admin));
+		assertThat(trial.get("differences").size()).isGreaterThan(0);
+		JsonNode first = trial.get("differences").get(0);
+		assertThat(first.hasNonNull("accountCode")).isTrue();
+		assertThat(first.hasNonNull("accountName")).isTrue();
+		assertThat(first.hasNonNull("differenceAmount")).isTrue();
+	}
+
 	private JsonNode postGeneralVoucher(AuthenticatedSession admin, String voucherDate, String summary, String amount)
 			throws Exception {
 		JsonNode draft = data(exchange(HttpMethod.POST, "/api/admin/gl/vouchers",
@@ -515,6 +624,30 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 		data(exchange(HttpMethod.POST, "/api/admin/approval-tasks/" + taskId + "/approve",
 				Map.of("version", taskVersion, "comment", "通过并记账", "idempotencyKey",
 						"gl-post-helper-approve-" + taskId),
+				approver));
+		return data(get("/api/admin/gl/vouchers/" + draft.get("id").longValue(), admin));
+	}
+
+	private JsonNode postFinanceDraftVoucher(AuthenticatedSession admin, FinanceDraftFixture fixture) throws Exception {
+		ensureSalesInvoiceDefaultRuleActive();
+		JsonNode draft = data(exchange(HttpMethod.POST,
+				"/api/admin/gl/vouchers/from-finance-draft/" + fixture.draftId(),
+				Map.of("version", fixture.draftVersion(), "idempotencyKey",
+						"gl-filter-convert-" + fixture.draftId()),
+				admin));
+		JsonNode submitted = data(exchange(HttpMethod.POST,
+				"/api/admin/gl/vouchers/" + draft.get("id").longValue() + "/submit",
+				Map.of("version", draft.get("version").longValue(), "reason", "提交来源凭证", "idempotencyKey",
+						"gl-filter-submit-" + draft.get("id").longValue()),
+				admin));
+		AuthenticatedSession approver = createUserAndLogin("gl-filter-approver-", "GL_FILTER_APPROVER_",
+				List.of("platform:todo:view", "gl:voucher:view", "gl:voucher:approve-post", "gl:amount:view",
+						"gl:source:view"));
+		long taskId = approvalTaskId(submitted.get("approvalSummary").get("id").longValue());
+		long taskVersion = approvalTaskVersion(taskId);
+		data(exchange(HttpMethod.POST, "/api/admin/approval-tasks/" + taskId + "/approve",
+				Map.of("version", taskVersion, "comment", "通过并记账", "idempotencyKey",
+						"gl-filter-approve-" + taskId),
 				approver));
 		return data(get("/api/admin/gl/vouchers/" + draft.get("id").longValue(), admin));
 	}
@@ -545,6 +678,39 @@ class GeneralLedgerControllerTests extends PostgresIntegrationTest {
 			return;
 		}
 		assertThat(code(response)).isEqualTo("GL_LEDGER_ALREADY_INITIALIZED");
+	}
+
+	private void ensureSalesInvoiceDefaultRuleActive() {
+		if (activeRuleCount("SALES_INVOICE", "DEFAULT") > 0) {
+			return;
+		}
+		this.jdbcTemplate.update("""
+				update gl_posting_rule
+				set status = 'ACTIVE', updated_by = 'test', updated_at = now(), version = version + 1
+				where id = (
+					select id
+					from gl_posting_rule
+					where source_type = 'SALES_INVOICE'
+					and source_variant = 'DEFAULT'
+					order by rule_version desc, id desc
+					limit 1
+				)
+				""");
+	}
+
+	private void ensureAccountingPeriod(AuthenticatedSession admin, String periodCode) throws Exception {
+		Long existing = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_accounting_period
+				where period_code = ?
+				""", Long.class, periodCode);
+		if (existing != null && existing > 0) {
+			return;
+		}
+		JsonNode period = data(exchange(HttpMethod.POST, "/api/admin/gl/accounting-periods",
+				Map.of("periodCode", periodCode, "idempotencyKey", "gl-period-" + periodCode),
+				admin));
+		assertThat(period.get("periodCode").asText()).isEqualTo(periodCode);
 	}
 
 	private Map<String, Object> manualVoucherPayload(String voucherType, String voucherDate, String summary,

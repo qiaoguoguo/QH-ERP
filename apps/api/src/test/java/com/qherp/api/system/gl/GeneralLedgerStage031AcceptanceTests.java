@@ -833,15 +833,21 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode firstAccountPage = data(get(admin, "/api/admin/gl/accounts?keyword=" + accountPrefix
 				+ "&page=1&pageSize=5"));
 		assertThat(firstAccountPage.get("total").longValue()).isGreaterThan(100);
-		assertThat(firstAccountPage.get("items").size()).isEqualTo(5);
+		assertThat(firstAccountPage.get("pageSize").intValue()).isEqualTo(10);
+		assertThat(firstAccountPage.get("items").size()).isEqualTo(10);
 		assertThat(itemsContainLong(firstAccountPage.get("items"), "id", lateAccountId)).isFalse();
+		JsonNode firstAccountCandidates = data(get(admin, "/api/admin/gl/accounts/candidates?keyword="
+				+ accountPrefix + "&page=1&pageSize=5"));
+		assertThat(firstAccountCandidates.get("total").longValue()).isGreaterThan(100);
+		assertThat(firstAccountCandidates.get("pageSize").intValue()).isEqualTo(5);
+		assertThat(firstAccountCandidates.get("items").size()).isEqualTo(5);
 		JsonNode lateAccountCandidates = data(get(admin, "/api/admin/gl/accounts/candidates?keyword="
-				+ lateAccountCode + "&page=1&pageSize=20"));
+				+ lateAccountCode + "&page=1&pageSize=5"));
 		assertThat(lateAccountCandidates.get("total").longValue()).isOne();
 		assertThat(itemsContainLong(lateAccountCandidates.get("items"), "accountId", lateAccountId)).isTrue();
 		assertThat(itemsContainText(lateAccountCandidates.get("items"), "accountCode", lateAccountCode)).isTrue();
 		JsonNode selectedAccountCandidates = data(get(admin, "/api/admin/gl/accounts/candidates?keyword="
-				+ "NO_MATCH_031&selectedIds=" + selectedAccountId + "&page=1&pageSize=20"));
+				+ "NO_MATCH_031&selectedIds=" + selectedAccountId + "&page=1&pageSize=5"));
 		assertThat(selectedAccountCandidates.get("total").longValue()).isOne();
 		assertThat(itemsContainLong(selectedAccountCandidates.get("items"), "accountId", selectedAccountId))
 			.isTrue();
@@ -851,15 +857,21 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode firstAuxPage = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionId
 				+ "/items?keyword=" + auxItemPrefix + "&page=1&pageSize=5"));
 		assertThat(firstAuxPage.get("total").longValue()).isGreaterThan(100);
-		assertThat(firstAuxPage.get("items").size()).isEqualTo(5);
+		assertThat(firstAuxPage.get("pageSize").intValue()).isEqualTo(10);
+		assertThat(firstAuxPage.get("items").size()).isEqualTo(10);
 		assertThat(itemsContainLong(firstAuxPage.get("items"), "id", lateAuxItemId)).isFalse();
+		JsonNode firstAuxCandidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionCode
+				+ "/candidates?keyword=" + auxItemPrefix + "&page=1&pageSize=5"));
+		assertThat(firstAuxCandidates.get("total").longValue()).isGreaterThan(100);
+		assertThat(firstAuxCandidates.get("pageSize").intValue()).isEqualTo(5);
+		assertThat(firstAuxCandidates.get("items").size()).isEqualTo(5);
 		JsonNode lateAuxCandidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionCode
-				+ "/candidates?keyword=" + lateAuxItemCode + "&page=1&pageSize=20"));
+				+ "/candidates?keyword=" + lateAuxItemCode + "&page=1&pageSize=5"));
 		assertThat(lateAuxCandidates.get("total").longValue()).isOne();
 		assertThat(itemsContainLong(lateAuxCandidates.get("items"), "auxItemId", lateAuxItemId)).isTrue();
 		assertThat(itemsContainText(lateAuxCandidates.get("items"), "objectCode", lateAuxItemCode)).isTrue();
 		JsonNode selectedAuxCandidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + auxDimensionCode
-				+ "/candidates?keyword=NO_MATCH_031&selectedIds=" + selectedAuxItemId + "&page=1&pageSize=20"));
+				+ "/candidates?keyword=NO_MATCH_031&selectedIds=" + selectedAuxItemId + "&page=1&pageSize=5"));
 		assertThat(selectedAuxCandidates.get("total").longValue()).isOne();
 		assertThat(itemsContainLong(selectedAuxCandidates.get("items"), "auxItemId", selectedAuxItemId)).isTrue();
 		assertThat(itemsContainText(selectedAuxCandidates.get("items"), "objectCode", selectedAuxItemCode))
@@ -883,6 +895,11 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode candidates = data(get(admin, "/api/admin/gl/aux-dimensions/" + dimensionCode
 				+ "/candidates?keyword=WS-" + suffix + "&page=1&pageSize=20"));
 		assertThat(candidates.get("total").longValue()).isOne();
+		JsonNode dimensions = data(get(admin, "/api/admin/gl/aux-dimensions?enabled=true&page=1&pageSize=20"));
+		assertThat(itemsContainText(dimensions.get("items"), "code", "CUSTOMER")).isTrue();
+		assertThat(itemsContainText(dimensions.get("items"), "code", "SUPPLIER")).isTrue();
+		assertThat(itemsContainText(dimensions.get("items"), "code", "PROJECT")).isTrue();
+		assertThat(itemsContainText(dimensions.get("items"), "code", dimensionCode)).isTrue();
 		long bankAccount = accountId(admin, "1002");
 		JsonNode customAccount = data(post(admin, "/api/admin/gl/accounts",
 				accountPayload(bankAccount, "1002.WS" + suffix, "031 车间辅助银行", "ASSET", "DEBIT", true,
@@ -909,6 +926,7 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(preview.get("validationStatus").asText()).isEqualTo("VALID");
 		assertThat(tableCount("gl_voucher")).isEqualTo(beforeVoucherCount);
 		assertThat(activeSourceClaimCount(draft.sourceType(), draft.sourceId())).isEqualTo(beforeClaimCount);
+		assertInvalidPostingRuleScenarios(admin, activeSalesRule.get("id").longValue(), suffix);
 		JsonNode newVersion = data(post(admin, "/api/admin/gl/posting-rules/" + activeSalesRule.get("id")
 			.longValue() + "/new-version", actionPayload(activeSalesRule.get("version").longValue(),
 					"031-rule-new-version-" + activeSalesRule.get("id").longValue())));
@@ -972,6 +990,22 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode posted = submitAndApprove(admin, voucher, "031-ledger-dto");
 		posted = data(get(admin, "/api/admin/gl/vouchers/" + posted.get("id").longValue()));
 		String voucherNo = posted.get("voucherNo").asText();
+		String customerCode = salesInvoiceCustomerCode(draft.sourceId());
+		String febSummary = "031-FEB-FILTER-" + SEQUENCE.incrementAndGet();
+		long bankAccount = accountId(admin, "1002");
+		long revenueAccount = accountId(admin, "6001");
+		JsonNode febVoucher = data(post(admin, "/api/admin/gl/vouchers",
+				voucherPayload("GENERAL", LocalDate.of(2091, 2, 2), febSummary,
+						List.of(line(1, bankAccount, febSummary, "7.00", null, List.of()),
+								line(2, revenueAccount, febSummary, null, "7.00", List.of())))));
+		JsonNode febOnly = data(get(admin, "/api/admin/gl/vouchers?periodCode=2091-02&keyword="
+				+ febSummary + "&page=1&pageSize=20"));
+		assertThat(febOnly.get("total").longValue()).isOne();
+		assertThat(febOnly.get("items").get(0).get("id").longValue()).isEqualTo(febVoucher.get("id").longValue());
+		assertThat(febOnly.get("items").get(0).get("accountingPeriodCode").asText()).isEqualTo("2091-02");
+		JsonNode janOnly = data(get(admin, "/api/admin/gl/vouchers?periodCode=" + START_PERIOD + "&keyword="
+				+ febSummary + "&page=1&pageSize=20"));
+		assertThat(janOnly.get("total").longValue()).isZero();
 		JsonNode detail = data(get(admin, "/api/admin/gl/ledgers/detail?periodCode=" + START_PERIOD
 				+ "&voucherNo=" + voucherNo + "&sourceType=" + draft.sourceType() + "&sourceId=" + draft.sourceId()
 				+ "&page=1&pageSize=20"));
@@ -992,6 +1026,52 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 			assertThat(item.get("sourceId").longValue()).isEqualTo(draft.sourceId());
 			assertThat(item.hasNonNull("sourceNo")).isTrue();
 		}
+		JsonNode generalByRange = data(get(admin, "/api/admin/gl/ledgers/general?periodCode=" + START_PERIOD
+				+ "&accountCodeFrom=1122&accountCodeTo=1122&page=1&pageSize=20"));
+		assertThat(generalByRange.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : generalByRange.get("items")) {
+			assertThat(item.get("accountCode").asText()).isEqualTo("1122");
+		}
+		JsonNode generalByLevel = data(get(admin, "/api/admin/gl/ledgers/general?periodCode=" + START_PERIOD
+				+ "&accountCodeFrom=2221&accountCodeTo=2221.99&level=2&page=1&pageSize=20"));
+		assertThat(generalByLevel.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : generalByLevel.get("items")) {
+			assertThat(item.get("accountCode").asText()).startsWith("2221.");
+		}
+		JsonNode generalByAuxiliary = data(get(admin, "/api/admin/gl/ledgers/general?periodCode=" + START_PERIOD
+				+ "&accountKeyword=1122&auxiliaryKeyword=" + customerCode + "&page=1&pageSize=20"));
+		assertThat(generalByAuxiliary.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : generalByAuxiliary.get("items")) {
+			assertThat(item.get("accountCode").asText()).isEqualTo("1122");
+		}
+		JsonNode generalBySource = data(get(admin, "/api/admin/gl/ledgers/general?periodCode=" + START_PERIOD
+				+ "&accountKeyword=6001&sourceType=" + draft.sourceType() + "&page=1&pageSize=20"));
+		assertThat(generalBySource.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : generalBySource.get("items")) {
+			assertThat(item.get("accountCode").asText()).isEqualTo("6001");
+		}
+		JsonNode unrelatedSource = data(get(admin, "/api/admin/gl/ledgers/general?periodCode=" + START_PERIOD
+				+ "&accountKeyword=6001&sourceType=PURCHASE_INVOICE&page=1&pageSize=20"));
+		assertThat(unrelatedSource.get("total").longValue()).isZero();
+		JsonNode detailByAuxiliary = data(get(admin, "/api/admin/gl/ledgers/detail?periodCode=" + START_PERIOD
+				+ "&voucherNo=" + voucherNo + "&auxiliaryKeyword=" + customerCode + "&page=1&pageSize=20"));
+		assertThat(detailByAuxiliary.get("total").longValue()).isOne();
+		assertThat(detailByAuxiliary.get("items").get(0).get("accountCode").asText()).isEqualTo("1122");
+		JsonNode balancesByAuxiliary = data(get(admin, "/api/admin/gl/account-balances?periodCode=" + START_PERIOD
+				+ "&accountKeyword=1122&auxiliaryKeyword=" + customerCode + "&page=1&pageSize=20"));
+		assertThat(balancesByAuxiliary.get("total").longValue()).isGreaterThanOrEqualTo(1L);
+		for (JsonNode item : balancesByAuxiliary.get("items")) {
+			assertThat(item.get("accountCode").asText()).isEqualTo("1122");
+		}
+		JsonNode trialBalance = data(get(admin, "/api/admin/gl/trial-balance?periodCode=" + START_PERIOD));
+		assertThat(trialBalance.get("groupDifferences").size()).isEqualTo(3);
+		assertThat(recursiveValues(trialBalance.get("groupDifferences"), "groupCode")).contains("OPENING",
+				"PERIOD", "ENDING");
+		assertThat(trialBalance.get("differences").size()).isGreaterThan(0);
+		JsonNode firstDifference = trialBalance.get("differences").get(0);
+		assertThat(firstDifference.hasNonNull("accountCode")).isTrue();
+		assertThat(firstDifference.hasNonNull("accountName")).isTrue();
+		assertThat(firstDifference.hasNonNull("differenceAmount")).isTrue();
 
 		long accountId = this.jdbcTemplate.queryForObject("""
 				select account_id
@@ -1079,6 +1159,102 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 			throws Exception {
 		return data(post(session, "/api/admin/gl/vouchers/from-finance-draft/" + draft.draftId(),
 				convertPayload(draft.version(), key)));
+	}
+
+	private void assertInvalidPostingRuleScenarios(AuthenticatedSession admin, long activeSalesRuleId, int suffix)
+			throws Exception {
+		JsonNode missingFactsRule = createPostingRule(admin, "SALES_INVOICE", "DEFAULT", "031 缺失事实规则 " + suffix,
+				List.of(ruleLine(1, "SALES_RECEIVABLE", "DEBIT", accountId(admin, "1122"), "031 缺失事实借方",
+						List.of(ruleAuxiliary("CUSTOMER", "SOURCE_CUSTOMER")))));
+		assertRuleInvalidOnValidateAndActivate(admin, missingFactsRule, "031-rule-missing-facts-" + suffix);
+
+		long unbalancedSalesInvoiceId = insertSalesInvoiceSource(SEQUENCE.incrementAndGet());
+		this.jdbcTemplate.execute("alter table fin_sales_invoice drop constraint ck_fin_sales_invoice_amount");
+		try {
+			this.jdbcTemplate.update("""
+					update fin_sales_invoice
+					set tax_amount = 14.00, version = version + 1
+					where id = ?
+					""", unbalancedSalesInvoiceId);
+			assertError(post(admin, "/api/admin/gl/posting-rules/" + activeSalesRuleId + "/validate",
+					Map.of("sourceType", "SALES_INVOICE", "sourceId", unbalancedSalesInvoiceId,
+							"sourceVersion", sourceVersion("SALES_INVOICE", unbalancedSalesInvoiceId),
+							"idempotencyKey", "031-rule-unbalanced-preview-" + unbalancedSalesInvoiceId)),
+					HttpStatus.BAD_REQUEST, "GL_RULE_INVALID");
+		}
+		finally {
+			this.jdbcTemplate.update("""
+					update fin_sales_invoice
+					set tax_amount = 13.00, tax_included_amount = 113.00, version = version + 1
+					where id = ?
+					""", unbalancedSalesInvoiceId);
+			this.jdbcTemplate.execute("""
+					alter table fin_sales_invoice
+					add constraint ck_fin_sales_invoice_amount check (
+						tax_excluded_amount >= 0 and tax_amount >= 0 and tax_included_amount >= 0
+						and tax_excluded_amount + tax_amount = tax_included_amount
+					)
+					""");
+		}
+
+		JsonNode nonLeafRule = createPostingRule(admin, "SALES_INVOICE", "DEFAULT", "031 非叶子规则 " + suffix,
+				List.of(ruleLine(1, "SALES_RECEIVABLE", "DEBIT", accountId(admin, "1122"), "031 非叶子应收",
+						List.of(ruleAuxiliary("CUSTOMER", "SOURCE_CUSTOMER"))),
+						ruleLine(2, "SALES_REVENUE", "CREDIT", accountId(admin, "6001"), "031 非叶子收入",
+								List.of()),
+						ruleLine(3, "OUTPUT_VAT", "CREDIT", accountId(admin, "2221"), "031 非叶子销项税",
+								List.of())));
+		assertRuleInvalidOnValidateAndActivate(admin, nonLeafRule, "031-rule-non-leaf-" + suffix);
+
+		long disabledAccountId = insertRuleAccountBySql("6301.DIS" + suffix, "031 停用规则科目 " + suffix,
+				"PROFIT_LOSS", "CREDIT", true, false);
+		JsonNode disabledRule = createPostingRule(admin, "SALES_INVOICE", "DEFAULT", "031 停用科目规则 " + suffix,
+				List.of(ruleLine(1, "SALES_RECEIVABLE", "DEBIT", accountId(admin, "1122"), "031 停用规则应收",
+						List.of(ruleAuxiliary("CUSTOMER", "SOURCE_CUSTOMER"))),
+						ruleLine(2, "SALES_REVENUE", "CREDIT", disabledAccountId, "031 停用规则收入",
+								List.of()),
+						ruleLine(3, "OUTPUT_VAT", "CREDIT", accountId(admin, "2221.02"), "031 停用规则销项税",
+								List.of())));
+		assertRuleInvalidOnValidateAndActivate(admin, disabledRule, "031-rule-disabled-account-" + suffix);
+
+		JsonNode impossibleAuxiliaryRule = createPostingRule(admin, "SALES_INVOICE", "DEFAULT",
+				"031 辅助不可满足规则 " + suffix,
+				List.of(ruleLine(1, "SALES_RECEIVABLE", "DEBIT", accountId(admin, "1122"), "031 辅助错误应收",
+						List.of(ruleAuxiliary("CUSTOMER", "SOURCE_SUPPLIER"))),
+						ruleLine(2, "SALES_REVENUE", "CREDIT", accountId(admin, "6001"), "031 辅助错误收入",
+								List.of()),
+						ruleLine(3, "OUTPUT_VAT", "CREDIT", accountId(admin, "2221.02"), "031 辅助错误销项税",
+								List.of())));
+		assertRuleInvalidOnValidateAndActivate(admin, impossibleAuxiliaryRule,
+				"031-rule-impossible-auxiliary-" + suffix);
+	}
+
+	private JsonNode createPostingRule(AuthenticatedSession session, String sourceType, String sourceVariant,
+			String name, List<Map<String, Object>> lines) throws Exception {
+		return data(post(session, "/api/admin/gl/posting-rules",
+				Map.of("sourceType", sourceType, "sourceVariant", sourceVariant, "name", name,
+						"effectiveFrom", START_DATE.toString(), "idempotencyKey", "031-rule-"
+								+ SEQUENCE.incrementAndGet(), "lines", lines)));
+	}
+
+	private Map<String, Object> ruleLine(int lineNo, String factCode, String direction, long accountId,
+			String summary, List<Map<String, Object>> auxiliaryMappings) {
+		return Map.of("lineNo", lineNo, "normalizedFactCode", factCode, "direction", direction, "accountId",
+				accountId, "summaryTemplate", summary, "auxiliaryMappings", auxiliaryMappings);
+	}
+
+	private Map<String, Object> ruleAuxiliary(String dimensionCode, String mappingType) {
+		return Map.of("dimensionCode", dimensionCode, "mappingType", mappingType);
+	}
+
+	private void assertRuleInvalidOnValidateAndActivate(AuthenticatedSession admin, JsonNode rule, String key)
+			throws Exception {
+		assertError(post(admin, "/api/admin/gl/posting-rules/" + rule.get("id").longValue() + "/validate",
+				actionPayload(rule.get("version").longValue(), key + "-validate")), HttpStatus.BAD_REQUEST,
+				"GL_RULE_INVALID");
+		assertError(post(admin, "/api/admin/gl/posting-rules/" + rule.get("id").longValue() + "/activate",
+				actionPayload(rule.get("version").longValue(), key + "-activate")), HttpStatus.BAD_REQUEST,
+				"GL_RULE_INVALID");
 	}
 
 	private Map<String, Object> voucherPayload(String voucherType, LocalDate voucherDate, String summary,
@@ -1201,6 +1377,20 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 				values (?, ?, ?, true, 'test', now(), 'test', now())
 				returning id
 				""", Long.class, dimensionId, code, name);
+	}
+
+	private long insertRuleAccountBySql(String code, String name, String category, String direction, boolean postable,
+			boolean enabled) {
+		long ledgerId = this.jdbcTemplate.queryForObject("select id from gl_ledger where code = 'MAIN'",
+				Long.class);
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_account (
+					ledger_id, parent_id, code, name, category, balance_direction, level_no, is_leaf, postable,
+					enabled, template_source, created_by, created_at, updated_by, updated_at
+				)
+				values (?, null, ?, ?, ?, ?, 1, true, ?, ?, 'USER_DEFINED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, ledgerId, code, name, category, direction, postable, enabled);
 	}
 
 	private boolean itemsContainLong(JsonNode items, String fieldName, long expected) {
@@ -1521,6 +1711,15 @@ class GeneralLedgerStage031AcceptanceTests extends PostgresIntegrationTest {
 					Long.class, sourceId);
 			default -> null;
 		};
+	}
+
+	private String salesInvoiceCustomerCode(long sourceId) {
+		return this.jdbcTemplate.queryForObject("""
+				select c.code
+				from fin_sales_invoice i
+				join mst_customer c on c.id = i.customer_id
+				where i.id = ?
+				""", String.class, sourceId);
 	}
 
 	private long sourceVersion(String sourceType, long sourceId) {

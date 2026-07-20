@@ -9,6 +9,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.YearMonth;
@@ -70,7 +71,7 @@ public class GeneralLedgerSetupService {
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> periods(String periodCode, int page, int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		List<Object> args = new ArrayList<>();
 		String where = "";
 		if (periodCode != null && !periodCode.isBlank()) {
@@ -145,15 +146,28 @@ public class GeneralLedgerSetupService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> accounts(String keyword, int page, int pageSize) {
+	public PageResponse<Map<String, Object>> accounts(String keyword, String category, Boolean enabled,
+			Boolean postable, int page, int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		List<Object> args = new ArrayList<>();
 		String where = "where l.code = 'MAIN'";
 		if (keyword != null && !keyword.isBlank()) {
 			where += " and (a.code ilike ? or a.name ilike ?)";
 			args.add("%" + keyword.trim() + "%");
 			args.add("%" + keyword.trim() + "%");
+		}
+		if (category != null && !category.isBlank()) {
+			where += " and a.category = ?";
+			args.add(normalizeCode(category));
+		}
+		if (enabled != null) {
+			where += " and a.enabled = ?";
+			args.add(enabled);
+		}
+		if (postable != null) {
+			where += " and a.postable = ?";
+			args.add(postable);
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -182,7 +196,7 @@ public class GeneralLedgerSetupService {
 	public PageResponse<Map<String, Object>> accountCandidates(String keyword, String selectedIds, int page,
 			int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.candidateLimit(pageSize);
 		Set<Long> selected = parseIds(selectedIds);
 		List<Object> args = new ArrayList<>();
 		String where = "where l.code = 'MAIN' and a.enabled = true and a.is_leaf = true and a.postable = true";
@@ -330,18 +344,37 @@ public class GeneralLedgerSetupService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> auxDimensions(int page, int pageSize) {
+	public PageResponse<Map<String, Object>> auxDimensions(String keyword, Boolean enabled, int page, int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
-		Long total = this.jdbcTemplate.queryForObject("select count(*) from gl_aux_dimension", Long.class);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
+		List<Object> args = new ArrayList<>();
+		String where = "where true";
+		if (keyword != null && !keyword.isBlank()) {
+			where += " and (d.code ilike ? or d.name ilike ?)";
+			args.add("%" + keyword.trim() + "%");
+			args.add("%" + keyword.trim() + "%");
+		}
+		if (enabled != null) {
+			where += " and d.enabled = ?";
+			args.add(enabled);
+		}
+		Long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_aux_dimension d
+				%s
+				""".formatted(where), Long.class, args.toArray());
+		args.add(safeSize);
+		args.add(GeneralLedgerSupport.offset(safePage, safeSize));
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select d.id, d.code, d.name, d.dimension_type, d.object_source, d.system_defined, d.enabled,
 				       d.version, count(i.id) as item_count
 				from gl_aux_dimension d
+				left join gl_aux_item i on i.dimension_id = d.id
+				%s
 				group by d.id
 				order by d.sort_order, d.id
 				limit ? offset ?
-				""", (rs, rowNum) -> {
+				""".formatted(where), (rs, rowNum) -> {
 			Map<String, Object> item = GeneralLedgerSupport.map();
 			item.put("id", rs.getLong("id"));
 			item.put("code", rs.getString("code"));
@@ -357,7 +390,7 @@ public class GeneralLedgerSetupService {
 			item.put("actionDisabledReasons", rs.getBoolean("system_defined")
 					? Map.of("UPDATE", "系统辅助维度不允许维护", "DISABLE", "系统辅助维度不允许停用") : Map.of());
 			return item;
-		}, safeSize, GeneralLedgerSupport.offset(safePage, safeSize));
+		}, args.toArray());
 		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
 	}
 
@@ -415,7 +448,7 @@ public class GeneralLedgerSetupService {
 	public PageResponse<Map<String, Object>> auxiliaryCandidates(String dimensionCode, String keyword,
 			String selectedIds, int page, int pageSize, CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.candidateLimit(pageSize);
 		String code = GeneralLedgerSupport.requiredText(dimensionCode, ApiErrorCode.GL_RULE_INVALID);
 		String table = switch (code) {
 			case "CUSTOMER" -> "mst_customer";
@@ -572,7 +605,7 @@ public class GeneralLedgerSetupService {
 	private PageResponse<Map<String, Object>> customAuxiliaryItems(Long dimensionId, String keyword, int page,
 			int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		List<Object> args = new ArrayList<>();
 		args.add(dimensionId);
 		String where = "where dimension_id = ?";
@@ -596,25 +629,42 @@ public class GeneralLedgerSetupService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<Map<String, Object>> postingRules(int page, int pageSize) {
+	public PageResponse<Map<String, Object>> postingRules(String sourceType, String status, int page, int pageSize) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
-		Long total = this.jdbcTemplate.queryForObject("select count(*) from gl_posting_rule", Long.class);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
+		List<Object> args = new ArrayList<>();
+		String where = "where true";
+		if (sourceType != null && !sourceType.isBlank()) {
+			where += " and r.source_type = ?";
+			args.add(normalizeCode(sourceType));
+		}
+		if (status != null && !status.isBlank()) {
+			where += " and r.status = ?";
+			args.add(normalizeCode(status));
+		}
+		Long total = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_posting_rule r
+				%s
+				""".formatted(where), Long.class, args.toArray());
+		args.add(safeSize);
+		args.add(GeneralLedgerSupport.offset(safePage, safeSize));
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select r.id, r.source_type, r.source_variant, r.rule_version, r.status, r.name, r.effective_from,
 				       r.effective_to, r.version, count(l.id) as line_count
 				from gl_posting_rule r
 				left join gl_posting_rule_line l on l.rule_id = r.id
+				%s
 				group by r.id
 				order by r.source_type, r.source_variant,
 				         case r.status when 'ACTIVE' then 0 when 'DRAFT' then 1 when 'SUPERSEDED' then 2 else 3 end,
 				         r.rule_version desc
 				limit ? offset ?
-				""", (rs, rowNum) -> postingRuleMap(new PostingRuleRow(rs.getLong("id"),
+				""".formatted(where), (rs, rowNum) -> postingRuleMap(new PostingRuleRow(rs.getLong("id"),
 				rs.getString("source_type"), rs.getString("source_variant"), rs.getInt("rule_version"),
 				rs.getString("status"), rs.getString("name"), rs.getObject("effective_from", LocalDate.class),
 				rs.getObject("effective_to", LocalDate.class), rs.getLong("version")), false, rs.getLong("line_count")),
-				safeSize, GeneralLedgerSupport.offset(safePage, safeSize));
+				args.toArray());
 		return PageResponse.of(items, safePage, safeSize, total == null ? 0 : total);
 	}
 
@@ -702,7 +752,7 @@ public class GeneralLedgerSetupService {
 		if (request != null && request.version() != null) {
 			requireVersion(rule.version(), request.version());
 		}
-		ruleValidationSummary(id);
+		ruleValidationSummary(id, request);
 		return postingRule(id);
 	}
 
@@ -713,7 +763,7 @@ public class GeneralLedgerSetupService {
 		if (!"DRAFT".equals(rule.status()) && !"ACTIVE".equals(rule.status())) {
 			throw new BusinessException(ApiErrorCode.GL_RULE_INVALID);
 		}
-		ruleValidationSummary(id);
+		ruleValidationSummary(id, request);
 		this.jdbcTemplate.update("""
 				update gl_posting_rule
 				set status = 'SUPERSEDED', updated_by = ?, updated_at = ?, version = version + 1
@@ -1130,8 +1180,8 @@ public class GeneralLedgerSetupService {
 		}, lineId);
 	}
 
-	private Map<String, Object> ruleValidationSummary(Long ruleId) {
-		Map<String, Object> summary = ruleValidationSummaryOrNull(ruleId);
+	private Map<String, Object> ruleValidationSummary(Long ruleId, ActionRequest request) {
+		Map<String, Object> summary = ruleValidationSummaryOrNull(ruleId, request);
 		if (summary == null) {
 			throw new BusinessException(ApiErrorCode.GL_RULE_INVALID);
 		}
@@ -1139,22 +1189,292 @@ public class GeneralLedgerSetupService {
 	}
 
 	private Map<String, Object> ruleValidationSummaryOrNull(Long ruleId) {
-		Long invalidAccounts = this.jdbcTemplate.queryForObject("""
-				select count(*)
-				from gl_posting_rule_line l
-				join gl_account a on a.id = l.account_id
-				where l.rule_id = ?
-				and (a.enabled = false or a.postable = false or a.is_leaf = false)
-				""", Long.class, ruleId);
-		long lineCount = ruleLineCount(ruleId);
-		if ((invalidAccounts != null && invalidAccounts > 0) || lineCount == 0) {
+		return ruleValidationSummaryOrNull(ruleId, null);
+	}
+
+	private Map<String, Object> ruleValidationSummaryOrNull(Long ruleId, ActionRequest request) {
+		PostingRuleRow rule = postingRuleRow(ruleId);
+		List<FactSpec> expectedFacts = expectedFacts(rule, request);
+		List<RuleLineValidationRow> lines = ruleValidationLines(ruleId);
+		if (expectedFacts.isEmpty() || lines.size() != expectedFacts.size()) {
+			return null;
+		}
+		BigDecimal debit = BigDecimal.ZERO;
+		BigDecimal credit = BigDecimal.ZERO;
+		for (FactSpec fact : expectedFacts) {
+			RuleLineValidationRow line = lines.stream()
+				.filter((candidate) -> fact.factCode().equals(candidate.normalizedFactCode())
+						&& fact.direction().equals(candidate.direction()))
+				.findFirst()
+				.orElse(null);
+			if (line == null || !line.enabled() || !line.postable() || !line.leaf()
+					|| !requiredAuxiliaryMappingsSatisfied(line, fact)) {
+				return null;
+			}
+			if ("DEBIT".equals(line.direction())) {
+				debit = debit.add(fact.amount());
+			}
+			else {
+				credit = credit.add(fact.amount());
+			}
+		}
+		if (debit.compareTo(credit) != 0) {
 			return null;
 		}
 		Map<String, Object> summary = GeneralLedgerSupport.map();
 		summary.put("balanced", true);
-		summary.put("lineCount", lineCount);
+		summary.put("lineCount", lines.size());
+		summary.put("factCount", expectedFacts.size());
+		summary.put("debitTotal", GeneralLedgerSupport.decimal(debit));
+		summary.put("creditTotal", GeneralLedgerSupport.decimal(credit));
 		summary.put("previewOnly", true);
+		summary.put("sourcePreview", request != null && request.sourceId() != null);
 		return summary;
+	}
+
+	private List<RuleLineValidationRow> ruleValidationLines(Long ruleId) {
+		return this.jdbcTemplate.query("""
+				select l.id, l.normalized_fact_code, l.direction, l.account_id, a.enabled, a.postable, a.is_leaf
+				from gl_posting_rule_line l
+				join gl_account a on a.id = l.account_id
+				where l.rule_id = ?
+				order by l.line_no, l.id
+				""", (rs, rowNum) -> new RuleLineValidationRow(rs.getLong("id"),
+				rs.getString("normalized_fact_code"), rs.getString("direction"), rs.getLong("account_id"),
+				rs.getBoolean("enabled"), rs.getBoolean("postable"), rs.getBoolean("is_leaf")), ruleId);
+	}
+
+	private boolean requiredAuxiliaryMappingsSatisfied(RuleLineValidationRow line, FactSpec fact) {
+		List<String> requiredDimensions = this.jdbcTemplate.query("""
+				select d.code
+				from gl_account_aux_requirement r
+				join gl_aux_dimension d on d.id = r.dimension_id
+				where r.account_id = ?
+				and r.requirement = 'REQUIRED'
+				order by d.code
+				""", (rs, rowNum) -> rs.getString("code"), line.accountId());
+		if (requiredDimensions.isEmpty()) {
+			return true;
+		}
+		Map<String, String> mappings = new LinkedHashMap<>();
+		this.jdbcTemplate.query("""
+				select d.code, m.mapping_type
+				from gl_posting_rule_line_aux_map m
+				join gl_aux_dimension d on d.id = m.dimension_id
+				where m.rule_line_id = ?
+				""", (rs) -> {
+			mappings.put(rs.getString("code"), rs.getString("mapping_type"));
+		}, line.id());
+		for (String dimensionCode : requiredDimensions) {
+			String mappingType = mappings.get(dimensionCode);
+			if (mappingType == null || !factCanProvideDimension(fact, dimensionCode, mappingType)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private boolean factCanProvideDimension(FactSpec fact, String dimensionCode, String mappingType) {
+		return switch (mappingType) {
+			case "SOURCE_CUSTOMER" -> "CUSTOMER".equals(dimensionCode) && fact.customerAvailable();
+			case "SOURCE_SUPPLIER" -> "SUPPLIER".equals(dimensionCode) && fact.supplierAvailable();
+			case "SOURCE_PROJECT" -> "PROJECT".equals(dimensionCode) && fact.projectAvailable();
+			case "FIXED_CUSTOM_ITEM" -> !List.of("CUSTOMER", "SUPPLIER", "PROJECT").contains(dimensionCode);
+			default -> false;
+		};
+	}
+
+	private List<FactSpec> expectedFacts(PostingRuleRow rule, ActionRequest request) {
+		if (request != null && request.sourceType() != null
+				&& !normalizeCode(request.sourceType()).equals(rule.sourceType())) {
+			return List.of();
+		}
+		if (request != null && request.sourceId() != null) {
+			return previewFacts(rule, request);
+		}
+		return templateFacts(rule.sourceType(), rule.sourceVariant());
+	}
+
+	private List<FactSpec> previewFacts(PostingRuleRow rule, ActionRequest request) {
+		SourcePreview preview = sourcePreview(rule.sourceType(), request.sourceId());
+		if (preview == null || !rule.sourceVariant().equals(preview.sourceVariant())) {
+			return List.of();
+		}
+		if (request.sourceVersion() != null && !request.sourceVersion().equals(preview.sourceVersion())) {
+			return List.of();
+		}
+		return preview.facts().stream()
+			.filter((fact) -> fact.amount().compareTo(BigDecimal.ZERO) > 0)
+			.toList();
+	}
+
+	private SourcePreview sourcePreview(String sourceType, Long sourceId) {
+		if (sourceId == null) {
+			return null;
+		}
+		return switch (sourceType) {
+			case "SALES_INVOICE" -> salesInvoicePreview(sourceId);
+			case "PURCHASE_INVOICE" -> purchaseInvoicePreview(sourceId);
+			case "EXPENSE" -> expensePreview(sourceId);
+			case "RECEIPT" -> receiptPreview(sourceId);
+			case "PAYMENT" -> paymentPreview(sourceId);
+			case "SETTLEMENT_ALLOCATION" -> settlementPreview(sourceId);
+			default -> null;
+		};
+	}
+
+	private SourcePreview salesInvoicePreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select customer_id, project_id, tax_excluded_amount, tax_amount, tax_included_amount, status, version
+				from fin_sales_invoice
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"CONFIRMED".equals(rs.getString("status"))) {
+				return null;
+			}
+			Long customerId = GeneralLedgerSupport.nullableLong(rs, "customer_id");
+			Long projectId = GeneralLedgerSupport.nullableLong(rs, "project_id");
+			return new SourcePreview("DEFAULT", rs.getLong("version"), List.of(
+					new FactSpec("SALES_RECEIVABLE", "DEBIT", rs.getBigDecimal("tax_included_amount"),
+							customerId != null, false, projectId != null),
+					new FactSpec("SALES_REVENUE", "CREDIT", rs.getBigDecimal("tax_excluded_amount"), false,
+							false, projectId != null),
+					new FactSpec("OUTPUT_VAT", "CREDIT", rs.getBigDecimal("tax_amount"), false, false, false)));
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private SourcePreview purchaseInvoicePreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select supplier_id, project_id, tax_excluded_amount, tax_amount, tax_included_amount, status, version
+				from fin_purchase_invoice
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"CONFIRMED".equals(rs.getString("status"))) {
+				return null;
+			}
+			Long supplierId = GeneralLedgerSupport.nullableLong(rs, "supplier_id");
+			Long projectId = GeneralLedgerSupport.nullableLong(rs, "project_id");
+			return new SourcePreview("DEFAULT", rs.getLong("version"), List.of(
+					new FactSpec("PURCHASE_CLEARING", "DEBIT", rs.getBigDecimal("tax_excluded_amount"), false,
+							false, projectId != null),
+					new FactSpec("INPUT_VAT", "DEBIT", rs.getBigDecimal("tax_amount"), false, false, false),
+					new FactSpec("PURCHASE_PAYABLE", "CREDIT", rs.getBigDecimal("tax_included_amount"), false,
+							supplierId != null, projectId != null)));
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private SourcePreview expensePreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select supplier_id, project_id, tax_excluded_amount, tax_amount, tax_included_amount, status, version
+				from fin_expense
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"CONFIRMED".equals(rs.getString("status"))) {
+				return null;
+			}
+			Long supplierId = GeneralLedgerSupport.nullableLong(rs, "supplier_id");
+			Long projectId = GeneralLedgerSupport.nullableLong(rs, "project_id");
+			return new SourcePreview("DEFAULT", rs.getLong("version"), List.of(
+					new FactSpec("EXPENSE", "DEBIT", rs.getBigDecimal("tax_excluded_amount"), false, false,
+							projectId != null),
+					new FactSpec("INPUT_VAT", "DEBIT", rs.getBigDecimal("tax_amount"), false, false, false),
+					new FactSpec("EXPENSE_PAYABLE", "CREDIT", rs.getBigDecimal("tax_included_amount"), false,
+							supplierId != null, projectId != null)));
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private SourcePreview receiptPreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select customer_id, amount, status, version
+				from fin_receipt
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"POSTED".equals(rs.getString("status"))) {
+				return null;
+			}
+			Long customerId = GeneralLedgerSupport.nullableLong(rs, "customer_id");
+			BigDecimal amount = rs.getBigDecimal("amount");
+			return new SourcePreview("DEFAULT", rs.getLong("version"), List.of(
+					new FactSpec("BANK_RECEIPT", "DEBIT", amount, false, false, false),
+					new FactSpec("ADVANCE_RECEIPT", "CREDIT", amount, customerId != null, false, false)));
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private SourcePreview paymentPreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select supplier_id, amount, status, version
+				from fin_payment
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"POSTED".equals(rs.getString("status"))) {
+				return null;
+			}
+			Long supplierId = GeneralLedgerSupport.nullableLong(rs, "supplier_id");
+			BigDecimal amount = rs.getBigDecimal("amount");
+			return new SourcePreview("DEFAULT", rs.getLong("version"), List.of(
+					new FactSpec("PREPAYMENT", "DEBIT", amount, false, supplierId != null, false),
+					new FactSpec("BANK_PAYMENT", "CREDIT", amount, false, false, false)));
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private SourcePreview settlementPreview(Long id) {
+		return this.jdbcTemplate.query("""
+				select settlement_side, party_id, project_id, total_amount, status, version
+				from fin_settlement_allocation
+				where id = ?
+				""", (rs, rowNum) -> {
+			if (!"POSTED".equals(rs.getString("status"))) {
+				return null;
+			}
+			String side = rs.getString("settlement_side");
+			Long partyId = GeneralLedgerSupport.nullableLong(rs, "party_id");
+			Long projectId = GeneralLedgerSupport.nullableLong(rs, "project_id");
+			BigDecimal amount = rs.getBigDecimal("total_amount");
+			List<FactSpec> facts = "RECEIVABLE".equals(side)
+					? List.of(new FactSpec("ADVANCE_RECEIPT_CLEAR", "DEBIT", amount, partyId != null, false,
+							projectId != null),
+							new FactSpec("RECEIVABLE_CLEAR", "CREDIT", amount, partyId != null, false,
+									projectId != null))
+					: List.of(new FactSpec("PAYABLE_CLEAR", "DEBIT", amount, false, partyId != null,
+							projectId != null),
+							new FactSpec("PREPAYMENT_CLEAR", "CREDIT", amount, false, partyId != null,
+									projectId != null));
+			return new SourcePreview(side, rs.getLong("version"), facts);
+		}, id).stream().findFirst().orElse(null);
+	}
+
+	private List<FactSpec> templateFacts(String sourceType, String sourceVariant) {
+		BigDecimal net = new BigDecimal("100.00");
+		BigDecimal tax = new BigDecimal("13.00");
+		BigDecimal gross = new BigDecimal("113.00");
+		BigDecimal amount = new BigDecimal("120.00");
+		return switch (sourceType + "|" + sourceVariant) {
+			case "SALES_INVOICE|DEFAULT" -> List.of(
+					new FactSpec("SALES_RECEIVABLE", "DEBIT", gross, true, false, true),
+					new FactSpec("SALES_REVENUE", "CREDIT", net, false, false, true),
+					new FactSpec("OUTPUT_VAT", "CREDIT", tax, false, false, false));
+			case "PURCHASE_INVOICE|DEFAULT" -> List.of(
+					new FactSpec("PURCHASE_CLEARING", "DEBIT", net, false, false, true),
+					new FactSpec("INPUT_VAT", "DEBIT", tax, false, false, false),
+					new FactSpec("PURCHASE_PAYABLE", "CREDIT", gross, false, true, true));
+			case "EXPENSE|DEFAULT" -> List.of(
+					new FactSpec("EXPENSE", "DEBIT", net, false, false, true),
+					new FactSpec("INPUT_VAT", "DEBIT", tax, false, false, false),
+					new FactSpec("EXPENSE_PAYABLE", "CREDIT", gross, false, true, true));
+			case "RECEIPT|DEFAULT" -> List.of(
+					new FactSpec("BANK_RECEIPT", "DEBIT", amount, false, false, false),
+					new FactSpec("ADVANCE_RECEIPT", "CREDIT", amount, true, false, false));
+			case "PAYMENT|DEFAULT" -> List.of(
+					new FactSpec("PREPAYMENT", "DEBIT", amount, false, true, false),
+					new FactSpec("BANK_PAYMENT", "CREDIT", amount, false, false, false));
+			case "SETTLEMENT_ALLOCATION|RECEIVABLE" -> List.of(
+					new FactSpec("ADVANCE_RECEIPT_CLEAR", "DEBIT", amount, true, false, true),
+					new FactSpec("RECEIVABLE_CLEAR", "CREDIT", amount, true, false, true));
+			case "SETTLEMENT_ALLOCATION|PAYABLE" -> List.of(
+					new FactSpec("PAYABLE_CLEAR", "DEBIT", amount, false, true, true),
+					new FactSpec("PREPAYMENT_CLEAR", "CREDIT", amount, false, true, true));
+			default -> List.of();
+		};
 	}
 
 	private void copyRuleLines(Long sourceRuleId, Long targetRuleId) {
@@ -1321,6 +1641,22 @@ public class GeneralLedgerSetupService {
 
 	private record PostingRuleRow(Long id, String sourceType, String sourceVariant, Integer ruleVersion,
 			String status, String name, LocalDate effectiveFrom, LocalDate effectiveTo, Long version) {
+	}
+
+	private record RuleLineValidationRow(Long id, String normalizedFactCode, String direction, Long accountId,
+			boolean enabled, boolean postable, boolean leaf) {
+	}
+
+	private record FactSpec(String factCode, String direction, BigDecimal amount, boolean customerAvailable,
+			boolean supplierAvailable, boolean projectAvailable) {
+
+		FactSpec {
+			amount = GeneralLedgerSupport.amount(amount);
+		}
+
+	}
+
+	private record SourcePreview(String sourceVariant, Long sourceVersion, List<FactSpec> facts) {
 	}
 
 }

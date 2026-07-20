@@ -195,7 +195,16 @@ describe('glApi', () => {
     }))
     expect(fetcher).toHaveBeenNthCalledWith(4, '/api/admin/gl/vouchers', expect.objectContaining({
       method: 'POST',
-      body: expect.stringContaining('"debitAmount":"100.10"'),
+      body: JSON.stringify({
+        voucherType: 'GENERAL',
+        voucherDate: '2026-07-20',
+        summary: '手工凭证',
+        lines: [
+          { lineNo: 1, summary: '借方', accountId: 1002, debitAmount: '100.10', creditAmount: '0.00', auxiliaryItems: [] },
+          { lineNo: 2, summary: '贷方', accountId: 6001, debitAmount: '0.00', creditAmount: '100.10', auxiliaryItems: [] },
+        ],
+        idempotencyKey: 'create-key',
+      }),
     }))
     expect(fetcher).toHaveBeenNthCalledWith(6, '/api/admin/gl/vouchers/from-finance-draft/61', expect.objectContaining({
       method: 'POST',
@@ -313,5 +322,67 @@ describe('glApi', () => {
       differenceAmount: '20.00',
       differences: [expect.objectContaining({ accountCode: '2221.01' })],
     })
+  })
+
+  it('消费独立科目与辅助候选接口，保留后段搜索和已选回显参数', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          accountId: 160,
+          accountCode: '6602.160',
+          accountName: '第 160 项费用',
+          category: 'PROFIT_LOSS',
+          levelNo: 2,
+          isLeaf: true,
+          postable: true,
+          balanceDirection: 'DEBIT',
+          enabled: true,
+          version: 1,
+          auxiliaryRequirements: [{ dimensionCode: 'PROJECT', dimensionName: '项目', requirementType: 'REQUIRED' }],
+          allowedActions: [{ code: 'UPDATE', enabled: true }],
+          actionDisabledReasons: { DISABLE: '已被规则引用' },
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          objectId: 501,
+          objectCode: 'PRJ-501',
+          objectName: '已选项目',
+          restricted: false,
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 20,
+      }))
+
+    const api = createGlApi({ fetcher })
+
+    await expect(api.accounts.candidates({
+      keyword: '第 160',
+      selectedIds: '1002,160',
+      page: 1,
+      pageSize: 20,
+    })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        id: 160,
+        code: '6602.160',
+        name: '第 160 项费用',
+        auxiliaryRequirements: [expect.objectContaining({ dimensionCode: 'PROJECT', requirement: 'REQUIRED' })],
+      })],
+    })
+    await expect(api.auxDimensions.candidates('PROJECT', {
+      keyword: '已选',
+      selectedIds: '501',
+      page: 1,
+      pageSize: 20,
+    })).resolves.toMatchObject({
+      items: [expect.objectContaining({ objectId: 501, objectName: '已选项目' })],
+    })
+
+    expect(fetcher).toHaveBeenNthCalledWith(1, '/api/admin/gl/accounts/candidates?keyword=%E7%AC%AC+160&selectedIds=1002%2C160&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
+    expect(fetcher).toHaveBeenNthCalledWith(2, '/api/admin/gl/aux-dimensions/PROJECT/candidates?keyword=%E5%B7%B2%E9%80%89&selectedIds=501&page=1&pageSize=20', expect.objectContaining({ method: 'GET' }))
   })
 })

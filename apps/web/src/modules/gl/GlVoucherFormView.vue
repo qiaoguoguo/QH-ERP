@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { glApi, type GlAccountRecord, type GlVoucherLineRecord, type GlVoucherRecord } from '../../shared/api/glApi'
+import { glApi, type GlAccountingPeriodRecord, type GlAccountRecord, type GlAuxCandidateRecord, type GlAuxRequirement, type GlVoucherLineRecord, type GlVoucherRecord } from '../../shared/api/glApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { createGlIdempotencyKey, formatGlAmount, glErrorMessage, glPageItems } from './glPageHelpers'
 import './GlShared.css'
@@ -15,10 +15,19 @@ const actionError = ref('')
 const existing = ref<GlVoucherRecord | null>(null)
 const accountCandidates = ref<GlAccountRecord[]>([])
 const accountKeyword = ref('')
+const accountCandidatePagination = reactive({ page: 1, pageSize: 20, total: 0 })
+const openPeriods = ref<GlAccountingPeriodRecord[]>([])
+const auxCandidatePools = reactive<Record<string, {
+  keyword: string
+  page: number
+  pageSize: number
+  total: number
+  items: GlAuxCandidateRecord[]
+  loading: boolean
+}>>({})
 const form = reactive({
   voucherType: 'GENERAL',
   voucherDate: '2026-07-20',
-  accountingPeriodCode: '2026-07',
   summary: '手工凭证',
   lines: [
     { lineNo: 1, summary: '借方分录', accountId: 1002, debitAmount: '100.00', creditAmount: '0.00', auxiliaryItems: [] },
@@ -31,8 +40,30 @@ const returnTo = computed(() => typeof route.query.returnTo === 'string' ? route
 const debitTotal = computed(() => addDecimalStrings(form.lines.map((line) => line.debitAmount)))
 const creditTotal = computed(() => addDecimalStrings(form.lines.map((line) => line.creditAmount)))
 const balanceDifference = computed(() => subtractDecimalStrings(debitTotal.value, creditTotal.value))
+const resolvedPeriod = computed(() => {
+  if (!form.voucherDate) {
+    return null
+  }
+  return openPeriods.value.find((period) => period.status === 'OPEN'
+    && form.voucherDate >= period.startDate
+    && form.voucherDate <= period.endDate) ?? null
+})
+const periodText = computed(() => {
+  if (!form.voucherDate) {
+    return '请先选择凭证日期'
+  }
+  if (resolvedPeriod.value) {
+    return `${resolvedPeriod.value.periodCode}（由凭证日期匹配唯一 OPEN 会计期间）`
+  }
+  return '未找到匹配的 OPEN 会计期间，保存将被禁用'
+})
 const validationReasons = computed(() => {
   const reasons: string[] = []
+  if (!form.voucherDate) {
+    reasons.push('请先选择凭证日期')
+  } else if (!resolvedPeriod.value) {
+    reasons.push('凭证日期未匹配 OPEN 会计期间')
+  }
   if (form.lines.length < 2) {
     reasons.push('至少两行分录')
   }
@@ -42,6 +73,15 @@ const validationReasons = computed(() => {
   if (form.lines.some((line) => !line.accountId)) {
     reasons.push('分录科目必填')
   }
+  form.lines.forEach((line) => {
+    currentAuxiliaryRequirements(line)
+      .filter((item) => item.requirement === 'REQUIRED')
+      .forEach((item) => {
+        if (!selectedAuxiliary(line, item.dimensionCode)?.objectId) {
+          reasons.push(`第 ${line.lineNo} 行${item.dimensionName || item.dimensionCode}辅助核算必填`)
+        }
+      })
+  })
   return reasons
 })
 const saveDisabled = computed(() => saving.value || validationReasons.value.length > 0)
@@ -85,7 +125,6 @@ async function loadRecord() {
     existing.value = record
     form.voucherType = record.voucherType || 'GENERAL'
     form.voucherDate = record.voucherDate || ''
-    form.accountingPeriodCode = record.accountingPeriodCode || ''
     form.summary = record.summary || ''
     form.lines = record.lines?.length ? record.lines : form.lines
   } catch (caught) {
@@ -95,21 +134,62 @@ async function loadRecord() {
   }
 }
 
-async function loadAccountCandidates(keyword = accountKeyword.value) {
-  accountKeyword.value = keyword
+async function loadPeriods() {
   try {
-    const page = await glApi.accounts.list({
-      keyword,
-      enabled: true,
-      postable: true,
-      page: 1,
-      pageSize: 20,
-    })
-    accountCandidates.value = glPageItems(page)
-    hydrateSelectedAccounts()
+    const page = await glApi.accountingPeriods.list({ page: 1, pageSize: 100 })
+    openPeriods.value = glPageItems(page).filter((period) => period.status === 'OPEN')
   } catch (caught) {
     actionError.value = glErrorMessage(caught)
   }
+}
+
+function selectedAccountIds() {
+  return [...new Set(form.lines.map((line) => line.accountId).filter(Boolean).map(String))].join(',')
+}
+
+function mergeById<T extends { id?: string | number | null }>(left: T[], right: T[]) {
+  const seen = new Set<string>()
+  return [...left, ...right].filter((item) => {
+    const key = String(item.id ?? '')
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+async function loadAccountCandidates(keyword = accountKeyword.value, append = false) {
+  accountKeyword.value = keyword
+  if (!append) {
+    accountCandidatePagination.page = 1
+  }
+  try {
+    const page = await glApi.accounts.candidates({
+      keyword,
+      selectedIds: selectedAccountIds(),
+      page: accountCandidatePagination.page,
+      pageSize: accountCandidatePagination.pageSize,
+    })
+    const items = glPageItems(page)
+    const selectedIdSet = new Set(selectedAccountIds().split(',').filter(Boolean))
+    accountCandidates.value = append
+      ? mergeById(accountCandidates.value, items)
+      : mergeById(items, accountCandidates.value.filter((account) => selectedIdSet.has(String(account.id))))
+    accountCandidatePagination.total = page.total ?? items.length
+    hydrateSelectedAccounts()
+    loadAllAuxiliaryCandidates()
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
+  }
+}
+
+async function loadMoreAccountCandidates() {
+  if (accountCandidates.value.length >= accountCandidatePagination.total) {
+    return
+  }
+  accountCandidatePagination.page += 1
+  await loadAccountCandidates(accountKeyword.value, true)
 }
 
 function accountText(account: Pick<GlAccountRecord, 'code' | 'name'>) {
@@ -128,15 +208,6 @@ function selectedAccountText(line: GlVoucherLineRecord) {
   return [line.accountCode, line.accountName].filter(Boolean).join(' ') || '请选择科目'
 }
 
-function accountAuxiliaryText(line: GlVoucherLineRecord) {
-  const account = selectedAccount(line)
-  const requirements = account?.auxiliaryRequirements ?? []
-  if (requirements.length === 0) {
-    return '无辅助核算要求'
-  }
-  return requirements.map((item) => `${item.dimensionName || item.dimensionCode} ${item.requirement === 'REQUIRED' ? '必填' : '可选'}`).join('、')
-}
-
 function hydrateSelectedAccounts() {
   form.lines.forEach((line) => {
     const account = selectedAccount(line)
@@ -147,19 +218,133 @@ function hydrateSelectedAccounts() {
   })
 }
 
+function currentAuxiliaryRequirements(line: GlVoucherLineRecord): GlAuxRequirement[] {
+  return selectedAccount(line)?.auxiliaryRequirements ?? []
+}
+
+function selectedAuxiliary(line: GlVoucherLineRecord, dimensionCode: string) {
+  return line.auxiliaryItems.find((item) => item.dimensionCode === dimensionCode)
+}
+
+function selectedAuxiliaryId(line: GlVoucherLineRecord, dimensionCode: string) {
+  return selectedAuxiliary(line, dimensionCode)?.objectId ?? ''
+}
+
+function selectedAuxiliaryIds(dimensionCode: string) {
+  return [...new Set(form.lines
+    .flatMap((line) => line.auxiliaryItems)
+    .filter((item) => item.dimensionCode === dimensionCode && item.objectId)
+    .map((item) => String(item.objectId)))].join(',')
+}
+
+function ensureAuxCandidatePool(dimensionCode: string) {
+  auxCandidatePools[dimensionCode] ??= {
+    keyword: '',
+    page: 1,
+    pageSize: 20,
+    total: 0,
+    items: [],
+    loading: false,
+  }
+  return auxCandidatePools[dimensionCode]
+}
+
+function mergeAuxCandidates(left: GlAuxCandidateRecord[], right: GlAuxCandidateRecord[]) {
+  const seen = new Set<string>()
+  return [...left, ...right].filter((item) => {
+    const key = String(item.objectId ?? '')
+    if (!key || seen.has(key)) {
+      return false
+    }
+    seen.add(key)
+    return true
+  })
+}
+
+async function loadAuxiliaryCandidates(dimensionCode: string, keyword?: string, append = false) {
+  const pool = ensureAuxCandidatePool(dimensionCode)
+  if (keyword !== undefined) {
+    pool.keyword = keyword
+  }
+  if (!append) {
+    pool.page = 1
+  }
+  pool.loading = true
+  actionError.value = ''
+  try {
+    const page = await glApi.auxDimensions.candidates(dimensionCode, {
+      keyword: pool.keyword,
+      selectedIds: selectedAuxiliaryIds(dimensionCode),
+      page: pool.page,
+      pageSize: pool.pageSize,
+    })
+    const items = glPageItems(page)
+    const selectedIdSet = new Set(selectedAuxiliaryIds(dimensionCode).split(',').filter(Boolean))
+    pool.items = append
+      ? mergeAuxCandidates(pool.items, items)
+      : mergeAuxCandidates(items, pool.items.filter((item) => selectedIdSet.has(String(item.objectId))))
+    pool.total = page.total ?? items.length
+  } catch (caught) {
+    if (!append) {
+      pool.items = []
+      pool.total = 0
+    }
+    actionError.value = glErrorMessage(caught)
+  } finally {
+    pool.loading = false
+  }
+}
+
+function loadAllAuxiliaryCandidates() {
+  const dimensionCodes = [...new Set(form.lines.flatMap((line) => currentAuxiliaryRequirements(line).map((item) => item.dimensionCode)))]
+  dimensionCodes.forEach((dimensionCode) => {
+    void loadAuxiliaryCandidates(dimensionCode)
+  })
+}
+
+function setLineAuxiliary(line: GlVoucherLineRecord, requirement: GlAuxRequirement, objectId: string | number | '') {
+  line.auxiliaryItems = line.auxiliaryItems.filter((item) => item.dimensionCode !== requirement.dimensionCode)
+  if (!objectId) {
+    return
+  }
+  const candidate = ensureAuxCandidatePool(requirement.dimensionCode).items.find((item) => String(item.objectId) === String(objectId))
+  line.auxiliaryItems.push({
+    dimensionCode: requirement.dimensionCode,
+    dimensionName: requirement.dimensionName,
+    objectId,
+    objectCode: candidate?.objectCode ?? null,
+    objectName: candidate?.objectName ?? null,
+    restricted: candidate?.restricted ?? false,
+    restrictedReason: candidate?.restrictedReason ?? null,
+  })
+}
+
+function auxiliaryCandidateText(candidate: GlAuxCandidateRecord) {
+  if (candidate.restricted) {
+    return candidate.restrictedReason || '无权查看候选'
+  }
+  return [candidate.objectCode, candidate.objectName].filter(Boolean).join(' ')
+}
+
+function selectedAuxiliaryText(line: GlVoucherLineRecord, dimensionCode: string) {
+  const selected = selectedAuxiliary(line, dimensionCode)
+  if (!selected?.objectId) {
+    return '未选择'
+  }
+  return [selected.objectCode, selected.objectName].filter(Boolean).join(' ') || String(selected.objectId)
+}
+
 function setLineAccount(line: GlVoucherLineRecord, accountId: string | number) {
   line.accountId = accountId
   const account = selectedAccount(line)
   if (account) {
     line.accountCode = account.code
     line.accountName = account.name
-    line.auxiliaryItems = (account.auxiliaryRequirements ?? []).map((item) => ({
-      dimensionCode: item.dimensionCode,
-      dimensionName: item.dimensionName,
-      objectId: null,
-      objectCode: null,
-      objectName: item.requirement === 'REQUIRED' ? '待选择' : '可选',
-    }))
+    line.auxiliaryItems = line.auxiliaryItems.filter((item) =>
+      (account.auxiliaryRequirements ?? []).some((requirement) => requirement.dimensionCode === item.dimensionCode && item.objectId))
+    ;(account.auxiliaryRequirements ?? []).forEach((item) => {
+      void loadAuxiliaryCandidates(item.dimensionCode)
+    })
   }
 }
 
@@ -195,9 +380,11 @@ async function saveVoucher() {
     const payload = {
       voucherType: form.voucherType,
       voucherDate: form.voucherDate,
-      accountingPeriodCode: form.accountingPeriodCode,
       summary: form.summary,
-      lines: form.lines,
+      lines: form.lines.map((line) => ({
+        ...line,
+        auxiliaryItems: line.auxiliaryItems.filter((item) => Boolean(item.objectId)),
+      })),
       idempotencyKey: createGlIdempotencyKey('gl-voucher-save'),
     }
     const saved = isEdit.value && existing.value
@@ -212,8 +399,8 @@ async function saveVoucher() {
 }
 
 onMounted(() => {
-  void loadRecord()
-  void loadAccountCandidates()
+  void loadPeriods()
+  void loadRecord().then(() => loadAccountCandidates())
 })
 </script>
 
@@ -236,7 +423,7 @@ onMounted(() => {
             @update:model-value="setVoucherDate"
           />
         </el-form-item>
-        <el-form-item label="会计期间"><el-input v-model="form.accountingPeriodCode" clearable placeholder="2026-07" /></el-form-item>
+        <el-form-item label="会计期间"><el-input :model-value="periodText" disabled placeholder="由凭证日期解析" /></el-form-item>
         <el-form-item label="凭证摘要"><el-input v-model="form.summary" clearable placeholder="凭证摘要" /></el-form-item>
         <el-form-item label="类型"><el-input v-model="form.voucherType" disabled /></el-form-item>
         <el-form-item label="科目候选">
@@ -255,6 +442,12 @@ onMounted(() => {
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证加载中" :closable="false" />
+      <el-alert
+        v-if="validationReasons.includes('请先选择凭证日期') || validationReasons.includes('凭证日期未匹配 OPEN 会计期间')"
+        type="warning"
+        :title="periodText"
+        :closable="false"
+      />
     </template>
 
     <div class="gl-summary-strip">
@@ -267,6 +460,13 @@ onMounted(() => {
 
     <div class="gl-toolbar">
       <el-button data-test="add-gl-voucher-line" @click="addLine">新增分录</el-button>
+      <el-button
+        v-if="accountCandidates.length < accountCandidatePagination.total"
+        data-test="load-more-account-candidates"
+        @click="loadMoreAccountCandidates"
+      >
+        加载更多科目
+      </el-button>
     </div>
     <div class="table-scroll" data-test="gl-voucher-lines-table">
       <el-table :data="form.lines" empty-text="暂无凭证分录" stripe>
@@ -290,8 +490,36 @@ onMounted(() => {
             <div class="gl-muted">{{ selectedAccountText(row) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="辅助核算" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ accountAuxiliaryText(row) }}</template>
+        <el-table-column label="辅助核算" min-width="260">
+          <template #default="{ row }">
+            <div class="gl-aux-cell">
+              <div v-if="currentAuxiliaryRequirements(row).length === 0" class="gl-muted">无辅助核算要求</div>
+              <div v-for="requirement in currentAuxiliaryRequirements(row)" :key="requirement.dimensionCode" class="gl-aux-editor">
+                <span class="gl-muted">{{ requirement.dimensionName || requirement.dimensionCode }} {{ requirement.requirement === 'REQUIRED' ? '必填' : '可选' }}</span>
+                <el-select
+                  :data-test="`select-gl-line-aux-${requirement.dimensionCode}-${row.lineNo}`"
+                  :model-value="selectedAuxiliaryId(row, requirement.dimensionCode)"
+                  clearable
+                  filterable
+                  remote
+                  reserve-keyword
+                  :remote-method="(keyword: string) => loadAuxiliaryCandidates(requirement.dimensionCode, keyword)"
+                  placeholder="选择辅助对象"
+                  @visible-change="(visible: boolean) => visible && loadAuxiliaryCandidates(requirement.dimensionCode)"
+                  @update:model-value="(value: string | number | '') => setLineAuxiliary(row, requirement, value)"
+                >
+                  <el-option
+                    v-for="candidate in ensureAuxCandidatePool(requirement.dimensionCode).items"
+                    :key="candidate.objectId"
+                    :label="auxiliaryCandidateText(candidate)"
+                    :value="candidate.objectId"
+                    :disabled="candidate.restricted"
+                  />
+                </el-select>
+                <span class="gl-muted">{{ selectedAuxiliaryText(row, requirement.dimensionCode) }}</span>
+              </div>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="借方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.debitAmount" /></template></el-table-column>
         <el-table-column label="贷方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.creditAmount" /></template></el-table-column>

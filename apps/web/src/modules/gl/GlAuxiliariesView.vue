@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { glApi, type GlAuxCandidateRecord, type GlAuxDimensionRecord } from '../../shared/api/glApi'
+import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { createGlIdempotencyKey, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
+import { createGlIdempotencyKey, glActionAllowed, glActionDisabledReason, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
 import './GlShared.css'
 
 const filters = reactive({ keyword: '', enabled: '' })
@@ -13,12 +14,18 @@ const loading = ref(false)
 const actionLoading = ref(false)
 const error = ref('')
 const actionError = ref('')
+const actionMessage = ref('')
 const candidateDrawerVisible = ref(false)
 const dimensionDialogVisible = ref(false)
+const itemDialogVisible = ref(false)
 const selectedDimension = ref<GlAuxDimensionRecord | null>(null)
+const selectedItem = ref<GlAuxCandidateRecord | null>(null)
 const candidateKeyword = ref('')
 const candidatePagination = reactive({ page: 1, pageSize: 20, total: 0 })
 const dimensionForm = reactive({ code: '', name: '', enabled: true, version: 0 })
+const itemForm = reactive({ objectCode: '', objectName: '', enabled: true, version: 0 })
+const selectedDimensionIsCustom = computed(() => selectedDimension.value?.dimensionType === 'CUSTOM')
+const dimensionFormIsSystem = computed(() => selectedDimension.value?.dimensionType === 'SYSTEM')
 
 async function loadRecords() {
   loading.value = true
@@ -54,12 +61,19 @@ async function loadCandidates(append = false) {
     return
   }
   actionError.value = ''
+  actionMessage.value = ''
   try {
-    const page = await glApi.auxDimensions.candidates(selectedDimension.value.code, {
-      keyword: candidateKeyword.value,
-      page: candidatePagination.page,
-      pageSize: candidatePagination.pageSize,
-    })
+    const page = selectedDimensionIsCustom.value
+      ? await glApi.auxDimensions.items(selectedDimension.value.id, {
+          keyword: candidateKeyword.value,
+          page: candidatePagination.page,
+          pageSize: candidatePagination.pageSize,
+        })
+      : await glApi.auxDimensions.candidates(selectedDimension.value.code, {
+          keyword: candidateKeyword.value,
+          page: candidatePagination.page,
+          pageSize: candidatePagination.pageSize,
+        })
     const items = glPageItems(page)
     candidates.value = append ? [...candidates.value, ...items] : items
     candidatePagination.total = glPageTotal(page)
@@ -103,6 +117,80 @@ function openEditDimension(row: GlAuxDimensionRecord) {
   dimensionDialogVisible.value = true
 }
 
+function openCreateItem() {
+  if (!selectedDimensionIsCustom.value) {
+    actionError.value = '系统维度不可维护自定义项目'
+    return
+  }
+  selectedItem.value = null
+  itemForm.objectCode = ''
+  itemForm.objectName = ''
+  itemForm.enabled = true
+  itemForm.version = 0
+  itemDialogVisible.value = true
+}
+
+function openEditItem(row: GlAuxCandidateRecord) {
+  selectedItem.value = row
+  itemForm.objectCode = row.objectCode || ''
+  itemForm.objectName = row.objectName || ''
+  itemForm.enabled = row.enabled !== false
+  itemForm.version = row.version ?? 0
+  itemDialogVisible.value = true
+}
+
+async function saveCustomItem() {
+  if (!selectedDimension.value || !selectedDimensionIsCustom.value || actionLoading.value) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  actionMessage.value = ''
+  try {
+    const payload = {
+      objectCode: itemForm.objectCode,
+      objectName: itemForm.objectName,
+      enabled: itemForm.enabled,
+      version: itemForm.version,
+      idempotencyKey: createGlIdempotencyKey('gl-aux-item-save'),
+    }
+    if (selectedItem.value?.objectId) {
+      await glApi.auxDimensions.updateItem(selectedDimension.value.id, selectedItem.value.objectId, payload)
+      actionMessage.value = '自定义辅助项目已更新'
+    } else {
+      await glApi.auxDimensions.createItem(selectedDimension.value.id, payload)
+      actionMessage.value = '自定义辅助项目已新增'
+    }
+    itemDialogVisible.value = false
+    await loadCandidates()
+    await loadRecords()
+  } catch (caught) {
+    actionError.value = glErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
+async function disableCustomItem(row: GlAuxCandidateRecord) {
+  if (!selectedDimension.value || !row.objectId || actionLoading.value) {
+    return
+  }
+  const reason = glActionDisabledReason(row, 'DISABLE')
+  if (reason && !glActionAllowed(row, 'DISABLE')) {
+    actionError.value = reason
+    return
+  }
+  if (!(await confirmAction(`停用辅助项目“${row.objectCode || ''} ${row.objectName || ''}”？`))) {
+    return
+  }
+  selectedItem.value = row
+  itemForm.objectCode = row.objectCode || ''
+  itemForm.objectName = row.objectName || ''
+  itemForm.enabled = false
+  itemForm.version = row.version ?? 0
+  await saveCustomItem()
+}
+
 async function saveDimension() {
   if (actionLoading.value) {
     return
@@ -118,6 +206,9 @@ async function saveDimension() {
       idempotencyKey: createGlIdempotencyKey('gl-aux-save'),
     }
     if (selectedDimension.value && dimensionForm.version > 0) {
+      if (dimensionFormIsSystem.value) {
+        throw new Error('系统维度不可非法维护')
+      }
       await glApi.auxDimensions.update(selectedDimension.value.id, payload)
     } else {
       await glApi.auxDimensions.create(payload)
@@ -172,6 +263,7 @@ onMounted(loadRecords)
       <el-alert type="info" title="客户、供应商、项目候选不受主列表分页限制，按维度接口独立查询。" :closable="false" />
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
+      <el-alert v-if="actionMessage" type="success" :title="actionMessage" :closable="false" />
       <el-alert v-if="loading" type="info" title="辅助核算加载中" :closable="false" />
     </template>
 
@@ -202,20 +294,36 @@ onMounted(loadRecords)
     />
     <el-drawer v-model="candidateDrawerVisible" title="辅助候选详情" size="min(720px, 92vw)" :teleported="false">
       <el-alert type="info" title="候选池独立查询，已选辅助项按对象编码与名称回显。" :closable="false" />
+      <el-alert v-if="!selectedDimensionIsCustom" type="warning" title="系统维度不可维护自定义项目，仅允许查看真实业务候选。" :closable="false" />
       <el-form class="query-form" inline>
         <el-form-item label="候选关键词">
           <el-input v-model="candidateKeyword" name="gl-aux-candidate-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
         <el-form-item>
           <el-button data-test="search-aux-candidates" type="primary" @click="searchCandidates">查询候选</el-button>
+          <el-button
+            v-if="selectedDimensionIsCustom"
+            data-test="create-custom-aux-item"
+            type="primary"
+            @click="openCreateItem"
+          >
+            新增自定义项目
+          </el-button>
         </el-form-item>
       </el-form>
       <div class="table-scroll">
         <el-table :data="candidates" empty-text="暂无候选，请调整筛选或检查权限">
           <el-table-column prop="objectCode" label="候选编码" min-width="140" />
           <el-table-column prop="objectName" label="候选名称" min-width="180" show-overflow-tooltip />
+          <el-table-column label="启用" min-width="90"><template #default="{ row }">{{ row.enabled === false ? '停用' : '启用' }}</template></el-table-column>
           <el-table-column label="权限状态" min-width="140">
             <template #default="{ row }">{{ row.restricted ? (row.restrictedReason || '无权查看候选') : '可选' }}</template>
+          </el-table-column>
+          <el-table-column v-if="selectedDimensionIsCustom" label="操作" fixed="right" min-width="150">
+            <template #default="{ row }">
+              <el-button data-test="edit-custom-aux-item" text :disabled="!glActionAllowed(row, 'UPDATE')" @click="openEditItem(row)">编辑</el-button>
+              <el-button data-test="disable-custom-aux-item" text type="danger" :disabled="!glActionAllowed(row, 'DISABLE')" @click="disableCustomItem(row)">停用</el-button>
+            </template>
           </el-table-column>
         </el-table>
       </div>
@@ -223,19 +331,37 @@ onMounted(loadRecords)
     </el-drawer>
     <el-drawer v-model="dimensionDialogVisible" title="自定义维度维护" size="min(720px, 92vw)" :teleported="false">
       <el-form label-position="top">
+        <el-alert v-if="dimensionFormIsSystem" type="warning" title="系统维度不可非法维护，请只查看候选或停用受允许的自定义项目。" :closable="false" />
         <el-form-item label="维度编码">
-          <el-input v-model="dimensionForm.code" name="gl-aux-code" clearable placeholder="REGION" />
+          <el-input v-model="dimensionForm.code" name="gl-aux-code" clearable placeholder="REGION" :disabled="dimensionFormIsSystem" />
         </el-form-item>
         <el-form-item label="维度名称">
-          <el-input v-model="dimensionForm.name" name="gl-aux-name" clearable placeholder="区域" />
+          <el-input v-model="dimensionForm.name" name="gl-aux-name" clearable placeholder="区域" :disabled="dimensionFormIsSystem" />
         </el-form-item>
         <el-form-item label="启用状态">
-          <el-switch v-model="dimensionForm.enabled" active-text="启用" inactive-text="停用" />
+          <el-switch v-model="dimensionForm.enabled" active-text="启用" inactive-text="停用" :disabled="dimensionFormIsSystem" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dimensionDialogVisible = false">取消</el-button>
-        <el-button data-test="save-aux-dimension" type="primary" :loading="actionLoading" @click="saveDimension">保存</el-button>
+        <el-button data-test="save-aux-dimension" type="primary" :loading="actionLoading" :disabled="dimensionFormIsSystem" @click="saveDimension">保存</el-button>
+      </template>
+    </el-drawer>
+    <el-drawer v-model="itemDialogVisible" title="自定义辅助项目" size="min(720px, 92vw)" :teleported="false">
+      <el-form label-position="top">
+        <el-form-item label="项目编码">
+          <el-input v-model="itemForm.objectCode" name="gl-aux-item-code" clearable placeholder="REG-001" />
+        </el-form-item>
+        <el-form-item label="项目名称">
+          <el-input v-model="itemForm.objectName" name="gl-aux-item-name" clearable placeholder="华东区" />
+        </el-form-item>
+        <el-form-item label="启用状态">
+          <el-switch v-model="itemForm.enabled" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="itemDialogVisible = false">取消</el-button>
+        <el-button data-test="save-custom-aux-item" type="primary" :loading="actionLoading" @click="saveCustomItem">保存</el-button>
       </template>
     </el-drawer>
   </MasterDataTableView>

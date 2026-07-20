@@ -47,6 +47,21 @@
   align-items: center;
 }
 
+.gl-aux-cell,
+.gl-aux-requirement-list {
+  display: grid;
+  gap: 8px;
+}
+
+.gl-aux-editor,
+.gl-aux-requirement-row {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
 .gl-query-actions {
   display: flex;
   gap: 8px;

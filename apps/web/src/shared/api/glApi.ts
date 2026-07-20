@@ -21,6 +21,19 @@ export interface GlVersionedActionPayload {
   reason?: string
 }
 
+export interface GlRulePreviewContext {
+  sourceType?: string
+  sourceId?: ResourceId
+  sourceNo?: string
+  sourceVersion?: number | string
+  sourceFingerprint?: string
+  businessDate?: string
+}
+
+export interface GlPostingRuleValidatePayload extends GlVersionedActionPayload {
+  sourceContext?: GlRulePreviewContext
+}
+
 export interface GlPeriodCreatePayload {
   periodCode: string
   version?: number
@@ -85,9 +98,14 @@ export interface GlAuxDimensionRecord extends GlActionState {
 }
 
 export interface GlAuxCandidateRecord {
+  id?: ResourceId | null
   objectId?: ResourceId | null
   objectCode?: string | null
   objectName?: string | null
+  enabled?: boolean | null
+  version?: number | null
+  allowedActions?: string[] | null
+  actionDisabledReasons?: Record<string, string> | null
   restricted?: boolean | null
   restrictedReason?: string | null
 }
@@ -170,7 +188,6 @@ export interface GlVoucherRecord extends GlActionState {
 export interface GlVoucherPayload {
   voucherType: GlVoucherType | string
   voucherDate: string
-  accountingPeriodCode?: string
   summary: string
   lines: GlVoucherLineRecord[]
   idempotencyKey: string
@@ -284,9 +301,9 @@ function normalizeAccount(record: RawRecord): GlAccountRecord {
   const normalized = normalizeActionState(record)
   return {
     ...normalized,
-    id: normalized.id as ResourceId,
-    code: String(normalized.code ?? ''),
-    name: String(normalized.name ?? ''),
+    id: (normalized.id ?? normalized.accountId) as ResourceId,
+    code: String(normalized.code ?? normalized.accountCode ?? ''),
+    name: String(normalized.name ?? normalized.accountName ?? ''),
     category: String(normalized.category ?? ''),
     level: Number(normalized.level ?? normalized.levelNo ?? 0),
     parentId: normalized.parentId as ResourceId | null | undefined,
@@ -298,6 +315,24 @@ function normalizeAccount(record: RawRecord): GlAccountRecord {
       ? normalized.auxiliaryRequirements.map(normalizeAuxRequirement)
       : [],
     referenced: normalized.referenced as boolean | null | undefined,
+  }
+}
+
+function normalizeAuxCandidate(record: RawRecord): GlAuxCandidateRecord {
+  const normalized = normalizeActionState(record)
+  const objectId = normalized.objectId ?? normalized.id
+  return {
+    ...normalized,
+    id: normalized.id as ResourceId | null | undefined,
+    objectId: objectId as ResourceId | null | undefined,
+    objectCode: (normalized.objectCode ?? normalized.code) as string | null | undefined,
+    objectName: (normalized.objectName ?? normalized.name) as string | null | undefined,
+    enabled: normalized.enabled as boolean | null | undefined,
+    version: normalized.version,
+    allowedActions: normalized.allowedActions,
+    actionDisabledReasons: normalized.actionDisabledReasons,
+    restricted: normalized.restricted as boolean | null | undefined,
+    restrictedReason: normalized.restrictedReason as string | null | undefined,
   }
 }
 
@@ -412,6 +447,9 @@ function normalizeGlResponse(path: string, data: unknown): unknown {
   if (path.includes('/accounts') && !path.includes('/account-balances')) {
     return normalizeRecordOrPage(data, normalizeAccount)
   }
+  if (path.includes('/aux-dimensions') && (path.includes('/candidates') || path.includes('/items'))) {
+    return normalizeRecordOrPage(data, normalizeAuxCandidate)
+  }
   if (path.includes('/aux-dimensions')) {
     return normalizeRecordOrPage(data, normalizeAuxDimension)
   }
@@ -486,6 +524,7 @@ export function createGlApi(options: GlApiOptions = {}) {
     },
     accounts: {
       list: (params: GlPageParams) => get<PageResult<GlAccountRecord>>('/api/admin/gl/accounts', params),
+      candidates: (params: Record<string, unknown>) => get<PageResult<GlAccountRecord>>('/api/admin/gl/accounts/candidates', params),
       get: (id: ResourceId) => get<GlAccountRecord>(`/api/admin/gl/accounts/${encodeId(id)}`),
       create: (payload: object) => write<GlAccountRecord>('POST', '/api/admin/gl/accounts', payload),
       update: (id: ResourceId, payload: object) => write<GlAccountRecord>('PUT', `/api/admin/gl/accounts/${encodeId(id)}`, payload),
@@ -506,7 +545,7 @@ export function createGlApi(options: GlApiOptions = {}) {
       create: (payload: object) => write<GlPostingRuleRecord>('POST', '/api/admin/gl/posting-rules', payload),
       newVersion: (id: ResourceId, payload: GlVersionedActionPayload) => write<GlPostingRuleRecord>('POST', `/api/admin/gl/posting-rules/${encodeId(id)}/new-version`, payload),
       update: (id: ResourceId, payload: object) => write<GlPostingRuleRecord>('PUT', `/api/admin/gl/posting-rules/${encodeId(id)}`, payload),
-      validate: (id: ResourceId, payload: GlVersionedActionPayload) => write<GlPostingRuleRecord>('POST', `/api/admin/gl/posting-rules/${encodeId(id)}/validate`, payload),
+      validate: (id: ResourceId, payload: GlPostingRuleValidatePayload) => write<GlPostingRuleRecord>('POST', `/api/admin/gl/posting-rules/${encodeId(id)}/validate`, payload),
       activate: (id: ResourceId, payload: GlVersionedActionPayload) => write<GlPostingRuleRecord>('POST', `/api/admin/gl/posting-rules/${encodeId(id)}/activate`, payload),
       disable: (id: ResourceId, payload: GlVersionedActionPayload) => write<GlPostingRuleRecord>('POST', `/api/admin/gl/posting-rules/${encodeId(id)}/disable`, payload),
     },

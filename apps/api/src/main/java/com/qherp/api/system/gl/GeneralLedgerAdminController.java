@@ -64,8 +64,10 @@ public class GeneralLedgerAdminController {
 
 	@GetMapping("/accounts")
 	public ApiResponse<PageResponse<Map<String, Object>>> accounts(@RequestParam(required = false) String keyword,
+			@RequestParam(required = false) String category, @RequestParam(required = false) Boolean enabled,
+			@RequestParam(required = false) Boolean postable,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize) {
-		return ApiResponse.ok(this.setupService.accounts(keyword, page, pageSize));
+		return ApiResponse.ok(this.setupService.accounts(keyword, category, enabled, postable, page, pageSize));
 	}
 
 	@GetMapping("/accounts/candidates")
@@ -102,8 +104,9 @@ public class GeneralLedgerAdminController {
 
 	@GetMapping("/aux-dimensions")
 	public ApiResponse<PageResponse<Map<String, Object>>> auxDimensions(
+			@RequestParam(required = false) String keyword, @RequestParam(required = false) Boolean enabled,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize) {
-		return ApiResponse.ok(this.setupService.auxDimensions(page, pageSize));
+		return ApiResponse.ok(this.setupService.auxDimensions(keyword, enabled, page, pageSize));
 	}
 
 	@PostMapping("/aux-dimensions")
@@ -152,9 +155,11 @@ public class GeneralLedgerAdminController {
 	}
 
 	@GetMapping("/posting-rules")
-	public ApiResponse<PageResponse<Map<String, Object>>> postingRules(@RequestParam(defaultValue = "1") int page,
+	public ApiResponse<PageResponse<Map<String, Object>>> postingRules(
+			@RequestParam(required = false) String sourceType, @RequestParam(required = false) String status,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize) {
-		return ApiResponse.ok(this.setupService.postingRules(page, pageSize));
+		return ApiResponse.ok(this.setupService.postingRules(sourceType, status, page, pageSize));
 	}
 
 	@GetMapping("/posting-rules/{id}")
@@ -207,9 +212,10 @@ public class GeneralLedgerAdminController {
 	@GetMapping("/vouchers")
 	public ApiResponse<PageResponse<Map<String, Object>>> vouchers(@RequestParam(required = false) String status,
 			@RequestParam(required = false) String keyword, @RequestParam(required = false) String sourceType,
-			@RequestParam(required = false) Long sourceId, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(required = false) Long sourceId, @RequestParam(required = false) String periodCode,
+			@RequestParam(defaultValue = "1") int page,
 			@RequestParam(defaultValue = "10") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.vouchers(status, keyword, sourceType, sourceId, page, pageSize,
+		return ApiResponse.ok(this.queryService.vouchers(status, keyword, sourceType, sourceId, periodCode, page, pageSize,
 				currentUser));
 	}
 
@@ -278,31 +284,35 @@ public class GeneralLedgerAdminController {
 	@GetMapping("/ledgers/general")
 	public ApiResponse<PageResponse<Map<String, Object>>> generalLedger(@RequestParam String periodCode,
 			@RequestParam(required = false) String accountKeyword, @RequestParam(required = false) Long accountId,
-			@RequestParam(required = false) Integer level,
+			@RequestParam(required = false) String accountCodeFrom,
+			@RequestParam(required = false) String accountCodeTo,
+			@RequestParam(required = false) Integer level, @RequestParam(required = false) String auxiliaryKeyword,
+			@RequestParam(required = false) String sourceType,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.generalLedger(periodCode, accountKeyword, accountId, level, page,
-				pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.generalLedger(periodCode, accountKeyword, accountId, accountCodeFrom,
+				accountCodeTo, level, auxiliaryKeyword, sourceType, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/ledgers/detail")
 	public ApiResponse<PageResponse<Map<String, Object>>> detailLedger(@RequestParam String periodCode,
 			@RequestParam(required = false) String voucherNo, @RequestParam(required = false) String accountKeyword,
 			@RequestParam(required = false) Long accountId, @RequestParam(required = false) String sourceType,
-			@RequestParam(required = false) Long sourceId, @RequestParam(defaultValue = "1") int page,
-			@RequestParam(defaultValue = "10") int pageSize, @AuthenticationPrincipal CurrentUser currentUser) {
+			@RequestParam(required = false) Long sourceId, @RequestParam(required = false) String auxiliaryKeyword,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
+			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.queryService.detailLedger(periodCode, voucherNo, accountKeyword, accountId,
-				sourceType, sourceId, page, pageSize, currentUser));
+				sourceType, sourceId, auxiliaryKeyword, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/account-balances")
 	public ApiResponse<PageResponse<Map<String, Object>>> accountBalances(@RequestParam String periodCode,
 			@RequestParam(required = false) String accountKeyword, @RequestParam(required = false) Long accountId,
-			@RequestParam(required = false) Integer level,
+			@RequestParam(required = false) Integer level, @RequestParam(required = false) String auxiliaryKeyword,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "10") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.queryService.accountBalances(periodCode, accountKeyword, accountId, level, page,
-				pageSize, currentUser));
+		return ApiResponse.ok(this.queryService.accountBalances(periodCode, accountKeyword, accountId, level,
+				auxiliaryKeyword, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/trial-balance")

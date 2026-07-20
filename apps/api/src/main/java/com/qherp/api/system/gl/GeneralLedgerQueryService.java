@@ -27,15 +27,26 @@ public class GeneralLedgerQueryService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> vouchers(String status, String keyword, String sourceType, Long sourceId,
-			int page, int pageSize, CurrentUser user) {
+			String periodCode, int page, int pageSize, CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		boolean sourceVisible = GeneralLedgerSupport.hasPermission(user, "gl:source:view");
 		if (!sourceVisible && ((sourceType != null && !sourceType.isBlank()) || sourceId != null)) {
 			return PageResponse.of(List.of(), safePage, safeSize, 0);
 		}
 		List<Object> args = new ArrayList<>();
 		String where = "where true";
+		if (periodCode != null && !periodCode.isBlank()) {
+			where += """
+					 and exists (
+						select 1
+						from gl_accounting_period p
+						where p.id = v.accounting_period_id
+						and p.period_code = ?
+					 )
+					""";
+			args.add(periodCode.trim());
+		}
 		if (status != null && !status.isBlank()) {
 			where += " and v.status = ?";
 			args.add(status.trim().toUpperCase());
@@ -155,17 +166,31 @@ public class GeneralLedgerQueryService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> generalLedger(String periodCode, String accountKeyword, Long accountId,
-			Integer level, int page, int pageSize, CurrentUser user) {
+			String accountCodeFrom, String accountCodeTo, Integer level, String auxiliaryKeyword, String sourceType,
+			int page, int pageSize, CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		PeriodRow period = period(periodCode);
 		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
+		boolean sourceVisible = GeneralLedgerSupport.hasPermission(user, "gl:source:view");
+		if (!sourceVisible && ((auxiliaryKeyword != null && !auxiliaryKeyword.isBlank())
+				|| (sourceType != null && !sourceType.isBlank()))) {
+			return PageResponse.of(List.of(), safePage, safeSize, 0);
+		}
 		List<Object> args = new ArrayList<>();
 		args.add(period.id());
 		String where = "where t.period_id = ?";
 		if (accountId != null) {
 			where += " and a.id = ?";
 			args.add(accountId);
+		}
+		if (accountCodeFrom != null && !accountCodeFrom.isBlank()) {
+			where += " and a.code >= ?";
+			args.add(accountCodeFrom.trim());
+		}
+		if (accountCodeTo != null && !accountCodeTo.isBlank()) {
+			where += " and a.code <= ?";
+			args.add(accountCodeTo.trim());
 		}
 		if (level != null) {
 			where += " and a.level_no = ?";
@@ -176,6 +201,30 @@ public class GeneralLedgerQueryService {
 			String like = "%" + accountKeyword.trim() + "%";
 			args.add(like);
 			args.add(like);
+		}
+		if (auxiliaryKeyword != null && !auxiliaryKeyword.isBlank()) {
+			where += """
+					 and exists (
+						select 1
+						from gl_ledger_entry e
+						where e.period_id = t.period_id
+						and e.account_id = t.account_id
+						and e.auxiliary_snapshot::text ilike ?
+					 )
+					""";
+			args.add("%" + auxiliaryKeyword.trim() + "%");
+		}
+		if (sourceType != null && !sourceType.isBlank()) {
+			where += """
+					 and exists (
+						select 1
+						from gl_ledger_entry e
+						where e.period_id = t.period_id
+						and e.account_id = t.account_id
+						and e.source_type = ?
+					 )
+					""";
+			args.add(sourceType.trim().toUpperCase());
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -203,13 +252,15 @@ public class GeneralLedgerQueryService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> detailLedger(String periodCode, String voucherNo, String accountKeyword,
-			Long accountId, String sourceType, Long sourceId, int page, int pageSize, CurrentUser user) {
+			Long accountId, String sourceType, Long sourceId, String auxiliaryKeyword, int page, int pageSize,
+			CurrentUser user) {
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		PeriodRow period = period(periodCode);
 		boolean amountVisible = GeneralLedgerSupport.hasPermission(user, "gl:amount:view");
 		boolean sourceVisible = GeneralLedgerSupport.hasPermission(user, "gl:source:view");
-		if (!sourceVisible && ((sourceType != null && !sourceType.isBlank()) || sourceId != null)) {
+		if (!sourceVisible && ((sourceType != null && !sourceType.isBlank()) || sourceId != null
+				|| (auxiliaryKeyword != null && !auxiliaryKeyword.isBlank()))) {
 			return PageResponse.of(List.of(), safePage, safeSize, 0);
 		}
 		List<Object> args = new ArrayList<>();
@@ -236,6 +287,10 @@ public class GeneralLedgerQueryService {
 		if (sourceId != null) {
 			where += " and e.source_id = ?";
 			args.add(sourceId);
+		}
+		if (auxiliaryKeyword != null && !auxiliaryKeyword.isBlank()) {
+			where += " and e.auxiliary_snapshot::text ilike ?";
+			args.add("%" + auxiliaryKeyword.trim() + "%");
 		}
 		Long total = this.jdbcTemplate.queryForObject("""
 				select count(*)
@@ -292,8 +347,9 @@ public class GeneralLedgerQueryService {
 
 	@Transactional(readOnly = true)
 	public PageResponse<Map<String, Object>> accountBalances(String periodCode, String accountKeyword, Long accountId,
-			Integer level, int page, int pageSize, CurrentUser user) {
-		return generalLedger(periodCode, accountKeyword, accountId, level, page, pageSize, user);
+			Integer level, String auxiliaryKeyword, int page, int pageSize, CurrentUser user) {
+		return generalLedger(periodCode, accountKeyword, accountId, null, null, level, auxiliaryKeyword, null, page,
+				pageSize, user);
 	}
 
 	@Transactional(readOnly = true)
@@ -331,7 +387,8 @@ public class GeneralLedgerQueryService {
 			.add(current.debit().subtract(current.credit()).abs())
 			.add(ending.debit().subtract(ending.credit()).abs());
 		result.put("differenceAmount", amountVisible ? GeneralLedgerSupport.decimal(difference) : null);
-		result.put("differences", amountVisible ? trialDifferences(period.id()) : List.of());
+		result.put("groupDifferences", amountVisible ? trialGroupDifferences(period.id()) : List.of());
+		result.put("differences", amountVisible ? trialAccountDifferences(period.id()) : List.of());
 		result.put("restricted", !amountVisible);
 		result.put("restrictedReason", amountVisible ? null : "无权查看GL金额");
 		return result;
@@ -344,7 +401,7 @@ public class GeneralLedgerQueryService {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
 		}
 		int safePage = GeneralLedgerSupport.page(page);
-		int safeSize = GeneralLedgerSupport.limit(pageSize);
+		int safeSize = GeneralLedgerSupport.listLimit(pageSize);
 		List<Object> args = new ArrayList<>();
 		String where = "where true";
 		if (sourceType != null && !sourceType.isBlank()) {
@@ -548,7 +605,7 @@ public class GeneralLedgerQueryService {
 		return item;
 	}
 
-	private List<Map<String, Object>> trialDifferences(Long periodId) {
+	private List<Map<String, Object>> trialGroupDifferences(Long periodId) {
 		List<Map<String, Object>> result = new ArrayList<>();
 		addTrialDifference(result, "OPENING", "期初", aggregateLedger(periodId, true));
 		addTrialDifference(result, "PERIOD", "本期", aggregateLedger(periodId, false));
@@ -557,6 +614,36 @@ public class GeneralLedgerQueryService {
 		addTrialDifference(result, "ENDING", "期末", new BalanceGroup(opening.debit().add(current.debit()),
 				opening.credit().add(current.credit())));
 		return result;
+	}
+
+	private List<Map<String, Object>> trialAccountDifferences(Long periodId) {
+		return this.jdbcTemplate.query("""
+				select a.code as account_code, a.name as account_name,
+				       abs(t.opening_debit - t.opening_credit) as opening_difference,
+				       abs(t.period_debit - t.period_credit) as period_difference,
+				       abs(t.ending_debit - t.ending_credit) as ending_difference,
+				       abs(t.opening_debit - t.opening_credit)
+				         + abs(t.period_debit - t.period_credit)
+				         + abs(t.ending_debit - t.ending_credit) as difference_amount
+				from gl_account_period_total t
+				join gl_account a on a.id = t.account_id
+				where t.period_id = ?
+				and (
+					t.opening_debit <> t.opening_credit
+					or t.period_debit <> t.period_credit
+					or t.ending_debit <> t.ending_credit
+				)
+				order by a.code
+				""", (rs, rowNum) -> {
+			Map<String, Object> item = GeneralLedgerSupport.map();
+			item.put("accountCode", rs.getString("account_code"));
+			item.put("accountName", rs.getString("account_name"));
+			item.put("openingDifference", GeneralLedgerSupport.decimal(rs.getBigDecimal("opening_difference")));
+			item.put("periodDifference", GeneralLedgerSupport.decimal(rs.getBigDecimal("period_difference")));
+			item.put("endingDifference", GeneralLedgerSupport.decimal(rs.getBigDecimal("ending_difference")));
+			item.put("differenceAmount", GeneralLedgerSupport.decimal(rs.getBigDecimal("difference_amount")));
+			return item;
+		}, periodId);
 	}
 
 	private List<ApiErrorDetail> trialMismatchDetails(Long periodId) {

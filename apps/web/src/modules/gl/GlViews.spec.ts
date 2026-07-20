@@ -20,8 +20,8 @@ import { useConfirmActionMock } from '../../test/setup'
 const glApiMock = vi.hoisted(() => ({
   ledger: { get: vi.fn(), initialize: vi.fn() },
   accountingPeriods: { list: vi.fn(), create: vi.fn() },
-  accounts: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), disable: vi.fn() },
-  auxDimensions: { list: vi.fn(), create: vi.fn(), update: vi.fn(), items: vi.fn(), candidates: vi.fn() },
+  accounts: { list: vi.fn(), candidates: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), disable: vi.fn() },
+  auxDimensions: { list: vi.fn(), create: vi.fn(), update: vi.fn(), items: vi.fn(), createItem: vi.fn(), updateItem: vi.fn(), candidates: vi.fn() },
   postingRules: { list: vi.fn(), get: vi.fn(), create: vi.fn(), newVersion: vi.fn(), update: vi.fn(), validate: vi.fn(), activate: vi.fn(), disable: vi.fn() },
   vouchers: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), fromFinanceDraft: vi.fn(), refreshSource: vi.fn(), submit: vi.fn(), withdraw: vi.fn(), cancel: vi.fn(), createReversal: vi.fn() },
   ledgers: { general: vi.fn(), detail: vi.fn() },
@@ -112,7 +112,7 @@ const accountRecord = {
   enabled: true,
   auxiliaryRequirements: [{ dimensionCode: 'CUSTOMER', dimensionName: '客户', requirement: 'OPTIONAL' }],
   version: 2,
-  allowedActions: ['UPDATE', 'DISABLE'],
+  allowedActions: ['UPDATE'],
   actionDisabledReasons: { DISABLE: '已被凭证使用' },
 }
 
@@ -159,6 +159,40 @@ describe('031 会计核算页面族', () => {
     glApiMock.accountingPeriods.list.mockResolvedValue(page([{ id: 1, periodCode: '2026-07', startDate: '2026-07-01', endDate: '2026-07-31', status: 'OPEN', voucherCount: 2, lastPostedAt: '2026-07-20T10:00:00+08:00' }]))
     glApiMock.accountingPeriods.create.mockResolvedValue({ id: 2, periodCode: '2026-08', startDate: '2026-08-01', endDate: '2026-08-31', status: 'OPEN' })
     glApiMock.accounts.list.mockResolvedValue(page([accountRecord]))
+    glApiMock.accounts.candidates.mockImplementation((params: { keyword?: string; page?: number; pageSize?: number }) => {
+      if (params.keyword === '后段科目') {
+        return Promise.resolve({
+          items: [{
+            id: 160,
+            code: '6602.160',
+            name: '第 160 项费用',
+            category: 'PROFIT_LOSS',
+            level: 2,
+            parentId: 6602,
+            isLeaf: true,
+            postable: true,
+            balanceDirection: 'DEBIT',
+            enabled: true,
+            auxiliaryRequirements: [{ dimensionCode: 'PROJECT', dimensionName: '项目', requirement: 'REQUIRED' }],
+            version: 1,
+            allowedActions: ['UPDATE'],
+            actionDisabledReasons: {},
+          }],
+          total: 25,
+          page: params.page ?? 1,
+          pageSize: params.pageSize ?? 20,
+        })
+      }
+      return Promise.resolve({
+        items: [
+          { ...accountRecord, auxiliaryRequirements: [{ dimensionCode: 'CUSTOMER', dimensionName: '客户', requirement: 'REQUIRED' }] },
+          { ...accountRecord, id: 6001, code: '6001', name: '主营业务收入', category: 'PROFIT_LOSS', auxiliaryRequirements: [] },
+        ],
+        total: 25,
+        page: params.page ?? 1,
+        pageSize: params.pageSize ?? 20,
+      })
+    })
     glApiMock.accounts.get.mockResolvedValue(accountRecord)
     glApiMock.accounts.create.mockResolvedValue({ ...accountRecord, id: 100201, code: '100201', name: '新增下级科目', parentId: 1002, level: 2 })
     glApiMock.accounts.update.mockResolvedValue({ ...accountRecord, name: '银行存款-更新' })
@@ -173,8 +207,9 @@ describe('031 会计核算页面族', () => {
     })
     glApiMock.auxDimensions.create.mockResolvedValue({ id: 2, code: 'REGION', name: '区域', dimensionType: 'CUSTOM', enabled: true, itemCount: 0, version: 1, allowedActions: ['UPDATE'], actionDisabledReasons: {} })
     glApiMock.auxDimensions.update.mockResolvedValue({ id: 1, code: 'CUSTOMER', name: '客户', dimensionType: 'SYSTEM', enabled: false, itemCount: 3, version: 2, allowedActions: [], actionDisabledReasons: { UPDATE: '系统维度不可改编码' } })
-    glApiMock.postingRules.list.mockResolvedValue(page([{ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', lineCount: 3, allowedActions: ['DISABLE'], actionDisabledReasons: {} }]))
+    glApiMock.postingRules.list.mockResolvedValue(page([{ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', lineCount: 3, allowedActions: ['VALIDATE', 'DISABLE'], actionDisabledReasons: {} }]))
     glApiMock.postingRules.get.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', lineCount: 3, allowedActions: ['NEW_VERSION', 'VALIDATE', 'DISABLE'], actionDisabledReasons: {}, lines: [{ factCode: 'SALES_RECEIVABLE', direction: 'DEBIT', accountCode: '1122' }] })
+    glApiMock.postingRules.create.mockResolvedValue({ id: 3, sourceType: 'PURCHASE_INVOICE', sourceVariant: 'STANDARD', versionNo: 1, status: 'DRAFT', validationStatus: 'PENDING', lineCount: 0, allowedActions: ['UPDATE', 'VALIDATE'], actionDisabledReasons: {} })
     glApiMock.postingRules.newVersion.mockResolvedValue({ id: 2, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 3, status: 'DRAFT', allowedActions: ['UPDATE', 'VALIDATE', 'ACTIVATE'], actionDisabledReasons: {} })
     glApiMock.postingRules.validate.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', validationStatus: 'VALID', allowedActions: ['DISABLE'], actionDisabledReasons: {} })
     glApiMock.postingRules.activate.mockResolvedValue({ id: 1, sourceType: 'SALES_INVOICE', sourceVariant: 'STANDARD', versionNo: 2, status: 'ACTIVE', allowedActions: ['DISABLE'], actionDisabledReasons: {} })
@@ -232,21 +267,25 @@ describe('031 会计核算页面族', () => {
     expect(accounts.wrapper.text()).toContain('新增下级科目')
     await accounts.wrapper.find('input[name="gl-account-code"]').setValue('100201')
     await accounts.wrapper.find('input[name="gl-account-name"]').setValue('新增下级科目')
+    await accounts.wrapper.find('[data-test="add-account-aux-requirement"]').trigger('click')
+    const postableSwitch = accounts.wrapper.findAllComponents({ name: 'ElSwitch' })
+      .find((component) => component.attributes('data-test') === 'gl-account-postable')
+    postableSwitch?.vm.$emit('update:modelValue', false)
+    await flushPromises()
     await accounts.wrapper.find('[data-test="save-gl-account"]').trigger('click')
     await flushPromises()
     expect(glApiMock.accounts.create).toHaveBeenCalledWith(expect.objectContaining({
       parentId: 1002,
       code: '100201',
       name: '新增下级科目',
+      postable: false,
+      auxiliaryRequirements: [expect.objectContaining({ dimensionCode: 'CUSTOMER', requirementType: 'REQUIRED' })],
       idempotencyKey: expect.stringContaining('gl-account-save-'),
     }))
+    expect(accounts.wrapper.find('[data-test="disable-gl-account"]').attributes('disabled')).toBeDefined()
     await accounts.wrapper.find('[data-test="disable-gl-account"]').trigger('click')
     await flushPromises()
-    expect(glApiMock.accounts.disable).toHaveBeenCalledWith(1002, expect.objectContaining({
-      version: 2,
-      reason: expect.stringContaining('停用'),
-      idempotencyKey: expect.stringContaining('gl-account-disable-'),
-    }))
+    expect(glApiMock.accounts.disable).not.toHaveBeenCalled()
 
     const auxiliaries = await mountGlView(GlAuxiliariesView, '/gl/auxiliaries')
     expect(auxiliaries.wrapper.text()).toContain('辅助核算')
@@ -261,6 +300,7 @@ describe('031 会计核算页面族', () => {
     await flushPromises()
     expect(glApiMock.auxDimensions.candidates).toHaveBeenLastCalledWith('CUSTOMER', expect.objectContaining({ keyword: '后段', page: 1, pageSize: 20 }))
     expect(auxiliaries.wrapper.text()).toContain('第 150 项客户')
+    expect(auxiliaries.wrapper.text()).toContain('系统维度不可维护自定义项目')
     await auxiliaries.wrapper.find('[data-test="create-aux-dimension"]').trigger('click')
     await flushPromises()
     await auxiliaries.wrapper.find('input[name="gl-aux-code"]').setValue('REGION')
@@ -273,20 +313,51 @@ describe('031 会计核算页面族', () => {
       idempotencyKey: expect.stringContaining('gl-aux-save-'),
     }))
 
+    glApiMock.auxDimensions.list.mockResolvedValueOnce(page([{ id: 2, code: 'REGION', name: '区域', dimensionType: 'CUSTOM', enabled: true, itemCount: 1, version: 1, allowedActions: ['UPDATE'], actionDisabledReasons: {} }]))
+    glApiMock.auxDimensions.items.mockResolvedValueOnce(page([{ objectId: 501, objectCode: 'REG-501', objectName: '华东区', enabled: true, version: 1, allowedActions: ['UPDATE', 'DISABLE'], actionDisabledReasons: {} }]))
+    glApiMock.auxDimensions.createItem.mockResolvedValueOnce({ objectId: 502, objectCode: 'REG-502', objectName: '华南区', enabled: true, version: 1 })
+    const customAuxiliaries = await mountGlView(GlAuxiliariesView, '/gl/auxiliaries')
+    await customAuxiliaries.wrapper.find('[data-test="view-aux-candidates"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.auxDimensions.items).toHaveBeenCalledWith(2, expect.objectContaining({ page: 1, pageSize: 20 }))
+    await customAuxiliaries.wrapper.find('[data-test="create-custom-aux-item"]').trigger('click')
+    await customAuxiliaries.wrapper.find('input[name="gl-aux-item-code"]').setValue('REG-502')
+    await customAuxiliaries.wrapper.find('input[name="gl-aux-item-name"]').setValue('华南区')
+    await customAuxiliaries.wrapper.find('[data-test="save-custom-aux-item"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.auxDimensions.createItem).toHaveBeenCalledWith(2, expect.objectContaining({
+      objectCode: 'REG-502',
+      objectName: '华南区',
+      idempotencyKey: expect.stringContaining('gl-aux-item-save-'),
+    }))
+
     const rules = await mountGlView(GlPostingRulesView, '/gl/posting-rules')
     expect(rules.wrapper.text()).toContain('自动制证规则')
     expect(rules.wrapper.text()).toContain('SALES_INVOICE')
     expect(rules.wrapper.text()).toContain('预览不制证')
+    await rules.wrapper.find('[data-test="create-posting-rule"]').trigger('click')
+    await rules.wrapper.find('input[name="gl-rule-source-type"]').setValue('PURCHASE_INVOICE')
+    await rules.wrapper.find('input[name="gl-rule-source-variant"]').setValue('STANDARD')
+    await rules.wrapper.find('[data-test="save-posting-rule"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.postingRules.create).toHaveBeenCalledWith(expect.objectContaining({
+      sourceType: 'PURCHASE_INVOICE',
+      sourceVariant: 'STANDARD',
+      idempotencyKey: expect.stringContaining('gl-rule-save-'),
+    }))
     await rules.wrapper.find('[data-test="view-posting-rule"]').trigger('click')
     await flushPromises()
     expect(glApiMock.postingRules.get).toHaveBeenCalledWith(1)
     expect(rules.wrapper.text()).toContain('SALES_RECEIVABLE')
+    await rules.wrapper.find('input[name="gl-rule-preview-source-no"]').setValue('SI-001')
     await rules.wrapper.find('[data-test="validate-posting-rule"]').trigger('click')
     await flushPromises()
     expect(glApiMock.postingRules.validate).toHaveBeenCalledWith(1, expect.objectContaining({
       version: 2,
+      sourceContext: expect.objectContaining({ sourceNo: 'SI-001' }),
       idempotencyKey: expect.stringContaining('gl-rule-validate-'),
     }))
+    expect(rules.wrapper.text()).toContain('预览校验完成')
   })
 
   it('凭证工作台展示正式凭证边界、allowedActions、returnTo 和受限金额语义', async () => {
@@ -345,29 +416,51 @@ describe('031 会计核算页面族', () => {
     expect(wrapper.text()).toContain('贷方合计')
     expect(wrapper.text()).toContain('差额')
     expect(wrapper.text()).toContain('会计期间')
-    expect(glApiMock.accounts.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 20 }))
+    expect(wrapper.find('input[name="gl-accounting-period-code"]').exists()).toBe(false)
+    expect(glApiMock.accounts.candidates).toHaveBeenCalledWith(expect.objectContaining({
+      selectedIds: expect.stringContaining('1002'),
+      page: 1,
+      pageSize: 20,
+    }))
+    expect(glApiMock.accounts.list).not.toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 20, postable: true }))
     await wrapper.find('input[name="gl-account-candidate-search"]').setValue('后段科目')
     await flushPromises()
-    expect(glApiMock.accounts.list).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: '后段科目', page: 1, pageSize: 20 }))
+    expect(glApiMock.accounts.candidates).toHaveBeenLastCalledWith(expect.objectContaining({ keyword: '后段科目', page: 1, pageSize: 20 }))
+    await wrapper.find('[data-test="load-more-account-candidates"]').trigger('click')
+    await flushPromises()
+    expect(glApiMock.accounts.candidates).toHaveBeenCalledWith(expect.objectContaining({ page: 2, pageSize: 20 }))
     expect(wrapper.find('[data-test="add-gl-voucher-line"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="remove-gl-voucher-line"]').exists()).toBe(true)
     expect(wrapper.find('input[name="gl-line-account-1"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('1002 银行存款')
-    expect(wrapper.text()).toContain('客户 可选')
+    expect(wrapper.text()).toContain('客户 必填')
+    expect(wrapper.text()).not.toContain('待选择')
+    expect(glApiMock.auxDimensions.candidates).toHaveBeenCalledWith('CUSTOMER', expect.objectContaining({ page: 1, pageSize: 20 }))
+    const customerSelect = wrapper.findAllComponents({ name: 'ElSelect' })
+      .find((component) => component.attributes('data-test') === 'select-gl-line-aux-CUSTOMER-1')
+    customerSelect?.vm.$emit('update:modelValue', 88)
+    await flushPromises()
     expect(wrapper.find('[data-test="gl-voucher-lines-table"]').exists()).toBe(true)
     expect(wrapper.find('.table-scroll').exists()).toBe(true)
 
     const datePicker = wrapper.findComponent({ name: 'ElDatePicker' })
     datePicker.vm.$emit('update:modelValue', null)
     await flushPromises()
+    expect(wrapper.text()).toContain('请先选择凭证日期')
+    expect(wrapper.find('[data-test="save-gl-voucher"]').attributes('disabled')).toBeDefined()
+    datePicker.vm.$emit('update:modelValue', '2026-07-20')
+    await flushPromises()
     await wrapper.find('[data-test="save-gl-voucher"]').trigger('click')
     await flushPromises()
 
     expect(glApiMock.vouchers.create).toHaveBeenCalledWith(expect.objectContaining({
-      accountingPeriodCode: '2026-07',
-      voucherDate: '',
+      voucherDate: '2026-07-20',
       lines: expect.arrayContaining([
-        expect.objectContaining({ debitAmount: '100.00', creditAmount: '0.00' }),
+        expect.objectContaining({
+          debitAmount: '100.00',
+          creditAmount: '0.00',
+          auxiliaryItems: [expect.objectContaining({ dimensionCode: 'CUSTOMER', objectId: 88, objectName: '齐辉客户' })],
+        }),
         expect.objectContaining({ debitAmount: '0.00', creditAmount: '100.00' }),
       ]),
     }))
