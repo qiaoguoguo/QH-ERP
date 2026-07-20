@@ -116,7 +116,7 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
-$expectedV34Checksum = "1689626005"
+$expectedV34Checksum = "-629066235"
 $expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
@@ -1066,7 +1066,10 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("financial-close:period:close") `
         -and $SqlText.Contains("financial-close:period:reopen") `
         -and $SqlText.Contains("financial-close:bank-sensitive:view") `
-        -and $SqlText.Contains("FINANCIAL_CLOSE_SYSTEM_ADMIN_PERMISSIONS_V34"))
+        -and $SqlText.Contains("FINANCIAL_CLOSE_SYSTEM_ADMIN_PERMISSIONS_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_STATEMENT_PERMISSION_ROUTE_V34") `
+        -and $SqlText.Contains("/gl/bank-statements") `
+        -and $SqlText.Contains("/api/admin/bank-statement-lines/**"))
     $approvalAndAccountRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_REOPEN_APPROVAL_V34") `
         -and $SqlText.Contains("FINANCIAL_PERIOD_REOPEN") `
         -and $SqlText.Contains("financial-close:period:reopen") `
@@ -1108,7 +1111,10 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("difference_amount <> 0") `
         -and (-not $SqlText.Contains($legacyAdjustedBankBalanceColumn)) `
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC") `
-        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_DISCLAIMER_V34"))
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_DISCLAIMER_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC") `
+        -and $SqlText.Contains("FIN_TAX_PAYMENT_RECORD") `
+        -and $SqlText.Contains("result_resource_type = 'FIN_TAX_PAYMENT_RECORD'"))
     $bankRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_BANK_ACCOUNT_1002_SUBTREE_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_EXCEPTION_TYPES_V34") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_FORMULA_DYNAMIC") `

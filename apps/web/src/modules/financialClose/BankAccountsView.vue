@@ -123,7 +123,7 @@ function openEditDialog(record: BankAccountRecord) {
     accountType: record.accountType || 'BASIC',
     bankName: record.bankName || '',
     currency: 'CNY',
-    glAccountId: record.glAccountCode || '100201',
+    glAccountId: String(record.glAccountId ?? ''),
     openedOn: '2026-01-01',
     accountNo: '',
     version: record.version,
@@ -170,14 +170,9 @@ async function saveBankAccount() {
   }
 }
 
-function changePage(page: number) {
+function changePagination(page: number, pageSize: number) {
   pagination.page = page
-  void loadRecords()
-}
-
-function changePageSize(pageSize: number) {
   pagination.pageSize = pageSize
-  pagination.page = 1
   void loadRecords()
 }
 
@@ -253,10 +248,9 @@ onMounted(loadRecords)
       layout="total, sizes, prev, pager, next"
       :page-sizes="financialClosePageSizes"
       :total="pagination.total"
-      :page-size="pagination.pageSize"
-      :current-page="pagination.page"
-      @current-change="changePage"
-      @size-change="changePageSize"
+      v-model:page-size="pagination.pageSize"
+      v-model:current-page="pagination.page"
+      @change="changePagination"
     />
     <el-dialog v-model="accountDialogVisible" title="银行账户维护" width="min(640px, 92vw)">
       <el-form label-position="top">
@@ -272,7 +266,15 @@ onMounted(loadRecords)
         </el-form-item>
         <el-form-item label="开户行"><el-input v-model="accountForm.bankName" name="bank-account-bank-name" /></el-form-item>
         <el-form-item label="绑定总账科目 ID"><el-input v-model="accountForm.glAccountId" name="bank-account-gl-account-id" /></el-form-item>
-        <el-form-item label="启用日期"><el-input v-model="accountForm.openedOn" name="bank-account-opened-on" /></el-form-item>
+        <el-form-item label="启用日期">
+          <el-date-picker
+            v-model="accountForm.openedOn"
+            name="bank-account-opened-on"
+            type="date"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+          />
+        </el-form-item>
         <el-form-item label="账号">
           <el-input v-model="accountForm.accountNo" name="bank-account-no" placeholder="仅提交后端生成不可恢复指纹；编辑可留空" />
         </el-form-item>

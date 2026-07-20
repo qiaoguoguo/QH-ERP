@@ -87,12 +87,31 @@ public class GeneralLedgerSetupService {
 		args.add(GeneralLedgerSupport.offset(safePage, safeSize));
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select p.id, p.period_code, p.start_date, p.end_date, p.status, p.version,
-				       l.code as ledger_code, count(v.id) as voucher_count, max(v.posted_at) as last_posted_at
+				       l.code as ledger_code, count(v.id) as voucher_count, max(v.posted_at) as last_posted_at,
+				       c.id as latest_financial_close_check_run_id,
+				       c.status as latest_financial_close_check_status,
+				       r.id as financial_close_run_id,
+				       r.status as financial_close_status
 				from gl_accounting_period p
 				join gl_ledger l on l.id = p.ledger_id
 				left join gl_voucher v on v.accounting_period_id = p.id and v.status = 'POSTED'
+				left join lateral (
+					select id, status
+					from fin_close_check_run
+					where period_id = p.id
+					order by created_at desc, id desc
+					limit 1
+				) c on true
+				left join lateral (
+					select id, status
+					from fin_close_run
+					where period_id = p.id
+					and status = 'CLOSED'
+					order by close_version desc, id desc
+					limit 1
+				) r on true
 				%s
-				group by p.id, l.code
+				group by p.id, l.code, c.id, c.status, r.id, r.status
 				order by p.period_code desc
 				limit ? offset ?
 				""".formatted(where), (rs, rowNum) -> {
@@ -106,6 +125,11 @@ public class GeneralLedgerSetupService {
 			item.put("voucherCount", rs.getLong("voucher_count"));
 			item.put("lastPostedAt", rs.getObject("last_posted_at", OffsetDateTime.class));
 			item.put("version", rs.getLong("version"));
+			putFinancialClosePeriodFields(item,
+					GeneralLedgerSupport.nullableLong(rs, "latest_financial_close_check_run_id"),
+					rs.getString("latest_financial_close_check_status"),
+					GeneralLedgerSupport.nullableLong(rs, "financial_close_run_id"),
+					rs.getString("financial_close_status"));
 			item.put("allowedActions", List.of());
 			item.put("actionDisabledReasons", Map.of());
 			return item;
@@ -867,8 +891,27 @@ public class GeneralLedgerSetupService {
 
 	private Map<String, Object> period(Long id) {
 		return this.jdbcTemplate.query("""
-				select p.id, p.period_code, p.start_date, p.end_date, p.status, p.version
+				select p.id, p.period_code, p.start_date, p.end_date, p.status, p.version,
+				       c.id as latest_financial_close_check_run_id,
+				       c.status as latest_financial_close_check_status,
+				       r.id as financial_close_run_id,
+				       r.status as financial_close_status
 				from gl_accounting_period p
+				left join lateral (
+					select id, status
+					from fin_close_check_run
+					where period_id = p.id
+					order by created_at desc, id desc
+					limit 1
+				) c on true
+				left join lateral (
+					select id, status
+					from fin_close_run
+					where period_id = p.id
+					and status = 'CLOSED'
+					order by close_version desc, id desc
+					limit 1
+				) r on true
 				where p.id = ?
 				""", (rs, rowNum) -> {
 			Map<String, Object> item = GeneralLedgerSupport.map();
@@ -878,8 +921,38 @@ public class GeneralLedgerSetupService {
 			item.put("endDate", rs.getObject("end_date", LocalDate.class));
 			item.put("status", rs.getString("status"));
 			item.put("version", rs.getLong("version"));
+			putFinancialClosePeriodFields(item,
+					GeneralLedgerSupport.nullableLong(rs, "latest_financial_close_check_run_id"),
+					rs.getString("latest_financial_close_check_status"),
+					GeneralLedgerSupport.nullableLong(rs, "financial_close_run_id"),
+					rs.getString("financial_close_status"));
 			return item;
 		}, id).stream().findFirst().orElseThrow(() -> new BusinessException(ApiErrorCode.GL_PERIOD_NOT_FOUND));
+	}
+
+	private void putFinancialClosePeriodFields(Map<String, Object> item, Long latestCheckRunId,
+			String latestCheckStatus, Long closeRunId, String closeStatus) {
+		String financialCloseStatus = closeStatus != null ? closeStatus : latestCheckStatus;
+		item.put("financialCloseStatus", financialCloseStatus == null ? "NOT_CHECKED" : financialCloseStatus);
+		item.put("latestFinancialCloseCheckRunId", latestCheckRunId);
+		item.put("latestCheckRunId", latestCheckRunId);
+		item.put("financialCloseRunId", closeRunId);
+		item.put("financialCloseDisabledReason", financialCloseDisabledReason(latestCheckRunId,
+				latestCheckStatus, closeStatus));
+	}
+
+	private String financialCloseDisabledReason(Long latestCheckRunId, String latestCheckStatus,
+			String closeStatus) {
+		if ("CLOSED".equals(closeStatus)) {
+			return "财务期间已关闭";
+		}
+		if (latestCheckRunId == null) {
+			return "尚未执行财务结账检查";
+		}
+		if ("READY".equals(latestCheckStatus)) {
+			return null;
+		}
+		return "最新财务结账检查未通过";
 	}
 
 	private Map<String, Object> periodByCode(String periodCode) {

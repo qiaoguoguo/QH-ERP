@@ -130,7 +130,8 @@ public class FinancialCloseQueryService {
 			FinancialCloseSupport.putVisibility(map, currentUser);
 			return map;
 		}, id).stream().findFirst().orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY));
-		result.put("items", checkItems(id, currentUser));
+		List<Map<String, Object>> checkItems = checkItems(id, currentUser);
+		result.put("checkItems", checkItems);
 		boolean closeAllowed = "READY".equals(result.get("status"))
 				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:close");
 		result.put("allowedActions", closeAllowed ? List.of("CLOSE") : List.of());
@@ -250,6 +251,7 @@ public class FinancialCloseQueryService {
 		map.put("endDate", rs.getObject("end_date", LocalDate.class));
 		map.put("status", rs.getString("status"));
 		map.put("latestCheckId", FinancialCloseSupport.nullableLong(rs, "latest_check_id"));
+		map.put("latestCheckRunId", FinancialCloseSupport.nullableLong(rs, "latest_check_id"));
 		map.put("latestCheckStatus", rs.getString("latest_check_status"));
 		map.put("latestCheckFingerprint", FinancialCloseSupport.sourceVisible(currentUser)
 				? rs.getString("latest_check_fingerprint") : null);

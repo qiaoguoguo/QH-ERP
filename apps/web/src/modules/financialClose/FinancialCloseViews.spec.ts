@@ -219,6 +219,7 @@ describe('032 财务结账前端页面族', () => {
       accountType: 'BASIC',
       bankName: '中国银行',
       accountNoMasked: '****1234',
+      glAccountId: 100201,
       glAccountCode: '1002.01',
       enabled: true,
       amountVisible: true,
@@ -465,6 +466,13 @@ describe('032 财务结账前端页面族', () => {
     await flushPromises()
     expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
     expect(router.currentRoute.value.query.returnTo).toBe('/gl/profit-loss-carryforward')
+
+    wrapper.findComponent({ name: 'ElPagination' }).vm.$emit('change', 2, 10)
+    await flushPromises()
+    expect(financialCloseApiMock.profitLoss.list).toHaveBeenCalledWith(7, expect.objectContaining({
+      page: 2,
+      pageSize: 10,
+    }))
   })
 
   it('银行账户页面以表单完成新增、编辑、停用，并按权限和 allowedActions 失败关闭', async () => {
@@ -500,9 +508,11 @@ describe('032 财务结账前端页面族', () => {
     await flushPromises()
     expect(financialCloseApiMock.bankAccounts.update).toHaveBeenCalledWith(101, expect.objectContaining({
       accountName: '基本户-更新',
+      glAccountId: 100201,
       version: 3,
       idempotencyKey: expect.stringContaining('bank-account-save-'),
     }))
+    expect(JSON.stringify(financialCloseApiMock.bankAccounts.update.mock.calls[0][1])).not.toContain('1002.01')
 
     await accounts.wrapper.find('[data-test="disable-bank-account"]').trigger('click')
     await flushPromises()
@@ -594,8 +604,10 @@ describe('032 财务结账前端页面族', () => {
     await statementSelections[1].setValue(true)
     await ledgerSelections[0].setValue(true)
     await ledgerSelections[1].setValue(true)
-    await reconciliation.wrapper.findAll('input[name="bank-match-amount"]')[0].setValue('60.00')
-    await reconciliation.wrapper.findAll('input[name="bank-match-amount"]')[1].setValue('60.00')
+    await flushPromises()
+    const matchDetailAmounts = reconciliation.wrapper.findAll('input[name="bank-match-detail-amount"]')
+    await matchDetailAmounts[0].setValue('60.00')
+    await matchDetailAmounts[1].setValue('60.00')
     await reconciliation.wrapper.find('[data-test="create-bank-match"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.bankReconciliations.createMatch).toHaveBeenCalledWith(201, expect.objectContaining({
@@ -614,6 +626,9 @@ describe('032 财务结账前端页面族', () => {
       idempotencyKey: expect.stringContaining('bank-reconciliation-cancel-match-'),
     }))
 
+    await reconciliation.wrapper.findAll('[data-test="select-statement-candidate"]')[0].setValue(true)
+    await reconciliation.wrapper.findAll('[data-test="select-ledger-candidate"]')[0].setValue(true)
+    await flushPromises()
     for (const exceptionType of ['BANK_ONLY_CREDIT', 'BANK_ONLY_DEBIT', 'BOOK_ONLY_DEBIT', 'BOOK_ONLY_CREDIT']) {
       await reconciliation.wrapper.find(`[data-test="classify-bank-exception-${exceptionType}"]`).trigger('click')
       await flushPromises()
@@ -646,6 +661,86 @@ describe('032 财务结账前端页面族', () => {
       reason: expect.stringContaining('重开对账'),
       idempotencyKey: expect.stringContaining('bank-reconciliation-reopen-'),
     }))
+  })
+
+  it('银行匹配明细支持 1 对多和多对 1，并拒绝累计匹配金额超过任一侧剩余金额', async () => {
+    financialCloseApiMock.bankReconciliations.candidates.mockResolvedValue({
+      statementLines: [
+        { id: 151, statementNo: 'BS-202607-001', amount: '120.00', remainingAmount: '120.00' },
+        { id: 152, statementNo: 'BS-202607-002', amount: '60.00', remainingAmount: '60.00' },
+      ],
+      ledgerEntries: [
+        { id: 301, voucherNo: '记-202607-0001', amount: '60.00', remainingAmount: '60.00' },
+        { id: 302, voucherNo: '记-202607-0002', amount: '60.00', remainingAmount: '60.00' },
+        { id: 303, voucherNo: '记-202607-0003', amount: '120.00', remainingAmount: '120.00' },
+      ],
+      page: 1,
+      pageSize: 20,
+      total: 3,
+    })
+    const oneToMany = await mountFinancialCloseView(BankReconciliationView, '/gl/bank-reconciliation')
+
+    await oneToMany.wrapper.findAll('[data-test="select-statement-candidate"]')[0].setValue(true)
+    await oneToMany.wrapper.findAll('[data-test="select-ledger-candidate"]')[0].setValue(true)
+    await oneToMany.wrapper.findAll('[data-test="select-ledger-candidate"]')[1].setValue(true)
+    await flushPromises()
+    const oneToManyAmounts = oneToMany.wrapper.findAll('input[name="bank-match-detail-amount"]')
+    expect(oneToManyAmounts).toHaveLength(2)
+    await oneToManyAmounts[0].setValue('60.00')
+    await oneToManyAmounts[1].setValue('60.00')
+    await oneToMany.wrapper.find('[data-test="create-bank-match"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.createMatch).toHaveBeenLastCalledWith(201, expect.objectContaining({
+      matches: [
+        { statementLineId: 151, ledgerEntryId: 301, amount: '60.00' },
+        { statementLineId: 151, ledgerEntryId: 302, amount: '60.00' },
+      ],
+    }))
+
+    financialCloseApiMock.bankReconciliations.createMatch.mockClear()
+    const manyToOne = await mountFinancialCloseView(BankReconciliationView, '/gl/bank-reconciliation')
+    await manyToOne.wrapper.findAll('[data-test="select-statement-candidate"]')[0].setValue(true)
+    await manyToOne.wrapper.findAll('[data-test="select-statement-candidate"]')[1].setValue(true)
+    await manyToOne.wrapper.findAll('[data-test="select-ledger-candidate"]')[2].setValue(true)
+    await flushPromises()
+    const manyToOneAmounts = manyToOne.wrapper.findAll('input[name="bank-match-detail-amount"]')
+    expect(manyToOneAmounts).toHaveLength(2)
+    await manyToOneAmounts[0].setValue('120.01')
+    await flushPromises()
+    expect(manyToOne.wrapper.find('[data-test="create-bank-match"]').attributes('disabled')).toBeDefined()
+    expect(manyToOne.wrapper.text()).toContain('银行流水 BS-202607-001 匹配金额超过剩余金额')
+    await manyToOneAmounts[0].setValue('60.00')
+    await manyToOneAmounts[1].setValue('60.00')
+    await manyToOne.wrapper.find('[data-test="create-bank-match"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.createMatch).toHaveBeenLastCalledWith(201, expect.objectContaining({
+      matches: [
+        { statementLineId: 151, ledgerEntryId: 303, amount: '60.00' },
+        { statementLineId: 152, ledgerEntryId: 303, amount: '60.00' },
+      ],
+    }))
+  })
+
+  it('银行未达分类必须显式选择正确侧候选，并提交选中对象与真实剩余金额', async () => {
+    const reconciliation = await mountFinancialCloseView(BankReconciliationView, '/gl/bank-reconciliation')
+
+    expect(reconciliation.wrapper.find('[data-test="classify-bank-exception-BANK_ONLY_CREDIT"]').attributes('disabled')).toBeDefined()
+    expect(reconciliation.wrapper.find('[data-test="classify-bank-exception-BOOK_ONLY_DEBIT"]').attributes('disabled')).toBeDefined()
+    expect(reconciliation.wrapper.text()).toContain('请选择银行流水候选')
+    expect(reconciliation.wrapper.text()).toContain('请选择总账分录候选')
+
+    await reconciliation.wrapper.findAll('[data-test="select-ledger-candidate"]')[1].setValue(true)
+    await flushPromises()
+    expect(reconciliation.wrapper.find('[data-test="classify-bank-exception-BANK_ONLY_CREDIT"]').attributes('disabled')).toBeDefined()
+    await reconciliation.wrapper.find('[data-test="classify-bank-exception-BOOK_ONLY_DEBIT"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.createException).toHaveBeenCalledWith(201, expect.objectContaining({
+      exceptionType: 'BOOK_ONLY_DEBIT',
+      statementLineId: null,
+      ledgerEntryId: 302,
+      amount: '60.00',
+    }))
+    expect(JSON.stringify(financialCloseApiMock.bankReconciliations.createException.mock.calls.at(-1)?.[1])).not.toContain('0.20')
   })
 
   it('税务设置页面维护档案、税率和票种，并展示后端真实 DTO 字段', async () => {
@@ -756,6 +851,49 @@ describe('032 财务结账前端页面族', () => {
     expect(readonlySummary.wrapper.find('[data-test="confirm-tax-summary"]').attributes('disabled')).toBeDefined()
     expect(readonlySummary.wrapper.text()).toContain('已确认不可重新计算')
     expect(readonlySummary.wrapper.text()).toContain('无生成凭证权限')
+  })
+
+  it('税额汇总只消费后端 allowedActions 和 actionDisabledReasons，缺失动作字段时失败关闭', async () => {
+    financialCloseApiMock.taxSummaries.list.mockResolvedValueOnce(page([
+      {
+        id: 504,
+        periodCode: '2026-07',
+        taxType: 'VAT',
+        status: 'CALCULATED',
+        payableTaxAmount: '380.00',
+        amountVisible: true,
+        sourceVisible: true,
+        bankSensitiveVisible: false,
+        version: 3,
+      },
+      {
+        id: 505,
+        periodCode: '2026-07',
+        taxType: 'VAT',
+        status: 'CALCULATED',
+        payableTaxAmount: '390.00',
+        amountVisible: true,
+        sourceVisible: true,
+        bankSensitiveVisible: false,
+        version: 4,
+        allowedActions: ['CALCULATE'],
+        actionDisabledReasons: { CONFIRM: '后端冻结为不可确认' },
+      },
+    ]))
+    const summary = await mountFinancialCloseView(TaxSummaryView, '/gl/tax-summary')
+    const calculateButtons = summary.wrapper.findAll('[data-test="calculate-tax-summary"]')
+
+    expect(calculateButtons[0].attributes('disabled')).toBeDefined()
+    expect(summary.wrapper.text()).toContain('当前状态不允许操作')
+    expect(calculateButtons[1].attributes('disabled')).toBeUndefined()
+    expect(summary.wrapper.text()).toContain('后端冻结为不可确认')
+
+    await calculateButtons[1].trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxSummaries.calculate).toHaveBeenCalledWith(505, expect.objectContaining({
+      version: 4,
+      idempotencyKey: expect.stringContaining('tax-summary-calculate-'),
+    }))
   })
 
   it('税款台账页面显示权限受控银行脱敏标识，支持登记缴纳和更正', async () => {

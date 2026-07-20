@@ -38,6 +38,15 @@ public class TaxFoundationService {
 	@Transactional
 	public Map<String, Object> upsertCurrentProfile(FinancialCloseModels.TaxProfileRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_PROFILE_UPSERT|"
+				+ profileFingerprint(request));
+		Long existingByKey = idempotentResult("FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE_CURRENT", 0L,
+				key, requestFingerprint, operator);
+		if (existingByKey != null) {
+			return profile(existingByKey, operator);
+		}
 		Long existing = currentProfileId();
 		if (existing == null) {
 			Long id = this.jdbcTemplate.queryForObject("""
@@ -58,6 +67,8 @@ public class TaxFoundationService {
 					amount(request.lossDeduction()), amount(request.prepaidIncomeTax()),
 					request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom(), operator.username(),
 					operator.username());
+			recordIdempotency("FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE_CURRENT", 0L, null, key,
+					requestFingerprint, "FIN_TAX_PROFILE", id, 0L, operator);
 			this.auditService.success(operator, "FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE", id);
 			return profile(id, operator);
 		}
@@ -83,6 +94,10 @@ public class TaxFoundationService {
 				amount(request.lossDeduction()), amount(request.prepaidIncomeTax()),
 				request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom(), operator.username(),
 				OffsetDateTime.now(), existing);
+		Long version = this.jdbcTemplate.queryForObject("select version from fin_tax_profile where id = ?",
+				Long.class, existing);
+		recordIdempotency("FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE_CURRENT", 0L, actualVersion, key,
+				requestFingerprint, "FIN_TAX_PROFILE", existing, version, operator);
 		this.auditService.success(operator, "FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE", existing);
 		return profile(existing, operator);
 	}
@@ -112,11 +127,20 @@ public class TaxFoundationService {
 
 	@Transactional
 	public Map<String, Object> createRateRule(FinancialCloseModels.TaxRateRuleRequest request, CurrentUser operator) {
+		requireRequest(request);
 		String taxType = normalized(request.taxType(), "VAT");
 		String rateCode = FinancialCloseSupport.requiredText(request.rateCode(), ApiErrorCode.VALIDATION_ERROR)
 			.toUpperCase();
 		BigDecimal rateValue = rate(request.rateValue());
 		LocalDate effectiveFrom = request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom();
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_RATE_RULE_UPSERT|" + taxType + "|"
+				+ rateCode + "|" + decimalKey(rateValue) + "|" + effectiveFrom + "|" + request.effectiveTo());
+		Long existingByKey = idempotentResult("FIN_TAX_RATE_RULE_UPSERT", "FIN_TAX_RATE_RULE", null, key,
+				requestFingerprint, operator);
+		if (existingByKey != null) {
+			return rateRule(existingByKey);
+		}
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into fin_tax_rate_rule (
 					tax_type, rate_code, rate_value, effective_from, effective_to, status, created_by, updated_by
@@ -132,6 +156,10 @@ public class TaxFoundationService {
 				returning id
 				""", Long.class, taxType, rateCode, rateValue, effectiveFrom, request.effectiveTo(),
 				operator.username(), operator.username());
+		Long version = this.jdbcTemplate.queryForObject("select version from fin_tax_rate_rule where id = ?",
+				Long.class, id);
+		recordIdempotency("FIN_TAX_RATE_RULE_UPSERT", "FIN_TAX_RATE_RULE", null, null, key,
+				requestFingerprint, "FIN_TAX_RATE_RULE", id, version, operator);
 		this.auditService.success(operator, "FIN_TAX_RATE_RULE_UPSERT", "FIN_TAX_RATE_RULE", id);
 		return rateRule(id);
 	}
@@ -153,11 +181,21 @@ public class TaxFoundationService {
 	@Transactional
 	public Map<String, Object> createInvoiceType(FinancialCloseModels.TaxInvoiceTypeRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
 		String code = FinancialCloseSupport.requiredText(request.code(), ApiErrorCode.VALIDATION_ERROR).toUpperCase();
 		String direction = FinancialCloseSupport.requiredText(request.direction(), ApiErrorCode.VALIDATION_ERROR)
 			.toUpperCase();
 		if (!List.of("OUTPUT", "INPUT").contains(direction)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		String name = FinancialCloseSupport.requiredText(request.name(), ApiErrorCode.VALIDATION_ERROR);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_INVOICE_TYPE_UPSERT|" + code + "|"
+				+ name + "|" + direction + "|" + Boolean.TRUE.equals(request.deductible()));
+		Long existingByKey = idempotentResult("FIN_TAX_INVOICE_TYPE_UPSERT", "FIN_TAX_INVOICE_TYPE", null,
+				key, requestFingerprint, operator);
+		if (existingByKey != null) {
+			return invoiceType(existingByKey);
 		}
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into fin_tax_invoice_type (
@@ -173,9 +211,12 @@ public class TaxFoundationService {
 				    updated_at = now(),
 				    version = fin_tax_invoice_type.version + 1
 				returning id
-				""", Long.class, code, FinancialCloseSupport.requiredText(request.name(),
-				ApiErrorCode.VALIDATION_ERROR), direction, Boolean.TRUE.equals(request.deductible()),
+				""", Long.class, code, name, direction, Boolean.TRUE.equals(request.deductible()),
 				operator.username(), operator.username());
+		Long version = this.jdbcTemplate.queryForObject("select version from fin_tax_invoice_type where id = ?",
+				Long.class, id);
+		recordIdempotency("FIN_TAX_INVOICE_TYPE_UPSERT", "FIN_TAX_INVOICE_TYPE", null, null, key,
+				requestFingerprint, "FIN_TAX_INVOICE_TYPE", id, version, operator);
 		this.auditService.success(operator, "FIN_TAX_INVOICE_TYPE_UPSERT", "FIN_TAX_INVOICE_TYPE", id);
 		return invoiceType(id);
 	}
@@ -183,10 +224,22 @@ public class TaxFoundationService {
 	@Transactional
 	public Map<String, Object> createSummary(FinancialCloseModels.TaxSummaryCreateRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
 		Period period = periodByCode(request.periodCode());
 		String taxType = normalized(request.taxType(), "VAT");
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_SUMMARY_CREATE|" + period.id()
+				+ "|" + period.periodCode() + "|" + taxType);
+		Long existingByKey = idempotentResult("FIN_TAX_SUMMARY_CREATE", "GL_ACCOUNTING_PERIOD", period.id(),
+				key, requestFingerprint, operator);
+		if (existingByKey != null) {
+			return summary(existingByKey, operator);
+		}
 		Map<String, Object> existing = currentSummary(period.id(), taxType, operator);
 		if (existing != null) {
+			recordIdempotency("FIN_TAX_SUMMARY_CREATE", "GL_ACCOUNTING_PERIOD", period.id(), null, key,
+					requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", ((Number) existing.get("id")).longValue(),
+					((Number) existing.get("version")).longValue(), operator);
 			return existing;
 		}
 		Long id = this.jdbcTemplate.queryForObject("""
@@ -199,6 +252,8 @@ public class TaxFoundationService {
 				""", Long.class, period.id(), period.periodCode(), taxType, sourceFingerprint(period),
 				FinancialCloseSupport.TAX_DISCLAIMER, request.idempotencyKey(), operator.username(),
 				operator.username());
+		recordIdempotency("FIN_TAX_SUMMARY_CREATE", "GL_ACCOUNTING_PERIOD", period.id(), null, key,
+				requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id, 0L, operator);
 		this.auditService.success(operator, "FIN_TAX_SUMMARY_CREATE", "FIN_TAX_PERIOD_SUMMARY", id);
 		return summary(id, operator);
 	}
@@ -206,8 +261,18 @@ public class TaxFoundationService {
 	@Transactional
 	public Map<String, Object> calculateSummary(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_SUMMARY_CALCULATE|" + id + "|"
+				+ request.version());
+		Long existing = idempotentResult("FIN_TAX_SUMMARY_CALCULATE", "FIN_TAX_PERIOD_SUMMARY", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return summary(existing, operator);
+		}
 		SummaryRow row = lockSummary(id);
 		requireMutable(row);
+		requireNoVoucher(row);
 		requireVersion(row.version(), request == null ? null : request.version());
 		Period period = periodById(row.periodId());
 		TaxAmounts amounts = amounts(period, totalAdjustments(id));
@@ -215,19 +280,21 @@ public class TaxFoundationService {
 		this.jdbcTemplate.update("delete from fin_tax_summary_line where summary_id = ?", id);
 		insertTaxLines(id, period);
 		updateSummaryAmounts(id, "CALCULATED", fingerprint, amounts, operator);
+		Map<String, Object> result = summary(id, operator);
+		recordIdempotency("FIN_TAX_SUMMARY_CALCULATE", "FIN_TAX_PERIOD_SUMMARY", id, row.version(), key,
+				requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id, ((Number) result.get("version")).longValue(),
+				operator);
 		this.auditService.success(operator, "FIN_TAX_SUMMARY_CALCULATE", "FIN_TAX_PERIOD_SUMMARY", id);
-		return summary(id, operator);
+		return result;
 	}
 
 	@Transactional
 	public Map<String, Object> adjustSummary(Long id, FinancialCloseModels.TaxAdjustmentRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
 		if (request.summaryId() != null && !request.summaryId().equals(id)) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
-		SummaryRow row = lockSummary(id);
-		requireMutable(row);
-		requireVersion(row.version(), request.version());
 		String type = FinancialCloseSupport.requiredText(request.adjustmentType(), ApiErrorCode.VALIDATION_ERROR)
 			.toUpperCase();
 		if (!List.of("OUTPUT_INCREASE", "OUTPUT_DECREASE", "INPUT_INCREASE", "INPUT_DECREASE").contains(type)) {
@@ -237,28 +304,52 @@ public class TaxFoundationService {
 		if (!FinancialCloseSupport.positive(amount)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_SUMMARY_ADJUST|" + id + "|"
+				+ request.version() + "|" + type + "|" + FinancialCloseSupport.decimal(amount) + "|" + reason);
+		Long existing = idempotentResult("FIN_TAX_SUMMARY_ADJUST", "FIN_TAX_PERIOD_SUMMARY", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return summary(existing, operator);
+		}
+		SummaryRow row = lockSummary(id);
+		requireMutable(row);
+		requireNoVoucher(row);
+		requireVersion(row.version(), request.version());
 		this.jdbcTemplate.update("""
 				insert into fin_tax_adjustment (
 					summary_id, adjustment_type, amount, reason, created_by
 				)
 				values (?, ?, ?, ?, ?)
-				""", id, type, amount,
-				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
-				operator.username());
+				""", id, type, amount, reason, operator.username());
 		Period period = periodById(row.periodId());
 		updateSummaryAmounts(id, row.status(), row.sourceFingerprint(), amounts(period, totalAdjustments(id)),
 				operator);
+		Map<String, Object> result = summary(id, operator);
+		recordIdempotency("FIN_TAX_SUMMARY_ADJUST", "FIN_TAX_PERIOD_SUMMARY", id, row.version(), key,
+				requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id, ((Number) result.get("version")).longValue(),
+				operator);
 		this.auditService.success(operator, "FIN_TAX_SUMMARY_ADJUST", "FIN_TAX_PERIOD_SUMMARY", id);
-		return summary(id, operator);
+		return result;
 	}
 
 	@Transactional
 	public Map<String, Object> confirmSummary(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_SUMMARY_CONFIRM|" + id + "|"
+				+ request.version() + "|" + reason);
+		Long existing = idempotentResult("FIN_TAX_SUMMARY_CONFIRM", "FIN_TAX_PERIOD_SUMMARY", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return summary(existing, operator);
+		}
 		SummaryRow row = lockSummary(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
-		FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		if (!"CALCULATED".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
 		}
@@ -271,23 +362,41 @@ public class TaxFoundationService {
 				set status = 'CONFIRMED', updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", operator.username(), OffsetDateTime.now(), id);
+		Map<String, Object> result = summary(id, operator);
+		recordIdempotency("FIN_TAX_SUMMARY_CONFIRM", "FIN_TAX_PERIOD_SUMMARY", id, row.version(), key,
+				requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id, ((Number) result.get("version")).longValue(),
+				operator);
 		this.auditService.success(operator, "FIN_TAX_SUMMARY_CONFIRM", "FIN_TAX_PERIOD_SUMMARY", id);
-		return summary(id, operator);
+		return result;
 	}
 
 	@Transactional
 	public Map<String, Object> generateVoucherDraft(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		requireRequest(request);
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_SUMMARY_GENERATE_VOUCHER|" + id
+				+ "|" + request.version() + "|" + reason);
+		Long existing = idempotentResult("FIN_TAX_SUMMARY_GENERATE_VOUCHER", "FIN_TAX_PERIOD_SUMMARY", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return summary(existing, operator);
+		}
 		SummaryRow row = lockSummary(id);
 		requireMutable(row);
+		requireNoVoucher(row);
 		requireVersion(row.version(), request == null ? null : request.version());
-		FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		if (!sourceFingerprint(periodById(row.periodId())).equals(row.sourceFingerprint())) {
 			throw new BusinessException(ApiErrorCode.FIN_TAX_SOURCE_CHANGED);
 		}
 		List<GeneralLedgerVoucherService.VoucherLineRequest> lines = voucherLines(row);
 		if (lines.isEmpty()) {
-			return summary(id, operator);
+			Map<String, Object> result = summary(id, operator);
+			recordIdempotency("FIN_TAX_SUMMARY_GENERATE_VOUCHER", "FIN_TAX_PERIOD_SUMMARY", id,
+					row.version(), key, requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id,
+					((Number) result.get("version")).longValue(), operator);
+			return result;
 		}
 		Period period = periodById(row.periodId());
 		Map<String, Object> voucher = this.voucherService.createSystemDraft("TAX_SUMMARY", id,
@@ -298,8 +407,12 @@ public class TaxFoundationService {
 				set voucher_id = ?, updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", ((Number) voucher.get("id")).longValue(), operator.username(), OffsetDateTime.now(), id);
+		Map<String, Object> result = summary(id, operator);
+		recordIdempotency("FIN_TAX_SUMMARY_GENERATE_VOUCHER", "FIN_TAX_PERIOD_SUMMARY", id, row.version(),
+				key, requestFingerprint, "FIN_TAX_PERIOD_SUMMARY", id,
+				((Number) result.get("version")).longValue(), operator);
 		this.auditService.success(operator, "FIN_TAX_SUMMARY_GENERATE_VOUCHER", "FIN_TAX_PERIOD_SUMMARY", id);
-		return summary(id, operator);
+		return result;
 	}
 
 	@Transactional(readOnly = true)
@@ -370,6 +483,15 @@ public class TaxFoundationService {
 
 	@Transactional
 	public Map<String, Object> recordPayment(FinancialCloseModels.TaxPaymentRequest request, CurrentUser operator) {
+		requireRequest(request);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_PAYMENT_RECORD|"
+				+ paymentFingerprint(request));
+		Long existingByKey = idempotentResult("FIN_TAX_PAYMENT_RECORD", "FIN_TAX_PERIOD_SUMMARY",
+				request.summaryId(), key, requestFingerprint, operator);
+		if (existingByKey != null) {
+			return payment(existingByKey, operator);
+		}
 		SummaryRow row = lockSummary(request.summaryId());
 		if (!"CONFIRMED".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
@@ -392,6 +514,8 @@ public class TaxFoundationService {
 				request.voucherId(), request.paymentId(), request.bankAccountId(),
 				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
 				operator.username(), operator.username());
+		recordIdempotency("FIN_TAX_PAYMENT_RECORD", "FIN_TAX_PERIOD_SUMMARY", request.summaryId(), row.version(),
+				key, requestFingerprint, "FIN_TAX_PAYMENT_RECORD", id, 0L, operator);
 		this.auditService.success(operator, "FIN_TAX_PAYMENT_RECORD", "FIN_TAX_PAYMENT_RECORD", id);
 		return payment(id, operator);
 	}
@@ -399,11 +523,21 @@ public class TaxFoundationService {
 	@Transactional
 	public Map<String, Object> correctPayment(Long id, FinancialCloseModels.TaxPaymentCorrectionRequest request,
 			CurrentUser operator) {
-		PaymentRow original = lockPayment(id);
+		requireRequest(request);
 		BigDecimal amount = FinancialCloseSupport.amount(request.amount());
 		if (amount.compareTo(ZERO) == 0) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String key = idempotencyKey(request.idempotencyKey());
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_TAX_PAYMENT_CORRECT|" + id + "|"
+				+ FinancialCloseSupport.decimal(amount) + "|" + reason);
+		Long existingByKey = idempotentResult("FIN_TAX_PAYMENT_CORRECT", "FIN_TAX_PAYMENT_RECORD", id, key,
+				requestFingerprint, operator);
+		if (existingByKey != null) {
+			return payment(existingByKey, operator);
+		}
+		PaymentRow original = lockPayment(id);
 		Long correctionId = this.jdbcTemplate.queryForObject("""
 				insert into fin_tax_payment_record (
 					summary_id, tax_type, payment_date, amount, reason, correction_of_id, status, created_by,
@@ -412,8 +546,9 @@ public class TaxFoundationService {
 				values (?, ?, ?, ?, ?, ?, 'CORRECTED', ?, ?)
 				returning id
 				""", Long.class, original.summaryId(), original.taxType(), LocalDate.now(), amount,
-				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
-				original.id(), operator.username(), operator.username());
+				reason, original.id(), operator.username(), operator.username());
+		recordIdempotency("FIN_TAX_PAYMENT_CORRECT", "FIN_TAX_PAYMENT_RECORD", id, original.version(), key,
+				requestFingerprint, "FIN_TAX_PAYMENT_RECORD", correctionId, 0L, operator);
 		this.auditService.success(operator, "FIN_TAX_PAYMENT_CORRECT", "FIN_TAX_PAYMENT_RECORD", correctionId);
 		return payment(correctionId, operator);
 	}
@@ -664,8 +799,80 @@ public class TaxFoundationService {
 		map.put("voucherId", view.voucherId());
 		FinancialCloseSupport.putVisibility(map, currentUser);
 		map.put("version", view.version());
+		map.put("allowedActions", summaryActions(view, stale, currentUser));
+		map.put("actionDisabledReasons", summaryDisabledReasons(view, stale, currentUser));
 		map.put("lines", summaryLines(view.id(), amountVisible, sourceVisible));
 		return map;
+	}
+
+	private List<String> summaryActions(SummaryView view, boolean stale, CurrentUser currentUser) {
+		boolean current = view.currentFlag() && !stale;
+		boolean hasVoucher = view.voucherId() != null;
+		List<String> actions = new ArrayList<>();
+		if (current && !hasVoucher && List.of("DRAFT", "CALCULATED").contains(view.status())
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:tax-summary:calculate")) {
+			actions.add("CALCULATE");
+			actions.add("ADJUST");
+		}
+		if (current && "CALCULATED".equals(view.status())
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:tax-summary:confirm")) {
+			actions.add("CONFIRM");
+		}
+		if (current && !hasVoucher && "CALCULATED".equals(view.status())
+				&& FinancialCloseSupport.hasPermission(currentUser,
+						"financial-close:tax-summary:generate-voucher")) {
+			actions.add("GENERATE_VOUCHER");
+		}
+		return actions;
+	}
+
+	private Map<String, String> summaryDisabledReasons(SummaryView view, boolean stale, CurrentUser currentUser) {
+		Map<String, String> reasons = new java.util.LinkedHashMap<>();
+		putTaxSummaryDisabledReason(reasons, "CALCULATE",
+				taxSummaryDisabledReason(view, stale, currentUser, "financial-close:tax-summary:calculate",
+						true, false));
+		putTaxSummaryDisabledReason(reasons, "ADJUST",
+				taxSummaryDisabledReason(view, stale, currentUser, "financial-close:tax-summary:calculate",
+						true, false));
+		putTaxSummaryDisabledReason(reasons, "CONFIRM",
+				taxSummaryDisabledReason(view, stale, currentUser, "financial-close:tax-summary:confirm",
+						false, true));
+		putTaxSummaryDisabledReason(reasons, "GENERATE_VOUCHER",
+				taxSummaryDisabledReason(view, stale, currentUser,
+						"financial-close:tax-summary:generate-voucher", true, true));
+		return reasons;
+	}
+
+	private void putTaxSummaryDisabledReason(Map<String, String> reasons, String action, String reason) {
+		if (reason != null) {
+			reasons.put(action, reason);
+		}
+	}
+
+	private String taxSummaryDisabledReason(SummaryView view, boolean stale, CurrentUser currentUser,
+			String permission, boolean mutableRequired, boolean calculatedRequired) {
+		if (!FinancialCloseSupport.hasPermission(currentUser, permission)) {
+			return "无权执行税务汇总动作";
+		}
+		if (stale) {
+			return "来源已变化，请创建新版本";
+		}
+		if (!view.currentFlag()) {
+			return "已存在更新版本";
+		}
+		if (mutableRequired && view.voucherId() != null) {
+			return "已有凭证草稿，禁止再次修改或生成";
+		}
+		if (mutableRequired && "CONFIRMED".equals(view.status())) {
+			return "已确认税务汇总不可修改";
+		}
+		if (calculatedRequired && !"CALCULATED".equals(view.status())) {
+			return "仅已计算税务汇总可执行";
+		}
+		if (!calculatedRequired && !List.of("DRAFT", "CALCULATED").contains(view.status())) {
+			return "当前税务汇总状态不可执行";
+		}
+		return null;
 	}
 
 	private boolean isStale(SummaryView view) {
@@ -970,6 +1177,91 @@ public class TaxFoundationService {
 		if ("CONFIRMED".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
+	}
+
+	private void requireNoVoucher(SummaryRow row) {
+		if (row.voucherId() != null) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+	}
+
+	private void requireRequest(Object request) {
+		if (request == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private String idempotencyKey(String idempotencyKey) {
+		String key = FinancialCloseSupport.requiredText(idempotencyKey, ApiErrorCode.VALIDATION_ERROR);
+		if (key.length() > 120) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		return key;
+	}
+
+	private Long idempotentResult(String action, String resourceType, Long resourceId, String key,
+			String requestFingerprint, CurrentUser operator) {
+		return this.jdbcTemplate.query("""
+				select request_fingerprint, result_resource_id
+				from fin_close_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and coalesce(resource_id, 0) = coalesce(?, 0)
+				and idempotency_key = ?
+				""", (rs, rowNum) -> {
+			if (!requestFingerprint.equals(rs.getString("request_fingerprint"))) {
+				throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+			}
+			return rs.getLong("result_resource_id");
+		}, operator.id(), action, resourceType, resourceId, key).stream().findFirst().orElse(null);
+	}
+
+	private void recordIdempotency(String action, String resourceType, Long resourceId, Long resourceVersion,
+			String key, String requestFingerprint, String resultResourceType, Long resultResourceId,
+			Long resultVersion, CurrentUser operator) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into fin_close_action_idempotency (
+						operator_user_id, operator_username, action, resource_type, resource_id, resource_version,
+						idempotency_key, request_fingerprint, result_resource_type, result_resource_id,
+						result_version
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), operator.username(), action, resourceType, resourceId, resourceVersion,
+					key, requestFingerprint, resultResourceType, resultResourceId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			idempotentResult(action, resourceType, resourceId, key, requestFingerprint, operator);
+		}
+	}
+
+	private String profileFingerprint(FinancialCloseModels.TaxProfileRequest request) {
+		LocalDate effectiveFrom = request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom();
+		return normalized(request.taxpayerType(), "GENERAL") + "|" + FinancialCloseSupport.requiredText(
+				request.creditCode(), ApiErrorCode.VALIDATION_ERROR) + "|" + FinancialCloseSupport.text(
+						request.taxAuthority()) + "|" + normalized(request.vatPeriodicity(), "MONTHLY") + "|"
+				+ decimalKey(rate(request.incomeTaxRate())) + "|" + decimalKey(rate(request.urbanMaintenanceRate()))
+				+ "|" + decimalKey(rate(request.educationSurchargeRate())) + "|"
+				+ decimalKey(rate(request.localEducationSurchargeRate())) + "|"
+				+ FinancialCloseSupport.decimal(amount(request.incomeAdjustmentIncrease())) + "|"
+				+ FinancialCloseSupport.decimal(amount(request.incomeAdjustmentDecrease())) + "|"
+				+ FinancialCloseSupport.decimal(amount(request.lossDeduction())) + "|"
+				+ FinancialCloseSupport.decimal(amount(request.prepaidIncomeTax())) + "|" + effectiveFrom + "|"
+				+ request.version();
+	}
+
+	private String paymentFingerprint(FinancialCloseModels.TaxPaymentRequest request) {
+		return request.summaryId() + "|" + normalized(request.taxType(), "") + "|" + request.paymentDate() + "|"
+				+ FinancialCloseSupport.decimal(FinancialCloseSupport.amount(request.amount())) + "|"
+				+ FinancialCloseSupport.text(request.paymentMethod()) + "|"
+				+ FinancialCloseSupport.text(request.referenceNo()) + "|" + request.voucherId() + "|"
+				+ request.paymentId() + "|" + request.bankAccountId() + "|"
+				+ FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+	}
+
+	private String decimalKey(BigDecimal value) {
+		return value == null ? "0" : value.stripTrailingZeros().toPlainString();
 	}
 
 	private record Period(Long id, String periodCode, LocalDate startDate, LocalDate endDate) {

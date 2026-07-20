@@ -72,6 +72,22 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "TAX_VOUCHERS_POSTED",
 				"PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
 		assertThat(check.get("closeVersion").intValue()).isZero();
+		JsonNode checkedPeriod = data(get("/api/admin/financial-closes/periods/" + periodId, admin));
+		assertThat(checkedPeriod.get("latestCheckRunId").longValue()).isEqualTo(check.get("id").longValue());
+		JsonNode checkDetail = data(get("/api/admin/financial-closes/check-runs/" + check.get("id").longValue(),
+				admin));
+		assertThat(checkDetail.has("checkItems")).isTrue();
+		assertThat(recursiveValues(checkDetail.get("checkItems"), "checkCode")).containsExactly(
+				"PREVIOUS_PERIOD_CLOSED", "BUSINESS_PERIOD_CLOSED", "NO_INCOMPLETE_VOUCHERS",
+				"TRIAL_BALANCE_BALANCED", "BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED",
+				"TAX_VOUCHERS_POSTED", "PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
+		JsonNode glPeriods = data(get("/api/admin/gl/accounting-periods?periodCode=2026-07&page=1&pageSize=10",
+				admin));
+		JsonNode glPeriod = itemById(glPeriods.get("items"), periodId);
+		assertThat(glPeriod.get("financialCloseStatus").asText()).isEqualTo("BLOCKED");
+		assertThat(glPeriod.get("latestFinancialCloseCheckRunId").longValue())
+			.isEqualTo(check.get("id").longValue());
+		assertThat(glPeriod.get("financialCloseDisabledReason").asText()).contains("财务结账检查未通过");
 
 		AuthenticatedSession restricted = createUserAndLogin("032-restricted-", "032_RESTRICTED_",
 				List.of("financial-close:period:view"));
@@ -97,6 +113,8 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 		JsonNode bankAccount = data(get("/api/admin/bank-accounts/" + bankAccountId, admin));
 		assertThat(bankAccount.get("bankSensitiveVisible").booleanValue()).isTrue();
 		assertThat(bankAccount.has("accountNo")).isFalse();
+		assertThat(bankAccount.get("glAccountId").longValue()).isEqualTo(accountId("1002"));
+		assertThat(bankAccount.get("glAccountCode").asText()).isEqualTo("1002");
 		assertThat(bankAccount.get("accountLast4").asText()).isEqualTo("0321");
 		assertThat(bankAccount.get("accountMasked").asText()).contains("0321");
 
@@ -315,6 +333,11 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 		assertTaxSummaryAmountsMasked(itemById(summaries.get("items"), summary.get("id").longValue()));
 		JsonNode detail = data(get("/api/admin/tax-summaries/" + summary.get("id").longValue(), taxViewer));
 		assertTaxSummaryAmountsMasked(detail);
+		assertThat(textValues(detail.get("allowedActions"))).isEmpty();
+		assertThat(detail.get("actionDisabledReasons").get("CALCULATE").asText()).contains("无权");
+		assertThat(detail.get("actionDisabledReasons").get("ADJUST").asText()).contains("无权");
+		assertThat(detail.get("actionDisabledReasons").get("CONFIRM").asText()).contains("无权");
+		assertThat(detail.get("actionDisabledReasons").get("GENERATE_VOUCHER").asText()).contains("无权");
 		JsonNode payments = data(get("/api/admin/tax-payments?page=1&pageSize=50", taxViewer));
 		assertTaxPaymentAmountsMasked(itemById(payments.get("items"), paymentId));
 	}

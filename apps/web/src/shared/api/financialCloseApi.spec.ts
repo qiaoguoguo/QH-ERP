@@ -358,4 +358,65 @@ describe('financialCloseApi', () => {
       body: JSON.stringify({ version: 5, adjustmentType: 'VAT_INCREASE', amount: '1.00', reason: '补充调整', idempotencyKey: 'tax-adjust-key' }),
     }))
   })
+
+  it('以冻结追溯字段为主并兼容旧检查字段，银行账户保留真实科目主键', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 7,
+          periodCode: '2026-07',
+          status: 'OPEN',
+          closeStatus: 'READY',
+          latestCheckId: 71,
+          version: 2,
+          allowedActions: ['CHECK'],
+          actionDisabledReasons: {},
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        id: 71,
+        periodCode: '2026-07',
+        status: 'READY',
+        items: [{ code: 'NO_INCOMPLETE_VOUCHERS', status: 'PASSED', conclusion: '无未完成凭证' }],
+        version: 3,
+        allowedActions: ['CLOSE'],
+        actionDisabledReasons: {},
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 101,
+          accountName: '基本户',
+          glAccountId: 100201,
+          glAccountCode: '1002.01',
+          version: 4,
+          allowedActions: ['UPDATE'],
+          actionDisabledReasons: {},
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+
+    const api = createFinancialCloseApi({ fetcher })
+
+    await expect(api.periods.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        latestCheckRunId: 71,
+        latestCheckId: 71,
+      })],
+    })
+    await expect(api.checkRuns.get(71)).resolves.toMatchObject({
+      checkItems: [expect.objectContaining({ code: 'NO_INCOMPLETE_VOUCHERS' })],
+      items: [expect.objectContaining({ code: 'NO_INCOMPLETE_VOUCHERS' })],
+    })
+    await expect(api.bankAccounts.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        glAccountId: 100201,
+        glAccountCode: '1002.01',
+      })],
+    })
+  })
 })

@@ -89,14 +89,9 @@ function resetSearch() {
   void loadRecords()
 }
 
-function changePage(page: number) {
+function changePagination(page: number, pageSize: number) {
   pagination.page = page
-  void loadRecords()
-}
-
-function changePageSize(pageSize: number) {
   pagination.pageSize = pageSize
-  pagination.page = 1
   void loadRecords()
 }
 
@@ -179,10 +174,9 @@ onMounted(loadRecords)
       layout="total, sizes, prev, pager, next"
       :page-sizes="financialClosePageSizes"
       :total="pagination.total"
-      :page-size="pagination.pageSize"
-      :current-page="pagination.page"
-      @current-change="changePage"
-      @size-change="changePageSize"
+      v-model:page-size="pagination.pageSize"
+      v-model:current-page="pagination.page"
+      @change="changePagination"
     />
   </MasterDataTableView>
 </template>

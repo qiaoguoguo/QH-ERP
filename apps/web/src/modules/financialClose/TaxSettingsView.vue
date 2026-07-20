@@ -227,7 +227,15 @@ onMounted(loadRecords)
         </el-form-item>
         <el-form-item label="企业所得税税率"><el-input v-model="profileForm.incomeTaxRate" name="tax-profile-income-rate" /></el-form-item>
         <el-form-item label="城建税率"><el-input v-model="profileForm.urbanMaintenanceRate" name="tax-profile-urban-rate" /></el-form-item>
-        <el-form-item label="生效日期"><el-input v-model="profileForm.effectiveFrom" name="tax-profile-effective-from" /></el-form-item>
+        <el-form-item label="生效日期">
+          <el-date-picker
+            v-model="profileForm.effectiveFrom"
+            name="tax-profile-effective-from"
+            type="date"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+          />
+        </el-form-item>
         <el-button data-test="save-tax-profile" type="primary" :loading="actionLoading" @click="saveTaxProfile">保存税务档案</el-button>
       </el-form>
 
@@ -237,7 +245,24 @@ onMounted(loadRecords)
           <el-form-item label="税种"><el-input v-model="rateForm.taxType" name="tax-rate-tax-type" /></el-form-item>
           <el-form-item label="税率编码"><el-input v-model="rateForm.rateCode" name="tax-rate-code" /></el-form-item>
           <el-form-item label="税率"><el-input v-model="rateForm.rateValue" name="tax-rate-value" /></el-form-item>
-          <el-form-item label="生效日期"><el-input v-model="rateForm.effectiveFrom" name="tax-rate-effective-from" /></el-form-item>
+          <el-form-item label="生效日期">
+            <el-date-picker
+              v-model="rateForm.effectiveFrom"
+              name="tax-rate-effective-from"
+              type="date"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+            />
+          </el-form-item>
+          <el-form-item label="截止日期">
+            <el-date-picker
+              v-model="rateForm.effectiveTo"
+              name="tax-rate-effective-to"
+              type="date"
+              value-format="YYYY-MM-DD"
+              value-on-clear=""
+            />
+          </el-form-item>
           <el-button data-test="create-tax-rate-rule" :loading="actionLoading" @click="createTaxRateRule">新增税率</el-button>
         </el-form>
       </section>

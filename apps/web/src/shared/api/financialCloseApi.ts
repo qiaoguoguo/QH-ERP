@@ -37,6 +37,7 @@ export interface FinancialClosePeriodRecord extends FinancialCloseActionState, F
   periodCode: string
   status: FinancialCloseStatus
   closeStatus?: string | null
+  latestCheckId?: FinancialCloseResourceId | null
   latestCheckRunId?: FinancialCloseResourceId | null
   latestCheckStatus?: string | null
   closeRunId?: FinancialCloseResourceId | null
@@ -63,6 +64,7 @@ export interface FinancialCloseCheckRunRecord extends FinancialCloseActionState,
   periodCode?: string | null
   status: FinancialCloseCheckStatus
   sourceFingerprint?: string | null
+  items?: FinancialCloseCheckItem[]
   checkItems?: FinancialCloseCheckItem[]
   closeVersion?: number | null
   closeSnapshot?: Record<string, unknown> | null
@@ -89,6 +91,7 @@ export interface BankAccountRecord extends FinancialCloseActionState, FinancialC
   accountNoMasked?: string | null
   accountNoLast4?: string | null
   accountNoFingerprint?: string | null
+  glAccountId?: FinancialCloseResourceId | null
   glAccountCode?: string | null
   enabled?: boolean | null
 }
@@ -205,6 +208,9 @@ function normalizeRecord(record: RawRecord) {
   const normalized = normalizeActionState(record)
   return {
     ...normalized,
+    latestCheckRunId: normalized.latestCheckRunId ?? normalized.latestCheckId,
+    latestCheckId: normalized.latestCheckId ?? normalized.latestCheckRunId,
+    checkItems: normalized.checkItems ?? normalized.items,
     accountNoMasked: normalized.accountNoMasked ?? normalized.accountMasked ?? normalized.maskedAccountNo,
     accountNoLast4: normalized.accountNoLast4 ?? normalized.accountLast4,
     unifiedSocialCreditCodeMasked: normalized.unifiedSocialCreditCodeMasked ?? normalized.creditCodeMasked ?? normalized.creditCode,
@@ -234,7 +240,8 @@ function normalizeRecordOrPage<T>(data: unknown, normalize: (item: RawRecord) =>
   if (!isRecord(data)) {
     return data
   }
-  if (Array.isArray(data.items) || Array.isArray(data.records) || Array.isArray(data.content)) {
+  const hasPageMetadata = 'total' in data || 'totalElements' in data || 'page' in data || 'pageSize' in data
+  if ((Array.isArray(data.items) && hasPageMetadata) || Array.isArray(data.records) || Array.isArray(data.content)) {
     return normalizePageItems(data, normalize)
   }
   return normalize(data)

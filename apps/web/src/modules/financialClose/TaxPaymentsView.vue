@@ -125,14 +125,9 @@ function bankAccountText(record: TaxPaymentRecord) {
   return record.bankAccountDisplay || record.bankAccountMasked || (record.bankSensitiveVisible === false ? '账号已脱敏' : '-')
 }
 
-function changePage(page: number) {
+function changePagination(page: number, pageSize: number) {
   pagination.page = page
-  void loadRecords()
-}
-
-function changePageSize(pageSize: number) {
   pagination.pageSize = pageSize
-  pagination.page = 1
   void loadRecords()
 }
 
@@ -182,16 +177,23 @@ onMounted(loadRecords)
       layout="total, sizes, prev, pager, next"
       :page-sizes="financialClosePageSizes"
       :total="pagination.total"
-      :page-size="pagination.pageSize"
-      :current-page="pagination.page"
-      @current-change="changePage"
-      @size-change="changePageSize"
+      v-model:page-size="pagination.pageSize"
+      v-model:current-page="pagination.page"
+      @change="changePagination"
     />
     <el-dialog v-model="paymentDialogVisible" title="登记税款缴纳" width="min(640px, 92vw)">
       <el-form label-position="top">
         <el-form-item label="税额汇总 ID"><el-input v-model="paymentForm.summaryId" name="tax-payment-summary-id" /></el-form-item>
         <el-form-item label="税种"><el-input v-model="paymentForm.taxType" name="tax-payment-tax-type" /></el-form-item>
-        <el-form-item label="缴纳日期"><el-input v-model="paymentForm.paymentDate" name="tax-payment-date" /></el-form-item>
+        <el-form-item label="缴纳日期">
+          <el-date-picker
+            v-model="paymentForm.paymentDate"
+            name="tax-payment-date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+          />
+        </el-form-item>
         <el-form-item label="金额"><el-input v-model="paymentForm.amount" name="tax-payment-amount" /></el-form-item>
         <el-form-item label="方式"><el-input v-model="paymentForm.paymentMethod" name="tax-payment-method" /></el-form-item>
         <el-form-item label="参考号"><el-input v-model="paymentForm.referenceNo" name="tax-payment-reference-no" /></el-form-item>

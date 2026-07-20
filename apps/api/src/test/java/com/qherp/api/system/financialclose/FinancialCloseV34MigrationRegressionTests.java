@@ -136,6 +136,17 @@ class FinancialCloseV34MigrationRegressionTests {
 			.isEqualTo(V34_TAX_INVOICE_TYPES.size());
 		assertThat(financialCloseRoutePaths(jdbcTemplate)).allSatisfy((routePath) -> assertThat(routePath)
 			.startsWith("/gl"));
+		assertThat(financialCloseRoutePaths(jdbcTemplate)).contains("/gl/bank-statements");
+		assertThat(financialCloseRoutePathByCode(jdbcTemplate, "financial-close:bank-reconciliation:view"))
+			.isEqualTo("/gl/bank-statements");
+		assertThat(financialCloseRoutePathByCode(jdbcTemplate, "financial-close:bank-reconciliation:import"))
+			.isEqualTo("/gl/bank-statements");
+		assertThat(financialCloseRoutePathByCode(jdbcTemplate, "financial-close:bank-reconciliation:match"))
+			.isEqualTo("/gl/bank-reconciliation");
+		assertThat(financialCloseRoutePathByCode(jdbcTemplate, "financial-close:bank-reconciliation:confirm"))
+			.isEqualTo("/gl/bank-reconciliation");
+		assertThat(financialCloseRoutePathByCode(jdbcTemplate, "financial-close:bank-reconciliation:reopen"))
+			.isEqualTo("/gl/bank-reconciliation");
 		assertThat(allConstraintDefinitions(jdbcTemplate, "gl_voucher"))
 			.contains("PROFIT_LOSS_CARRYFORWARD", "TAX_SUMMARY");
 		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_close_check_run"))
@@ -307,6 +318,14 @@ class FinancialCloseV34MigrationRegressionTests {
 			.stream()
 			.filter((routePath) -> routePath != null && !routePath.isBlank())
 			.toList();
+	}
+
+	private String financialCloseRoutePathByCode(JdbcTemplate jdbcTemplate, String code) {
+		return jdbcTemplate.queryForObject("""
+				select route_path
+				from sys_permission
+				where code = ?
+				""", String.class, code);
 	}
 
 	private String allConstraintDefinitions(JdbcTemplate jdbcTemplate, String tableName) {

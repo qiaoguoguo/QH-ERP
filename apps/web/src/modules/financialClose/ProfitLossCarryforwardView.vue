@@ -113,6 +113,12 @@ function openVoucher(record: ProfitLossTransferRecord) {
   })
 }
 
+function changePagination(page: number, pageSize: number) {
+  pagination.page = page
+  pagination.pageSize = pageSize
+  void loadRecords()
+}
+
 onMounted(loadRecords)
 </script>
 
@@ -181,8 +187,9 @@ onMounted(loadRecords)
       layout="total, sizes, prev, pager, next"
       :page-sizes="financialClosePageSizes"
       :total="pagination.total"
-      :page-size="pagination.pageSize"
-      :current-page="pagination.page"
+      v-model:page-size="pagination.pageSize"
+      v-model:current-page="pagination.page"
+      @change="changePagination"
     />
   </MasterDataTableView>
 </template>

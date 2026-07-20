@@ -201,14 +201,9 @@ function previewErrorText(row: Record<string, unknown>) {
   return String(row.message ?? row.errorMessage ?? '-')
 }
 
-function changePage(page: number) {
+function changePagination(page: number, pageSize: number) {
   pagination.page = page
-  void loadRecords()
-}
-
-function changePageSize(pageSize: number) {
   pagination.pageSize = pageSize
-  pagination.page = 1
   void loadRecords()
 }
 
@@ -271,16 +266,31 @@ onMounted(loadRecords)
       layout="total, sizes, prev, pager, next"
       :page-sizes="financialClosePageSizes"
       :total="pagination.total"
-      :page-size="pagination.pageSize"
-      :current-page="pagination.page"
-      @current-change="changePage"
-      @size-change="changePageSize"
+      v-model:page-size="pagination.pageSize"
+      v-model:current-page="pagination.page"
+      @change="changePagination"
     />
     <el-dialog v-model="statementDialogVisible" title="手工录入银行流水" width="min(640px, 92vw)">
       <el-form label-position="top">
         <el-form-item label="银行账户 ID"><el-input v-model="statementForm.bankAccountId" name="bank-statement-bank-account-id" /></el-form-item>
-        <el-form-item label="交易日期"><el-input v-model="statementForm.transactionDate" name="bank-statement-transaction-date" /></el-form-item>
-        <el-form-item label="入账日期"><el-input v-model="statementForm.postingDate" name="bank-statement-posting-date" /></el-form-item>
+        <el-form-item label="交易日期">
+          <el-date-picker
+            v-model="statementForm.transactionDate"
+            name="bank-statement-transaction-date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+          />
+        </el-form-item>
+        <el-form-item label="入账日期">
+          <el-date-picker
+            v-model="statementForm.postingDate"
+            name="bank-statement-posting-date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+          />
+        </el-form-item>
         <el-form-item label="方向">
           <el-select v-model="statementForm.direction">
             <el-option label="银行入账" value="CREDIT" />

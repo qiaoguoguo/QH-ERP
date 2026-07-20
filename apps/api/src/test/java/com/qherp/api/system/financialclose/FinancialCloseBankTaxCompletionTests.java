@@ -232,24 +232,64 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 				profilePayload, admin));
 		assertThat(profile.get("current").booleanValue()).isTrue();
 		assertThat(profile.get("educationSurchargeRate").asText()).isEqualTo("0.0300");
-		JsonNode rateRule = data(exchange(HttpMethod.POST, "/api/admin/tax-rate-rules",
-				Map.of("taxType", "VAT", "rateCode", "VAT_13_STAGE032", "rateValue", "0.13",
-						"effectiveFrom", "2026-01-01", "idempotencyKey", "032-tax-rate"),
-				admin));
-		assertThat(rateRule.get("status").asText()).isEqualTo("ENABLED");
-		JsonNode invoiceType = data(exchange(HttpMethod.POST, "/api/admin/tax-invoice-types",
-				Map.of("code", "SPECIAL_VAT_STAGE032", "name", "032 专票", "direction", "OUTPUT",
-						"deductible", false, "idempotencyKey", "032-tax-invoice-type"),
-				admin));
-		assertThat(invoiceType.get("status").asText()).isEqualTo("ENABLED");
+		JsonNode profileReplay = data(exchange(HttpMethod.PUT, "/api/admin/tax-profiles/current",
+				profilePayload, admin));
+		assertThat(profileReplay.get("id").longValue()).isEqualTo(profile.get("id").longValue());
+		Map<String, Object> conflictingProfilePayload = new LinkedHashMap<>(profilePayload);
+		conflictingProfilePayload.put("taxAuthority", "032 幂等冲突税务机关");
+		assertError(exchange(HttpMethod.PUT, "/api/admin/tax-profiles/current", conflictingProfilePayload, admin),
+				HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
 
+		Map<String, Object> ratePayload = Map.of("taxType", "VAT", "rateCode", "VAT_13_STAGE032",
+				"rateValue", "0.13", "effectiveFrom", "2026-01-01", "idempotencyKey", "032-tax-rate");
+		JsonNode rateRule = data(exchange(HttpMethod.POST, "/api/admin/tax-rate-rules",
+				ratePayload, admin));
+		assertThat(rateRule.get("status").asText()).isEqualTo("ENABLED");
+		JsonNode rateReplay = data(exchange(HttpMethod.POST, "/api/admin/tax-rate-rules", ratePayload, admin));
+		assertThat(rateReplay.get("id").longValue()).isEqualTo(rateRule.get("id").longValue());
+		assertError(exchange(HttpMethod.POST, "/api/admin/tax-rate-rules",
+				Map.of("taxType", "VAT", "rateCode", "VAT_13_STAGE032", "rateValue", "0.09",
+						"effectiveFrom", "2026-01-01", "idempotencyKey", "032-tax-rate"),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+
+		Map<String, Object> invoiceTypePayload = Map.of("code", "SPECIAL_VAT_STAGE032", "name", "032 专票",
+				"direction", "OUTPUT", "deductible", false, "idempotencyKey", "032-tax-invoice-type");
+		JsonNode invoiceType = data(exchange(HttpMethod.POST, "/api/admin/tax-invoice-types",
+				invoiceTypePayload, admin));
+		assertThat(invoiceType.get("status").asText()).isEqualTo("ENABLED");
+		JsonNode invoiceTypeReplay = data(exchange(HttpMethod.POST, "/api/admin/tax-invoice-types",
+				invoiceTypePayload, admin));
+		assertThat(invoiceTypeReplay.get("id").longValue()).isEqualTo(invoiceType.get("id").longValue());
+		assertError(exchange(HttpMethod.POST, "/api/admin/tax-invoice-types",
+				Map.of("code", "SPECIAL_VAT_STAGE032", "name", "032 专票冲突", "direction", "OUTPUT",
+						"deductible", false, "idempotencyKey", "032-tax-invoice-type"),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+
+		Map<String, Object> summaryPayload = Map.of("periodCode", "2026-07", "taxType", "VAT",
+				"idempotencyKey", "032-tax-summary-full");
 		JsonNode summary = data(exchange(HttpMethod.POST, "/api/admin/tax-summaries",
-				Map.of("periodCode", "2026-07", "taxType", "VAT", "idempotencyKey", "032-tax-summary-full"),
+				summaryPayload, admin));
+		assertThat(textValues(summary.get("allowedActions"))).contains("CALCULATE", "ADJUST");
+		assertThat(textValues(summary.get("allowedActions"))).doesNotContain("CONFIRM", "GENERATE_VOUCHER");
+		JsonNode summaryReplay = data(exchange(HttpMethod.POST, "/api/admin/tax-summaries", summaryPayload,
 				admin));
+		assertThat(summaryReplay.get("id").longValue()).isEqualTo(summary.get("id").longValue());
+		assertError(exchange(HttpMethod.POST, "/api/admin/tax-summaries",
+				Map.of("periodCode", "2026-07", "taxType", "INCOME_TAX",
+						"idempotencyKey", "032-tax-summary-full"),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+
+		Map<String, Object> calculatePayload = Map.of("version", summary.get("version").longValue(),
+				"idempotencyKey", "032-tax-calc-full");
 		JsonNode calculated = data(exchange(HttpMethod.POST,
 				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/calculate",
-				Map.of("version", summary.get("version").longValue(), "idempotencyKey", "032-tax-calc-full"),
-				admin));
+				calculatePayload, admin));
+		JsonNode calculateReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/calculate",
+				calculatePayload, admin));
+		assertThat(calculateReplay.get("id").longValue()).isEqualTo(calculated.get("id").longValue());
+		assertThat(textValues(calculated.get("allowedActions"))).contains("CALCULATE", "ADJUST", "CONFIRM",
+				"GENERATE_VOUCHER");
 		assertThat(calculated.get("outputVat").asText()).isEqualTo("13.00");
 		assertThat(calculated.get("inputVat").asText()).isEqualTo("6.00");
 		assertThat(calculated.get("vatPayable").asText()).isEqualTo("7.00");
@@ -265,6 +305,13 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 				Map.of("version", calculated.get("version").longValue(), "adjustmentType", "OUTPUT_INCREASE",
 						"amount", "1.00", "reason", "销项补调", "idempotencyKey", "032-tax-adjust"),
 				admin));
+		JsonNode adjustedReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/adjustments",
+				Map.of("version", calculated.get("version").longValue(), "adjustmentType", "OUTPUT_INCREASE",
+						"amount", "1.00", "reason", "销项补调", "idempotencyKey", "032-tax-adjust"),
+				admin));
+		assertThat(adjustedReplay.get("id").longValue()).isEqualTo(adjusted.get("id").longValue());
+		assertThat(taxAdjustmentCount(summary.get("id").longValue())).isOne();
 		assertThat(adjusted.get("adjustmentAmount").asText()).isEqualTo("1.00");
 		assertThat(adjusted.get("vatPayable").asText()).isEqualTo("8.00");
 
@@ -274,6 +321,14 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-tax-voucher"),
 				admin));
 		long voucherId = voucherDraft.get("voucherId").longValue();
+		JsonNode voucherReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/voucher-drafts",
+				Map.of("version", adjusted.get("version").longValue(), "reason", "生成税费凭证",
+						"idempotencyKey", "032-tax-voucher"),
+				admin));
+		assertThat(voucherReplay.get("voucherId").longValue()).isEqualTo(voucherId);
+		assertThat(textValues(voucherDraft.get("allowedActions"))).doesNotContain("GENERATE_VOUCHER");
+		assertThat(voucherDraft.get("actionDisabledReasons").get("GENERATE_VOUCHER").asText()).contains("已有凭证");
 		assertThat(glVoucherSourceType(voucherId)).isEqualTo("TAX_SUMMARY");
 		assertThat(voucherAccountCodes(voucherId)).contains("2221.03", "2221.04", "2221.05", "2221.06");
 		JsonNode confirmed = data(exchange(HttpMethod.POST,
@@ -282,6 +337,12 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-tax-confirm"),
 				admin));
 		assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		JsonNode confirmReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/confirm",
+				Map.of("version", voucherDraft.get("version").longValue(), "reason", "确认税务汇总",
+						"idempotencyKey", "032-tax-confirm"),
+				admin));
+		assertThat(confirmReplay.get("status").asText()).isEqualTo("CONFIRMED");
 
 		postVoucherById(admin, voucherId);
 		JsonNode payment = data(exchange(HttpMethod.POST, "/api/admin/tax-payments",
@@ -290,10 +351,27 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-tax-payment"),
 				admin));
 		assertThat(payment.get("status").asText()).isEqualTo("RECORDED");
+		JsonNode paymentReplay = data(exchange(HttpMethod.POST, "/api/admin/tax-payments",
+				Map.of("summaryId", summary.get("id").longValue(), "taxType", "VAT", "paymentDate",
+						"2026-07-28", "amount", "8.00", "voucherId", voucherId, "reason", "登记已缴税款",
+						"idempotencyKey", "032-tax-payment"),
+				admin));
+		assertThat(paymentReplay.get("id").longValue()).isEqualTo(payment.get("id").longValue());
+		assertThat(taxPaymentCount(summary.get("id").longValue())).isOne();
+		assertError(exchange(HttpMethod.POST, "/api/admin/tax-payments",
+				Map.of("summaryId", summary.get("id").longValue(), "taxType", "VAT", "paymentDate",
+						"2026-07-28", "amount", "9.00", "voucherId", voucherId, "reason", "登记已缴税款",
+						"idempotencyKey", "032-tax-payment"),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
 		JsonNode correction = data(exchange(HttpMethod.POST,
 				"/api/admin/tax-payments/" + payment.get("id").longValue() + "/corrections",
 				Map.of("amount", "-1.00", "reason", "缴纳台账更正", "idempotencyKey", "032-tax-payment-correction"),
 				admin));
+		JsonNode correctionReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/tax-payments/" + payment.get("id").longValue() + "/corrections",
+				Map.of("amount", "-1.00", "reason", "缴纳台账更正", "idempotencyKey", "032-tax-payment-correction"),
+				admin));
+		assertThat(correctionReplay.get("id").longValue()).isEqualTo(correction.get("id").longValue());
 		assertThat(correction.get("correctionOfId").longValue()).isEqualTo(payment.get("id").longValue());
 
 		this.jdbcTemplate.update("""
@@ -304,6 +382,8 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 		JsonNode stale = data(get("/api/admin/tax-summaries/" + summary.get("id").longValue(), admin));
 		assertThat(stale.get("stale").booleanValue()).isTrue();
 		assertThat(stale.get("current").booleanValue()).isFalse();
+		assertThat(textValues(stale.get("allowedActions"))).isEmpty();
+		assertThat(stale.get("actionDisabledReasons").get("CALCULATE").asText()).contains("来源已变化");
 		JsonNode next = data(exchange(HttpMethod.POST, "/api/admin/tax-summaries",
 				Map.of("periodCode", "2026-07", "taxType", "VAT", "idempotencyKey", "032-tax-summary-new"),
 				admin));
@@ -501,6 +581,30 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 
 	private long financialCloseAuditCount() {
 		return this.jdbcTemplate.queryForObject("select count(*) from fin_close_audit_event", Long.class);
+	}
+
+	private long taxAdjustmentCount(long summaryId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_adjustment
+				where summary_id = ?
+				""", Long.class, summaryId);
+	}
+
+	private long taxPaymentCount(long summaryId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_payment_record
+				where summary_id = ?
+				""", Long.class, summaryId);
+	}
+
+	private List<String> textValues(JsonNode array) {
+		java.util.ArrayList<String> values = new java.util.ArrayList<>();
+		for (JsonNode item : array) {
+			values.add(item.asText());
+		}
+		return values;
 	}
 
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,

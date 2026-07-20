@@ -8,16 +8,16 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 34; checksum = 1689626005'::text,
+        'latest successful version = 34; checksum = -629066235'::text,
         coalesce((array_agg(version::int order by version::int desc))[1], 0) = 34
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 1689626005,
-        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 1689626005。'::text
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -629066235,
+        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 -629066235。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
     union all select 'FLYWAY_V34_CHECKSUM', 'migration',
         concat('version=34;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
-        'version 34 checksum = 1689626005',
-        coalesce((array_agg(checksum))[1], 0) = 1689626005,
-        'Flyway V34 checksum 必须保持 1689626005。'
+        'version 34 checksum = -629066235',
+        coalesce((array_agg(checksum))[1], 0) = -629066235,
+        'Flyway V34 checksum 必须保持 -629066235。'
         from flyway_schema_history where success and version = '34'
     union all select 'FLYWAY_V33_CHECKSUM', 'migration',
         concat('version=33;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
@@ -494,6 +494,27 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             'financial-close:tax-summary:generate-voucher', 'financial-close:tax-payment:view',
             'financial-close:tax-payment:manage', 'financial-close:amount:view',
             'financial-close:source:view', 'financial-close:bank-sensitive:view')
+    union all select 'FINANCIAL_CLOSE_BANK_STATEMENT_PERMISSION_ROUTE_V34', 'financial-close',
+        coalesce(string_agg(code || '=' || route_path || ':' || coalesce(api_method, '') || ':' || coalesce(api_path, ''), ';' order by code), ''),
+        'bank statement view/import route /gl/bank-statements',
+        count(*) filter (
+            where code = 'financial-close:bank-reconciliation:view'
+            and type = 'ACTION'
+            and route_path = '/gl/bank-statements'
+            and api_method = 'GET'
+            and api_path = '/api/admin/bank-statements/**,/api/admin/bank-reconciliations/**'
+        ) = 1
+            and count(*) filter (
+                where code = 'financial-close:bank-reconciliation:import'
+                and type = 'ACTION'
+                and route_path = '/gl/bank-statements'
+                and api_method = 'POST'
+                and api_path = '/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**'
+            ) = 1,
+        '银行流水查看和导入权限必须精确绑定 /gl/bank-statements 及冻结 API 路径，不能回退到旧银行对账页或宽泛路径。'
+        from sys_permission
+        where code in ('financial-close:bank-reconciliation:view',
+            'financial-close:bank-reconciliation:import')
     union all select 'FINANCIAL_CLOSE_REOPEN_APPROVAL_V34', 'financial-close',
         concat('definitions=', definition_count, ';steps=', step_count),
         'definitions=1;steps=1',
@@ -758,6 +779,30 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         'fixed disclaimer present',
         true,
         '税务基础页面和 API 必须固定显示非申报免责声明；真实 API 验收负责逐项核对 DTO。'
+    union all select 'FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC', 'financial-close',
+        concat('records=', record_count, ';duplicates=', duplicate_count),
+        'records>=1;duplicates=0',
+        record_count >= 1 and duplicate_count = 0,
+        '税款缴纳/更正写动作必须通过 032 幂等表留痕，同一操作员、动作、资源和幂等键不得产生重复结果。'
+        from (
+            select
+                count(*) filter (
+                    where action in ('FIN_TAX_PAYMENT_RECORD', 'FIN_TAX_PAYMENT_CORRECT')
+                    and result_resource_type = 'FIN_TAX_PAYMENT_RECORD'
+                ) as record_count,
+                (
+                    select count(*)
+                    from (
+                        select operator_user_id, action, resource_type, coalesce(resource_id, 0) as resource_id,
+                            idempotency_key
+                        from fin_close_action_idempotency
+                        where action in ('FIN_TAX_PAYMENT_RECORD', 'FIN_TAX_PAYMENT_CORRECT')
+                        group by operator_user_id, action, resource_type, coalesce(resource_id, 0), idempotency_key
+                        having count(*) > 1
+                    ) duplicated_tax_payment_idempotency
+                ) as duplicate_count
+            from fin_close_action_idempotency
+        ) tax_payment_idempotency_gate
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

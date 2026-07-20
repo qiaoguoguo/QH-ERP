@@ -109,7 +109,10 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(historicalChecksum("31")).isEqualTo(-2074547591);
 		assertThat(historicalChecksum("32")).isEqualTo(249406902);
 		assertThat(historicalChecksum("33")).isEqualTo(612501943);
-		assertThat(historicalChecksum("34")).isEqualTo(1689626005);
+		assertThat(historicalChecksum("34")).isEqualTo(-629066235);
+		assertThat(bankStatementPermissionRoutes()).containsExactlyInAnyOrder(
+				"financial-close:bank-reconciliation:view|/gl/bank-statements|GET|/api/admin/bank-statements/**,/api/admin/bank-reconciliations/**",
+				"financial-close:bank-reconciliation:import|/gl/bank-statements|POST|/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**");
 	}
 
 	@Test
@@ -126,6 +129,11 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertMandatoryCheckCodes(check);
 		assertCheckFailed(check, "BUSINESS_PERIOD_CLOSED");
 		assertThat(check.get("sourceFingerprint").asText()).isNotBlank();
+		JsonNode storedCheck = data(get(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()));
+		assertThat(storedCheck.get("checkItems")).hasSize(MANDATORY_FINANCIAL_CLOSE_CHECKS.size());
+		assertMandatoryCheckCodes(storedCheck);
+		JsonNode refreshedPeriod = data(get(admin, "/api/admin/financial-closes/periods/" + periodId));
+		assertThat(refreshedPeriod.get("latestCheckRunId").longValue()).isEqualTo(check.get("id").longValue());
 
 		assertError(post(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()
 				+ "/close", Map.of("version", check.get("version").longValue(), "idempotencyKey",
@@ -321,9 +329,13 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 
 		JsonNode bankAccount = data(post(admin, "/api/admin/bank-accounts",
 				bankAccountPayload("032 子树银行账户", childAccountId, "6222020960300004321")));
+		assertThat(bankAccount.get("glAccountId").longValue()).isEqualTo(childAccountId);
 		assertThat(bankAccount.get("glAccountCode").asText()).isEqualTo("1002.01");
 		assertThat(bankAccount.get("accountMasked").asText()).isEqualTo("****4321");
 		assertThat(bankAccount.toString()).doesNotContain("6222020960300004321");
+		JsonNode persistedBankAccount = data(get(admin, "/api/admin/bank-accounts/"
+				+ bankAccount.get("id").longValue()));
+		assertThat(persistedBankAccount.get("glAccountId").longValue()).isEqualTo(childAccountId);
 
 		assertError(post(admin, "/api/admin/bank-accounts",
 				bankAccountPayload("032 非末级银行账户", nonLeafAccountId, "6222020960300004322")),
@@ -378,6 +390,68 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(payment.get("bankSensitiveVisible").booleanValue()).isFalse();
 		assertThat(payment.hasNonNull("accountMasked")).isTrue();
 		assertThat(payment.toString()).doesNotContain("6222020960300009876");
+
+		long actionPeriodId = ensureOpenAccountingPeriod(admin, "2097-02");
+		JsonNode draftSummary = data(post(admin, "/api/admin/tax-summaries",
+				Map.of("periodCode", "2097-02", "taxType", "VAT", "idempotencyKey",
+						"032-tax-action-summary-" + SEQUENCE.incrementAndGet())));
+		JsonNode calculatedSummary = data(post(admin, "/api/admin/tax-summaries/"
+				+ draftSummary.get("id").longValue() + "/calculate",
+				Map.of("version", draftSummary.get("version").longValue(), "idempotencyKey",
+						"032-tax-action-calculate-" + SEQUENCE.incrementAndGet())));
+		assertThat(textArray(calculatedSummary.get("allowedActions"))).containsExactlyInAnyOrder("CALCULATE",
+				"ADJUST", "CONFIRM", "GENERATE_VOUCHER");
+		assertThat(stringMap(calculatedSummary.get("actionDisabledReasons"))).isEmpty();
+
+		AuthenticatedSession taxViewer = createUserAndLogin("032-tax-viewer-", "032_TAX_VIEWER_",
+				List.of("financial-close:tax-summary:view"));
+		JsonNode noPermissionSummary = data(get(taxViewer, "/api/admin/tax-summaries/"
+				+ calculatedSummary.get("id").longValue()));
+		assertThat(textArray(noPermissionSummary.get("allowedActions"))).isEmpty();
+		assertThat(stringMap(noPermissionSummary.get("actionDisabledReasons")))
+			.containsEntry("CALCULATE", "无权执行税务汇总动作")
+			.containsEntry("ADJUST", "无权执行税务汇总动作")
+			.containsEntry("CONFIRM", "无权执行税务汇总动作")
+			.containsEntry("GENERATE_VOUCHER", "无权执行税务汇总动作");
+
+		JsonNode confirmedSummary = data(post(admin, "/api/admin/tax-summaries/"
+				+ calculatedSummary.get("id").longValue() + "/confirm",
+				Map.of("version", calculatedSummary.get("version").longValue(), "reason", "确认税额基础汇总",
+						"idempotencyKey", "032-tax-action-confirm-" + SEQUENCE.incrementAndGet())));
+		makeTaxSummaryStale(confirmedSummary.get("id").longValue());
+		JsonNode staleSummary = data(get(admin, "/api/admin/tax-summaries/" + confirmedSummary.get("id").longValue()));
+		assertThat(staleSummary.get("stale").booleanValue()).isTrue();
+		assertThat(textArray(staleSummary.get("allowedActions"))).isEmpty();
+		assertThat(stringMap(staleSummary.get("actionDisabledReasons")))
+			.containsEntry("CALCULATE", "来源已变化，请创建新版本")
+			.containsEntry("CONFIRM", "来源已变化，请创建新版本");
+
+		long voucherSummaryId = seedCalculatedTaxSummaryWithVoucher(actionPeriodId, "2097-02");
+		JsonNode voucherSummary = data(get(admin, "/api/admin/tax-summaries/" + voucherSummaryId));
+		assertThat(textArray(voucherSummary.get("allowedActions"))).containsExactly("CONFIRM");
+		assertThat(stringMap(voucherSummary.get("actionDisabledReasons")))
+			.containsEntry("CALCULATE", "已有凭证草稿，禁止再次修改或生成")
+			.containsEntry("ADJUST", "已有凭证草稿，禁止再次修改或生成")
+			.containsEntry("GENERATE_VOUCHER", "已有凭证草稿，禁止再次修改或生成");
+
+		long idempotencyPeriodId = ensureOpenAccountingPeriod(admin, "2097-03");
+		long idempotencySummaryId = seedConfirmedTaxSummary(idempotencyPeriodId, "2097-03", "VAT");
+		long idempotencyBankAccountId = seedBankAccountDirect("032 税款幂等账户", "6222020970300005678");
+		long paymentVoucherId = seedPostedTaxPaymentVoucher(idempotencyPeriodId, idempotencySummaryId,
+				"032-TAX-PAY-IDEMP-" + SEQUENCE.incrementAndGet());
+		String paymentReference = "032-TAX-PAY-IDEMP-REF-" + SEQUENCE.incrementAndGet();
+		Map<String, Object> paymentPayload = taxPaymentPayload(idempotencySummaryId, paymentVoucherId,
+				idempotencyBankAccountId, paymentReference, "12.34", "032-tax-payment-idem");
+		JsonNode firstPayment = data(post(admin, "/api/admin/tax-payments", paymentPayload));
+		JsonNode repeatedPayment = data(post(admin, "/api/admin/tax-payments", paymentPayload));
+		assertThat(repeatedPayment.get("id").longValue()).isEqualTo(firstPayment.get("id").longValue());
+		assertThat(taxPaymentCountByReference(paymentReference)).isOne();
+		Map<String, Object> conflictingPaymentPayload = new java.util.LinkedHashMap<>(paymentPayload);
+		conflictingPaymentPayload.put("amount", "13.34");
+		conflictingPaymentPayload.put("referenceNo", paymentReference + "-DIFF");
+		assertError(post(admin, "/api/admin/tax-payments", conflictingPaymentPayload),
+				HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+		assertThat(taxPaymentCountBySummary(idempotencySummaryId)).isOne();
 	}
 
 	@Test
@@ -397,8 +471,21 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				HttpStatus.FORBIDDEN, "FIN_PERMISSION_DENIED");
 
 		JsonNode check = runCheck(admin, periodId, "032-check-reopen-trace-");
+		JsonNode glPeriodAfterCheck = pageItemById(data(get(admin,
+				"/api/admin/gl/accounting-periods?periodCode=2097-01&page=1&pageSize=10")), periodId);
+		assertThat(glPeriodAfterCheck.get("financialCloseStatus").asText()).isEqualTo("READY");
+		assertThat(glPeriodAfterCheck.get("latestFinancialCloseCheckRunId").longValue())
+			.isEqualTo(check.get("id").longValue());
+		assertThat(glPeriodAfterCheck.get("latestCheckRunId").longValue()).isEqualTo(check.get("id").longValue());
+		assertThat(glPeriodAfterCheck.get("financialCloseDisabledReason").isNull()).isTrue();
 		data(post(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()
 				+ "/close", closePayload(check, "032-close-reopen-trace-" + periodId)));
+		JsonNode glPeriodAfterClose = pageItemById(data(get(admin,
+				"/api/admin/gl/accounting-periods?periodCode=2097-01&page=1&pageSize=10")), periodId);
+		assertThat(glPeriodAfterClose.get("financialCloseStatus").asText()).isEqualTo("CLOSED");
+		assertThat(glPeriodAfterClose.get("latestFinancialCloseCheckRunId").longValue())
+			.isEqualTo(check.get("id").longValue());
+		assertThat(glPeriodAfterClose.get("financialCloseDisabledReason").asText()).isEqualTo("财务期间已关闭");
 		ClosedRun closedRun = currentClosedRun(periodId);
 		JsonNode reopen = data(post(admin, "/api/admin/financial-closes/close-runs/" + closedRun.id()
 				+ "/reopen-requests", Map.of("version", closedRun.version(), "idempotencyKey",
@@ -861,11 +948,121 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				""", Long.class, summaryId, taxType, bankAccountId);
 	}
 
+	private void makeTaxSummaryStale(long summaryId) {
+		String periodCode = this.jdbcTemplate.queryForObject("""
+				select period_code
+				from fin_tax_period_summary
+				where id = ?
+				""", String.class, summaryId);
+		int suffix = SEQUENCE.incrementAndGet();
+		LocalDate invoiceDate = LocalDate.parse(periodCode + "-12");
+		long customerId = this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "032-STALE-CUS-" + suffix, "032 失效客户" + suffix);
+		this.jdbcTemplate.update("""
+				insert into fin_sales_invoice (
+					invoice_no, customer_id, ownership_type, source_type, source_id, source_no, invoice_date,
+					due_date, invoice_type, currency, tax_excluded_amount, tax_amount, tax_included_amount,
+					status, party_snapshot, source_snapshot, created_by, created_at, updated_by, updated_at,
+					confirmed_by, confirmed_at, version
+				)
+				values (?, ?, 'PUBLIC', 'SALES_SHIPMENT', ?, ?, ?, ?,
+					'SPECIAL_VAT', 'CNY', 100.00, 13.00, 113.00, 'CONFIRMED', '{}'::jsonb, '{}'::jsonb,
+					'test', now(), 'test', now(), 'test', now(), 1)
+				""", "032-STALE-SI-" + suffix, customerId, 97000 + suffix,
+				"032-STALE-SHIP-" + suffix, invoiceDate, invoiceDate.plusMonths(1));
+	}
+
+	private long seedCalculatedTaxSummaryWithVoucher(long periodId, String periodCode) {
+		long summaryId = this.jdbcTemplate.queryForObject("""
+				insert into fin_tax_period_summary (
+					period_id, period_code, tax_type, status, source_fingerprint, output_vat, input_vat,
+					vat_payable, urban_maintenance_tax, disclaimer, current_flag, created_by, updated_by
+				)
+				values (?, ?, 'VAT', 'CALCULATED', ?, 100.00, 20.00, 80.00, 5.60, ?, true, 'test', 'test')
+				returning id
+				""", Long.class, periodId, periodCode, taxSourceFingerprint(periodId, periodCode),
+				FinancialCloseSupport.TAX_DISCLAIMER);
+		long voucherId = seedPostedTaxPaymentVoucher(periodId, summaryId,
+				"032-TAX-SUMMARY-VOUCHER-" + SEQUENCE.incrementAndGet());
+		this.jdbcTemplate.update("""
+				update fin_tax_period_summary
+				set voucher_id = ?, updated_by = 'test', updated_at = now(), version = version + 1
+				where id = ?
+				""", voucherId, summaryId);
+		return summaryId;
+	}
+
+	private long seedPostedTaxPaymentVoucher(long periodId, long sourceId, String voucherNo) {
+		int voucherNumber = 910000 + SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_voucher (
+					ledger_id, accounting_period_id, draft_no, voucher_type, voucher_date, status, summary,
+					source_type, source_id, source_fingerprint, source_version, source_payload, currency,
+					debit_total, credit_total, voucher_word, voucher_number, voucher_no, posted_by, posted_at,
+					created_by, created_at, updated_by, updated_at
+				)
+				select ledger_id, id, ?, 'GENERAL', end_date, 'POSTED', ?,
+					'TAX_SUMMARY', ?, ?, 0, '{}'::jsonb, 'CNY',
+					0, 0, '记', ?, ?, 'test', now(), 'test', now(), 'test', now()
+				from gl_accounting_period
+				where id = ?
+				returning id
+				""", Long.class, "032-TAX-PAY-DRAFT-" + SEQUENCE.incrementAndGet(), voucherNo,
+				sourceId, "032-tax-payment-voucher-" + sourceId + "-" + voucherNo, voucherNumber, voucherNo,
+				periodId);
+	}
+
+	private Map<String, Object> taxPaymentPayload(long summaryId, long voucherId, long bankAccountId,
+			String referenceNo, String amount, String idempotencyKey) {
+		Map<String, Object> payload = new java.util.LinkedHashMap<>();
+		payload.put("summaryId", summaryId);
+		payload.put("taxType", "VAT");
+		payload.put("paymentDate", "2097-03-20");
+		payload.put("amount", amount);
+		payload.put("paymentMethod", "BANK");
+		payload.put("referenceNo", referenceNo);
+		payload.put("voucherId", voucherId);
+		payload.put("bankAccountId", bankAccountId);
+		payload.put("reason", "记录税款缴纳");
+		payload.put("idempotencyKey", idempotencyKey);
+		return payload;
+	}
+
+	private long taxPaymentCountByReference(String referenceNo) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_payment_record
+				where reference_no = ?
+				""", Long.class, referenceNo);
+	}
+
+	private long taxPaymentCountBySummary(long summaryId) {
+		return this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_payment_record
+				where summary_id = ?
+				""", Long.class, summaryId);
+	}
+
 	private List<String> permissionCodes() {
 		return this.jdbcTemplate.queryForList("""
 				select code
 				from sys_permission
 				where code like 'financial-close:%'
+				and type = 'ACTION'
+				order by code
+				""", String.class);
+	}
+
+	private List<String> bankStatementPermissionRoutes() {
+		return this.jdbcTemplate.queryForList("""
+				select code || '|' || route_path || '|' || coalesce(api_method, '') || '|' || coalesce(api_path, '')
+				from sys_permission
+				where code in ('financial-close:bank-reconciliation:view',
+					'financial-close:bank-reconciliation:import')
 				and type = 'ACTION'
 				order by code
 				""", String.class);
@@ -1310,6 +1507,22 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		else if (node.isArray()) {
 			node.forEach((item) -> assertRecursiveNull(item, fieldNames));
 		}
+	}
+
+	private List<String> textArray(JsonNode node) {
+		List<String> values = new ArrayList<>();
+		if (node != null && node.isArray()) {
+			node.forEach((item) -> values.add(item.asText()));
+		}
+		return values;
+	}
+
+	private Map<String, String> stringMap(JsonNode node) {
+		Map<String, String> values = new java.util.LinkedHashMap<>();
+		if (node != null && node.isObject()) {
+			node.properties().forEach((entry) -> values.put(entry.getKey(), entry.getValue().asText()));
+		}
+		return values;
 	}
 
 	private JsonNode pageItemById(JsonNode page, long id) {

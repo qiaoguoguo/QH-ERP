@@ -31,4 +31,32 @@ describe('日期选择器契约', () => {
 
     expect(missingValueOnClear).toEqual([])
   })
+
+  it('032 财务结账日期录入使用统一日期选择器和 YYYY-MM-DD 值格式', () => {
+    const requiredDateFields = [
+      ['modules/financialClose/BankAccountsView.vue', 'bank-account-opened-on'],
+      ['modules/financialClose/BankStatementsView.vue', 'bank-statement-transaction-date'],
+      ['modules/financialClose/BankStatementsView.vue', 'bank-statement-posting-date'],
+      ['modules/financialClose/TaxSettingsView.vue', 'tax-profile-effective-from'],
+      ['modules/financialClose/TaxSettingsView.vue', 'tax-rate-effective-from'],
+      ['modules/financialClose/TaxSettingsView.vue', 'tax-rate-effective-to'],
+      ['modules/financialClose/TaxPaymentsView.vue', 'tax-payment-date'],
+    ] as const
+
+    const violations = requiredDateFields.flatMap(([file, fieldName]) => {
+      const source = readFileSync(join(sourceRoot, file), 'utf8')
+      const datePickerPattern = new RegExp(`<el-date-picker\\b[\\s\\S]*?name="${fieldName}"[\\s\\S]*?value-format="YYYY-MM-DD"[\\s\\S]*?value-on-clear[\\s\\S]*?/?>`)
+      const inputPattern = new RegExp(`<el-input\\b[^>]*name="${fieldName}"`)
+      const messages: string[] = []
+      if (!datePickerPattern.test(source)) {
+        messages.push(`${file}:${fieldName}:缺少统一日期选择器`)
+      }
+      if (inputPattern.test(source)) {
+        messages.push(`${file}:${fieldName}:仍使用普通输入框`)
+      }
+      return messages
+    })
+
+    expect(violations).toEqual([])
+  })
 })
