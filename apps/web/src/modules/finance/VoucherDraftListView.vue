@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { financeVoucherDraftApi, type VoucherDraftRecord, type VoucherDraftStatus, type VoucherSourceType } from '../../shared/api/financeVoucherDraftApi'
 import { financeInvoiceApi, type InvoiceStatus } from '../../shared/api/financeInvoiceApi'
 import { financeExpenseApi, type ExpenseStatus } from '../../shared/api/financeExpenseApi'
 import { financeSettlementApi } from '../../shared/api/financeSettlementApi'
 import { financeApi, type PaymentSummaryRecord, type ReceiptSummaryRecord } from '../../shared/api/financeApi'
+import { glApi, type GlVoucherRecord } from '../../shared/api/glApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
@@ -13,6 +15,7 @@ import { pageItems } from '../system/shared/pageHelpers'
 import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, ownershipTypeText, voucherDraftStatusText } from './financePageHelpers'
 import './Finance028Shared.css'
 
+const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const filters = reactive<{ keyword: string; sourceType: '' | VoucherSourceType; status?: VoucherDraftStatus; balanced?: boolean; businessDateFrom: string; businessDateTo: string }>({
@@ -25,10 +28,12 @@ const filters = reactive<{ keyword: string; sourceType: '' | VoucherSourceType; 
 })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<VoucherDraftRecord[]>([])
+const linkedGlVouchers = ref<Record<string, GlVoucherRecord>>({})
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
 const generating = ref(false)
+const glActionLoadingId = ref<string | number | null>(null)
 const sourceCandidatesLoading = ref(false)
 const generation = reactive<{ sourceType: VoucherSourceType; sourceKeyword: string; selectedKey: string }>({
   sourceType: 'SALES_INVOICE',
@@ -53,6 +58,8 @@ interface VoucherSourceCandidate {
 
 const sourceCandidates = ref<VoucherSourceCandidate[]>([])
 const selectedSourceCandidate = computed(() => sourceCandidates.value.find((item) => item.key === generation.selectedKey) ?? null)
+const canQueryGlVouchers = computed(() => authStore.hasPermission('gl:voucher:view'))
+const canConvertGlVoucher = computed(() => authStore.hasPermission('gl:voucher:convert'))
 const generateDisabled = computed(() => {
   const source = selectedSourceCandidate.value
   return generating.value
@@ -86,13 +93,36 @@ async function loadRecords() {
     })
     records.value = pageItems(page)
     pagination.total = Number(page.total)
+    await loadLinkedGlVouchers(records.value)
   } catch (caught) {
     records.value = []
+    linkedGlVouchers.value = {}
     pagination.total = 0
     error.value = financeErrorMessage(caught)
   } finally {
     loading.value = false
   }
+}
+
+async function loadLinkedGlVouchers(drafts: VoucherDraftRecord[]) {
+  if (!canQueryGlVouchers.value || drafts.length === 0) {
+    linkedGlVouchers.value = {}
+    return
+  }
+  const entries = await Promise.all(drafts.map(async (draft) => {
+    try {
+      const page = await glApi.vouchers.list({
+        sourceType: 'FIN_VOUCHER_DRAFT',
+        sourceId: draft.id,
+        page: 1,
+        pageSize: 10,
+      })
+      return [String(draft.id), pageItems(page)[0]] as const
+    } catch {
+      return [String(draft.id), undefined] as const
+    }
+  }))
+  linkedGlVouchers.value = Object.fromEntries(entries.filter((entry): entry is readonly [string, GlVoucherRecord] => Boolean(entry[1])))
 }
 
 function search() {
@@ -267,6 +297,53 @@ async function generateDraft() {
   }
 }
 
+function linkedGlVoucher(record: VoucherDraftRecord) {
+  return linkedGlVouchers.value[String(record.id)]
+}
+
+function viewGlVoucher(record: VoucherDraftRecord) {
+  const voucher = linkedGlVoucher(record)
+  if (!voucher) {
+    return
+  }
+  void router.push({
+    name: 'gl-voucher-detail',
+    params: { id: voucher.id },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
+}
+
+async function convertToGlVoucher(record: VoucherDraftRecord) {
+  if (glActionLoadingId.value || !canConvertGlVoucher.value || !canQueryGlVouchers.value || record.status !== 'READY') {
+    return
+  }
+  if (linkedGlVoucher(record)) {
+    viewGlVoucher(record)
+    return
+  }
+  if (!(await confirmAction(`将凭证草稿“${record.draftNo}”生成正式凭证草稿？`))) {
+    return
+  }
+  glActionLoadingId.value = record.id
+  actionError.value = ''
+  try {
+    const voucher = await glApi.vouchers.fromFinanceDraft(record.id, {
+      version: record.version,
+      idempotencyKey: `gl-convert-finance-draft-${record.id}-${Date.now()}`,
+    })
+    linkedGlVouchers.value = { ...linkedGlVouchers.value, [String(record.id)]: voucher }
+    await router.push({
+      name: 'gl-voucher-detail',
+      params: { id: voucher.id },
+      query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+    })
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    glActionLoadingId.value = null
+  }
+}
+
 watch(() => generation.sourceKeyword, () => {
   generation.selectedKey = ''
 })
@@ -371,7 +448,28 @@ onMounted(() => {
         <el-table-column label="借方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.debitTotal) }}</template></el-table-column>
         <el-table-column label="贷方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.creditTotal) }}</template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="160" />
-        <el-table-column label="操作" fixed="right" min-width="100"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-voucher-draft-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
+        <el-table-column label="操作" fixed="right" min-width="190">
+          <template #default="{ row }">
+            <el-button text @click="router.push({ name: 'finance-voucher-draft-detail', params: { id: row.id } })">详情</el-button>
+            <el-button
+              v-if="linkedGlVoucher(row) && canQueryGlVouchers"
+              data-test="view-gl-voucher"
+              text
+              @click="viewGlVoucher(row)"
+            >
+              查看正式凭证
+            </el-button>
+            <el-button
+              v-else-if="row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers"
+              data-test="convert-gl-voucher"
+              text
+              :loading="glActionLoadingId === row.id"
+              @click="convertToGlVoucher(row)"
+            >
+              生成正式凭证草稿
+            </el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />

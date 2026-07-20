@@ -372,6 +372,7 @@ describe('022 平台页面', () => {
     ['INVENTORY_OWNERSHIP_CONVERSION', 2, '/inventory/ownership-conversions/2'],
     ['INVENTORY_VALUATION_ADJUSTMENT', 3, '/inventory/valuation-adjustments/3'],
     ['SALES_QUOTE', 9, '/sales/quotes/9'],
+    ['GL_VOUCHER', 91, '/gl/vouchers/91'],
   ])('审批详情为 %s 提供业务单据入口', async (objectType, objectId, expectedPath) => {
     documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
       items: [{
@@ -424,7 +425,72 @@ describe('022 平台页面', () => {
     if (objectType === 'SALES_QUOTE') {
       expect(link.text()).toContain('销售报价')
     }
+    if (objectType === 'GL_VOUCHER') {
+      expect(link.text()).toContain('会计凭证')
+    }
     expect(link.attributes('data-to')).toBe(expectedPath)
+  })
+
+  it('GL_VOUCHER_POST 最终审批在审批中心显示通过并记账，不提供直接 GL 编辑', async () => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 91,
+        taskId: 791,
+        taskNo: 'AT-GL-001',
+        sceneCode: 'GL_VOUCHER_POST',
+        objectType: 'GL_VOUCHER',
+        objectId: 91,
+        objectNo: 'GLD-202607-0001',
+        objectName: '销售发票转正式凭证',
+        status: 'PENDING',
+        currentStepName: '固定审批',
+        applicantName: '会计',
+        assignedAt: '2026-07-20T10:00:00+08:00',
+        availableActions: [],
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 91,
+      taskId: 791,
+      taskVersion: 3,
+      sceneCode: 'GL_VOUCHER_POST',
+      objectType: 'GL_VOUCHER',
+      objectId: 91,
+      objectNo: 'GLD-202607-0001',
+      objectName: '销售发票转正式凭证',
+      status: 'SUBMITTED',
+      applicantName: '会计',
+      submittedAt: '2026-07-20T10:00:00+08:00',
+      version: 2,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ taskId: 791, stepName: '固定审批', status: 'PENDING', candidatePermission: 'gl:voucher:approve-post', version: 3 }],
+      histories: [{ action: 'SUBMIT', operatorName: '会计', operatedAt: '2026-07-20T10:00:00+08:00', comment: '提交记账审批' }],
+      attachmentSnapshots: [],
+    })
+
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/vouchers/91')
+    expect(wrapper.text()).toContain('会计凭证')
+    expect(wrapper.text()).toContain('通过并记账')
+    expect(wrapper.text()).not.toContain('编辑凭证')
+
+    await wrapper.find('[data-test="approval-comment"]').setValue('复核通过')
+    await wrapper.find('[data-test="approve-task"]').trigger('click')
+    await flushPromises()
+
+    expect(documentPlatformApiMock.approvalTasks.approve).toHaveBeenCalledWith(791, {
+      version: 3,
+      comment: '复核通过',
+      idempotencyKey: expect.stringContaining('approval-approve-'),
+    })
   })
 
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {

@@ -3,16 +3,22 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V32'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V33'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 32; checksum = 249406902'::text,
-        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 32
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 249406902),
-        'Flyway 最新成功版本必须为 V32，checksum 必须为 249406902。'::text
+        'latest successful version = 33; checksum = 612501943'::text,
+        (coalesce((array_agg(version::int order by version::int desc))[1], 0) = 33
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 612501943),
+        'Flyway 最新成功版本必须为 V33，checksum 必须为 612501943。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V33_CHECKSUM', 'migration',
+        concat('version=33;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 33 checksum = 612501943',
+        coalesce((array_agg(checksum))[1], 0) = 612501943,
+        'Flyway V33 checksum 必须保持 612501943。'
+        from flyway_schema_history where success and version = '33'
     union all select 'FLYWAY_V32_CHECKSUM', 'migration',
         concat('version=32;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
         'version 32 checksum = 249406902',
@@ -207,6 +213,208 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             where r.status = 'REOPENED'
                 and s.id is null
         ) reopened_without_snapshot
+
+    union all select 'GL_TABLES_V33', 'general-ledger', count(*)::text, '19', count(*) = 19,
+        'V33 必须创建 19 张总账领域表。'
+        from information_schema.tables
+        where table_schema = 'public'
+        and table_name in ('gl_ledger', 'gl_accounting_period', 'gl_account',
+            'gl_aux_dimension', 'gl_aux_item', 'gl_account_aux_requirement', 'gl_posting_rule',
+            'gl_posting_rule_line', 'gl_posting_rule_line_aux_map', 'gl_voucher', 'gl_voucher_line',
+            'gl_voucher_line_auxiliary', 'gl_voucher_source_claim', 'gl_voucher_number_sequence',
+            'gl_ledger_entry', 'gl_account_period_total', 'gl_voucher_reversal_link',
+            'gl_action_idempotency', 'gl_audit_event')
+    union all select 'GL_LEDGER_SINGLE_MAIN_CNY_V33', 'general-ledger',
+        concat('ledgerCount=', ledger_count, ';mainCny=', main_cny_count),
+        'ledgerCount=1;mainCny=1',
+        ledger_count = 1 and main_cny_count = 1,
+        '031 只能存在单一 MAIN 总账账簿，记账本位币必须为 CNY。'
+        from (
+            select count(*) as ledger_count,
+                count(*) filter (where code = 'MAIN' and currency = 'CNY') as main_cny_count
+            from gl_ledger
+        ) ledger_gate
+    union all select 'GL_ACCOUNT_TEMPLATE_CODES_V33', 'general-ledger', count(*)::text, '25', count(*) = 25,
+        'V33 制造业基础科目模板必须完整，且不得缺失进项/销项税下级科目。'
+        from gl_account
+        where code in ('1001', '1002', '1122', '1123', '1401', '1403', '1405', '1408',
+            '1601', '2202', '2203', '2221', '2221.01', '2221.02', '4001', '5001',
+            '5101', '6001', '6051', '6401', '6601', '6602', '6603', '6301', '6711')
+    union all select 'GL_AUX_DIMENSIONS_V33', 'general-ledger',
+        concat('systemDimensions=', system_dimension_count, ';enabledDimensions=', enabled_dimension_count),
+        'systemDimensions=3;enabledDimensions=3',
+        system_dimension_count = 3 and enabled_dimension_count = 3,
+        'V33 必须预置客户、供应商、项目三个启用的系统辅助核算维度。'
+        from (
+            select count(*) filter (
+                    where code in ('CUSTOMER', 'SUPPLIER', 'PROJECT')
+                    and dimension_type = 'SYSTEM'
+                    and system_defined
+                ) as system_dimension_count,
+                count(*) filter (
+                    where code in ('CUSTOMER', 'SUPPLIER', 'PROJECT')
+                    and enabled
+                ) as enabled_dimension_count
+            from gl_aux_dimension
+        ) aux_gate
+    union all select 'GL_POSTING_RULES_V33', 'general-ledger',
+        concat('activeRules=', active_rule_count, ';lines=', line_count, ';auxMaps=', aux_map_count),
+        'activeRules=7;lines=17;auxMaps=9',
+        active_rule_count = 7 and line_count = 17 and aux_map_count = 9,
+        'V33 必须预置六类 028 来源转换所需活动制证规则、规则行和辅助映射。'
+        from (
+            select
+                (select count(*) from gl_posting_rule where status = 'ACTIVE') as active_rule_count,
+                (select count(*) from gl_posting_rule_line) as line_count,
+                (select count(*) from gl_posting_rule_line_aux_map) as aux_map_count
+        ) posting_rule_gate
+    union all select 'GL_ACTION_PERMISSIONS_V33', 'general-ledger', count(*)::text, '23', count(*) = 23,
+        '031 总账动作权限必须精确种子化。'
+        from sys_permission
+        where code in ('gl:account:view', 'gl:account:create', 'gl:account:update', 'gl:account:disable',
+            'gl:auxiliary:view', 'gl:auxiliary:manage', 'gl:period:view', 'gl:period:initialize',
+            'gl:period:create', 'gl:rule:view', 'gl:rule:manage', 'gl:voucher:view',
+            'gl:voucher:create', 'gl:voucher:update', 'gl:voucher:convert', 'gl:voucher:submit',
+            'gl:voucher:cancel', 'gl:voucher:reverse', 'gl:voucher:approve-post',
+            'gl:ledger:view', 'gl:balance:view', 'gl:amount:view', 'gl:source:view')
+    union all select 'GL_SYSTEM_ADMIN_PERMISSIONS_V33', 'general-ledger', count(*)::text, '31', count(*) = 31,
+        'SYSTEM_ADMIN 必须拥有 V33 会计核算菜单和动作权限。'
+        from sys_role_permission rp
+        join sys_role r on r.id = rp.role_id
+        join sys_permission p on p.id = rp.permission_id
+        where r.code = 'SYSTEM_ADMIN'
+        and (p.code = 'gl' or p.code like 'gl:%')
+    union all select 'GL_APPROVAL_DEFINITION_V33', 'general-ledger',
+        concat('definitions=', definition_count, ';steps=', step_count),
+        'definitions=1;steps=1',
+        definition_count = 1 and step_count = 1,
+        '031 必须注册 GL_VOUCHER_POST 固定审批场景并使用 gl:voucher:approve-post 候选权限。'
+        from (
+            select
+                count(distinct d.id) as definition_count,
+                count(s.id) filter (where s.candidate_permission_code = 'gl:voucher:approve-post') as step_count
+            from platform_approval_definition d
+            left join platform_approval_definition_step s on s.definition_id = d.id
+            where d.scene_code = 'GL_VOUCHER_POST'
+            and d.status = 'ENABLED'
+        ) approval_gate
+    union all select 'GL_IMMUTABLE_TRIGGERS_V33', 'general-ledger', count(*)::text, '4', count(*) = 4,
+        'POSTED 凭证、凭证行、辅助快照和总账分录必须有数据库不可变守卫。'
+        from pg_trigger t
+        join pg_class c on c.oid = t.tgrelid
+        where not t.tgisinternal
+        and t.tgname in ('tr_gl_voucher_posted_immutable', 'tr_gl_voucher_line_posted_immutable',
+            'tr_gl_voucher_aux_posted_immutable', 'tr_gl_ledger_entry_immutable')
+        and c.relname in ('gl_voucher', 'gl_voucher_line', 'gl_voucher_line_auxiliary', 'gl_ledger_entry')
+    union all select 'GL_POSTED_VOUCHER_LEDGER_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+        '若存在 POSTED 凭证，必须有正式号且凭证头、分录和总账事实借贷金额一致。'
+        from (
+            select v.id
+            from gl_voucher v
+            left join (
+                select voucher_id, count(*) as line_count,
+                    coalesce(sum(debit_amount), 0) as line_debit,
+                    coalesce(sum(credit_amount), 0) as line_credit
+                from gl_voucher_line
+                group by voucher_id
+            ) l on l.voucher_id = v.id
+            left join (
+                select voucher_id, count(*) as entry_count,
+                    coalesce(sum(debit_amount), 0) as entry_debit,
+                    coalesce(sum(credit_amount), 0) as entry_credit
+                from gl_ledger_entry
+                group by voucher_id
+            ) e on e.voucher_id = v.id
+            where v.status = 'POSTED'
+            and (v.voucher_no is null or v.voucher_number is null or v.debit_total <> v.credit_total
+                or coalesce(l.line_count, 0) <> coalesce(e.entry_count, 0)
+                or coalesce(l.line_debit, 0) <> coalesce(e.entry_debit, 0)
+                or coalesce(l.line_credit, 0) <> coalesce(e.entry_credit, 0)
+                or v.debit_total <> coalesce(e.entry_debit, 0)
+                or v.credit_total <> coalesce(e.entry_credit, 0))
+        ) posted_voucher_violations
+    union all select 'GL_LEDGER_ENTRY_LINE_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+        '总账分录必须逐行对应 POSTED 凭证分录，金额、科目、期间和来源快照不能漂移。'
+        from (
+            select ('entry:' || e.id)::text as violation_id
+            from gl_ledger_entry e
+            left join gl_voucher_line l on l.id = e.voucher_line_id
+            left join gl_voucher v on v.id = e.voucher_id
+            where l.id is null or v.id is null or v.status <> 'POSTED'
+                or l.voucher_id <> v.id
+                or e.ledger_id <> v.ledger_id
+                or e.period_id <> v.accounting_period_id
+                or e.account_id <> l.account_id
+                or e.debit_amount <> l.debit_amount
+                or e.credit_amount <> l.credit_amount
+                or e.source_type is distinct from l.source_type
+                or e.source_id is distinct from l.source_id
+            union all
+            select ('line:' || l.id)::text as violation_id
+            from gl_voucher_line l
+            join gl_voucher v on v.id = l.voucher_id
+            left join gl_ledger_entry e on e.voucher_line_id = l.id
+            where v.status = 'POSTED'
+            and e.id is null
+        ) ledger_entry_line_violations
+    union all select 'GL_PERIOD_TOTALS_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+        '科目期间余额缓存必须与不可变总账分录按期初、本期和期末三组汇总一致。'
+        from (
+            select coalesce(t.ledger_id, e.ledger_id) as ledger_id,
+                coalesce(t.period_id, e.period_id) as period_id,
+                coalesce(t.account_id, e.account_id) as account_id
+            from gl_account_period_total t
+            full join (
+                select ledger_id, period_id, account_id,
+                    coalesce(sum(case when voucher_type = 'OPENING' then debit_amount else 0 end), 0) as opening_debit,
+                    coalesce(sum(case when voucher_type = 'OPENING' then credit_amount else 0 end), 0) as opening_credit,
+                    coalesce(sum(case when voucher_type <> 'OPENING' then debit_amount else 0 end), 0) as period_debit,
+                    coalesce(sum(case when voucher_type <> 'OPENING' then credit_amount else 0 end), 0) as period_credit,
+                    coalesce(sum(debit_amount), 0) as ending_debit,
+                    coalesce(sum(credit_amount), 0) as ending_credit
+                from gl_ledger_entry
+                group by ledger_id, period_id, account_id
+            ) e on e.ledger_id = t.ledger_id and e.period_id = t.period_id and e.account_id = t.account_id
+            where t.id is null or e.account_id is null
+                or t.opening_debit <> e.opening_debit
+                or t.opening_credit <> e.opening_credit
+                or t.period_debit <> e.period_debit
+                or t.period_credit <> e.period_credit
+                or t.ending_debit <> e.ending_debit
+                or t.ending_credit <> e.ending_credit
+        ) period_total_violations
+    union all select 'GL_SOURCE_CLAIMS_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+        '028 来源占用必须和凭证状态、来源版本及来源指纹一致；取消来源不得继续占用。'
+        from (
+            select c.id
+            from gl_voucher_source_claim c
+            left join gl_voucher v on v.id = c.voucher_id
+            where c.status in ('RESERVED', 'POSTED')
+            and (v.id is null
+                or c.source_fingerprint is null
+                or c.source_fingerprint = ''
+                or c.source_version is null
+                or v.source_claim_id is distinct from c.id
+                or (c.status = 'RESERVED' and v.status not in ('DRAFT', 'SUBMITTED'))
+                or (c.status = 'POSTED' and v.status <> 'POSTED'))
+        ) source_claim_violations
+    union all select 'GL_VOUCHER_SEQUENCE_DYNAMIC', 'general-ledger', count(*)::text, '0', count(*) = 0,
+        '凭证号段 last_number 必须等于同期间同凭证字已记账凭证最大正式号，失败事务不得消耗号。'
+        from (
+            select coalesce(s.ledger_id, posted.ledger_id) as ledger_id,
+                coalesce(s.period_id, posted.period_id) as period_id,
+                coalesce(s.voucher_word, posted.voucher_word) as voucher_word
+            from gl_voucher_number_sequence s
+            full join (
+                select ledger_id, accounting_period_id as period_id, voucher_word, max(voucher_number) as max_number
+                from gl_voucher
+                where status = 'POSTED'
+                group by ledger_id, accounting_period_id, voucher_word
+            ) posted on posted.ledger_id = s.ledger_id
+                and posted.period_id = s.period_id
+                and posted.voucher_word = s.voucher_word
+            where coalesce(s.last_number, 0) <> coalesce(posted.max_number, 0)
+        ) sequence_violations
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

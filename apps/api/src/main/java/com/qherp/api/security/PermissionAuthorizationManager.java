@@ -80,6 +80,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return periodClosePermissionCode;
 		}
 
+		String generalLedgerPermissionCode = generalLedgerPermissionCode(method, path);
+		if (generalLedgerPermissionCode != null) {
+			return generalLedgerPermissionCode;
+		}
+
 		String stage021MasterPermissionCode = stage021MasterPermissionCode(method, path);
 		if (stage021MasterPermissionCode != null) {
 			return stage021MasterPermissionCode;
@@ -330,6 +335,89 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("GET".equals(method)) {
 			return "system:business-period-close:view";
+		}
+		return null;
+	}
+
+	private String generalLedgerPermissionCode(String method, String path) {
+		String basePath = "/api/admin/gl";
+		if (!matchesBasePath(path, basePath)) {
+			return null;
+		}
+		if ("GET".equals(method) && "/api/admin/gl/ledger".equals(path)) {
+			return "gl:period:view";
+		}
+		if ("POST".equals(method) && "/api/admin/gl/ledger/initialize".equals(path)) {
+			return "gl:period:initialize";
+		}
+		if (matchesBasePath(path, "/api/admin/gl/accounting-periods")) {
+			if ("GET".equals(method)) {
+				return "gl:period:view";
+			}
+			if ("POST".equals(method)) {
+				return "gl:period:create";
+			}
+		}
+		if (matchesBasePath(path, "/api/admin/gl/accounts")) {
+			if ("GET".equals(method)) {
+				return "gl:account:view";
+			}
+			if ("POST".equals(method) && "/api/admin/gl/accounts".equals(path)) {
+				return "gl:account:create";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/accounts") + "/\\d+/disable")) {
+				return "gl:account:disable";
+			}
+			if ("PUT".equals(method) && matchesIdPath(path, "/api/admin/gl/accounts")) {
+				return "gl:account:update";
+			}
+		}
+		if (matchesBasePath(path, "/api/admin/gl/aux-dimensions")) {
+			if ("GET".equals(method)) {
+				return "gl:auxiliary:view";
+			}
+			return "gl:auxiliary:manage";
+		}
+		if (matchesBasePath(path, "/api/admin/gl/posting-rules")) {
+			if ("GET".equals(method)) {
+				return "gl:rule:view";
+			}
+			return "gl:rule:manage";
+		}
+		if (matchesBasePath(path, "/api/admin/gl/vouchers")) {
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/gl/vouchers/from-finance-draft") + "/\\d+")) {
+				return "gl:voucher:convert";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/submit")) {
+				return "gl:voucher:submit";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/cancel")) {
+				return "gl:voucher:cancel";
+			}
+			if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/reversals")) {
+				return "gl:voucher:reverse";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/gl/vouchers") + "/\\d+/refresh-source")) {
+				return "gl:voucher:convert";
+			}
+			if ("GET".equals(method)) {
+				return "gl:voucher:view";
+			}
+			if ("POST".equals(method) && "/api/admin/gl/vouchers".equals(path)) {
+				return "gl:voucher:create";
+			}
+			if ("PUT".equals(method) && matchesIdPath(path, "/api/admin/gl/vouchers")) {
+				return "gl:voucher:update";
+			}
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/gl/ledgers")) {
+			return "gl:ledger:view";
+		}
+		if ("GET".equals(method)
+				&& ("/api/admin/gl/account-balances".equals(path) || "/api/admin/gl/trial-balance".equals(path))) {
+			return "gl:balance:view";
 		}
 		return null;
 	}

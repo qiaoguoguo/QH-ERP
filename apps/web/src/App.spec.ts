@@ -13,6 +13,7 @@ import productionMenuSource from './navigation/productionMenu.ts?raw'
 import planningMenuSource from './navigation/planningMenu.ts?raw'
 import costMenuSource from './navigation/costMenu.ts?raw'
 import periodCloseMenuSource from './navigation/periodCloseMenu.ts?raw'
+import glMenuSource from './navigation/glMenu.ts?raw'
 import appMenuRegistrySource from './navigation/appMenuRegistry.ts?raw'
 import appSource from './App.vue?raw'
 import { createQhErpRouter } from './router'
@@ -417,6 +418,39 @@ describe('ERP 应用骨架', () => {
       .toContain('/period-close/runs')
     expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
       .toContain('/menu/period-close')
+  })
+
+  it('有会计核算权限但后端菜单缺失时通过轻量菜单注册补齐 GL 入口', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    useAuthStore().setSession({
+      user: { id: 1, username: 'gl_user', displayName: '会计用户', status: 'ENABLED' },
+      menus: [],
+      permissions: ['gl:voucher:view', 'gl:ledger:view'],
+    })
+    const router = createQhErpRouter()
+    router.push('/')
+    await router.isReady()
+
+    const wrapper = mount(App, {
+      global: {
+        plugins: [pinia, router, ElementPlus],
+      },
+    })
+
+    expect(glMenuSource).toContain('/gl/vouchers')
+    expect(glMenuSource).toContain('gl:voucher:view')
+    expect(appMenuRegistrySource).toContain('glChildren')
+    expect(appSource).not.toContain('ensureGlMenu')
+    expect(appSource).not.toContain('removeGlMenus')
+    expect(wrapper.text()).toContain('会计核算')
+    expect(wrapper.text()).toContain('正式凭证')
+    expect(wrapper.text()).toContain('总账')
+    expect(wrapper.find('[data-test="main-menu-icon-gl"]').exists()).toBe(true)
+    expect(wrapper.findAllComponents({ name: 'ElMenuItem' }).map((item) => item.props('index')))
+      .toEqual(expect.arrayContaining(['/gl/vouchers', '/gl/ledgers/general']))
+    expect(wrapper.findAllComponents({ name: 'ElSubMenu' }).map((item) => item.props('index')))
+      .toContain('/menu/gl')
   })
 
   it('有业务期间查看权限但后端菜单缺失时补齐系统管理入口', async () => {

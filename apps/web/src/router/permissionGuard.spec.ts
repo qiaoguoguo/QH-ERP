@@ -55,6 +55,17 @@ import PeriodCloseCheckDetailView from '../modules/periodClose/PeriodCloseCheckD
 import PeriodCloseRunDetailView from '../modules/periodClose/PeriodCloseRunDetailView.vue'
 import PeriodCloseSnapshotView from '../modules/periodClose/PeriodCloseSnapshotView.vue'
 import PeriodCloseWorkbenchView from '../modules/periodClose/PeriodCloseWorkbenchView.vue'
+import GlAccountingPeriodsView from '../modules/gl/GlAccountingPeriodsView.vue'
+import GlAccountsView from '../modules/gl/GlAccountsView.vue'
+import GlAuxiliariesView from '../modules/gl/GlAuxiliariesView.vue'
+import GlPostingRulesView from '../modules/gl/GlPostingRulesView.vue'
+import GlVoucherWorkbenchView from '../modules/gl/GlVoucherWorkbenchView.vue'
+import GlVoucherFormView from '../modules/gl/GlVoucherFormView.vue'
+import GlVoucherDetailView from '../modules/gl/GlVoucherDetailView.vue'
+import GlGeneralLedgerView from '../modules/gl/GlGeneralLedgerView.vue'
+import GlDetailLedgerView from '../modules/gl/GlDetailLedgerView.vue'
+import GlAccountBalanceView from '../modules/gl/GlAccountBalanceView.vue'
+import GlTrialBalanceView from '../modules/gl/GlTrialBalanceView.vue'
 import PurchaseOrderDetailView from '../modules/procurement/PurchaseOrderDetailView.vue'
 import PurchaseOrderFormView from '../modules/procurement/PurchaseOrderFormView.vue'
 import PurchaseOrderListView from '../modules/procurement/PurchaseOrderListView.vue'
@@ -111,6 +122,7 @@ import productionRouteSource from './modules/productionRoutes.ts?raw'
 import planningRouteSource from './modules/planningRoutes.ts?raw'
 import costRouteSource from './modules/costRoutes.ts?raw'
 import periodCloseRouteSource from './modules/periodCloseRoutes.ts?raw'
+import glRouteSource from './modules/glRoutes.ts?raw'
 
 const user: UserProfile = { id: '1', username: 'admin', displayName: '管理员', status: 'ENABLED' }
 const adminSession: AuthSession = {
@@ -530,6 +542,39 @@ describe('账号权限路由守卫', () => {
     expect(rootRoute?.meta.requiresAuth).toBe(true)
     expect(periodCloseRouteSource).toContain('periodCloseRouteOrder')
     expect(periodCloseRouteSource).toContain('system:business-period-close:view')
+  })
+
+  it('会计核算路由由独立 GL 模块接入并配置冻结权限', async () => {
+    const router = createQhErpRouter()
+    const glRouteExpectations = [
+      ['gl-accounting-periods', '/gl/accounting-periods', 'gl:period:view', GlAccountingPeriodsView],
+      ['gl-accounts', '/gl/accounts', 'gl:account:view', GlAccountsView],
+      ['gl-auxiliaries', '/gl/auxiliaries', 'gl:auxiliary:view', GlAuxiliariesView],
+      ['gl-posting-rules', '/gl/posting-rules', 'gl:rule:view', GlPostingRulesView],
+      ['gl-vouchers', '/gl/vouchers', 'gl:voucher:view', GlVoucherWorkbenchView],
+      ['gl-voucher-create', '/gl/vouchers/create', 'gl:voucher:create', GlVoucherFormView],
+      ['gl-voucher-detail', '/gl/vouchers/:id', 'gl:voucher:view', GlVoucherDetailView],
+      ['gl-voucher-edit', '/gl/vouchers/:id/edit', 'gl:voucher:update', GlVoucherFormView],
+      ['gl-ledger-general', '/gl/ledgers/general', 'gl:ledger:view', GlGeneralLedgerView],
+      ['gl-ledger-detail', '/gl/ledgers/detail', 'gl:ledger:view', GlDetailLedgerView],
+      ['gl-account-balances', '/gl/account-balances', 'gl:balance:view', GlAccountBalanceView],
+      ['gl-trial-balance', '/gl/trial-balance', 'gl:balance:view', GlTrialBalanceView],
+    ] as const
+
+    for (const [routeName, path, permission, expectedComponent] of glRouteExpectations) {
+      const route = router.getRoutes().find((item) => item.name === routeName)
+      const component = route?.components?.default as (() => Promise<unknown>) | undefined
+
+      expect(route?.path).toBe(path)
+      expect(route?.meta.requiresAuth).toBe(true)
+      expect(route?.meta.requiredPermission).toBe(permission)
+      expect(component).toBeTypeOf('function')
+      await expect(component?.()).resolves.toHaveProperty('default', expectedComponent)
+    }
+
+    expect(router.getRoutes().find((item) => item.name === 'gl-root')?.path).toBe('/gl')
+    expect(glRouteSource).toContain('glRouteOrder')
+    expect(glRouteSource).toContain('gl:voucher:view')
   })
 
   it('采购订单、采购入库和采购退货路由加载真实页面并配置对应权限', async () => {

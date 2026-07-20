@@ -4,6 +4,7 @@ import { firstFinanceRouteByPermission } from '../modules/finance/financePageHel
 import { firstReportRouteByPermission, reportRouteConfigs } from '../modules/reports/reportPageHelpers'
 import { useAuthStore } from '../stores/authStore'
 import { costRoutes, firstCostRouteByPermission } from './modules/costRoutes'
+import { firstGlRouteByPermission, glRoutes } from './modules/glRoutes'
 import { firstPeriodCloseRouteByPermission, periodCloseRoutes } from './modules/periodCloseRoutes'
 import { firstPlanningRouteByPermission, planningRoutes } from './modules/planningRoutes'
 import { firstProductionRouteByPermission, productionRoutes } from './modules/productionRoutes'
@@ -654,6 +655,7 @@ const routes: RouteRecordRaw[] = [
   },
   ...costRoutes,
   ...periodCloseRoutes,
+  ...glRoutes,
   {
     path: '/finance',
     name: 'finance-root',
@@ -1008,6 +1010,14 @@ export function createQhErpRouter() {
         return { name: 'forbidden', query: { from: to.fullPath } }
       }
       return periodCloseRoute
+    }
+
+    if (to.name === 'gl-root') {
+      const glRoute = firstGlRouteByPermission((permission) => authStore.hasPermission(permission))
+      if (!glRoute) {
+        return { name: 'forbidden', query: { from: to.fullPath } }
+      }
+      return glRoute
     }
 
     if (to.name === 'sales-root') {

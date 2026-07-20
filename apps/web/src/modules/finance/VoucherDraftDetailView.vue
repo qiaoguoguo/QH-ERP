@@ -2,9 +2,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { financeVoucherDraftApi, type VoucherDraftRecord } from '../../shared/api/financeVoucherDraftApi'
+import { glApi, type GlVoucherRecord } from '../../shared/api/glApi'
+import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import { pageItems } from '../system/shared/pageHelpers'
 import {
   financeErrorMessage,
   financePermissions,
@@ -20,6 +23,7 @@ const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
 const record = ref<VoucherDraftRecord | null>(null)
+const linkedGlVoucher = ref<GlVoucherRecord | null>(null)
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
@@ -27,6 +31,12 @@ const actionLoading = ref(false)
 
 const canReady = computed(() => record.value?.allowedActions?.includes('READY') && authStore.hasPermission(financePermissions.voucherDraftReady))
 const canCancel = computed(() => record.value?.allowedActions?.includes('CANCEL') && authStore.hasPermission(financePermissions.voucherDraftCancel))
+const canQueryGlVoucher = computed(() => authStore.hasPermission('gl:voucher:view'))
+const canConvertGlVoucher = computed(() =>
+  Boolean(record.value && record.value.status === 'READY' && !linkedGlVoucher.value)
+  && authStore.hasPermission('gl:voucher:convert')
+  && canQueryGlVoucher.value,
+)
 const balanceText = computed(() => record.value?.balanced ? '借贷平衡' : '借贷不平衡')
 
 function debitTotalText(draft: VoucherDraftRecord) {
@@ -59,10 +69,29 @@ async function loadRecord() {
   error.value = ''
   try {
     record.value = await financeVoucherDraftApi.voucherDrafts.get(route.params.id as string)
+    await loadLinkedGlVoucher()
   } catch (caught) {
     error.value = financeErrorMessage(caught)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadLinkedGlVoucher() {
+  if (!record.value || !canQueryGlVoucher.value) {
+    linkedGlVoucher.value = null
+    return
+  }
+  try {
+    const page = await glApi.vouchers.list({
+      sourceType: 'FIN_VOUCHER_DRAFT',
+      sourceId: record.value.id,
+      page: 1,
+      pageSize: 10,
+    })
+    linkedGlVoucher.value = pageItems(page)[0] ?? null
+  } catch {
+    linkedGlVoucher.value = null
   }
 }
 
@@ -94,6 +123,39 @@ async function runAction(action: 'ready' | 'cancel') {
   }
 }
 
+function viewGlVoucher() {
+  if (!linkedGlVoucher.value) {
+    return
+  }
+  void router.push({
+    name: 'gl-voucher-detail',
+    params: { id: linkedGlVoucher.value.id },
+    query: queryWithReturnTo({}, currentRouteReturnTo(route)),
+  })
+}
+
+async function convertToGlVoucher() {
+  if (!record.value || !canConvertGlVoucher.value || actionLoading.value) {
+    return
+  }
+  if (!(await confirmAction(`将凭证草稿“${record.value.draftNo}”生成正式凭证草稿？`))) {
+    return
+  }
+  actionLoading.value = true
+  actionError.value = ''
+  try {
+    linkedGlVoucher.value = await glApi.vouchers.fromFinanceDraft(record.value.id, {
+      version: record.value.version,
+      idempotencyKey: `gl-convert-finance-draft-${record.value.id}-${Date.now()}`,
+    })
+    viewGlVoucher()
+  } catch (caught) {
+    actionError.value = financeErrorMessage(caught)
+  } finally {
+    actionLoading.value = false
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -102,6 +164,8 @@ onMounted(loadRecord)
     <template #actions>
       <el-button @click="router.push({ name: 'finance-voucher-drafts' })">返回列表</el-button>
       <el-button @click="loadRecord">刷新</el-button>
+      <el-button v-if="linkedGlVoucher && canQueryGlVoucher" data-test="view-gl-voucher" @click="viewGlVoucher">查看正式凭证</el-button>
+      <el-button v-if="canConvertGlVoucher" data-test="convert-gl-voucher" type="primary" :loading="actionLoading" @click="convertToGlVoucher">生成正式凭证草稿</el-button>
       <el-button v-if="canReady" data-test="ready-voucher-draft" type="success" :loading="actionLoading" :disabled="actionLoading" @click="runAction('ready')">标记待制证</el-button>
       <el-button v-if="canCancel" data-test="cancel-voucher-draft" type="danger" :loading="actionLoading" :disabled="actionLoading" @click="runAction('cancel')">取消草稿</el-button>
     </template>
@@ -121,6 +185,7 @@ onMounted(loadRecord)
       <div><span>贷方合计</span><strong>{{ formatFinanceAmount(creditTotalText(record)) }}</strong></div>
       <div><span>生成版本</span><strong>{{ record.generationVersion }}</strong></div>
       <div><span>项目/公共</span><strong>{{ ownershipTypeText(record.ownershipType) }} {{ record.projectName ?? '' }}</strong></div>
+      <div v-if="linkedGlVoucher"><span>正式凭证</span><strong>已生成正式凭证 {{ linkedGlVoucher.voucherNo || linkedGlVoucher.draftNo }}</strong></div>
     </div>
 
     <div v-if="record" class="finance-section-grid">
@@ -154,6 +219,11 @@ onMounted(loadRecord)
       <section class="finance-section">
         <span class="finance-section-title">来源追溯</span>
         <p>{{ sourceSummaryText(record) }}</p>
+      </section>
+      <section v-if="linkedGlVoucher" class="finance-section">
+        <span class="finance-section-title">正式凭证</span>
+        <p>已生成正式凭证 {{ linkedGlVoucher.voucherNo || linkedGlVoucher.draftNo }}</p>
+        <el-button data-test="view-gl-voucher" text @click="viewGlVoucher">查看正式凭证</el-button>
       </section>
       <section class="finance-section">
         <span class="finance-section-title">审计</span>

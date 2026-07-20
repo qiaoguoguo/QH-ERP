@@ -59,12 +59,14 @@ const canApprove = computed(() => hasCurrentTaskVersion.value && (detail.value?.
 const canReject = computed(() => hasCurrentTaskVersion.value && (detail.value?.availableActions?.includes('REJECT') ?? false))
 const canWithdraw = computed(() => detail.value?.availableActions?.includes('WITHDRAW') ?? false)
 const canCancel = computed(() => detail.value?.availableActions?.includes('CANCEL') ?? false)
+const approveButtonText = computed(() => detail.value?.sceneCode === 'GL_VOUCHER_POST' ? '通过并记账' : '通过')
 
 const businessObjectPaths: Record<string, string> = {
   INVENTORY_STOCKTAKE: '/inventory/stocktakes',
   INVENTORY_OWNERSHIP_CONVERSION: '/inventory/ownership-conversions',
   INVENTORY_VALUATION_ADJUSTMENT: '/inventory/valuation-adjustments',
   SALES_QUOTE: '/sales/quotes',
+  GL_VOUCHER: '/gl/vouchers',
 }
 
 const businessObjectLabels: Record<string, string> = {
@@ -72,6 +74,7 @@ const businessObjectLabels: Record<string, string> = {
   INVENTORY_OWNERSHIP_CONVERSION: '库存权属转换',
   INVENTORY_VALUATION_ADJUSTMENT: '库存估值调整',
   SALES_QUOTE: '销售报价',
+  GL_VOUCHER: '会计凭证',
 }
 
 function businessObjectRoute(record: { objectType?: string | null, objectId?: string | number | null }) {
@@ -386,7 +389,7 @@ onMounted(() => {
         <el-button v-if="canCancel" data-test="approval-cancel" type="warning" plain :loading="actionLoading" @click="cancelApproval">治理取消</el-button>
         <el-button v-if="canWithdraw" data-test="withdraw-approval" :loading="actionLoading" @click="withdrawApproval">撤回</el-button>
         <el-button v-if="canReject" data-test="reject-task" type="danger" plain :loading="actionLoading" @click="submitTaskAction('reject')">驳回</el-button>
-        <el-button v-if="canApprove" data-test="approve-task" type="primary" :loading="actionLoading" @click="submitTaskAction('approve')">通过</el-button>
+        <el-button v-if="canApprove" data-test="approve-task" type="primary" :loading="actionLoading" @click="submitTaskAction('approve')">{{ approveButtonText }}</el-button>
       </template>
     </el-drawer>
   </MasterDataTableView>

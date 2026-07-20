@@ -1,4 +1,5 @@
 import type { MenuNode } from '../shared/api/accountPermissionApi'
+import { glChildren, glMenuPaths } from './glMenu'
 import { periodCloseChildren, periodCloseMenuPaths } from './periodCloseMenu'
 
 interface RegisteredModuleMenuGroup {
@@ -16,6 +17,13 @@ export const registeredModuleMenuGroups: RegisteredModuleMenuGroup[] = [
     name: '业务月结',
     children: periodCloseChildren,
     paths: periodCloseMenuPaths,
+  },
+  {
+    id: 'gl',
+    code: 'gl',
+    name: '会计核算',
+    children: glChildren,
+    paths: glMenuPaths,
   },
 ]
 

@@ -42,6 +42,9 @@ const settlementApiMock = vi.hoisted(() => ({
 const voucherApiMock = vi.hoisted(() => ({
   voucherDrafts: { list: vi.fn(), get: vi.fn(), generate: vi.fn(), markReady: vi.fn(), cancel: vi.fn() },
 }))
+const glApiMock = vi.hoisted(() => ({
+  vouchers: { list: vi.fn(), fromFinanceDraft: vi.fn() },
+}))
 const financeApiMock = vi.hoisted(() => ({
   receipts: { list: vi.fn() },
   payments: { list: vi.fn() },
@@ -70,6 +73,10 @@ vi.mock('../../shared/api/financeSettlementApi', async (importOriginal) => ({
 vi.mock('../../shared/api/financeVoucherDraftApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/financeVoucherDraftApi')>()),
   financeVoucherDraftApi: voucherApiMock,
+}))
+vi.mock('../../shared/api/glApi', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../shared/api/glApi')>()),
+  glApi: glApiMock,
 }))
 vi.mock('../../shared/api/financeApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/financeApi')>()),
@@ -419,6 +426,19 @@ describe('028 财务页面', () => {
     voucherApiMock.voucherDrafts.generate.mockResolvedValue(voucherDraft)
     voucherApiMock.voucherDrafts.markReady.mockResolvedValue({ ...voucherDraft, status: 'READY', allowedActions: [] })
     voucherApiMock.voucherDrafts.cancel.mockResolvedValue({ ...voucherDraft, status: 'CANCELLED', allowedActions: [] })
+    glApiMock.vouchers.list.mockResolvedValue(page([]))
+    glApiMock.vouchers.fromFinanceDraft.mockResolvedValue({
+      id: 91,
+      draftNo: 'GLD-202607-0001',
+      status: 'DRAFT',
+      sourceType: 'FIN_VOUCHER_DRAFT',
+      sourceId: 61,
+      debitTotal: '113.00',
+      creditTotal: '113.00',
+      version: 1,
+      allowedActions: ['UPDATE', 'SUBMIT'],
+      actionDisabledReasons: {},
+    })
     financeApiMock.receipts.list.mockResolvedValue(page([{ id: 81, receiptNo: 'RC-POSTED-001', receivableId: 11, receivableNo: 'AR-001', customerId: 88, customerName: '真实客户', receiptDate: '2026-08-06', amount: '500.00', method: 'BANK_TRANSFER', status: 'POSTED', createdByName: '财务用户', version: 4 }]))
     financeApiMock.payments.list.mockResolvedValue(page([{ id: 91, paymentNo: 'PM-POSTED-001', payableId: 21, payableNo: 'AP-001', supplierId: 99, supplierName: '真实供应商', paymentDate: '2026-08-06', amount: '260.00', method: 'BANK_TRANSFER', status: 'POSTED', createdByName: '财务用户', version: 5 }]))
   })
@@ -1188,5 +1208,66 @@ describe('028 财务页面', () => {
     expect(wrapper.text()).not.toContain('CASH_DRAFT')
     expect(wrapper.text()).not.toContain('ADVANCE_RECEIPT_DRAFT')
     expect(wrapper.text()).toContain('收款形成现金')
+  })
+
+  it('READY 凭证草稿按 GL 权限提供正式制证入口并保留 returnTo', async () => {
+    voucherApiMock.voucherDrafts.list.mockResolvedValueOnce(page([{ ...voucherDraft, status: 'READY', balanced: true, debitTotal: '113.00', creditTotal: '113.00' }]))
+    const { wrapper, router } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'gl:voucher:convert', 'gl:voucher:view'],
+      '/finance/voucher-drafts',
+    )
+
+    expect(glApiMock.vouchers.list).toHaveBeenCalledWith(expect.objectContaining({
+      sourceType: 'FIN_VOUCHER_DRAFT',
+      sourceId: 61,
+      page: 1,
+      pageSize: 10,
+    }))
+    expect(wrapper.text()).toContain('生成正式凭证草稿')
+
+    await wrapper.find('[data-test="convert-gl-voucher"]').trigger('click')
+    await flushPromises()
+
+    expect(glApiMock.vouchers.fromFinanceDraft).toHaveBeenCalledWith(61, expect.objectContaining({
+      version: 1,
+      idempotencyKey: expect.stringContaining('gl-convert-finance-draft-'),
+    }))
+    expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
+    expect(router.currentRoute.value.params.id).toBe('91')
+    expect(router.currentRoute.value.query.returnTo).toBe('/finance/voucher-drafts')
+  })
+
+  it('已关联正式凭证的 028 草稿只展示查看正式凭证入口，不重复转换', async () => {
+    glApiMock.vouchers.list.mockResolvedValueOnce(page([{
+      id: 91,
+      draftNo: 'GLD-202607-0001',
+      voucherNo: '记-202607-0001',
+      status: 'POSTED',
+      sourceType: 'FIN_VOUCHER_DRAFT',
+      sourceId: 61,
+      debitTotal: '113.00',
+      creditTotal: '113.00',
+      version: 2,
+      allowedActions: [],
+      actionDisabledReasons: {},
+    }]))
+
+    const { wrapper, router } = await mountFinanceView(
+      VoucherDraftDetailView,
+      ['finance:voucher-draft:view', 'gl:voucher:convert', 'gl:voucher:view'],
+      '/finance/voucher-drafts/61',
+    )
+
+    expect(wrapper.text()).toContain('已生成正式凭证')
+    expect(wrapper.text()).toContain('记-202607-0001')
+    expect(wrapper.text()).not.toContain('生成正式凭证草稿')
+
+    await wrapper.find('[data-test="view-gl-voucher"]').trigger('click')
+    await flushPromises()
+
+    expect(glApiMock.vouchers.fromFinanceDraft).not.toHaveBeenCalled()
+    expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
+    expect(router.currentRoute.value.query.returnTo).toBe('/finance/voucher-drafts/61')
   })
 })

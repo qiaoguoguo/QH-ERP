@@ -6,6 +6,7 @@ import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.audit.AuditService;
 import com.qherp.api.system.bom.BomEngineeringChangeAdminService;
+import com.qherp.api.system.gl.GeneralLedgerVoucherService;
 import com.qherp.api.system.inventory.InventoryStage023AdminService;
 import com.qherp.api.system.procurement.ProcurementRequisitionService;
 import com.qherp.api.system.procurement.ProcurementSourcingService;
@@ -62,6 +63,8 @@ public class PlatformApprovalService {
 
 	private final ProjectCostAdjustmentService projectCostAdjustmentService;
 
+	private final GeneralLedgerVoucherService generalLedgerVoucherService;
+
 	public PlatformApprovalService(JdbcTemplate jdbcTemplate, AuditService auditService,
 			SalesProjectContractService contractService,
 			BomEngineeringChangeAdminService engineeringChangeService,
@@ -72,7 +75,8 @@ public class PlatformApprovalService {
 			@Lazy SalesAdminService salesAdminService,
 			@Lazy SalesQuoteService salesQuoteService,
 			@Lazy SalesFulfillmentService salesFulfillmentService,
-			@Lazy ProjectCostAdjustmentService projectCostAdjustmentService) {
+			@Lazy ProjectCostAdjustmentService projectCostAdjustmentService,
+			@Lazy GeneralLedgerVoucherService generalLedgerVoucherService) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.auditService = auditService;
 		this.contractService = contractService;
@@ -85,6 +89,7 @@ public class PlatformApprovalService {
 		this.salesQuoteService = salesQuoteService;
 		this.salesFulfillmentService = salesFulfillmentService;
 		this.projectCostAdjustmentService = projectCostAdjustmentService;
+		this.generalLedgerVoucherService = generalLedgerVoucherService;
 	}
 
 	@Transactional
@@ -160,6 +165,11 @@ public class PlatformApprovalService {
 	public ApprovalInstanceRecord submitProjectCostAdjustment(Long adjustmentId, ApprovalSubmitRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
 		return submit("PROJECT_COST_ADJUSTMENT_CONFIRM", adjustmentId, request, operator, servletRequest);
+	}
+
+	public ApprovalInstanceRecord submitGlVoucherPost(Long voucherId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("GL_VOUCHER_POST", voucherId, request, operator, servletRequest);
 	}
 
 	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
@@ -258,6 +268,9 @@ public class PlatformApprovalService {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
 		if (task.submittedByUserId().equals(operator.id())) {
+			if ("GL_VOUCHER_POST".equals(task.sceneCode())) {
+				throw new BusinessException(ApiErrorCode.GL_APPROVAL_SELF_FORBIDDEN);
+			}
 			throw new BusinessException(ApiErrorCode.APPROVAL_SELF_ACTION_FORBIDDEN);
 		}
 		requirePermission(operator, task.candidatePermissionCode());
@@ -527,6 +540,11 @@ public class PlatformApprovalService {
 					task.businessObjectVersion(), operator, servletRequest);
 			return;
 		}
+		if ("GL_VOUCHER_POST".equals(task.sceneCode())) {
+			this.generalLedgerVoucherService.postFromApproval(task.businessObjectId(), task.businessObjectVersion(),
+					operator, servletRequest);
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -554,6 +572,9 @@ public class PlatformApprovalService {
 		}
 		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
 			this.projectCostAdjustmentService.reopenAfterApprovalTerminal(objectId, operator);
+		}
+		if ("GL_VOUCHER_POST".equals(sceneCode)) {
+			this.generalLedgerVoucherService.reopenAfterApprovalTerminal(objectId, operator);
 		}
 	}
 
@@ -822,6 +843,12 @@ public class PlatformApprovalService {
 				.stream()
 				.findFirst()
 				.orElseThrow(() -> new BusinessException(ApiErrorCode.PROJECT_COST_PROJECT_INVALID));
+		}
+		if ("GL_VOUCHER_POST".equals(sceneCode)) {
+			GeneralLedgerVoucherService.ApprovalSnapshot snapshot = this.generalLedgerVoucherService
+				.approvalSnapshot(objectId);
+			return new BusinessObjectSnapshot(snapshot.id(), snapshot.no(), snapshot.summary(),
+					snapshot.approvalStatus(), snapshot.version());
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -1191,6 +1218,9 @@ public class PlatformApprovalService {
 		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
 			return operator.permissions().contains("cost:project-cost-adjustment:view");
 		}
+		if ("GL_VOUCHER_POST".equals(sceneCode)) {
+			return operator.permissions().contains("gl:voucher:view");
+		}
 		return false;
 	}
 
@@ -1269,6 +1299,9 @@ public class PlatformApprovalService {
 		}
 		if ("PROJECT_COST_ADJUSTMENT_CONFIRM".equals(sceneCode)) {
 			return "cost:project-cost-adjustment:view";
+		}
+		if ("GL_VOUCHER_POST".equals(sceneCode)) {
+			return "gl:voucher:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

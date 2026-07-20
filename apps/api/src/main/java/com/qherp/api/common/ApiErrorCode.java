@@ -766,6 +766,56 @@ public enum ApiErrorCode {
 
 	PERIOD_CLOSE_SNAPSHOT_INCOMPLETE(HttpStatus.CONFLICT, "业务月结快照不完整"),
 
+	GL_LEDGER_ALREADY_INITIALIZED(HttpStatus.CONFLICT, "总账已启用，不能更换启用期间"),
+
+	GL_LEDGER_NOT_INITIALIZED(HttpStatus.CONFLICT, "总账尚未启用"),
+
+	GL_ACCOUNT_NOT_FOUND(HttpStatus.NOT_FOUND, "会计科目不存在"),
+
+	GL_ACCOUNT_NOT_LEAF(HttpStatus.BAD_REQUEST, "只能使用末级会计科目"),
+
+	GL_ACCOUNT_DISABLED(HttpStatus.CONFLICT, "会计科目已停用"),
+
+	GL_ACCOUNT_LOCKED(HttpStatus.CONFLICT, "会计科目已有总账事实，不允许当前修改"),
+
+	GL_AUXILIARY_REQUIRED(HttpStatus.BAD_REQUEST, "缺少必填辅助核算"),
+
+	GL_AUXILIARY_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "当前科目不允许该辅助核算"),
+
+	GL_PERIOD_NOT_FOUND(HttpStatus.NOT_FOUND, "会计期间不存在"),
+
+	GL_PERIOD_NOT_OPEN(HttpStatus.CONFLICT, "会计期间未开放"),
+
+	GL_RULE_MISSING(HttpStatus.CONFLICT, "缺少有效制证规则"),
+
+	GL_RULE_AMBIGUOUS(HttpStatus.CONFLICT, "有效制证规则不唯一"),
+
+	GL_RULE_INVALID(HttpStatus.BAD_REQUEST, "制证规则不合法"),
+
+	GL_VOUCHER_NOT_FOUND(HttpStatus.NOT_FOUND, "正式凭证不存在"),
+
+	GL_VOUCHER_UNBALANCED(HttpStatus.BAD_REQUEST, "凭证借贷不平衡"),
+
+	GL_SOURCE_NOT_READY(HttpStatus.CONFLICT, "来源单据未就绪或状态已变化"),
+
+	GL_SOURCE_ALREADY_ACCOUNTED(HttpStatus.CONFLICT, "来源单据已被正式凭证占用"),
+
+	GL_SOURCE_CHANGED(HttpStatus.CONFLICT, "来源会计事实已变化，请刷新后重试"),
+
+	GL_POSTED_IMMUTABLE(HttpStatus.CONFLICT, "已记账凭证不可修改"),
+
+	GL_APPROVAL_SELF_FORBIDDEN(HttpStatus.FORBIDDEN, "提交人不能审批并记账自己的凭证"),
+
+	GL_VOUCHER_NUMBER_CONFLICT(HttpStatus.CONFLICT, "凭证连续编号冲突"),
+
+	GL_VERSION_CONFLICT(HttpStatus.CONFLICT, "总账对象版本已变化，请刷新后重试"),
+
+	GL_IDEMPOTENCY_CONFLICT(HttpStatus.CONFLICT, "总账业务幂等键冲突"),
+
+	GL_REVERSAL_ALREADY_EXISTS(HttpStatus.CONFLICT, "原凭证已存在有效冲销凭证"),
+
+	GL_TRIAL_BALANCE_MISMATCH(HttpStatus.CONFLICT, "试算平衡与总账汇总缓存不一致"),
+
 	CONFLICT("CONFLICT", "数据冲突", HttpStatus.CONFLICT),
 
 	SYSTEM_ERROR("SYSTEM_ERROR", "系统异常", HttpStatus.INTERNAL_SERVER_ERROR);

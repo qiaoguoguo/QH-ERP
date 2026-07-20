@@ -1,0 +1,77 @@
+.gl-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.gl-summary-strip > div,
+.gl-section {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--el-bg-color);
+}
+
+.gl-summary-strip span,
+.gl-section-title,
+.gl-muted {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.gl-summary-strip strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--el-text-color-primary);
+  font-size: 14px;
+}
+
+.gl-section-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.gl-section-title {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.gl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.gl-query-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.gl-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.gl-danger-note {
+  color: var(--el-color-danger);
+}
+
+.gl-drawer-list {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 8px 12px;
+  margin: 0 0 16px;
+}
+
+.gl-drawer-list dt {
+  color: var(--el-text-color-secondary);
+}
+
+.gl-drawer-list dd {
+  margin: 0;
+}
