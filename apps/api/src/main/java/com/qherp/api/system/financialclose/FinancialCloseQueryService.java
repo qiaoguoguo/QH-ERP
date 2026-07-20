@@ -131,8 +131,12 @@ public class FinancialCloseQueryService {
 			return map;
 		}, id).stream().findFirst().orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY));
 		result.put("items", checkItems(id, currentUser));
-		result.put("allowedActions", "READY".equals(result.get("status")) ? List.of("CLOSE") : List.of());
-		result.put("actionDisabledReasons", Map.of());
+		boolean closeAllowed = "READY".equals(result.get("status"))
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:close");
+		result.put("allowedActions", closeAllowed ? List.of("CLOSE") : List.of());
+		result.put("actionDisabledReasons", closeAllowed ? Map.of()
+				: Map.of("CLOSE", !FinancialCloseSupport.hasPermission(currentUser,
+						"financial-close:period:close") ? "无权关闭财务期间" : "检查运行未就绪"));
 		return result;
 	}
 
@@ -147,7 +151,12 @@ public class FinancialCloseQueryService {
 				where r.id = ?
 				""", (rs, rowNum) -> closeRunMap(rs, currentUser), id).stream().findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
-		result.put("allowedActions", "CLOSED".equals(result.get("status")) ? List.of("REOPEN") : List.of());
+		boolean reopenAllowed = "CLOSED".equals(result.get("status"))
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:reopen");
+		result.put("allowedActions", reopenAllowed ? List.of("REOPEN") : List.of());
+		result.put("actionDisabledReasons", reopenAllowed ? Map.of()
+				: Map.of("REOPEN", !FinancialCloseSupport.hasPermission(currentUser,
+						"financial-close:period:reopen") ? "无权申请财务反结账" : "当前关闭运行不可反结账"));
 		return result;
 	}
 
@@ -250,8 +259,10 @@ public class FinancialCloseQueryService {
 		map.put("version", rs.getLong("version"));
 		FinancialCloseSupport.putVisibility(map, currentUser);
 		map.put("allowedActions", periodActions(rs.getString("status"), rs.getString("latest_check_status"),
-				FinancialCloseSupport.nullableLong(rs, "close_run_id")));
-		map.put("actionDisabledReasons", Map.of());
+				FinancialCloseSupport.nullableLong(rs, "close_run_id"), currentUser));
+		map.put("actionDisabledReasons", periodDisabledReasons(rs.getString("status"),
+				rs.getString("latest_check_status"), FinancialCloseSupport.nullableLong(rs, "close_run_id"),
+				currentUser));
 		return map;
 	}
 
@@ -298,18 +309,46 @@ public class FinancialCloseQueryService {
 		return map;
 	}
 
-	private List<String> periodActions(String periodStatus, String latestCheckStatus, Long closeRunId) {
+	private List<String> periodActions(String periodStatus, String latestCheckStatus, Long closeRunId,
+			CurrentUser currentUser) {
 		List<String> actions = new ArrayList<>();
-		if ("OPEN".equals(periodStatus)) {
+		if ("OPEN".equals(periodStatus) && FinancialCloseSupport.hasPermission(currentUser,
+				"financial-close:period:check")) {
 			actions.add("CHECK");
-			if ("READY".equals(latestCheckStatus)) {
+			if ("READY".equals(latestCheckStatus) && FinancialCloseSupport.hasPermission(currentUser,
+					"financial-close:period:close")) {
 				actions.add("CLOSE");
 			}
 		}
-		if ("CLOSED".equals(periodStatus) && closeRunId != null) {
+		if ("CLOSED".equals(periodStatus) && closeRunId != null
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:reopen")) {
 			actions.add("REOPEN");
 		}
 		return actions;
+	}
+
+	private Map<String, String> periodDisabledReasons(String periodStatus, String latestCheckStatus, Long closeRunId,
+			CurrentUser currentUser) {
+		Map<String, String> reasons = new java.util.LinkedHashMap<>();
+		if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:check")) {
+			reasons.put("CHECK", "无权执行财务结账检查");
+		}
+		else if (!"OPEN".equals(periodStatus)) {
+			reasons.put("CHECK", "会计期间不是开放状态");
+		}
+		if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:close")) {
+			reasons.put("CLOSE", "无权关闭财务期间");
+		}
+		else if (!"READY".equals(latestCheckStatus)) {
+			reasons.put("CLOSE", "最新检查未就绪");
+		}
+		if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:period:reopen")) {
+			reasons.put("REOPEN", "无权申请财务反结账");
+		}
+		else if (!"CLOSED".equals(periodStatus) || closeRunId == null) {
+			reasons.put("REOPEN", "当前期间没有可反结账的关闭运行");
+		}
+		return reasons;
 	}
 
 }

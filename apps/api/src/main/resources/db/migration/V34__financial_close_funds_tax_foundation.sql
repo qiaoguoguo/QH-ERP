@@ -151,6 +151,10 @@ create unique index uk_fin_close_profit_loss_idempotency
 	on fin_close_profit_loss_transfer (period_id, idempotency_key)
 	where idempotency_key is not null;
 
+create unique index uk_fin_close_profit_loss_active_source
+	on fin_close_profit_loss_transfer (period_id, source_fingerprint)
+	where status in ('DRAFT', 'ZERO_BALANCE', 'SUBMITTED', 'POSTED');
+
 create table fin_close_action_idempotency (
 	id bigserial primary key,
 	operator_user_id bigint not null,
@@ -319,7 +323,7 @@ create table fin_bank_reconciliation_exception (
 	created_at timestamptz not null default now(),
 	version bigint not null default 0,
 	constraint ck_fin_bank_reconciliation_exception_type check (
-		exception_type in ('BANK_ONLY', 'LEDGER_ONLY', 'AMOUNT_DIFFERENCE', 'DATE_DIFFERENCE')
+		exception_type in ('BANK_ONLY_CREDIT', 'BANK_ONLY_DEBIT', 'BOOK_ONLY_DEBIT', 'BOOK_ONLY_CREDIT')
 	),
 	constraint ck_fin_bank_reconciliation_exception_status check (status in ('OPEN', 'RESOLVED'))
 );
@@ -332,6 +336,12 @@ create table fin_tax_profile (
 	vat_periodicity varchar(32) not null,
 	income_tax_rate numeric(9, 4) not null default 0,
 	urban_maintenance_rate numeric(9, 4) not null default 0,
+	education_surcharge_rate numeric(9, 4) not null default 0,
+	local_education_surcharge_rate numeric(9, 4) not null default 0,
+	income_adjustment_increase numeric(18, 2) not null default 0,
+	income_adjustment_decrease numeric(18, 2) not null default 0,
+	loss_deduction numeric(18, 2) not null default 0,
+	prepaid_income_tax numeric(18, 2) not null default 0,
 	effective_from date not null,
 	current_flag boolean not null default true,
 	created_by varchar(64) not null,
@@ -395,8 +405,16 @@ create table fin_tax_period_summary (
 	opening_credit_vat numeric(18, 2) not null default 0,
 	vat_payable numeric(18, 2) not null default 0,
 	urban_maintenance_tax numeric(18, 2) not null default 0,
+	education_surcharge_tax numeric(18, 2) not null default 0,
+	local_education_surcharge_tax numeric(18, 2) not null default 0,
+	additional_tax_total numeric(18, 2) not null default 0,
 	ending_credit_vat numeric(18, 2) not null default 0,
+	income_adjustment_increase numeric(18, 2) not null default 0,
+	income_adjustment_decrease numeric(18, 2) not null default 0,
+	loss_deduction numeric(18, 2) not null default 0,
+	prepaid_income_tax numeric(18, 2) not null default 0,
 	income_tax_estimated numeric(18, 2) not null default 0,
+	income_tax_payable numeric(18, 2) not null default 0,
 	disclaimer varchar(500) not null,
 	stale boolean not null default false,
 	current_flag boolean not null default true,
@@ -533,7 +551,7 @@ set name = excluded.name,
 
 insert into sys_permission (code, name, type, parent_id, route_path, api_method, api_path, sort_order,
 	created_by, created_at, updated_by, updated_at)
-select 'financial-close', '财务结账', 'MENU', gl.id, '/financial-close/periods', null, null, 881,
+select 'financial-close', '财务结账', 'MENU', gl.id, '/gl/financial-close', null, null, 881,
        'system', now(), 'system', now()
 from sys_permission gl
 where gl.code = 'gl'
@@ -551,13 +569,13 @@ select seed.code, seed.name, 'MENU', parent.id, seed.route_path, null, null, see
        'system', now(), 'system', now()
 from (
 	values
-		('financial-close:period', '财务结账期间', '/financial-close/periods', 882),
-		('financial-close:profit-loss', '期末损益结转', '/financial-close/profit-loss', 883),
-		('financial-close:bank-account', '银行账户', '/financial-close/bank-accounts', 884),
-		('financial-close:bank-reconciliation', '银行对账', '/financial-close/bank-reconciliations', 885),
-		('financial-close:tax-profile', '税务基础设置', '/financial-close/tax-profile', 886),
-		('financial-close:tax-summary', '税务期间汇总', '/financial-close/tax-summaries', 887),
-		('financial-close:tax-payment', '税款缴纳记录', '/financial-close/tax-payments', 888)
+		('financial-close:period', '财务结账期间', '/gl/financial-close', 882),
+		('financial-close:profit-loss', '期末损益结转', '/gl/profit-loss-carryforward', 883),
+		('financial-close:bank-account', '银行账户', '/gl/bank-accounts', 884),
+		('financial-close:bank-reconciliation', '银行对账', '/gl/bank-reconciliation', 885),
+		('financial-close:tax-profile', '税务基础设置', '/gl/tax-settings', 886),
+		('financial-close:tax-summary', '税务期间汇总', '/gl/tax-summary', 887),
+		('financial-close:tax-payment', '税款缴纳记录', '/gl/tax-payments', 888)
 ) as seed(code, name, route_path, sort_order)
 join sys_permission parent on parent.code = 'financial-close'
 on conflict (code) do update
@@ -574,30 +592,30 @@ select seed.code, seed.name, 'ACTION', parent.id, seed.route_path, seed.api_meth
        seed.sort_order, 'system', now(), 'system', now()
 from (
 	values
-		('financial-close:period:view', '查看财务结账期间', 'financial-close:period', '/financial-close/periods', 'GET', '/api/admin/financial-closes/**', 889),
-		('financial-close:period:check', '执行财务结账检查', 'financial-close:period', '/financial-close/periods', 'POST', '/api/admin/financial-closes/periods/{id}/checks', 890),
-		('financial-close:period:close', '关闭财务期间', 'financial-close:period', '/financial-close/periods', 'POST', '/api/admin/financial-closes/check-runs/{id}/close', 891),
-		('financial-close:period:reopen', '申请与审批财务反结账', 'financial-close:period', '/financial-close/periods', 'POST', '/api/admin/financial-closes/close-runs/{id}/reopen-requests', 892),
-		('financial-close:profit-loss:view', '查看期末损益结转', 'financial-close:profit-loss', '/financial-close/profit-loss', 'GET', '/api/admin/financial-closes/periods/{id}/profit-loss-transfers/**', 893),
-		('financial-close:profit-loss:generate', '生成期末损益结转凭证草稿', 'financial-close:profit-loss', '/financial-close/profit-loss', 'POST', '/api/admin/financial-closes/periods/{id}/profit-loss-transfers/**', 894),
-		('financial-close:bank-account:view', '查看银行账户', 'financial-close:bank-account', '/financial-close/bank-accounts', 'GET', '/api/admin/bank-accounts/**', 895),
-		('financial-close:bank-account:manage', '维护银行账户', 'financial-close:bank-account', '/financial-close/bank-accounts', null, '/api/admin/bank-accounts/**', 896),
-		('financial-close:bank-reconciliation:view', '查看银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'GET', '/api/admin/bank-reconciliations/**', 897),
-		('financial-close:bank-reconciliation:import', '导入银行流水', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**', 898),
-		('financial-close:bank-reconciliation:match', '执行银行对账匹配', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/**', 899),
-		('financial-close:bank-reconciliation:confirm', '确认银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/{id}/confirm', 900),
-		('financial-close:bank-reconciliation:reopen', '重开银行对账', 'financial-close:bank-reconciliation', '/financial-close/bank-reconciliations', 'POST', '/api/admin/bank-reconciliations/{id}/reopen', 901),
-		('financial-close:tax-profile:view', '查看税务基础设置', 'financial-close:tax-profile', '/financial-close/tax-profile', 'GET', '/api/admin/tax-profiles/**', 902),
-		('financial-close:tax-profile:manage', '维护税务基础设置', 'financial-close:tax-profile', '/financial-close/tax-profile', null, '/api/admin/tax-profiles/**', 903),
-		('financial-close:tax-summary:view', '查看税务汇总', 'financial-close:tax-summary', '/financial-close/tax-summaries', 'GET', '/api/admin/tax-summaries/**', 904),
-		('financial-close:tax-summary:calculate', '计算税务汇总', 'financial-close:tax-summary', '/financial-close/tax-summaries', 'POST', '/api/admin/tax-summaries/**', 905),
-		('financial-close:tax-summary:confirm', '确认税务汇总', 'financial-close:tax-summary', '/financial-close/tax-summaries', 'POST', '/api/admin/tax-summaries/{id}/confirm', 906),
-		('financial-close:tax-summary:generate-voucher', '生成税务凭证草稿', 'financial-close:tax-summary', '/financial-close/tax-summaries', 'POST', '/api/admin/tax-summaries/{id}/voucher-drafts', 907),
-		('financial-close:tax-payment:view', '查看税款缴纳记录', 'financial-close:tax-payment', '/financial-close/tax-payments', 'GET', '/api/admin/tax-payments/**', 908),
-		('financial-close:tax-payment:manage', '维护税款缴纳记录', 'financial-close:tax-payment', '/financial-close/tax-payments', null, '/api/admin/tax-payments/**', 909),
-		('financial-close:amount:view', '查看财务结账金额', 'financial-close', '/financial-close/periods', null, null, 910),
-		('financial-close:source:view', '查看财务结账来源', 'financial-close', '/financial-close/periods', null, null, 911),
-		('financial-close:bank-sensitive:view', '查看银行敏感字段', 'financial-close:bank-account', '/financial-close/bank-accounts', null, null, 912)
+		('financial-close:period:view', '查看财务结账期间', 'financial-close:period', '/gl/financial-close', 'GET', '/api/admin/financial-closes/**', 889),
+		('financial-close:period:check', '执行财务结账检查', 'financial-close:period', '/gl/financial-close', 'POST', '/api/admin/financial-closes/periods/{id}/checks', 890),
+		('financial-close:period:close', '关闭财务期间', 'financial-close:period', '/gl/financial-close', 'POST', '/api/admin/financial-closes/check-runs/{id}/close', 891),
+		('financial-close:period:reopen', '申请与审批财务反结账', 'financial-close:period', '/gl/financial-close', 'POST', '/api/admin/financial-closes/close-runs/{id}/reopen-requests', 892),
+		('financial-close:profit-loss:view', '查看期末损益结转', 'financial-close:profit-loss', '/gl/profit-loss-carryforward', 'GET', '/api/admin/financial-closes/periods/{id}/profit-loss-transfers/**', 893),
+		('financial-close:profit-loss:generate', '生成期末损益结转凭证草稿', 'financial-close:profit-loss', '/gl/profit-loss-carryforward', 'POST', '/api/admin/financial-closes/periods/{id}/profit-loss-transfers/**', 894),
+		('financial-close:bank-account:view', '查看银行账户', 'financial-close:bank-account', '/gl/bank-accounts', 'GET', '/api/admin/bank-accounts/**', 895),
+		('financial-close:bank-account:manage', '维护银行账户', 'financial-close:bank-account', '/gl/bank-accounts', null, '/api/admin/bank-accounts/**', 896),
+		('financial-close:bank-reconciliation:view', '查看银行对账', 'financial-close:bank-reconciliation', '/gl/bank-reconciliation', 'GET', '/api/admin/bank-reconciliations/**', 897),
+		('financial-close:bank-reconciliation:import', '导入银行流水', 'financial-close:bank-reconciliation', '/gl/bank-reconciliation', 'POST', '/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**', 898),
+		('financial-close:bank-reconciliation:match', '执行银行对账匹配', 'financial-close:bank-reconciliation', '/gl/bank-reconciliation', 'POST', '/api/admin/bank-reconciliations/**', 899),
+		('financial-close:bank-reconciliation:confirm', '确认银行对账', 'financial-close:bank-reconciliation', '/gl/bank-reconciliation', 'POST', '/api/admin/bank-reconciliations/{id}/confirm', 900),
+		('financial-close:bank-reconciliation:reopen', '重开银行对账', 'financial-close:bank-reconciliation', '/gl/bank-reconciliation', 'POST', '/api/admin/bank-reconciliations/{id}/reopen', 901),
+		('financial-close:tax-profile:view', '查看税务基础设置', 'financial-close:tax-profile', '/gl/tax-settings', 'GET', '/api/admin/tax-profiles/**', 902),
+		('financial-close:tax-profile:manage', '维护税务基础设置', 'financial-close:tax-profile', '/gl/tax-settings', null, '/api/admin/tax-profiles/**', 903),
+		('financial-close:tax-summary:view', '查看税务汇总', 'financial-close:tax-summary', '/gl/tax-summary', 'GET', '/api/admin/tax-summaries/**', 904),
+		('financial-close:tax-summary:calculate', '计算税务汇总', 'financial-close:tax-summary', '/gl/tax-summary', 'POST', '/api/admin/tax-summaries/**', 905),
+		('financial-close:tax-summary:confirm', '确认税务汇总', 'financial-close:tax-summary', '/gl/tax-summary', 'POST', '/api/admin/tax-summaries/{id}/confirm', 906),
+		('financial-close:tax-summary:generate-voucher', '生成税务凭证草稿', 'financial-close:tax-summary', '/gl/tax-summary', 'POST', '/api/admin/tax-summaries/{id}/voucher-drafts', 907),
+		('financial-close:tax-payment:view', '查看税款缴纳记录', 'financial-close:tax-payment', '/gl/tax-payments', 'GET', '/api/admin/tax-payments/**', 908),
+		('financial-close:tax-payment:manage', '维护税款缴纳记录', 'financial-close:tax-payment', '/gl/tax-payments', null, '/api/admin/tax-payments/**', 909),
+		('financial-close:amount:view', '查看财务结账金额', 'financial-close', '/gl/financial-close', null, null, 910),
+		('financial-close:source:view', '查看财务结账来源', 'financial-close', '/gl/financial-close', null, null, 911),
+		('financial-close:bank-sensitive:view', '查看银行敏感字段', 'financial-close:bank-account', '/gl/bank-accounts', null, null, 912)
 ) as seed(code, name, parent_code, route_path, api_method, api_path, sort_order)
 join sys_permission parent on parent.code = seed.parent_code
 on conflict (code) do update
@@ -649,6 +667,11 @@ values
 	('VAT', 'VAT_13', 0.1300, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
 	('VAT', 'VAT_9', 0.0900, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
 	('VAT', 'VAT_6', 0.0600, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
+	('VAT', 'VAT_0', 0.0000, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
+	('VAT', 'SIMPLIFIED_3', 0.0300, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
+	('SURCHARGE', 'URBAN_7', 0.0700, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
+	('SURCHARGE', 'URBAN_5', 0.0500, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
+	('SURCHARGE', 'URBAN_1', 0.0100, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now()),
 	('INCOME_TAX', 'INCOME_25', 0.2500, date '2026-01-01', 'ENABLED', 'system', now(), 'system', now())
 on conflict (tax_type, rate_code, effective_from) do nothing;
 
@@ -656,9 +679,10 @@ insert into fin_tax_invoice_type (
 	code, name, direction, deductible, status, created_by, created_at, updated_by, updated_at
 )
 values
-	('SPECIAL_VAT_OUTPUT', '增值税专用发票-销项', 'OUTPUT', false, 'ENABLED', 'system', now(), 'system', now()),
-	('SPECIAL_VAT_INPUT', '增值税专用发票-进项', 'INPUT', true, 'ENABLED', 'system', now(), 'system', now()),
-	('ORDINARY_VAT_OUTPUT', '增值税普通发票-销项', 'OUTPUT', false, 'ENABLED', 'system', now(), 'system', now())
+	('E_DIGITAL_SPECIAL', '数电专票', 'OUTPUT', true, 'ENABLED', 'system', now(), 'system', now()),
+	('E_DIGITAL_NORMAL', '数电普票', 'OUTPUT', false, 'ENABLED', 'system', now(), 'system', now()),
+	('PAPER_SPECIAL', '纸质专票', 'OUTPUT', true, 'ENABLED', 'system', now(), 'system', now()),
+	('PAPER_NORMAL', '纸质普票', 'OUTPUT', false, 'ENABLED', 'system', now(), 'system', now())
 on conflict (code) do nothing;
 
 do $$
@@ -714,9 +738,9 @@ begin
 	)
 	values
 		(v_ledger_id, v_tax_parent_id, '2221.03', '未交增值税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now()),
-		(v_ledger_id, v_tax_parent_id, '2221.04', '转出未交增值税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now()),
-		(v_ledger_id, v_tax_parent_id, '2221.05', '城市维护建设税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now()),
-		(v_ledger_id, v_tax_parent_id, '2221.06', '应交所得税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now())
+		(v_ledger_id, v_tax_parent_id, '2221.04', '应交城市维护建设税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now()),
+		(v_ledger_id, v_tax_parent_id, '2221.05', '应交教育费附加', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now()),
+		(v_ledger_id, v_tax_parent_id, '2221.06', '应交企业所得税', 'LIABILITY', 'CREDIT', 2, true, true, true, 'system', now(), 'system', now())
 	on conflict (ledger_id, code) do nothing;
 
 	insert into gl_account (

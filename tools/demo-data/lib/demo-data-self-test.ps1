@@ -116,7 +116,7 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
-$expectedV34Checksum = "-177563574"
+$expectedV34Checksum = "1689626005"
 $expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
@@ -1071,8 +1071,12 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("FINANCIAL_PERIOD_REOPEN") `
         -and $SqlText.Contains("financial-close:period:reopen") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_ACCOUNT_CODES_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_ACCOUNT_NAMES_V34") `
         -and $SqlText.Contains("4103") `
         -and $SqlText.Contains("2221.03") `
+        -and $SqlText.Contains("应交城市维护建设税") `
+        -and $SqlText.Contains("应交教育费附加") `
+        -and $SqlText.Contains("应交企业所得税") `
         -and $SqlText.Contains("2221.06") `
         -and $SqlText.Contains("6801"))
     $constraintRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_IMMUTABLE_TRIGGERS_V34") `
@@ -1083,9 +1087,20 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("REOPENED") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC") `
         -and $SqlText.Contains("having count(*) > 1"))
+    $mandatoryCheckRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_MANDATORY_CHECK_CODES_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC") `
+        -and $SqlText.Contains("PREVIOUS_PERIOD_CLOSED") `
+        -and $SqlText.Contains("NO_INCOMPLETE_VOUCHERS") `
+        -and $SqlText.Contains("TRIAL_BALANCE_BALANCED") `
+        -and $SqlText.Contains("TAX_VOUCHERS_POSTED") `
+        -and $SqlText.Contains("NO_SOURCE_CHANGES") `
+        -and $SqlText.Contains("count(*) from fin_close_check_item i where i.check_run_id = r.id") `
+        -and $SqlText.Contains("每个已完成财务结账检查运行必须精确包含 9 项冻结检查"))
     $dynamicRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_READY_CHECKS_CONSUMABLE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_CLOSE_RECHECK_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CLOSED_PERIOD_LOCK_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_NO_UPSTREAM_WRITE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_SYSTEM_SOURCE_VOUCHER_UNIQUE_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC") `
         -and $SqlText.Contains("join fin_close_run c on c.period_id = r.period_id") `
         -and $SqlText.Contains("join gl_accounting_period p on p.id = r.period_id") `
@@ -1094,6 +1109,32 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and (-not $SqlText.Contains($legacyAdjustedBankBalanceColumn)) `
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_DISCLAIMER_V34"))
+    $bankRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_BANK_ACCOUNT_1002_SUBTREE_DYNAMIC") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_EXCEPTION_TYPES_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_FORMULA_DYNAMIC") `
+        -and $SqlText.Contains("BANK_ONLY_CREDIT") `
+        -and $SqlText.Contains("BANK_ONLY_DEBIT") `
+        -and $SqlText.Contains("BOOK_ONLY_DEBIT") `
+        -and $SqlText.Contains("BOOK_ONLY_CREDIT") `
+        -and $SqlText.Contains("a.code = '1002' or a.code like '1002.%'") `
+        -and $SqlText.Contains("a.balance_direction <> 'DEBIT'") `
+        -and $SqlText.Contains("a.is_leaf is not true") `
+        -and $SqlText.Contains("adjusted_bank_delta") `
+        -and $SqlText.Contains("adjusted_book_delta"))
+    $taxRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_TAX_RATE_RULES_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_INVOICE_TYPES_V34") `
+        -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_ADJUSTMENT_TYPES_V34") `
+        -and $SqlText.Contains("VAT_13") `
+        -and $SqlText.Contains("VAT_0") `
+        -and $SqlText.Contains("SIMPLIFIED_3") `
+        -and $SqlText.Contains("INCOME_25") `
+        -and $SqlText.Contains("URBAN_7") `
+        -and $SqlText.Contains("数电专票") `
+        -and $SqlText.Contains("纸质普票") `
+        -and $SqlText.Contains("OUTPUT_INCREASE") `
+        -and $SqlText.Contains("OUTPUT_DECREASE") `
+        -and $SqlText.Contains("INPUT_INCREASE") `
+        -and $SqlText.Contains("INPUT_DECREASE"))
     $objectRuleIsDynamic = ($SqlText.Contains("FILE_OBJECTS_AVAILABLE_MIN_8") `
         -and (-not $SqlText.Contains("count(*) = 18")) `
         -and (-not $SqlText.Contains("MINIO_BUCKET_OBJECTS_18")))
@@ -1102,7 +1143,10 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $permissionRulesAreStrict `
         -and $approvalAndAccountRulesAreStrict `
         -and $constraintRulesAreStrict `
+        -and $mandatoryCheckRulesAreStrict `
         -and $dynamicRulesAreStrict `
+        -and $bankRulesAreStrict `
+        -and $taxRulesAreStrict `
         -and $objectRuleIsDynamic)
 }
 
@@ -1110,7 +1154,7 @@ Assert-True -Condition (Test-FinancialCloseAuditEventRuleUsesV34ResourceType -Sq
     -Message "032 验证器必须在 fin_close_audit_event 使用 V34 列 resource_type，不得引用旧目标列。"
 
 Assert-True -Condition (Test-FinancialCloseValidatorRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须新增 032 表、权限、反结账审批、科目、状态/约束、不可变、动态业务事实和动态对象一致性门禁。"
+    -Message "正式演示数据验证器必须新增 032 表、权限、反结账审批、科目名称、9 项检查、系统来源唯一、银行未达公式、税务基础、动态业务事实和动态对象一致性门禁。"
 
 $legacyAuditEventSql = @"
 union all select 'FINANCIAL_CLOSE_NO_UPSTREAM_WRITE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,

@@ -58,8 +58,10 @@ class FinancialCloseServiceTests extends PostgresIntegrationTest {
 				"/api/admin/financial-closes/periods/" + periodId + "/checks",
 				Map.of("idempotencyKey", "032-block-close-check-" + periodId), admin));
 		assertThat(check.get("status").asText()).isEqualTo("BLOCKED");
-		assertThat(recursiveValues(check, "checkCode")).contains("BUSINESS_PERIOD_CLOSED",
-				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "PROFIT_LOSS_TRANSFER_POSTED");
+		assertThat(recursiveValues(check, "checkCode")).containsExactly("PREVIOUS_PERIOD_CLOSED",
+				"BUSINESS_PERIOD_CLOSED", "NO_INCOMPLETE_VOUCHERS", "TRIAL_BALANCE_BALANCED",
+				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "TAX_VOUCHERS_POSTED",
+				"PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
 
 		assertError(exchange(HttpMethod.POST,
 				"/api/admin/financial-closes/check-runs/" + check.get("id").longValue() + "/close",
@@ -82,6 +84,10 @@ class FinancialCloseServiceTests extends PostgresIntegrationTest {
 				"/api/admin/financial-closes/periods/" + periodId + "/checks",
 				Map.of("idempotencyKey", "032-ready-close-check-" + periodId), admin));
 		assertThat(check.get("status").asText()).isEqualTo("READY");
+		assertThat(recursiveValues(check, "checkCode")).containsExactly("PREVIOUS_PERIOD_CLOSED",
+				"BUSINESS_PERIOD_CLOSED", "NO_INCOMPLETE_VOUCHERS", "TRIAL_BALANCE_BALANCED",
+				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "TAX_VOUCHERS_POSTED",
+				"PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
 		JsonNode closed = data(exchange(HttpMethod.POST,
 				"/api/admin/financial-closes/check-runs/" + check.get("id").longValue() + "/close",
 				Map.of("version", check.get("version").longValue(), "reason", "完成财务结账",
@@ -151,6 +157,22 @@ class FinancialCloseServiceTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-pl-generate-" + periodId),
 				admin));
 		assertThat(replay.get("id").longValue()).isEqualTo(generated.get("id").longValue());
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/financial-closes/periods/" + periodId + "/profit-loss-transfers",
+				Map.of("sourceFingerprint", preview.get("sourceFingerprint").asText(), "reason", "生成损益结转草稿",
+						"idempotencyKey", "032-pl-generate-other-" + periodId),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+		this.jdbcTemplate.update("""
+				update fin_close_profit_loss_transfer
+				set source_fingerprint = ?, updated_at = now(), version = version + 1
+				where id = ?
+				""", "032-pl-mutated-source", generated.get("id").longValue());
+		JsonNode voucher = data(get("/api/admin/gl/vouchers/" + generated.get("voucherId").longValue(), admin));
+		assertError(exchange(HttpMethod.POST,
+				"/api/admin/gl/vouchers/" + generated.get("voucherId").longValue() + "/submit",
+				Map.of("version", voucher.get("version").longValue(), "reason", "来源已变化不得提交",
+						"idempotencyKey", "032-pl-submit-stale-" + periodId),
+				admin), HttpStatus.CONFLICT, "GL_SOURCE_CHANGED");
 	}
 
 	private JsonNode postGeneralVoucher(AuthenticatedSession admin, String voucherDate, String summary, String amount,

@@ -261,8 +261,8 @@ public class FinancialCloseAdminController {
 	}
 
 	@GetMapping("/tax-profiles/current")
-	public ApiResponse<Map<String, Object>> currentTaxProfile() {
-		return ApiResponse.ok(this.taxFoundationService.currentProfile());
+	public ApiResponse<Map<String, Object>> currentTaxProfile(@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.taxFoundationService.currentProfile(currentUser));
 	}
 
 	@PutMapping("/tax-profiles/current")

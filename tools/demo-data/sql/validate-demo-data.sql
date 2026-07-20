@@ -8,16 +8,16 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 34; checksum = -177563574'::text,
+        'latest successful version = 34; checksum = 1689626005'::text,
         coalesce((array_agg(version::int order by version::int desc))[1], 0) = 34
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -177563574,
-        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 -177563574。'::text
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 1689626005,
+        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 1689626005。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
     union all select 'FLYWAY_V34_CHECKSUM', 'migration',
         concat('version=34;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
-        'version 34 checksum = -177563574',
-        coalesce((array_agg(checksum))[1], 0) = -177563574,
-        'Flyway V34 checksum 必须保持 -177563574。'
+        'version 34 checksum = 1689626005',
+        coalesce((array_agg(checksum))[1], 0) = 1689626005,
+        'Flyway V34 checksum 必须保持 1689626005。'
         from flyway_schema_history where success and version = '34'
     union all select 'FLYWAY_V33_CHECKSUM', 'migration',
         concat('version=33;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
@@ -512,6 +512,19 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         'V34 必须补充本年利润、税务相关应交税费和费用科目。'
         from gl_account
         where code in ('4103', '2221.03', '2221.04', '2221.05', '2221.06', '6403', '6801')
+    union all select 'FINANCIAL_CLOSE_ACCOUNT_NAMES_V34', 'financial-close',
+        coalesce(string_agg(code || '=' || name, ';' order by code), ''),
+        '2221.03=未交增值税;2221.04=应交城市维护建设税;2221.05=应交教育费附加;2221.06=应交企业所得税;4103=本年利润;6403=税金及附加;6801=所得税费用',
+        count(*) filter (where code = '2221.03' and name = '未交增值税' and category = 'LIABILITY' and balance_direction = 'CREDIT' and postable is true) = 1
+            and count(*) filter (where code = '2221.04' and name = '应交城市维护建设税' and category = 'LIABILITY' and balance_direction = 'CREDIT' and postable is true) = 1
+            and count(*) filter (where code = '2221.05' and name = '应交教育费附加' and category = 'LIABILITY' and balance_direction = 'CREDIT' and postable is true) = 1
+            and count(*) filter (where code = '2221.06' and name = '应交企业所得税' and category = 'LIABILITY' and balance_direction = 'CREDIT' and postable is true) = 1
+            and count(*) filter (where code = '4103' and name = '本年利润' and category = 'EQUITY' and balance_direction = 'CREDIT' and postable is true) = 1
+            and count(*) filter (where code = '6403' and name = '税金及附加' and category = 'PROFIT_LOSS' and balance_direction = 'DEBIT' and postable is true) = 1
+            and count(*) filter (where code = '6801' and name = '所得税费用' and category = 'PROFIT_LOSS' and balance_direction = 'DEBIT' and postable is true) = 1,
+        'V34 税务与损益科目必须按阶段说明冻结名称、类别、方向和可记账属性，不得只校验编码数量。'
+        from gl_account
+        where code in ('4103', '2221.03', '2221.04', '2221.05', '2221.06', '6403', '6801')
     union all select 'FINANCIAL_CLOSE_IMMUTABLE_TRIGGERS_V34', 'financial-close', count(*)::text, '>= 4', count(*) >= 4,
         '关闭快照、反结账申请、已确认银行对账和已确认税务汇总必须有数据库不可变守卫。'
         from pg_trigger t
@@ -529,6 +542,56 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             '%CLOSED%', '%REOPENED%', '%SUBMITTED%', '%APPLIED%', '%UNMATCHED%', '%MATCHED%',
             '%CONFIRMED%', '%CALCULATED%'
         ])
+    union all select 'FINANCIAL_CLOSE_MANDATORY_CHECK_CODES_DYNAMIC', 'financial-close',
+        count(*)::text, '0', count(*) = 0,
+        '每个已完成财务结账检查运行必须精确包含 9 项冻结检查，不能只落地 4 项产生伪阳性。'
+        from (
+            select r.id
+            from fin_close_check_run r
+            where r.status in ('BLOCKED', 'READY', 'CONSUMED', 'STALE', 'FAILED')
+            and (
+                (select count(*) from fin_close_check_item i where i.check_run_id = r.id) <> 9
+                or exists (
+                    select 1
+                    from fin_close_check_item i
+                    where i.check_run_id = r.id
+                    and i.check_code not in (
+                        'PREVIOUS_PERIOD_CLOSED', 'BUSINESS_PERIOD_CLOSED', 'NO_INCOMPLETE_VOUCHERS',
+                        'TRIAL_BALANCE_BALANCED', 'BANK_RECONCILIATIONS_CONFIRMED',
+                        'TAX_SUMMARIES_CONFIRMED', 'TAX_VOUCHERS_POSTED',
+                        'PROFIT_LOSS_TRANSFER_POSTED', 'NO_SOURCE_CHANGES'
+                    )
+                )
+                or exists (
+                    select 1
+                    from (values
+                        ('PREVIOUS_PERIOD_CLOSED'), ('BUSINESS_PERIOD_CLOSED'),
+                        ('NO_INCOMPLETE_VOUCHERS'), ('TRIAL_BALANCE_BALANCED'),
+                        ('BANK_RECONCILIATIONS_CONFIRMED'), ('TAX_SUMMARIES_CONFIRMED'),
+                        ('TAX_VOUCHERS_POSTED'), ('PROFIT_LOSS_TRANSFER_POSTED'),
+                        ('NO_SOURCE_CHANGES')
+                    ) expected(check_code)
+                    where not exists (
+                        select 1
+                        from fin_close_check_item i
+                        where i.check_run_id = r.id
+                        and i.check_code = expected.check_code
+                    )
+                )
+            )
+        ) incomplete_check_runs
+    union all select 'FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC', 'financial-close',
+        coalesce(string_agg(distinct i.check_code, ',' order by i.check_code), ''),
+        'NO_INCOMPLETE_VOUCHERS,NO_SOURCE_CHANGES,PREVIOUS_PERIOD_CLOSED,TAX_VOUCHERS_POSTED',
+        count(distinct i.check_code) filter (where i.check_code = 'PREVIOUS_PERIOD_CLOSED') = 1
+            and count(distinct i.check_code) filter (where i.check_code = 'NO_INCOMPLETE_VOUCHERS') = 1
+            and count(distinct i.check_code) filter (where i.check_code = 'TAX_VOUCHERS_POSTED') = 1
+            and count(distinct i.check_code) filter (where i.check_code = 'NO_SOURCE_CHANGES') = 1,
+        '演示数据必须保留上期未关、未完成凭证、税费凭证未记账和来源变化的失败样例；试算不平负例由独立验收在隔离 Testcontainers 覆盖，避免破坏完整库总账一致性。'
+        from fin_close_check_item i
+        where i.passed is false
+        and i.check_code in ('PREVIOUS_PERIOD_CLOSED', 'NO_INCOMPLETE_VOUCHERS',
+            'TAX_VOUCHERS_POSTED', 'NO_SOURCE_CHANGES')
     union all select 'FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '同一会计期间同一时刻只能存在一个当前 CLOSED 财务关闭版本。'
         from (
@@ -551,6 +614,19 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             join fin_close_run c on c.period_id = r.period_id and c.status = 'CLOSED'
             where r.status = 'READY'
         ) unconsumed_ready_check_runs
+    union all select 'FINANCIAL_CLOSE_CLOSE_RECHECK_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
+        '关闭事务必须消费同源 READY 检查运行，不能用过期或来源已变化的检查运行完成关闭。'
+        from (
+            select c.id
+            from fin_close_run c
+            join fin_close_check_run r on r.id = c.check_run_id
+            where c.status = 'CLOSED'
+            and (
+                r.status <> 'CONSUMED'
+                or c.period_id <> r.period_id
+                or c.source_fingerprint <> r.source_fingerprint
+            )
+        ) close_runs_without_recheck
     union all select 'FINANCIAL_CLOSE_CLOSED_PERIOD_LOCK_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '当前 CLOSED 财务关闭运行必须把对应会计期间保持为 CLOSED；反结账后旧运行必须为 REOPENED。'
         from (
@@ -566,11 +642,112 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         where result = 'SUCCESS'
         and resource_type in ('FIN_RECEIVABLE', 'FIN_PAYABLE', 'FIN_RECEIPT', 'FIN_PAYMENT',
             'PRJ_COST_CALCULATION', 'BIZ_PERIOD_CLOSE_RUN')
+    union all select 'FINANCIAL_CLOSE_SYSTEM_SOURCE_VOUCHER_UNIQUE_DYNAMIC', 'financial-close',
+        count(*)::text, '0', count(*) = 0,
+        '032 生成的损益结转和税务系统来源凭证必须按 source_type/source_id 同源唯一，重复生成或重复提交不得产生重复凭证。'
+        from (
+            select source_type, source_id
+            from gl_voucher
+            where source_type in ('PROFIT_LOSS_CARRYFORWARD', 'TAX_SUMMARY')
+            and source_id is not null
+            group by source_type, source_id
+            having count(*) > 1
+        ) duplicated_system_source_vouchers
+    union all select 'FINANCIAL_CLOSE_BANK_ACCOUNT_1002_SUBTREE_DYNAMIC', 'financial-close',
+        count(*)::text, '0', count(*) = 0,
+        '启用银行账户必须绑定 1002 或其后代中的启用、末级、可记账、资产类借方科目。'
+        from fin_bank_account b
+        join gl_account a on a.id = b.gl_account_id
+        where b.status = 'ENABLED'
+        and (
+            not (a.code = '1002' or a.code like '1002.%')
+            or a.category <> 'ASSET'
+            or a.balance_direction <> 'DEBIT'
+            or a.enabled is not true
+            or a.postable is not true
+            or a.is_leaf is not true
+        )
+    union all select 'FINANCIAL_CLOSE_BANK_EXCEPTION_TYPES_V34', 'financial-close',
+        coalesce((array_agg(check_clause))[1], ''),
+        'BANK_ONLY_CREDIT,BANK_ONLY_DEBIT,BOOK_ONLY_DEBIT,BOOK_ONLY_CREDIT',
+        coalesce((array_agg(check_clause))[1], '') like '%BANK_ONLY_CREDIT%'
+            and coalesce((array_agg(check_clause))[1], '') like '%BANK_ONLY_DEBIT%'
+            and coalesce((array_agg(check_clause))[1], '') like '%BOOK_ONLY_DEBIT%'
+            and coalesce((array_agg(check_clause))[1], '') like '%BOOK_ONLY_CREDIT%'
+            and length(coalesce((array_agg(check_clause))[1], ''))
+                - length(replace(coalesce((array_agg(check_clause))[1], ''), '''', '')) = 8,
+        '银行未达必须冻结为四类方向化分类，旧泛化枚举不得保留。'
+        from information_schema.check_constraints
+        where constraint_schema = 'public'
+        and constraint_name = 'ck_fin_bank_reconciliation_exception_type'
     union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_BALANCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '已确认银行对账必须零差额，调整后银行余额与账面余额完全一致。'
         from fin_bank_reconciliation_run
         where status = 'CONFIRMED'
         and difference_amount <> 0
+    union all select 'FINANCIAL_CLOSE_BANK_RECONCILIATION_FORMULA_DYNAMIC', 'financial-close',
+        count(*)::text, '0', count(*) = 0,
+        '银行对账 BALANCED/CONFIRMED 必须按四类未达公式计算调整后银行余额与调整后账面余额。'
+        from (
+            select r.id
+            from fin_bank_reconciliation_run r
+            left join (
+                select run_id,
+                    sum(case
+                        when exception_type = 'BOOK_ONLY_DEBIT' then amount
+                        when exception_type = 'BOOK_ONLY_CREDIT' then -amount
+                        else 0
+                    end) as adjusted_bank_delta,
+                    sum(case
+                        when exception_type = 'BANK_ONLY_CREDIT' then amount
+                        when exception_type = 'BANK_ONLY_DEBIT' then -amount
+                        else 0
+                    end) as adjusted_book_delta
+                from fin_bank_reconciliation_exception
+                where status = 'OPEN'
+                group by run_id
+            ) e on e.run_id = r.id
+            where r.status in ('BALANCED', 'CONFIRMED')
+            and round(
+                r.statement_balance + coalesce(e.adjusted_bank_delta, 0)
+                - r.ledger_balance - coalesce(e.adjusted_book_delta, 0),
+                2
+            ) <> 0
+        ) bank_formula_violations
+    union all select 'FINANCIAL_CLOSE_TAX_RATE_RULES_V34', 'financial-close',
+        coalesce(string_agg(rate_code || '=' || rate_value::text, ';' order by rate_code), ''),
+        'INCOME_25=0.2500;SIMPLIFIED_3=0.0300;URBAN_1=0.0100;URBAN_5=0.0500;URBAN_7=0.0700;VAT_0=0.0000;VAT_13=0.1300;VAT_6=0.0600;VAT_9=0.0900',
+        count(*) filter (where rate_code = 'VAT_13' and rate_value = 0.1300 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'VAT_9' and rate_value = 0.0900 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'VAT_6' and rate_value = 0.0600 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'VAT_0' and rate_value = 0.0000 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'SIMPLIFIED_3' and rate_value = 0.0300 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'INCOME_25' and rate_value = 0.2500 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'URBAN_7' and rate_value = 0.0700 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'URBAN_5' and rate_value = 0.0500 and status = 'ENABLED') = 1
+            and count(*) filter (where rate_code = 'URBAN_1' and rate_value = 0.0100 and status = 'ENABLED') = 1,
+        '税率/征收率必须按有效期种子化增值税 13/9/6/0、简易 3、企业所得税 25 和城建税 7/5/1。'
+        from fin_tax_rate_rule
+    union all select 'FINANCIAL_CLOSE_TAX_INVOICE_TYPES_V34', 'financial-close',
+        coalesce(string_agg(code || '=' || name, ';' order by code), ''),
+        'E_DIGITAL_SPECIAL=数电专票;E_DIGITAL_NORMAL=数电普票;PAPER_SPECIAL=纸质专票;PAPER_NORMAL=纸质普票',
+        count(*) filter (where code = 'E_DIGITAL_SPECIAL' and name = '数电专票' and status = 'ENABLED') = 1
+            and count(*) filter (where code = 'E_DIGITAL_NORMAL' and name = '数电普票' and status = 'ENABLED') = 1
+            and count(*) filter (where code = 'PAPER_SPECIAL' and name = '纸质专票' and status = 'ENABLED') = 1
+            and count(*) filter (where code = 'PAPER_NORMAL' and name = '纸质普票' and status = 'ENABLED') = 1,
+        '税务票种必须冻结为数电专票、数电普票、纸质专票和纸质普票，不得仅保留旧销项/进项泛化票种。'
+        from fin_tax_invoice_type
+    union all select 'FINANCIAL_CLOSE_TAX_ADJUSTMENT_TYPES_V34', 'financial-close',
+        coalesce((array_agg(check_clause))[1], ''),
+        'OUTPUT_INCREASE,OUTPUT_DECREASE,INPUT_INCREASE,INPUT_DECREASE',
+        coalesce((array_agg(check_clause))[1], '') like '%OUTPUT_INCREASE%'
+            and coalesce((array_agg(check_clause))[1], '') like '%OUTPUT_DECREASE%'
+            and coalesce((array_agg(check_clause))[1], '') like '%INPUT_INCREASE%'
+            and coalesce((array_agg(check_clause))[1], '') like '%INPUT_DECREASE%',
+        '税务调整必须冻结为销项调增、销项调减、进项调增和进项调减四类。'
+        from information_schema.check_constraints
+        where constraint_schema = 'public'
+        and constraint_name = 'ck_fin_tax_adjustment_type'
     union all select 'FINANCIAL_CLOSE_TAX_SUMMARY_SOURCE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '已确认税务汇总必须保存来源指纹，不能以后续来源变化覆盖旧确认版本。'
         from fin_tax_period_summary

@@ -109,6 +109,17 @@ final class FinancialCloseSupport {
 		return hasPermission(user, "financial-close:bank-sensitive:view");
 	}
 
+	static String requiredChineseReason(String value, ApiErrorCode errorCode) {
+		String normalized = requiredText(value, errorCode);
+		long chineseChars = normalized.codePoints()
+			.filter((codePoint) -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN)
+			.count();
+		if (chineseChars < 2) {
+			throw new BusinessException(errorCode);
+		}
+		return normalized;
+	}
+
 	static void putVisibility(Map<String, Object> map, CurrentUser user) {
 		map.put("amountVisible", amountVisible(user));
 		map.put("sourceVisible", sourceVisible(user));
@@ -121,6 +132,17 @@ final class FinancialCloseSupport {
 
 	static String visibleDecimal(BigDecimal value, boolean amountVisible) {
 		return amountVisible ? decimal(value) : null;
+	}
+
+	static String visibleBankMask(String accountMasked, CurrentUser user) {
+		return bankSensitiveVisible(user) ? accountMasked : "****";
+	}
+
+	static String maskedCreditCode(String creditCode, CurrentUser user) {
+		if (sourceVisible(user) && bankSensitiveVisible(user)) {
+			return creditCode;
+		}
+		return creditCode == null || creditCode.isBlank() ? null : "******************";
 	}
 
 	static String sha256(String value) {

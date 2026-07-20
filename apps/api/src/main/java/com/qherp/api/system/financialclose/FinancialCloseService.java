@@ -6,6 +6,7 @@ import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.platform.PlatformApprovalService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.context.annotation.Lazy;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,10 +47,19 @@ public class FinancialCloseService {
 	@Transactional
 	public Map<String, Object> close(Long checkRunId, FinancialCloseModels.CloseRequest request,
 			CurrentUser operator) {
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.PERIOD_CLOSE_REASON_REQUIRED);
+		String key = FinancialCloseSupport.requiredText(request == null ? null : request.idempotencyKey(),
+				ApiErrorCode.FIN_CLOSE_CONFLICT);
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_CLOSE|" + checkRunId + "|"
+				+ (request == null ? null : request.version()) + "|" + reason);
+		Long existingResult = idempotentResult("FIN_CLOSE_PERIOD_CLOSE", "FIN_CLOSE_CHECK_RUN", checkRunId, key,
+				requestFingerprint, operator);
+		if (existingResult != null) {
+			return this.queryService.closeRun(existingResult, operator);
+		}
 		CheckRunRow checkRun = lockCheckRun(checkRunId);
 		requireVersion(checkRun.version(), request == null ? null : request.version());
-		String reason = FinancialCloseSupport.requiredText(request == null ? null : request.reason(),
-				ApiErrorCode.PERIOD_CLOSE_REASON_REQUIRED);
 		if (!"READY".equals(checkRun.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
 		}
@@ -62,10 +72,7 @@ public class FinancialCloseService {
 		if (businessCloseRun == null) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
 		}
-		String currentFingerprint = this.checkService.currentSourceFingerprint(period.id());
-		if (!currentFingerprint.equals(checkRun.sourceFingerprint())) {
-			throw new BusinessException(ApiErrorCode.FIN_CLOSE_STALE);
-		}
+		this.checkService.assertReadyForClose(period.id(), checkRun.sourceFingerprint());
 		Long alreadyClosed = this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from fin_close_run
@@ -118,6 +125,8 @@ public class FinancialCloseService {
 		if (periodUpdated == 0) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
+		recordAction("FIN_CLOSE_PERIOD_CLOSE", "FIN_CLOSE_CHECK_RUN", checkRun.id(), checkRun.version(), key,
+				requestFingerprint, TARGET_CLOSE_RUN, closeRunId, 0L, operator);
 		this.auditService.success(operator, "FIN_CLOSE_PERIOD_CLOSE", TARGET_CLOSE_RUN, closeRunId);
 		return this.queryService.closeRun(closeRunId, operator);
 	}
@@ -125,10 +134,19 @@ public class FinancialCloseService {
 	@Transactional
 	public Map<String, Object> submitReopenRequest(Long closeRunId, FinancialCloseModels.ReopenRequest request,
 			CurrentUser operator, HttpServletRequest servletRequest) {
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.PERIOD_CLOSE_REASON_REQUIRED);
+		String key = FinancialCloseSupport.requiredText(request == null ? null : request.idempotencyKey(),
+				ApiErrorCode.FIN_CLOSE_CONFLICT);
+		String requestFingerprint = FinancialCloseSupport.sha256("FIN_REOPEN_REQUEST|" + closeRunId + "|"
+				+ (request == null ? null : request.version()) + "|" + reason);
+		Long existingResult = idempotentResult("FIN_CLOSE_REOPEN_REQUEST", TARGET_CLOSE_RUN, closeRunId, key,
+				requestFingerprint, operator);
+		if (existingResult != null) {
+			return this.queryService.reopenRequest(existingResult, operator);
+		}
 		CloseRunRow closeRun = lockCloseRun(closeRunId);
 		requireVersion(closeRun.version(), request == null ? null : request.version());
-		String reason = FinancialCloseSupport.requiredText(request == null ? null : request.reason(),
-				ApiErrorCode.PERIOD_CLOSE_REASON_REQUIRED);
 		if (!"CLOSED".equals(closeRun.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
@@ -162,6 +180,8 @@ public class FinancialCloseService {
 				set approval_instance_id = ?, updated_at = now()
 				where id = ?
 				""", approval.id(), requestId);
+		recordAction("FIN_CLOSE_REOPEN_REQUEST", TARGET_CLOSE_RUN, closeRun.id(), closeRun.version(), key,
+				requestFingerprint, "FIN_CLOSE_REOPEN_REQUEST", requestId, 0L, operator);
 		this.auditService.success(operator, "FIN_CLOSE_REOPEN_REQUEST", "FIN_CLOSE_REOPEN_REQUEST", requestId);
 		return this.queryService.reopenRequest(requestId, operator);
 	}
@@ -284,6 +304,42 @@ public class FinancialCloseService {
 	private void requireVersion(Long actual, Long expected) {
 		if (expected == null || !actual.equals(expected)) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
+	}
+
+	private Long idempotentResult(String action, String resourceType, Long resourceId, String key,
+			String requestFingerprint, CurrentUser operator) {
+		return this.jdbcTemplate.query("""
+				select request_fingerprint, result_resource_id
+				from fin_close_action_idempotency
+				where operator_user_id = ?
+				and action = ?
+				and resource_type = ?
+				and coalesce(resource_id, 0) = coalesce(?, 0)
+				and idempotency_key = ?
+				""", (rs, rowNum) -> {
+			if (!requestFingerprint.equals(rs.getString("request_fingerprint"))) {
+				throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+			}
+			return rs.getLong("result_resource_id");
+		}, operator.id(), action, resourceType, resourceId, key).stream().findFirst().orElse(null);
+	}
+
+	private void recordAction(String action, String resourceType, Long resourceId, Long resourceVersion, String key,
+			String requestFingerprint, String resultType, Long resultId, Long resultVersion, CurrentUser operator) {
+		try {
+			this.jdbcTemplate.update("""
+					insert into fin_close_action_idempotency (
+						operator_user_id, operator_username, action, resource_type, resource_id, resource_version,
+						idempotency_key, request_fingerprint, result_resource_type, result_resource_id,
+						result_version
+					)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+					""", operator.id(), operator.username(), action, resourceType, resourceId, resourceVersion,
+					key, requestFingerprint, resultType, resultId, resultVersion);
+		}
+		catch (DuplicateKeyException exception) {
+			idempotentResult(action, resourceType, resourceId, key, requestFingerprint, operator);
 		}
 	}
 

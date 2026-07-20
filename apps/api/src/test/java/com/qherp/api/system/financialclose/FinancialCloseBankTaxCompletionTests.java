@@ -49,16 +49,53 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 	private PasswordEncoder passwordEncoder;
 
 	@Test
+	void 银行账户必须支持1002后代末级科目且有历史事实后不得改绑账号或启用日期() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		ensureLedgerInitialized(admin);
+		long childAccountId = createBankChildAccount();
+		String accountNo = "6222 8888 0000 7321";
+
+		JsonNode created = data(exchange(HttpMethod.POST, "/api/admin/bank-accounts",
+				Map.of("accountName", "032 子科目账户", "accountType", "BASIC", "bankName", "032 银行",
+						"currency", "CNY", "glAccountId", childAccountId, "openedOn", "2026-07-01",
+						"accountNo", accountNo,
+						"idempotencyKey", "032-bank-child-" + SEQUENCE.incrementAndGet()),
+				admin));
+		assertThat(created.get("glAccountCode").asText()).startsWith("1002.");
+		bankStatement(admin, created.get("id").longValue(), "2026-07-18", "CREDIT", "10.00",
+				"032-BANK-IMMUTABLE");
+
+		JsonNode current = data(get("/api/admin/bank-accounts/" + created.get("id").longValue(), admin));
+		assertError(exchange(HttpMethod.PUT, "/api/admin/bank-accounts/" + created.get("id").longValue(),
+				Map.of("accountName", "032 违规换绑账户", "accountType", "BASIC", "bankName", "032 银行",
+						"currency", "CNY", "glAccountId", accountId("1002"), "openedOn", "2026-07-02",
+						"accountNo", "6222 8888 0000 9999", "version", current.get("version").longValue(),
+						"idempotencyKey", "032-bank-forbidden-update-" + SEQUENCE.incrementAndGet()),
+				admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+
+		JsonNode renamed = data(exchange(HttpMethod.PUT, "/api/admin/bank-accounts/"
+				+ created.get("id").longValue(), Map.of("accountName", "032 只改名称", "accountType", "BASIC",
+						"bankName", "032 银行更新", "currency", "CNY", "glAccountId", childAccountId,
+						"openedOn", "2026-07-01", "accountNo", accountNo,
+						"version", current.get("version").longValue(),
+						"idempotencyKey", "032-bank-name-only-" + SEQUENCE.incrementAndGet()),
+				admin));
+		assertThat(renamed.get("accountName").asText()).isEqualTo("032 只改名称");
+	}
+
+	@Test
 	void 银行对账必须支持多对多匹配取消未达分类零差额确认和确认后不可变() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long periodId = ensureLedgerInitialized(admin);
-		long bankAccountId = createBankAccount(admin, "6222 8888 0000 1321");
-		postGeneralVoucher(admin, "2026-07-03", "银行入账一", "60.00", accountId("1002"), accountId("6001"));
-		postGeneralVoucher(admin, "2026-07-04", "银行入账二", "40.00", accountId("1002"), accountId("6001"));
-		postGeneralVoucher(admin, "2026-07-05", "银行未达账面", "5.00", accountId("1002"), accountId("6001"));
-		long ledgerOne = ledgerEntryId("银行入账一", "1002");
-		long ledgerTwo = ledgerEntryId("银行入账二", "1002");
-		long ledgerOnly = ledgerEntryId("银行未达账面", "1002");
+		long reconciliationAccountId = createBankChildAccount();
+		String reconciliationAccountCode = accountCode(reconciliationAccountId);
+		long bankAccountId = createBankAccount(admin, "6222 8888 0000 1321", reconciliationAccountId);
+		postGeneralVoucher(admin, "2026-07-03", "银行入账一", "60.00", reconciliationAccountId, accountId("6001"));
+		postGeneralVoucher(admin, "2026-07-04", "银行入账二", "40.00", reconciliationAccountId, accountId("6001"));
+		postGeneralVoucher(admin, "2026-07-05", "银行未达账面", "5.00", reconciliationAccountId, accountId("6001"));
+		long ledgerOne = ledgerEntryId("银行入账一", reconciliationAccountCode);
+		long ledgerTwo = ledgerEntryId("银行入账二", reconciliationAccountCode);
+		long ledgerOnly = ledgerEntryId("银行未达账面", reconciliationAccountCode);
 		long statementOne = bankStatement(admin, bankAccountId, "2026-07-03", "CREDIT", "70.00", "032-BANK-M1");
 		long statementTwo = bankStatement(admin, bankAccountId, "2026-07-04", "CREDIT", "30.00", "032-BANK-M2");
 		long bankOnly = bankStatement(admin, bankAccountId, "2026-07-05", "CREDIT", "5.00", "032-BANK-U1");
@@ -87,9 +124,20 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 												"ledgerEntryId", ledgerTwo, "amount", "30.00")),
 						"idempotencyKey", "032-bank-good-match"), admin));
 		assertThat(matched.get("status").asText()).isEqualTo("RECONCILING");
+		JsonNode matchReplay = data(exchange(HttpMethod.POST, "/api/admin/bank-reconciliations/"
+				+ run.get("id").longValue() + "/matches", Map.of("version", run.get("version").longValue(),
+						"matchGroupNo", "032-G1", "matches",
+						List.of(Map.of("statementLineId", statementOne, "ledgerEntryId", ledgerOne, "amount",
+								"60.00"), Map.of("statementLineId", statementOne, "ledgerEntryId", ledgerTwo,
+										"amount", "10.00"), Map.of("statementLineId", statementTwo,
+												"ledgerEntryId", ledgerTwo, "amount", "30.00")),
+						"idempotencyKey", "032-bank-good-match"), admin));
+		assertThat(matchReplay.get("id").longValue()).isEqualTo(matched.get("id").longValue());
+		assertThat(matchReplay.get("matchedAmount").asText()).isEqualTo("100.00");
 		JsonNode cancelled = data(exchange(HttpMethod.DELETE,
 				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/matches?matchGroupNo=032-G1",
-				Map.of("version", matched.get("version").longValue(), "idempotencyKey", "032-bank-cancel-match"),
+				Map.of("version", matched.get("version").longValue(), "reason", "取消匹配",
+						"idempotencyKey", "032-bank-cancel-match"),
 				admin));
 		assertThat(cancelled.get("matchedAmount").asText()).isEqualTo("0.00");
 
@@ -103,30 +151,30 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-bank-rematch"), admin));
 		JsonNode withExceptions = data(exchange(HttpMethod.POST,
 				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/exceptions",
-				Map.of("version", rematched.get("version").longValue(), "exceptionType", "BANK_ONLY",
+				Map.of("version", rematched.get("version").longValue(), "exceptionType", "BANK_ONLY_CREDIT",
 						"statementLineId", bankOnly, "amount", "5.00", "reason", "银行已入账账面未达",
 						"idempotencyKey", "032-bank-only"),
 				admin));
+		JsonNode exceptionReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/exceptions",
+				Map.of("version", rematched.get("version").longValue(), "exceptionType", "BANK_ONLY_CREDIT",
+						"statementLineId", bankOnly, "amount", "5.00", "reason", "银行已入账账面未达",
+						"idempotencyKey", "032-bank-only"),
+				admin));
+		assertThat(exceptionReplay.get("id").longValue()).isEqualTo(withExceptions.get("id").longValue());
 		withExceptions = data(exchange(HttpMethod.POST,
 				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/exceptions",
-				Map.of("version", withExceptions.get("version").longValue(), "exceptionType", "LEDGER_ONLY",
+				Map.of("version", withExceptions.get("version").longValue(), "exceptionType", "BOOK_ONLY_DEBIT",
 						"ledgerEntryId", ledgerOnly, "amount", "5.00", "reason", "账面已记银行未达",
 						"idempotencyKey", "032-ledger-only"),
 				admin));
-		for (String type : List.of("AMOUNT_DIFFERENCE", "DATE_DIFFERENCE")) {
-			withExceptions = data(exchange(HttpMethod.POST,
-					"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/exceptions",
-					Map.of("version", withExceptions.get("version").longValue(), "exceptionType", type,
-							"amount", "0.00", "reason", type + " 已解释",
-							"idempotencyKey", "032-" + type),
-					admin));
-		}
 		assertThat(textValues(withExceptions.get("exceptions"), "exceptionType"))
-			.contains("BANK_ONLY", "LEDGER_ONLY", "AMOUNT_DIFFERENCE", "DATE_DIFFERENCE");
+			.contains("BANK_ONLY_CREDIT", "BOOK_ONLY_DEBIT");
 
 		JsonNode calculated = data(exchange(HttpMethod.POST,
 				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/calculate",
-				Map.of("version", withExceptions.get("version").longValue(), "idempotencyKey", "032-bank-calc"),
+				Map.of("version", withExceptions.get("version").longValue(), "reason", "计算对账",
+						"idempotencyKey", "032-bank-calc"),
 				admin));
 		assertThat(calculated.get("bankEndingBalance").asText()).isEqualTo("105.00");
 		assertThat(calculated.get("glEndingBalance").asText()).isEqualTo("105.00");
@@ -141,6 +189,12 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 						"idempotencyKey", "032-bank-confirm"),
 				admin));
 		assertThat(confirmed.get("status").asText()).isEqualTo("CONFIRMED");
+		JsonNode confirmReplay = data(exchange(HttpMethod.POST,
+				"/api/admin/bank-reconciliations/" + run.get("id").longValue() + "/confirm",
+				Map.of("version", calculated.get("version").longValue(), "reason", "确认对账",
+						"idempotencyKey", "032-bank-confirm"),
+				admin));
+		assertThat(confirmReplay.get("status").asText()).isEqualTo("CONFIRMED");
 		assertError(exchange(HttpMethod.POST, "/api/admin/bank-reconciliations/" + run.get("id").longValue()
 				+ "/matches", Map.of("version", confirmed.get("version").longValue(), "matchGroupNo",
 						"032-IMMUTABLE", "matches", List.of(Map.of("statementLineId", statementOne,
@@ -155,15 +209,29 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long periodId = ensureLedgerInitialized(admin);
 		postGeneralVoucher(admin, "2026-07-08", "所得税估算利润", "100.00", accountId("1001"), accountId("6001"));
+		postGeneralVoucher(admin, "2026-07-09", "所得税费用自循环", "100.00", accountId("6801"), accountId("1002"));
 		insertConfirmedTaxSources();
 
+		Map<String, Object> profilePayload = new LinkedHashMap<>();
+		profilePayload.put("taxpayerType", "GENERAL");
+		profilePayload.put("creditCode", "9132000000001321X1");
+		profilePayload.put("taxAuthority", "032 主管税务机关");
+		profilePayload.put("vatPeriodicity", "MONTHLY");
+		profilePayload.put("incomeTaxRate", "0.25");
+		profilePayload.put("urbanMaintenanceRate", "0.07");
+		profilePayload.put("educationSurchargeRate", "0.03");
+		profilePayload.put("localEducationSurchargeRate", "0.00");
+		profilePayload.put("incomeAdjustmentIncrease", "20.00");
+		profilePayload.put("incomeAdjustmentDecrease", "5.00");
+		profilePayload.put("lossDeduction", "10.00");
+		profilePayload.put("prepaidIncomeTax", "3.00");
+		profilePayload.put("effectiveFrom", "2026-01-01");
+		profilePayload.put("version", 0);
+		profilePayload.put("idempotencyKey", "032-tax-profile-full");
 		JsonNode profile = data(exchange(HttpMethod.PUT, "/api/admin/tax-profiles/current",
-				Map.of("taxpayerType", "GENERAL", "creditCode", "9132000000001321X1", "taxAuthority",
-						"032 主管税务机关", "vatPeriodicity", "MONTHLY", "incomeTaxRate", "0.25",
-						"urbanMaintenanceRate", "0.07", "effectiveFrom", "2026-01-01", "version", 0,
-						"idempotencyKey", "032-tax-profile-full"),
-				admin));
+				profilePayload, admin));
 		assertThat(profile.get("current").booleanValue()).isTrue();
+		assertThat(profile.get("educationSurchargeRate").asText()).isEqualTo("0.0300");
 		JsonNode rateRule = data(exchange(HttpMethod.POST, "/api/admin/tax-rate-rules",
 				Map.of("taxType", "VAT", "rateCode", "VAT_13_STAGE032", "rateValue", "0.13",
 						"effectiveFrom", "2026-01-01", "idempotencyKey", "032-tax-rate"),
@@ -186,7 +254,9 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 		assertThat(calculated.get("inputVat").asText()).isEqualTo("6.00");
 		assertThat(calculated.get("vatPayable").asText()).isEqualTo("7.00");
 		assertThat(calculated.get("urbanMaintenanceTax").asText()).isEqualTo("0.49");
-		assertThat(calculated.get("incomeTaxEstimated").asText()).isEqualTo("25.00");
+		assertThat(calculated.get("educationSurchargeTax").asText()).isEqualTo("0.21");
+		assertThat(calculated.get("additionalTaxTotal").asText()).isEqualTo("0.70");
+		assertThat(calculated.get("incomeTaxEstimated").asText()).isEqualTo("23.25");
 		assertThat(calculated.get("disclaimer").asText())
 			.isEqualTo("本结果为 ERP 基础汇总或估算，不是正式纳税申报结果，不代替税务专业判断。");
 
@@ -205,6 +275,7 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 				admin));
 		long voucherId = voucherDraft.get("voucherId").longValue();
 		assertThat(glVoucherSourceType(voucherId)).isEqualTo("TAX_SUMMARY");
+		assertThat(voucherAccountCodes(voucherId)).contains("2221.03", "2221.04", "2221.05", "2221.06");
 		JsonNode confirmed = data(exchange(HttpMethod.POST,
 				"/api/admin/tax-summaries/" + summary.get("id").longValue() + "/confirm",
 				Map.of("version", voucherDraft.get("version").longValue(), "reason", "确认税务汇总",
@@ -256,11 +327,30 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 	}
 
 	private long createBankAccount(AuthenticatedSession admin, String accountNo) throws Exception {
+		return createBankAccount(admin, accountNo, accountId("1002"));
+	}
+
+	private long createBankAccount(AuthenticatedSession admin, String accountNo, long glAccountId) throws Exception {
 		return data(exchange(HttpMethod.POST, "/api/admin/bank-accounts",
 				Map.of("accountName", "032 对账户", "accountType", "BASIC", "bankName", "032 银行",
-						"currency", "CNY", "glAccountId", accountId("1002"), "openedOn", "2026-07-01",
+						"currency", "CNY", "glAccountId", glAccountId, "openedOn", "2026-07-01",
 						"accountNo", accountNo, "idempotencyKey", "032-bank-account-" + SEQUENCE.incrementAndGet()),
 				admin)).get("id").longValue();
+	}
+
+	private long createBankChildAccount() {
+		int suffix = SEQUENCE.incrementAndGet();
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_account (
+					ledger_id, parent_id, code, name, category, balance_direction, level_no, is_leaf, postable,
+					enabled, created_by, created_at, updated_by, updated_at
+				)
+				select ledger_id, id, ?, ?, 'ASSET', 'DEBIT', 2, true, true, true,
+				       'test', now(), 'test', now()
+				from gl_account
+				where code = '1002'
+				returning id
+				""", Long.class, "1002." + suffix, "032 银行子科目" + suffix);
 	}
 
 	private long bankStatement(AuthenticatedSession admin, long bankAccountId, String date, String direction,
@@ -391,9 +481,22 @@ class FinancialCloseBankTaxCompletionTests extends PostgresIntegrationTest {
 		return this.jdbcTemplate.queryForObject("select id from gl_account where code = ?", Long.class, code);
 	}
 
+	private String accountCode(long id) {
+		return this.jdbcTemplate.queryForObject("select code from gl_account where id = ?", String.class, id);
+	}
+
 	private String glVoucherSourceType(long voucherId) {
 		return this.jdbcTemplate.queryForObject("select source_type from gl_voucher where id = ?", String.class,
 				voucherId);
+	}
+
+	private List<String> voucherAccountCodes(long voucherId) {
+		return this.jdbcTemplate.query("""
+				select account_code
+				from gl_voucher_line
+				where voucher_id = ?
+				order by line_no
+				""", (rs, rowNum) -> rs.getString("account_code"), voucherId);
 	}
 
 	private long financialCloseAuditCount() {

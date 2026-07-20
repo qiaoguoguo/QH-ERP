@@ -54,6 +54,15 @@ class FinancialCloseV34MigrationRegressionTests {
 	private static final List<String> V34_ACCOUNT_CODES = List.of("4103", "2221.03", "2221.04",
 			"2221.05", "2221.06", "6403", "6801");
 
+	private static final Map<String, String> V34_ACCOUNT_NAMES = Map.of("2221.03", "未交增值税",
+			"2221.04", "应交城市维护建设税", "2221.05", "应交教育费附加", "2221.06", "应交企业所得税");
+
+	private static final List<String> V34_TAX_RATE_CODES = List.of("VAT_13", "VAT_9", "VAT_6",
+			"VAT_0", "SIMPLIFIED_3", "URBAN_7", "URBAN_5", "URBAN_1");
+
+	private static final List<String> V34_TAX_INVOICE_TYPES = List.of("E_DIGITAL_SPECIAL",
+			"E_DIGITAL_NORMAL", "PAPER_SPECIAL", "PAPER_NORMAL");
+
 	@Container
 	static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
 
@@ -120,6 +129,13 @@ class FinancialCloseV34MigrationRegressionTests {
 		assertThat(approvalDefinitionExists(jdbcTemplate, "FINANCIAL_PERIOD_REOPEN",
 				"financial-close:period:reopen")).isTrue();
 		assertThat(accountCodeCount(jdbcTemplate, V34_ACCOUNT_CODES)).isEqualTo(V34_ACCOUNT_CODES.size());
+		assertThat(accountNames(jdbcTemplate, V34_ACCOUNT_NAMES.keySet().stream().toList()))
+			.containsAllEntriesOf(V34_ACCOUNT_NAMES);
+		assertThat(taxRateCodeCount(jdbcTemplate, V34_TAX_RATE_CODES)).isEqualTo(V34_TAX_RATE_CODES.size());
+		assertThat(taxInvoiceTypeCount(jdbcTemplate, V34_TAX_INVOICE_TYPES))
+			.isEqualTo(V34_TAX_INVOICE_TYPES.size());
+		assertThat(financialCloseRoutePaths(jdbcTemplate)).allSatisfy((routePath) -> assertThat(routePath)
+			.startsWith("/gl"));
 		assertThat(allConstraintDefinitions(jdbcTemplate, "gl_voucher"))
 			.contains("PROFIT_LOSS_CARRYFORWARD", "TAX_SUMMARY");
 		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_close_check_run"))
@@ -127,6 +143,11 @@ class FinancialCloseV34MigrationRegressionTests {
 		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_close_run")).contains("CLOSED", "REOPENED");
 		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_bank_statement_line"))
 			.contains("UNMATCHED", "PARTIALLY_MATCHED", "MATCHED", "IGNORED", "CREDIT", "DEBIT");
+		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_bank_reconciliation_exception"))
+			.contains("BANK_ONLY_CREDIT", "BANK_ONLY_DEBIT", "BOOK_ONLY_DEBIT", "BOOK_ONLY_CREDIT")
+			.doesNotContain("'LEDGER_ONLY'")
+			.doesNotContain("'AMOUNT_DIFFERENCE'")
+			.doesNotContain("'DATE_DIFFERENCE'");
 		assertThat(allConstraintDefinitions(jdbcTemplate, "fin_tax_period_summary"))
 			.contains("DRAFT", "CALCULATED", "CONFIRMED");
 		assertThat(anyIndexContains(jdbcTemplate, "fin_close_check_run", "unique", "period_id", "ready"))
@@ -246,6 +267,46 @@ class FinancialCloseV34MigrationRegressionTests {
 				from gl_account
 				where code = any (?::text[])
 				""", Long.class, (Object) accountCodes.toArray(String[]::new));
+	}
+
+	private Map<String, String> accountNames(JdbcTemplate jdbcTemplate, List<String> accountCodes) {
+		return jdbcTemplate.query("""
+				select code, name
+				from gl_account
+				where code = any (?::text[])
+				""", (rs, rowNum) -> Map.entry(rs.getString("code"), rs.getString("name")),
+				(Object) accountCodes.toArray(String[]::new))
+			.stream()
+			.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+	}
+
+	private long taxRateCodeCount(JdbcTemplate jdbcTemplate, List<String> rateCodes) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_rate_rule
+				where rate_code = any (?::text[])
+				""", Long.class, (Object) rateCodes.toArray(String[]::new));
+	}
+
+	private long taxInvoiceTypeCount(JdbcTemplate jdbcTemplate, List<String> codes) {
+		return jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_tax_invoice_type
+				where code = any (?::text[])
+				""", Long.class, (Object) codes.toArray(String[]::new));
+	}
+
+	private List<String> financialCloseRoutePaths(JdbcTemplate jdbcTemplate) {
+		return jdbcTemplate.query("""
+				select route_path
+				from sys_permission
+				where code = 'financial-close'
+				   or code like 'financial-close:%'
+				order by code
+				""", (rs, rowNum) -> rs.getString("route_path"))
+			.stream()
+			.filter((routePath) -> routePath != null && !routePath.isBlank())
+			.toList();
 	}
 
 	private String allConstraintDefinitions(JdbcTemplate jdbcTemplate, String tableName) {

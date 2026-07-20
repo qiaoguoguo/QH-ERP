@@ -68,6 +68,18 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 			"financial-close:tax-payment:manage", "financial-close:amount:view",
 			"financial-close:source:view", "financial-close:bank-sensitive:view");
 
+	private static final List<String> MANDATORY_FINANCIAL_CLOSE_CHECKS = List.of(
+			"PREVIOUS_PERIOD_CLOSED", "BUSINESS_PERIOD_CLOSED", "NO_INCOMPLETE_VOUCHERS",
+			"TRIAL_BALANCE_BALANCED", "BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED",
+			"TAX_VOUCHERS_POSTED", "PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
+
+	private static final List<String> FROZEN_BANK_EXCEPTION_TYPES = List.of("BANK_ONLY_CREDIT",
+			"BANK_ONLY_DEBIT", "BOOK_ONLY_DEBIT", "BOOK_ONLY_CREDIT");
+
+	private static final Map<String, String> EXPECTED_TAX_ACCOUNT_NAMES = Map.of("2221.03", "未交增值税",
+			"2221.04", "应交城市维护建设税", "2221.05", "应交教育费附加", "2221.06", "应交企业所得税",
+			"4103", "本年利润", "6403", "税金及附加", "6801", "所得税费用");
+
 	@Autowired
 	private TestRestTemplate restTemplate;
 
@@ -82,13 +94,14 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 
 	@Test
 	@Order(1)
-	void v34迁移必须创建032表权限审批科目和验证器门禁() {
+	void v34迁移必须创建032表权限审批科目和验证器门禁() throws Exception {
 		requireV34Schema();
 		assertThat(permissionCodes()).containsExactlyInAnyOrderElementsOf(FINANCIAL_CLOSE_PERMISSIONS);
 		assertThat(systemAdminFinancialClosePermissionCount()).isGreaterThanOrEqualTo(FINANCIAL_CLOSE_PERMISSIONS.size());
 		assertThat(financialReopenApprovalDefinitionSummary()).isEqualTo("definitions=1;steps=1");
-		assertThat(accountCodes()).contains("4103", "2221.03", "2221.04", "2221.05", "2221.06",
-				"6403", "6801");
+		assertThat(taxAccountNames()).containsExactlyInAnyOrderEntriesOf(EXPECTED_TAX_ACCOUNT_NAMES);
+		assertThat(bankExceptionTypes()).containsExactlyInAnyOrderElementsOf(FROZEN_BANK_EXCEPTION_TYPES);
+		assertThat(frontendFinancialCloseRoutesAreFrozen()).isTrue();
 		assertThat(immutableTriggerCount()).isGreaterThanOrEqualTo(4L);
 		assertThat(latestSuccessfulFlywayVersion()).isEqualTo("34");
 		assertThat(historicalChecksum("29")).isEqualTo(774334682);
@@ -96,7 +109,7 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(historicalChecksum("31")).isEqualTo(-2074547591);
 		assertThat(historicalChecksum("32")).isEqualTo(249406902);
 		assertThat(historicalChecksum("33")).isEqualTo(612501943);
-		assertThat(historicalChecksum("34")).isEqualTo(-177563574);
+		assertThat(historicalChecksum("34")).isEqualTo(1689626005);
 	}
 
 	@Test
@@ -110,9 +123,8 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode check = data(post(admin, "/api/admin/financial-closes/periods/" + periodId + "/checks",
 				Map.of("idempotencyKey", "032-check-business-open-" + periodId)));
 		assertThat(check.get("status").asText()).isEqualTo("BLOCKED");
-		assertThat(recursiveValues(check, "checkCode")).contains("BUSINESS_PERIOD_CLOSED",
-				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED",
-				"PROFIT_LOSS_TRANSFER_POSTED");
+		assertMandatoryCheckCodes(check);
+		assertCheckFailed(check, "BUSINESS_PERIOD_CLOSED");
 		assertThat(check.get("sourceFingerprint").asText()).isNotBlank();
 
 		assertError(post(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()
@@ -133,6 +145,7 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		JsonNode check = data(post(admin, "/api/admin/financial-closes/periods/" + periodId + "/checks",
 				Map.of("idempotencyKey", "032-check-ready-" + periodId)));
 		assertThat(check.get("status").asText()).isEqualTo("READY");
+		assertMandatoryCheckCodes(check);
 
 		ExecutorService executor = Executors.newFixedThreadPool(2);
 		try {
@@ -231,6 +244,173 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(validatorObjectRuleDoesNotFixEighteen()).isTrue();
 	}
 
+	@Test
+	@Order(6)
+	void 财务关闭强制检查必须覆盖九项集合并阻断上期未关未完成凭证试算不平和税费凭证未记账() throws Exception {
+		requireV34Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+
+		ensureOpenAccountingPeriod(admin, "2096-04");
+		long previousOpenPeriodId = seedReadyFinancialClosePeriod(admin, "2096-05", false);
+		JsonNode previousOpenCheck = runCheck(admin, previousOpenPeriodId, "032-check-previous-open-");
+		assertThat(previousOpenCheck.get("status").asText()).isEqualTo("BLOCKED");
+		assertMandatoryCheckCodes(previousOpenCheck);
+		assertCheckFailed(previousOpenCheck, "PREVIOUS_PERIOD_CLOSED");
+
+		long incompleteVoucherPeriodId = seedReadyFinancialClosePeriod(admin, "2096-06");
+		data(post(admin, "/api/admin/gl/vouchers", voucherPayload(incompleteVoucherPeriodId,
+				LocalDate.of(2096, 6, 10), "032 未完成凭证阻断", "6.00")));
+		JsonNode incompleteVoucherCheck = runCheck(admin, incompleteVoucherPeriodId,
+				"032-check-incomplete-voucher-");
+		assertThat(incompleteVoucherCheck.get("status").asText()).isEqualTo("BLOCKED");
+		assertMandatoryCheckCodes(incompleteVoucherCheck);
+		assertCheckFailed(incompleteVoucherCheck, "NO_INCOMPLETE_VOUCHERS");
+
+		long unbalancedPeriodId = seedReadyFinancialClosePeriod(admin, "2096-07");
+		breakTrialBalanceCache(unbalancedPeriodId);
+		JsonNode unbalancedCheck = runCheck(admin, unbalancedPeriodId, "032-check-trial-unbalanced-");
+		assertThat(unbalancedCheck.get("status").asText()).isEqualTo("BLOCKED");
+		assertMandatoryCheckCodes(unbalancedCheck);
+		assertCheckFailed(unbalancedCheck, "TRIAL_BALANCE_BALANCED");
+
+		long taxVoucherPeriodId = seedReadyFinancialClosePeriod(admin, "2096-08");
+		seedDraftTaxVoucher(taxVoucherPeriodId, "2096-08");
+		JsonNode taxVoucherCheck = runCheck(admin, taxVoucherPeriodId, "032-check-tax-voucher-draft-");
+		assertThat(taxVoucherCheck.get("status").asText()).isEqualTo("BLOCKED");
+		assertMandatoryCheckCodes(taxVoucherCheck);
+		assertCheckFailed(taxVoucherCheck, "TAX_VOUCHERS_POSTED");
+	}
+
+	@Test
+	@Order(7)
+	void 关闭事务必须复检来源和检查项不得用过期ready运行完成关闭() throws Exception {
+		requireV34Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long periodId = seedReadyFinancialClosePeriod(admin, "2096-09");
+		JsonNode check = runCheck(admin, periodId, "032-check-ready-before-source-change-");
+		assertThat(check.get("status").asText()).isEqualTo("READY");
+		assertMandatoryCheckCodes(check);
+
+		data(post(admin, "/api/admin/gl/vouchers", voucherPayload(periodId, LocalDate.of(2096, 9, 12),
+				"032 READY 后新增草稿凭证", "9.00")));
+
+		assertConflictCodeIn(post(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()
+				+ "/close", closePayload(check, "032-close-after-source-change-" + periodId)),
+				List.of("FIN_CLOSE_STALE", "FIN_CLOSE_NOT_READY"));
+		assertThat(accountingPeriodStatus(periodId)).isEqualTo("OPEN");
+		assertThat(currentClosedRunCount(periodId)).isZero();
+
+		JsonNode refreshed = runCheck(admin, periodId, "032-check-after-source-change-");
+		assertThat(refreshed.get("status").asText()).isEqualTo("BLOCKED");
+		assertMandatoryCheckCodes(refreshed);
+		assertThat(refreshed.get("sourceFingerprint").asText()).isNotEqualTo(check.get("sourceFingerprint").asText());
+		assertCheckFailed(refreshed, "NO_INCOMPLETE_VOUCHERS");
+	}
+
+	@Test
+	@Order(8)
+	void 银行账户必须支持1002子树并拒绝非末级非借方和历史换绑() throws Exception {
+		requireV34Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long childAccountId = ensureBankAccountChild("1002.01", "032 银行存款基本户", "ASSET", "DEBIT",
+				true, true, true);
+		long nonLeafAccountId = ensureBankAccountChild("1002.88", "032 银行存款非末级", "ASSET", "DEBIT",
+				false, true, true);
+		long nonDebitAccountId = ensureBankAccountChild("1002.99", "032 银行存款贷方方向", "ASSET", "CREDIT",
+				true, true, true);
+
+		JsonNode bankAccount = data(post(admin, "/api/admin/bank-accounts",
+				bankAccountPayload("032 子树银行账户", childAccountId, "6222020960300004321")));
+		assertThat(bankAccount.get("glAccountCode").asText()).isEqualTo("1002.01");
+		assertThat(bankAccount.get("accountMasked").asText()).isEqualTo("****4321");
+		assertThat(bankAccount.toString()).doesNotContain("6222020960300004321");
+
+		assertError(post(admin, "/api/admin/bank-accounts",
+				bankAccountPayload("032 非末级银行账户", nonLeafAccountId, "6222020960300004322")),
+				HttpStatus.BAD_REQUEST, "GL_ACCOUNT_NOT_LEAF");
+		assertError(post(admin, "/api/admin/bank-accounts",
+				bankAccountPayload("032 非借方银行账户", nonDebitAccountId, "6222020960300004323")),
+				HttpStatus.BAD_REQUEST, "VALIDATION_ERROR");
+
+		data(post(admin, "/api/admin/bank-statements", Map.of("bankAccountId", bankAccount.get("id").longValue(),
+				"transactionDate", "2096-10-01", "postingDate", "2096-10-01", "direction", "CREDIT",
+				"amount", "18.00", "counterpartyName", "032 往来单位", "summary", "032 历史换绑保护流水",
+				"bankTransactionId", "032-HISTORY-" + SEQUENCE.incrementAndGet(), "referenceNo",
+				"032-HISTORY-REF", "idempotencyKey", "032-history-statement-" + SEQUENCE.incrementAndGet())));
+		long targetChildAccountId = ensureBankAccountChild("1002.02", "032 银行存款一般户", "ASSET", "DEBIT",
+				true, true, true);
+		assertError(put(admin, "/api/admin/bank-accounts/" + bankAccount.get("id").longValue(),
+				bankAccountPayload("032 子树银行账户换绑", targetChildAccountId, "6222020960300004321",
+						bankAccount.get("version").longValue())),
+				HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
+	}
+
+	@Test
+	@Order(9)
+	void 税务基础必须冻结DTO税率票种所得税基础项和税款脱敏标识() throws Exception {
+		requireV34Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		data(put(admin, "/api/admin/tax-profiles/current", taxProfilePayload()));
+
+		JsonNode profile = data(get(admin, "/api/admin/tax-profiles/current"));
+		assertThat(profile.hasNonNull("unifiedSocialCreditCodeMasked")).isTrue();
+		assertThat(profile.hasNonNull("urbanMaintenanceRate")).isTrue();
+		assertThat(profile.has("creditCode")).as("税务 DTO 不得暴露未脱敏统一社会信用代码字段").isFalse();
+
+		assertThat(taxRateRuleCodes()).contains("VAT_13", "VAT_9", "VAT_6", "VAT_0", "SIMPLIFIED_3",
+				"INCOME_25", "URBAN_7", "URBAN_5", "URBAN_1");
+		assertThat(taxInvoiceTypeNames()).contains("数电专票", "数电普票", "纸质专票", "纸质普票");
+		assertThat(taxAdjustmentTypes()).containsExactly("OUTPUT_INCREASE", "OUTPUT_DECREASE",
+				"INPUT_INCREASE", "INPUT_DECREASE");
+
+		long periodId = ensureOpenAccountingPeriod(admin, "2096-12");
+		long summaryId = seedConfirmedTaxSummary(periodId, "2096-12", "INCOME_TAX");
+		long paymentBankAccountId = seedBankAccountDirect("032 税款缴纳账户", "6222020960300009876");
+		long paymentId = seedTaxPayment(summaryId, "INCOME_TAX", paymentBankAccountId);
+		AuthenticatedSession limited = createUserAndLogin("032-tax-limited-", "032_TAX_LIMITED_",
+				List.of("financial-close:tax-payment:view"));
+		JsonNode payments = data(get(limited, "/api/admin/tax-payments?page=1&pageSize=10"));
+		JsonNode payment = pageItemById(payments, paymentId);
+		assertThat(payment.get("amount").isNull()).isTrue();
+		assertThat(payment.get("referenceNo").isNull()).isTrue();
+		assertThat(payment.get("amountVisible").booleanValue()).isFalse();
+		assertThat(payment.get("sourceVisible").booleanValue()).isFalse();
+		assertThat(payment.get("bankSensitiveVisible").booleanValue()).isFalse();
+		assertThat(payment.hasNonNull("accountMasked")).isTrue();
+		assertThat(payment.toString()).doesNotContain("6222020960300009876");
+	}
+
+	@Test
+	@Order(10)
+	void 权限失败动作状态和反结账审批追溯必须形成独立验收门禁() throws Exception {
+		requireV34Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long periodId = seedReadyFinancialClosePeriod(admin, "2097-01");
+		JsonNode period = data(get(admin, "/api/admin/financial-closes/periods/" + periodId));
+		assertThat(period.has("allowedActions")).isTrue();
+		assertThat(period.has("actionDisabledReasons")).isTrue();
+
+		AuthenticatedSession viewer = createUserAndLogin("032-period-viewer-", "032_PERIOD_VIEWER_",
+				List.of("financial-close:period:view"));
+		assertError(post(viewer, "/api/admin/financial-closes/periods/" + periodId + "/checks",
+				Map.of("idempotencyKey", "032-viewer-check-denied-" + periodId)),
+				HttpStatus.FORBIDDEN, "FIN_PERMISSION_DENIED");
+
+		JsonNode check = runCheck(admin, periodId, "032-check-reopen-trace-");
+		data(post(admin, "/api/admin/financial-closes/check-runs/" + check.get("id").longValue()
+				+ "/close", closePayload(check, "032-close-reopen-trace-" + periodId)));
+		ClosedRun closedRun = currentClosedRun(periodId);
+		JsonNode reopen = data(post(admin, "/api/admin/financial-closes/close-runs/" + closedRun.id()
+				+ "/reopen-requests", Map.of("version", closedRun.version(), "idempotencyKey",
+						"032-reopen-trace-" + closedRun.id(), "reason", "验证审批对象追溯")));
+		ApprovalTrace approvalTrace = approvalTrace(reopen.get("approvalInstanceId").longValue());
+		assertThat(approvalTrace.sceneCode()).isEqualTo("FINANCIAL_PERIOD_REOPEN");
+		assertThat(approvalTrace.businessObjectType()).isEqualTo("FIN_CLOSE_REOPEN_REQUEST");
+		assertThat(approvalTrace.businessObjectId()).isEqualTo(reopen.get("id").longValue());
+		assertThat(reopen.get("closeRunId").longValue()).isEqualTo(closedRun.id());
+		assertThat(reopen.get("periodCode").asText()).isEqualTo("2097-01");
+	}
+
 	private void requireV34Schema() {
 		for (String table : FINANCIAL_CLOSE_TABLES) {
 			assertThat(tableExists(table)).as("V34 必须创建 " + table).isTrue();
@@ -238,20 +418,49 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 	}
 
 	private long ensureOpenAccountingPeriod(AuthenticatedSession admin, String periodCode) throws Exception {
-		JsonNode existing = data(get(admin, "/api/admin/gl/accounting-periods?periodCode=" + periodCode
-				+ "&page=1&pageSize=20"));
-		if (existing.get("items").size() > 0) {
-			return existing.get("items").get(0).get("id").longValue();
+		Long existingId = accountingPeriodId(periodCode);
+		if (existingId != null) {
+			return existingId;
 		}
 		ensureLedgerInitialized(admin, periodCode.substring(0, 7));
 		ResponseEntity<String> response = post(admin, "/api/admin/gl/accounting-periods",
 				Map.of("periodCode", periodCode, "idempotencyKey", "032-period-" + periodCode));
 		if (response.getStatusCode() == HttpStatus.CONFLICT) {
-			JsonNode refreshed = data(get(admin, "/api/admin/gl/accounting-periods?periodCode=" + periodCode
-					+ "&page=1&pageSize=20"));
-			return refreshed.get("items").get(0).get("id").longValue();
+			Long refreshedId = accountingPeriodId(periodCode);
+			if (refreshedId != null) {
+				return refreshedId;
+			}
+			return insertOpenAccountingPeriod(periodCode);
+		}
+		if (response.getStatusCode() == HttpStatus.BAD_REQUEST) {
+			return insertOpenAccountingPeriod(periodCode);
 		}
 		return data(response).get("id").longValue();
+	}
+
+	private Long accountingPeriodId(String periodCode) {
+		return this.jdbcTemplate.query("""
+				select id
+				from gl_accounting_period
+				where period_code = ?
+				order by id desc
+				limit 1
+				""", (rs) -> rs.next() ? rs.getLong("id") : null, periodCode);
+	}
+
+	private long insertOpenAccountingPeriod(String periodCode) {
+		Long ledgerId = this.jdbcTemplate.queryForObject("select id from gl_ledger where code = 'MAIN'",
+				Long.class);
+		LocalDate startDate = LocalDate.parse(periodCode + "-01");
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_accounting_period (
+					ledger_id, period_code, start_date, end_date, status, created_by, created_at, updated_by,
+					updated_at
+				)
+				values (?, ?, ?, ?, 'OPEN', 'test', now(), 'test', now())
+				on conflict (ledger_id, period_code) do update set period_code = excluded.period_code
+				returning id
+				""", Long.class, ledgerId, periodCode, startDate, startDate.withDayOfMonth(startDate.lengthOfMonth()));
 	}
 
 	private void ensureLedgerInitialized(AuthenticatedSession admin, String startYearMonth) throws Exception {
@@ -261,11 +470,29 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 	}
 
 	private long seedReadyFinancialClosePeriod(AuthenticatedSession admin, String periodCode) throws Exception {
+		return seedReadyFinancialClosePeriod(admin, periodCode, true);
+	}
+
+	private long seedReadyFinancialClosePeriod(AuthenticatedSession admin, String periodCode,
+			boolean closePreviousAccountingPeriods) throws Exception {
 		long periodId = ensureOpenAccountingPeriod(admin, periodCode);
 		// 只为独立验收构造技术前置；业务状态机仍通过 032 API 完成。
+		if (closePreviousAccountingPeriods) {
+			closePreviousAccountingPeriods(periodCode);
+		}
 		insertClosedBusinessPeriod(periodCode);
 		seedConfirmedBankTaxAndPostedProfitLoss(periodId, periodCode);
 		return periodId;
+	}
+
+	private void closePreviousAccountingPeriods(String periodCode) {
+		LocalDate startDate = LocalDate.parse(periodCode + "-01");
+		this.jdbcTemplate.update("""
+				update gl_accounting_period
+				set status = 'CLOSED', updated_by = 'test', updated_at = now(), version = version + 1
+				where end_date < ?
+				and status <> 'CLOSED'
+				""", startDate);
 	}
 
 	private void insertClosedBusinessPeriod(String periodCode) {
@@ -291,6 +518,11 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 	}
 
 	private void seedConfirmedBankTaxAndPostedProfitLoss(long periodId, String periodCode) {
+		this.jdbcTemplate.update("""
+				update fin_bank_account
+				set status = 'DISABLED', updated_by = 'test', updated_at = now(), version = version + 1
+				where status = 'ENABLED'
+				""");
 		long bankAccountId = this.jdbcTemplate.queryForObject("""
 				insert into fin_bank_account (
 					account_name, account_type, bank_name, currency, gl_account_id, account_fingerprint,
@@ -397,6 +629,11 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				"reason", "032 验证原子财务关闭");
 	}
 
+	private JsonNode runCheck(AuthenticatedSession admin, long periodId, String idempotencyPrefix) throws Exception {
+		return data(post(admin, "/api/admin/financial-closes/periods/" + periodId + "/checks",
+				Map.of("idempotencyKey", idempotencyPrefix + periodId + "-" + SEQUENCE.incrementAndGet())));
+	}
+
 	private Map<String, Object> voucherPayload(long periodId, LocalDate date, String summary, String amount) {
 		long bankAccount = accountId("1002");
 		long capitalAccount = accountId("4001");
@@ -409,6 +646,221 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				"idempotencyKey", "032-closed-voucher-" + periodId + "-" + SEQUENCE.incrementAndGet());
 	}
 
+	private Map<String, Object> bankAccountPayload(String accountName, long glAccountId, String accountNo) {
+		return bankAccountPayload(accountName, glAccountId, accountNo, null);
+	}
+
+	private Map<String, Object> taxProfilePayload() {
+		Map<String, Object> payload = new java.util.LinkedHashMap<>();
+		payload.put("taxpayerType", "GENERAL");
+		payload.put("creditCode", "913200000000032X9");
+		payload.put("taxAuthority", "032 主管税务机关");
+		payload.put("vatPeriodicity", "MONTHLY");
+		payload.put("incomeTaxRate", "0.25");
+		payload.put("urbanMaintenanceRate", "0.07");
+		payload.put("educationSurchargeRate", "0.03");
+		payload.put("localEducationSurchargeRate", "0.02");
+		payload.put("incomeAdjustmentIncrease", "10.00");
+		payload.put("incomeAdjustmentDecrease", "2.00");
+		payload.put("lossDeduction", "1.00");
+		payload.put("prepaidIncomeTax", "3.00");
+		payload.put("effectiveFrom", "2096-01-01");
+		payload.put("version", 0);
+		payload.put("idempotencyKey", "032-tax-profile-contract");
+		return payload;
+	}
+
+	private Map<String, Object> bankAccountPayload(String accountName, long glAccountId, String accountNo,
+			Long version) {
+		Map<String, Object> payload = new java.util.LinkedHashMap<>();
+		payload.put("accountName", accountName);
+		payload.put("accountType", "BASIC");
+		payload.put("bankName", "032 验收银行");
+		payload.put("currency", "CNY");
+		payload.put("glAccountId", glAccountId);
+		payload.put("openedOn", "2096-10-01");
+		payload.put("accountNo", accountNo);
+		payload.put("idempotencyKey", "032-bank-account-" + SEQUENCE.incrementAndGet());
+		if (version != null) {
+			payload.put("version", version);
+		}
+		return payload;
+	}
+
+	private long ensureBankAccountChild(String code, String name, String category, String balanceDirection,
+			boolean leaf, boolean postable, boolean enabled) {
+		Long parentId = accountId("1002");
+		this.jdbcTemplate.update("update gl_account set is_leaf = false where id = ?", parentId);
+		return this.jdbcTemplate.queryForObject("""
+				insert into gl_account (
+					ledger_id, parent_id, code, name, category, balance_direction, level_no, is_leaf, postable,
+					enabled, template_source, created_by, created_at, updated_by, updated_at
+				)
+				select ledger_id, id, ?, ?, ?, ?, level_no + 1, ?, ?, ?, 'TEST_STAGE032',
+					'test', now(), 'test', now()
+				from gl_account
+				where id = ?
+				on conflict (ledger_id, code) do update
+				set name = excluded.name,
+				    category = excluded.category,
+				    balance_direction = excluded.balance_direction,
+				    is_leaf = excluded.is_leaf,
+				    postable = excluded.postable,
+				    enabled = excluded.enabled,
+				    updated_at = now()
+				returning id
+				""", Long.class, code, name, category, balanceDirection, leaf, postable, enabled, parentId);
+	}
+
+	private void breakTrialBalanceCache(long periodId) {
+		int voucherNumber = 900000 + SEQUENCE.incrementAndGet();
+		String voucherNo = "记-032-UNBALANCED-" + periodId;
+		Long voucherId = this.jdbcTemplate.queryForObject("""
+				insert into gl_voucher (
+					ledger_id, accounting_period_id, draft_no, voucher_type, voucher_date, status, summary,
+					source_type, source_fingerprint, source_version, source_payload, currency, debit_total,
+					credit_total, created_by, created_at, updated_by, updated_at
+				)
+				select ledger_id, id, ?, 'GENERAL', end_date, 'DRAFT', '032 试算不平技术样例',
+					'MANUAL', ?, 0, '{}'::jsonb, 'CNY', 3.21, 0, 'test', now(), 'test', now()
+				from gl_accounting_period
+				where id = ?
+				returning id
+				""", Long.class, "032-UNBALANCED-" + periodId + "-" + SEQUENCE.incrementAndGet(),
+				"032-unbalanced-" + periodId, periodId);
+		Long lineId = this.jdbcTemplate.queryForObject("""
+				insert into gl_voucher_line (
+					voucher_id, line_no, summary, account_id, account_code, account_name, account_category,
+					account_balance_direction, debit_amount, credit_amount, created_at
+				)
+				select ?, 1, '032 试算不平借方行', a.id, a.code, a.name, a.category, a.balance_direction,
+					3.21, 0, now()
+				from gl_account a
+				where a.code = '1002'
+				returning id
+				""", Long.class, voucherId);
+		this.jdbcTemplate.update("""
+				update gl_voucher
+				set status = 'POSTED',
+				    voucher_word = '记',
+				    voucher_number = ?,
+				    voucher_no = ?,
+				    posted_by = 'test',
+				    posted_at = now(),
+				    updated_at = now()
+				where id = ?
+				""", voucherNumber, voucherNo, voucherId);
+		this.jdbcTemplate.update("""
+				insert into gl_ledger_entry (
+					ledger_id, period_id, voucher_id, voucher_line_id, voucher_date, voucher_no, voucher_word,
+					voucher_number, line_no, summary, account_id, account_code, account_name, balance_direction,
+					voucher_type, debit_amount, credit_amount, auxiliary_snapshot, source_type, source_route,
+					posted_by, posted_at, created_at
+				)
+				select p.ledger_id, p.id, ?, ?, p.end_date, ?, '记', ?, 1, '032 试算不平借方分录',
+					a.id, a.code, a.name, a.balance_direction, 'GENERAL', 3.21, 0, '[]'::jsonb, 'MANUAL',
+					'{}'::jsonb, 'test', now(), now()
+				from gl_accounting_period p
+				join gl_account a on a.ledger_id = p.ledger_id and a.code = '1002'
+				where p.id = ?
+				""", voucherId, lineId, voucherNo, voucherNumber, periodId);
+	}
+
+	private void seedDraftTaxVoucher(long periodId, String periodCode) {
+		Long voucherId = this.jdbcTemplate.queryForObject("""
+				insert into gl_voucher (
+					ledger_id, accounting_period_id, draft_no, voucher_type, voucher_date, status, summary,
+					source_type, source_id, source_fingerprint, source_version, source_payload, currency,
+					debit_total, credit_total, created_by, created_at, updated_by, updated_at
+				)
+				select ledger_id, id, ?, 'GENERAL', end_date, 'DRAFT', ?, 'TAX_SUMMARY', ?, ?, 0,
+					'{}'::jsonb, 'CNY', 0, 0, 'test', now(), 'test', now()
+				from gl_accounting_period
+				where id = ?
+				returning id
+				""", Long.class, "032-TAX-DRAFT-" + periodCode + "-" + SEQUENCE.incrementAndGet(),
+				periodCode + " 税费计提未记账草稿", null, "032-tax-draft-" + periodCode, periodId);
+		this.jdbcTemplate.update("""
+				insert into fin_tax_period_summary (
+					period_id, period_code, tax_type, status, source_fingerprint, vat_payable,
+					urban_maintenance_tax, income_tax_estimated, disclaimer, current_flag, voucher_id,
+					created_by, updated_by
+				)
+				values (?, ?, 'VAT', 'CONFIRMED', ?, 12.34, 0, 0, ?, true, ?, 'test', 'test')
+				""", periodId, periodCode, "032-tax-voucher-unposted-" + periodCode,
+				FinancialCloseSupport.TAX_DISCLAIMER, voucherId);
+	}
+
+	private List<String> taxRateRuleCodes() {
+		return this.jdbcTemplate.queryForList("""
+				select rate_code
+				from fin_tax_rate_rule
+				where status = 'ENABLED'
+				order by rate_code
+				""", String.class);
+	}
+
+	private List<String> taxInvoiceTypeNames() {
+		return this.jdbcTemplate.queryForList("""
+				select name
+				from fin_tax_invoice_type
+				where status = 'ENABLED'
+				order by code
+				""", String.class);
+	}
+
+	private List<String> taxAdjustmentTypes() {
+		String definition = this.jdbcTemplate.queryForObject("""
+				select pg_get_constraintdef(oid)
+				from pg_constraint
+				where conname = 'ck_fin_tax_adjustment_type'
+				""", String.class);
+		return List.of("OUTPUT_INCREASE", "OUTPUT_DECREASE", "INPUT_INCREASE", "INPUT_DECREASE")
+			.stream()
+			.filter(definition::contains)
+			.toList();
+	}
+
+	private long seedConfirmedTaxSummary(long periodId, String periodCode, String taxType) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_tax_period_summary (
+					period_id, period_code, tax_type, status, source_fingerprint, output_vat, input_vat,
+					transfer_out_vat, adjustment_amount, opening_credit_vat, vat_payable,
+					urban_maintenance_tax, ending_credit_vat, income_tax_estimated, disclaimer, current_flag,
+					created_by, updated_by
+				)
+				values (?, ?, ?, 'CONFIRMED', ?, 0, 0, 0, 0, 0, 0, 0, 0, 12.34, ?, true, 'test', 'test')
+				returning id
+				""", Long.class, periodId, periodCode, taxType, "032-tax-payment-" + periodCode,
+				FinancialCloseSupport.TAX_DISCLAIMER);
+	}
+
+	private long seedBankAccountDirect(String accountName, String accountNo) {
+		String last4 = accountNo.substring(accountNo.length() - 4);
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_bank_account (
+					account_name, account_type, bank_name, currency, gl_account_id, account_fingerprint,
+					account_last4, account_masked, status, opened_on, created_by, updated_by
+				)
+				values (?, 'BASIC', '032 验收银行', 'CNY', ?, ?, ?, ?, 'ENABLED', date '2096-12-01',
+					'test', 'test')
+				returning id
+				""", Long.class, accountName, accountId("1002"),
+				FinancialCloseSupport.sha256("BANK_ACCOUNT|" + accountNo), last4, "****" + last4);
+	}
+
+	private long seedTaxPayment(long summaryId, String taxType, long bankAccountId) {
+		return this.jdbcTemplate.queryForObject("""
+				insert into fin_tax_payment_record (
+					summary_id, tax_type, payment_date, amount, payment_method, reference_no, bank_account_id,
+					reason, status, created_by, updated_by
+				)
+				values (?, ?, date '2096-12-20', 12.34, 'BANK', '032-TAX-PAY-REF', ?,
+					'032 税款脱敏验收', 'RECORDED', 'test', 'test')
+				returning id
+				""", Long.class, summaryId, taxType, bankAccountId);
+	}
+
 	private List<String> permissionCodes() {
 		return this.jdbcTemplate.queryForList("""
 				select code
@@ -419,13 +871,27 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				""", String.class);
 	}
 
-	private List<String> accountCodes() {
-		return this.jdbcTemplate.queryForList("""
-				select code
+	private Map<String, String> taxAccountNames() {
+		return this.jdbcTemplate.query("""
+				select code, name
 				from gl_account
 				where code in ('4103', '2221.03', '2221.04', '2221.05', '2221.06', '6403', '6801')
-				order by code
+				""", (rs) -> {
+			Map<String, String> result = new java.util.LinkedHashMap<>();
+			while (rs.next()) {
+				result.put(rs.getString("code"), rs.getString("name"));
+			}
+			return result;
+		});
+	}
+
+	private List<String> bankExceptionTypes() {
+		String definition = this.jdbcTemplate.queryForObject("""
+				select pg_get_constraintdef(oid)
+				from pg_constraint
+				where conname = 'ck_fin_bank_reconciliation_exception_type'
 				""", String.class);
+		return FROZEN_BANK_EXCEPTION_TYPES.stream().filter(definition::contains).toList();
 	}
 
 	private long systemAdminFinancialClosePermissionCount() {
@@ -554,6 +1020,15 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				""", Long.class, requestId);
 	}
 
+	private ApprovalTrace approvalTrace(long approvalInstanceId) {
+		return this.jdbcTemplate.queryForObject("""
+				select scene_code, business_object_type, business_object_id
+				from platform_approval_instance
+				where id = ?
+				""", (rs, rowNum) -> new ApprovalTrace(rs.getString("scene_code"),
+				rs.getString("business_object_type"), rs.getLong("business_object_id")), approvalInstanceId);
+	}
+
 	private long taskVersion(long taskId) {
 		return this.jdbcTemplate.queryForObject("select version from platform_approval_task where id = ?",
 				Long.class, taskId);
@@ -628,6 +1103,27 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				&& !validator.contains("MINIO_BUCKET_OBJECTS_18");
 	}
 
+	private boolean frontendFinancialCloseRoutesAreFrozen() throws Exception {
+		java.nio.file.Path workingDirectory = java.nio.file.Path.of(System.getProperty("user.dir"));
+		java.nio.file.Path menuPath = workingDirectory.resolve("../../apps/web/src/navigation/financialCloseMenu.ts")
+			.normalize();
+		java.nio.file.Path routePath = workingDirectory.resolve("../../apps/web/src/router/modules/financialCloseRoutes.ts")
+			.normalize();
+		if (!java.nio.file.Files.exists(menuPath)) {
+			menuPath = workingDirectory.resolve("apps/web/src/navigation/financialCloseMenu.ts").normalize();
+		}
+		if (!java.nio.file.Files.exists(routePath)) {
+			routePath = workingDirectory.resolve("apps/web/src/router/modules/financialCloseRoutes.ts").normalize();
+		}
+		String menu = java.nio.file.Files.readString(menuPath);
+		String routes = java.nio.file.Files.readString(routePath);
+		List<String> expectedPaths = List.of("/gl/financial-close", "/gl/profit-loss-carryforward",
+				"/gl/bank-accounts", "/gl/bank-statements", "/gl/bank-reconciliation", "/gl/tax-settings",
+				"/gl/tax-summary", "/gl/tax-payments");
+		return expectedPaths.stream().allMatch((path) -> menu.contains(path) && routes.contains(path))
+				&& routes.contains("/gl/financial-close/:runId");
+	}
+
 	private AuthenticatedSession createUserAndLogin(String usernamePrefix, String rolePrefix,
 			List<String> permissionCodes) {
 		int suffix = SEQUENCE.incrementAndGet();
@@ -690,6 +1186,11 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 				entity(body, session.sessionCookie(), session.csrfSession()), String.class);
 	}
 
+	private ResponseEntity<String> put(AuthenticatedSession session, String path, Object body) {
+		return this.restTemplate.exchange(path, HttpMethod.PUT,
+				entity(body, session.sessionCookie(), session.csrfSession()), String.class);
+	}
+
 	private HttpEntity<Object> entity(Object body, String cookie, CsrfSession csrf) {
 		HttpHeaders headers = new HttpHeaders();
 		headers.setContentType(MediaType.APPLICATION_JSON);
@@ -721,6 +1222,11 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(code(response)).isEqualTo(code);
 	}
 
+	private void assertConflictCodeIn(ResponseEntity<String> response, List<String> expectedCodes) throws Exception {
+		assertThat(response.getStatusCode()).as(response.getBody()).isEqualTo(HttpStatus.CONFLICT);
+		assertThat(code(response)).isIn(expectedCodes);
+	}
+
 	private String sessionCookie(ResponseEntity<String> response) {
 		return response.getHeaders()
 			.getOrEmpty(HttpHeaders.SET_COOKIE)
@@ -735,6 +1241,41 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		List<String> values = new ArrayList<>();
 		collectValues(node, fieldName, values);
 		return values;
+	}
+
+	private void assertMandatoryCheckCodes(JsonNode check) {
+		assertThat(recursiveValues(check, "checkCode")).containsExactlyInAnyOrderElementsOf(
+				MANDATORY_FINANCIAL_CLOSE_CHECKS);
+	}
+
+	private void assertCheckFailed(JsonNode check, String checkCode) {
+		List<JsonNode> items = new ArrayList<>();
+		collectObjectsWithFieldValue(check, "checkCode", checkCode, items);
+		assertThat(items).as("必须存在检查项 " + checkCode).hasSize(1);
+		assertThat(items.get(0).get("passed").booleanValue()).as(checkCode + " 必须失败").isFalse();
+	}
+
+	private void assertCheckPassed(JsonNode check, String checkCode) {
+		List<JsonNode> items = new ArrayList<>();
+		collectObjectsWithFieldValue(check, "checkCode", checkCode, items);
+		assertThat(items).as("必须存在检查项 " + checkCode).hasSize(1);
+		assertThat(items.get(0).get("passed").booleanValue()).as(checkCode + " 必须通过").isTrue();
+	}
+
+	private void collectObjectsWithFieldValue(JsonNode node, String fieldName, String expectedValue,
+			List<JsonNode> values) {
+		if (node == null || node.isNull()) {
+			return;
+		}
+		if (node.isObject()) {
+			if (node.has(fieldName) && expectedValue.equals(node.get(fieldName).asText())) {
+				values.add(node);
+			}
+			node.forEach((child) -> collectObjectsWithFieldValue(child, fieldName, expectedValue, values));
+		}
+		else if (node.isArray()) {
+			node.forEach((child) -> collectObjectsWithFieldValue(child, fieldName, expectedValue, values));
+		}
 	}
 
 	private void collectValues(JsonNode node, String fieldName, List<String> values) {
@@ -771,6 +1312,17 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		}
 	}
 
+	private JsonNode pageItemById(JsonNode page, long id) {
+		JsonNode items = page.get("items");
+		assertThat(items).as("分页结果必须包含 items").isNotNull();
+		for (JsonNode item : items) {
+			if (item.has("id") && item.get("id").longValue() == id) {
+				return item;
+			}
+		}
+		throw new AssertionError("分页结果缺少 ID " + id);
+	}
+
 	private void await(CountDownLatch latch) {
 		try {
 			assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
@@ -788,6 +1340,9 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 	}
 
 	private record ClosedRun(long id, long version) {
+	}
+
+	private record ApprovalTrace(String sceneCode, String businessObjectType, long businessObjectId) {
 	}
 
 }

@@ -48,4 +48,38 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
+}
+
+.financial-close-disabled-reason {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.financial-close-inline-input {
+  width: 96px;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  text-align: right;
+  font: inherit;
+}
+
+.financial-close-detail-list {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px 14px;
+}
+
+.financial-close-detail-list dt {
+  color: var(--el-text-color-secondary);
+}
+
+.financial-close-detail-list dd {
+  margin: 0;
+  min-width: 0;
+  word-break: break-word;
 }

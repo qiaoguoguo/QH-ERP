@@ -62,6 +62,7 @@ async function mountGlView(component: object, path = '/gl', permissions: string[
   'gl:balance:view',
   'gl:amount:view',
   'gl:source:view',
+  'financial-close:period:view',
 ]) {
   const pinia = createPinia()
   setActivePinia(pinia)
@@ -279,6 +280,42 @@ describe('031 会计核算页面族', () => {
       periodCode: '2026-08',
       idempotencyKey: expect.stringContaining('gl-period-create-'),
     }))
+  })
+
+  it('会计期间页兼容 032 最新检查字段，中文显示 CLOSED 并按查看权限隐藏入口', async () => {
+    glApiMock.accountingPeriods.list.mockResolvedValueOnce(page([{
+      id: 10,
+      periodCode: '2026-10',
+      startDate: '2026-10-01',
+      endDate: '2026-10-31',
+      status: 'CLOSED',
+      voucherCount: 6,
+      lastPostedAt: '2026-10-31T10:00:00+08:00',
+      closeStatus: 'CLOSED',
+      latestCheckRunId: 3,
+      financialCloseDisabledReason: '已关闭',
+    }]))
+    const withPermission = await mountGlView(GlAccountingPeriodsView, '/gl/accounting-periods')
+
+    expect(withPermission.wrapper.text()).toContain('已关闭')
+    expect(withPermission.wrapper.text()).not.toContain('CLOSED')
+    await withPermission.wrapper.find('[data-test="gl-period-financial-close-link"]').trigger('click')
+    await flushPromises()
+    expect(withPermission.router.currentRoute.value.name).toBe('gl-financial-close-run-detail')
+    expect(withPermission.router.currentRoute.value.params.runId).toBe('3')
+
+    glApiMock.accountingPeriods.list.mockResolvedValueOnce(page([{
+      id: 11,
+      periodCode: '2026-11',
+      startDate: '2026-11-01',
+      endDate: '2026-11-30',
+      status: 'OPEN',
+      financialCloseStatus: 'READY',
+      latestFinancialCloseCheckRunId: 31,
+    }]))
+    const withoutPermission = await mountGlView(GlAccountingPeriodsView, '/gl/accounting-periods', ['gl:period:view'])
+    expect(withoutPermission.wrapper.find('[data-test="gl-period-financial-close-link"]').exists()).toBe(false)
+    expect(withoutPermission.wrapper.text()).toContain('无财务结账查看权限')
   })
 
   it('科目、辅助和规则页面按 page-standards 渲染宽表、状态和动作禁用原因', async () => {
@@ -595,10 +632,12 @@ describe('031 会计核算页面族', () => {
     ]))
     const { wrapper } = await mountGlView(GlVoucherWorkbenchView, '/gl/vouchers')
 
-    expect(wrapper.text()).toContain('正式来源 PROFIT_LOSS_TRANSFER PL-202607-001')
-    expect(wrapper.text()).toContain('业务来源 TAX_SUMMARY TAX-202607-001')
+    expect(wrapper.text()).toContain('正式来源 期末损益结转 PL-202607-001')
+    expect(wrapper.text()).toContain('业务来源 税额汇总 TAX-202607-001')
     expect(wrapper.text()).toContain('来源指纹 fp-tax-001')
     expect(wrapper.text()).toContain('期间已财务关闭，禁止提交凭证')
+    expect(wrapper.text()).not.toContain('PROFIT_LOSS_TRANSFER')
+    expect(wrapper.text()).not.toContain('TAX_SUMMARY')
     expect(wrapper.text()).not.toContain('业务月结关闭，禁止提交凭证')
   })
 
@@ -616,16 +655,16 @@ describe('031 会计核算页面族', () => {
     }
     glApiMock.vouchers.list.mockResolvedValueOnce(page([convertedVoucher]))
     const workbench = await mountGlView(GlVoucherWorkbenchView, '/gl/vouchers')
-    expect(workbench.wrapper.text()).toContain('正式来源 FIN_VOUCHER_DRAFT')
-    expect(workbench.wrapper.text()).toContain('业务来源 SALES_INVOICE SI-001')
+    expect(workbench.wrapper.text()).toContain('正式来源 财务凭证草稿 VD-001')
+    expect(workbench.wrapper.text()).toContain('业务来源 销售发票 SI-001')
     expect(workbench.wrapper.text()).toContain('来源版本 7')
     expect(workbench.wrapper.text()).toContain('fp-si-001')
     expect(workbench.wrapper.text()).not.toContain('FIN_VOUCHER_DRAFT SI-001')
 
     glApiMock.vouchers.get.mockResolvedValueOnce(convertedVoucher)
     const detail = await mountGlView(GlVoucherDetailView, '/gl/vouchers/91')
-    expect(detail.wrapper.text()).toContain('正式来源 FIN_VOUCHER_DRAFT')
-    expect(detail.wrapper.text()).toContain('业务来源 SALES_INVOICE SI-001')
+    expect(detail.wrapper.text()).toContain('正式来源 财务凭证草稿 VD-001')
+    expect(detail.wrapper.text()).toContain('业务来源 销售发票 SI-001')
     expect(detail.wrapper.text()).toContain('业务来源版本')
     expect(detail.wrapper.text()).toContain('fp-si-001')
     expect(detail.wrapper.text()).not.toContain('FIN_VOUCHER_DRAFT SI-001')

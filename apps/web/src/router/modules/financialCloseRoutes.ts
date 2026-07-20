@@ -4,7 +4,7 @@ export const financialCloseRouteOrder = [
   { name: 'gl-financial-close', permission: 'financial-close:period:view' },
   { name: 'gl-profit-loss-carryforward', permission: 'financial-close:profit-loss:view' },
   { name: 'gl-bank-accounts', permission: 'financial-close:bank-account:view' },
-  { name: 'gl-bank-statements', permission: 'financial-close:bank-reconciliation:import' },
+  { name: 'gl-bank-statements', permission: 'financial-close:bank-reconciliation:view' },
   { name: 'gl-bank-reconciliation', permission: 'financial-close:bank-reconciliation:view' },
   { name: 'gl-tax-settings', permission: 'financial-close:tax-profile:view' },
   { name: 'gl-tax-summary', permission: 'financial-close:tax-summary:view' },
@@ -39,7 +39,7 @@ export const financialCloseRoutes: RouteRecordRaw[] = [
   {
     path: '/gl/bank-statements',
     name: 'gl-bank-statements',
-    meta: { requiresAuth: true, requiredPermission: 'financial-close:bank-reconciliation:import' },
+    meta: { requiresAuth: true, requiredPermission: 'financial-close:bank-reconciliation:view' },
     component: () => import('../../modules/financialClose/BankStatementsView.vue'),
   },
   {

@@ -53,8 +53,7 @@ public class FinancialCloseCheckService {
 				and status = 'READY'
 				""", periodId);
 		BusinessCloseRun businessCloseRun = businessCloseRun(period.periodCode());
-		List<CheckItem> items = List.of(businessPeriodItem(period, businessCloseRun), bankReconciliationItem(period),
-				taxSummaryItem(period), profitLossTransferItem(period));
+		List<CheckItem> items = checkItems(period, businessCloseRun);
 		int blockingCount = (int) items.stream().filter((item) -> !item.passed()).count();
 		boolean ready = blockingCount == 0;
 		String sourceFingerprint = sourceFingerprint(period, businessCloseRun);
@@ -99,6 +98,20 @@ public class FinancialCloseCheckService {
 	}
 
 	@Transactional(readOnly = true)
+	public void assertReadyForClose(Long periodId, String expectedSourceFingerprint) {
+		PeriodRow period = period(periodId);
+		BusinessCloseRun businessCloseRun = businessCloseRun(period.periodCode());
+		List<CheckItem> items = checkItems(period, businessCloseRun);
+		if (items.stream().anyMatch((item) -> !item.passed())) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
+		}
+		String currentFingerprint = sourceFingerprint(period, businessCloseRun);
+		if (!currentFingerprint.equals(expectedSourceFingerprint)) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_STALE);
+		}
+	}
+
+	@Transactional(readOnly = true)
 	public PeriodRow period(Long periodId) {
 		return this.jdbcTemplate.query("""
 				select p.id, p.ledger_id, p.period_code, p.start_date, p.end_date, p.status, p.version
@@ -138,6 +151,65 @@ public class FinancialCloseCheckService {
 		}
 		return new CheckItem("BUSINESS_PERIOD_CLOSED", true, "CLOSED", "CLOSED", "030 业务月结已完成。",
 				"BIZ_PERIOD_CLOSE_RUN", businessCloseRun.id(), period.periodCode(), false);
+	}
+
+	private List<CheckItem> checkItems(PeriodRow period, BusinessCloseRun businessCloseRun) {
+		CheckItem bank = bankReconciliationItem(period);
+		CheckItem tax = taxSummaryItem(period);
+		CheckItem profitLoss = profitLossTransferItem(period);
+		return List.of(previousPeriodItem(period), businessPeriodItem(period, businessCloseRun),
+				noIncompleteVouchersItem(period), trialBalanceItem(period), bank, tax, taxVoucherPostedItem(period),
+				profitLoss, noSourceChangesItem(period, businessCloseRun, bank, tax, profitLoss));
+	}
+
+	private CheckItem previousPeriodItem(PeriodRow period) {
+		PreviousPeriodRow previous = previousPeriod(period);
+		if (previous == null) {
+			return new CheckItem("PREVIOUS_PERIOD_CLOSED", true, "FIRST_PERIOD", "CLOSED_OR_FIRST_PERIOD",
+					"当前期间为启用首月，无需检查上一会计期间。", "GL_ACCOUNTING_PERIOD", period.id(),
+					period.periodCode(), false);
+		}
+		boolean passed = "CLOSED".equals(previous.status());
+		return new CheckItem("PREVIOUS_PERIOD_CLOSED", passed, previous.periodCode() + ":" + previous.status(),
+				"CLOSED", passed ? "紧邻上月会计期间已关闭。" : "紧邻上月会计期间未关闭，不能执行本期财务结账。",
+				"GL_ACCOUNTING_PERIOD", previous.id(), previous.periodCode(), true);
+	}
+
+	private CheckItem noIncompleteVouchersItem(PeriodRow period) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from gl_voucher
+				where accounting_period_id = ?
+				and status in ('DRAFT', 'SUBMITTED')
+				""", Long.class, period.id());
+		Long sourceDrafts = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_voucher_draft
+				where business_date between ? and ?
+				and status in ('READY', 'CONVERTING')
+				""", Long.class, period.startDate(), period.endDate());
+		long total = (count == null ? 0 : count) + (sourceDrafts == null ? 0 : sourceDrafts);
+		return new CheckItem("NO_INCOMPLETE_VOUCHERS", total == 0, String.valueOf(total), "0",
+				total == 0 ? "当期不存在未完成凭证、冲销或来源转换草稿。" : "当期存在未完成凭证、冲销或来源转换草稿。",
+				"GL_VOUCHER", null, period.periodCode(), true);
+	}
+
+	private CheckItem trialBalanceItem(PeriodRow period) {
+		BigDecimal debit = queryAmount("""
+				select coalesce(sum(debit_amount), 0)
+				from gl_ledger_entry
+				where period_id = ?
+				""", period.id());
+		BigDecimal credit = queryAmount("""
+				select coalesce(sum(credit_amount), 0)
+				from gl_ledger_entry
+				where period_id = ?
+				""", period.id());
+		boolean passed = debit.compareTo(credit) == 0;
+		return new CheckItem("TRIAL_BALANCE_BALANCED", passed,
+				"借方=" + FinancialCloseSupport.decimal(debit) + ";贷方=" + FinancialCloseSupport.decimal(credit),
+				"借贷相等", passed ? "当期试算平衡。" : "当期试算不平衡，不能关闭财务期间。",
+				"GL_LEDGER_ENTRY", null, period.periodCode(), true);
 	}
 
 	private CheckItem bankReconciliationItem(PeriodRow period) {
@@ -193,6 +265,25 @@ public class FinancialCloseCheckService {
 				"FIN_TAX_PERIOD_SUMMARY", summary.id(), period.periodCode(), true);
 	}
 
+	private CheckItem taxVoucherPostedItem(PeriodRow period) {
+		TaxVoucherCheckRow summary = latestTaxVoucherSummary(period.id(), "VAT");
+		if (summary == null) {
+			return new CheckItem("TAX_VOUCHERS_POSTED", true, "NO_SUMMARY", "POSTED_OR_NOT_REQUIRED",
+					"当期尚无已选择生成的税费凭证。", "FIN_TAX_PERIOD_SUMMARY", null, period.periodCode(), true);
+		}
+		boolean requiresVoucher = summary.vatPayable().compareTo(BigDecimal.ZERO) > 0
+				|| summary.urbanMaintenanceTax().compareTo(BigDecimal.ZERO) > 0
+				|| summary.educationSurchargeTax().compareTo(BigDecimal.ZERO) > 0
+				|| summary.localEducationSurchargeTax().compareTo(BigDecimal.ZERO) > 0
+				|| summary.incomeTaxEstimated().compareTo(BigDecimal.ZERO) > 0;
+		boolean posted = !requiresVoucher || ("POSTED".equals(summary.voucherStatus()) && summary.voucherId() != null);
+		return new CheckItem("TAX_VOUCHERS_POSTED", posted,
+				requiresVoucher ? String.valueOf(summary.voucherStatus()) : "NOT_REQUIRED",
+				"POSTED_OR_NOT_REQUIRED", posted ? "已选择生成的税费计提凭证均已记账。"
+						: "税费计提凭证尚未记账，不能关闭财务期间。",
+				"FIN_TAX_PERIOD_SUMMARY", summary.id(), period.periodCode(), true);
+	}
+
 	private CheckItem profitLossTransferItem(PeriodRow period) {
 		BigDecimal imbalance = profitLossImbalance(period.id());
 		if (imbalance.compareTo(BigDecimal.ZERO) == 0) {
@@ -207,6 +298,15 @@ public class FinancialCloseCheckService {
 				"POSTED_OR_ZERO_BALANCE", posted ? "最新损益结转凭证已通过 031 记账。"
 						: "存在损益余额，必须先生成并记账期末损益结转凭证。",
 				"FIN_CLOSE_PROFIT_LOSS_TRANSFER", transfer == null ? null : transfer.id(), period.periodCode(), true);
+	}
+
+	private CheckItem noSourceChangesItem(PeriodRow period, BusinessCloseRun businessCloseRun, CheckItem bank,
+			CheckItem tax, CheckItem profitLoss) {
+		boolean passed = bank.passed() && tax.passed() && profitLoss.passed();
+		return new CheckItem("NO_SOURCE_CHANGES", passed,
+				sourceFingerprint(period, businessCloseRun), "CURRENT_SOURCE_FINGERPRINT",
+				passed ? "当前来源指纹与检查、对账、税务和结转版本一致。" : "存在对账、税务或结转来源变化。",
+				"FIN_CLOSE_CHECK_RUN", null, period.periodCode(), true);
 	}
 
 	private void insertCheckItem(Long checkRunId, CheckItem item) {
@@ -262,6 +362,18 @@ public class FinancialCloseCheckService {
 				period.endDate());
 	}
 
+	private PreviousPeriodRow previousPeriod(PeriodRow period) {
+		return this.jdbcTemplate.query("""
+				select id, period_code, status
+				from gl_accounting_period
+				where ledger_id = ?
+				and end_date < ?
+				order by end_date desc, id desc
+				limit 1
+				""", (rs, rowNum) -> new PreviousPeriodRow(rs.getLong("id"), rs.getString("period_code"),
+				rs.getString("status")), period.ledgerId(), period.startDate()).stream().findFirst().orElse(null);
+	}
+
 	private BankRunCheckRow latestBankRun(Long periodId, Long bankAccountId) {
 		return this.jdbcTemplate.query("""
 				select id, status, source_fingerprint, difference_amount, version
@@ -299,6 +411,31 @@ public class FinancialCloseCheckService {
 				taxType).stream().findFirst().orElse(null);
 	}
 
+	private TaxVoucherCheckRow latestTaxVoucherSummary(Long periodId, String taxType) {
+		return this.jdbcTemplate.query("""
+				select s.id, s.voucher_id, coalesce(v.status, 'NONE') as voucher_status,
+				       s.vat_payable, s.urban_maintenance_tax, s.education_surcharge_tax,
+				       s.local_education_surcharge_tax, s.income_tax_estimated
+				from fin_tax_period_summary s
+				left join gl_voucher v on v.id = s.voucher_id
+				where s.period_id = ?
+				and s.tax_type = ?
+				and s.current_flag = true
+				and s.status = 'CONFIRMED'
+				order by s.id desc
+				limit 1
+				""", (rs, rowNum) -> new TaxVoucherCheckRow(rs.getLong("id"),
+				FinancialCloseSupport.nullableLong(rs, "voucher_id"), rs.getString("voucher_status"),
+				FinancialCloseSupport.amount(rs.getBigDecimal("vat_payable")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("urban_maintenance_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("local_education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated"))), periodId, taxType)
+			.stream()
+			.findFirst()
+			.orElse(null);
+	}
+
 	private ProfitLossTransferCheckRow latestProfitLossTransfer(Long periodId) {
 		return this.jdbcTemplate.query("""
 				select t.id, t.status, coalesce(v.status, t.voucher_status) as voucher_status, t.version
@@ -312,7 +449,7 @@ public class FinancialCloseCheckService {
 	}
 
 	private BigDecimal profitLossImbalance(Long periodId) {
-		return FinancialCloseSupport.amount(this.jdbcTemplate.queryForObject("""
+		return queryAmount("""
 				select coalesce(sum(abs(balance)), 0)
 				from (
 					select sum(e.debit_amount - e.credit_amount) as balance
@@ -323,7 +460,11 @@ public class FinancialCloseCheckService {
 					group by e.account_id
 					having sum(e.debit_amount) <> sum(e.credit_amount)
 				) balances
-				""", BigDecimal.class, periodId));
+				""", periodId);
+	}
+
+	private BigDecimal queryAmount(String sql, Object... args) {
+		return FinancialCloseSupport.amount(this.jdbcTemplate.queryForObject(sql, BigDecimal.class, args));
 	}
 
 	private String bankStateFingerprint(PeriodRow period) {
@@ -398,6 +539,7 @@ public class FinancialCloseCheckService {
 					join gl_account a on a.id = e.account_id
 					where e.period_id = ?
 					and a.category = 'PROFIT_LOSS'
+					and a.code <> '6801'
 				) source
 				""", String.class, period.startDate(), period.endDate(), period.startDate(), period.endDate(),
 				period.startDate(), period.endDate(), period.id());
@@ -453,6 +595,9 @@ public class FinancialCloseCheckService {
 			String conclusion, String sourceType, Long sourceId, String sourceNo, boolean sourceRestricted) {
 	}
 
+	private record PreviousPeriodRow(Long id, String periodCode, String status) {
+	}
+
 	private record BankAccountCheckRow(Long id, Long version) {
 	}
 
@@ -462,6 +607,11 @@ public class FinancialCloseCheckService {
 
 	private record TaxSummaryCheckRow(Long id, String status, String sourceFingerprint, boolean currentFlag,
 			Long version) {
+	}
+
+	private record TaxVoucherCheckRow(Long id, Long voucherId, String voucherStatus, BigDecimal vatPayable,
+			BigDecimal urbanMaintenanceTax, BigDecimal educationSurchargeTax, BigDecimal localEducationSurchargeTax,
+			BigDecimal incomeTaxEstimated) {
 	}
 
 	private record ProfitLossTransferCheckRow(Long id, String status, String voucherStatus, Long version) {

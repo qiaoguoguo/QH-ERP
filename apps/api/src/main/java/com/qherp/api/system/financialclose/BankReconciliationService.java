@@ -36,10 +36,7 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> createAccount(FinancialCloseModels.BankAccountRequest request, CurrentUser operator) {
 		AccountSnapshot glAccount = glAccount(request == null ? null : request.glAccountId());
-		if (!"1002".equals(glAccount.code()) || !"ASSET".equals(glAccount.category()) || !glAccount.enabled()
-				|| !glAccount.postable()) {
-			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
-		}
+		validateBankGlAccount(glAccount);
 		String normalizedAccountNo = normalizeAccountNo(request.accountNo());
 		String fingerprint = FinancialCloseSupport.sha256("BANK_ACCOUNT|" + normalizedAccountNo);
 		String last4 = normalizedAccountNo.length() <= 4 ? normalizedAccountNo
@@ -74,11 +71,14 @@ public class BankReconciliationService {
 		AccountRow current = lockAccount(id);
 		requireVersion(current.version(), request == null ? null : request.version());
 		AccountSnapshot glAccount = glAccount(request.glAccountId());
-		if (!"1002".equals(glAccount.code()) || !"ASSET".equals(glAccount.category()) || !glAccount.enabled()
-				|| !glAccount.postable()) {
-			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
-		}
+		validateBankGlAccount(glAccount);
 		AccountNumberParts accountNumber = accountNumberParts(request.accountNo());
+		AccountImmutableSnapshot immutable = accountImmutableSnapshot(id);
+		if (hasBankFacts(id) && (!immutable.glAccountId().equals(request.glAccountId())
+				|| !immutable.accountFingerprint().equals(accountNumber.fingerprint())
+				|| !java.util.Objects.equals(immutable.openedOn(), request.openedOn()))) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
 		try {
 			int updated = this.jdbcTemplate.update("""
 					update fin_bank_account
@@ -109,7 +109,7 @@ public class BankReconciliationService {
 			CurrentUser operator) {
 		AccountRow current = lockAccount(id);
 		requireVersion(current.version(), request == null ? null : request.version());
-		String reason = FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		if ("DISABLED".equals(current.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
@@ -162,7 +162,8 @@ public class BankReconciliationService {
 			map.put("glAccountId", rs.getLong("gl_account_id"));
 			map.put("glAccountCode", rs.getString("gl_account_code"));
 			map.put("accountLast4", sensitiveVisible ? rs.getString("account_last4") : null);
-			map.put("accountMasked", rs.getString("account_masked"));
+			map.put("accountMasked", FinancialCloseSupport.visibleBankMask(rs.getString("account_masked"),
+					currentUser));
 			map.put("status", rs.getString("status"));
 			map.put("openedOn", rs.getObject("opened_on", LocalDate.class));
 			map.put("disabledReason", rs.getString("disabled_reason"));
@@ -321,7 +322,7 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> ignoreStatementLine(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
-		String reason = FinancialCloseSupport.requiredText(request == null ? null : request.reason(),
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
 				ApiErrorCode.VALIDATION_ERROR);
 		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
 		String requestFingerprint = FinancialCloseSupport.sha256("BANK_STATEMENT_IGNORE|" + id + "|"
@@ -360,6 +361,14 @@ public class BankReconciliationService {
 			CurrentUser operator) {
 		Period period = period(request.periodId());
 		account(request.bankAccountId(), operator);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_CREATE|" + period.id() + "|"
+				+ request.bankAccountId());
+		Long existing = idempotentResult("BANK_RECONCILIATION_CREATE", "FIN_BANK_ACCOUNT",
+				request.bankAccountId(), key, requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		FinancialCloseSupport.advisoryLock(this.jdbcTemplate, "BANK_RECON|" + period.id() + "|"
 				+ request.bankAccountId());
 		Long id = this.jdbcTemplate.queryForObject("""
@@ -370,6 +379,8 @@ public class BankReconciliationService {
 				returning id
 				""", Long.class, period.id(), request.bankAccountId(),
 				sourceFingerprint(period.id(), request.bankAccountId()), operator.username(), operator.username());
+		recordIdempotency("BANK_RECONCILIATION_CREATE", "FIN_BANK_ACCOUNT", request.bankAccountId(), null, key,
+				requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", id, 0L, operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_CREATE", "FIN_BANK_RECONCILIATION_RUN", id);
 		return reconciliation(id, operator);
 	}
@@ -412,10 +423,19 @@ public class BankReconciliationService {
 
 	@Transactional
 	public Map<String, Object> match(Long id, FinancialCloseModels.BankMatchRequest request, CurrentUser operator) {
+		String groupNo = FinancialCloseSupport.requiredText(request == null ? null : request.matchGroupNo(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_MATCH|" + id + "|"
+				+ request.version() + "|" + groupNo + "|" + request.matches());
+		Long existing = idempotentResult("BANK_RECONCILIATION_MATCH", "FIN_BANK_RECONCILIATION_RUN", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		RunRow row = lockRun(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
-		String groupNo = FinancialCloseSupport.requiredText(request.matchGroupNo(), ApiErrorCode.VALIDATION_ERROR);
 		if (request.matches() == null || request.matches().isEmpty()) {
 			throw new BusinessException(ApiErrorCode.FIN_BANK_MATCH_AMOUNT_INVALID);
 		}
@@ -457,6 +477,8 @@ public class BankReconciliationService {
 		}
 		updateStatementStatuses(row);
 		touchRun(row, "RECONCILING", operator);
+		recordIdempotency("BANK_RECONCILIATION_MATCH", "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version(),
+				key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version() + 1, operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_MATCH", "FIN_BANK_RECONCILIATION_RUN", row.id());
 		return reconciliation(row.id(), operator);
 	}
@@ -464,10 +486,20 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> cancelMatch(Long id, String matchGroupNo,
 			FinancialCloseModels.VersionedActionRequest request, CurrentUser operator) {
+		String group = FinancialCloseSupport.requiredText(matchGroupNo, ApiErrorCode.VALIDATION_ERROR);
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_CANCEL_MATCH|" + id + "|"
+				+ request.version() + "|" + group + "|" + reason);
+		Long existing = idempotentResult("BANK_RECONCILIATION_CANCEL_MATCH", "FIN_BANK_RECONCILIATION_RUN", id,
+				key, requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		RunRow row = lockRun(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
-		String group = FinancialCloseSupport.requiredText(matchGroupNo, ApiErrorCode.VALIDATION_ERROR);
 		this.jdbcTemplate.update("""
 				delete from fin_bank_reconciliation_match
 				where run_id = ?
@@ -475,6 +507,9 @@ public class BankReconciliationService {
 				""", row.id(), group);
 		updateStatementStatuses(row);
 		touchRun(row, "RECONCILING", operator);
+		recordIdempotency("BANK_RECONCILIATION_CANCEL_MATCH", "FIN_BANK_RECONCILIATION_RUN", row.id(),
+				row.version(), key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version() + 1,
+				operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_CANCEL_MATCH",
 				"FIN_BANK_RECONCILIATION_RUN", row.id());
 		return reconciliation(row.id(), operator);
@@ -483,32 +518,43 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> classifyException(Long id, FinancialCloseModels.BankExceptionRequest request,
 			CurrentUser operator) {
+		String type = FinancialCloseSupport.requiredText(request == null ? null : request.exceptionType(),
+				ApiErrorCode.VALIDATION_ERROR).toUpperCase();
+		String reason = FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_EXCEPTION|" + id + "|"
+				+ request.version() + "|" + type + "|" + request.statementLineId() + "|" + request.ledgerEntryId()
+				+ "|" + FinancialCloseSupport.decimal(request.amount()) + "|" + reason);
+		Long existing = idempotentResult("BANK_RECONCILIATION_EXCEPTION", "FIN_BANK_RECONCILIATION_RUN", id,
+				key, requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		RunRow row = lockRun(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
-		String type = FinancialCloseSupport.requiredText(request.exceptionType(), ApiErrorCode.VALIDATION_ERROR)
-			.toUpperCase();
-		if (!List.of("BANK_ONLY", "LEDGER_ONLY", "AMOUNT_DIFFERENCE", "DATE_DIFFERENCE").contains(type)) {
+		if (!List.of("BANK_ONLY_CREDIT", "BANK_ONLY_DEBIT", "BOOK_ONLY_DEBIT", "BOOK_ONLY_CREDIT").contains(type)) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
 		}
-		String reason = FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		BigDecimal amount = FinancialCloseSupport.amount(request.amount());
-		if ("BANK_ONLY".equals(type)) {
-			if (request.statementLineId() == null || !FinancialCloseSupport.positive(amount)
+		if (type.startsWith("BANK_ONLY_")) {
+			StatementSide statement = request.statementLineId() == null ? null
+					: statementSide(row, request.statementLineId());
+			if (statement == null || request.ledgerEntryId() != null || !FinancialCloseSupport.positive(amount)
+					|| !type.endsWith(statement.direction())
 					|| remainingStatementAmount(row.id(), request.statementLineId()).compareTo(amount) < 0) {
 				throw new BusinessException(ApiErrorCode.FIN_BANK_MATCH_AMOUNT_INVALID);
 			}
-			statementSide(row, request.statementLineId());
 		}
-		if ("LEDGER_ONLY".equals(type)) {
-			if (request.ledgerEntryId() == null || !FinancialCloseSupport.positive(amount)
+		if (type.startsWith("BOOK_ONLY_")) {
+			LedgerSide ledger = request.ledgerEntryId() == null ? null : ledgerSide(row, request.ledgerEntryId());
+			String ledgerDirection = ledger == null ? null : ledger.debitAmount().compareTo(ZERO) > 0 ? "DEBIT"
+					: "CREDIT";
+			if (ledger == null || request.statementLineId() != null || !FinancialCloseSupport.positive(amount)
+					|| !type.endsWith(ledgerDirection)
 					|| remainingLedgerAmount(row.id(), request.ledgerEntryId()).compareTo(amount) < 0) {
 				throw new BusinessException(ApiErrorCode.FIN_BANK_MATCH_AMOUNT_INVALID);
 			}
-			ledgerSide(row, request.ledgerEntryId());
-		}
-		if (("AMOUNT_DIFFERENCE".equals(type) || "DATE_DIFFERENCE".equals(type)) && amount.compareTo(ZERO) < 0) {
-			throw new BusinessException(ApiErrorCode.FIN_BANK_MATCH_AMOUNT_INVALID);
 		}
 		this.jdbcTemplate.update("""
 				insert into fin_bank_reconciliation_exception (
@@ -518,6 +564,9 @@ public class BankReconciliationService {
 				""", row.id(), request.statementLineId(), request.ledgerEntryId(), type, amount, reason,
 				operator.username());
 		touchRun(row, "RECONCILING", operator);
+		recordIdempotency("BANK_RECONCILIATION_EXCEPTION", "FIN_BANK_RECONCILIATION_RUN", row.id(),
+				row.version(), key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version() + 1,
+				operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_EXCEPTION",
 				"FIN_BANK_RECONCILIATION_RUN", row.id());
 		return reconciliation(row.id(), operator);
@@ -526,6 +575,16 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> calculate(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_CALCULATE|" + id + "|"
+				+ request.version() + "|" + reason);
+		Long existing = idempotentResult("BANK_RECONCILIATION_CALCULATE", "FIN_BANK_RECONCILIATION_RUN", id,
+				key, requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		RunRow row = lockRun(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
@@ -544,6 +603,9 @@ public class BankReconciliationService {
 		if (updated != 1) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
+		recordIdempotency("BANK_RECONCILIATION_CALCULATE", "FIN_BANK_RECONCILIATION_RUN", row.id(),
+				row.version(), key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version() + 1,
+				operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_CALCULATE",
 				"FIN_BANK_RECONCILIATION_RUN", row.id());
 		return reconciliation(row.id(), operator);
@@ -552,6 +614,16 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> confirmReconciliation(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_CONFIRM|" + id + "|"
+				+ request.version() + "|" + reason);
+		Long existing = idempotentResult("BANK_RECONCILIATION_CONFIRM", "FIN_BANK_RECONCILIATION_RUN", id,
+				key, requestFingerprint, operator);
+		if (existing != null) {
+			return reconciliation(existing, operator);
+		}
 		RunRow row = lockRun(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
@@ -574,6 +646,8 @@ public class BankReconciliationService {
 		if (updated != 1) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
+		recordIdempotency("BANK_RECONCILIATION_CONFIRM", "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version(),
+				key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version() + 1, operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_CONFIRM",
 				"FIN_BANK_RECONCILIATION_RUN", row.id());
 		return reconciliation(row.id(), operator);
@@ -582,12 +656,23 @@ public class BankReconciliationService {
 	@Transactional
 	public Map<String, Object> reopenReconciliation(Long id, FinancialCloseModels.VersionedActionRequest request,
 			CurrentUser operator) {
+		String reason = FinancialCloseSupport.requiredChineseReason(request == null ? null : request.reason(),
+				ApiErrorCode.VALIDATION_ERROR);
+		String key = FinancialCloseSupport.requiredText(request.idempotencyKey(), ApiErrorCode.VALIDATION_ERROR);
+		String requestFingerprint = FinancialCloseSupport.sha256("BANK_RECON_REOPEN|" + id + "|"
+				+ request.version() + "|" + reason);
+		Long existing = idempotentResult("BANK_RECONCILIATION_REOPEN", "FIN_BANK_RECONCILIATION_RUN", id, key,
+				requestFingerprint, operator);
+		if (existing != null) {
+			Map<String, Object> replay = reconciliation(existing, operator);
+			replay.put("reopenedFromId", id);
+			return replay;
+		}
 		RunRow row = lockRun(id);
 		requireVersion(row.version(), request == null ? null : request.version());
 		if (!"CONFIRMED".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
 		}
-		String reason = FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		Long newId = this.jdbcTemplate.queryForObject("""
 				insert into fin_bank_reconciliation_run (
 					period_id, bank_account_id, status, source_fingerprint, reopened_by, reopened_at,
@@ -600,6 +685,8 @@ public class BankReconciliationService {
 				operator.username());
 		Map<String, Object> result = reconciliation(newId, operator);
 		result.put("reopenedFromId", row.id());
+		recordIdempotency("BANK_RECONCILIATION_REOPEN", "FIN_BANK_RECONCILIATION_RUN", row.id(), row.version(),
+				key, requestFingerprint, "FIN_BANK_RECONCILIATION_RUN", newId, 0L, operator);
 		this.auditService.success(operator, "FIN_BANK_RECONCILIATION_REOPEN",
 				"FIN_BANK_RECONCILIATION_RUN", newId);
 		return result;
@@ -633,8 +720,8 @@ public class BankReconciliationService {
 		map.put("confirmedBy", row.confirmedBy());
 		map.put("confirmedAt", row.confirmedAt());
 		FinancialCloseSupport.putVisibility(map, currentUser);
-		map.put("allowedActions", List.of());
-		map.put("actionDisabledReasons", Map.of());
+		map.put("allowedActions", reconciliationActions(row, currentUser));
+		map.put("actionDisabledReasons", reconciliationDisabledReasons(row, currentUser));
 		map.put("version", row.version());
 		map.put("matches", matches(row.id(), currentUser));
 		map.put("exceptions", exceptions(row.id(), currentUser));
@@ -680,6 +767,56 @@ public class BankReconciliationService {
 			map.put("version", rs.getLong("version"));
 			return map;
 		}, row.bankAccountId(), period.startDate(), period.endDate(), limit, offset);
+	}
+
+	private List<String> reconciliationActions(RunRow row, CurrentUser currentUser) {
+		List<String> actions = new ArrayList<>();
+		if (!"CONFIRMED".equals(row.status())) {
+			if (FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:match")) {
+				actions.add("MATCH");
+				actions.add("CANCEL_MATCH");
+				actions.add("CLASSIFY_EXCEPTION");
+				actions.add("CALCULATE");
+			}
+			if ("BALANCED".equals(row.status())
+					&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:confirm")) {
+				actions.add("CONFIRM");
+			}
+		}
+		if ("CONFIRMED".equals(row.status())
+				&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:reopen")) {
+			actions.add("REOPEN");
+		}
+		return actions;
+	}
+
+	private Map<String, Object> reconciliationDisabledReasons(RunRow row, CurrentUser currentUser) {
+		Map<String, Object> reasons = FinancialCloseSupport.map();
+		if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:match")) {
+			reasons.put("MATCH", "无权执行银行对账匹配");
+			reasons.put("CANCEL_MATCH", "无权取消银行对账匹配");
+			reasons.put("CLASSIFY_EXCEPTION", "无权维护银行对账未达项");
+			reasons.put("CALCULATE", "无权计算银行对账");
+		}
+		if ("CONFIRMED".equals(row.status())) {
+			reasons.put("MATCH", "已确认银行对账不可修改");
+			reasons.put("CANCEL_MATCH", "已确认银行对账不可修改");
+			reasons.put("CLASSIFY_EXCEPTION", "已确认银行对账不可修改");
+			reasons.put("CALCULATE", "已确认银行对账不可修改");
+			if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:reopen")) {
+				reasons.put("REOPEN", "无权重开银行对账");
+			}
+		}
+		else {
+			if (!FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:confirm")) {
+				reasons.put("CONFIRM", "无权确认银行对账");
+			}
+			else if (!"BALANCED".equals(row.status())) {
+				reasons.put("CONFIRM", "银行对账未平衡");
+			}
+			reasons.put("REOPEN", "仅已确认银行对账可重开");
+		}
+		return reasons;
 	}
 
 	private List<Map<String, Object>> ledgerCandidates(RunRow row, int limit, int offset, CurrentUser currentUser) {
@@ -736,24 +873,36 @@ public class BankReconciliationService {
 				where e.period_id = ?
 				and e.account_id = a.gl_account_id
 				""", row.bankAccountId(), row.periodId());
-		BigDecimal ledgerOnly = queryAmount("""
-				select coalesce(sum(case when e.debit_amount > 0 then x.amount else -x.amount end), 0)
+		BigDecimal bookOnlyDebit = queryAmount("""
+				select coalesce(sum(amount), 0)
 				from fin_bank_reconciliation_exception x
-				join gl_ledger_entry e on e.id = x.ledger_entry_id
 				where x.run_id = ?
 				and x.status = 'OPEN'
-				and x.exception_type = 'LEDGER_ONLY'
+				and x.exception_type = 'BOOK_ONLY_DEBIT'
 				""", row.id());
-		BigDecimal bankOnly = queryAmount("""
-				select coalesce(sum(case when l.direction = 'CREDIT' then x.amount else -x.amount end), 0)
+		BigDecimal bookOnlyCredit = queryAmount("""
+				select coalesce(sum(amount), 0)
 				from fin_bank_reconciliation_exception x
-				join fin_bank_statement_line l on l.id = x.statement_line_id
 				where x.run_id = ?
 				and x.status = 'OPEN'
-				and x.exception_type = 'BANK_ONLY'
+				and x.exception_type = 'BOOK_ONLY_CREDIT'
 				""", row.id());
-		BigDecimal adjustedBank = FinancialCloseSupport.amount(bankEnding.add(ledgerOnly));
-		BigDecimal adjustedBook = FinancialCloseSupport.amount(glEnding.add(bankOnly));
+		BigDecimal bankOnlyCredit = queryAmount("""
+				select coalesce(sum(amount), 0)
+				from fin_bank_reconciliation_exception x
+				where x.run_id = ?
+				and x.status = 'OPEN'
+				and x.exception_type = 'BANK_ONLY_CREDIT'
+				""", row.id());
+		BigDecimal bankOnlyDebit = queryAmount("""
+				select coalesce(sum(amount), 0)
+				from fin_bank_reconciliation_exception x
+				where x.run_id = ?
+				and x.status = 'OPEN'
+				and x.exception_type = 'BANK_ONLY_DEBIT'
+				""", row.id());
+		BigDecimal adjustedBank = FinancialCloseSupport.amount(bankEnding.add(bookOnlyDebit).subtract(bookOnlyCredit));
+		BigDecimal adjustedBook = FinancialCloseSupport.amount(glEnding.add(bankOnlyCredit).subtract(bankOnlyDebit));
 		BigDecimal matched = queryAmount("""
 				select coalesce(sum(match_amount), 0)
 				from fin_bank_reconciliation_match
@@ -774,11 +923,10 @@ public class BankReconciliationService {
 				and l.amount - coalesce((
 					select sum(m.match_amount) from fin_bank_reconciliation_match m
 					where m.run_id = ? and m.statement_line_id = l.id
-				), 0) > 0
-				and not exists (
-					select 1 from fin_bank_reconciliation_exception x
+				), 0) - coalesce((
+					select sum(x.amount) from fin_bank_reconciliation_exception x
 					where x.run_id = ? and x.statement_line_id = l.id and x.status = 'OPEN'
-				)
+				), 0) > 0
 				""", Integer.class, row.bankAccountId(), period.startDate(), period.endDate(), row.id(), row.id());
 		AccountSnapshot account = bankAccount(row.bankAccountId());
 		Integer ledgerCount = this.jdbcTemplate.queryForObject("""
@@ -789,11 +937,10 @@ public class BankReconciliationService {
 				and (case when e.debit_amount > 0 then e.debit_amount else e.credit_amount end) - coalesce((
 					select sum(m.match_amount) from fin_bank_reconciliation_match m
 					where m.run_id = ? and m.ledger_entry_id = e.id
-				), 0) > 0
-				and not exists (
-					select 1 from fin_bank_reconciliation_exception x
+				), 0) - coalesce((
+					select sum(x.amount) from fin_bank_reconciliation_exception x
 					where x.run_id = ? and x.ledger_entry_id = e.id and x.status = 'OPEN'
-				)
+				), 0) > 0
 				""", Integer.class, row.periodId(), account.glAccountId(), row.id(), row.id());
 		return (statementCount == null ? 0 : statementCount) + (ledgerCount == null ? 0 : ledgerCount);
 	}
@@ -869,8 +1016,13 @@ public class BankReconciliationService {
 			map.put("status", rs.getString("status"));
 			map.put("sourceMethod", rs.getString("source_method"));
 			FinancialCloseSupport.putVisibility(map, currentUser);
-			map.put("allowedActions", List.of());
-			map.put("actionDisabledReasons", Map.of());
+			String status = rs.getString("status");
+			boolean canIgnore = List.of("UNMATCHED", "PARTIALLY_MATCHED").contains(status)
+					&& FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:import");
+			map.put("allowedActions", canIgnore ? List.of("IGNORE") : List.of());
+			map.put("actionDisabledReasons", canIgnore ? Map.of() : Map.of("IGNORE",
+					FinancialCloseSupport.hasPermission(currentUser, "financial-close:bank-reconciliation:import")
+							? "仅未匹配或部分匹配流水可忽略" : "无权忽略银行流水"));
 			map.put("createdAt", rs.getObject("created_at", OffsetDateTime.class));
 			map.put("updatedAt", rs.getObject("updated_at", OffsetDateTime.class));
 			map.put("version", rs.getLong("version"));
@@ -1375,6 +1527,43 @@ public class BankReconciliationService {
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
 	}
 
+	private void validateBankGlAccount(AccountSnapshot account) {
+		if (!account.enabled()) {
+			throw new BusinessException(ApiErrorCode.GL_ACCOUNT_DISABLED);
+		}
+		if (!account.leaf() || !account.postable()) {
+			throw new BusinessException(ApiErrorCode.GL_ACCOUNT_NOT_LEAF);
+		}
+		if (!"ASSET".equals(account.category()) || !"DEBIT".equals(account.balanceDirection())
+				|| (!"1002".equals(account.code()) && !account.code().startsWith("1002."))) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private AccountImmutableSnapshot accountImmutableSnapshot(Long id) {
+		return this.jdbcTemplate.query("""
+				select gl_account_id, account_fingerprint, opened_on
+				from fin_bank_account
+				where id = ?
+				""", (rs, rowNum) -> new AccountImmutableSnapshot(rs.getLong("gl_account_id"),
+				rs.getString("account_fingerprint"), rs.getObject("opened_on", LocalDate.class)), id).stream()
+			.findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
+	}
+
+	private boolean hasBankFacts(Long bankAccountId) {
+		Boolean exists = this.jdbcTemplate.queryForObject("""
+				select exists (
+					select 1 from fin_bank_statement where bank_account_id = ?
+					union all
+					select 1 from fin_bank_statement_line where bank_account_id = ?
+					union all
+					select 1 from fin_bank_reconciliation_run where bank_account_id = ?
+				)
+				""", Boolean.class, bankAccountId, bankAccountId, bankAccountId);
+		return Boolean.TRUE.equals(exists);
+	}
+
 	private void requireEnabledAccount(Long id) {
 		if (id == null) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
@@ -1481,24 +1670,27 @@ public class BankReconciliationService {
 
 	private AccountSnapshot glAccount(Long id) {
 		return this.jdbcTemplate.query("""
-				select id, code, category, postable, enabled
+				select id, code, category, balance_direction, is_leaf, postable, enabled
 				from gl_account
 				where id = ?
 				""", (rs, rowNum) -> new AccountSnapshot(rs.getLong("id"), rs.getString("code"),
-				rs.getString("category"), rs.getBoolean("postable"), rs.getBoolean("enabled"), null), id).stream()
+				rs.getString("category"), rs.getString("balance_direction"), rs.getBoolean("postable"),
+				rs.getBoolean("enabled"), rs.getBoolean("is_leaf"), null), id).stream()
 			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_ACCOUNT_NOT_FOUND));
 	}
 
 	private AccountSnapshot bankAccount(Long id) {
 		return this.jdbcTemplate.query("""
-				select a.id, g.code, g.category, g.postable, g.enabled, a.gl_account_id
+				select a.id, g.code, g.category, g.balance_direction, g.postable, g.enabled, g.is_leaf,
+				       a.gl_account_id
 				from fin_bank_account a
 				join gl_account g on g.id = a.gl_account_id
 				where a.id = ?
 				""", (rs, rowNum) -> new AccountSnapshot(rs.getLong("id"), rs.getString("code"),
-				rs.getString("category"), rs.getBoolean("postable"), rs.getBoolean("enabled"),
-				rs.getLong("gl_account_id")), id).stream().findFirst()
+				rs.getString("category"), rs.getString("balance_direction"), rs.getBoolean("postable"),
+				rs.getBoolean("enabled"), rs.getBoolean("is_leaf"), rs.getLong("gl_account_id")), id).stream()
+			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
 	}
 
@@ -1518,8 +1710,11 @@ public class BankReconciliationService {
 		}
 	}
 
-	private record AccountSnapshot(Long id, String code, String category, boolean postable, boolean enabled,
-			Long glAccountId) {
+	private record AccountSnapshot(Long id, String code, String category, String balanceDirection, boolean postable,
+			boolean enabled, boolean leaf, Long glAccountId) {
+	}
+
+	private record AccountImmutableSnapshot(Long glAccountId, String accountFingerprint, LocalDate openedOn) {
 	}
 
 	private record AccountRow(Long id, String status, Long version) {

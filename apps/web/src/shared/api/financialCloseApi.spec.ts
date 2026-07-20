@@ -250,4 +250,112 @@ describe('financialCloseApi', () => {
       traceId: 'trace-fin-close-1',
     } satisfies Partial<AccountPermissionApiError>)
   })
+
+  it('兼容后端 032 税务 DTO 字段并按冻结路径发送银行、税务维护动作', async () => {
+    const fetcher = vi.fn()
+      .mockResolvedValueOnce(apiResponse({
+        id: 401,
+        taxpayerType: 'GENERAL',
+        creditCode: '91330000123456789X',
+        taxAuthority: '杭州市税务局',
+        vatPeriodicity: 'MONTHLY',
+        incomeTaxRate: '0.2500',
+        urbanMaintenanceRate: '0.0700',
+        effectiveFrom: '2026-01-01',
+        version: 2,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 501,
+          periodCode: '2026-11',
+          taxType: 'VAT',
+          status: 'CONFIRMED',
+          outputVat: '13.00',
+          inputVat: '6.00',
+          adjustmentAmount: '1.00',
+          vatPayable: '8.00',
+          urbanMaintenanceTax: '0.56',
+          incomeTaxEstimated: '38.75',
+          stale: false,
+          current: true,
+          version: 5,
+          allowedActions: ['GENERATE_VOUCHER'],
+          actionDisabledReasons: { CONFIRM: '已确认不可重复确认' },
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse({
+        items: [{
+          id: 601,
+          taxType: 'VAT',
+          paymentDate: '2026-11-28',
+          amount: '8.00',
+          bankAccountId: 2,
+          bankAccountMasked: '账号已脱敏',
+          bankAccountDisplay: '中国银行 基本户 账号已脱敏',
+          bankSensitiveVisible: false,
+          version: 2,
+        }],
+        total: 1,
+        page: 1,
+        pageSize: 10,
+      }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 101, version: 1 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 151, version: 1 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 201, version: 4 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 202, version: 5 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 501, version: 6 }))
+      .mockResolvedValueOnce(apiResponse(csrf))
+      .mockResolvedValueOnce(apiResponse({ id: 601, version: 3 }))
+
+    const api = createFinancialCloseApi({ fetcher })
+
+    await expect(api.taxProfiles.current()).resolves.toMatchObject({
+      creditCode: '91330000123456789X',
+      unifiedSocialCreditCodeMasked: '91330000123456789X',
+      urbanMaintenanceRate: '0.0700',
+      cityMaintenanceTaxRate: '0.0700',
+    })
+    await expect(api.taxSummaries.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        outputTaxAmount: '13.00',
+        inputTaxAmount: '6.00',
+        payableTaxAmount: '8.00',
+        estimatedIncomeTaxAmount: '38.75',
+      })],
+    })
+    await expect(api.taxPayments.list({ page: 1, pageSize: 10 })).resolves.toMatchObject({
+      items: [expect.objectContaining({
+        bankAccountMasked: '账号已脱敏',
+        bankAccountDisplay: '中国银行 基本户 账号已脱敏',
+      })],
+    })
+
+    await api.bankAccounts.create({ accountName: '一般户', accountType: 'GENERAL', bankName: '中国银行', currency: 'CNY', glAccountId: 100201, openedOn: '2026-01-01', accountNo: '6222000011112222', idempotencyKey: 'bank-account-create-key' })
+    await api.bankStatements.create({ bankAccountId: 101, transactionDate: '2026-11-01', postingDate: '2026-11-01', direction: 'CREDIT', amount: '8.00', counterpartyName: '税务局', summary: '退税', bankTransactionId: 'BTX-1', referenceNo: 'REF-1', idempotencyKey: 'bank-statement-create-key' })
+    await api.bankReconciliations.createMatch(201, { version: 4, matches: [{ statementLineId: 151, ledgerEntryId: 301, amount: '8.00' }], idempotencyKey: 'match-key' })
+    await api.bankReconciliations.deleteMatch(201, 'MATCH-1', { version: 5, reason: '取消错误匹配', idempotencyKey: 'cancel-match-key' })
+    await api.taxSummaries.addAdjustment(501, { version: 5, adjustmentType: 'VAT_INCREASE', amount: '1.00', reason: '补充调整', idempotencyKey: 'tax-adjust-key' })
+    await api.taxPayments.correct(601, { amount: '9.00', reason: '更正缴纳金额', idempotencyKey: 'tax-payment-correct-key' })
+
+    expect(fetcher).toHaveBeenCalledWith('/api/admin/bank-reconciliations/201/matches', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ version: 4, matches: [{ statementLineId: 151, ledgerEntryId: 301, amount: '8.00' }], idempotencyKey: 'match-key' }),
+    }))
+    expect(fetcher).toHaveBeenCalledWith('/api/admin/bank-reconciliations/201/matches?matchGroupNo=MATCH-1', expect.objectContaining({
+      method: 'DELETE',
+      body: JSON.stringify({ version: 5, reason: '取消错误匹配', idempotencyKey: 'cancel-match-key' }),
+    }))
+    expect(fetcher).toHaveBeenCalledWith('/api/admin/tax-summaries/501/adjustments', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ version: 5, adjustmentType: 'VAT_INCREASE', amount: '1.00', reason: '补充调整', idempotencyKey: 'tax-adjust-key' }),
+    }))
+  })
 })

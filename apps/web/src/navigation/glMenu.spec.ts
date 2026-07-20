@@ -36,7 +36,7 @@ describe('glMenu', () => {
       'financial-close:period:view',
       'financial-close:profit-loss:view',
       'financial-close:bank-account:view',
-      'financial-close:bank-reconciliation:import',
+      'financial-close:bank-reconciliation:view',
       'financial-close:bank-reconciliation:view',
       'financial-close:tax-profile:view',
       'financial-close:tax-summary:view',

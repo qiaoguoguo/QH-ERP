@@ -87,16 +87,16 @@ const businessObjectLabels: Record<string, string> = {
   FINANCIAL_PERIOD_REOPEN: '反结账申请',
 }
 
-function businessObjectRoute(record: { objectType?: string | null, objectId?: string | number | null }) {
+function businessObjectRoute(record: { sceneCode?: string | null, objectType?: string | null, objectId?: string | number | null }) {
+  if (record.sceneCode === 'FINANCIAL_PERIOD_REOPEN' || record.objectType === 'FINANCIAL_PERIOD_REOPEN') {
+    return `/gl/financial-close?returnTo=${encodeURIComponent('/platform/approvals')}`
+  }
   if (!record.objectType || record.objectId === null || record.objectId === undefined) {
     return null
   }
   const basePath = businessObjectPaths[record.objectType]
   if (!basePath) {
     return null
-  }
-  if (record.objectType === 'FINANCIAL_PERIOD_REOPEN') {
-    return `${basePath}?returnTo=${encodeURIComponent('/platform/approvals')}`
   }
   const path = `${basePath}/${encodeURIComponent(String(record.objectId))}`
   return record.objectType === 'GL_VOUCHER'

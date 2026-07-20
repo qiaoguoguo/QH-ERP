@@ -76,9 +76,21 @@ public class GeneralLedgerVoucherService {
 		if (existing != null) {
 			return this.queryService.voucher(existing, operator);
 		}
-		PersistedVoucher draft = createVoucher(sourceType, sourceId, sourceNo, sourceFingerprint, sourceVersion, null,
-				null, null, null, null, "GENERAL", voucherDate, summary, lines, idempotencyKey, fingerprint, null, null,
-				operator);
+		SourceFacts facts = systemSourceFacts(sourceType, sourceId, sourceNo, sourceFingerprint, sourceVersion,
+				voucherDate);
+		ensureNoActiveClaim(facts.sourceType(), facts.sourceId());
+		ValidatedDraft validated = validateDraft("GENERAL", voucherDate, summary, lines, null, true);
+		Long claimId = reserveSourceClaim(facts, operator);
+		Map<String, Object> payload = new LinkedHashMap<>();
+		payload.put("systemSourceType", facts.sourceType());
+		payload.put("systemSourceId", facts.sourceId());
+		PersistedVoucher draft = insertVoucher(sourceType, sourceId, sourceNo, sourceFingerprint, sourceVersion,
+				null, null, null, null, null, validated.voucherType(), validated.voucherDate(), validated.summary(),
+				validated.period().id(), validated.debitTotal(), validated.creditTotal(), claimId, null, null,
+				idempotencyKey, fingerprint, payload, null, null, operator);
+		insertLines(draft.id(), validated.lines());
+		this.jdbcTemplate.update("update gl_voucher_source_claim set voucher_id = ? where id = ?", draft.id(),
+				claimId);
 		recordAction("SYSTEM_CREATE", sourceType, sourceId, sourceVersion, idempotencyKey, fingerprint, TARGET,
 				draft.id(), draft.version(), operator);
 		this.glAuditService.success(operator, "GL_VOUCHER_SYSTEM_CREATE", TARGET, draft.id());
@@ -625,6 +637,9 @@ public class GeneralLedgerVoucherService {
 				throw new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED);
 			}
 		}
+		if (validateSource && List.of("PROFIT_LOSS_CARRYFORWARD", "TAX_SUMMARY").contains(voucher.sourceType())) {
+			revalidateFinancialCloseSource(voucher);
+		}
 	}
 
 	private AccountSnapshot account(Long id) {
@@ -904,6 +919,52 @@ public class GeneralLedgerVoucherService {
 		};
 	}
 
+	private SourceFacts systemSourceFacts(String sourceType, Long sourceId, String sourceNo, String sourceFingerprint,
+			Long sourceVersion, LocalDate businessDate) {
+		if (sourceId == null || sourceVersion == null || sourceFingerprint == null || sourceFingerprint.isBlank()) {
+			throw new BusinessException(ApiErrorCode.GL_SOURCE_NOT_READY);
+		}
+		return new SourceFacts(sourceType, "SYSTEM", sourceId, sourceNo, businessDate, sourceVersion,
+				sourceFingerprint, List.of());
+	}
+
+	private void revalidateFinancialCloseSource(VoucherRow voucher) {
+		if ("PROFIT_LOSS_CARRYFORWARD".equals(voucher.sourceType())) {
+			this.jdbcTemplate.query("""
+					select id, status, source_fingerprint, voucher_id
+					from fin_close_profit_loss_transfer
+					where id = ?
+					for update
+					""", (rs, rowNum) -> {
+				if (!List.of("DRAFT", "SUBMITTED", "POSTED").contains(rs.getString("status"))
+						|| !voucher.id().equals(GeneralLedgerSupport.nullableLong(rs, "voucher_id"))
+						|| !voucher.sourceFingerprint().equals(rs.getString("source_fingerprint"))) {
+					throw new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED);
+				}
+				return rs.getLong("id");
+			}, voucher.sourceId()).stream().findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED));
+			return;
+		}
+		if ("TAX_SUMMARY".equals(voucher.sourceType())) {
+			this.jdbcTemplate.query("""
+					select id, status, source_fingerprint, voucher_id, stale, current_flag
+					from fin_tax_period_summary
+					where id = ?
+					for update
+					""", (rs, rowNum) -> {
+				if (!"CONFIRMED".equals(rs.getString("status"))
+						|| !voucher.id().equals(GeneralLedgerSupport.nullableLong(rs, "voucher_id"))
+						|| !voucher.sourceFingerprint().equals(rs.getString("source_fingerprint"))
+						|| rs.getBoolean("stale") || !rs.getBoolean("current_flag")) {
+					throw new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED);
+				}
+				return rs.getLong("id");
+			}, voucher.sourceId()).stream().findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.GL_SOURCE_CHANGED));
+		}
+	}
+
 	private SourceFacts salesInvoiceFacts(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, invoice_no, customer_id, project_id, invoice_date, tax_excluded_amount, tax_amount,
@@ -1176,7 +1237,8 @@ public class GeneralLedgerVoucherService {
 		return this.jdbcTemplate.query("""
 				select v.id, v.ledger_id, v.accounting_period_id, p.period_code, p.start_date, v.draft_no,
 				       v.voucher_type, v.voucher_date, v.status, v.summary, v.source_type, v.source_id,
-				       v.source_no, v.source_claim_id, v.source_original_type, v.source_original_id,
+				       v.source_no, v.source_fingerprint, v.source_version, v.source_claim_id,
+				       v.source_original_type, v.source_original_id,
 				       v.source_original_no, v.source_original_version, v.source_original_fingerprint,
 				       v.debit_total, v.credit_total, v.voucher_no, v.version
 				from gl_voucher v
@@ -1188,9 +1250,11 @@ public class GeneralLedgerVoucherService {
 				rs.getObject("start_date", LocalDate.class), rs.getString("draft_no"), rs.getString("voucher_type"),
 				rs.getObject("voucher_date", LocalDate.class), rs.getString("status"), rs.getString("summary"),
 				rs.getString("source_type"), GeneralLedgerSupport.nullableLong(rs, "source_id"),
-				rs.getString("source_no"), GeneralLedgerSupport.nullableLong(rs, "source_claim_id"),
-				rs.getString("source_original_type"), GeneralLedgerSupport.nullableLong(rs, "source_original_id"),
-				rs.getString("source_original_no"), GeneralLedgerSupport.nullableLong(rs, "source_original_version"),
+				rs.getString("source_no"), rs.getString("source_fingerprint"),
+				GeneralLedgerSupport.nullableLong(rs, "source_version"),
+				GeneralLedgerSupport.nullableLong(rs, "source_claim_id"), rs.getString("source_original_type"),
+				GeneralLedgerSupport.nullableLong(rs, "source_original_id"), rs.getString("source_original_no"),
+				GeneralLedgerSupport.nullableLong(rs, "source_original_version"),
 				rs.getString("source_original_fingerprint"), rs.getBigDecimal("debit_total"),
 				rs.getBigDecimal("credit_total"), rs.getString("voucher_no"), rs.getLong("version")), id).stream()
 			.findFirst()
@@ -1355,8 +1419,9 @@ public class GeneralLedgerVoucherService {
 
 	private record VoucherRow(Long id, Long ledgerId, Long periodId, String periodCode, LocalDate periodStart,
 			String draftNo, String voucherType, LocalDate voucherDate, String status, String summary,
-			String sourceType, Long sourceId, String sourceNo, Long sourceClaimId, String sourceOriginalType,
-			Long sourceOriginalId, String sourceOriginalNo, Long sourceOriginalVersion,
+			String sourceType, Long sourceId, String sourceNo, String sourceFingerprint, Long sourceVersion,
+			Long sourceClaimId, String sourceOriginalType, Long sourceOriginalId, String sourceOriginalNo,
+			Long sourceOriginalVersion,
 			String sourceOriginalFingerprint, BigDecimal debitTotal, BigDecimal creditTotal, String voucherNo,
 			Long version) {
 	}

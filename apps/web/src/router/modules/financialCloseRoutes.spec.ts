@@ -23,7 +23,7 @@ describe('financialCloseRoutes', () => {
     })
     expect(routes.get('gl-bank-statements')).toMatchObject({
       path: '/gl/bank-statements',
-      meta: { requiredPermission: 'financial-close:bank-reconciliation:import' },
+      meta: { requiredPermission: 'financial-close:bank-reconciliation:view' },
     })
     expect(routes.get('gl-bank-reconciliation')).toMatchObject({
       path: '/gl/bank-reconciliation',
@@ -45,7 +45,7 @@ describe('financialCloseRoutes', () => {
 
   it('按 032 查看权限决定 /gl 默认财务结账入口', () => {
     expect(firstFinancialCloseRouteByPermission((permission) => permission === 'financial-close:period:view')).toEqual({ name: 'gl-financial-close' })
-    expect(firstFinancialCloseRouteByPermission((permission) => permission === 'financial-close:bank-reconciliation:view')).toEqual({ name: 'gl-bank-reconciliation' })
+    expect(firstFinancialCloseRouteByPermission((permission) => permission === 'financial-close:bank-reconciliation:view')).toEqual({ name: 'gl-bank-statements' })
     expect(firstFinancialCloseRouteByPermission((permission) => permission === 'financial-close:tax-summary:view')).toEqual({ name: 'gl-tax-summary' })
     expect(firstFinancialCloseRouteByPermission(() => false)).toBeNull()
   })

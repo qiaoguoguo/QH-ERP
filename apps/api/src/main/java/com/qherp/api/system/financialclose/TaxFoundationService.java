@@ -43,18 +43,23 @@ public class TaxFoundationService {
 			Long id = this.jdbcTemplate.queryForObject("""
 					insert into fin_tax_profile (
 						taxpayer_type, credit_code, tax_authority, vat_periodicity, income_tax_rate,
-						urban_maintenance_rate, effective_from, current_flag, created_by, updated_by
+						urban_maintenance_rate, education_surcharge_rate, local_education_surcharge_rate,
+						income_adjustment_increase, income_adjustment_decrease, loss_deduction, prepaid_income_tax,
+						effective_from, current_flag, created_by, updated_by
 					)
-					values (?, ?, ?, ?, ?, ?, ?, true, ?, ?)
+					values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, true, ?, ?)
 					returning id
 					""", Long.class, normalized(request.taxpayerType(), "GENERAL"),
 					FinancialCloseSupport.requiredText(request.creditCode(), ApiErrorCode.VALIDATION_ERROR),
 					FinancialCloseSupport.text(request.taxAuthority()), normalized(request.vatPeriodicity(), "MONTHLY"),
 					rate(request.incomeTaxRate()), rate(request.urbanMaintenanceRate()),
+					rate(request.educationSurchargeRate()), rate(request.localEducationSurchargeRate()),
+					amount(request.incomeAdjustmentIncrease()), amount(request.incomeAdjustmentDecrease()),
+					amount(request.lossDeduction()), amount(request.prepaidIncomeTax()),
 					request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom(), operator.username(),
 					operator.username());
 			this.auditService.success(operator, "FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE", id);
-			return profile(id);
+			return profile(id, operator);
 		}
 		Long actualVersion = this.jdbcTemplate.queryForObject("select version from fin_tax_profile where id = ?",
 				Long.class, existing);
@@ -64,26 +69,31 @@ public class TaxFoundationService {
 		this.jdbcTemplate.update("""
 				update fin_tax_profile
 				set taxpayer_type = ?, credit_code = ?, tax_authority = ?, vat_periodicity = ?, income_tax_rate = ?,
-				    urban_maintenance_rate = ?, effective_from = ?, updated_by = ?, updated_at = ?,
+				    urban_maintenance_rate = ?, education_surcharge_rate = ?, local_education_surcharge_rate = ?,
+				    income_adjustment_increase = ?, income_adjustment_decrease = ?, loss_deduction = ?,
+				    prepaid_income_tax = ?, effective_from = ?, updated_by = ?, updated_at = ?,
 				    version = version + 1
 				where id = ?
 				""", normalized(request.taxpayerType(), "GENERAL"),
 				FinancialCloseSupport.requiredText(request.creditCode(), ApiErrorCode.VALIDATION_ERROR),
 				FinancialCloseSupport.text(request.taxAuthority()), normalized(request.vatPeriodicity(), "MONTHLY"),
 				rate(request.incomeTaxRate()), rate(request.urbanMaintenanceRate()),
+				rate(request.educationSurchargeRate()), rate(request.localEducationSurchargeRate()),
+				amount(request.incomeAdjustmentIncrease()), amount(request.incomeAdjustmentDecrease()),
+				amount(request.lossDeduction()), amount(request.prepaidIncomeTax()),
 				request.effectiveFrom() == null ? LocalDate.now() : request.effectiveFrom(), operator.username(),
 				OffsetDateTime.now(), existing);
 		this.auditService.success(operator, "FIN_TAX_PROFILE_UPSERT", "FIN_TAX_PROFILE", existing);
-		return profile(existing);
+		return profile(existing, operator);
 	}
 
 	@Transactional(readOnly = true)
-	public Map<String, Object> currentProfile() {
+	public Map<String, Object> currentProfile(CurrentUser currentUser) {
 		Long id = currentProfileId();
 		if (id == null) {
 			return Map.of();
 		}
-		return profile(id);
+		return profile(id, currentUser);
 	}
 
 	@Transactional(readOnly = true)
@@ -233,7 +243,7 @@ public class TaxFoundationService {
 				)
 				values (?, ?, ?, ?, ?)
 				""", id, type, amount,
-				FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR),
+				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
 				operator.username());
 		Period period = periodById(row.periodId());
 		updateSummaryAmounts(id, row.status(), row.sourceFingerprint(), amounts(period, totalAdjustments(id)),
@@ -248,6 +258,7 @@ public class TaxFoundationService {
 		SummaryRow row = lockSummary(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
+		FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		if (!"CALCULATED".equals(row.status())) {
 			throw new BusinessException(ApiErrorCode.FIN_CLOSE_NOT_READY);
 		}
@@ -270,6 +281,7 @@ public class TaxFoundationService {
 		SummaryRow row = lockSummary(id);
 		requireMutable(row);
 		requireVersion(row.version(), request == null ? null : request.version());
+		FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR);
 		if (!sourceFingerprint(periodById(row.periodId())).equals(row.sourceFingerprint())) {
 			throw new BusinessException(ApiErrorCode.FIN_TAX_SOURCE_CHANGED);
 		}
@@ -309,8 +321,10 @@ public class TaxFoundationService {
 		SummaryView view = this.jdbcTemplate.query("""
 				select id, period_id, period_code, tax_type, status, source_fingerprint, output_vat, input_vat,
 				       transfer_out_vat, adjustment_amount, opening_credit_vat, vat_payable,
-				       urban_maintenance_tax, ending_credit_vat, income_tax_estimated, disclaimer, stale,
-				       current_flag, voucher_id, version
+				       urban_maintenance_tax, education_surcharge_tax, local_education_surcharge_tax,
+				       additional_tax_total, ending_credit_vat, income_adjustment_increase,
+				       income_adjustment_decrease, loss_deduction, prepaid_income_tax, income_tax_estimated,
+				       income_tax_payable, disclaimer, stale, current_flag, voucher_id, version
 				from fin_tax_period_summary
 				where id = ?
 				""", (rs, rowNum) -> new SummaryView(rs.getLong("id"), rs.getLong("period_id"),
@@ -322,10 +336,19 @@ public class TaxFoundationService {
 				FinancialCloseSupport.amount(rs.getBigDecimal("opening_credit_vat")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("vat_payable")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("urban_maintenance_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("local_education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("additional_tax_total")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("ending_credit_vat")),
-				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated")), rs.getString("disclaimer"),
-				rs.getBoolean("stale"), rs.getBoolean("current_flag"),
-				FinancialCloseSupport.nullableLong(rs, "voucher_id"), rs.getLong("version")), id).stream()
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_adjustment_increase")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_adjustment_decrease")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("loss_deduction")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("prepaid_income_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_payable")), rs.getString("disclaimer"),
+				rs.getBoolean("stale"), rs.getBoolean("current_flag"), FinancialCloseSupport.nullableLong(rs,
+						"voucher_id"),
+				rs.getLong("version")), id).stream()
 			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
 		return summary(view, currentUser);
@@ -367,7 +390,8 @@ public class TaxFoundationService {
 				request.paymentDate() == null ? LocalDate.now() : request.paymentDate(), amount,
 				FinancialCloseSupport.text(request.paymentMethod()), FinancialCloseSupport.text(request.referenceNo()),
 				request.voucherId(), request.paymentId(), request.bankAccountId(),
-				FinancialCloseSupport.text(request.reason()), operator.username(), operator.username());
+				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
+				operator.username(), operator.username());
 		this.auditService.success(operator, "FIN_TAX_PAYMENT_RECORD", "FIN_TAX_PAYMENT_RECORD", id);
 		return payment(id, operator);
 	}
@@ -388,8 +412,8 @@ public class TaxFoundationService {
 				values (?, ?, ?, ?, ?, ?, 'CORRECTED', ?, ?)
 				returning id
 				""", Long.class, original.summaryId(), original.taxType(), LocalDate.now(), amount,
-				FinancialCloseSupport.requiredText(request.reason(), ApiErrorCode.VALIDATION_ERROR), original.id(),
-				operator.username(), operator.username());
+				FinancialCloseSupport.requiredChineseReason(request.reason(), ApiErrorCode.VALIDATION_ERROR),
+				original.id(), operator.username(), operator.username());
 		this.auditService.success(operator, "FIN_TAX_PAYMENT_CORRECT", "FIN_TAX_PAYMENT_RECORD", correctionId);
 		return payment(correctionId, operator);
 	}
@@ -404,23 +428,38 @@ public class TaxFoundationService {
 				""", (rs, rowNum) -> rs.getLong("id")).stream().findFirst().orElse(null);
 	}
 
-	private Map<String, Object> profile(Long id) {
+	private Map<String, Object> profile(Long id, CurrentUser currentUser) {
 		return this.jdbcTemplate.query("""
 				select id, taxpayer_type, credit_code, tax_authority, vat_periodicity, income_tax_rate,
-				       urban_maintenance_rate, effective_from, current_flag, version
+				       urban_maintenance_rate, education_surcharge_rate, local_education_surcharge_rate,
+				       income_adjustment_increase, income_adjustment_decrease, loss_deduction, prepaid_income_tax,
+				       effective_from, current_flag, version
 				from fin_tax_profile
 				where id = ?
 				""", (rs, rowNum) -> {
 			Map<String, Object> map = FinancialCloseSupport.map();
 			map.put("id", rs.getLong("id"));
 			map.put("taxpayerType", rs.getString("taxpayer_type"));
-			map.put("creditCode", rs.getString("credit_code"));
+			map.put("unifiedSocialCreditCodeMasked", FinancialCloseSupport.maskedCreditCode(
+					rs.getString("credit_code"), currentUser));
 			map.put("taxAuthority", rs.getString("tax_authority"));
 			map.put("vatPeriodicity", rs.getString("vat_periodicity"));
 			map.put("incomeTaxRate", rs.getBigDecimal("income_tax_rate").toPlainString());
 			map.put("urbanMaintenanceRate", rs.getBigDecimal("urban_maintenance_rate").toPlainString());
+			map.put("educationSurchargeRate", rs.getBigDecimal("education_surcharge_rate").toPlainString());
+			map.put("localEducationSurchargeRate",
+					rs.getBigDecimal("local_education_surcharge_rate").toPlainString());
+			map.put("incomeAdjustmentIncrease", FinancialCloseSupport.visibleDecimal(
+					rs.getBigDecimal("income_adjustment_increase"), currentUser));
+			map.put("incomeAdjustmentDecrease", FinancialCloseSupport.visibleDecimal(
+					rs.getBigDecimal("income_adjustment_decrease"), currentUser));
+			map.put("lossDeduction", FinancialCloseSupport.visibleDecimal(rs.getBigDecimal("loss_deduction"),
+					currentUser));
+			map.put("prepaidIncomeTax", FinancialCloseSupport.visibleDecimal(rs.getBigDecimal("prepaid_income_tax"),
+					currentUser));
 			map.put("effectiveFrom", rs.getObject("effective_from", LocalDate.class));
 			map.put("current", rs.getBoolean("current_flag"));
+			FinancialCloseSupport.putVisibility(map, currentUser);
 			map.put("version", rs.getLong("version"));
 			return map;
 		}, id).stream().findFirst().orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
@@ -467,8 +506,10 @@ public class TaxFoundationService {
 		List<SummaryView> rows = this.jdbcTemplate.query("""
 				select id, period_id, period_code, tax_type, status, source_fingerprint, output_vat, input_vat,
 				       transfer_out_vat, adjustment_amount, opening_credit_vat, vat_payable,
-				       urban_maintenance_tax, ending_credit_vat, income_tax_estimated, disclaimer, stale,
-				       current_flag, voucher_id, version
+				       urban_maintenance_tax, education_surcharge_tax, local_education_surcharge_tax,
+				       additional_tax_total, ending_credit_vat, income_adjustment_increase,
+				       income_adjustment_decrease, loss_deduction, prepaid_income_tax, income_tax_estimated,
+				       income_tax_payable, disclaimer, stale, current_flag, voucher_id, version
 				from fin_tax_period_summary
 				where period_id = ?
 				and tax_type = ?
@@ -483,10 +524,19 @@ public class TaxFoundationService {
 				FinancialCloseSupport.amount(rs.getBigDecimal("opening_credit_vat")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("vat_payable")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("urban_maintenance_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("local_education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("additional_tax_total")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("ending_credit_vat")),
-				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated")), rs.getString("disclaimer"),
-				rs.getBoolean("stale"), rs.getBoolean("current_flag"),
-				FinancialCloseSupport.nullableLong(rs, "voucher_id"), rs.getLong("version")), periodId, taxType);
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_adjustment_increase")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_adjustment_decrease")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("loss_deduction")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("prepaid_income_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_payable")), rs.getString("disclaimer"),
+				rs.getBoolean("stale"), rs.getBoolean("current_flag"), FinancialCloseSupport.nullableLong(rs,
+						"voucher_id"),
+				rs.getLong("version")), periodId, taxType);
 		for (SummaryView row : rows) {
 			if (!isStale(row)) {
 				return summary(row, currentUser);
@@ -498,8 +548,9 @@ public class TaxFoundationService {
 	private SummaryRow lockSummary(Long id) {
 		return this.jdbcTemplate.query("""
 				select id, period_id, tax_type, status, source_fingerprint, output_vat, input_vat,
-				       adjustment_amount, vat_payable, urban_maintenance_tax, income_tax_estimated, voucher_id,
-				       version
+				       adjustment_amount, vat_payable, urban_maintenance_tax, education_surcharge_tax,
+				       local_education_surcharge_tax, additional_tax_total, income_tax_estimated,
+				       income_tax_payable, voucher_id, version
 				from fin_tax_period_summary
 				where id = ?
 				for update
@@ -510,7 +561,11 @@ public class TaxFoundationService {
 				FinancialCloseSupport.amount(rs.getBigDecimal("adjustment_amount")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("vat_payable")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("urban_maintenance_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("local_education_surcharge_tax")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("additional_tax_total")),
 				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_estimated")),
+				FinancialCloseSupport.amount(rs.getBigDecimal("income_tax_payable")),
 				FinancialCloseSupport.nullableLong(rs, "voucher_id"), rs.getLong("version")), id).stream()
 			.findFirst()
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT));
@@ -532,11 +587,13 @@ public class TaxFoundationService {
 		boolean amountVisible = FinancialCloseSupport.amountVisible(currentUser);
 		boolean sourceVisible = FinancialCloseSupport.sourceVisible(currentUser);
 		return this.jdbcTemplate.query("""
-				select id, summary_id, tax_type, payment_date, amount, payment_method, reference_no, voucher_id,
-				       payment_id, bank_account_id, reason, correction_of_id, status, created_by, created_at,
-				       version
-				from fin_tax_payment_record
-				where id = ?
+				select p.id, p.summary_id, p.tax_type, p.payment_date, p.amount, p.payment_method, p.reference_no,
+				       p.voucher_id, p.payment_id, p.bank_account_id, a.account_name, a.bank_name,
+				       a.account_last4, a.account_masked, p.reason, p.correction_of_id, p.status, p.created_by,
+				       p.created_at, p.version
+				from fin_tax_payment_record p
+				left join fin_bank_account a on a.id = p.bank_account_id
+				where p.id = ?
 				""", (rs, rowNum) -> {
 			Map<String, Object> map = FinancialCloseSupport.map();
 			map.put("id", rs.getLong("id"));
@@ -549,6 +606,12 @@ public class TaxFoundationService {
 			map.put("voucherId", FinancialCloseSupport.nullableLong(rs, "voucher_id"));
 			map.put("paymentId", FinancialCloseSupport.nullableLong(rs, "payment_id"));
 			map.put("bankAccountId", FinancialCloseSupport.nullableLong(rs, "bank_account_id"));
+			map.put("bankAccountName", rs.getString("account_name"));
+			map.put("bankName", rs.getString("bank_name"));
+			boolean sensitiveVisible = FinancialCloseSupport.bankSensitiveVisible(currentUser);
+			map.put("accountLast4", sensitiveVisible ? rs.getString("account_last4") : null);
+			map.put("accountMasked", rs.getString("account_masked") == null ? null
+					: FinancialCloseSupport.visibleBankMask(rs.getString("account_masked"), currentUser));
 			map.put("reason", rs.getString("reason"));
 			map.put("correctionOfId", FinancialCloseSupport.nullableLong(rs, "correction_of_id"));
 			map.put("status", rs.getString("status"));
@@ -579,9 +642,22 @@ public class TaxFoundationService {
 		map.put("vatPayable", FinancialCloseSupport.visibleDecimal(view.vatPayable(), amountVisible));
 		map.put("urbanMaintenanceTax", FinancialCloseSupport.visibleDecimal(view.urbanMaintenanceTax(),
 				amountVisible));
+		map.put("educationSurchargeTax", FinancialCloseSupport.visibleDecimal(view.educationSurchargeTax(),
+				amountVisible));
+		map.put("localEducationSurchargeTax", FinancialCloseSupport.visibleDecimal(
+				view.localEducationSurchargeTax(), amountVisible));
+		map.put("additionalTaxTotal", FinancialCloseSupport.visibleDecimal(view.additionalTaxTotal(),
+				amountVisible));
 		map.put("endingCreditVat", FinancialCloseSupport.visibleDecimal(view.endingCreditVat(), amountVisible));
+		map.put("incomeAdjustmentIncrease", FinancialCloseSupport.visibleDecimal(view.incomeAdjustmentIncrease(),
+				amountVisible));
+		map.put("incomeAdjustmentDecrease", FinancialCloseSupport.visibleDecimal(view.incomeAdjustmentDecrease(),
+				amountVisible));
+		map.put("lossDeduction", FinancialCloseSupport.visibleDecimal(view.lossDeduction(), amountVisible));
+		map.put("prepaidIncomeTax", FinancialCloseSupport.visibleDecimal(view.prepaidIncomeTax(), amountVisible));
 		map.put("incomeTaxEstimated", FinancialCloseSupport.visibleDecimal(view.incomeTaxEstimated(),
 				amountVisible));
+		map.put("incomeTaxPayable", FinancialCloseSupport.visibleDecimal(view.incomeTaxPayable(), amountVisible));
 		map.put("disclaimer", view.disclaimer());
 		map.put("stale", stale);
 		map.put("current", view.currentFlag() && !stale);
@@ -603,13 +679,18 @@ public class TaxFoundationService {
 				update fin_tax_period_summary
 				set status = ?, source_fingerprint = ?, output_vat = ?, input_vat = ?,
 				    transfer_out_vat = 0, adjustment_amount = ?, opening_credit_vat = 0, vat_payable = ?,
-				    urban_maintenance_tax = ?, ending_credit_vat = ?, income_tax_estimated = ?,
-				    disclaimer = ?, stale = false, updated_by = ?, updated_at = ?, version = version + 1
+				    urban_maintenance_tax = ?, education_surcharge_tax = ?, local_education_surcharge_tax = ?,
+				    additional_tax_total = ?, ending_credit_vat = ?, income_adjustment_increase = ?,
+				    income_adjustment_decrease = ?, loss_deduction = ?, prepaid_income_tax = ?,
+				    income_tax_estimated = ?, income_tax_payable = ?, disclaimer = ?, stale = false,
+				    updated_by = ?, updated_at = ?, version = version + 1
 				where id = ?
 				""", status, fingerprint, amounts.outputVat(), amounts.inputVat(), amounts.adjustmentAmount(),
-				amounts.vatPayable(), amounts.urbanMaintenanceTax(), amounts.endingCreditVat(),
-				amounts.incomeTaxEstimated(), FinancialCloseSupport.TAX_DISCLAIMER, operator.username(),
-				OffsetDateTime.now(), id);
+				amounts.vatPayable(), amounts.urbanMaintenanceTax(), amounts.educationSurchargeTax(),
+				amounts.localEducationSurchargeTax(), amounts.additionalTaxTotal(), amounts.endingCreditVat(),
+				amounts.incomeAdjustmentIncrease(), amounts.incomeAdjustmentDecrease(), amounts.lossDeduction(),
+				amounts.prepaidIncomeTax(), amounts.incomeTaxEstimated(), amounts.incomeTaxPayable(),
+				FinancialCloseSupport.TAX_DISCLAIMER, operator.username(), OffsetDateTime.now(), id);
 	}
 
 	private List<GeneralLedgerVoucherService.VoucherLineRequest> voucherLines(SummaryRow row) {
@@ -624,14 +705,22 @@ public class TaxFoundationService {
 		if (row.urbanMaintenanceTax().compareTo(ZERO) > 0) {
 			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("6403"),
 					"城市维护建设税计提", row.urbanMaintenanceTax(), ZERO, List.of()));
-			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("2221.05"),
+			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("2221.04"),
 					"城市维护建设税计提", ZERO, row.urbanMaintenanceTax(), List.of()));
 		}
-		if (row.incomeTaxEstimated().compareTo(ZERO) > 0) {
+		BigDecimal educationSurcharge = FinancialCloseSupport.amount(row.educationSurchargeTax()
+			.add(row.localEducationSurchargeTax()));
+		if (educationSurcharge.compareTo(ZERO) > 0) {
+			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("6403"),
+					"教育费附加计提", educationSurcharge, ZERO, List.of()));
+			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("2221.05"),
+					"教育费附加计提", ZERO, educationSurcharge, List.of()));
+		}
+		if (row.incomeTaxPayable().compareTo(ZERO) > 0) {
 			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo++, accountId("6801"),
-					"企业所得税估算计提", row.incomeTaxEstimated(), ZERO, List.of()));
+					"企业所得税估算计提", row.incomeTaxPayable(), ZERO, List.of()));
 			lines.add(new GeneralLedgerVoucherService.VoucherLineRequest(lineNo, accountId("2221.06"),
-					"企业所得税估算计提", ZERO, row.incomeTaxEstimated(), List.of()));
+					"企业所得税估算计提", ZERO, row.incomeTaxPayable(), List.of()));
 		}
 		return lines;
 	}
@@ -682,19 +771,38 @@ public class TaxFoundationService {
 		BigDecimal payable = net.compareTo(ZERO) > 0 ? net : ZERO;
 		BigDecimal credit = net.compareTo(ZERO) < 0 ? net.abs() : ZERO;
 		BigDecimal urban = FinancialCloseSupport.amount(payable.multiply(profileRate("urban_maintenance_rate")));
+		BigDecimal education = FinancialCloseSupport.amount(payable.multiply(profileRate("education_surcharge_rate")));
+		BigDecimal localEducation = FinancialCloseSupport.amount(payable.multiply(profileRate(
+				"local_education_surcharge_rate")));
+		BigDecimal additional = FinancialCloseSupport.amount(urban.add(education).add(localEducation));
+		BigDecimal incomeIncrease = profileAmount("income_adjustment_increase");
+		BigDecimal incomeDecrease = profileAmount("income_adjustment_decrease");
+		BigDecimal lossDeduction = profileAmount("loss_deduction");
+		BigDecimal prepaidIncomeTax = profileAmount("prepaid_income_tax");
 		BigDecimal profit = queryAmount("""
 				select coalesce(sum(e.credit_amount - e.debit_amount), 0)
 				from gl_ledger_entry e
 				join gl_account a on a.id = e.account_id
 				where e.period_id = ?
 				and a.category = 'PROFIT_LOSS'
+				and a.code <> '6801'
 				""", period.id());
-		BigDecimal income = profit.compareTo(ZERO) > 0
-				? FinancialCloseSupport.amount(profit.multiply(profileRate("income_tax_rate"))) : ZERO;
+		BigDecimal taxableIncome = FinancialCloseSupport.amount(profit.add(incomeIncrease)
+			.subtract(incomeDecrease)
+			.subtract(lossDeduction));
+		if (taxableIncome.compareTo(ZERO) < 0) {
+			taxableIncome = ZERO;
+		}
+		BigDecimal estimated = FinancialCloseSupport.amount(taxableIncome.multiply(profileRate("income_tax_rate")));
+		BigDecimal income = FinancialCloseSupport.amount(estimated.subtract(prepaidIncomeTax));
+		if (income.compareTo(ZERO) < 0) {
+			income = ZERO;
+		}
 		return new TaxAmounts(FinancialCloseSupport.amount(outputVat), FinancialCloseSupport.amount(inputVat),
 				FinancialCloseSupport.amount(adjustment), FinancialCloseSupport.amount(payable),
-				FinancialCloseSupport.amount(urban), FinancialCloseSupport.amount(credit),
-				FinancialCloseSupport.amount(income));
+				FinancialCloseSupport.amount(urban), education, localEducation, additional,
+				FinancialCloseSupport.amount(credit), incomeIncrease, incomeDecrease, lossDeduction,
+				prepaidIncomeTax, income, income);
 	}
 
 	private BigDecimal totalAdjustments(Long summaryId) {
@@ -735,6 +843,7 @@ public class TaxFoundationService {
 					join gl_account a on a.id = e.account_id
 					where e.period_id = ?
 					and a.category = 'PROFIT_LOSS'
+					and a.code <> '6801'
 				) source
 				""", String.class, period.startDate(), period.endDate(), period.startDate(), period.endDate(),
 				period.startDate(), period.endDate(), period.id());
@@ -821,6 +930,15 @@ public class TaxFoundationService {
 				BigDecimal.class, id);
 	}
 
+	private BigDecimal profileAmount(String columnName) {
+		Long id = currentProfileId();
+		if (id == null) {
+			return ZERO;
+		}
+		return FinancialCloseSupport.amount(this.jdbcTemplate.queryForObject("select " + columnName
+				+ " from fin_tax_profile where id = ?", BigDecimal.class, id));
+	}
+
 	private BigDecimal queryAmount(String sql, Object... args) {
 		return FinancialCloseSupport.amount(this.jdbcTemplate.queryForObject(sql, BigDecimal.class, args));
 	}
@@ -832,6 +950,10 @@ public class TaxFoundationService {
 
 	private BigDecimal rate(BigDecimal value) {
 		return value == null ? BigDecimal.ZERO : value;
+	}
+
+	private BigDecimal amount(BigDecimal value) {
+		return FinancialCloseSupport.amount(value);
 	}
 
 	private Long accountId(String code) {
@@ -855,19 +977,26 @@ public class TaxFoundationService {
 
 	private record SummaryRow(Long id, Long periodId, String taxType, String status, String sourceFingerprint,
 			BigDecimal outputVat, BigDecimal inputVat, BigDecimal adjustmentAmount, BigDecimal vatPayable,
-			BigDecimal urbanMaintenanceTax, BigDecimal incomeTaxEstimated, Long voucherId, Long version) {
+			BigDecimal urbanMaintenanceTax, BigDecimal educationSurchargeTax, BigDecimal localEducationSurchargeTax,
+			BigDecimal additionalTaxTotal, BigDecimal incomeTaxEstimated, BigDecimal incomeTaxPayable,
+			Long voucherId, Long version) {
 	}
 
 	private record SummaryView(Long id, Long periodId, String periodCode, String taxType, String status,
 			String sourceFingerprint, BigDecimal outputVat, BigDecimal inputVat, BigDecimal transferOutVat,
 			BigDecimal adjustmentAmount, BigDecimal openingCreditVat, BigDecimal vatPayable,
-			BigDecimal urbanMaintenanceTax, BigDecimal endingCreditVat, BigDecimal incomeTaxEstimated,
+			BigDecimal urbanMaintenanceTax, BigDecimal educationSurchargeTax,
+			BigDecimal localEducationSurchargeTax, BigDecimal additionalTaxTotal, BigDecimal endingCreditVat,
+			BigDecimal incomeAdjustmentIncrease, BigDecimal incomeAdjustmentDecrease, BigDecimal lossDeduction,
+			BigDecimal prepaidIncomeTax, BigDecimal incomeTaxEstimated, BigDecimal incomeTaxPayable,
 			String disclaimer, boolean stale, boolean currentFlag, Long voucherId, Long version) {
 	}
 
 	private record TaxAmounts(BigDecimal outputVat, BigDecimal inputVat, BigDecimal adjustmentAmount,
-			BigDecimal vatPayable, BigDecimal urbanMaintenanceTax, BigDecimal endingCreditVat,
-			BigDecimal incomeTaxEstimated) {
+			BigDecimal vatPayable, BigDecimal urbanMaintenanceTax, BigDecimal educationSurchargeTax,
+			BigDecimal localEducationSurchargeTax, BigDecimal additionalTaxTotal, BigDecimal endingCreditVat,
+			BigDecimal incomeAdjustmentIncrease, BigDecimal incomeAdjustmentDecrease, BigDecimal lossDeduction,
+			BigDecimal prepaidIncomeTax, BigDecimal incomeTaxEstimated, BigDecimal incomeTaxPayable) {
 	}
 
 	private record PaymentRow(Long id, Long summaryId, String taxType, BigDecimal amount, String status,

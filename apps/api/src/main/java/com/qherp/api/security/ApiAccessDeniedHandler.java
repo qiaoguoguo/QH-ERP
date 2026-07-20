@@ -47,8 +47,10 @@ public class ApiAccessDeniedHandler implements AccessDeniedHandler {
 		response.setStatus(HttpStatus.FORBIDDEN.value());
 		response.setCharacterEncoding(StandardCharsets.UTF_8.name());
 		response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-		this.objectMapper.writeValue(response.getWriter(), ApiResponse.error(ApiErrorCode.AUTH_FORBIDDEN,
-				ApiErrorCode.AUTH_FORBIDDEN.message(), List.of(), null));
+		ApiErrorCode errorCode = financialClosePath(request) ? ApiErrorCode.FIN_PERMISSION_DENIED
+				: ApiErrorCode.AUTH_FORBIDDEN;
+		this.objectMapper.writeValue(response.getWriter(), ApiResponse.error(errorCode,
+				errorCode.message(), List.of(), null));
 	}
 
 	private void recordPermissionDeniedAudit(HttpServletRequest request) {
@@ -75,6 +77,20 @@ public class ApiAccessDeniedHandler implements AccessDeniedHandler {
 	private boolean isAdminPath(HttpServletRequest request) {
 		String path = requestPath(request);
 		return path.equals("/api/admin") || path.startsWith("/api/admin/");
+	}
+
+	private boolean financialClosePath(HttpServletRequest request) {
+		String path = requestPath(request);
+		return path.startsWith("/api/admin/financial-closes")
+				|| path.startsWith("/api/admin/bank-accounts")
+				|| path.startsWith("/api/admin/bank-statements")
+				|| path.startsWith("/api/admin/bank-statement-lines")
+				|| path.startsWith("/api/admin/bank-reconciliations")
+				|| path.startsWith("/api/admin/tax-profiles")
+				|| path.startsWith("/api/admin/tax-rate-rules")
+				|| path.startsWith("/api/admin/tax-invoice-types")
+				|| path.startsWith("/api/admin/tax-summaries")
+				|| path.startsWith("/api/admin/tax-payments");
 	}
 
 	private String requestPath(HttpServletRequest request) {

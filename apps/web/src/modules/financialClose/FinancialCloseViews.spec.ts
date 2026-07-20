@@ -234,9 +234,10 @@ describe('032 财务结账前端页面族', () => {
       statementNo: 'BS-202607-001',
       bankAccountName: '基本户',
       transactionDate: '2026-07-20',
-      direction: 'INFLOW',
+      postingDate: '2026-07-20',
+      direction: 'CREDIT',
       amount: '120.00',
-      status: 'PARTIAL_MATCHED',
+      status: 'PARTIALLY_MATCHED',
       duplicate: false,
       amountVisible: true,
       sourceVisible: true,
@@ -249,7 +250,29 @@ describe('032 财务结账前端页面族', () => {
       batchNo: 'IMPORT-001',
       validRows: 2,
       errorRows: 1,
-      rows: [{ rowNo: 3, valid: false, message: '金额格式错误' }],
+      lines: [{ rowNo: 3, status: 'ERROR', errors: ['金额格式错误'], message: '金额格式错误' }],
+    })
+    financialCloseApiMock.bankStatements.importConfirm.mockResolvedValue({ statementId: 701, importedCount: 2 })
+    financialCloseApiMock.bankStatements.create.mockResolvedValue({ id: 152, statementNo: 'BS-202607-002', version: 1 })
+    financialCloseApiMock.bankStatements.get.mockResolvedValue({
+      id: 151,
+      statementNo: 'BS-202607-001',
+      bankAccountName: '基本户',
+      transactionDate: '2026-07-20',
+      postingDate: '2026-07-20',
+      direction: 'CREDIT',
+      amount: '120.00',
+      status: 'PARTIALLY_MATCHED',
+      counterpartyName: '齐辉客户',
+      summary: '银行收款',
+      bankTransactionId: 'BTX-001',
+      referenceNo: 'REF-001',
+      amountVisible: true,
+      sourceVisible: true,
+      bankSensitiveVisible: false,
+      version: 1,
+      allowedActions: ['IGNORE'],
+      actionDisabledReasons: {},
     })
     financialCloseApiMock.bankStatements.ignoreLine.mockResolvedValue({ id: 151, status: 'IGNORED', version: 2 })
     financialCloseApiMock.bankReconciliations.list.mockResolvedValue(page([{
@@ -267,42 +290,58 @@ describe('032 财务结账前端页面族', () => {
       sourceVisible: true,
       bankSensitiveVisible: false,
       version: 4,
-      allowedActions: ['MATCH', 'CONFIRM'],
+      allowedActions: ['MATCH', 'CALCULATE', 'CONFIRM', 'REOPEN'],
       actionDisabledReasons: {},
     }]))
     financialCloseApiMock.bankReconciliations.get.mockResolvedValue({
       id: 201,
       reconciliationNo: 'BR-202607-001',
       periodCode: '2026-07',
-      status: 'READY',
+      status: 'BALANCED',
       bankEndingBalance: '1000.10',
       glEndingBalance: '999.90',
       adjustedBankBalance: '1000.10',
       adjustedBookBalance: '1000.10',
       difference: '0.00',
-      exceptions: [{ category: 'BANK_RECEIVED_NOT_BOOKED', amount: '0.20', explanation: '银行已收企业未入账' }],
+      matches: [{ matchGroupNo: 'MATCH-1', statementLineId: 151, ledgerEntryId: 301, amount: '60.00' }],
+      exceptions: [{ exceptionType: 'BANK_ONLY_CREDIT', amount: '0.20', reason: '银行已收企业未入账' }],
       amountVisible: true,
       sourceVisible: true,
       bankSensitiveVisible: false,
       version: 4,
-      allowedActions: ['MATCH', 'CONFIRM'],
+      allowedActions: ['MATCH', 'CALCULATE', 'CONFIRM', 'REOPEN'],
       actionDisabledReasons: {},
     })
     financialCloseApiMock.bankReconciliations.candidates.mockResolvedValue({
-      statementLines: [{ id: 151, statementNo: 'BS-202607-001', amount: '120.00', selected: false }],
-      ledgerEntries: [{ id: 301, voucherNo: '记-202607-0001', amount: '120.00', selected: false }],
+      statementLines: [
+        { id: 151, statementNo: 'BS-202607-001', amount: '120.00', remainingAmount: '60.00', selected: false },
+        { id: 152, statementNo: 'BS-202607-002', amount: '80.00', remainingAmount: '60.00', selected: false },
+      ],
+      ledgerEntries: [
+        { id: 301, voucherNo: '记-202607-0001', amount: '120.00', remainingAmount: '60.00', selected: false },
+        { id: 302, voucherNo: '记-202607-0002', amount: '80.00', remainingAmount: '60.00', selected: false },
+      ],
       page: 1,
       pageSize: 20,
       total: 25,
     })
     financialCloseApiMock.bankReconciliations.createMatch.mockResolvedValue({ id: 901, version: 1 })
+    financialCloseApiMock.bankReconciliations.deleteMatch.mockResolvedValue({ id: 201, version: 5 })
+    financialCloseApiMock.bankReconciliations.createException.mockResolvedValue({ id: 201, version: 6 })
+    financialCloseApiMock.bankReconciliations.calculate.mockResolvedValue({ id: 201, status: 'BALANCED', version: 7, difference: '0.00' })
     financialCloseApiMock.bankReconciliations.confirm.mockResolvedValue({ id: 201, status: 'CONFIRMED', version: 5 })
+    financialCloseApiMock.bankReconciliations.reopen.mockResolvedValue({ id: 202, status: 'DRAFT', reopenedFromId: 201, version: 1 })
     financialCloseApiMock.taxProfiles.current.mockResolvedValue({
       id: 401,
-      companyName: '齐辉制造',
       taxpayerType: 'GENERAL',
-      unifiedSocialCreditCodeMasked: '9133********1234',
-      cityMaintenanceTaxRate: '7',
+      creditCode: '91330000123456789X',
+      unifiedSocialCreditCodeMasked: '91330000123456789X',
+      taxAuthority: '杭州市税务局',
+      vatPeriodicity: 'MONTHLY',
+      incomeTaxRate: '0.2500',
+      urbanMaintenanceRate: '0.0700',
+      cityMaintenanceTaxRate: '0.0700',
+      effectiveFrom: '2026-01-01',
       amountVisible: true,
       sourceVisible: true,
       bankSensitiveVisible: false,
@@ -310,26 +349,39 @@ describe('032 财务结账前端页面族', () => {
       allowedActions: ['UPDATE'],
       actionDisabledReasons: {},
     })
-    financialCloseApiMock.taxRateRules.list.mockResolvedValue(page([{ id: 411, taxType: 'VAT', rate: '13', effectiveFrom: '2026-01-01', enabled: true }], 1, 10))
-    financialCloseApiMock.taxInvoiceTypes.list.mockResolvedValue(page([{ id: 421, code: 'DIGITAL_VAT_SPECIAL', name: '数电专票', enabled: true }], 1, 10))
+    financialCloseApiMock.taxProfiles.update.mockResolvedValue({ id: 401, taxpayerType: 'GENERAL', version: 3 })
+    financialCloseApiMock.taxRateRules.list.mockResolvedValue(page([{ id: 411, taxType: 'VAT', rateCode: 'VAT_13', rateValue: '0.1300', effectiveFrom: '2026-01-01', status: 'ENABLED' }], 1, 10))
+    financialCloseApiMock.taxRateRules.create.mockResolvedValue({ id: 412, taxType: 'VAT', rateCode: 'VAT_09', rateValue: '0.0900', version: 1 })
+    financialCloseApiMock.taxInvoiceTypes.list.mockResolvedValue(page([{ id: 421, code: 'DIGITAL_VAT_SPECIAL', name: '数电专票', direction: 'OUTPUT', deductible: true, status: 'ENABLED' }], 1, 10))
+    financialCloseApiMock.taxInvoiceTypes.create.mockResolvedValue({ id: 422, code: 'DIGITAL_VAT_NORMAL', name: '数电普票', version: 1 })
     financialCloseApiMock.taxSummaries.list.mockResolvedValue(page([{
       id: 501,
       periodCode: '2026-07',
+      taxType: 'VAT',
       status: 'CALCULATED',
       disclaimer: '基础汇总/估算，非正式申报',
       outputTaxAmount: '500.00',
+      outputVat: '500.00',
       inputTaxAmount: '120.00',
+      inputVat: '120.00',
       payableTaxAmount: '380.00',
+      vatPayable: '380.00',
       retainedTaxAmount: '0.00',
       estimatedIncomeTaxAmount: '200.00',
+      incomeTaxEstimated: '200.00',
+      adjustmentAmount: '0.00',
+      stale: false,
+      current: true,
       amountVisible: true,
       sourceVisible: false,
       bankSensitiveVisible: false,
       version: 6,
-      allowedActions: ['CALCULATE', 'CONFIRM', 'GENERATE_VOUCHER'],
+      allowedActions: ['CALCULATE', 'ADJUST', 'CONFIRM', 'GENERATE_VOUCHER'],
       actionDisabledReasons: {},
     }]))
+    financialCloseApiMock.taxSummaries.create.mockResolvedValue({ id: 502, periodCode: '2026-07', taxType: 'VAT', status: 'DRAFT', version: 1 })
     financialCloseApiMock.taxSummaries.calculate.mockResolvedValue({ id: 501, status: 'CALCULATED', payableTaxAmount: '380.00', version: 7 })
+    financialCloseApiMock.taxSummaries.addAdjustment.mockResolvedValue({ id: 501, status: 'CALCULATED', adjustmentAmount: '1.00', version: 7 })
     financialCloseApiMock.taxSummaries.confirm.mockResolvedValue({ id: 501, status: 'CONFIRMED', version: 8 })
     financialCloseApiMock.taxSummaries.createVoucherDraft.mockResolvedValue({ id: 501, voucherId: 93, voucherNo: 'GLD-202607-0093', version: 9 })
     financialCloseApiMock.taxPayments.list.mockResolvedValue(page([{
@@ -342,6 +394,7 @@ describe('032 财务结账前端页面族', () => {
       voucherNo: '记-202607-0094',
       paymentSourceType: 'GL_VOUCHER',
       bankAccountMasked: '****1234',
+      bankAccountDisplay: '中国银行 基本户 ****1234',
       amountVisible: true,
       sourceVisible: true,
       bankSensitiveVisible: false,
@@ -349,6 +402,7 @@ describe('032 财务结账前端页面族', () => {
       allowedActions: ['CORRECT'],
       actionDisabledReasons: {},
     }]))
+    financialCloseApiMock.taxPayments.create.mockResolvedValue({ id: 602, amount: '380.00', version: 1 })
     financialCloseApiMock.taxPayments.correct.mockResolvedValue({ id: 601, amount: '390.00', version: 3 })
   })
 
@@ -413,12 +467,43 @@ describe('032 财务结账前端页面族', () => {
     expect(router.currentRoute.value.query.returnTo).toBe('/gl/profit-loss-carryforward')
   })
 
-  it('银行账户、流水和对账页面覆盖账号脱敏、CSV 错误、候选池不受十条限制、多对多匹配和确认只读', async () => {
+  it('银行账户页面以表单完成新增、编辑、停用，并按权限和 allowedActions 失败关闭', async () => {
     const accounts = await mountFinancialCloseView(BankAccountsView, '/gl/bank-accounts')
     expect(accounts.wrapper.text()).toContain('银行账户')
     expect(accounts.wrapper.text()).toContain('****1234')
     expect(accounts.wrapper.text()).toContain('1002.01')
     expect(accounts.wrapper.find('.table-scroll').exists()).toBe(true)
+
+    await accounts.wrapper.find('[data-test="open-bank-account-create"]').trigger('click')
+    await flushPromises()
+    expect(accounts.wrapper.text()).toContain('银行账户维护')
+    await accounts.wrapper.find('input[name="bank-account-name"]').setValue('一般户')
+    await accounts.wrapper.find('input[name="bank-account-bank-name"]').setValue('建设银行')
+    await accounts.wrapper.find('input[name="bank-account-gl-account-id"]').setValue('100201')
+    await accounts.wrapper.find('input[name="bank-account-no"]').setValue('6222000011112222')
+    await accounts.wrapper.find('[data-test="save-bank-account"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankAccounts.create).toHaveBeenCalledWith(expect.objectContaining({
+      accountName: '一般户',
+      accountType: 'BASIC',
+      bankName: '建设银行',
+      currency: 'CNY',
+      glAccountId: 100201,
+      accountNo: '6222000011112222',
+      idempotencyKey: expect.stringContaining('bank-account-save-'),
+    }))
+
+    await accounts.wrapper.find('[data-test="open-bank-account-edit"]').trigger('click')
+    await flushPromises()
+    await accounts.wrapper.find('input[name="bank-account-name"]').setValue('基本户-更新')
+    await accounts.wrapper.find('[data-test="save-bank-account"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankAccounts.update).toHaveBeenCalledWith(101, expect.objectContaining({
+      accountName: '基本户-更新',
+      version: 3,
+      idempotencyKey: expect.stringContaining('bank-account-save-'),
+    }))
+
     await accounts.wrapper.find('[data-test="disable-bank-account"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.bankAccounts.disable).toHaveBeenCalledWith(101, expect.objectContaining({
@@ -427,34 +512,126 @@ describe('032 财务结账前端页面族', () => {
       idempotencyKey: expect.stringContaining('bank-account-disable-'),
     }))
 
+    financialCloseApiMock.bankAccounts.list.mockResolvedValueOnce(page([{
+      id: 102,
+      accountName: '只读户',
+      enabled: true,
+      bankSensitiveVisible: false,
+      version: 1,
+      allowedActions: [],
+      actionDisabledReasons: { DISABLE: '无银行账户维护权限' },
+    }]))
+    const readonlyAccounts = await mountFinancialCloseView(BankAccountsView, '/gl/bank-accounts', ['financial-close:bank-account:view'])
+    expect(readonlyAccounts.wrapper.find('[data-test="open-bank-account-create"]').attributes('disabled')).toBeDefined()
+    expect(readonlyAccounts.wrapper.find('[data-test="disable-bank-account"]').attributes('disabled')).toBeDefined()
+    expect(readonlyAccounts.wrapper.text()).toContain('无银行账户维护权限')
+  })
+
+  it('银行流水页面完成 CSV 预览后确认导入、手工录入、详情查看和忽略', async () => {
     const statements = await mountFinancialCloseView(BankStatementsView, '/gl/bank-statements')
     expect(statements.wrapper.text()).toContain('银行流水')
-    expect(statements.wrapper.text()).toContain('PARTIAL_MATCHED')
+    expect(statements.wrapper.text()).toContain('部分匹配')
+    expect(statements.wrapper.text()).not.toContain('PARTIALLY_MATCHED / PARTIALLY_MATCHED')
+
+    await statements.wrapper.find('[data-test="open-bank-statement-create"]').trigger('click')
+    await flushPromises()
+    await statements.wrapper.find('input[name="bank-statement-bank-account-id"]').setValue('101')
+    await statements.wrapper.find('input[name="bank-statement-amount"]').setValue('88.00')
+    await statements.wrapper.find('[data-test="save-bank-statement"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankStatements.create).toHaveBeenCalledWith(expect.objectContaining({
+      bankAccountId: 101,
+      direction: 'CREDIT',
+      amount: '88.00',
+      idempotencyKey: expect.stringContaining('bank-statement-create-'),
+    }))
+
     await statements.wrapper.find('[data-test="preview-bank-statement-import"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.bankStatements.importPreview).toHaveBeenCalledWith(expect.objectContaining({
+      bankAccountId: 101,
       fileName: 'bank-statement.csv',
+      csvContent: expect.stringContaining('交易日期'),
       idempotencyKey: expect.stringContaining('bank-statement-preview-'),
     }))
     expect(statements.wrapper.text()).toContain('金额格式错误')
+    await statements.wrapper.find('[data-test="confirm-bank-statement-import"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankStatements.importConfirm).toHaveBeenCalledWith(expect.objectContaining({
+      bankAccountId: 101,
+      csvContent: expect.stringContaining('交易日期'),
+      idempotencyKey: expect.stringContaining('bank-statement-confirm-'),
+    }))
+
+    await statements.wrapper.find('[data-test="open-bank-statement-detail"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankStatements.get).toHaveBeenCalledWith(151)
+    expect(statements.wrapper.text()).toContain('银行收款')
+
     await statements.wrapper.find('[data-test="ignore-bank-statement-line"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.bankStatements.ignoreLine).toHaveBeenCalledWith(151, expect.objectContaining({
       reason: expect.stringContaining('忽略'),
     }))
+  })
 
+  it('银行对账页面要求用户显式多选候选，支持部分金额、取消匹配、四类未达、重算、确认和重开', async () => {
     const reconciliation = await mountFinancialCloseView(BankReconciliationView, '/gl/bank-reconciliation')
     expect(reconciliation.wrapper.text()).toContain('银行对账工作台')
     expect(reconciliation.wrapper.text()).toContain('候选池不受主列表十条分页限制')
     expect(reconciliation.wrapper.text()).toContain('差额')
     expect(reconciliation.wrapper.text()).toContain('0.00')
     expect(financialCloseApiMock.bankReconciliations.candidates).toHaveBeenCalledWith(201, expect.objectContaining({ page: 1, pageSize: 20 }))
+
+    await reconciliation.wrapper.find('[data-test="create-bank-match"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.createMatch).not.toHaveBeenCalled()
+    expect(reconciliation.wrapper.text()).toContain('请选择银行流水和总账分录')
+
+    const statementSelections = reconciliation.wrapper.findAll('[data-test="select-statement-candidate"]')
+    const ledgerSelections = reconciliation.wrapper.findAll('[data-test="select-ledger-candidate"]')
+    await statementSelections[0].setValue(true)
+    await statementSelections[1].setValue(true)
+    await ledgerSelections[0].setValue(true)
+    await ledgerSelections[1].setValue(true)
+    await reconciliation.wrapper.findAll('input[name="bank-match-amount"]')[0].setValue('60.00')
+    await reconciliation.wrapper.findAll('input[name="bank-match-amount"]')[1].setValue('60.00')
     await reconciliation.wrapper.find('[data-test="create-bank-match"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.bankReconciliations.createMatch).toHaveBeenCalledWith(201, expect.objectContaining({
-      statementLineIds: [151],
-      ledgerEntryIds: [301],
+      matches: [
+        { statementLineId: 151, ledgerEntryId: 301, amount: '60.00' },
+        { statementLineId: 152, ledgerEntryId: 302, amount: '60.00' },
+      ],
       idempotencyKey: expect.stringContaining('bank-reconciliation-match-'),
+    }))
+    expect(JSON.stringify(financialCloseApiMock.bankReconciliations.createMatch.mock.calls[0][1])).not.toContain('statementLineIds')
+
+    await reconciliation.wrapper.find('[data-test="cancel-bank-match"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.deleteMatch).toHaveBeenCalledWith(201, 'MATCH-1', expect.objectContaining({
+      reason: expect.stringContaining('取消匹配'),
+      idempotencyKey: expect.stringContaining('bank-reconciliation-cancel-match-'),
+    }))
+
+    for (const exceptionType of ['BANK_ONLY_CREDIT', 'BANK_ONLY_DEBIT', 'BOOK_ONLY_DEBIT', 'BOOK_ONLY_CREDIT']) {
+      await reconciliation.wrapper.find(`[data-test="classify-bank-exception-${exceptionType}"]`).trigger('click')
+      await flushPromises()
+    }
+    expect(financialCloseApiMock.bankReconciliations.createException).toHaveBeenCalledTimes(4)
+    expect(financialCloseApiMock.bankReconciliations.createException.mock.calls.map((call) => call[1].exceptionType)).toEqual([
+      'BANK_ONLY_CREDIT',
+      'BANK_ONLY_DEBIT',
+      'BOOK_ONLY_DEBIT',
+      'BOOK_ONLY_CREDIT',
+    ])
+
+    await reconciliation.wrapper.find('[data-test="calculate-bank-reconciliation"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.calculate).toHaveBeenCalledWith(201, expect.objectContaining({
+      version: 4,
+      reason: expect.stringContaining('重算'),
+      idempotencyKey: expect.stringContaining('bank-reconciliation-calculate-'),
     }))
     await reconciliation.wrapper.find('[data-test="confirm-bank-reconciliation"]').trigger('click')
     await flushPromises()
@@ -463,28 +640,90 @@ describe('032 财务结账前端页面族', () => {
       reason: expect.stringContaining('确认对账'),
       idempotencyKey: expect.stringContaining('bank-reconciliation-confirm-'),
     }))
+    await reconciliation.wrapper.find('[data-test="reopen-bank-reconciliation"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.bankReconciliations.reopen).toHaveBeenCalledWith(201, expect.objectContaining({
+      reason: expect.stringContaining('重开对账'),
+      idempotencyKey: expect.stringContaining('bank-reconciliation-reopen-'),
+    }))
   })
 
-  it('税务设置、税额汇总和税款台账固定非申报边界，展示金额/来源权限和零数据状态', async () => {
+  it('税务设置页面维护档案、税率和票种，并展示后端真实 DTO 字段', async () => {
     const settings = await mountFinancialCloseView(TaxSettingsView, '/gl/tax-settings')
     expect(settings.wrapper.text()).toContain('税务基础设置')
     expect(settings.wrapper.text()).toContain('基础汇总/估算，非正式申报')
-    expect(settings.wrapper.text()).toContain('9133********1234')
-    expect(settings.wrapper.text()).toContain('13')
+    expect(settings.wrapper.text()).toContain('91330000123456789X')
+    expect(settings.wrapper.text()).toContain('0.1300')
     expect(settings.wrapper.text()).toContain('数电专票')
+    expect(settings.wrapper.text()).toContain('启用')
+    expect(settings.wrapper.text()).toContain('一般纳税人')
     expect(settings.wrapper.text()).not.toContain('报送成功')
     expect(settings.wrapper.text()).not.toContain('税控同步')
 
+    await settings.wrapper.find('[data-test="open-tax-settings-maintenance"]').trigger('click')
+    await flushPromises()
+    await settings.wrapper.find('input[name="tax-profile-credit-code"]').setValue('91330000999999999X')
+    await settings.wrapper.find('[data-test="save-tax-profile"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxProfiles.update).toHaveBeenCalledWith(expect.objectContaining({
+      taxpayerType: 'GENERAL',
+      creditCode: '91330000999999999X',
+      vatPeriodicity: 'MONTHLY',
+      incomeTaxRate: '0.2500',
+      urbanMaintenanceRate: '0.0700',
+      version: 2,
+      idempotencyKey: expect.stringContaining('tax-profile-save-'),
+    }))
+
+    await settings.wrapper.find('[data-test="create-tax-rate-rule"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxRateRules.create).toHaveBeenCalledWith(expect.objectContaining({
+      taxType: 'VAT',
+      rateCode: 'VAT_13',
+      rateValue: '0.1300',
+      idempotencyKey: expect.stringContaining('tax-rate-rule-create-'),
+    }))
+
+    await settings.wrapper.find('[data-test="create-tax-invoice-type"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxInvoiceTypes.create).toHaveBeenCalledWith(expect.objectContaining({
+      code: 'DIGITAL_VAT_SPECIAL',
+      name: '数电专票',
+      direction: 'OUTPUT',
+      deductible: true,
+      idempotencyKey: expect.stringContaining('tax-invoice-type-create-'),
+    }))
+  })
+
+  it('税额汇总页面支持创建、计算、调整、确认、生成凭证和状态权限禁用', async () => {
     const summary = await mountFinancialCloseView(TaxSummaryView, '/gl/tax-summary')
     expect(summary.wrapper.text()).toContain('税额汇总')
     expect(summary.wrapper.text()).toContain('基础汇总/估算，非正式申报')
     expect(summary.wrapper.text()).toContain('380.00')
     expect(summary.wrapper.text()).toContain('来源受限')
+    expect(summary.wrapper.text()).not.toContain('失效需后端公开端点')
+    expect(summary.wrapper.text()).not.toContain('失效')
+    await summary.wrapper.find('[data-test="create-tax-summary"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxSummaries.create).toHaveBeenCalledWith(expect.objectContaining({
+      periodCode: '2026-07',
+      taxType: 'VAT',
+      idempotencyKey: expect.stringContaining('tax-summary-create-'),
+    }))
     await summary.wrapper.find('[data-test="calculate-tax-summary"]').trigger('click')
     await flushPromises()
     expect(financialCloseApiMock.taxSummaries.calculate).toHaveBeenCalledWith(501, expect.objectContaining({
       version: 6,
       idempotencyKey: expect.stringContaining('tax-summary-calculate-'),
+    }))
+    await summary.wrapper.find('[data-test="add-tax-summary-adjustment"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxSummaries.addAdjustment).toHaveBeenCalledWith(501, expect.objectContaining({
+      version: 6,
+      adjustmentType: 'VAT_INCREASE',
+      amount: '1.00',
+      reason: expect.stringContaining('调整'),
+      idempotencyKey: expect.stringContaining('tax-summary-adjust-'),
     }))
     await summary.wrapper.find('[data-test="confirm-tax-summary"]').trigger('click')
     await flushPromises()
@@ -497,10 +736,76 @@ describe('032 财务结账前端页面族', () => {
       idempotencyKey: expect.stringContaining('tax-voucher-draft-'),
     }))
 
+    financialCloseApiMock.taxSummaries.list.mockResolvedValueOnce(page([{
+      id: 503,
+      periodCode: '2026-07',
+      taxType: 'VAT',
+      status: 'CONFIRMED',
+      outputTaxAmount: '500.00',
+      inputTaxAmount: '120.00',
+      payableTaxAmount: '380.00',
+      amountVisible: true,
+      sourceVisible: true,
+      bankSensitiveVisible: false,
+      version: 9,
+      allowedActions: [],
+      actionDisabledReasons: { CALCULATE: '已确认不可重新计算', CONFIRM: '已确认不可重复确认', GENERATE_VOUCHER: '无生成凭证权限' },
+    }]))
+    const readonlySummary = await mountFinancialCloseView(TaxSummaryView, '/gl/tax-summary', ['financial-close:tax-summary:view'])
+    expect(readonlySummary.wrapper.find('[data-test="calculate-tax-summary"]').attributes('disabled')).toBeDefined()
+    expect(readonlySummary.wrapper.find('[data-test="confirm-tax-summary"]').attributes('disabled')).toBeDefined()
+    expect(readonlySummary.wrapper.text()).toContain('已确认不可重新计算')
+    expect(readonlySummary.wrapper.text()).toContain('无生成凭证权限')
+  })
+
+  it('税款台账页面显示权限受控银行脱敏标识，支持登记缴纳和更正', async () => {
+    const paymentsWithData = await mountFinancialCloseView(TaxPaymentsView, '/gl/tax-payments')
+    expect(paymentsWithData.wrapper.text()).toContain('税款缴纳台账')
+    expect(paymentsWithData.wrapper.text()).toContain('增值税')
+    expect(paymentsWithData.wrapper.text()).toContain('中国银行 基本户 ****1234')
+    expect(paymentsWithData.wrapper.text()).toContain('账号已脱敏')
+    expect(paymentsWithData.wrapper.text()).not.toContain('VAT')
+    await paymentsWithData.wrapper.find('[data-test="open-tax-payment-create"]').trigger('click')
+    await flushPromises()
+    await paymentsWithData.wrapper.find('input[name="tax-payment-summary-id"]').setValue('501')
+    await paymentsWithData.wrapper.find('[data-test="save-tax-payment"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxPayments.create).toHaveBeenCalledWith(expect.objectContaining({
+      summaryId: 501,
+      taxType: 'VAT',
+      amount: '380.00',
+      paymentDate: '2026-07-25',
+      reason: expect.stringContaining('登记税款缴纳'),
+      idempotencyKey: expect.stringContaining('tax-payment-create-'),
+    }))
+
+    await paymentsWithData.wrapper.find('[data-test="correct-tax-payment"]').trigger('click')
+    await flushPromises()
+    expect(financialCloseApiMock.taxPayments.correct).toHaveBeenCalledWith(601, expect.objectContaining({
+      amount: '390.00',
+      reason: expect.stringContaining('更正税款缴纳'),
+      idempotencyKey: expect.stringContaining('tax-payment-correct-'),
+    }))
+
     financialCloseApiMock.taxPayments.list.mockResolvedValueOnce(page([]))
     const payments = await mountFinancialCloseView(TaxPaymentsView, '/gl/tax-payments')
     expect(payments.wrapper.text()).toContain('税款缴纳台账')
     expect(payments.wrapper.text()).toContain('只追溯已记账凭证或合法付款')
     expect(payments.wrapper.text()).toContain('暂无税款缴纳记录')
+  })
+
+  it('写动作统一展示 401、403、409、422 后端反馈，并保持按钮失败关闭', async () => {
+    financialCloseApiMock.taxSummaries.calculate
+      .mockRejectedValueOnce(new Error('未登录或会话已失效（401）'))
+      .mockRejectedValueOnce(new Error('无权执行税额计算（403）'))
+      .mockRejectedValueOnce(new Error('版本冲突，请刷新后重试（409）'))
+      .mockRejectedValueOnce(new Error('调整原因至少 2 个中文字符（422）'))
+    const summary = await mountFinancialCloseView(TaxSummaryView, '/gl/tax-summary')
+
+    for (const expected of ['未登录或会话已失效（401）', '无权执行税额计算（403）', '版本冲突，请刷新后重试（409）', '调整原因至少 2 个中文字符（422）']) {
+      await summary.wrapper.find('[data-test="calculate-tax-summary"]').trigger('click')
+      await flushPromises()
+      expect(summary.wrapper.text()).toContain(expected)
+    }
   })
 })

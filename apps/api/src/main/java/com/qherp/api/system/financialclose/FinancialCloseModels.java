@@ -55,8 +55,10 @@ public final class FinancialCloseModels {
 	}
 
 	public record TaxProfileRequest(String taxpayerType, String creditCode, String taxAuthority,
-			String vatPeriodicity, BigDecimal incomeTaxRate, BigDecimal urbanMaintenanceRate, LocalDate effectiveFrom,
-			Long version, String idempotencyKey) {
+			String vatPeriodicity, BigDecimal incomeTaxRate, BigDecimal urbanMaintenanceRate,
+			BigDecimal educationSurchargeRate, BigDecimal localEducationSurchargeRate,
+			BigDecimal incomeAdjustmentIncrease, BigDecimal incomeAdjustmentDecrease, BigDecimal lossDeduction,
+			BigDecimal prepaidIncomeTax, LocalDate effectiveFrom, Long version, String idempotencyKey) {
 	}
 
 	public record TaxRateRuleRequest(String taxType, String rateCode, BigDecimal rateValue, LocalDate effectiveFrom,

@@ -115,6 +115,7 @@ export interface BankReconciliationRecord extends FinancialCloseActionState, Fin
   adjustedBankBalance?: FinancialCloseAmount | null
   adjustedBookBalance?: FinancialCloseAmount | null
   difference?: FinancialCloseAmount | null
+  matches?: Array<Record<string, unknown>>
   exceptions?: Array<Record<string, unknown>>
 }
 
@@ -122,6 +123,12 @@ export interface TaxProfileRecord extends FinancialCloseActionState, FinancialCl
   id: FinancialCloseResourceId
   companyName?: string | null
   taxpayerType?: string | null
+  creditCode?: string | null
+  taxAuthority?: string | null
+  vatPeriodicity?: string | null
+  incomeTaxRate?: string | null
+  urbanMaintenanceRate?: string | null
+  effectiveFrom?: string | null
   unifiedSocialCreditCodeMasked?: string | null
   cityMaintenanceTaxRate?: string | null
 }
@@ -129,13 +136,22 @@ export interface TaxProfileRecord extends FinancialCloseActionState, FinancialCl
 export interface TaxSummaryRecord extends FinancialCloseActionState, FinancialCloseVisibilityState {
   id: FinancialCloseResourceId
   periodCode?: string | null
+  taxType?: string | null
   status?: string | null
   disclaimer?: string | null
   outputTaxAmount?: FinancialCloseAmount | null
+  outputVat?: FinancialCloseAmount | null
   inputTaxAmount?: FinancialCloseAmount | null
+  inputVat?: FinancialCloseAmount | null
   payableTaxAmount?: FinancialCloseAmount | null
+  vatPayable?: FinancialCloseAmount | null
   retainedTaxAmount?: FinancialCloseAmount | null
+  endingCreditVat?: FinancialCloseAmount | null
   estimatedIncomeTaxAmount?: FinancialCloseAmount | null
+  incomeTaxEstimated?: FinancialCloseAmount | null
+  adjustmentAmount?: FinancialCloseAmount | null
+  stale?: boolean | null
+  current?: boolean | null
   voucherId?: FinancialCloseResourceId | null
   voucherNo?: string | null
 }
@@ -150,6 +166,7 @@ export interface TaxPaymentRecord extends FinancialCloseActionState, FinancialCl
   voucherNo?: string | null
   paymentSourceType?: string | null
   bankAccountMasked?: string | null
+  bankAccountDisplay?: string | null
 }
 
 type RawRecord = Record<string, unknown>
@@ -185,7 +202,22 @@ function normalizeActionState<T extends RawRecord>(record: T): T & FinancialClos
 }
 
 function normalizeRecord(record: RawRecord) {
-  return normalizeActionState(record)
+  const normalized = normalizeActionState(record)
+  return {
+    ...normalized,
+    accountNoMasked: normalized.accountNoMasked ?? normalized.accountMasked ?? normalized.maskedAccountNo,
+    accountNoLast4: normalized.accountNoLast4 ?? normalized.accountLast4,
+    unifiedSocialCreditCodeMasked: normalized.unifiedSocialCreditCodeMasked ?? normalized.creditCodeMasked ?? normalized.creditCode,
+    cityMaintenanceTaxRate: normalized.cityMaintenanceTaxRate ?? normalized.urbanMaintenanceRate,
+    outputTaxAmount: normalized.outputTaxAmount ?? normalized.outputVat,
+    inputTaxAmount: normalized.inputTaxAmount ?? normalized.inputVat,
+    payableTaxAmount: normalized.payableTaxAmount ?? normalized.vatPayable,
+    retainedTaxAmount: normalized.retainedTaxAmount ?? normalized.endingCreditVat,
+    estimatedIncomeTaxAmount: normalized.estimatedIncomeTaxAmount ?? normalized.incomeTaxEstimated,
+    bankAccountMasked: normalized.bankAccountMasked ?? normalized.bankAccountDisplay ?? normalized.accountMasked,
+    rate: normalized.rate ?? normalized.rateValue,
+    enabled: normalized.enabled ?? (normalized.status === 'ENABLED' ? true : normalized.status === 'DISABLED' ? false : normalized.enabled),
+  }
 }
 
 function normalizePageItems<T>(page: RawRecord, normalize: (item: RawRecord) => T): unknown {
@@ -313,8 +345,8 @@ export function createFinancialCloseApi(options: FinancialCloseApiOptions = {}) 
       create: (payload: object) => write<BankReconciliationRecord>('POST', '/api/admin/bank-reconciliations', payload),
       createMatch: (id: FinancialCloseResourceId, payload: object) =>
         write<Record<string, unknown>>('POST', `/api/admin/bank-reconciliations/${encodeId(id)}/matches`, payload),
-      deleteMatch: (id: FinancialCloseResourceId, payload: object) =>
-        write<Record<string, unknown>>('DELETE', `/api/admin/bank-reconciliations/${encodeId(id)}/matches`, payload),
+      deleteMatch: (id: FinancialCloseResourceId, matchGroupNo: string, payload: FinancialCloseActionPayload) =>
+        write<Record<string, unknown>>('DELETE', `/api/admin/bank-reconciliations/${encodeId(id)}/matches?matchGroupNo=${encodeURIComponent(matchGroupNo)}`, payload),
       createException: (id: FinancialCloseResourceId, payload: object) =>
         write<Record<string, unknown>>('POST', `/api/admin/bank-reconciliations/${encodeId(id)}/exceptions`, payload),
       calculate: (id: FinancialCloseResourceId, payload: FinancialCloseActionPayload) =>

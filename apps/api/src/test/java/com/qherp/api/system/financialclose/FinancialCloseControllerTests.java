@@ -67,12 +67,17 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 				Map.of("idempotencyKey", "032-check-blocked-" + periodId), admin));
 		assertThat(check.get("status").asText()).isEqualTo("BLOCKED");
 		assertThat(check.get("sourceFingerprint").asText()).hasSize(64);
-		assertThat(recursiveValues(check, "checkCode")).contains("BUSINESS_PERIOD_CLOSED",
-				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "PROFIT_LOSS_TRANSFER_POSTED");
+		assertThat(recursiveValues(check, "checkCode")).containsExactly("PREVIOUS_PERIOD_CLOSED",
+				"BUSINESS_PERIOD_CLOSED", "NO_INCOMPLETE_VOUCHERS", "TRIAL_BALANCE_BALANCED",
+				"BANK_RECONCILIATIONS_CONFIRMED", "TAX_SUMMARIES_CONFIRMED", "TAX_VOUCHERS_POSTED",
+				"PROFIT_LOSS_TRANSFER_POSTED", "NO_SOURCE_CHANGES");
 		assertThat(check.get("closeVersion").intValue()).isZero();
 
 		AuthenticatedSession restricted = createUserAndLogin("032-restricted-", "032_RESTRICTED_",
 				List.of("financial-close:period:view"));
+		JsonNode restrictedPeriod = data(get("/api/admin/financial-closes/periods/" + periodId, restricted));
+		assertThat(textValues(restrictedPeriod.get("allowedActions"))).isEmpty();
+		assertThat(restrictedPeriod.get("actionDisabledReasons").get("CHECK").asText()).contains("无权");
 		JsonNode masked = data(get("/api/admin/financial-closes/check-runs/" + check.get("id").longValue(),
 				restricted));
 		assertVisibilityFlags(masked, false, false, false);
@@ -81,7 +86,7 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 
 		AuthenticatedSession noPermission = createUserAndLogin("032-no-perm-", "032_NO_PERM_", List.of());
 		assertError(get("/api/admin/financial-closes/periods", noPermission), HttpStatus.FORBIDDEN,
-				"AUTH_FORBIDDEN");
+				"FIN_PERMISSION_DENIED");
 	}
 
 	@Test
@@ -94,6 +99,13 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 		assertThat(bankAccount.has("accountNo")).isFalse();
 		assertThat(bankAccount.get("accountLast4").asText()).isEqualTo("0321");
 		assertThat(bankAccount.get("accountMasked").asText()).contains("0321");
+
+		AuthenticatedSession bankViewer = createUserAndLogin("032-bank-mask-viewer-", "032_BANK_MASK_VIEWER_",
+				List.of("financial-close:bank-account:view"));
+		JsonNode bankMasked = data(get("/api/admin/bank-accounts/" + bankAccountId, bankViewer));
+		assertVisibilityFlags(bankMasked, false, false, false);
+		assertNullFields(bankMasked, List.of("accountLast4"));
+		assertThat(bankMasked.get("accountMasked").asText()).doesNotContain("0321");
 
 		assertError(exchange(HttpMethod.POST, "/api/admin/bank-accounts", bankAccountPayload("6222888800000321",
 				"032-bank-dup"), admin), HttpStatus.CONFLICT, "FIN_CLOSE_CONFLICT");
@@ -120,7 +132,14 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 						"urbanMaintenanceRate", "0.07", "effectiveFrom", "2026-01-01", "version", 0,
 						"idempotencyKey", "032-tax-profile"),
 				admin));
-		assertThat(profile.get("creditCode").asText()).isEqualTo("9132000000000032X1");
+		assertThat(profile.has("creditCode")).isFalse();
+		assertThat(profile.get("unifiedSocialCreditCodeMasked").asText()).isEqualTo("9132000000000032X1");
+		AuthenticatedSession taxProfileViewer = createUserAndLogin("032-tax-profile-viewer-",
+				"032_TAX_PROFILE_VIEWER_", List.of("financial-close:tax-profile:view"));
+		JsonNode maskedProfile = data(get("/api/admin/tax-profiles/current", taxProfileViewer));
+		assertVisibilityFlags(maskedProfile, false, false, false);
+		assertThat(maskedProfile.has("creditCode")).isFalse();
+		assertThat(maskedProfile.get("unifiedSocialCreditCodeMasked").asText()).doesNotContain("0032X1");
 
 		JsonNode summary = data(exchange(HttpMethod.POST, "/api/admin/tax-summaries",
 				Map.of("periodCode", "2026-07", "taxType", "VAT", "idempotencyKey", "032-tax-summary"), admin));
@@ -328,6 +347,7 @@ class FinancialCloseControllerTests extends PostgresIntegrationTest {
 		JsonNode bankAccount = data(get("/api/admin/bank-accounts/" + bankAccountId, viewer));
 		assertVisibilityFlags(bankAccount, false, false, false);
 		assertNullFields(bankAccount, List.of("accountLast4"));
+		assertThat(bankAccount.get("accountMasked").asText()).doesNotContain("3099");
 
 		JsonNode statements = data(get("/api/admin/bank-statements?bankAccountId=" + bankAccountId
 				+ "&page=1&pageSize=10", viewer));

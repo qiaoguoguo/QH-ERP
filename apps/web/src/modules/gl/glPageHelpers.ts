@@ -104,7 +104,11 @@ export function glVoucherStatusText(value: string | null | undefined) {
 }
 
 export function glPeriodStatusText(value: string | null | undefined) {
-  return value === 'OPEN' ? '开放' : value || '-'
+  const text: Record<string, string> = {
+    OPEN: '开放',
+    CLOSED: '已关闭',
+  }
+  return value ? text[value] ?? value : '-'
 }
 
 export function glActionAllowed(record: { allowedActions?: string[] | null }, action: string) {
@@ -123,7 +127,7 @@ export function glFormalSourceText(record: Pick<GlVoucherRecord, 'sourceType' | 
   if (record.sourceVisible === false) {
     return record.restrictedReason || '无权查看来源'
   }
-  return `正式来源 ${[record.sourceType || 'MANUAL', record.sourceNo].filter(Boolean).join(' ')}`
+  return `正式来源 ${[glSourceTypeText(record.sourceType || 'MANUAL'), record.sourceNo].filter(Boolean).join(' ')}`
 }
 
 export function glCombinedActionDisabledReason(record: { actionDisabledReasons?: Record<string, string> | null }) {
@@ -131,6 +135,18 @@ export function glCombinedActionDisabledReason(record: { actionDisabledReasons?:
   return ['CANCEL', 'SUBMIT', 'UPDATE', 'CREATE', 'REVERSE', 'WITHDRAW']
     .map((action) => reasons[action])
     .find((reason): reason is string => Boolean(reason)) ?? ''
+}
+
+export function glAllowedActionsText(actions: string[] | null | undefined) {
+  const labels: Record<string, string> = {
+    UPDATE: '可编辑',
+    SUBMIT: '可提交',
+    CANCEL: '可取消',
+    WITHDRAW: '可撤回',
+    REVERSE: '可冲销',
+    CREATE: '可创建',
+  }
+  return actions?.length ? actions.map((action) => labels[action] ?? action).join('、') : '-'
 }
 
 export function glFinancialCloseStatusText(value: string | null | undefined) {
@@ -155,7 +171,7 @@ export function glBusinessSourceText(record: Pick<GlVoucherRecord, 'businessSour
   if (!sourceType && !sourceNo) {
     return '业务来源 -'
   }
-  return `业务来源 ${[sourceType, sourceNo].filter(Boolean).join(' ')}`
+  return `业务来源 ${[glSourceTypeText(sourceType), sourceNo].filter(Boolean).join(' ')}`
 }
 
 export function glBusinessSourceMetaText(record: Pick<GlVoucherRecord, 'sourceOriginalVersion' | 'businessSourceVersion' | 'sourceOriginalFingerprint' | 'businessSourceFingerprint' | 'sourceVisible' | 'restrictedReason'>) {
@@ -168,4 +184,18 @@ export function glBusinessSourceMetaText(record: Pick<GlVoucherRecord, 'sourceOr
     version === null || version === undefined ? '' : `业务来源版本 ${version}`,
     fingerprint ? `来源指纹 ${fingerprint}` : '',
   ].filter(Boolean).join(' / ') || '来源版本 -'
+}
+
+export function glSourceTypeText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    MANUAL: '手工凭证',
+    FIN_VOUCHER_DRAFT: '财务凭证草稿',
+    PROFIT_LOSS_TRANSFER: '期末损益结转',
+    PROFIT_LOSS_CARRYFORWARD: '期末损益结转',
+    TAX_SUMMARY: '税额汇总',
+    SALES_INVOICE: '销售发票',
+    PURCHASE_INVOICE: '采购发票',
+    REVERSAL: '冲销凭证',
+  }
+  return value ? text[value] ?? value : '-'
 }

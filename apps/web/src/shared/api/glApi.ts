@@ -70,7 +70,9 @@ export interface GlAccountingPeriodRecord {
   lastPostedAt?: string | null
   version?: number | null
   financialCloseStatus?: string | null
+  closeStatus?: string | null
   latestFinancialCloseCheckRunId?: ResourceId | null
+  latestCheckRunId?: ResourceId | null
   financialCloseDisabledReason?: string | null
 }
 
@@ -527,6 +529,18 @@ function normalizeVoucher(record: RawRecord): GlVoucherRecord {
   }
 }
 
+function normalizeAccountingPeriod(record: RawRecord): GlAccountingPeriodRecord {
+  return {
+    ...record,
+    periodCode: String(record.periodCode ?? ''),
+    startDate: String(record.startDate ?? ''),
+    endDate: String(record.endDate ?? ''),
+    status: String(record.status ?? ''),
+    financialCloseStatus: (record.financialCloseStatus ?? record.closeStatus) as string | null | undefined,
+    latestFinancialCloseCheckRunId: (record.latestFinancialCloseCheckRunId ?? record.latestCheckRunId) as ResourceId | null | undefined,
+  }
+}
+
 function normalizeLedgerRow(record: RawRecord): GlLedgerRow {
   return {
     ...record,
@@ -569,6 +583,9 @@ function normalizeTrialBalance(record: RawRecord): GlTrialBalanceRecord {
 function normalizeGlResponse(path: string, data: unknown): unknown {
   if (!path.startsWith('/api/admin/gl')) {
     return data
+  }
+  if (path.includes('/accounting-periods')) {
+    return normalizeRecordOrPage(data, normalizeAccountingPeriod)
   }
   if (path.includes('/trial-balance')) {
     return isRecord(data) ? normalizeTrialBalance(data) : data

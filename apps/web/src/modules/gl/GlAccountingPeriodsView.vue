@@ -44,6 +44,7 @@ const nextPeriodCode = computed(() => {
   const nextYear = month === 12 ? year + 1 : year
   return `${nextYear}-${String(nextMonth).padStart(2, '0')}`
 })
+const canViewFinancialClose = computed(() => authStore.hasPermission('financial-close:period:view'))
 
 async function loadRecords() {
   loading.value = true
@@ -131,8 +132,13 @@ function changePageSize(pageSize: number) {
 }
 
 function openFinancialClose(record: GlAccountingPeriodRecord) {
-  const target = record.latestFinancialCloseCheckRunId
-    ? { name: 'gl-financial-close-run-detail', params: { runId: record.latestFinancialCloseCheckRunId } }
+  if (!canViewFinancialClose.value) {
+    actionError.value = '无财务结账查看权限'
+    return
+  }
+  const latestRunId = record.latestFinancialCloseCheckRunId ?? record.latestCheckRunId
+  const target = latestRunId
+    ? { name: 'gl-financial-close-run-detail', params: { runId: latestRunId } }
     : { name: 'gl-financial-close' }
   void router.push({
     ...target,
@@ -210,7 +216,8 @@ onMounted(loadRecords)
         </el-table-column>
         <el-table-column label="关闭入口" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-button data-test="gl-period-financial-close-link" text @click="openFinancialClose(row)">032 财务结账入口</el-button>
+            <el-button v-if="canViewFinancialClose" data-test="gl-period-financial-close-link" text @click="openFinancialClose(row)">032 财务结账入口</el-button>
+            <span v-else class="gl-muted">无财务结账查看权限</span>
             <span class="gl-muted">{{ row.financialCloseDisabledReason || '-' }}</span>
           </template>
         </el-table-column>

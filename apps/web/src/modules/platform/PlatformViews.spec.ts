@@ -549,6 +549,56 @@ describe('022 平台页面', () => {
     expect(wrapper.text()).not.toContain('通过并记账')
   })
 
+  it('FINANCIAL_PERIOD_REOPEN 审批即使缺少 objectId 也提供财务结账回链', async () => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 93,
+        taskId: 793,
+        taskNo: 'AT-FC-002',
+        sceneCode: 'FINANCIAL_PERIOD_REOPEN',
+        objectType: null,
+        objectId: null,
+        objectNo: 'FCR-202610-0002',
+        objectName: '032 集中审查反结账双人审批',
+        status: 'PENDING',
+        currentStepName: '双人审批',
+        applicantName: '会计',
+        assignedAt: '2026-07-20T10:00:00+08:00',
+        availableActions: [],
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 93,
+      taskId: 793,
+      taskVersion: 5,
+      sceneCode: 'FINANCIAL_PERIOD_REOPEN',
+      objectType: null,
+      objectId: null,
+      objectNo: 'FCR-202610-0002',
+      objectName: '032 集中审查反结账双人审批',
+      status: 'SUBMITTED',
+      applicantName: '会计',
+      submittedAt: '2026-07-20T10:00:00+08:00',
+      version: 2,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ taskId: 793, stepName: '双人审批', status: 'PENDING', candidatePermission: 'financial-close:period:reopen', version: 5 }],
+      histories: [],
+      attachmentSnapshots: [],
+    })
+
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).not.toContain('无可跳转业务单据')
+    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
+  })
+
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {
     const zeroVersionDetail = {
       id: 3,

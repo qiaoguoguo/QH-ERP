@@ -71,6 +71,22 @@ export function canFinancialCloseAction(record: Partial<FinancialCloseActionStat
   return record.allowedActions?.includes(action) ?? false
 }
 
+export function financialCloseActionState(
+  record: Partial<FinancialCloseActionState>,
+  action: string,
+  hasPermission = true,
+  noPermissionReason = '无操作权限',
+) {
+  const backendReason = financialCloseActionDisabledReason(record, action)
+  if (!hasPermission) {
+    return { allowed: false, reason: backendReason || noPermissionReason }
+  }
+  if (!canFinancialCloseAction(record, action)) {
+    return { allowed: false, reason: backendReason || '当前状态不允许操作' }
+  }
+  return { allowed: true, reason: '' }
+}
+
 export function sourceVisibleText(visible: boolean | null | undefined) {
   return visible === false ? '来源受限' : '来源可追溯'
 }
@@ -96,10 +112,69 @@ export function financialCloseStatusText(status: string | null | undefined) {
     SUBMITTED: '审批中',
     CONFIRMED: '已确认',
     CALCULATED: '已计算',
+    UNMATCHED: '未匹配',
+    PARTIALLY_MATCHED: '部分匹配',
     PARTIAL_MATCHED: '部分匹配',
+    MATCHED: '已匹配',
+    IGNORED: '已忽略',
+    BALANCED: '已平衡',
+    RECONCILING: '对账中',
     READY_TO_CONFIRM: '待确认',
+    ENABLED: '启用',
+    DISABLED: '停用',
   }
   return status ? labels[status] ?? status : '-'
 }
 
 export const taxFoundationDisclaimer = '基础汇总/估算，非正式申报'
+
+export function bankDirectionText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    CREDIT: '银行入账',
+    DEBIT: '银行出账',
+    INFLOW: '银行入账',
+    OUTFLOW: '银行出账',
+  }
+  return value ? labels[value] ?? value : '-'
+}
+
+export function bankAccountTypeText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    BASIC: '基本户',
+    GENERAL: '一般户',
+    SPECIAL: '专用户',
+    TEMPORARY: '临时户',
+    OTHER: '其他',
+  }
+  return value ? labels[value] ?? value : '-'
+}
+
+export function taxTypeText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    VAT: '增值税',
+    INCOME_TAX: '企业所得税',
+    URBAN_MAINTENANCE: '城市维护建设税',
+    EDUCATION_SURCHARGE: '教育费附加',
+  }
+  return value ? labels[value] ?? value : '-'
+}
+
+export function taxpayerTypeText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    GENERAL: '一般纳税人',
+    SMALL_SCALE: '小规模纳税人',
+  }
+  return value ? labels[value] ?? value : '-'
+}
+
+export function sourceTypeText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    GL_VOUCHER: '正式凭证',
+    PAYMENT: '付款单',
+    TAX_SUMMARY: '税额汇总',
+    PROFIT_LOSS_CARRYFORWARD: '期末损益结转',
+    PROFIT_LOSS_TRANSFER: '期末损益结转',
+    FIN_VOUCHER_DRAFT: '财务凭证草稿',
+  }
+  return value ? labels[value] ?? value : '-'
+}

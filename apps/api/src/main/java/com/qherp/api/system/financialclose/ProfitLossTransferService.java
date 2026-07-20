@@ -68,6 +68,7 @@ public class ProfitLossTransferService {
 					"FIN_CLOSE_PROFIT_LOSS_TRANSFER", ((Number) existing.get("id")).longValue());
 			return existing;
 		}
+		requireNoActiveTransfer(periodId, preview.sourceFingerprint());
 		if (preview.lines().isEmpty()) {
 			Long transferId = this.jdbcTemplate.queryForObject("""
 					insert into fin_close_profit_loss_transfer (
@@ -120,6 +121,19 @@ public class ProfitLossTransferService {
 			}
 			return transfer(rs.getLong("id"), null, currentUser);
 		}, periodId, key).stream().findFirst().orElse(null);
+	}
+
+	private void requireNoActiveTransfer(Long periodId, String sourceFingerprint) {
+		Long count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from fin_close_profit_loss_transfer
+				where period_id = ?
+				and source_fingerprint = ?
+				and status in ('DRAFT', 'ZERO_BALANCE', 'SUBMITTED', 'POSTED')
+				""", Long.class, periodId, sourceFingerprint);
+		if (count != null && count > 0) {
+			throw new BusinessException(ApiErrorCode.FIN_CLOSE_CONFLICT);
+		}
 	}
 
 	private TransferPreview buildPreview(Long periodId) {
