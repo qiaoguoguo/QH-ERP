@@ -1090,6 +1090,24 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("REOPENED") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC") `
         -and $SqlText.Contains("having count(*) > 1"))
+    $failureSampleRuleIsIntegrityOnly = ($SqlText.Contains("FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC") `
+        -and $SqlText.Contains("invalidSamples=") `
+        -and $SqlText.Contains("sampleCodes=") `
+        -and $SqlText.Contains("sample_count") `
+        -and $SqlText.Contains("invalid_sample_count = 0") `
+        -and $SqlText.Contains("left join fin_close_check_run r on r.id = i.check_run_id") `
+        -and $SqlText.Contains("r.status not in ('BLOCKED', 'READY', 'CONSUMED', 'STALE', 'FAILED')") `
+        -and $SqlText.Contains("not exists (") `
+        -and $SqlText.Contains("where peer.check_run_id = i.check_run_id") `
+        -and $SqlText.Contains("sample_count = 0") `
+        -and $SqlText.Contains("previous_period_closed_count = 1") `
+        -and $SqlText.Contains("no_incomplete_vouchers_count = 1") `
+        -and $SqlText.Contains("tax_vouchers_posted_count = 1") `
+        -and $SqlText.Contains("no_source_changes_count = 1") `
+        -and $SqlText.Contains("and peer.check_code not in (") `
+        -and $SqlText.Contains("'TAX_VOUCHERS_POSTED', 'NO_SOURCE_CHANGES')") `
+        -and (-not $SqlText.Contains("count(distinct i.check_code) filter (where i.check_code = 'PREVIOUS_PERIOD_CLOSED') = 1")) `
+        -and (-not $SqlText.Contains("'records>=1;duplicates=0'")))
     $mandatoryCheckRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_MANDATORY_CHECK_CODES_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC") `
         -and $SqlText.Contains("PREVIOUS_PERIOD_CLOSED") `
@@ -1098,7 +1116,22 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("TAX_VOUCHERS_POSTED") `
         -and $SqlText.Contains("NO_SOURCE_CHANGES") `
         -and $SqlText.Contains("count(*) from fin_close_check_item i where i.check_run_id = r.id") `
-        -and $SqlText.Contains("每个已完成财务结账检查运行必须精确包含 9 项冻结检查"))
+        -and $SqlText.Contains("每个已完成财务结账检查运行必须精确包含 9 项冻结检查") `
+        -and $failureSampleRuleIsIntegrityOnly)
+    $taxPaymentIdempotencyRuleIsIntegrityOnly = ($SqlText.Contains("FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC") `
+        -and $SqlText.Contains("invalidRecords=") `
+        -and $SqlText.Contains("duplicates=") `
+        -and $SqlText.Contains("invalid_record_count = 0 and duplicate_count = 0") `
+        -and $SqlText.Contains("idempotency_key is null or idempotency_key = ''") `
+        -and $SqlText.Contains("action = 'FIN_TAX_PAYMENT_RECORD' and resource_type <> 'FIN_TAX_PERIOD_SUMMARY'") `
+        -and $SqlText.Contains("action = 'FIN_TAX_PAYMENT_CORRECT' and resource_type <> 'FIN_TAX_PAYMENT_RECORD'") `
+        -and $SqlText.Contains("result_resource_type <> 'FIN_TAX_PAYMENT_RECORD'") `
+        -and $SqlText.Contains("result_resource_id is null") `
+        -and $SqlText.Contains("request_fingerprint is null or request_fingerprint = ''") `
+        -and $SqlText.Contains("from fin_close_action_idempotency") `
+        -and $SqlText.Contains("having count(*) > 1") `
+        -and (-not $SqlText.Contains("record_count >= 1 and duplicate_count = 0")) `
+        -and (-not $SqlText.Contains("'records>=1;duplicates=0'")))
     $dynamicRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_READY_CHECKS_CONSUMABLE_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CLOSE_RECHECK_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_CLOSED_PERIOD_LOCK_DYNAMIC") `
@@ -1114,7 +1147,8 @@ function Test-FinancialCloseValidatorRulesAreStrict {
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_DISCLAIMER_V34") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC") `
         -and $SqlText.Contains("FIN_TAX_PAYMENT_RECORD") `
-        -and $SqlText.Contains("result_resource_type = 'FIN_TAX_PAYMENT_RECORD'"))
+        -and $SqlText.Contains("result_resource_type = 'FIN_TAX_PAYMENT_RECORD'") `
+        -and $taxPaymentIdempotencyRuleIsIntegrityOnly)
     $bankRulesAreStrict = ($SqlText.Contains("FINANCIAL_CLOSE_BANK_ACCOUNT_1002_SUBTREE_DYNAMIC") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_EXCEPTION_TYPES_V34") `
         -and $SqlText.Contains("FINANCIAL_CLOSE_BANK_RECONCILIATION_FORMULA_DYNAMIC") `
@@ -1188,6 +1222,48 @@ union all select 'FILE_OBJECTS_AVAILABLE_MIN_8', 'attachment', count(*)::text, '
 "@
 Assert-True -Condition (-not (Test-FinancialCloseValidatorRulesAreStrict -SqlText $weakenedFinancialCloseSql)) `
     -Message "自测必须拒绝只按前缀宽泛计数、缺少动态事实门禁或写死 18 个对象的 032 验证器。"
+
+$formalBlockingFinancialCloseSql = @"
+union all select 'FINANCIAL_CLOSE_MANDATORY_CHECK_CODES_DYNAMIC', 'financial-close',
+    count(*)::text, '0', count(*) = 0,
+    '每个已完成财务结账检查运行必须精确包含 9 项冻结检查，不能只落地 4 项产生伪阳性。'
+    from fin_close_check_run
+union all select 'FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC', 'financial-close',
+    coalesce(string_agg(distinct i.check_code, ',' order by i.check_code), ''),
+    'NO_INCOMPLETE_VOUCHERS,NO_SOURCE_CHANGES,PREVIOUS_PERIOD_CLOSED,TAX_VOUCHERS_POSTED',
+    count(distinct i.check_code) filter (where i.check_code = 'PREVIOUS_PERIOD_CLOSED') = 1
+        and count(distinct i.check_code) filter (where i.check_code = 'NO_INCOMPLETE_VOUCHERS') = 1
+        and count(distinct i.check_code) filter (where i.check_code = 'TAX_VOUCHERS_POSTED') = 1
+        and count(distinct i.check_code) filter (where i.check_code = 'NO_SOURCE_CHANGES') = 1,
+    '演示数据必须保留上期未关、未完成凭证、税费凭证未记账和来源变化的失败样例。'
+    from fin_close_check_item i
+    where i.passed is false
+union all select 'FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC', 'financial-close',
+    concat('records=', record_count, ';duplicates=', duplicate_count),
+    'records>=1;duplicates=0',
+    record_count >= 1 and duplicate_count = 0,
+    '税款缴纳/更正写动作必须通过 032 幂等表留痕，同一操作员、动作、资源和幂等键不得产生重复结果。'
+    from (
+        select count(*) as record_count, 0 as duplicate_count
+        from fin_close_action_idempotency
+        where action in ('FIN_TAX_PAYMENT_RECORD', 'FIN_TAX_PAYMENT_CORRECT')
+    ) tax_payment_idempotency_gate
+"@
+Assert-True -Condition (-not (Test-FinancialCloseValidatorRulesAreStrict -SqlText $formalBlockingFinancialCloseSql)) `
+    -Message "自测必须拒绝把隔离代表样本存在性误用为所有数据库门禁，正式 032 零业务事实必须合法。"
+
+$weakenedFinancialCloseIntegritySql = @"
+union all select 'FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC', 'financial-close',
+    count(*)::text, '0', true,
+    '失败样本存在时也直接通过。'
+    from fin_close_check_item
+union all select 'FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC', 'financial-close',
+    count(*)::text, '0', true,
+    '税款幂等存在时也直接通过。'
+    from fin_close_action_idempotency
+"@
+Assert-True -Condition (-not (Test-FinancialCloseValidatorRulesAreStrict -SqlText $weakenedFinancialCloseIntegritySql)) `
+    -Message "自测必须拒绝删除失败样本完整性、税款幂等唯一性和资源映射门禁的弱验证器。"
 
 function Test-Stage032IsolationStrategyIsStrict {
     param([string] $ScriptText)

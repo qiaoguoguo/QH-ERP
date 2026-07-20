@@ -602,17 +602,65 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             )
         ) incomplete_check_runs
     union all select 'FINANCIAL_CLOSE_CHECK_FAILURE_SAMPLES_DYNAMIC', 'financial-close',
-        coalesce(string_agg(distinct i.check_code, ',' order by i.check_code), ''),
-        'NO_INCOMPLETE_VOUCHERS,NO_SOURCE_CHANGES,PREVIOUS_PERIOD_CLOSED,TAX_VOUCHERS_POSTED',
-        count(distinct i.check_code) filter (where i.check_code = 'PREVIOUS_PERIOD_CLOSED') = 1
-            and count(distinct i.check_code) filter (where i.check_code = 'NO_INCOMPLETE_VOUCHERS') = 1
-            and count(distinct i.check_code) filter (where i.check_code = 'TAX_VOUCHERS_POSTED') = 1
-            and count(distinct i.check_code) filter (where i.check_code = 'NO_SOURCE_CHANGES') = 1,
-        '演示数据必须保留上期未关、未完成凭证、税费凭证未记账和来源变化的失败样例；试算不平负例由独立验收在隔离 Testcontainers 覆盖，避免破坏完整库总账一致性。'
-        from fin_close_check_item i
-        where i.passed is false
-        and i.check_code in ('PREVIOUS_PERIOD_CLOSED', 'NO_INCOMPLETE_VOUCHERS',
-            'TAX_VOUCHERS_POSTED', 'NO_SOURCE_CHANGES')
+        concat('sampleCodes=', coalesce(sample_codes, 'none'), ';sampleCount=', sample_count,
+            ';invalidSamples=', invalid_sample_count),
+        'none or complete valid sample set',
+        sample_count = 0
+            or (previous_period_closed_count = 1 and no_incomplete_vouchers_count = 1
+                and tax_vouchers_posted_count = 1 and no_source_changes_count = 1
+                and invalid_sample_count = 0),
+        '失败样本为代表状态而非正式库必填事实；无 032 检查事实时合法，存在样本时必须覆盖四类代表失败并来自完整 9 项冻结检查运行。'
+        from (
+            select
+                count(*) as sample_count,
+                string_agg(distinct check_code, ',' order by check_code) as sample_codes,
+                count(*) filter (where invalid_sample) as invalid_sample_count,
+                count(distinct check_code) filter (where check_code = 'PREVIOUS_PERIOD_CLOSED') as previous_period_closed_count,
+                count(distinct check_code) filter (where check_code = 'NO_INCOMPLETE_VOUCHERS') as no_incomplete_vouchers_count,
+                count(distinct check_code) filter (where check_code = 'TAX_VOUCHERS_POSTED') as tax_vouchers_posted_count,
+                count(distinct check_code) filter (where check_code = 'NO_SOURCE_CHANGES') as no_source_changes_count
+            from (
+                select i.check_code,
+                    (
+                        r.id is null
+                        or r.status not in ('BLOCKED', 'READY', 'CONSUMED', 'STALE', 'FAILED')
+                        or (select count(*) from fin_close_check_item peer where peer.check_run_id = i.check_run_id) <> 9
+                        or exists (
+                            select 1
+                            from fin_close_check_item peer
+                            where peer.check_run_id = i.check_run_id
+                            and peer.check_code not in (
+                                'PREVIOUS_PERIOD_CLOSED', 'BUSINESS_PERIOD_CLOSED',
+                                'NO_INCOMPLETE_VOUCHERS', 'TRIAL_BALANCE_BALANCED',
+                                'BANK_RECONCILIATIONS_CONFIRMED', 'TAX_SUMMARIES_CONFIRMED',
+                                'TAX_VOUCHERS_POSTED', 'PROFIT_LOSS_TRANSFER_POSTED',
+                                'NO_SOURCE_CHANGES'
+                            )
+                        )
+                        or exists (
+                            select 1
+                            from (values
+                                ('PREVIOUS_PERIOD_CLOSED'), ('BUSINESS_PERIOD_CLOSED'),
+                                ('NO_INCOMPLETE_VOUCHERS'), ('TRIAL_BALANCE_BALANCED'),
+                                ('BANK_RECONCILIATIONS_CONFIRMED'), ('TAX_SUMMARIES_CONFIRMED'),
+                                ('TAX_VOUCHERS_POSTED'), ('PROFIT_LOSS_TRANSFER_POSTED'),
+                                ('NO_SOURCE_CHANGES')
+                            ) expected(check_code)
+                            where not exists (
+                                select 1
+                                from fin_close_check_item peer
+                                where peer.check_run_id = i.check_run_id
+                                and peer.check_code = expected.check_code
+                            )
+                        )
+                    ) as invalid_sample
+                from fin_close_check_item i
+                left join fin_close_check_run r on r.id = i.check_run_id
+                where i.passed is false
+                and i.check_code in ('PREVIOUS_PERIOD_CLOSED', 'NO_INCOMPLETE_VOUCHERS',
+                    'TAX_VOUCHERS_POSTED', 'NO_SOURCE_CHANGES')
+            ) sample_items
+        ) sample_gate
     union all select 'FINANCIAL_CLOSE_CURRENT_CLOSED_UNIQUE_DYNAMIC', 'financial-close', count(*)::text, '0', count(*) = 0,
         '同一会计期间同一时刻只能存在一个当前 CLOSED 财务关闭版本。'
         from (
@@ -780,16 +828,29 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         true,
         '税务基础页面和 API 必须固定显示非申报免责声明；真实 API 验收负责逐项核对 DTO。'
     union all select 'FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC', 'financial-close',
-        concat('records=', record_count, ';duplicates=', duplicate_count),
-        'records>=1;duplicates=0',
-        record_count >= 1 and duplicate_count = 0,
-        '税款缴纳/更正写动作必须通过 032 幂等表留痕，同一操作员、动作、资源和幂等键不得产生重复结果。'
+        concat('records=', record_count, ';invalidRecords=', invalid_record_count,
+            ';duplicates=', duplicate_count),
+        'records>=0;invalidRecords=0;duplicates=0',
+        invalid_record_count = 0 and duplicate_count = 0,
+        '税款缴纳/更正幂等记录不是正式库必填业务事实；存在时必须具备合法动作、资源映射、请求指纹、结果资源和唯一键，不得重复。'
         from (
             select
                 count(*) filter (
                     where action in ('FIN_TAX_PAYMENT_RECORD', 'FIN_TAX_PAYMENT_CORRECT')
                     and result_resource_type = 'FIN_TAX_PAYMENT_RECORD'
                 ) as record_count,
+                count(*) filter (
+                    where action in ('FIN_TAX_PAYMENT_RECORD', 'FIN_TAX_PAYMENT_CORRECT')
+                    and (
+                        idempotency_key is null or idempotency_key = ''
+                        or request_fingerprint is null or request_fingerprint = ''
+                        or (action = 'FIN_TAX_PAYMENT_RECORD' and resource_type <> 'FIN_TAX_PERIOD_SUMMARY')
+                        or (action = 'FIN_TAX_PAYMENT_CORRECT' and resource_type <> 'FIN_TAX_PAYMENT_RECORD')
+                        or resource_id is null
+                        or result_resource_type <> 'FIN_TAX_PAYMENT_RECORD'
+                        or result_resource_id is null
+                    )
+                ) as invalid_record_count,
                 (
                     select count(*)
                     from (
