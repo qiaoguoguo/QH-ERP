@@ -77,7 +77,7 @@ class GeneralLedgerV33MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
@@ -100,7 +100,7 @@ class GeneralLedgerV33MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);

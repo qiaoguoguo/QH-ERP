@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { useRoute, useRouter } from 'vue-router'
 import type { ReportTraceRecord } from '../../shared/api/businessReportingApi'
-import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
-import { reportSourceTypeText } from './reportPageHelpers'
+import { currentRouteReturnTo, queryWithReturnTo, safeReturnTo } from '../../shared/navigation/navigationReturn'
+import { reportSourceTypeText, reportStatusText } from './reportPageHelpers'
 
 defineProps<{
   visible: boolean
@@ -26,10 +26,14 @@ function viewSource(row: ReportTraceRecord) {
   if (restricted(row) || !row.resourceRouteName) {
     return
   }
+  const routeName = typeof route.name === 'string' ? route.name : ''
+  const returnTo = routeName.startsWith('reports-')
+    ? safeReturnTo(route.fullPath) ?? currentRouteReturnTo(route)
+    : currentRouteReturnTo(route)
   void router.push({
     name: row.resourceRouteName,
     params: row.resourceRouteParams ?? {},
-    query: queryWithReturnTo(row.resourceRouteQuery, currentRouteReturnTo(route)),
+    query: queryWithReturnTo(row.resourceRouteQuery, returnTo),
   })
 }
 </script>
@@ -81,7 +85,7 @@ function viewSource(row: ReportTraceRecord) {
           </el-table-column>
           <el-table-column label="状态" min-width="110">
             <template #default="{ row }">
-              <span v-if="!restricted(row)">{{ row.status }}</span>
+              <span v-if="!restricted(row)">{{ reportStatusText(row.status) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="数量" min-width="110" align="right">

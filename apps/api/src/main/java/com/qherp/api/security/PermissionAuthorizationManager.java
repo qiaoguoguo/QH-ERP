@@ -561,6 +561,31 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("/api/admin/reports/overview".equals(path)) {
 			return "report:overview:view";
 		}
+		if ("/api/admin/reports/operating-finance-overview".equals(path)) {
+			return "report:operating-finance:view";
+		}
+		if (matchesReportEndpoint(path, "project-profit")
+				|| path.matches(Pattern.quote("/api/admin/reports/project-profit") + "/\\d+(/traces)?")) {
+			return "report:project-profit:view";
+		}
+		if (matchesReportEndpoint(path, "contract-collections")) {
+			return "report:contract-collection:view";
+		}
+		if (matchesReportEndpoint(path, "procurement-variances")) {
+			return "report:procurement-variance:view";
+		}
+		if (matchesReportEndpoint(path, "inventory-capital")) {
+			return "report:inventory-capital:view";
+		}
+		if (matchesReportEndpoint(path, "receivable-payable")) {
+			return "report:receivable-payable:view";
+		}
+		if (matchesReportEndpoint(path, "operating-accounting-reconciliation")) {
+			return "report:operating-accounting:view";
+		}
+		if (matchesReportEndpoint(path, "financial-summary")) {
+			return "report:financial-summary:view";
+		}
 		if (matchesReportEndpoint(path, "sales-summary")) {
 			return "report:sales:view";
 		}

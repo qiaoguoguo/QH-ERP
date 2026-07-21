@@ -38,7 +38,7 @@ class InventoryV25MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
 	}
@@ -48,7 +48,7 @@ class InventoryV25MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertMovementTypeColumnsAllowLongEnums(jdbcTemplate);
 	}

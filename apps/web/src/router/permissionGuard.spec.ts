@@ -117,6 +117,14 @@ import ProductionReportView from '../modules/reports/ProductionReportView.vue'
 import CostReportView from '../modules/reports/CostReportView.vue'
 import SettlementReportView from '../modules/reports/SettlementReportView.vue'
 import ExceptionReportView from '../modules/reports/ExceptionReportView.vue'
+import ProjectProfitReportView from '../modules/reports/ProjectProfitReportView.vue'
+import ProjectProfitDetailView from '../modules/reports/ProjectProfitDetailView.vue'
+import ContractCollectionReportView from '../modules/reports/ContractCollectionReportView.vue'
+import ProcurementVarianceReportView from '../modules/reports/ProcurementVarianceReportView.vue'
+import InventoryCapitalReportView from '../modules/reports/InventoryCapitalReportView.vue'
+import ReceivablePayableReportView from '../modules/reports/ReceivablePayableReportView.vue'
+import OperatingAccountingReconciliationReportView from '../modules/reports/OperatingAccountingReconciliationReportView.vue'
+import FinancialSummaryReportView from '../modules/reports/FinancialSummaryReportView.vue'
 import { createQhErpRouter } from './index'
 import productionRouteSource from './modules/productionRoutes.ts?raw'
 import planningRouteSource from './modules/planningRoutes.ts?raw'
@@ -768,6 +776,14 @@ describe('账号权限路由守卫', () => {
       ['reports-cost', CostReportView],
       ['reports-settlement', SettlementReportView],
       ['reports-exceptions', ExceptionReportView],
+      ['reports-project-profit', ProjectProfitReportView],
+      ['reports-project-profit-detail', ProjectProfitDetailView],
+      ['reports-contract-collection', ContractCollectionReportView],
+      ['reports-procurement-variance', ProcurementVarianceReportView],
+      ['reports-inventory-capital', InventoryCapitalReportView],
+      ['reports-receivable-payable', ReceivablePayableReportView],
+      ['reports-operating-accounting', OperatingAccountingReconciliationReportView],
+      ['reports-financial-summary', FinancialSummaryReportView],
     ] as const
 
     for (const config of reportRouteConfigs) {
@@ -785,6 +801,17 @@ describe('账号权限路由守卫', () => {
     const rootRoute = router.getRoutes().find((item) => item.path === '/reports')
     expect(rootRoute?.name).toBe('reports-root')
     expect(rootRoute?.meta.requiresAuth).toBe(true)
+  })
+
+  it('033 经营财务分析继续复用 /reports 根路径并按首个权限进入固定报表', async () => {
+    const router = createQhErpRouter()
+    useAuthStore().setSession({ user, menus: [], permissions: [reportPermissions.projectProfitView] })
+
+    await router.push('/reports')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('reports-project-profit')
+    expect(router.currentRoute.value.path).toBe('/reports/project-profit')
   })
 
   it('访问库存根路径时重定向到库存余额页', async () => {

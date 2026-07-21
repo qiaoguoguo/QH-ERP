@@ -55,7 +55,7 @@ class ProjectCostV31MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
@@ -95,7 +95,7 @@ class ProjectCostV31MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		Map<String, Integer> checksums = migrationChecksums(jdbcTemplate);
 		assertThat(checksums.get("29")).isEqualTo(774334682);
 		assertThat(checksums.get("30")).isEqualTo(2130342893);

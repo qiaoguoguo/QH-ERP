@@ -259,10 +259,10 @@ function Invoke-DemoApi {
         if ($AllowFailure) {
             return [pscustomobject]@{
                 failed = $true
-                message = $_.Exception.Message
+                message = "API 请求失败：$Method $Path`n$($_.Exception.Message)"
             }
         }
-        throw
+        throw "API 请求失败：$Method $Path`n$($_.Exception.Message)"
     }
 }
 

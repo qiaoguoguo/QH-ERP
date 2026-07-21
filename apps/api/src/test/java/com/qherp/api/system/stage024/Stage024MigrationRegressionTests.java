@@ -35,7 +35,7 @@ class Stage024MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertTablesExist(jdbcTemplate, List.of(
 				"proc_purchase_requisition",
@@ -128,7 +128,7 @@ class Stage024MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(text(jdbcTemplate, """
 				select purchase_mode || ':' || coalesce(project_id::text, 'NULL')

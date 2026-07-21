@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import BusinessReferenceSelect from '../system/shared/BusinessReferenceSelect.vue'
+import type { BusinessReferenceId, BusinessReferenceOption } from '../system/shared/businessReferenceSelectTypes'
+
 export interface ReportFilterField {
   key: string
   label: string
   name: string
   placeholder?: string
-  type?: 'text' | 'date'
+  type?: 'text' | 'date' | 'reference'
+  loadOptions?: (keyword: string, selectedValue?: BusinessReferenceId | '') => Promise<BusinessReferenceOption[]>
 }
 
 const props = defineProps<{
@@ -18,6 +22,8 @@ const emit = defineEmits<{
   search: []
   reset: []
 }>()
+
+const emptyOptionsLoader = () => Promise.resolve([])
 
 function updateField(key: string, value: string | number | null | undefined) {
   emit('update:modelValue', {
@@ -49,12 +55,21 @@ function updateField(key: string, value: string | number | null | undefined) {
         />
       </div>
       <el-input
-        v-else
+        v-else-if="field.type !== 'reference'"
         :name="field.name"
         :placeholder="field.placeholder"
         :model-value="modelValue[field.key]"
         :disabled="loading"
         clearable
+        @update:model-value="updateField(field.key, $event)"
+      />
+      <BusinessReferenceSelect
+        v-else
+        :model-value="modelValue[field.key] ?? ''"
+        :placeholder="field.placeholder ?? field.label"
+        :load-options="field.loadOptions ?? emptyOptionsLoader"
+        :disabled="loading"
+        :data-test="`report-reference-${field.name}`"
         @update:model-value="updateField(field.key, $event)"
       />
     </el-form-item>
@@ -86,6 +101,7 @@ function updateField(key: string, value: string | number | null | undefined) {
 }
 
 .report-filter-bar :deep(.el-input),
+.report-filter-bar :deep(.el-select),
 .report-date-field,
 .report-date-picker {
   width: 100%;

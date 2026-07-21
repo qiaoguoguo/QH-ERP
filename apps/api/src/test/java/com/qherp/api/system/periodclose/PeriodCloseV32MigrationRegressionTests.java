@@ -74,7 +74,7 @@ class PeriodCloseV32MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);
@@ -93,7 +93,7 @@ class PeriodCloseV32MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("34");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
 		Map<String, Integer> checksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(checksums);
 		assertThat(checksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);

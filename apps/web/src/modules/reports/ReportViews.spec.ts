@@ -88,6 +88,13 @@ async function mountReport(component: Component, path = '/reports/sales', permis
       { path: '/reports/cost', name: 'reports-cost', component },
       { path: '/reports/settlement', name: 'reports-settlement', component },
       { path: '/reports/exceptions', name: 'reports-exceptions', component },
+      { path: '/reports/project-profit', name: 'reports-project-profit', component: { render: () => null } },
+      { path: '/reports/contract-collection', name: 'reports-contract-collection', component: { render: () => null } },
+      { path: '/reports/procurement-variance', name: 'reports-procurement-variance', component: { render: () => null } },
+      { path: '/reports/inventory-capital', name: 'reports-inventory-capital', component: { render: () => null } },
+      { path: '/reports/receivable-payable', name: 'reports-receivable-payable', component: { render: () => null } },
+      { path: '/reports/operating-accounting-reconciliation', name: 'reports-operating-accounting', component: { render: () => null } },
+      { path: '/reports/financial-summary', name: 'reports-financial-summary', component: { render: () => null } },
       { path: '/sales/shipments/:id', name: 'sales-shipment-detail', component: { render: () => null } },
       { path: '/sales/returns/:id', name: 'sales-return-detail', component: { render: () => null } },
       { path: '/procurement/returns/:id', name: 'procurement-return-detail', component: { render: () => null } },
@@ -579,10 +586,10 @@ describe('经营报表页面', () => {
   it('经营概览在全报表权限会话下展示七类固定报表入口', async () => {
     const permissions = reportRouteConfigs.map((item) => item.permission)
     const { wrapper } = await mountReport(ReportOverviewView, '/reports/overview', permissions)
-    const fixedReportRoutes = reportRouteConfigs.filter((item) => item.routeName !== 'reports-overview')
+    const fixedReportRoutes = reportRouteConfigs.filter((item) => item.routeName !== 'reports-overview' && item.menuVisible !== false)
 
     const entries = wrapper.findAll('[data-test="fixed-report-entry"]')
-    expect(entries).toHaveLength(7)
+    expect(entries).toHaveLength(fixedReportRoutes.length)
     expect(entries.map((item) => item.text())).toEqual(fixedReportRoutes.map((item) => item.menuName))
   })
 

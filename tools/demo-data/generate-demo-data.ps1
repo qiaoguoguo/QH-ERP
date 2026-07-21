@@ -70,10 +70,19 @@ $LockedPeriodStart = "2026-06-01"
 $LockedPeriodEnd = "2026-06-30"
 $OpenPeriodStart = "2026-07-01"
 $OpenPeriodEnd = "2026-07-31"
+$ProjectCostExceptionPeriodCode = "2026-08"
+$ProjectCostExceptionStart = "2026-08-01"
+$ProjectCostExceptionEnd = "2026-08-31"
+$ProjectCostExceptionInventoryDate = "2026-08-09"
+$ProjectCostExceptionProductionStart = "2026-08-16"
+$ProjectCostExceptionProductionFinish = "2026-08-17"
+$ProjectCostExceptionSettlementDate = "2026-08-18"
+$ProjectCostExceptionAllocationDate = "2026-08-19"
+$ProjectCostExceptionCutoffDate = "2026-08-22"
 $DemoPrefix = "DEMO-ELEC-20260715"
-$OpenPeriodCode = "DE260715-OPEN"
-$LockedPeriodCode = "DE260715-LOCK"
-$Manifest.AddNote("业务期间 period_code 受 V13 varchar(20) 限制，使用 DE260715-* 作为 DEMO-ELEC-20260715 的字段长度等价短前缀。")
+$OpenPeriodCode = "2026-07"
+$LockedPeriodCode = "2026-06"
+$Manifest.AddNote("033 验收演示期间使用标准 YYYY-MM 编码；2026-06 保留历史锁定态覆盖，2026-08 专用于 P1 项目成本红样本隔离。")
 $script:DemoPurchaseReceiptIds = New-Object 'System.Collections.Generic.HashSet[long]'
 
 function Write-Step {
@@ -419,7 +428,30 @@ function Ensure-Period {
     param([string] $Code, [string] $Name, [string] $Start, [string] $End, [bool] $Locked = $false)
     $existing = Get-ItemByField -Path "/api/admin/system/business-periods" -FieldName "periodCode" -FieldValue $Code -Query @{ periodCode = $Code }
     if ($null -eq $existing) {
+        $existing = Invoke-DemoApiPage -Session $Session -Path "/api/admin/system/business-periods" -Parameters @{
+            startDate = $Start
+            endDate = $End
+        } | Where-Object { $_.startDate -eq $Start -and $_.endDate -eq $End } | Select-Object -First 1
+    }
+    if ($null -eq $existing) {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/system/business-periods" -Body ([ordered]@{
+            periodCode = $Code
+            periodName = $Name
+            startDate = $Start
+            endDate = $End
+        })
+    }
+    elseif ($existing.periodCode -ne $Code -or $existing.periodName -ne $Name `
+            -or [string]$existing.startDate -ne $Start -or [string]$existing.endDate -ne $End) {
+        if ($existing.status -eq "LOCKED") {
+            $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/system/business-periods/$($existing.id)/unlock" -Body ([ordered]@{
+                reason = "033 验收演示标准期间编码更新"
+            })
+        }
+        if ($existing.status -ne "OPEN") {
+            throw "业务期间 $($existing.periodCode) 当前状态 $($existing.status) 不允许更新为标准编码 $Code。"
+        }
+        $existing = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/system/business-periods/$($existing.id)" -Body ([ordered]@{
             periodCode = $Code
             periodName = $Name
             startDate = $Start
@@ -715,14 +747,28 @@ function Ensure-BomEcoDraft {
 }
 
 function Get-FirstByRemark {
-    param([string] $Path, [string] $Remark, [hashtable] $Query = @{})
+    param(
+        [string] $Path,
+        [string] $Remark,
+        [hashtable] $Query = @{},
+        [switch] $SkipKeyword,
+        [string[]] $PreferredStatuses = @()
+    )
     $queryParameters = @{} + $Query
-    if (-not $queryParameters.ContainsKey("keyword")) {
+    if (-not $SkipKeyword.IsPresent -and -not $queryParameters.ContainsKey("keyword")) {
         $queryParameters["keyword"] = $Remark
     }
-    return Invoke-DemoApiPage -Session $Session -Path $Path -Parameters $queryParameters |
-        Where-Object { $_.remark -eq $Remark } |
-        Select-Object -First 1
+    $matches = @(Invoke-DemoApiPage -Session $Session -Path $Path -Parameters $queryParameters |
+            Where-Object { $_.remark -eq $Remark })
+    foreach ($status in @($PreferredStatuses)) {
+        $preferred = $matches |
+            Where-Object { $_.status -eq $status } |
+            Select-Object -First 1
+        if ($null -ne $preferred) {
+            return $preferred
+        }
+    }
+    return $matches | Select-Object -First 1
 }
 
 function Ensure-Stage029InventoryMutationWindow {
@@ -746,14 +792,21 @@ function Ensure-Stage029InventoryMutationWindow {
 }
 
 function Ensure-PurchaseOrder {
-    param([string] $Key, $Supplier, [object[]] $Lines, [bool] $PublicDirect = $true)
+    param(
+        [string] $Key,
+        $Supplier,
+        [object[]] $Lines,
+        [bool] $PublicDirect = $true,
+        [string] $OrderDate = "2026-07-02",
+        [string] $ExpectedArrivalDate = "2026-07-06"
+    )
     $remark = "验收演示采购订单 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/procurement/orders" -Remark $remark
     if ($null -eq $existing) {
         $body = [ordered]@{
             supplierId = $Supplier.id
-            orderDate = "2026-07-02"
-            expectedArrivalDate = "2026-07-06"
+            orderDate = $OrderDate
+            expectedArrivalDate = $ExpectedArrivalDate
             remark = $remark
             lines = $Lines
         }
@@ -790,13 +843,19 @@ function Ensure-PurchaseOrder {
 }
 
 function Ensure-PurchaseReceipt {
-    param([string] $Key, $Order, $Warehouse, [object[]] $Lines)
+    param(
+        [string] $Key,
+        $Order,
+        $Warehouse,
+        [object[]] $Lines,
+        [string] $BusinessDate = "2026-07-04"
+    )
     $remark = "验收演示采购入库 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/procurement/receipts" -Remark $remark -Query @{ orderId = $Order.id }
     if ($null -eq $existing) {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/procurement/orders/$($Order.id)/receipts" -Body ([ordered]@{
             warehouseId = $Warehouse.id
-            businessDate = "2026-07-04"
+            businessDate = $BusinessDate
             remark = $remark
             lines = $Lines
         })
@@ -968,7 +1027,8 @@ function Ensure-OwnershipConversionPosted {
     param(
         [string] $Key,
         [string] $Reason,
-        [object[]] $Lines
+        [object[]] $Lines,
+        [string] $BusinessDate = "2026-07-09"
     )
     $existing = Invoke-DemoApiPage -Session $Session -Path "/api/admin/inventory/ownership-conversions" -Parameters @{
         keyword = $Reason
@@ -977,7 +1037,7 @@ function Ensure-OwnershipConversionPosted {
     } | Where-Object { $_.reason -eq $Reason } | Select-Object -First 1
     if ($null -eq $existing) {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/inventory/ownership-conversions" -Body ([ordered]@{
-            businessDate = "2026-07-09"
+            businessDate = $BusinessDate
             reason = $Reason
             idempotencyKey = "$RunId-OWN-$Key-CREATE"
             lines = $Lines
@@ -993,7 +1053,8 @@ function Ensure-WarehouseTransferPosted {
     param(
         [string] $Key,
         [string] $Reason,
-        [object[]] $Lines
+        [object[]] $Lines,
+        [string] $BusinessDate = "2026-07-10"
     )
     $existing = Invoke-DemoApiPage -Session $Session -Path "/api/admin/inventory/warehouse-transfers" -Parameters @{
         keyword = $Reason
@@ -1002,7 +1063,7 @@ function Ensure-WarehouseTransferPosted {
     } | Where-Object { $_.reason -eq $Reason } | Select-Object -First 1
     if ($null -eq $existing) {
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/inventory/warehouse-transfers" -Body ([ordered]@{
-            businessDate = "2026-07-10"
+            businessDate = $BusinessDate
             reason = $Reason
             idempotencyKey = "$RunId-TRF-$Key-CREATE"
             lines = $Lines
@@ -1193,15 +1254,17 @@ function Ensure-SalesOrderConfirmed {
         [object[]] $Lines,
         $Project = $null,
         $Contract = $null,
-        [switch] $CreditOverride
+        [switch] $CreditOverride,
+        [string] $OrderDate = "2026-07-10",
+        [string] $ExpectedShipDate = "2026-07-14"
     )
     $remark = "验收演示销售订单 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/sales/orders" -Remark $remark
     if ($null -eq $existing) {
         $body = [ordered]@{
             customerId = $Customer.id
-            orderDate = "2026-07-10"
-            expectedShipDate = "2026-07-14"
+            orderDate = $OrderDate
+            expectedShipDate = $ExpectedShipDate
             remark = $remark
             lines = $Lines
         }
@@ -1242,7 +1305,13 @@ function Ensure-SalesOrderConfirmed {
 }
 
 function Ensure-SalesShipmentPosted {
-    param([string] $Key, $Order, $Warehouse, [object[]] $Lines)
+    param(
+        [string] $Key,
+        $Order,
+        $Warehouse,
+        [object[]] $Lines,
+        [string] $BusinessDate = "2026-07-11"
+    )
     $remark = "验收演示销售发货 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/sales/shipments" -Remark $remark -Query @{ orderId = $Order.id }
     if ($null -eq $existing) {
@@ -1260,7 +1329,7 @@ function Ensure-SalesShipmentPosted {
         }
         $existing = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/orders/$($Order.id)/shipments" -Body ([ordered]@{
             warehouseId = $Warehouse.id
-            businessDate = "2026-07-11"
+            businessDate = $BusinessDate
             remark = $remark
             lines = $Lines
         })
@@ -1623,7 +1692,7 @@ function Ensure-ProductionMaterialReturnPosted {
         $materialReturn = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/production/material-returns" -Body ([ordered]@{
             sourceIssueId = $ProductionIssue.id
             businessDate = $BusinessDate
-            clientRequestId = "$RunId-MATERIAL-RETURN-$Key"
+            clientRequestId = "$DemoPrefix-MR-$Key"
             remark = $remark
             idempotencyKey = "$RunId-MATERIAL-RETURN-$Key-CREATE"
             lines = @([ordered]@{
@@ -1684,7 +1753,7 @@ function Ensure-ProductionMaterialSupplementPosted {
             workOrderId = $WorkOrder.id
             warehouseId = $WorkOrder.issueWarehouseId
             businessDate = $BusinessDate
-            clientRequestId = "$RunId-MATERIAL-SUPPLEMENT-$Key"
+            clientRequestId = "$DemoPrefix-MS-$Key"
             remark = $remark
             idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-$Key-CREATE"
             lines = @($line)
@@ -1721,7 +1790,19 @@ function Get-ProjectCostLayerForBatch {
 }
 
 function Ensure-OutsourcingOrderReleased {
-    param([string] $Key, $Supplier, $Product, $Bom, $IssueWarehouse, $ReceiptWarehouse, $Project)
+    param(
+        [string] $Key,
+        $Supplier,
+        $Product,
+        $Bom,
+        $IssueWarehouse,
+        $ReceiptWarehouse,
+        $Project,
+        [string] $PlannedIssueDate = "2026-07-16",
+        [string] $PlannedReceiptDate = "2026-07-17",
+        [string] $PlannedStartDate = "2026-07-16",
+        [string] $PlannedFinishDate = "2026-07-17"
+    )
     $remark = "验收演示外协订单 $Key"
     $existing = Get-FirstByRemark -Path "/api/admin/production/outsourcing-orders" -Remark $remark
     if ($null -eq $existing) {
@@ -1732,10 +1813,10 @@ function Ensure-OutsourcingOrderReleased {
             plannedQuantity = "1.000000"
             issueWarehouseId = $IssueWarehouse.id
             receiptWarehouseId = $ReceiptWarehouse.id
-            plannedIssueDate = "2026-07-16"
-            plannedReceiptDate = "2026-07-17"
-            plannedStartDate = "2026-07-16"
-            plannedFinishDate = "2026-07-17"
+            plannedIssueDate = $PlannedIssueDate
+            plannedReceiptDate = $PlannedReceiptDate
+            plannedStartDate = $PlannedStartDate
+            plannedFinishDate = $PlannedFinishDate
             ownershipType = "PROJECT"
             projectId = $Project.id
             provisionalUnitCost = "100.000000"
@@ -1778,12 +1859,17 @@ function New-OutsourcingIssueLineForMaterial {
 }
 
 function Ensure-OutsourcingIssuePosted {
-    param([string] $Key, $OutsourcingOrder, [object[]] $IssueLines)
+    param(
+        [string] $Key,
+        $OutsourcingOrder,
+        [object[]] $IssueLines,
+        [string] $BusinessDate = "2026-07-16"
+    )
     $remark = "验收演示外协发料 $Key"
     $issue = Get-FirstByRemark -Path "/api/admin/production/outsourcing-orders/$($OutsourcingOrder.id)/material-issues" -Remark $remark
     if ($null -eq $issue) {
         $issue = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/production/outsourcing-orders/$($OutsourcingOrder.id)/material-issues" -Body ([ordered]@{
-            businessDate = "2026-07-16"
+            businessDate = $BusinessDate
             reason = "029 项目成本外协发料"
             warehouseId = $OutsourcingOrder.issueWarehouseId
             remark = $remark
@@ -1804,12 +1890,17 @@ function Ensure-OutsourcingIssuePosted {
 }
 
 function Ensure-OutsourcingReceiptPosted {
-    param([string] $Key, $OutsourcingOrder, [string] $BatchNo)
+    param(
+        [string] $Key,
+        $OutsourcingOrder,
+        [string] $BatchNo,
+        [string] $BusinessDate = "2026-07-17"
+    )
     $remark = "验收演示外协收货 $Key"
     $receipt = Get-FirstByRemark -Path "/api/admin/production/outsourcing-orders/$($OutsourcingOrder.id)/receipts" -Remark $remark
     if ($null -eq $receipt) {
         $body = [ordered]@{
-            businessDate = "2026-07-17"
+            businessDate = $BusinessDate
             receiptWarehouseId = $OutsourcingOrder.receiptWarehouseId
             quantity = "1.000000"
             provisionalUnitCost = "100.000000"
@@ -1868,15 +1959,20 @@ function Ensure-CostRecord {
 }
 
 function Ensure-SalesInvoiceConfirmed {
-    param([string] $Key, $Shipment)
+    param(
+        [string] $Key,
+        $Shipment,
+        [string] $InvoiceDate = "2026-07-18",
+        [string] $DueDate = "2026-08-17"
+    )
     $remark = "验收演示销售发票 $Key"
     $invoice = Get-FirstByRemark -Path "/api/admin/finance/sales-invoices" -Remark $remark
     if ($null -eq $invoice) {
         $invoice = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/finance/sales-invoices" -Body ([ordered]@{
             sourceType = "SALES_SHIPMENT"
             sourceId = $Shipment.id
-            invoiceDate = "2026-07-18"
-            dueDate = "2026-08-17"
+            invoiceDate = $InvoiceDate
+            dueDate = $DueDate
             invoiceType = "SPECIAL_VAT"
             externalInvoiceNo = "$DemoPrefix-SI-$Key"
             idempotencyKey = "$RunId-SI-$Key-CREATE"
@@ -1908,7 +2004,13 @@ function New-PurchaseInvoiceLine {
 }
 
 function Ensure-OutsourcingPurchaseInvoiceConfirmed {
-    param([string] $Key, $OutsourcingReceipt, [string] $ActualUnitPrice)
+    param(
+        [string] $Key,
+        $OutsourcingReceipt,
+        [string] $ActualUnitPrice,
+        [string] $InvoiceDate = "2026-07-18",
+        [string] $DueDate = "2026-08-17"
+    )
     $remark = "验收演示外协采购发票 $Key"
     $invoice = Get-FirstByRemark -Path "/api/admin/finance/purchase-invoices" -Remark $remark
     $externalInvoiceNo = "$DemoPrefix-PI-$Key"
@@ -1939,8 +2041,8 @@ function Ensure-OutsourcingPurchaseInvoiceConfirmed {
             sourceId = $OutsourcingReceipt.id
             ownershipType = "PROJECT"
             projectId = $OutsourcingReceipt.projectId
-            invoiceDate = "2026-07-18"
-            dueDate = "2026-08-17"
+            invoiceDate = $InvoiceDate
+            dueDate = $DueDate
             invoiceType = "SPECIAL_VAT"
             supplierInvoiceNo = $externalInvoiceNo
             idempotencyKey = "$RunId-PI-$Key-CREATE"
@@ -1964,7 +2066,9 @@ function Ensure-ExpenseConfirmed {
         [string] $OwnershipType,
         $Project,
         [string] $Amount,
-        [string] $Description
+        [string] $Description,
+        [string] $BusinessDate = "2026-07-18",
+        [string] $DueDate = "2026-08-17"
     )
     $remark = "验收演示费用 $Key"
     $expense = Get-FirstByRemark -Path "/api/admin/finance/expenses" -Remark $remark
@@ -1972,8 +2076,8 @@ function Ensure-ExpenseConfirmed {
         $body = [ordered]@{
             supplierId = $Supplier.id
             ownershipType = $OwnershipType
-            businessDate = "2026-07-18"
-            dueDate = "2026-08-17"
+            businessDate = $BusinessDate
+            dueDate = $DueDate
             invoiceType = "GENERAL_VAT"
             idempotencyKey = "$RunId-EXP-$Key-CREATE"
             version = 0
@@ -2001,7 +2105,13 @@ function Ensure-ExpenseConfirmed {
 }
 
 function Ensure-ProjectCostPublicAllocationConfirmed {
-    param([string] $Key, $Project, $PublicExpense, [string] $Amount)
+    param(
+        [string] $Key,
+        $Project,
+        $PublicExpense,
+        [string] $Amount,
+        [string] $BusinessDate = "2026-07-19"
+    )
     $remark = "029 公共制造费用分配 $Key"
     $adjustment = Get-FirstByRemark -Path "/api/admin/cost/project-cost-adjustments" -Remark $remark
     if ($null -eq $adjustment) {
@@ -2015,7 +2125,7 @@ function Ensure-ProjectCostPublicAllocationConfirmed {
         }
         $adjustment = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/cost/project-cost-adjustments" -Body ([ordered]@{
             adjustmentType = "PUBLIC_EXPENSE_ALLOCATION"
-            businessDate = "2026-07-19"
+            businessDate = $BusinessDate
             reason = $remark
             idempotencyKey = "$RunId-PC-ADJ-$Key-CREATE"
             lines = @([ordered]@{
@@ -2107,10 +2217,11 @@ function Ensure-ProjectCostCalculationVerified {
         [string] $ExpectedShipmentRevenue = "10000.00",
         [string] $ExpectedShipmentGrossMargin = "9162.00",
         [string] $ExpectedCompleteness = "INCOMPLETE",
-        [string] $ExpectedConfirmFailureCode = "PROJECT_COST_LABOR_UNPRICED"
+        [string] $ExpectedConfirmFailureCode = "PROJECT_COST_LABOR_UNPRICED",
+        [string] $CutoffDate = "2026-07-22"
     )
     $calculation = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/cost/project-costs/projects/$($Project.id)/calculations" -Body ([ordered]@{
-        cutoffDate = "2026-07-22"
+        cutoffDate = $CutoffDate
         idempotencyKey = "$RunId-PC-CALC-$Key"
     })
     Assert-DemoAmount -Name "029 项目总成本" -Actual $calculation.totalCost -Expected $ExpectedTotalCost
@@ -2157,6 +2268,165 @@ function Ensure-ProjectCostCalculationVerified {
     }
 }
 
+function Assert-P1ProjectCostMonthlyIsolation {
+    param($Project)
+    $response = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/reports/project-profit?periodCode=2026-07&analysisMode=LIVE&keyword=$([uri]::EscapeDataString($Project.projectNo))&page=1&pageSize=10"
+    if ($response.total -ne 0) {
+        throw "P1 2026-07 月结候选事实必须为 0，项目利润 LIVE 不应返回 P1；实际 total=$($response.total)。"
+    }
+}
+
+function Assert-Stage029CurrentProjectCostReady {
+    param(
+        [string] $Key,
+        $Project,
+        [string] $CutoffDate = "2026-07-31"
+    )
+    $calculation = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/cost/project-costs/projects/$($Project.id)/calculations" -Body ([ordered]@{
+        cutoffDate = $CutoffDate
+        idempotencyKey = "$RunId-PC-CALC-$Key"
+    })
+    $variances = Invoke-DemoApiPage -Session $Session -Path "/api/admin/cost/project-cost-calculations/$($calculation.id)/variances" -Parameters @{
+        page = 1
+        pageSize = 200
+    }
+    $blocking = @($variances | Where-Object { $_.severity -eq "BLOCKING" -and $_.status -eq "OPEN" })
+    if ($blocking.Count -gt 0) {
+        throw "033 $Key 项目成本当前运行存在 OPEN/BLOCKING 差异，不能作为 2026-07 月结基线。"
+    }
+    if ($calculation.status -eq "CALCULATED") {
+        $calculation = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/cost/project-cost-calculations/$($calculation.id)/confirm" -Body ([ordered]@{
+            version = $calculation.version
+            sourceFingerprint = $calculation.sourceFingerprint
+            idempotencyKey = "$RunId-PC-CALC-$Key-CONFIRM"
+        })
+    }
+    if ($calculation.status -ne "CONFIRMED" -or $calculation.isCurrent -ne $true) {
+        throw "033 $Key 项目成本运行必须确认成为 CURRENT，实际 status=$($calculation.status)、isCurrent=$($calculation.isCurrent)。"
+    }
+    $Manifest.AddObject("projectCostCalculation", $Key, $calculation.id)
+    return $calculation
+}
+
+function Get-GeneralLedgerAccountByCode {
+    param([string] $Code)
+    $accounts = Invoke-DemoApiPage -Session $Session -Path "/api/admin/gl/accounts" -Parameters @{
+        keyword = $Code
+        page = 1
+        pageSize = 100
+    }
+    $account = @($accounts | Where-Object { $_.code -eq $Code } | Select-Object -First 1)
+    if ($account.Count -eq 0 -or $null -eq $account[0]) {
+        throw "033 经营会计对照未找到总账科目 $Code。"
+    }
+    return $account[0]
+}
+
+function Ensure-GeneralLedgerJulyOpen {
+    Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/gl/ledger/initialize" -Body ([ordered]@{
+        startYearMonth = "2026-07"
+        idempotencyKey = "$RunId-GL-LEDGER-INIT-202607"
+    }) | Out-Null
+    $period = Invoke-DemoApiPage -Session $Session -Path "/api/admin/gl/accounting-periods" -Parameters @{
+        periodCode = "2026-07"
+        page = 1
+        pageSize = 20
+    } | Where-Object { $_.periodCode -eq "2026-07" } | Select-Object -First 1
+    if ($null -eq $period -or $period.status -ne "OPEN") {
+        throw "033 经营会计对照需要 2026-07 会计期间为 OPEN，实际 status=$($period.status)。"
+    }
+    $Manifest.AddObject("glAccountingPeriod", "2026-07", $period.id)
+    return $period
+}
+
+function New-GeneralLedgerLine {
+    param(
+        [int] $LineNo,
+        [long] $AccountId,
+        [string] $Summary,
+        [string] $DebitAmount = "0.00",
+        [string] $CreditAmount = "0.00",
+        [object[]] $AuxiliaryItems = @()
+    )
+    return [ordered]@{
+        lineNo = $LineNo
+        accountId = $AccountId
+        summary = $Summary
+        debitAmount = $DebitAmount
+        creditAmount = $CreditAmount
+        auxiliaryItems = $AuxiliaryItems
+    }
+}
+
+function Ensure-OperatingAccountingProjectVoucherPosted {
+    param(
+        [string] $Key,
+        $Project,
+        [string] $VoucherDate,
+        [string] $RevenueAmount,
+        [string] $CostAmount
+    )
+    $summary = "033 经营会计对照 $Key"
+    $voucher = Invoke-DemoApiPage -Session $Session -Path "/api/admin/gl/vouchers" -Parameters @{
+        keyword = $summary
+        page = 1
+        pageSize = 20
+    } | Where-Object { $_.summary -eq $summary } | Select-Object -First 1
+    if ($null -eq $voucher) {
+        $bankAccount = Get-GeneralLedgerAccountByCode -Code "1002"
+        $revenueAccount = Get-GeneralLedgerAccountByCode -Code "6001"
+        $costAccount = Get-GeneralLedgerAccountByCode -Code "6401"
+        $projectAuxiliary = @([ordered]@{ dimensionCode = "PROJECT"; sourceId = $Project.id })
+        $voucher = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/gl/vouchers" -Body ([ordered]@{
+            voucherType = "GENERAL"
+            voucherDate = $VoucherDate
+            summary = $summary
+            currency = "CNY"
+            version = 0
+            idempotencyKey = "$RunId-GL-VOUCHER-$Key-CREATE"
+            lines = @(
+                (New-GeneralLedgerLine -LineNo 1 -AccountId $bankAccount.id -Summary "$summary 收入借方" -DebitAmount $RevenueAmount),
+                (New-GeneralLedgerLine -LineNo 2 -AccountId $revenueAccount.id -Summary "$summary 项目收入" -CreditAmount $RevenueAmount -AuxiliaryItems $projectAuxiliary),
+                (New-GeneralLedgerLine -LineNo 3 -AccountId $costAccount.id -Summary "$summary 项目成本" -DebitAmount $CostAmount -AuxiliaryItems $projectAuxiliary),
+                (New-GeneralLedgerLine -LineNo 4 -AccountId $bankAccount.id -Summary "$summary 成本贷方" -CreditAmount $CostAmount)
+            )
+        })
+    }
+    if ($voucher.status -eq "DRAFT") {
+        $voucher = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/gl/vouchers/$($voucher.id)/submit" -Body ([ordered]@{
+            version = $voucher.version
+            reason = "033 经营会计对照凭证提交"
+            idempotencyKey = "$RunId-GL-VOUCHER-$Key-SUBMIT"
+        })
+    }
+    if ($voucher.status -eq "SUBMITTED") {
+        $approval = $voucher.approvalSummary
+        if ($null -eq $approval) {
+            $approval = (Get-ItemById -Path "/api/admin/gl/vouchers" -Id $voucher.id).approvalSummary
+        }
+        if ($null -eq $approval) {
+            throw "033 经营会计对照凭证 $Key 已提交但没有审批实例。"
+        }
+        Invoke-ApprovalTaskAction -Approval $approval -Action "approve" -Comment "同意 033 经营会计对照凭证" -Key "$RunId-GL-VOUCHER-$Key-APPROVE" | Out-Null
+        $voucher = Get-ItemById -Path "/api/admin/gl/vouchers" -Id $voucher.id
+    }
+    if ($voucher.status -ne "POSTED") {
+        throw "033 经营会计对照凭证 $Key 必须过账，实际 status=$($voucher.status)。"
+    }
+    $Manifest.AddObject("glVoucher", $Key, $voucher.id)
+    return $voucher
+}
+
+function Ensure-OperatingAccountingFacts {
+    param($ProjectP2, $ProjectP3)
+    Ensure-GeneralLedgerJulyOpen | Out-Null
+    $p2Voucher = Ensure-OperatingAccountingProjectVoucherPosted -Key "029-P2" -Project $ProjectP2 `
+        -VoucherDate "2026-07-25" -RevenueAmount "1000.00" -CostAmount "33.00"
+    $p3Voucher = Ensure-OperatingAccountingProjectVoucherPosted -Key "029-P3" -Project $ProjectP3 `
+        -VoucherDate "2026-07-26" -RevenueAmount "1500.00" -CostAmount "44.00"
+    return [pscustomobject]@{ p2Voucher = $p2Voucher; p3Voucher = $p3Voucher }
+}
+
 function Ensure-Stage029ProjectCostDataset {
     param(
         $Unit,
@@ -2195,6 +2465,19 @@ function Ensure-Stage029ProjectCostDataset {
         $projectP2 = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales-projects/$($projectP2.id)/activate" -Body ([ordered]@{
             version = $projectP2.version
             reason = "029 项目成本核算验收启动 P2"
+        })
+    }
+
+    $projectP3 = Ensure-SalesProject -Key "$DemoPrefix-SALES-PROJ-029-P3" -Customer $Customer -OwnerUserId $OwnerUserId `
+        -Name "029 项目成本核算关闭 P3" -Revenue "1500.00" -Cost "44.00"
+    $contractP3 = Ensure-SalesContract -Key "$DemoPrefix-CONTRACT-029-P3" -Project $projectP3 -ContractType "MAIN" `
+        -MainContractId $null -Name "029 项目成本 P3 主合同" -Amount "1500.00" -ExternalNo "$DemoPrefix-EXT-029-P3"
+    $contractP3 = Submit-And-ActSalesContractApproval -Contract $contractP3 -Action "approve" -Key "029-P3"
+    $projectP3 = Get-ItemById -Path "/api/admin/sales-projects" -Id $projectP3.id
+    if ($projectP3.status -ne "ACTIVE") {
+        $projectP3 = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales-projects/$($projectP3.id)/activate" -Body ([ordered]@{
+            version = $projectP3.version
+            reason = "029 项目成本核算验收启动 P3"
         })
     }
 
@@ -2253,7 +2536,7 @@ function Ensure-Stage029ProjectCostDataset {
 
     $raw48Batch = Get-InventoryBatch -BatchNo "$DemoPrefix-BATCH-029-RAW-48"
     $raw110Batch = Get-InventoryBatch -BatchNo "$DemoPrefix-BATCH-029-RAW-110" -OnlyAvailable $false
-    Ensure-OwnershipConversionPosted -Key "029-P1-RAW-48" -Reason "029 P1 材料 48 批次转项目仓" -Lines @(
+    Ensure-OwnershipConversionPosted -Key "029-P1-RAW-48" -Reason "029 P1 材料 48 批次转项目仓" -BusinessDate $ProjectCostExceptionInventoryDate -Lines @(
         [ordered]@{
             lineNo = 1
             sourceOwnershipType = "PUBLIC"
@@ -2274,45 +2557,62 @@ function Ensure-Stage029ProjectCostDataset {
 
     $workOrder029 = Ensure-WorkOrderReleased -Key "029-P1-FG" -Product $FinishedGood -Bom $Bom `
         -PlannedQuantity "1.000000" -IssueWarehouse $RawWarehouse -ReceiptWarehouse $FinishedWarehouse `
-        -PlannedStartDate "2026-07-16" -PlannedFinishDate "2026-07-17" -Project $projectP1
+        -PlannedStartDate $ProjectCostExceptionProductionStart -PlannedFinishDate $ProjectCostExceptionProductionFinish -Project $projectP1
     $issue029 = Ensure-ProductionIssuePosted -Key "029-P1-FG-MATERIAL" -WorkOrder $workOrder029 -IssueLines @(
         (New-IssueLineForMaterial -WorkOrder $workOrder029 -MaterialCode $Raw48.code -WarehouseId $RawWarehouse.id -Quantity "1.000000" `
             -TrackingAllocations @([ordered]@{ batchId = $raw48Batch.id; quantity = "1.000000" }) -OwnershipType "PROJECT" -ProjectId $projectP1.id -CostLayerId $raw48Layer.id),
         (New-IssueLineForMaterial -WorkOrder $workOrder029 -MaterialCode $Raw110.code -WarehouseId $RawWarehouse.id -Quantity "1.000000" `
             -TrackingAllocations @([ordered]@{ batchId = $raw110Batch.id; quantity = "1.000000" }) -OwnershipType "PUBLIC")
-    ) -BusinessDate "2026-07-16"
+    ) -BusinessDate $ProjectCostExceptionProductionStart
     $raw110IssueLine = @($issue029.lines) | Where-Object { $_.materialCode -eq $Raw110.code } | Select-Object -First 1
     if ($null -eq $raw110IssueLine -or $raw110IssueLine.ownershipType -ne "PUBLIC" -or $null -ne $raw110IssueLine.projectId `
             -or $null -ne $raw110IssueLine.costLayerId -or [long]$raw110IssueLine.warehouseId -ne [long]$RawWarehouse.id) {
         throw "029 材料 110 领料来源必须是原料仓 PUBLIC 库存，且 projectId/costLayerId 为空。"
     }
     Ensure-ProductionMaterialReturnPosted -Key "029-P1-FG-RETURN" -ProductionIssue $issue029 `
-        -SourceBatchNo "$DemoPrefix-BATCH-029-RAW-48" -Quantity "0.250000" -BusinessDate "2026-07-16" | Out-Null
+        -SourceBatchNo "$DemoPrefix-BATCH-029-RAW-48" -Quantity "0.250000" -BusinessDate $ProjectCostExceptionProductionStart | Out-Null
     Ensure-ProductionMaterialSupplementPosted -Key "029-P1-FG-SUPPLEMENT" -WorkOrder $workOrder029 `
         -MaterialCode $Raw48.code -Quantity "0.458333" -Project $projectP1 -CostLayer $raw48Layer `
-        -TrackingAllocations @([ordered]@{ batchId = $raw48Batch.id; quantity = "0.458333" }) -BusinessDate "2026-07-16" | Out-Null
+        -TrackingAllocations @([ordered]@{ batchId = $raw48Batch.id; quantity = "0.458333" }) -BusinessDate $ProjectCostExceptionProductionStart | Out-Null
     $production029 = Ensure-ProductionReportAndReceiptPosted -Key "029-P1-FG" -WorkOrder $workOrder029 `
-        -CompletionQuantity "1.000000" -BusinessDate "2026-07-17" -ProvisionalUnitCost "0.000000"
-    Process-PendingQualityInspections -SourceType "PRODUCTION_COMPLETION" -SourceIds @([long]$production029.receipt.id) -BusinessDate "2026-07-17"
+        -CompletionQuantity "1.000000" -BusinessDate $ProjectCostExceptionProductionFinish -ProvisionalUnitCost "0.000000"
+    Process-PendingQualityInspections -SourceType "PRODUCTION_COMPLETION" -SourceIds @([long]$production029.receipt.id) -BusinessDate $ProjectCostExceptionProductionFinish
     Ensure-CostRecord -Key "029-P1-LABOR-ACTUAL" -WorkOrder $production029.workOrder -CostType "LABOR" `
-        -Amount "300.00" -BusinessDate "2026-07-17" | Out-Null
+        -Amount "300.00" -BusinessDate $ProjectCostExceptionProductionFinish | Out-Null
 
     $outsourcing029 = Ensure-OutsourcingOrderReleased -Key "029-P1-FG" -Supplier $Supplier -Product $FinishedGood `
-        -Bom $Bom -IssueWarehouse $RawWarehouse -ReceiptWarehouse $FinishedWarehouse -Project $projectP1
-    $outsourcingReceipt029 = Ensure-OutsourcingReceiptPosted -Key "029-P1-FG" -OutsourcingOrder $outsourcing029 -BatchNo $null
+        -Bom $Bom -IssueWarehouse $RawWarehouse -ReceiptWarehouse $FinishedWarehouse -Project $projectP1 `
+        -PlannedIssueDate $ProjectCostExceptionProductionStart -PlannedReceiptDate $ProjectCostExceptionProductionFinish `
+        -PlannedStartDate $ProjectCostExceptionProductionStart -PlannedFinishDate $ProjectCostExceptionProductionFinish
+    $outsourcingReceipt029 = Ensure-OutsourcingReceiptPosted -Key "029-P1-FG" -OutsourcingOrder $outsourcing029 -BatchNo $null -BusinessDate $ProjectCostExceptionProductionFinish
     Ensure-OutsourcingPurchaseInvoiceConfirmed -Key "029-P1-FG" -OutsourcingReceipt $outsourcingReceipt029 `
-        -ActualUnitPrice "120.000000" | Out-Null
+        -ActualUnitPrice "120.000000" -InvoiceDate $ProjectCostExceptionSettlementDate -DueDate "2026-09-17" | Out-Null
 
     Ensure-ExpenseConfirmed -Key "029-P1-PROJECT-EXPENSE" -Supplier $Supplier -OwnershipType "PROJECT" `
-        -Project $projectP1 -Amount "200.00" -Description "029 P1 项目费用" | Out-Null
+        -Project $projectP1 -Amount "200.00" -Description "029 P1 项目费用" -BusinessDate $ProjectCostExceptionSettlementDate -DueDate "2026-09-17" | Out-Null
     $publicExpense = Ensure-ExpenseConfirmed -Key "029-P1-PUBLIC-OVERHEAD" -Supplier $Supplier -OwnershipType "PUBLIC" `
-        -Project $null -Amount "50.00" -Description "029 公共制造费用"
+        -Project $null -Amount "50.00" -Description "029 公共制造费用" -BusinessDate $ProjectCostExceptionSettlementDate -DueDate "2026-09-17"
     Ensure-ProjectCostPublicAllocationConfirmed -Key "029-P1-PUBLIC-OVERHEAD" -Project $projectP1 `
-        -PublicExpense $publicExpense -Amount "50.00" | Out-Null
+        -PublicExpense $publicExpense -Amount "50.00" -BusinessDate $ProjectCostExceptionAllocationDate | Out-Null
     Ensure-ExpenseConfirmed -Key "029-P2-PROJECT-EXPENSE" -Supplier $Supplier -OwnershipType "PROJECT" `
         -Project $projectP2 -Amount "33.00" -Description "029 P2 隔离项目费用" | Out-Null
+    Ensure-ExpenseConfirmed -Key "029-P3-PROJECT-EXPENSE" -Supplier $Supplier -OwnershipType "PROJECT" `
+        -Project $projectP3 -Amount "44.00" -Description "029 P3 月结项目费用" | Out-Null
     Ensure-ExpenseConfirmed -Key "029-PUBLIC-UNALLOCATED" -Supplier $Supplier -OwnershipType "PUBLIC" `
         -Project $null -Amount "75.00" -Description "029 未分配公共费用隔离" | Out-Null
+
+    $workOrderP2 = Ensure-WorkOrderReleased -Key "029-P2-CURRENT" -Product $FinishedGood -Bom $Bom `
+        -PlannedQuantity "1.000000" -IssueWarehouse $RawWarehouse -ReceiptWarehouse $FinishedWarehouse `
+        -PlannedStartDate "2026-07-20" -PlannedFinishDate "2026-07-21" -Project $projectP2
+    Ensure-CostRecord -Key "029-P2-LABOR-CURRENT" -WorkOrder $workOrderP2 -CostType "LABOR" `
+        -Amount "33.00" -BusinessDate "2026-07-20" | Out-Null
+    $workOrderP3 = Ensure-WorkOrderReleased -Key "029-P3-CURRENT" -Product $FinishedGood -Bom $Bom `
+        -PlannedQuantity "1.000000" -IssueWarehouse $RawWarehouse -ReceiptWarehouse $FinishedWarehouse `
+        -PlannedStartDate "2026-07-21" -PlannedFinishDate "2026-07-22" -Project $projectP3
+    Ensure-CostRecord -Key "029-P3-LABOR-CURRENT" -WorkOrder $workOrderP3 -CostType "LABOR" `
+        -Amount "44.00" -BusinessDate "2026-07-21" | Out-Null
+    Assert-Stage029CurrentProjectCostReady -Key "029-P2" -Project $projectP2 | Out-Null
+    Assert-Stage029CurrentProjectCostReady -Key "029-P3" -Project $projectP3 | Out-Null
 
     Ensure-SalesCreditProfile -Customer $Customer -CreditLimit "20000.00" -Remark "029 项目成本验收：P1 发货额度内确认" | Out-Null
     $salesOrder029 = Ensure-SalesOrderConfirmed -Key "029-P1-FG" -Customer $Customer -Project $projectP1 -Contract $contractP1 -Lines @(
@@ -2323,10 +2623,10 @@ function Ensure-Stage029ProjectCostDataset {
             quantity = "2.000000"
             unitPrice = "5000.00"
             reservationWarehouseId = $FinishedWarehouse.id
-            expectedShipDate = "2026-07-18"
+            expectedShipDate = $ProjectCostExceptionSettlementDate
             remark = "029 P1 同 FG 销售发货 2 件"
         }
-    )
+    ) -OrderDate $ProjectCostExceptionSettlementDate -ExpectedShipDate $ProjectCostExceptionSettlementDate
     $shipment029 = Ensure-SalesShipmentPosted -Key "029-P1-FG" -Order $salesOrder029 -Warehouse $FinishedWarehouse -Lines @(
         [ordered]@{
             lineNo = 1
@@ -2336,15 +2636,18 @@ function Ensure-Stage029ProjectCostDataset {
             quantity = "2.000000"
             remark = "029 P1 同 FG 销售出库 2 件"
         }
-    )
-    Ensure-SalesInvoiceConfirmed -Key "029-P1-FG" -Shipment $shipment029 | Out-Null
+    ) -BusinessDate $ProjectCostExceptionSettlementDate
+    Ensure-SalesInvoiceConfirmed -Key "029-P1-FG" -Shipment $shipment029 -InvoiceDate $ProjectCostExceptionSettlementDate -DueDate "2026-09-17" | Out-Null
     $calculation = Ensure-ProjectCostCalculationVerified -Key "029-P1" -Project $projectP1 `
         -ExpectedTotalCost "838.00" -ExpectedShipmentRevenue "10000.00" -ExpectedShipmentGrossMargin "9162.00" `
-        -ExpectedCompleteness "INCOMPLETE" -ExpectedConfirmFailureCode "PROJECT_COST_LABOR_UNPRICED"
+        -ExpectedCompleteness "INCOMPLETE" -ExpectedConfirmFailureCode "PROJECT_COST_LABOR_UNPRICED" `
+        -CutoffDate $ProjectCostExceptionCutoffDate
+    Assert-P1ProjectCostMonthlyIsolation -Project $projectP1
 
     return [pscustomobject]@{
         projectP1 = $projectP1
         projectP2 = $projectP2
+        projectP3 = $projectP3
         purchaseReceipt = $receipt029
         production = $production029
         outsourcingReceipt = $outsourcingReceipt029
@@ -2377,7 +2680,8 @@ function Ensure-FinanceSettlementPosted {
     }
     if ($receivables.Count -gt 0) {
         $target = $receivables[0]
-        $receipt = Get-FirstByRemark -Path "/api/admin/finance/receipts" -Remark "验收演示收款 $($target.receivableNo)" -Query @{ receivableId = $target.id }
+        $receipt = Get-FirstByRemark -Path "/api/admin/finance/receipts" -Remark "验收演示收款 $($target.receivableNo)" `
+            -Query @{ receivableId = $target.id } -SkipKeyword -PreferredStatuses @("POSTED", "DRAFT")
         if ($null -eq $receipt) {
             $receipt = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/finance/receivables/$($target.id)/receipts" -Body ([ordered]@{
                 receiptDate = "2026-07-18"
@@ -2395,7 +2699,8 @@ function Ensure-FinanceSettlementPosted {
     $adjustmentReceipt = $null
     if ($receivables.Count -gt 1) {
         $adjustmentReceivable = $receivables[1]
-        $adjustmentReceipt = Get-FirstByRemark -Path "/api/admin/finance/receipts" -Remark "验收演示调整收款 $($adjustmentReceivable.receivableNo)" -Query @{ receivableId = $adjustmentReceivable.id }
+        $adjustmentReceipt = Get-FirstByRemark -Path "/api/admin/finance/receipts" -Remark "验收演示调整收款 $($adjustmentReceivable.receivableNo)" `
+            -Query @{ receivableId = $adjustmentReceivable.id } -SkipKeyword -PreferredStatuses @("POSTED", "DRAFT")
         if ($null -eq $adjustmentReceipt) {
             $adjustmentReceipt = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/finance/receivables/$($adjustmentReceivable.id)/receipts" -Body ([ordered]@{
                 receiptDate = "2026-07-18"
@@ -2432,7 +2737,8 @@ function Ensure-FinanceSettlementPosted {
     }
     if ($payables.Count -gt 0) {
         $target = $payables[0]
-        $payment = Get-FirstByRemark -Path "/api/admin/finance/payments" -Remark "验收演示付款 $($target.payableNo)" -Query @{ payableId = $target.id }
+        $payment = Get-FirstByRemark -Path "/api/admin/finance/payments" -Remark "验收演示付款 $($target.payableNo)" `
+            -Query @{ payableId = $target.id } -SkipKeyword -PreferredStatuses @("POSTED", "DRAFT")
         if ($null -eq $payment) {
             $payment = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/finance/payables/$($target.id)/payments" -Body ([ordered]@{
                 paymentDate = "2026-07-18"
@@ -2502,7 +2808,7 @@ function Ensure-ReversalDocumentsPosted {
         $salesReturn = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/sales/returns" -Body ([ordered]@{
             sourceShipmentId = $SalesShipment.id
             businessDate = "2026-07-19"
-            clientRequestId = "$RunId-SALES-RETURN"
+            clientRequestId = "$DemoPrefix-SALES-RETURN"
             remark = $salesReturnRemark
             lines = $salesReturnLines
         })
@@ -2511,7 +2817,7 @@ function Ensure-ReversalDocumentsPosted {
         $salesReturn = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/sales/returns/$($salesReturn.id)" -Body ([ordered]@{
             sourceShipmentId = $SalesShipment.id
             businessDate = "2026-07-19"
-            clientRequestId = "$RunId-SALES-RETURN"
+            clientRequestId = "$DemoPrefix-SALES-RETURN"
             remark = $salesReturnRemark
             lines = $salesReturnLines
         })
@@ -2532,7 +2838,7 @@ function Ensure-ReversalDocumentsPosted {
         $purchaseReturn = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/procurement/returns" -Body ([ordered]@{
             sourceReceiptId = $PurchaseReceipt.id
             businessDate = "2026-07-19"
-            clientRequestId = "$RunId-PURCHASE-RETURN"
+            clientRequestId = "$DemoPrefix-PURCHASE-RETURN"
             remark = $purchaseReturnRemark
             lines = @([ordered]@{
                 sourceReceiptLineId = $sourceLine.id
@@ -2573,7 +2879,7 @@ function Ensure-ReversalDocumentsPosted {
         $materialReturn = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/production/material-returns" -Body ([ordered]@{
             sourceIssueId = $ProductionIssue.id
             businessDate = "2026-07-19"
-            clientRequestId = "$RunId-MATERIAL-RETURN"
+            clientRequestId = "$DemoPrefix-MATERIAL-RETURN"
             remark = $materialReturnRemark
             idempotencyKey = "$RunId-MATERIAL-RETURN-CREATE"
             lines = @([ordered]@{
@@ -2606,7 +2912,7 @@ function Ensure-ReversalDocumentsPosted {
             workOrderId = $WorkOrder.id
             warehouseId = $WorkOrder.issueWarehouseId
             businessDate = "2026-07-19"
-            clientRequestId = "$RunId-MATERIAL-SUPPLEMENT"
+            clientRequestId = "$DemoPrefix-MATERIAL-SUPPLEMENT"
             remark = $supplementRemark
             idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-CREATE"
             lines = @([ordered]@{
@@ -2639,7 +2945,7 @@ function Ensure-ReversalDocumentsPosted {
             targetId = $ReceivableForAdjustment.id
             businessDate = "2026-07-20"
             amount = "10.00"
-            clientRequestId = "$RunId-SETTLEMENT-ADJ"
+            clientRequestId = "$DemoPrefix-SETTLEMENT-ADJ"
             remark = $adjustmentRemark
         }
         if ($null -eq $adjustment) {
@@ -2831,9 +3137,7 @@ function Ensure-StocktakeDocuments {
                 $zeroDone = $true
                 continue
             }
-            if ($updates.Count -lt 25) {
-                $updates.Add([ordered]@{ id = $line.id; version = $line.version; countedQuantity = $line.bookQuantity })
-            }
+            $updates.Add([ordered]@{ id = $line.id; version = $line.version; countedQuantity = $line.bookQuantity })
         }
         if (-not $positiveDone -or -not $negativeDone -or $updates.Count -lt 2) {
             throw "差异盘点缺少可用项目盘盈或盘亏行。"
@@ -2855,7 +3159,7 @@ function Ensure-StocktakeDocuments {
         Where-Object { $_.reason -eq $draftReason } | Select-Object -First 1
     if ($null -eq $draft) {
         $draft = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/inventory/stocktakes" -Body ([ordered]@{
-            businessDate = "2026-07-24"
+            businessDate = "2026-08-24"
             scopeType = "WAREHOUSE"
             warehouseId = $ProjectLayer.warehouseId
             reason = $draftReason
@@ -2867,6 +3171,13 @@ function Ensure-StocktakeDocuments {
             version = $draft.version
             reason = "启动未盘快照样例"
             idempotencyKey = "$RunId-STK-DRAFT-START"
+        })
+    }
+    if ($draft.status -in @("COUNTING", "RECONCILED")) {
+        $draft = Invoke-DemoApi -Session $Session -Method Put -Path "/api/admin/inventory/stocktakes/$($draft.id)/cancel" -Body ([ordered]@{
+            version = $draft.version
+            reason = "033 月结验收释放未盘样例范围锁"
+            idempotencyKey = "$RunId-STK-DRAFT-CANCEL-FOR-CLOSE"
         })
     }
     $Manifest.AddObject("stocktake", "ZERO", $zero.id)
@@ -2946,7 +3257,7 @@ function New-BomDraftImportFile {
 
 function Ensure-DocumentTaskSamples {
     param($ContractApproval, $BomEcoApproval, $BomDraft, $BomImportParent, $BomImportChild)
-    $taskDir = New-DemoDirectory -Path (Join-Path $Root "apps/api/target/demo-data/document-tasks")
+    $taskDir = New-DemoDirectory -Path (Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) "qherp-demo-data") "$RunId/document-tasks")
     if ($DocumentWorkerMode -eq "WorkerDisabled") {
         $cancelTask = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/exports/materials" -Body ([ordered]@{
             keyword = $DemoPrefix
@@ -3071,6 +3382,63 @@ function Ensure-DocumentTaskSamples {
     $Manifest.AddNote("DocumentWorkerMode=WorkerEnabled：已通过真实 worker 处理导入、导出和打印任务。")
 }
 
+function Ensure-Stage033PeriodCloseFrozen {
+    param($Period)
+
+    if ($DocumentWorkerMode -ne "WorkerEnabled") {
+        $Manifest.AddNote("DocumentWorkerMode=WorkerDisabled：033 业务月结关闭延后到同 RunId WorkerEnabled 标准步骤执行。")
+        return $null
+    }
+
+    $summary = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/period-closes/periods/$($Period.id)"
+    if ($summary.status -eq "CLOSED" -and $summary.periodStatus -eq "LOCKED" -and $null -ne $summary.currentSnapshotId) {
+        $Manifest.AddTask("PERIOD-CLOSE-2026-07", $summary.currentRunId)
+        $Manifest.AddNote("033 验收通过 WorkerEnabled 标准步骤复用既有 2026-07 CLOSED 月结与冻结快照。")
+        return $summary
+    }
+
+    $check = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/period-closes/checks" -Body ([ordered]@{
+        periodId = [long]$Period.id
+        idempotencyKey = "$RunId-PERIOD-CHECK-2026-07"
+    })
+    if ($check.status -ne "READY") {
+        throw "033 业务月结检查未达到 READY：status=$($check.status) blocking=$($check.blockingCount) warning=$($check.warningCount)。"
+    }
+
+    $closed = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/period-closes/$($check.id)/close" -Body ([ordered]@{
+        version = $check.version
+        sourceFingerprint = $check.sourceFingerprint
+        warningAcknowledged = $true
+        reason = "033 验收关闭 2026-07 业务月结并生成经营侧冻结快照"
+        idempotencyKey = "$RunId-PERIOD-CLOSE-2026-07"
+    })
+    if ($closed.status -ne "CLOSED" -or $closed.periodStatus -ne "LOCKED" -or $null -eq $closed.snapshotId) {
+        throw "033 业务月结关闭未产生 CLOSED/LOCKED/snapshot：status=$($closed.status) periodStatus=$($closed.periodStatus) snapshotId=$($closed.snapshotId)。"
+    }
+
+    $snapshot = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/period-closes/$($closed.id)/snapshot"
+    $requiredReportCodes = @(
+        "OVERVIEW", "SALES_SUMMARY", "PROCUREMENT_SUMMARY", "INVENTORY_STOCK_FLOW",
+        "PRODUCTION_EXECUTION", "COST_COLLECTION", "SETTLEMENT_SUMMARY", "EXCEPTIONS",
+        "PROJECT_PROFIT", "CONTRACT_COLLECTION", "PROCUREMENT_VARIANCE",
+        "INVENTORY_CAPITAL", "RECEIVABLE_PAYABLE"
+    )
+    foreach ($code in $requiredReportCodes) {
+        if ($code -notin @($snapshot.reportCodes)) {
+            throw "033 业务月结快照缺少报表分区：$code。"
+        }
+    }
+    foreach ($code in @("OPERATING_ACCOUNTING_RECONCILIATION", "FINANCIAL_SUMMARY")) {
+        if ($code -in @($snapshot.reportCodes)) {
+            throw "033 业务月结快照不应包含不支持快照的报表分区：$code。"
+        }
+    }
+
+    $Manifest.AddTask("PERIOD-CLOSE-2026-07", $closed.id)
+    $Manifest.AddNote("033 验收通过 WorkerEnabled 标准步骤完成 2026-07 业务月结关闭并生成五类经营侧冻结快照。")
+    return $closed
+}
+
 function Ensure-SalesProject {
     param(
         [string] $Key,
@@ -3139,7 +3507,7 @@ $adminLikeRole = Ensure-Role -Code "$DemoPrefix-ROLE-ADMIN" -Name "桥合演示�
 $warehouseRole = Ensure-Role -Code "$DemoPrefix-ROLE-WAREHOUSE" -Name "桥合仓储角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "inventory:*" -or $_ -like "master:*" -or $_ -like "platform:*" -or $_ -like "system:business-period:*" }) -PermissionMap $permissionMap
 $productionRole = Ensure-Role -Code "$DemoPrefix-ROLE-PRODUCTION" -Name "桥合生产角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "production:*" -or $_ -like "material:*" -or $_ -like "inventory:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
 $financeRole = Ensure-Role -Code "$DemoPrefix-ROLE-FINANCE" -Name "桥合财务角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "finance:*" -or $_ -like "sales:*" -or $_ -like "procurement:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
-$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -like "cost:project-cost-adjustment:*" -or $_ -eq "cost:project-cost:view" -or $_ -eq "finance:expense:view" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" -or $_ -eq "sales:order:view" -or $_ -eq "sales:credit:view" -or $_ -eq "sales:credit:override-approve" }) -PermissionMap $permissionMap
+$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -like "cost:project-cost-adjustment:*" -or $_ -eq "cost:project-cost:view" -or $_ -eq "finance:expense:view" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" -or $_ -eq "sales:order:view" -or $_ -eq "sales:credit:view" -or $_ -eq "sales:credit:override-approve" -or $_ -eq "gl:voucher:view" -or $_ -eq "gl:voucher:approve-post" }) -PermissionMap $permissionMap
 $readonlyRole = Ensure-Role -Code "$DemoPrefix-ROLE-READONLY" -Name "桥合只读角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "*:view" -or $_ -like "*:export" }) -PermissionMap $permissionMap
 
 $demoAdmin = Ensure-User -Username "$DemoPrefix-admin" -DisplayName "桥合演示管理员" -RoleIds @($adminLikeRole.id)
@@ -3243,6 +3611,7 @@ foreach ($rule in $codingRules) {
 }
 $openPeriod = Ensure-Period -Code $OpenPeriodCode -Name "$DemoPrefix 2026 年 7 月开放期间" -Start $OpenPeriodStart -End $OpenPeriodEnd
 $lockedPeriod = Ensure-Period -Code $LockedPeriodCode -Name "$DemoPrefix 2026 年 6 月锁定期间" -Start $LockedPeriodStart -End $LockedPeriodEnd -Locked $true
+$projectCostExceptionPeriod = Ensure-Period -Code $ProjectCostExceptionPeriodCode -Name "$DemoPrefix 2026 年 8 月项目成本红样本隔离期间" -Start $ProjectCostExceptionStart -End $ProjectCostExceptionEnd
 $lockedPeriod = Ensure-PeriodAuditSamples -LockedPeriod $lockedPeriod
 
 Write-Step "创建 BOM、替代料和 ECO。"
@@ -3511,7 +3880,8 @@ $ownCable = Ensure-OwnershipConversionPosted -Key "PROJECT-CABLE" -Reason "验�
         serialId = $null
         quantity = "60.000000"
     }
-)
+) `
+    -BusinessDate $ProjectCostExceptionInventoryDate
 $projectCuLayer = Invoke-DemoApiPage -Session $Session -Path "/api/admin/inventory/cost-layers" -Parameters @{
     ownershipType = "PROJECT"
     projectId = $projectA.id
@@ -3553,7 +3923,8 @@ $ownProjectToProject = Ensure-OwnershipConversionPosted -Key "PROJECT-CABLE-REAS
         quantity = "10.000000"
         sourceCostLayerId = $projectCableLayer.id
     }
-)
+) `
+    -BusinessDate $ProjectCostExceptionInventoryDate
 $ownProjectToPublic = Ensure-OwnershipConversionPosted -Key "PROJECT-CU-RETURN-PUBLIC" -Reason "验收演示项目 A 铜排退回公共库存" -Lines @(
     [ordered]@{
         lineNo = 1
@@ -3588,6 +3959,7 @@ Ensure-WarehouseTransferPosted -Key "PROJECT-CU" -Reason "验收演示项目铜�
         sourceCostLayerId = $projectCuLayer.id
     }
 ) | Out-Null
+Assert-Stage029CurrentProjectCostReady -Key "BASE-PROJ-A" -Project $projectA | Out-Null
 
 Write-Step "创建生产工单、领料、报工和完工入库。"
 $workOrderComplete = Ensure-WorkOrderReleased -Key "COMPLETE-SEMI-B" -Product $semiB -Bom $bomSemi `
@@ -3697,6 +4069,9 @@ $stage029Dataset = Ensure-Stage029ProjectCostDataset -Unit $unitEach -RawWarehou
     -FinishedWarehouse $whFinished -Customer $customers[2] -IsolationCustomer $customers[1] -Supplier $suppliers[2] `
     -OwnerUserId $demoAdmin.id -FinishedGood $fg029 -Raw48 $raw02948 -Raw110 $raw029110 -Bom $bom029
 
+Write-Step "创建 033 经营会计对照最小真实总账事实。"
+$operatingAccountingFacts = Ensure-OperatingAccountingFacts -ProjectP2 $stage029Dataset.projectP2 -ProjectP3 $stage029Dataset.projectP3
+
 Write-Step "创建估值调整和盘点单据。"
 $valuationAdjustment = Ensure-ValuationAdjustmentPosted -Material $materials["$DemoPrefix-MAT-RAW-RAIL"] -ProjectLayer $projectCuLayer
 $stocktakes = Ensure-StocktakeDocuments -ProjectLayer $projectCuLayer
@@ -3704,6 +4079,9 @@ $stocktakes = Ensure-StocktakeDocuments -ProjectLayer $projectCuLayer
 Write-Step "创建文档任务样例。"
 Ensure-DocumentTaskSamples -ContractApproval $mainContract.approvalSummary -BomEcoApproval $eco.approvalSummary `
     -BomDraft $bomDraft -BomImportParent $fgB -BomImportChild $label
+
+Write-Step "执行 033 标准业务月结关闭步骤。"
+$periodClose = Ensure-Stage033PeriodCloseFrozen -Period $openPeriod
 
 $Manifest.AddNote("核心业务数据生成坚持 API-only；未使用业务 INSERT/UPDATE SQL。")
 $Manifest.Save()

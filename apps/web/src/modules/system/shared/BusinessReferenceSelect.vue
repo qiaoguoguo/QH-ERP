@@ -1,11 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import type { BusinessReferenceId, BusinessReferenceOption } from './businessReferenceSelectTypes'
 
 const props = withDefaults(defineProps<{
   modelValue: BusinessReferenceId | ''
   placeholder: string
-  loadOptions: (keyword: string) => Promise<BusinessReferenceOption[]>
+  loadOptions: (keyword: string, selectedValue?: BusinessReferenceId | '') => Promise<BusinessReferenceOption[]>
   disabled?: boolean
   clearable?: boolean
   dataTest?: string
@@ -27,7 +27,7 @@ async function remoteSearch(keyword = '') {
   const seq = ++requestSeq
   loading.value = true
   try {
-    const loaded = await props.loadOptions(keyword)
+    const loaded = await props.loadOptions(keyword, props.modelValue)
     if (seq === requestSeq) {
       options.value = loaded
     }
@@ -43,6 +43,10 @@ function updateValue(value: BusinessReferenceId | '' | null | undefined) {
 }
 
 onMounted(() => {
+  void remoteSearch('')
+})
+
+watch(() => props.modelValue, () => {
   void remoteSearch('')
 })
 

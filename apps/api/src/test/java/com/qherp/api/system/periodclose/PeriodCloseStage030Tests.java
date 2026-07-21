@@ -19,6 +19,7 @@ import org.springframework.test.annotation.DirtiesContext;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +48,12 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 			"biz_period_inventory_snapshot", "biz_period_inventory_summary", "biz_period_wip_snapshot",
 			"biz_period_project_cost_snapshot", "biz_period_report_snapshot",
 			"biz_period_close_action_idempotency", "biz_period_close_audit");
+
+	private static final List<String> STAGE_033_BUSINESS_SNAPSHOT_REPORT_CODES = List.of("PROJECT_PROFIT",
+			"CONTRACT_COLLECTION", "PROCUREMENT_VARIANCE", "INVENTORY_CAPITAL", "RECEIVABLE_PAYABLE");
+
+	private static final List<String> STAGE_033_NON_SNAPSHOT_REPORT_CODES = List.of(
+			"OPERATING_ACCOUNTING_RECONCILIATION", "FINANCIAL_SUMMARY");
 
 	@Autowired
 	private TestRestTemplate restTemplate;
@@ -443,6 +450,9 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 		assertThat(snapshot.get("partitions").size()).isGreaterThanOrEqualTo(4);
 		assertThat(recursiveValues(snapshot.get("partitions"), "code")).contains("INVENTORY", "WIP",
 				"PROJECT_COST", "REPORTS");
+		assertThat(stringValues(snapshot.get("reportCodes")))
+			.contains(STAGE_033_BUSINESS_SNAPSHOT_REPORT_CODES.toArray(String[]::new))
+			.doesNotContain(STAGE_033_NON_SNAPSHOT_REPORT_CODES.toArray(String[]::new));
 
 		JsonNode report = data(get("/api/admin/period-closes/" + runId + "/snapshot/reports/OVERVIEW", admin));
 		assertThat(report.has("reportCode")).as(report.toString()).isTrue();
@@ -456,6 +466,42 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 		assertThat(report.has("result")).as(report.toString()).isTrue();
 		assertThat(report.get("result").isObject()).isTrue();
 		assertThat(report.has("resultJson")).isFalse();
+
+		JsonNode projectProfit = data(get("/api/admin/period-closes/" + runId
+				+ "/snapshot/reports/PROJECT_PROFIT", admin));
+		assertThat(projectProfit.get("reportCode").asText()).isEqualTo("PROJECT_PROFIT");
+		assertThat(projectProfit.get("reportName").asText()).isEqualTo("项目利润分析");
+		assertThat(projectProfit.get("result").isObject()).isTrue();
+		assertThat(projectProfit.has("resultJson")).isFalse();
+	}
+
+	@Test
+	void 三十三业务快照必须权限无关完整冻结且不受一百条截断() throws Exception {
+		requireV32Schema();
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		LocalDate startDate = LocalDate.of(2052, 9, 1);
+		LocalDate endDate = LocalDate.of(2052, 9, 30);
+		long periodId = createPeriod(admin, "2052-09", startDate, endDate);
+		insertProjectProfitSnapshotRows("2052-09", endDate, 105);
+		AuthenticatedSession closerWithoutAmounts = createUserAndLogin("030-033-snapshot-closer-",
+				"030_033_SNAPSHOT_CLOSER_", List.of("system:business-period-close:view",
+						"system:business-period-close:check", "system:business-period-close:close",
+						"system:business-period-close:snapshot-view"));
+
+		JsonNode check = data(exchange(HttpMethod.POST, "/api/admin/period-closes/checks",
+				Map.of("periodId", periodId, "idempotencyKey", "030-033-full-check-" + periodId),
+				closerWithoutAmounts));
+		JsonNode closed = data(exchange(HttpMethod.POST, "/api/admin/period-closes/" + check.get("id").longValue()
+				+ "/close", closePayload(check, "030-033-full-close-" + periodId, true, "033 完整业务快照"),
+				closerWithoutAmounts));
+
+		JsonNode projectProfit = reportSnapshotPayload(closed.get("snapshotId").longValue(), "PROJECT_PROFIT");
+		assertThat(projectProfit.get("summary").get("analysisMode").asText()).isEqualTo("BUSINESS_SNAPSHOT");
+		assertThat(projectProfit.get("summary").get("shipmentRevenue").asText()).isEqualTo("1050.00");
+		assertThat(projectProfit.get("summary").get("projectCostTotal").asText()).isEqualTo("105.00");
+		assertThat(projectProfit.get("summary").get("amountVisible").booleanValue()).isTrue();
+		assertThat(projectProfit.get("items")).hasSize(105);
+		assertThat(projectProfit.get("items").get(0).get("shipmentRevenue").isNull()).isFalse();
 	}
 
 	@Test
@@ -587,7 +633,10 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 				select count(distinct report_code)
 				from biz_period_report_snapshot
 				where snapshot_id = ?
-				""", Long.class, snapshotId)).isEqualTo(8L);
+				""", Long.class, snapshotId)).isEqualTo(13L);
+		assertThat(snapshotReportCodes(snapshotId))
+			.contains(STAGE_033_BUSINESS_SNAPSHOT_REPORT_CODES.toArray(String[]::new))
+			.doesNotContain(STAGE_033_NON_SNAPSHOT_REPORT_CODES.toArray(String[]::new));
 		assertThat(this.jdbcTemplate.queryForObject("""
 				select count(*)
 				from biz_period_close_audit
@@ -606,6 +655,72 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 				where s.run_id = ?
 				group by s.id, s.revision_no, s.source_fingerprint
 				""", String.class, runId);
+	}
+
+	private List<String> snapshotReportCodes(long snapshotId) {
+		return this.jdbcTemplate.queryForList("""
+				select report_code
+				from biz_period_report_snapshot
+				where snapshot_id = ?
+				order by report_code
+				""", String.class, snapshotId);
+	}
+
+	private JsonNode reportSnapshotPayload(long snapshotId, String reportCode) throws Exception {
+		String json = this.jdbcTemplate.queryForObject("""
+				select result_json::text
+				from biz_period_report_snapshot
+				where snapshot_id = ?
+				and report_code = ?
+				""", String.class, snapshotId, reportCode);
+		return this.objectMapper.readTree(json);
+	}
+
+	private void insertProjectProfitSnapshotRows(String periodCode, LocalDate cutoffDate, int count) {
+		int suffix = SEQUENCE.incrementAndGet();
+		long customerId = this.jdbcTemplate.queryForObject("""
+				insert into mst_customer (code, name, status, created_by, created_at, updated_by, updated_at)
+				values (?, ?, 'ENABLED', 'test', now(), 'test', now())
+				returning id
+				""", Long.class, "030033C" + suffix, "030-033快照客户" + suffix);
+		for (int index = 1; index <= count; index++) {
+			long projectId = this.jdbcTemplate.queryForObject("""
+					insert into sal_project (
+						project_no, name, customer_id, owner_user_id, planned_start_date, planned_finish_date,
+						status, target_revenue, target_cost, created_by, created_at, updated_by, updated_at
+					)
+					values (?, ?, ?, ?, date '2052-01-01', date '2052-12-31', 'ACTIVE', 10.00, 1.00,
+						'test', now(), 'test', now())
+					returning id
+					""", Long.class, "030-033-SNAP-" + suffix + "-" + index, "030-033快照项目" + index,
+					customerId, adminUserId());
+			this.jdbcTemplate.update("""
+					insert into prj_cost_calculation (
+						project_id, calculation_no, cutoff_date, status, is_current, source_fingerprint,
+						project_cost_total, wip_cost, finished_cost, delivered_cost, direct_project_cost,
+						shipment_revenue, invoice_revenue, target_revenue, shipment_gross_margin,
+						invoice_gross_margin, target_gross_margin, shipment_gross_margin_rate,
+						invoice_gross_margin_rate, target_gross_margin_rate, margin_completeness,
+						created_by, created_at, updated_by, updated_at, confirmed_by, confirmed_at
+					)
+					values (?, ?, ?, 'CONFIRMED', true, ?, 1.00, 0.00, 0.00, 1.00, 0.00,
+						10.00, 10.00, 10.00, 9.00, 9.00, 9.00, 0.900000, 0.900000, 0.900000,
+						'COMPLETE', 'test', now(), 'test', now(), 'test', now())
+					""", projectId, "030-033-PCC-" + suffix + "-" + index, cutoffDate,
+					"030-033-fp-" + periodCode + "-" + index);
+			this.jdbcTemplate.update("""
+					insert into prj_cost_source_line (
+						calculation_id, project_id, cost_category, cost_stage, entry_type, source_type, source_id,
+						source_no, source_status, business_date, quantity, unit_cost, source_amount,
+						calculated_amount, source_fingerprint
+					)
+					select id, project_id, 'MATERIAL', 'DELIVERED', 'SOURCE_TO_WIP', 'SALES_SHIPMENT', ?,
+						?, 'ACTUAL', ?, 1.000000, 1.000000, 1.00, 1.00, source_fingerprint
+					from prj_cost_calculation
+					where calculation_no = ?
+					""", projectId, "030-033-SRC-" + suffix + "-" + index, cutoffDate,
+					"030-033-PCC-" + suffix + "-" + index);
+		}
 	}
 
 	private void insertOpenStocktake(String stocktakeNo, LocalDate businessDate) {
@@ -699,6 +814,12 @@ class PeriodCloseStage030Tests extends PostgresIntegrationTest {
 		List<String> codes = new ArrayList<>();
 		page.get("items").forEach((item) -> codes.add(item.get("periodCode").asText()));
 		return codes;
+	}
+
+	private List<String> stringValues(JsonNode valuesNode) {
+		List<String> values = new ArrayList<>();
+		valuesNode.forEach((value) -> values.add(value.asText()));
+		return values;
 	}
 
 	private long snapshotCount(long periodId) {

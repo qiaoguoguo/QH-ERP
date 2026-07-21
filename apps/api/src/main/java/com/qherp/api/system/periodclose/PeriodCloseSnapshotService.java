@@ -5,6 +5,7 @@ import com.qherp.api.common.BusinessException;
 import com.qherp.api.common.PageResponse;
 import com.qherp.api.security.CurrentUser;
 import com.qherp.api.system.reporting.ReportingAdminService;
+import com.qherp.api.system.reporting.ReportingStage033Service;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,13 +40,17 @@ class PeriodCloseSnapshotService {
 
 	private final ReportingAdminService reportingAdminService;
 
+	private final ReportingStage033Service reportingStage033Service;
+
 	private final ObjectMapper objectMapper;
 
 	PeriodCloseSnapshotService(JdbcTemplate jdbcTemplate, PeriodCloseRepository repository,
-			ReportingAdminService reportingAdminService, ObjectMapper objectMapper) {
+			ReportingAdminService reportingAdminService, ReportingStage033Service reportingStage033Service,
+			ObjectMapper objectMapper) {
 		this.jdbcTemplate = jdbcTemplate;
 		this.repository = repository;
 		this.reportingAdminService = reportingAdminService;
+		this.reportingStage033Service = reportingStage033Service;
 		this.objectMapper = objectMapper;
 	}
 
@@ -355,6 +360,7 @@ class PeriodCloseSnapshotService {
 		LinkedMultiValueMap<String, String> parameters = new LinkedMultiValueMap<>();
 		parameters.add("dateFrom", period.startDate().toString());
 		parameters.add("dateTo", period.endDate().toString());
+		parameters.add("periodCode", period.periodCode());
 		parameters.add("page", "1");
 		parameters.add("pageSize", "100");
 		return switch (reportCode) {
@@ -366,6 +372,9 @@ class PeriodCloseSnapshotService {
 			case "COST_COLLECTION" -> this.reportingAdminService.costCollection(parameters);
 			case "SETTLEMENT_SUMMARY" -> this.reportingAdminService.settlementSummary(parameters);
 			case "EXCEPTIONS" -> this.reportingAdminService.exceptions(parameters);
+			case "PROJECT_PROFIT", "CONTRACT_COLLECTION", "PROCUREMENT_VARIANCE", "INVENTORY_CAPITAL",
+					"RECEIVABLE_PAYABLE" -> this.reportingStage033Service.captureBusinessSnapshot(reportCode,
+							period.periodCode(), period.startDate(), period.endDate());
 			default -> throw new BusinessException(ApiErrorCode.PERIOD_CLOSE_SNAPSHOT_INCOMPLETE);
 		};
 	}
@@ -445,7 +454,9 @@ class PeriodCloseSnapshotService {
 				where snapshot_id = ?
 				order by array_position(array[
 					'OVERVIEW', 'SALES_SUMMARY', 'PROCUREMENT_SUMMARY', 'INVENTORY_STOCK_FLOW',
-					'PRODUCTION_EXECUTION', 'COST_COLLECTION', 'SETTLEMENT_SUMMARY', 'EXCEPTIONS'
+					'PRODUCTION_EXECUTION', 'COST_COLLECTION', 'SETTLEMENT_SUMMARY', 'EXCEPTIONS',
+					'PROJECT_PROFIT', 'CONTRACT_COLLECTION', 'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL',
+					'RECEIVABLE_PAYABLE'
 				], report_code)
 				""", String.class, snapshotId);
 	}
@@ -465,15 +476,20 @@ class PeriodCloseSnapshotService {
 	}
 
 	private String reportName(String reportCode) {
-		return Map.of(
-				"OVERVIEW", "经营概览",
-				"SALES_SUMMARY", "销售汇总",
-				"PROCUREMENT_SUMMARY", "采购汇总",
-				"INVENTORY_STOCK_FLOW", "库存收发存",
-				"PRODUCTION_EXECUTION", "生产执行",
-				"COST_COLLECTION", "成本归集",
-				"SETTLEMENT_SUMMARY", "结算汇总",
-				"EXCEPTIONS", "异常清单").getOrDefault(reportCode, reportCode);
+		return Map.ofEntries(
+				Map.entry("OVERVIEW", "经营概览"),
+				Map.entry("SALES_SUMMARY", "销售汇总"),
+				Map.entry("PROCUREMENT_SUMMARY", "采购汇总"),
+				Map.entry("INVENTORY_STOCK_FLOW", "库存收发存"),
+				Map.entry("PRODUCTION_EXECUTION", "生产执行"),
+				Map.entry("COST_COLLECTION", "成本归集"),
+				Map.entry("SETTLEMENT_SUMMARY", "结算汇总"),
+				Map.entry("EXCEPTIONS", "异常清单"),
+				Map.entry("PROJECT_PROFIT", "项目利润分析"),
+				Map.entry("CONTRACT_COLLECTION", "合同回款分析"),
+				Map.entry("PROCUREMENT_VARIANCE", "采购差异分析"),
+				Map.entry("INVENTORY_CAPITAL", "库存资金分析"),
+				Map.entry("RECEIVABLE_PAYABLE", "往来分析")).getOrDefault(reportCode, reportCode);
 	}
 
 }

@@ -21,17 +21,24 @@ final class PeriodCloseSupport {
 	static final int SCHEMA_VERSION = 1;
 
 	static final List<String> REPORT_CODES = List.of("OVERVIEW", "SALES_SUMMARY", "PROCUREMENT_SUMMARY",
-			"INVENTORY_STOCK_FLOW", "PRODUCTION_EXECUTION", "COST_COLLECTION", "SETTLEMENT_SUMMARY", "EXCEPTIONS");
+			"INVENTORY_STOCK_FLOW", "PRODUCTION_EXECUTION", "COST_COLLECTION", "SETTLEMENT_SUMMARY", "EXCEPTIONS",
+			"PROJECT_PROFIT", "CONTRACT_COLLECTION", "PROCUREMENT_VARIANCE", "INVENTORY_CAPITAL",
+			"RECEIVABLE_PAYABLE");
 
-	static final Map<String, String> REPORT_PERMISSIONS = Map.of(
-			"OVERVIEW", "report:overview:view",
-			"SALES_SUMMARY", "report:sales:view",
-			"PROCUREMENT_SUMMARY", "report:procurement:view",
-			"INVENTORY_STOCK_FLOW", "report:inventory:view",
-			"PRODUCTION_EXECUTION", "report:production:view",
-			"COST_COLLECTION", "report:cost:view",
-			"SETTLEMENT_SUMMARY", "report:settlement:view",
-			"EXCEPTIONS", "report:exception:view");
+	static final Map<String, String> REPORT_PERMISSIONS = Map.ofEntries(
+			Map.entry("OVERVIEW", "report:overview:view"),
+			Map.entry("SALES_SUMMARY", "report:sales:view"),
+			Map.entry("PROCUREMENT_SUMMARY", "report:procurement:view"),
+			Map.entry("INVENTORY_STOCK_FLOW", "report:inventory:view"),
+			Map.entry("PRODUCTION_EXECUTION", "report:production:view"),
+			Map.entry("COST_COLLECTION", "report:cost:view"),
+			Map.entry("SETTLEMENT_SUMMARY", "report:settlement:view"),
+			Map.entry("EXCEPTIONS", "report:exception:view"),
+			Map.entry("PROJECT_PROFIT", "report:project-profit:view"),
+			Map.entry("CONTRACT_COLLECTION", "report:contract-collection:view"),
+			Map.entry("PROCUREMENT_VARIANCE", "report:procurement-variance:view"),
+			Map.entry("INVENTORY_CAPITAL", "report:inventory-capital:view"),
+			Map.entry("RECEIVABLE_PAYABLE", "report:receivable-payable:view"));
 
 	private PeriodCloseSupport() {
 	}

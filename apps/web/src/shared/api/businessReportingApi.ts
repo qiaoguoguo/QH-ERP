@@ -5,6 +5,11 @@ export type ResourceId = string | number
 export type ReportDecimal = string
 export type ReportMoney = string
 export type ReportPercent = string
+export type ReportAnalysisMode = 'LIVE' | 'BUSINESS_SNAPSHOT'
+export type ReportCompletenessStatus = 'COMPLETE' | 'INCOMPLETE' | 'UNAVAILABLE' | 'RESTRICTED' | string
+export type ReportFreshnessStatus = 'CURRENT' | 'FROZEN' | 'STALE' | 'LEGACY_NOT_INCLUDED' | string
+export type ReportReconciliationStatus = 'MATCHED' | 'DIFFERENT' | 'INCOMPLETE' | 'UNAVAILABLE' | 'RESTRICTED' | string
+export type ReportFinalityStatus = 'PREVIEW' | 'FINAL' | 'UNAVAILABLE' | string
 
 interface BusinessReportingApiOptions {
   baseUrl?: string
@@ -32,6 +37,26 @@ export interface ReportPageResult<TSummary, TItem> extends PageResult<TItem> {
 
 export interface ReportOverviewParams extends DateRangeParams {}
 
+export interface OperatingFinanceParams {
+  periodCode?: string | null
+  projectId?: ResourceId | null
+  contractId?: ResourceId | null
+  basis?: string | null
+  analysisMode?: ReportAnalysisMode | string | null
+  completenessStatus?: ReportCompletenessStatus | null
+  reconciliationStatus?: ReportReconciliationStatus | null
+  finalityStatus?: ReportFinalityStatus | null
+  keyword?: string | null
+  page?: number
+  pageSize?: number
+}
+
+export interface OperatingFinanceTraceListParams extends PageParams {
+  traceKey: string
+  periodCode?: string | null
+  analysisMode?: ReportAnalysisMode | string | null
+}
+
 export interface ReportPeriod {
   dateFrom: string
   dateTo: string
@@ -52,6 +77,24 @@ export interface ReportOverviewRecord {
   paidAmount: ReportMoney
   exceptionCount: number
   formalAccounting: false
+}
+
+export interface OperatingFinanceOverviewRecord {
+  periodCode: string
+  analysisMode: ReportAnalysisMode | string
+  businessPeriodStatus: string
+  accountingPeriodStatus: string
+  financialCloseStatus: string
+  finalityStatus: ReportFinalityStatus
+  freshnessStatus: ReportFreshnessStatus
+  projectProfitAmount: ReportMoney | null
+  contractUnreceivedAmount: ReportMoney | null
+  procurementVarianceAmount: ReportMoney | null
+  inventoryCapitalAmount: ReportMoney | null
+  receivablePayableBalanceAmount: ReportMoney | null
+  accountingDifferenceAmount: ReportMoney | null
+  restrictedReason?: string | null
+  sourceCount: number
 }
 
 export interface SalesReportListParams extends DateRangeParams, KeywordParams, PageParams {
@@ -379,8 +422,242 @@ export interface ReportTraceRecord {
   restrictedMessage: string | null
 }
 
+export interface ProjectProfitReportSummary {
+  projectCount?: number
+  shipmentRevenueAmount?: ReportMoney | null
+  invoiceRevenueAmount?: ReportMoney | null
+  targetRevenueAmount?: ReportMoney | null
+  projectCostAmount?: ReportMoney | null
+  operatingGrossProfitAmount?: ReportMoney | null
+  accountingProfitAmount?: ReportMoney | null
+  differenceAmount?: ReportMoney | null
+  sourceCount: number
+  amountVisible?: boolean
+  restrictedReason?: string | null
+}
+
+export interface ProjectProfitReportRow {
+  projectId: ResourceId
+  projectNo: string
+  projectName: string
+  customerName?: string | null
+  shipmentRevenueAmount: ReportMoney | null
+  invoiceRevenueAmount: ReportMoney | null
+  targetRevenueAmount: ReportMoney | null
+  projectCostAmount: ReportMoney | null
+  operatingGrossProfitAmount: ReportMoney | null
+  operatingGrossProfitRate: ReportPercent | null
+  accountingRevenueAmount?: ReportMoney | null
+  accountingCostAmount?: ReportMoney | null
+  accountingProfitAmount?: ReportMoney | null
+  differenceAmount?: ReportMoney | null
+  completenessStatus: ReportCompletenessStatus
+  freshnessStatus: ReportFreshnessStatus
+  reconciliationStatus: ReportReconciliationStatus
+  finalityStatus: ReportFinalityStatus
+  sourceCount: number
+  traceKey: string | null
+  amountVisible?: boolean
+  restrictedReason?: string | null
+}
+
+export interface ProjectProfitDetailRecord extends ProjectProfitReportRow {
+  costStageEntries: Array<{ stage: string; amount: ReportMoney | null; status: string }>
+  revenueEntries: Array<{ basis: string; amount: ReportMoney | null; description: string }>
+  accountingEntries: Array<{ accountCode?: string; accountName?: string; amount: ReportMoney | null; description?: string }>
+  varianceReasons: Array<{ reasonCode: string; description: string; amount: ReportMoney | null }>
+}
+
+export interface ContractCollectionReportSummary {
+  contractAmount?: ReportMoney | null
+  invoiceAmount?: ReportMoney | null
+  receivedAmount?: ReportMoney | null
+  unreceivedAmount?: ReportMoney | null
+  advanceReceiptAmount?: ReportMoney | null
+  overdueAmount?: ReportMoney | null
+  sourceCount: number
+}
+
+export interface ContractCollectionReportRow {
+  projectId?: ResourceId | null
+  projectNo?: string | null
+  contractId: ResourceId
+  contractNo: string
+  customerName?: string | null
+  contractAmount: ReportMoney | null
+  invoiceAmount: ReportMoney | null
+  receivedAmount: ReportMoney | null
+  allocatedAmount: ReportMoney | null
+  unreceivedAmount: ReportMoney | null
+  advanceReceiptAmount: ReportMoney | null
+  overdueAmount: ReportMoney | null
+  collectionRate: ReportPercent | null
+  status: string
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+}
+
+export interface ProcurementVarianceReportSummary {
+  orderAmount?: ReportMoney | null
+  receiptAmount?: ReportMoney | null
+  invoiceAmount?: ReportMoney | null
+  paidAmount?: ReportMoney | null
+  matchVarianceAmount?: ReportMoney | null
+  sourceCount: number
+}
+
+export interface ProcurementVarianceReportRow {
+  sourceNo: string
+  supplierName?: string | null
+  projectNo?: string | null
+  basis: string
+  orderAmount: ReportMoney | null
+  receiptAmount: ReportMoney | null
+  invoiceAmount: ReportMoney | null
+  paidAmount: ReportMoney | null
+  unreceivedOrderAmount: ReportMoney | null
+  receivedUninvoicedAmount: ReportMoney | null
+  invoiceReceiptDifferenceAmount: ReportMoney | null
+  unpaidAmount: ReportMoney | null
+  matchVarianceAmount: ReportMoney | null
+  outsourcingUnsettledAmount: ReportMoney | null
+  reconciliationStatus: ReportReconciliationStatus
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+}
+
+export interface InventoryCapitalReportSummary {
+  quantity?: ReportDecimal | null
+  amount?: ReportMoney | null
+  snapshotAmount?: ReportMoney | null
+  differenceAmount?: ReportMoney | null
+  riskQuantity?: ReportDecimal | null
+  knownValuationAmount?: ReportMoney | null
+  unknownValuationQuantity?: ReportDecimal | null
+  completenessStatus?: ReportCompletenessStatus | null
+  sourceCount: number
+}
+
+export interface InventoryCapitalReportRow {
+  projectId?: ResourceId | null
+  ownerType: string
+  projectNo?: string | null
+  warehouseName: string
+  materialName: string
+  qualityStatus: string
+  freezeStatus: string
+  valuationStatus: string
+  quantity: ReportDecimal | null
+  amount: ReportMoney | null
+  snapshotAmount: ReportMoney | null
+  differenceAmount: ReportMoney | null
+  riskQuantity: ReportDecimal | null
+  knownValuationAmount?: ReportMoney | null
+  unknownValuationQuantity?: ReportDecimal | null
+  completenessStatus?: ReportCompletenessStatus | null
+  freshnessStatus: ReportFreshnessStatus
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+}
+
+export interface ReceivablePayableReportSummary {
+  receivableAmount?: ReportMoney | null
+  payableAmount?: ReportMoney | null
+  advanceReceiptAmount?: ReportMoney | null
+  prepaymentAmount?: ReportMoney | null
+  balanceAmount?: ReportMoney | null
+  overdueAmount?: ReportMoney | null
+  sourceCount: number
+}
+
+export interface ReceivablePayableReportRow {
+  projectId?: ResourceId | null
+  partyType: string
+  partyName: string
+  projectNo?: string | null
+  sourceType?: string | null
+  sourceNo?: string | null
+  receivableAmount: ReportMoney | null
+  payableAmount: ReportMoney | null
+  advanceReceiptAmount: ReportMoney | null
+  prepaymentAmount: ReportMoney | null
+  settledAmount: ReportMoney | null
+  balanceAmount: ReportMoney | null
+  notDueAmount: ReportMoney | null
+  aging1To30Amount: ReportMoney | null
+  aging31To60Amount: ReportMoney | null
+  aging61To90Amount: ReportMoney | null
+  agingOver90Amount: ReportMoney | null
+  overdueAmount: ReportMoney | null
+  agingBucket?: string | null
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+}
+
+export interface OperatingAccountingReconciliationReportSummary {
+  operatingProfitAmount?: ReportMoney | null
+  accountingProfitAmount?: ReportMoney | null
+  publicUnallocatedAmount?: ReportMoney | null
+  differenceAmount?: ReportMoney | null
+  sourceCount: number
+}
+
+export interface OperatingAccountingReconciliationReportRow {
+  projectId?: ResourceId | null
+  projectNo: string
+  projectName: string
+  operatingRevenueAmount: ReportMoney | null
+  operatingCostAmount: ReportMoney | null
+  operatingProfitAmount: ReportMoney | null
+  accountingRevenueAmount: ReportMoney | null
+  accountingCostAmount: ReportMoney | null
+  accountingProfitAmount: ReportMoney | null
+  publicUnallocatedAmount: ReportMoney | null
+  differenceAmount: ReportMoney | null
+  reconciliationStatus: ReportReconciliationStatus
+  finalityStatus: ReportFinalityStatus
+  varianceReason?: string | null
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+}
+
+export interface FinancialSummaryRecord {
+  periodCode: string
+  analysisMode: ReportAnalysisMode | string
+  finalityStatus: ReportFinalityStatus
+  businessPeriodStatus: string
+  accountingPeriodStatus: string
+  financialCloseStatus: string
+  revenueAmount: ReportMoney | null
+  mainCostAmount: ReportMoney | null
+  periodExpenseAmount: ReportMoney | null
+  otherProfitLossAmount: ReportMoney | null
+  incomeTaxExpenseAmount: ReportMoney | null
+  operatingResultAmount: ReportMoney | null
+  assetBalanceAmount: ReportMoney | null
+  liabilityBalanceAmount: ReportMoney | null
+  equityBalanceAmount: ReportMoney | null
+  trialBalanceStatus: string
+  bankReconciliationStatus: string
+  taxSummaryStatus: string
+  sourceCount: number
+  traceKey: string | null
+  restrictedReason?: string | null
+  legalReport: boolean
+  disclaimer: string
+}
+
 interface TraceEndpoint {
   list(params: ReportTraceListParams): Promise<PageResult<ReportTraceRecord>>
+}
+
+interface OperatingFinanceTraceEndpoint {
+  list(params: OperatingFinanceTraceListParams): Promise<PageResult<ReportTraceRecord>>
 }
 
 export interface BusinessReportingApi {
@@ -415,6 +692,42 @@ export interface BusinessReportingApi {
     list(params: ExceptionReportListParams): Promise<ReportPageResult<ExceptionReportSummary, ExceptionReportRow>>
     traces: TraceEndpoint
   }
+  operatingFinanceOverview: {
+    get(params?: OperatingFinanceParams): Promise<OperatingFinanceOverviewRecord>
+  }
+  projectProfit: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<ProjectProfitReportSummary, ProjectProfitReportRow>>
+    detail: {
+      get(projectId: ResourceId, params?: OperatingFinanceParams): Promise<ProjectProfitDetailRecord>
+    }
+    traces: {
+      list(params: OperatingFinanceTraceListParams & { projectId: ResourceId }): Promise<PageResult<ReportTraceRecord>>
+    }
+  }
+  contractCollection: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<ContractCollectionReportSummary, ContractCollectionReportRow>>
+    traces: OperatingFinanceTraceEndpoint
+  }
+  procurementVariance: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<ProcurementVarianceReportSummary, ProcurementVarianceReportRow>>
+    traces: OperatingFinanceTraceEndpoint
+  }
+  inventoryCapital: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<InventoryCapitalReportSummary, InventoryCapitalReportRow>>
+    traces: OperatingFinanceTraceEndpoint
+  }
+  receivablePayable: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<ReceivablePayableReportSummary, ReceivablePayableReportRow>>
+    traces: OperatingFinanceTraceEndpoint
+  }
+  operatingAccountingReconciliation: {
+    list(params: OperatingFinanceParams & PageParams): Promise<ReportPageResult<OperatingAccountingReconciliationReportSummary, OperatingAccountingReconciliationReportRow>>
+    traces: OperatingFinanceTraceEndpoint
+  }
+  financialSummary: {
+    get(params?: OperatingFinanceParams): Promise<FinancialSummaryRecord>
+    traces: OperatingFinanceTraceEndpoint
+  }
 }
 
 export function createBusinessReportingApi(options: BusinessReportingApiOptions = {}): BusinessReportingApi {
@@ -430,6 +743,25 @@ export function createBusinessReportingApi(options: BusinessReportingApiOptions 
   const settlementQueryKeys = ['dateFrom', 'dateTo', 'customerId', 'supplierId', 'status', 'keyword', 'page', 'pageSize'] as const
   const exceptionQueryKeys = ['dateFrom', 'dateTo', 'type', 'keyword', 'page', 'pageSize'] as const
   const traceQueryKeys = ['traceKey', 'dateFrom', 'dateTo', 'page', 'pageSize'] as const
+  const operatingFinanceQueryKeys = [
+    'periodCode',
+    'projectId',
+    'contractId',
+    'basis',
+    'analysisMode',
+    'completenessStatus',
+    'reconciliationStatus',
+    'finalityStatus',
+    'keyword',
+    'page',
+    'pageSize',
+  ] as const
+  const operatingFinanceOverviewQueryKeys = [
+    'periodCode',
+    'analysisMode',
+    'finalityStatus',
+  ] as const
+  const operatingFinanceTraceQueryKeys = ['traceKey', 'periodCode', 'analysisMode', 'page', 'pageSize'] as const
 
   const pickQuery = (query: object | undefined, keys: readonly string[]) => {
     const result: Record<string, unknown> = {}
@@ -476,6 +808,9 @@ export function createBusinessReportingApi(options: BusinessReportingApiOptions 
   const get = <T>(path: string, query?: object) => request<T>(path, query)
   const trace = (path: string): TraceEndpoint => ({
     list: (params) => get<PageResult<ReportTraceRecord>>(path, pickQuery(params, traceQueryKeys)),
+  })
+  const operatingFinanceTrace = (path: string): OperatingFinanceTraceEndpoint => ({
+    list: (params) => get<PageResult<ReportTraceRecord>>(path, pickQuery(params, operatingFinanceTraceQueryKeys)),
   })
 
   return {
@@ -528,6 +863,78 @@ export function createBusinessReportingApi(options: BusinessReportingApiOptions 
       list: (params) =>
         get<ReportPageResult<ExceptionReportSummary, ExceptionReportRow>>('/api/admin/reports/exceptions', pickQuery(params, exceptionQueryKeys)),
       traces: trace('/api/admin/reports/exceptions/traces'),
+    },
+    operatingFinanceOverview: {
+      get: (params = {}) =>
+        get<OperatingFinanceOverviewRecord>(
+          '/api/admin/reports/operating-finance-overview',
+          pickQuery(params, operatingFinanceOverviewQueryKeys),
+        ),
+    },
+    projectProfit: {
+      list: (params) =>
+        get<ReportPageResult<ProjectProfitReportSummary, ProjectProfitReportRow>>(
+          '/api/admin/reports/project-profit',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      detail: {
+        get: (projectId, params = {}) =>
+          get<ProjectProfitDetailRecord>(
+            `/api/admin/reports/project-profit/${encodeURIComponent(String(projectId))}`,
+            pickQuery(params, operatingFinanceOverviewQueryKeys),
+          ),
+      },
+      traces: {
+        list: (params) =>
+          get<PageResult<ReportTraceRecord>>(
+            `/api/admin/reports/project-profit/${encodeURIComponent(String(params.projectId))}/traces`,
+            pickQuery(params, operatingFinanceTraceQueryKeys),
+          ),
+      },
+    },
+    contractCollection: {
+      list: (params) =>
+        get<ReportPageResult<ContractCollectionReportSummary, ContractCollectionReportRow>>(
+          '/api/admin/reports/contract-collections',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      traces: operatingFinanceTrace('/api/admin/reports/contract-collections/traces'),
+    },
+    procurementVariance: {
+      list: (params) =>
+        get<ReportPageResult<ProcurementVarianceReportSummary, ProcurementVarianceReportRow>>(
+          '/api/admin/reports/procurement-variances',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      traces: operatingFinanceTrace('/api/admin/reports/procurement-variances/traces'),
+    },
+    inventoryCapital: {
+      list: (params) =>
+        get<ReportPageResult<InventoryCapitalReportSummary, InventoryCapitalReportRow>>(
+          '/api/admin/reports/inventory-capital',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      traces: operatingFinanceTrace('/api/admin/reports/inventory-capital/traces'),
+    },
+    receivablePayable: {
+      list: (params) =>
+        get<ReportPageResult<ReceivablePayableReportSummary, ReceivablePayableReportRow>>(
+          '/api/admin/reports/receivable-payable',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      traces: operatingFinanceTrace('/api/admin/reports/receivable-payable/traces'),
+    },
+    operatingAccountingReconciliation: {
+      list: (params) =>
+        get<ReportPageResult<OperatingAccountingReconciliationReportSummary, OperatingAccountingReconciliationReportRow>>(
+          '/api/admin/reports/operating-accounting-reconciliation',
+          pickQuery(params, operatingFinanceQueryKeys),
+        ),
+      traces: operatingFinanceTrace('/api/admin/reports/operating-accounting-reconciliation/traces'),
+    },
+    financialSummary: {
+      get: (params = {}) => get<FinancialSummaryRecord>('/api/admin/reports/financial-summary', pickQuery(params, operatingFinanceOverviewQueryKeys)),
+      traces: operatingFinanceTrace('/api/admin/reports/financial-summary/traces'),
     },
   }
 }

@@ -43,6 +43,22 @@ const reportPageComponent = (routeName: string) => {
       return () => import('../modules/reports/SettlementReportView.vue')
     case 'reports-exceptions':
       return () => import('../modules/reports/ExceptionReportView.vue')
+    case 'reports-project-profit':
+      return () => import('../modules/reports/ProjectProfitReportView.vue')
+    case 'reports-project-profit-detail':
+      return () => import('../modules/reports/ProjectProfitDetailView.vue')
+    case 'reports-contract-collection':
+      return () => import('../modules/reports/ContractCollectionReportView.vue')
+    case 'reports-procurement-variance':
+      return () => import('../modules/reports/ProcurementVarianceReportView.vue')
+    case 'reports-inventory-capital':
+      return () => import('../modules/reports/InventoryCapitalReportView.vue')
+    case 'reports-receivable-payable':
+      return () => import('../modules/reports/ReceivablePayableReportView.vue')
+    case 'reports-operating-accounting':
+      return () => import('../modules/reports/OperatingAccountingReconciliationReportView.vue')
+    case 'reports-financial-summary':
+      return () => import('../modules/reports/FinancialSummaryReportView.vue')
     default:
       return placeholder('经营报表', '经营报表页面。')
   }

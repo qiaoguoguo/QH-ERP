@@ -55,13 +55,89 @@ function New-Rule {
 }
 
 function Get-ContainerHealth {
-    param([string] $ContainerName)
-    $inspectOutput = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' $ContainerName 2>&1
+    param(
+        [string] $ContainerName,
+        [scriptblock] $FallbackProbe
+    )
+    $inspectOutput = docker inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-healthcheck:{{.State.Status}}{{end}}' $ContainerName 2>&1
     if ($LASTEXITCODE -ne 0) {
         return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue "inspect failed" -ExpectedValue "healthy" -Passed:$false -Message "容器不可检查：$ContainerName"
     }
     $health = (($inspectOutput | ForEach-Object { $_.ToString().Trim() }) -join "")
-    return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue $health -ExpectedValue "healthy" -Passed:($health -eq "healthy") -Message "容器必须处于健康状态：$ContainerName"
+    if ($health -eq "healthy") {
+        return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue $health -ExpectedValue "healthy" -Passed:$true -Message "容器必须处于健康状态：$ContainerName"
+    }
+    if ($health -eq "unhealthy") {
+        return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue $health -ExpectedValue "healthy" -Passed:$false -Message "容器必须处于健康状态：$ContainerName"
+    }
+    if ($health -eq "no-healthcheck:running" -and $null -ne $FallbackProbe) {
+        $probe = & $FallbackProbe
+        return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" `
+            -ActualValue ("running;{0}" -f $probe.actualValue) -ExpectedValue "healthy or running with successful probe" `
+            -Passed:$probe.passed -Message "容器无 Docker healthcheck 时必须通过真实服务探测：$ContainerName"
+    }
+    return New-Rule -RuleCode "ENV_CONTAINER_$($ContainerName.ToUpperInvariant())" -Category "environment" -ActualValue $health -ExpectedValue "healthy" -Passed:$false -Message "容器必须处于健康状态：$ContainerName"
+}
+
+function Test-PostgresContainerHealthy {
+    param(
+        [string] $ContainerName,
+        [string] $User,
+        [string] $DatabaseName,
+        [string] $Password
+    )
+    $args = @("exec")
+    if ($Password) {
+        $args += @("-e", "PGPASSWORD=$Password")
+    }
+    $args += @($ContainerName, "pg_isready", "-q", "-U", $User, "-d", $DatabaseName)
+    docker @args 2>&1 | Out-Null
+    [pscustomobject]@{
+        passed = ($LASTEXITCODE -eq 0)
+        actualValue = $(if ($LASTEXITCODE -eq 0) { "pg_isready=accepting" } else { "pg_isready=failed" })
+    }
+}
+
+function Get-DockerPublishedPort {
+    param(
+        [string] $ContainerName,
+        [int] $ContainerPort
+    )
+    $portOutput = docker port $ContainerName "$ContainerPort/tcp" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        return $null
+    }
+    $binding = @($portOutput | ForEach-Object { $_.ToString().Trim() } | Where-Object { $_ } | Select-Object -First 1)
+    if ($binding.Count -eq 0 -or $binding[0] -notmatch ':(\d+)$') {
+        return $null
+    }
+    return [int]$Matches[1]
+}
+
+function Test-MinioContainerHealthy {
+    param([string] $ContainerName)
+    $publishedPort = Get-DockerPublishedPort -ContainerName $ContainerName -ContainerPort 9000
+    if ($null -ne $publishedPort) {
+        try {
+            Invoke-WebRequest -Uri "http://127.0.0.1:$publishedPort/minio/health/live" -TimeoutSec 10 -UseBasicParsing | Out-Null
+            return [pscustomobject]@{
+                passed = $true
+                actualValue = "minio=/minio/health/live"
+            }
+        }
+        catch {
+            return [pscustomobject]@{
+                passed = $false
+                actualValue = "minio=/minio/health/live failed"
+            }
+        }
+    }
+    $minioReadyCommand = "MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc ready qherplocal"
+    docker exec $ContainerName sh -c $minioReadyCommand 2>&1 | Out-Null
+    [pscustomobject]@{
+        passed = ($LASTEXITCODE -eq 0)
+        actualValue = $(if ($LASTEXITCODE -eq 0) { "minio=mc ready" } else { "minio=failed" })
+    }
 }
 
 function Get-SqlRuleActualInt {
@@ -137,9 +213,14 @@ if (-not $jsonText) {
 $summary = $jsonText | ConvertFrom-Json
 
 $environmentRules = New-Object System.Collections.Generic.List[object]
-$environmentRules.Add((Get-ContainerHealth -ContainerName $PostgresContainer))
+$environmentRules.Add((Get-ContainerHealth -ContainerName $PostgresContainer -FallbackProbe {
+            Test-PostgresContainerHealthy -ContainerName $PostgresContainer -User $DbUser -DatabaseName $Database `
+                -Password $DbPassword
+        }))
 if (-not $SkipMinio) {
-    $environmentRules.Add((Get-ContainerHealth -ContainerName $MinioContainer))
+    $environmentRules.Add((Get-ContainerHealth -ContainerName $MinioContainer -FallbackProbe {
+                Test-MinioContainerHealthy -ContainerName $MinioContainer
+            }))
     $minioCommand = "MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc find qherplocal/$MinioBucket | wc -l"
     $minioOutput = docker exec $MinioContainer sh -c $minioCommand 2>&1
     $minioExitCode = $LASTEXITCODE

@@ -46,7 +46,8 @@ $parsedBody = $body | ConvertFrom-Json
 Assert-True -Condition ($parsedBody.materialCode -eq "RAW-CABLE-001") -Message "JSON 序列化应保留业务字段。"
 Assert-True -Condition ($parsedBody.quantity -eq "12.000000") -Message "十进制字符串不得被转换成浮点数。"
 
-$manifestPath = Join-Path $Root "apps/api/target/demo-data/self-test-manifest.json"
+$selfTestOutputRoot = Join-Path ([System.IO.Path]::GetTempPath()) "qherp-demo-data-self-test"
+$manifestPath = Join-Path $selfTestOutputRoot "self-test-manifest.json"
 $manifest = New-DemoManifest -RunId "DEMO-ELEC-SELFTEST" -OutputPath $manifestPath -GitCommit "test"
 $manifest.AddObject("unit", "PCS", 1)
 $manifest.AddFile([ordered]@{ category = "attachment"; objectType = "UNIT"; objectId = 1; downloadableId = 99; downloadPath = "/api/admin/attachments/99/download"; fileName = "unit.txt" })
@@ -70,10 +71,23 @@ $validatorSqlPath = Join-Path $Root "tools/demo-data/sql/validate-demo-data.sql"
 $validatorSql = Get-Content -LiteralPath $validatorSqlPath -Raw
 $stage032IsolationPath = Join-Path $Root "tools/demo-data/lib/stage032-isolation-strategy.ps1"
 $stage032Isolation = if (Test-Path -LiteralPath $stage032IsolationPath) { Get-Content -LiteralPath $stage032IsolationPath -Raw } else { "" }
+$stage033IsolationPath = Join-Path $Root "tools/demo-data/lib/stage033-isolation-strategy.ps1"
+$stage033Isolation = if (Test-Path -LiteralPath $stage033IsolationPath) { Get-Content -LiteralPath $stage033IsolationPath -Raw } else { "" }
 $apiPomPath = Join-Path $Root "apps/api/pom.xml"
 $apiPom = Get-Content -LiteralPath $apiPomPath -Raw
 $stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
 $stage023Integration = Get-Content -LiteralPath $stage023IntegrationPath -Raw
+
+Assert-True -Condition ($generator -match '\$OpenPeriodCode = "2026-07"' -and $generator -match '\$LockedPeriodCode = "2026-06"') `
+    -Message "033 验收演示期间必须使用标准 YYYY-MM 编码，不能继续使用 DE260715-* 旧短码。"
+Assert-True -Condition ($generator -notmatch 'DE260715-OPEN' -and $generator -notmatch 'DE260715-LOCK') `
+    -Message "033 生成器不得继续生成非标准年月期间编码。"
+Assert-True -Condition ($generator -notmatch 'apps/api/target/demo-data/document-tasks' -and $generator -match '\[System\.IO\.Path\]::GetTempPath\(\).*qherp-demo-data') `
+    -Message "文档任务临时导入文件必须写入系统临时目录，不能在共享工作树中改写 apps/api/target。"
+Assert-True -Condition ($validator -match 'function Test-PostgresContainerHealthy' -and $validator -match 'pg_isready') `
+    -Message "无 Docker healthcheck 的 PostgreSQL 隔离容器必须通过 pg_isready 兜底校验，不能把 running 误判为失败。"
+Assert-True -Condition ($validator -match 'function Test-MinioContainerHealthy' -and $validator -match '/minio/health/live') `
+    -Message "无 Docker healthcheck 的 MinIO 隔离容器必须通过真实健康端点兜底校验，不能把 running 误判为失败。"
 
 $firstByRemarkStart = $generator.IndexOf("function Get-FirstByRemark")
 $firstByRemarkEnd = $generator.IndexOf("function Ensure-PurchaseOrder", $firstByRemarkStart)
@@ -82,11 +96,15 @@ Assert-True -Condition ($firstByRemarkStart -ge 0 -and $firstByRemarkEnd -gt $fi
 $firstByRemarkFunction = $generator.Substring($firstByRemarkStart, $firstByRemarkEnd - $firstByRemarkStart)
 Assert-ContainsInOrder -Text $firstByRemarkFunction -Needles @(
     '$queryParameters = @{} + $Query',
-    'if (-not $queryParameters.ContainsKey("keyword")) {',
+    'if (-not $SkipKeyword.IsPresent -and -not $queryParameters.ContainsKey("keyword")) {',
     '$queryParameters["keyword"] = $Remark',
-    'Invoke-DemoApiPage -Session $Session -Path $Path -Parameters $queryParameters',
-    'Where-Object { $_.remark -eq $Remark }'
-) -Message "按 remark 定位既有单据时必须同步传 keyword，避免正式副本重复运行只扫第一页而创建重复业务单据。"
+    '$matches = @(Invoke-DemoApiPage -Session $Session -Path $Path -Parameters $queryParameters',
+    'Where-Object { $_.remark -eq $Remark })',
+    'foreach ($status in @($PreferredStatuses)) {',
+    'Where-Object { $_.status -eq $status }',
+    'return $preferred',
+    'return $matches | Select-Object -First 1'
+) -Message "按 remark 定位既有单据时默认同步传 keyword；收付款等不支持 remark keyword 的端点必须允许跳过 keyword 并按状态优先复用已过账单据。"
 $stage029WindowStart = $generator.IndexOf("function Ensure-Stage029InventoryMutationWindow")
 $stage029WindowEnd = $generator.IndexOf("function Ensure-PurchaseOrder", $stage029WindowStart)
 Assert-True -Condition ($stage029WindowStart -ge 0 -and $stage029WindowEnd -gt $stage029WindowStart) `
@@ -120,35 +138,40 @@ $expectedV34Checksum = "-629066235"
 $expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
-$pendingV34ChecksumMarker = "V34_CHECKSUM_" + "PENDING"
-$pendingFlywayV34Rule = "FLYWAY_V34_CHECKSUM_" + "PENDING"
+$pendingV35ChecksumMarker = "V35_CHECKSUM_" + "PENDING"
+$pendingFlywayV35Rule = "FLYWAY_V35_CHECKSUM_" + "PENDING"
 $legacyAdjustedBankBalanceColumn = "adjusted_bank_" + "balance"
 $legacyFinancialCloseAuditEventTargetColumn = "target_" + "type"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
 
-    $flywayLatestV34RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V34") `
-            -and $SqlText.Contains("latest successful version = 34; checksum = $expectedV34Checksum") `
-            -and $SqlText.Contains("= 34") `
-            -and $SqlText.Contains("checksum = $expectedV34Checksum") `
+    $flywayLatestV35RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V35") `
+            -and $SqlText.Contains("latest successful version = 35; checksum recorded") `
+            -and $SqlText.Contains("= 35") `
+            -and $SqlText.Contains("is not null") `
+            -and $SqlText.Contains("FLYWAY_V35_CHECKSUM_RECORDED") `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V33")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V32")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V31")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V30")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V29")) `
-            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-3])")) `
+            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-4])")) `
             -and (-not $SqlText.Contains("latest successful version = 33; checksum = $expectedV33Checksum")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V32")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V31")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V30")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V29")) `
-            -and (-not ($SqlText -match ">=\s*34")) `
-            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*34")) `
-            -and (-not ($SqlText -match "version::int\s*>=\s*34")) `
-            -and (-not $SqlText.Contains($pendingV34ChecksumMarker)))
+            -and (-not ($SqlText -match ">=\s*35")) `
+            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*35")) `
+            -and (-not ($SqlText -match "version::int\s*>=\s*35")) `
+            -and (-not $SqlText.Contains($pendingV35ChecksumMarker)) `
+            -and (-not $SqlText.Contains($pendingFlywayV35Rule)))
+    $flywayV35ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V35_CHECKSUM_RECORDED") `
+            -and $SqlText.Contains("version 35 checksum is recorded") `
+            -and $SqlText.Contains("version = '35'") `
+            -and $SqlText.Contains("Flyway V35 checksum 必须存在"))
     $flywayV34ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V34_CHECKSUM") `
-            -and (-not $SqlText.Contains($pendingFlywayV34Rule)) `
             -and $SqlText.Contains("version 34 checksum = $expectedV34Checksum") `
             -and $SqlText.Contains("version = '34'") `
             -and $SqlText.Contains("checksum = $expectedV34Checksum") `
@@ -183,7 +206,8 @@ function Test-FlywayMigrationRulesAreStrict {
             -and $SqlText.Contains("Flyway 不能存在失败迁移记录。") `
             -and $SqlText.Contains("from flyway_schema_history where not success"))
 
-    return ($flywayLatestV34RuleIsStrict `
+    return ($flywayLatestV35RuleIsStrict `
+        -and $flywayV35ChecksumRuleIsStrict `
         -and $flywayV34ChecksumRuleIsStrict `
         -and $flywayV33HistoricalChecksumIsStrict `
         -and $flywayV32HistoricalChecksumIsStrict `
@@ -194,14 +218,17 @@ function Test-FlywayMigrationRulesAreStrict {
 }
 
 Assert-True -Condition (Test-FlywayMigrationRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须要求 Flyway 最新成功版本为 V34，独立校验 V34/V33/V32/V31/V30/V29 checksum 和失败迁移 0，且不得保留 V34 pending 标记。"
+    -Message "正式演示数据验证器必须要求 Flyway 最新成功版本为 V35，V35 checksum 已记录，独立校验 V34/V33/V32/V31/V30/V29 checksum 和失败迁移 0，且不得保留 V35 pending 标记。"
 $weakenedFlywaySql = @"
-select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
-    'version=34;checksum=$expectedV34Checksum',
-    'latest successful version = 34; checksum = $expectedV34Checksum',
-    max(version::int) >= 34,
-    'latest V34 must stay exact until checksum freeze'
+select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
+    'version=35;checksum=123',
+    'latest successful version = 35; checksum recorded',
+    max(version::int) >= 35,
+    'latest V35 must stay exact until checksum freeze'
 from flyway_schema_history where success and version ~ '^[0-9]+$';
+union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration', 'version=35;checksum=123',
+    'version 35 checksum is recorded', checksum is not null,
+    'Flyway V35 checksum 必须存在。' from flyway_schema_history where success and version = '35';
 union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
     'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
     'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
@@ -224,14 +251,17 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $weakenedFlywaySql)) `
-    -Message "自测必须拒绝把最新迁移规则弱化为 >= 34 的实现。"
+    -Message "自测必须拒绝把最新迁移规则弱化为 >= 35 的实现。"
 $missingV33ChecksumSql = @"
-select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
-    'version=34;checksum=$expectedV34Checksum',
-    'latest successful version = 34; checksum = $expectedV34Checksum',
-    version::int = 34 and checksum is not null,
-    'latest V34 must stay exact until checksum freeze'
-from flyway_schema_history where success and version = '34';
+select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
+    'version=35;checksum=123',
+    'latest successful version = 35; checksum recorded',
+    version::int = 35 and checksum is not null,
+    'latest V35 must stay exact until checksum freeze'
+from flyway_schema_history where success and version = '35';
+union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration', 'version=35;checksum=123',
+    'version 35 checksum is recorded', checksum is not null,
+    'Flyway V35 checksum 必须存在。' from flyway_schema_history where success and version = '35';
 union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
     'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
     'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
@@ -423,10 +453,16 @@ function Test-PeriodCloseValidatorRulesAreStrict {
             -and $SqlText.Contains("p.status <> 'LOCKED'") `
             -and $SqlText.Contains("action = 'CLOSE'") `
             -and $SqlText.Contains("result = 'SUCCESS'"))
-    $snapshotRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_8") `
-            -and $SqlText.Contains("count(distinct report.report_code) <> 8") `
+    $snapshotRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_V35") `
+            -and $SqlText.Contains("count(distinct report.report_code) not in (8, 13)") `
+            -and $SqlText.Contains("not in (0, 5)") `
             -and $SqlText.Contains("OVERVIEW") `
             -and $SqlText.Contains("SETTLEMENT_SUMMARY") `
+            -and $SqlText.Contains("PROJECT_PROFIT") `
+            -and $SqlText.Contains("RECEIVABLE_PAYABLE") `
+            -and $SqlText.Contains("PERIOD_CLOSE_UNSUPPORTED_033_REPORT_SNAPSHOT_CODES_V35") `
+            -and $SqlText.Contains("OPERATING_ACCOUNTING_RECONCILIATION") `
+            -and $SqlText.Contains("FINANCIAL_SUMMARY") `
             -and $SqlText.Contains("PERIOD_CLOSE_SNAPSHOT_FINGERPRINTS_LOCKED") `
             -and $SqlText.Contains("report.fingerprint is null") `
             -and $SqlText.Contains("PERIOD_CLOSE_SNAPSHOT_VERSION_IMMUTABLE") `
@@ -435,8 +471,22 @@ function Test-PeriodCloseValidatorRulesAreStrict {
             -and $SqlText.Contains("blocking_count <> 0") `
             -and $SqlText.Contains("snapshot_id is null") `
             -and $SqlText.Contains("source_fingerprint is null"))
-    $forbiddenExistenceRulesAreAbsent = (-not $SqlText.Contains("PERIOD_CLOSE_CLOSED_RUN_MIN_1") `
-            -and -not $SqlText.Contains("PERIOD_CLOSE_MASKED_READER_ROLE_MIN_1"))
+    $stage033ClosedRunRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_2026_07_CURRENT_CLOSED_RUN_V35") `
+            -and $SqlText.Contains("PERIOD_CLOSE_2026_07_LOCKED_SNAPSHOT_V35") `
+            -and $SqlText.Contains("p.period_code = '2026-07'") `
+            -and $SqlText.Contains("r.status = 'CLOSED'") `
+            -and $SqlText.Contains("count(*) = 1") `
+            -and $SqlText.Contains("p.status = 'LOCKED'") `
+            -and $SqlText.Contains("r.snapshot_id is not null"))
+    $stage033SnapshotRulesAreStrict = ($SqlText.Contains("PERIOD_CLOSE_2026_07_REPORT_SNAPSHOT_CODES_V35") `
+            -and $SqlText.Contains("count(distinct report.report_code) = 13") `
+            -and $SqlText.Contains("PERIOD_CLOSE_2026_07_033_FROZEN_PAYLOADS_V35") `
+            -and $SqlText.Contains("coalesce(report.result_json -> 'summary' ->> 'analysisMode', '') = 'BUSINESS_SNAPSHOT'") `
+            -and $SqlText.Contains("coalesce(report.result_json -> 'summary' ->> 'freshnessStatus', '') = 'FROZEN'") `
+            -and $SqlText.Contains("PERIOD_CLOSE_2026_07_UNSUPPORTED_SNAPSHOT_CODES_V35") `
+            -and $SqlText.Contains("p.period_code = '2026-07'") `
+            -and $SqlText.Contains("OPERATING_ACCOUNTING_RECONCILIATION") `
+            -and $SqlText.Contains("FINANCIAL_SUMMARY"))
     $sourcePermissionIdentifiersArePresent = ($SqlText.Contains("inventory:valuation:view") `
             -and $SqlText.Contains("cost:project-cost:amount-view") `
             -and $SqlText.Contains("report:sales:view") `
@@ -452,12 +502,25 @@ function Test-PeriodCloseValidatorRulesAreStrict {
         -and $lockAuditRuleIsStrict `
         -and $snapshotRulesAreStrict `
         -and $blockingRulesAreStrict `
-        -and $forbiddenExistenceRulesAreAbsent `
+        -and $stage033ClosedRunRulesAreStrict `
+        -and $stage033SnapshotRulesAreStrict `
         -and $sourcePermissionIdentifiersArePresent)
 }
 
 Assert-True -Condition (Test-PeriodCloseValidatorRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须失败关闭当前关闭唯一、期间锁定/审计、阻断不得关闭、快照对账/不变、重开保留旧快照；不得要求 CLOSED/脱敏角色硬存在，且必须保留金额/来源权限分离标识。"
+    -Message "正式演示数据验证器必须强制 2026-07 恰好一个当前 CLOSED、期间 LOCKED、snapshot_id 非空、13 个快照分区完整、五类 033 FROZEN payload 存在且两类不支持快照缺失，不能空集通过。"
+
+$stage033PeriodCloseGeneratorIsStrict = ($generator.Contains("function Ensure-Stage033PeriodCloseFrozen") `
+        -and $generator.Contains('$DocumentWorkerMode -ne "WorkerEnabled"') `
+        -and $generator.Contains('/api/admin/period-closes/checks') `
+        -and $generator.Contains('/api/admin/period-closes/$($check.id)/close') `
+        -and $generator.Contains('warningAcknowledged = $true') `
+        -and $generator.Contains('sourceFingerprint = $check.sourceFingerprint') `
+        -and $generator.Contains('version = $check.version') `
+        -and $generator.Contains('idempotencyKey = "$RunId-PERIOD-CLOSE-2026-07"') `
+        -and $generator.Contains('033 验收通过 WorkerEnabled 标准步骤完成 2026-07 业务月结关闭并生成五类经营侧冻结快照。'))
+Assert-True -Condition $stage033PeriodCloseGeneratorIsStrict `
+    -Message "033 生成器必须在 WorkerEnabled 标准命令内通过 /api/admin/period-closes checks→close API 完成 2026-07 READY→CLOSED，不能依赖一次性临时脚本。"
 
 function Test-SelfTestMinioFileObjectConsistency {
     param(
@@ -820,6 +883,17 @@ Assert-True -Condition ($productionStepIndex -ge 0 -and $salesStepIndex -gt $pro
     -Message "可销售半成品库存必须先由生产完工和质检生成，销售链不能早于生产链执行。"
 Assert-True -Condition ($generator -match 'function Ensure-FinanceSettlementPosted' -and $generator -match '/api/admin/finance/receivables/\$\([^)]*\.id\)/receipts' -and $generator -match '/api/admin/finance/payables/\$\([^)]*\.id\)/payments') `
     -Message "应收应付和收付款必须通过真实财务 API 生成。"
+$financeSettlementStart = $generator.IndexOf("function Ensure-FinanceSettlementPosted")
+$financeSettlementEnd = $generator.IndexOf("function Get-SalesReturnBySourceShipment", $financeSettlementStart)
+Assert-True -Condition ($financeSettlementStart -ge 0 -and $financeSettlementEnd -gt $financeSettlementStart) `
+    -Message "自测无法定位 Ensure-FinanceSettlementPosted 函数边界。"
+$financeSettlementFunction = $generator.Substring($financeSettlementStart, $financeSettlementEnd - $financeSettlementStart)
+Assert-True -Condition (([regex]::Matches($financeSettlementFunction, '-SkipKeyword -PreferredStatuses @\("POSTED", "DRAFT"\)').Count) -eq 3) `
+    -Message "收款、调整收款和付款复跑定位必须跳过不支持 remark 的 keyword，并优先复用已过账单据。"
+Assert-True -Condition ($financeSettlementFunction -match 'Get-FirstByRemark -Path "/api/admin/finance/receipts"[\s\S]*-Query @\{ receivableId = \$target\.id \} -SkipKeyword -PreferredStatuses @\("POSTED", "DRAFT"\)' `
+        -and $financeSettlementFunction -match 'Get-FirstByRemark -Path "/api/admin/finance/receipts"[\s\S]*-Query @\{ receivableId = \$adjustmentReceivable\.id \} -SkipKeyword -PreferredStatuses @\("POSTED", "DRAFT"\)' `
+        -and $financeSettlementFunction -match 'Get-FirstByRemark -Path "/api/admin/finance/payments"[\s\S]*-Query @\{ payableId = \$target\.id \} -SkipKeyword -PreferredStatuses @\("POSTED", "DRAFT"\)') `
+    -Message "收付款幂等定位必须按应收/应付主键缩小候选后客户端精确匹配 remark，不能继续用 remark keyword 导致重复草稿。"
 Assert-True -Condition ($generator -notmatch 'foreach \(\$[rp] in @\(\$(receivables|payables)\)\)') `
     -Message "财务 helper 不得用 @() 包装泛型列表遍历，避免 pwsh binder 类型错误。"
 $stage029Start = $generator.IndexOf("function Ensure-Stage029ProjectCostDataset")
@@ -829,6 +903,45 @@ Assert-True -Condition ($stage029Start -ge 0 -and $stage029End -gt $stage029Star
 $stage029Function = $generator.Substring($stage029Start, $stage029End - $stage029Start)
 Assert-True -Condition ($generator -match '\[switch\]\s*\$Stage029Only') `
     -Message "生成器必须提供 Stage029Only 增量模式，供正式 V30 副本只补齐 029 数据而不重放旧业务单据。"
+Assert-True -Condition ($generator -match '\$ProjectCostExceptionPeriodCode = "2026-08"' `
+        -and $generator -match '\$ProjectCostExceptionStart = "2026-08-01"' `
+        -and $generator -match '\$ProjectCostExceptionEnd = "2026-08-31"' `
+        -and $generator -match 'Ensure-Period -Code \$ProjectCostExceptionPeriodCode') `
+    -Message "033 关闭验收必须把 P1 未定价 LABOR 红样本放入明确的非 7 月标准期间，不能污染 2026-07 月结候选池。"
+Assert-True -Condition ($generator -match 'P1 2026-07 月结候选事实必须为 0' `
+        -and $stage029Function -match 'Assert-P1ProjectCostMonthlyIsolation' `
+        -and $stage029Function -match 'Assert-Stage029CurrentProjectCostReady -Key "029-P2"' `
+        -and $stage029Function -match 'Assert-Stage029CurrentProjectCostReady -Key "029-P3"') `
+    -Message "033 关闭验收必须锁定 P1 红样本仍存在但不进入 2026-07 三类月结事实来源，同时 P2/P3 在 2026-07-31 生成可确认当前成本运行。"
+Assert-True -Condition ($generator -match 'Assert-Stage029CurrentProjectCostReady -Key "BASE-PROJ-A" -Project \$projectA' `
+        -and $generator -match 'Ensure-OwnershipConversionPosted -Key "PROJECT-CABLE"[\s\S]*-BusinessDate \$ProjectCostExceptionInventoryDate' `
+        -and $generator -match 'Ensure-OwnershipConversionPosted -Key "PROJECT-CABLE-REASSIGN"[\s\S]*-BusinessDate \$ProjectCostExceptionInventoryDate') `
+    -Message "033 关闭验收必须为基础项目 A 的 7 月项目库存活动补齐真实项目成本，并把基础项目 B 草稿样例活动隔离到非 7 月。"
+Assert-True -Condition ($validatorSql -match 'OPERATING_FINANCE_P1_RED_SAMPLE_RETAINED_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_P1_JULY_PROJECT_ACTIVITY_ZERO_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_P2_P3_CURRENT_COST_READY_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_JULY_PROJECT_ACTIVITY_COST_READY_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_JULY_OPEN_STOCKTAKE_ZERO_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_STOCKTAKE_RANGE_LOCK_ZERO_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_PROJECT_PROFIT_FACTS_DYNAMIC' `
+        -and $validatorSql -match 'OPERATING_FINANCE_ACCOUNTING_FACTS_MIN_DYNAMIC') `
+    -Message "033 验证器必须用真实库规则锁定 P1 红样本保留、P1 7 月候选事实为 0、P2/P3 当前成本、所有 7 月项目活动成本、7 月无未终态盘点且无未释放范围锁。"
+Assert-True -Condition ($generator -match 'function Ensure-OperatingAccountingFacts' `
+        -and $generator -match '/api/admin/gl/ledger/initialize' `
+        -and $generator -match '/api/admin/gl/vouchers' `
+        -and $generator -match '/api/admin/approval-tasks/\$\(\$task\.taskId\)/\$Action' `
+        -and $generator -match 'dimensionCode = "PROJECT"; sourceId = \$Project\.id' `
+        -and $generator -match 'Ensure-OperatingAccountingFacts -ProjectP2 \$stage029Dataset\.projectP2 -ProjectP3 \$stage029Dataset\.projectP3') `
+    -Message "033 经营会计对照必须通过现有 031 总账 API 生成 POSTED+PROJECT 辅助真实事实，不能 SQL 伪造或保留 LIVE=0。"
+Assert-True -Condition ($generator -match 'gl:voucher:approve-post' -and $generator -match 'gl:voucher:view') `
+    -Message "审批角色必须具备 GL 凭证查看与过账审批权限，保证真实审批链路可完成。"
+Assert-True -Condition ($generator -match '验收演示未盘草稿盘点[\s\S]*businessDate = "2026-08-24"') `
+    -Message "未盘草稿样例必须移到 2026-07 截止日外，保留库存异常验收但不阻断 2026-07 月结。"
+Assert-True -Condition ($generator -match 'STK-DRAFT-CANCEL-FOR-CLOSE' `
+        -and $generator -match '/api/admin/inventory/stocktakes/\$\(\$draft\.id\)/cancel') `
+    -Message "未盘样例启动后必须通过正式取消 API 释放盘点范围锁，不能只靠业务日期移出 7 月。"
+Assert-True -Condition ($generator -notmatch 'clientRequestId = "\$RunId') `
+    -Message "反向、补料和调整类 clientRequestId 必须保持在生产 API 64 字符限制内，不能拼接长 RunId。"
 Assert-ContainsInOrder -Text $generator -Needles @(
     '$bom029 = Ensure-Bom -Code "$DemoPrefix-BOM-029-FG-V1"',
     'if ($Stage029Only) {',
@@ -941,7 +1054,7 @@ Assert-True -Condition ($generator -match '/api/admin/production/material-return
     -Message "批次生产退料必须先读取 material-return-sources 候选并提交 sourceAllocationId。"
 Assert-ContainsInOrder -Text $reversalFunction -Needles @(
     'Path "/api/admin/production/material-returns" -Body ([ordered]@{',
-    'clientRequestId = "$RunId-MATERIAL-RETURN"',
+    'clientRequestId = "$DemoPrefix-MATERIAL-RETURN"',
     'idempotencyKey = "$RunId-MATERIAL-RETURN-CREATE"'
 ) -Message "生产退料创建必须同时保留自然去重 clientRequestId 和稳定幂等键。"
 Assert-ContainsInOrder -Text $reversalFunction -Needles @(
@@ -952,7 +1065,7 @@ Assert-ContainsInOrder -Text $reversalFunction -Needles @(
 ) -Message "生产退料过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
 Assert-ContainsInOrder -Text $reversalFunction -Needles @(
     'Path "/api/admin/production/material-supplements" -Body ([ordered]@{',
-    'clientRequestId = "$RunId-MATERIAL-SUPPLEMENT"',
+    'clientRequestId = "$DemoPrefix-MATERIAL-SUPPLEMENT"',
     'idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-CREATE"'
 ) -Message "生产补料创建必须同时保留自然去重 clientRequestId 和稳定幂等键。"
 Assert-ContainsInOrder -Text $reversalFunction -Needles @(
@@ -961,6 +1074,15 @@ Assert-ContainsInOrder -Text $reversalFunction -Needles @(
     'reason = "验收演示生产补料过账"',
     'idempotencyKey = "$RunId-MATERIAL-SUPPLEMENT-POST"'
 ) -Message "生产补料过账必须按 VersionedActionRequest 携带当前版本、中文原因和稳定幂等键。"
+$projectSupplementStart = $generator.IndexOf("function Ensure-ProductionMaterialSupplementPosted")
+$projectSupplementEnd = $generator.IndexOf("function Get-ProjectCostLayerForBatch", $projectSupplementStart)
+Assert-True -Condition ($projectSupplementStart -ge 0 -and $projectSupplementEnd -gt $projectSupplementStart) `
+    -Message "自测无法定位 029 项目成本补料 helper。"
+$projectSupplementFunction = $generator.Substring($projectSupplementStart, $projectSupplementEnd - $projectSupplementStart)
+Assert-True -Condition ($projectSupplementFunction -match 'clientRequestId = "\$DemoPrefix-MS-\$Key"') `
+    -Message "029 项目成本补料 clientRequestId 必须使用短前缀，避免本轮 RunId 下超过后端 64 字符契约。"
+Assert-True -Condition ("DEMO-ELEC-20260715-MS-029-P1-FG-SUPPLEMENT".Length -le 64) `
+    -Message "033 全量窗口 029 项目成本补料自然去重键必须不超过 64 字符。"
 Assert-True -Condition ($generator -match 'Ensure-ReversalDocumentsPosted -SalesShipment \$shipmentSemiA -PurchaseReceipt \$receiptMain `\s+-ProductionIssue \$productionExecution\.issue -WorkOrder \$workOrderReleased') `
     -Message "生产补料样例必须挂到 RELEASED/IN_PROGRESS 工单，不能使用已完成工单作为来源。"
 Assert-True -Condition ($generator -match 'function Ensure-ProductionIssuePosted') `
@@ -979,6 +1101,8 @@ Assert-True -Condition ($generator -match 'function Ensure-StocktakeDocuments' -
     -Message "盘点必须消费分页行接口，不能依赖详情无界 lines。"
 Assert-True -Condition ($generator -match 'function Get-AllStocktakeLines' -and $generator -match 'while \(\$page -le \$data\.totalPages\)' -and $generator -notmatch '\$firstPage = Get-StocktakeLinesPage[\s\S]*\$secondPage = Get-StocktakeLinesPage') `
     -Message "盘点行读取必须按 totalPages 循环或精确 scope，不得固定只读第 1、2 页。"
+Assert-True -Condition ($generator -notmatch '\$updates\.Count -lt 25') `
+    -Message "差异盘点必须为真实分页返回的全部行提交 countedQuantity，不能只回写 25 行后让复核因未盘行失败。"
 Assert-True -Condition ($generator -match 'varianceUnitCost' -and $generator -match 'varianceReason' -and $generator -match 'INVENTORY_STOCKTAKE') `
     -Message "项目正差异盘盈必须提交单位成本、行级原因和有效附件证据。"
 Assert-True -Condition ($generator -match 'function Ensure-ValuationAdjustmentPosted' -and $generator -match 'Submit-And-ApproveInventoryDocument -Document \$existing -Path "/api/admin/inventory/valuation-adjustments"') `
@@ -1265,6 +1389,89 @@ union all select 'FINANCIAL_CLOSE_TAX_PAYMENT_IDEMPOTENCY_DYNAMIC', 'financial-c
 Assert-True -Condition (-not (Test-FinancialCloseValidatorRulesAreStrict -SqlText $weakenedFinancialCloseIntegritySql)) `
     -Message "自测必须拒绝删除失败样本完整性、税款幂等唯一性和资源映射门禁的弱验证器。"
 
+function Test-OperatingFinanceValidatorRulesAreStrict {
+    param([string] $SqlText)
+
+    $permissionRulesAreStrict = ($SqlText.Contains("OPERATING_FINANCE_PERMISSIONS_V35") `
+        -and $SqlText.Contains("count(*)::text, '8', count(*) = 8") `
+        -and $SqlText.Contains("report:operating-finance:view") `
+        -and $SqlText.Contains("report:project-profit:view") `
+        -and $SqlText.Contains("report:contract-collection:view") `
+        -and $SqlText.Contains("report:procurement-variance:view") `
+        -and $SqlText.Contains("report:inventory-capital:view") `
+        -and $SqlText.Contains("report:receivable-payable:view") `
+        -and $SqlText.Contains("report:operating-accounting:view") `
+        -and $SqlText.Contains("report:financial-summary:view") `
+        -and $SqlText.Contains("OPERATING_FINANCE_SYSTEM_ADMIN_PERMISSIONS_V35"))
+    $routeRulesAreStrict = ($SqlText.Contains("OPERATING_FINANCE_PERMISSION_ROUTES_V35") `
+        -and $SqlText.Contains("route_path not like '/reports%'") `
+        -and $SqlText.Contains("api_path not like '/api/admin/reports%'") `
+        -and $SqlText.Contains("api_method <> 'GET'") `
+        -and $SqlText.Contains("/reports/overview") `
+        -and $SqlText.Contains("/api/admin/reports/operating-finance-overview") `
+        -and $SqlText.Contains("/reports/project-profit") `
+        -and $SqlText.Contains("/api/admin/reports/project-profit/**") `
+        -and $SqlText.Contains("/reports/contract-collection") `
+        -and $SqlText.Contains("/api/admin/reports/contract-collections/**") `
+        -and $SqlText.Contains("/reports/operating-accounting-reconciliation") `
+        -and $SqlText.Contains("/api/admin/reports/financial-summary/**"))
+    $snapshotRulesAreStrict = ($SqlText.Contains("OPERATING_FINANCE_SNAPSHOT_CONSTRAINT_V35") `
+        -and $SqlText.Contains("PROJECT_PROFIT") `
+        -and $SqlText.Contains("CONTRACT_COLLECTION") `
+        -and $SqlText.Contains("PROCUREMENT_VARIANCE") `
+        -and $SqlText.Contains("INVENTORY_CAPITAL") `
+        -and $SqlText.Contains("RECEIVABLE_PAYABLE") `
+        -and $SqlText.Contains("position('OPERATING_ACCOUNTING_RECONCILIATION' in constraint_def) = 0") `
+        -and $SqlText.Contains("position('FINANCIAL_SUMMARY' in constraint_def) = 0") `
+        -and $SqlText.Contains("OPERATING_FINANCE_SNAPSHOT_ROWS_COMPLETE_V35") `
+        -and $SqlText.Contains("not in (0, 5)") `
+        -and $SqlText.Contains("where report_code in ('OPERATING_ACCOUNTING_RECONCILIATION', 'FINANCIAL_SUMMARY')"))
+    $dynamicRulesAreStrict = ($SqlText.Contains("OPERATING_FINANCE_ACCOUNTING_PROJECT_AUXILIARY_DYNAMIC") `
+        -and $SqlText.Contains("projectAuxiliary>=0;missingProject=0") `
+        -and $SqlText.Contains("left join sal_project p on p.id = a.object_id") `
+        -and $SqlText.Contains("正式零会计事实合法") `
+        -and $SqlText.Contains("OPERATING_FINANCE_FILE_OBJECTS_MIN_DYNAMIC") `
+        -and $SqlText.Contains("count(*) >= 8") `
+        -and (-not $SqlText.Contains("OPERATING_FINANCE_FILE_OBJECTS_18")) `
+        -and (-not ($SqlText -match "OPERATING_FINANCE_FILE_OBJECTS_MIN_DYNAMIC[\s\S]{0,300}count\(\*\)\s*=\s*18")))
+
+    return ($permissionRulesAreStrict `
+        -and $routeRulesAreStrict `
+        -and $snapshotRulesAreStrict `
+        -and $dynamicRulesAreStrict)
+}
+
+Assert-True -Condition (Test-OperatingFinanceValidatorRulesAreStrict -SqlText $validatorSql) `
+    -Message "033 验证器必须锁定八个固定权限、SYSTEM_ADMIN、/reports 与 /api/admin/reports 边界、五个经营侧快照代码、后两类快照排除、零正式事实和动态对象数。"
+
+$weakenedOperatingFinanceSql = @"
+union all select 'OPERATING_FINANCE_PERMISSIONS_V35', 'operating-finance', count(*)::text, '>= 8', count(*) >= 8,
+    '033 报表权限存在即可。' from sys_permission where code like 'report:%'
+union all select 'OPERATING_FINANCE_PERMISSION_ROUTES_V35', 'operating-finance', count(*)::text, '>= 8', count(*) >= 8,
+    '033 路由在报表下即可。' from sys_permission where route_path like '/reports%'
+union all select 'OPERATING_FINANCE_FILE_OBJECTS_18', 'operating-finance', count(*)::text, '18', count(*) = 18,
+    '对象数量固定 18。' from platform_file_object
+"@
+Assert-True -Condition (-not (Test-OperatingFinanceValidatorRulesAreStrict -SqlText $weakenedOperatingFinanceSql)) `
+    -Message "自测必须拒绝按 report 前缀宽泛计数、缺少固定路由/API 契约或写死 18 个对象的 033 验证器。"
+
+$snapshotMisuseOperatingFinanceSql = @"
+union all select 'OPERATING_FINANCE_SNAPSHOT_CONSTRAINT_V35', 'operating-finance',
+    constraint_def,
+    'all 033 reports included',
+    position('PROJECT_PROFIT' in constraint_def) > 0
+        and position('CONTRACT_COLLECTION' in constraint_def) > 0
+        and position('PROCUREMENT_VARIANCE' in constraint_def) > 0
+        and position('INVENTORY_CAPITAL' in constraint_def) > 0
+        and position('RECEIVABLE_PAYABLE' in constraint_def) > 0
+        and position('OPERATING_ACCOUNTING_RECONCILIATION' in constraint_def) > 0
+        and position('FINANCIAL_SUMMARY' in constraint_def) > 0,
+    '所有 033 报表都进入快照。'
+    from (select '' as constraint_def) s
+"@
+Assert-True -Condition (-not (Test-OperatingFinanceValidatorRulesAreStrict -SqlText $snapshotMisuseOperatingFinanceSql)) `
+    -Message "自测必须拒绝把经营/会计对照和固定经营财务摘要纳入 BUSINESS_SNAPSHOT 的 033 验证器。"
+
 function Test-Stage032IsolationStrategyIsStrict {
     param([string] $ScriptText)
 
@@ -1287,5 +1494,46 @@ function Test-Stage032IsolationStrategyIsStrict {
 
 Assert-True -Condition ((Test-Path -LiteralPath $stage032IsolationPath) -and (Test-Stage032IsolationStrategyIsStrict -ScriptText $stage032Isolation)) `
     -Message "032 隔离数据准备策略必须固定 qherp_032_review/qherp-032-review，拒绝正式 qherp/qherp-private，并覆盖跨期间、双人审批/反结账、对账和税额汇总。"
+
+function Test-Stage033IsolationStrategyIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("qherp_033_review") `
+        -and $ScriptText.Contains("qherp-033-review") `
+        -and $ScriptText.Contains("qherp_demo_build_033_full_") `
+        -and $ScriptText.Contains("qherp-demo-build-033-full-") `
+        -and $ScriptText.Contains("qherp/qherp-private") `
+        -and $ScriptText.Contains("Assert-Stage033IsolationTarget") `
+        -and $ScriptText.Contains("Test-Stage033IsolationDatabaseName") `
+        -and $ScriptText.Contains("Test-Stage033IsolationBucketName") `
+        -and $ScriptText.Contains("Assert-Stage033FormalResourceRejected") `
+        -and $ScriptText.Contains("New-Stage033AcceptanceDataPlan") `
+        -and $ScriptText.Contains("正式 V34") `
+        -and $ScriptText.Contains("自然前迁 V35") `
+        -and $ScriptText.Contains("BUSINESS_SNAPSHOT") `
+        -and $ScriptText.Contains("PROJECT_PROFIT") `
+        -and $ScriptText.Contains("CONTRACT_COLLECTION") `
+        -and $ScriptText.Contains("PROCUREMENT_VARIANCE") `
+        -and $ScriptText.Contains("INVENTORY_CAPITAL") `
+        -and $ScriptText.Contains("RECEIVABLE_PAYABLE") `
+        -and $ScriptText.Contains("operating-accounting-reconciliation") `
+        -and $ScriptText.Contains("financial-summary") `
+        -and $ScriptText.Contains("不可用") `
+        -and $ScriptText.Contains("项目辅助缺失") `
+        -and $ScriptText.Contains("结转后发生额") `
+        -and $ScriptText.Contains("旧快照") `
+        -and $ScriptText.Contains("未估值") `
+        -and $ScriptText.Contains("分页完整汇总") `
+        -and $ScriptText.Contains("候选池") `
+        -and $ScriptText.Contains("反结账来源变化") `
+        -and $ScriptText.Contains("权限组合") `
+        -and $ScriptText.Contains("不少于 8") `
+        -and $ScriptText.Contains("正式库禁止写入") `
+        -and (-not $ScriptText.Contains('Database = "qherp"')) `
+        -and (-not $ScriptText.Contains('MinioBucket = "qherp-private"')))
+}
+
+Assert-True -Condition ((Test-Path -LiteralPath $stage033IsolationPath) -and (Test-Stage033IsolationStrategyIsStrict -ScriptText $stage033Isolation)) `
+    -Message "033 隔离数据准备策略必须限制 qherp_033_review/qherp-033-review 或 qherp_demo_build_033_full_*/qherp-demo-build-033-full-*，拒绝正式 qherp/qherp-private，并覆盖快照边界、口径对账、跨期间、权限脱敏、分页候选池和动态对象一致性。"
 
 Write-Host "demo-data-self-test 通过"

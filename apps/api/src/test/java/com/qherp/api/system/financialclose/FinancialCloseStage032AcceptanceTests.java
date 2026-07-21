@@ -103,7 +103,7 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(bankExceptionTypes()).containsExactlyInAnyOrderElementsOf(FROZEN_BANK_EXCEPTION_TYPES);
 		assertThat(frontendFinancialCloseRoutesAreFrozen()).isTrue();
 		assertThat(immutableTriggerCount()).isGreaterThanOrEqualTo(4L);
-		assertThat(latestSuccessfulFlywayVersion()).isEqualTo("34");
+		assertThat(latestSuccessfulFlywayVersion()).isEqualTo("35");
 		assertThat(historicalChecksum("29")).isEqualTo(774334682);
 		assertThat(historicalChecksum("30")).isEqualTo(2130342893);
 		assertThat(historicalChecksum("31")).isEqualTo(-2074547591);

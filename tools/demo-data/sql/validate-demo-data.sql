@@ -3,16 +3,22 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V34'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 34; checksum = -629066235'::text,
-        coalesce((array_agg(version::int order by version::int desc))[1], 0) = 34
-            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = -629066235,
-        'Flyway 最新成功版本必须为 V34，V34 checksum 必须保持 -629066235。'::text
+        'latest successful version = 35; checksum recorded'::text,
+        coalesce((array_agg(version::int order by version::int desc))[1], 0) = 35
+            and (array_agg(checksum order by version::int desc))[1] is not null,
+        'Flyway 最新成功版本必须为 V35，V35 checksum 必须已记录；V29-V34 checksum 仍精确锁定。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
+    union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration',
+        concat('version=35;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 35 checksum is recorded',
+        (array_agg(checksum))[1] is not null,
+        'Flyway V35 checksum 必须存在；冻结后可补充为精确值。'
+        from flyway_schema_history where success and version = '35'
     union all select 'FLYWAY_V34_CHECKSUM', 'migration',
         concat('version=34;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
         'version 34 checksum = -629066235',
@@ -144,6 +150,138 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
     -- report:sales:view, report:procurement:view, report:inventory:view,
     -- report:production:view, report:cost:view, report:settlement:view,
     -- report:exceptions:view。
+    union all select 'PERIOD_CLOSE_2026_07_CURRENT_CLOSED_RUN_V35', 'period-close',
+        concat('periods=', period_count, ';closed=', closed_run_count),
+        'periods=1;closed=1',
+        period_count = 1
+            and closed_run_count = 1
+            and (
+                select count(*) = 1
+                from biz_period_close_run r
+                join biz_business_period p on p.id = r.period_id
+                where p.period_code = '2026-07'
+                    and r.status = 'CLOSED'
+            ),
+        '033 全量验收库必须通过生成器标准 API 步骤把 2026-07 关闭为恰好一个当前 CLOSED 月结运行，不能空集通过。'
+        from (
+            select
+                count(distinct p.id) as period_count,
+                count(distinct r.id) filter (where r.status = 'CLOSED') as closed_run_count
+            from biz_business_period p
+            left join biz_period_close_run r on r.period_id = p.id
+            where p.period_code = '2026-07'
+        ) july_close_gate
+    union all select 'PERIOD_CLOSE_2026_07_LOCKED_SNAPSHOT_V35', 'period-close',
+        concat('lockedClosed=', locked_closed_count, ';snapshot=', snapshot_count),
+        'lockedClosed=1;snapshot=1',
+        locked_closed_count = 1 and snapshot_count = 1,
+        '033 全量验收库中 2026-07 当前 CLOSED 运行必须锁定业务期间且 snapshot_id 非空，并存在对应主快照。'
+        from (
+            select
+                count(*) filter (
+                    where p.status = 'LOCKED'
+                        and r.status = 'CLOSED'
+                        and r.snapshot_id is not null
+                        and r.blocking_count = 0
+                        and r.source_fingerprint is not null
+                        and r.source_fingerprint <> ''
+                ) as locked_closed_count,
+                count(s.id) filter (
+                    where p.status = 'LOCKED'
+                        and r.status = 'CLOSED'
+                        and r.snapshot_id is not null
+                ) as snapshot_count
+            from biz_business_period p
+            left join biz_period_close_run r on r.period_id = p.id
+            left join biz_period_snapshot s on s.id = r.snapshot_id and s.run_id = r.id
+            where p.period_code = '2026-07'
+        ) july_locked_snapshot_gate
+    union all select 'PERIOD_CLOSE_2026_07_REPORT_SNAPSHOT_CODES_V35', 'period-close',
+        concat('codes=', report_code_count, ';missing=', missing_required_count, ';unexpected=', unexpected_count),
+        'codes=13;missing=0;unexpected=0',
+        report_code_count = 13
+            and missing_required_count = 0
+            and unexpected_count = 0
+            and (
+                select count(distinct report.report_code) = 13
+                from biz_period_close_run r
+                join biz_business_period p on p.id = r.period_id
+                join biz_period_snapshot s on s.id = r.snapshot_id
+                left join biz_period_report_snapshot report on report.snapshot_id = s.id
+                where p.period_code = '2026-07'
+                    and r.status = 'CLOSED'
+            ),
+        '033 全量验收库中 2026-07 CLOSED 快照必须精确包含 030 原 8 类和 033 五类经营侧报表，共 13 个分区。'
+        from (
+            select
+                count(distinct report.report_code) as report_code_count,
+                (
+                    select count(*)
+                    from (values
+                        ('OVERVIEW'), ('SALES_SUMMARY'), ('PROCUREMENT_SUMMARY'),
+                        ('INVENTORY_STOCK_FLOW'), ('PRODUCTION_EXECUTION'), ('COST_COLLECTION'),
+                        ('SETTLEMENT_SUMMARY'), ('EXCEPTIONS'), ('PROJECT_PROFIT'), ('CONTRACT_COLLECTION'),
+                        ('PROCUREMENT_VARIANCE'), ('INVENTORY_CAPITAL'), ('RECEIVABLE_PAYABLE')
+                    ) required(report_code)
+                    where not exists (
+                        select 1
+                        from biz_period_close_run r2
+                        join biz_business_period p2 on p2.id = r2.period_id
+                        join biz_period_snapshot s2 on s2.id = r2.snapshot_id
+                        join biz_period_report_snapshot report2 on report2.snapshot_id = s2.id
+                        where p2.period_code = '2026-07'
+                            and r2.status = 'CLOSED'
+                            and report2.report_code = required.report_code
+                    )
+                ) as missing_required_count,
+                count(*) filter (
+                    where report.report_code not in ('OVERVIEW', 'SALES_SUMMARY', 'PROCUREMENT_SUMMARY',
+                        'INVENTORY_STOCK_FLOW', 'PRODUCTION_EXECUTION', 'COST_COLLECTION',
+                        'SETTLEMENT_SUMMARY', 'EXCEPTIONS', 'PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
+                ) as unexpected_count
+            from biz_period_close_run r
+            join biz_business_period p on p.id = r.period_id
+            join biz_period_snapshot s on s.id = r.snapshot_id
+            left join biz_period_report_snapshot report on report.snapshot_id = s.id
+            where p.period_code = '2026-07'
+                and r.status = 'CLOSED'
+        ) july_snapshot_codes_gate
+    union all select 'PERIOD_CLOSE_2026_07_033_FROZEN_PAYLOADS_V35', 'period-close',
+        concat('businessReports=', business_report_count, ';frozenPayloads=', frozen_payload_count),
+        'businessReports=5;frozenPayloads=5',
+        business_report_count = 5 and frozen_payload_count = 5,
+        '033 全量验收库中 2026-07 五类经营侧快照 payload 必须保存 BUSINESS_SNAPSHOT/FROZEN，不能用实时结果冒充快照。'
+        from (
+            select
+                count(*) filter (
+                    where report.report_code in ('PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
+                ) as business_report_count,
+                count(*) filter (
+                    where report.report_code in ('PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
+                        and coalesce(report.result_json -> 'summary' ->> 'analysisMode', '') = 'BUSINESS_SNAPSHOT'
+                        and coalesce(report.result_json -> 'summary' ->> 'freshnessStatus', '') = 'FROZEN'
+                        and report.result_json is not null
+                ) as frozen_payload_count
+            from biz_period_close_run r
+            join biz_business_period p on p.id = r.period_id
+            join biz_period_snapshot s on s.id = r.snapshot_id
+            left join biz_period_report_snapshot report on report.snapshot_id = s.id
+            where p.period_code = '2026-07'
+                and r.status = 'CLOSED'
+        ) july_frozen_payload_gate
+    union all select 'PERIOD_CLOSE_2026_07_UNSUPPORTED_SNAPSHOT_CODES_V35', 'period-close',
+        count(*)::text, '0', count(*) = 0,
+        '033 全量验收库中 2026-07 经营/会计对照和固定经营财务摘要不得进入 BUSINESS_SNAPSHOT 快照。'
+        from biz_period_close_run r
+        join biz_business_period p on p.id = r.period_id
+        join biz_period_snapshot s on s.id = r.snapshot_id
+        join biz_period_report_snapshot report on report.snapshot_id = s.id
+        where p.period_code = '2026-07'
+            and r.status = 'CLOSED'
+            and report.report_code in ('OPERATING_ACCOUNTING_RECONCILIATION', 'FINANCIAL_SUMMARY')
     union all select 'PERIOD_CLOSE_CURRENT_CLOSED_UNIQUE', 'period-close', count(*)::text, '0', count(*) = 0,
         '同一业务期间同一时刻只能存在一个当前 CLOSED 月结版本。'
         from (
@@ -171,8 +309,8 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
         from biz_period_close_run
         where status = 'CLOSED'
             and (blocking_count <> 0 or snapshot_id is null or source_fingerprint is null or source_fingerprint = '')
-    union all select 'PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_8', 'period-close', count(*)::text, '0', count(*) = 0,
-        '每个 CLOSED 快照必须精确保存八类固定经营报表基线。'
+    union all select 'PERIOD_CLOSE_REPORT_SNAPSHOT_CODES_V35', 'period-close', count(*)::text, '0', count(*) = 0,
+        'CLOSED 快照必须保留 030 八类基线；033 五个经营侧报表要么全部缺失作为历史快照，要么全部存在作为 V35 快照。'
         from (
             select s.id
             from biz_period_snapshot s
@@ -180,13 +318,28 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
             left join biz_period_report_snapshot report on report.snapshot_id = s.id
             where r.status = 'CLOSED'
             group by s.id
-            having count(distinct report.report_code) <> 8
+            having count(distinct report.report_code) filter (
+                    where report.report_code in ('OVERVIEW', 'SALES_SUMMARY', 'PROCUREMENT_SUMMARY',
+                        'INVENTORY_STOCK_FLOW', 'PRODUCTION_EXECUTION', 'COST_COLLECTION',
+                        'SETTLEMENT_SUMMARY', 'EXCEPTIONS')
+                ) <> 8
+                or count(distinct report.report_code) filter (
+                    where report.report_code in ('PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
+                ) not in (0, 5)
+                or count(distinct report.report_code) not in (8, 13)
                 or count(*) filter (
                     where report.report_code not in ('OVERVIEW', 'SALES_SUMMARY', 'PROCUREMENT_SUMMARY',
                         'INVENTORY_STOCK_FLOW', 'PRODUCTION_EXECUTION', 'COST_COLLECTION',
-                        'SETTLEMENT_SUMMARY', 'EXCEPTIONS')
+                        'SETTLEMENT_SUMMARY', 'EXCEPTIONS', 'PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
                 ) > 0
         ) report_snapshot_code_violations
+    union all select 'PERIOD_CLOSE_UNSUPPORTED_033_REPORT_SNAPSHOT_CODES_V35', 'period-close',
+        count(*)::text, '0', count(*) = 0,
+        '经营/会计对照和固定经营财务摘要不进入 030 BUSINESS_SNAPSHOT，不得保存为月结报表快照。'
+        from biz_period_report_snapshot
+        where report_code in ('OPERATING_ACCOUNTING_RECONCILIATION', 'FINANCIAL_SUMMARY')
     union all select 'PERIOD_CLOSE_SNAPSHOT_FINGERPRINTS_LOCKED', 'period-close', count(*)::text, '0', count(*) = 0,
         '快照主表和报表分区必须保存非空来源指纹，支撑快照对账和不可变复验。'
         from (
@@ -864,6 +1017,310 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
                 ) as duplicate_count
             from fin_close_action_idempotency
         ) tax_payment_idempotency_gate
+
+    union all select 'OPERATING_FINANCE_PERMISSIONS_V35', 'operating-finance', count(*)::text, '8', count(*) = 8,
+        '033 必须精确初始化八个固定经营财务分析查看权限，继续使用 reporting 领域权限前缀。'
+        from sys_permission
+        where code in ('report:operating-finance:view', 'report:project-profit:view',
+            'report:contract-collection:view', 'report:procurement-variance:view',
+            'report:inventory-capital:view', 'report:receivable-payable:view',
+            'report:operating-accounting:view', 'report:financial-summary:view')
+        and type = 'ACTION'
+    union all select 'OPERATING_FINANCE_SYSTEM_ADMIN_PERMISSIONS_V35', 'operating-finance', count(*)::text, '8', count(*) = 8,
+        'SYSTEM_ADMIN 必须拥有 033 固定经营财务分析全部查看权限。'
+        from sys_role_permission rp
+        join sys_role r on r.id = rp.role_id
+        join sys_permission p on p.id = rp.permission_id
+        where r.code = 'SYSTEM_ADMIN'
+        and p.code in ('report:operating-finance:view', 'report:project-profit:view',
+            'report:contract-collection:view', 'report:procurement-variance:view',
+            'report:inventory-capital:view', 'report:receivable-payable:view',
+            'report:operating-accounting:view', 'report:financial-summary:view')
+    union all select 'OPERATING_FINANCE_PERMISSION_ROUTES_V35', 'operating-finance',
+        coalesce(string_agg(code || '=' || route_path || ':' || coalesce(api_method, '') || ':' || coalesce(api_path, ''), ';' order by code), ''),
+        '033 report routes stay under /reports and APIs stay under /api/admin/reports',
+        count(*) = 8
+            and count(*) filter (where type <> 'ACTION') = 0
+            and count(*) filter (where api_method <> 'GET') = 0
+            and count(*) filter (where route_path not like '/reports%') = 0
+            and count(*) filter (where api_path not like '/api/admin/reports%') = 0
+            and count(*) filter (
+                where code = 'report:operating-finance:view'
+                and route_path = '/reports/overview'
+                and api_path = '/api/admin/reports/operating-finance-overview'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:project-profit:view'
+                and route_path = '/reports/project-profit'
+                and api_path = '/api/admin/reports/project-profit/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:contract-collection:view'
+                and route_path = '/reports/contract-collection'
+                and api_path = '/api/admin/reports/contract-collections/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:procurement-variance:view'
+                and route_path = '/reports/procurement-variance'
+                and api_path = '/api/admin/reports/procurement-variances/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:inventory-capital:view'
+                and route_path = '/reports/inventory-capital'
+                and api_path = '/api/admin/reports/inventory-capital/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:receivable-payable:view'
+                and route_path = '/reports/receivable-payable'
+                and api_path = '/api/admin/reports/receivable-payable/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:operating-accounting:view'
+                and route_path = '/reports/operating-accounting-reconciliation'
+                and api_path = '/api/admin/reports/operating-accounting-reconciliation/**'
+            ) = 1
+            and count(*) filter (
+                where code = 'report:financial-summary:view'
+                and route_path = '/reports/financial-summary'
+                and api_path = '/api/admin/reports/financial-summary/**'
+            ) = 1,
+        '033 权限必须绑定既有 /reports 产品入口和 /api/admin/reports 只读 API，不得新建平行报表领域或写动作。'
+        from sys_permission
+        where code in ('report:operating-finance:view', 'report:project-profit:view',
+            'report:contract-collection:view', 'report:procurement-variance:view',
+            'report:inventory-capital:view', 'report:receivable-payable:view',
+            'report:operating-accounting:view', 'report:financial-summary:view')
+    union all select 'OPERATING_FINANCE_SNAPSHOT_CONSTRAINT_V35', 'operating-finance',
+        constraint_def,
+        'five business-side 033 reports included; reconciliation and summary excluded',
+        position('PROJECT_PROFIT' in constraint_def) > 0
+            and position('CONTRACT_COLLECTION' in constraint_def) > 0
+            and position('PROCUREMENT_VARIANCE' in constraint_def) > 0
+            and position('INVENTORY_CAPITAL' in constraint_def) > 0
+            and position('RECEIVABLE_PAYABLE' in constraint_def) > 0
+            and position('OPERATING_ACCOUNTING_RECONCILIATION' in constraint_def) = 0
+            and position('FINANCIAL_SUMMARY' in constraint_def) = 0,
+        'BUSINESS_SNAPSHOT 只扩展五个经营侧 033 报表；经营/会计对照和固定经营财务摘要不得进入快照约束。'
+        from (
+            select coalesce(string_agg(pg_get_constraintdef(c.oid), ';' order by c.conname), '') as constraint_def
+            from pg_constraint c
+            join pg_class t on t.oid = c.conrelid
+            where t.relname = 'biz_period_report_snapshot'
+            and c.conname = 'ck_biz_period_report_snapshot_code'
+        ) operating_finance_snapshot_constraint
+    union all select 'OPERATING_FINANCE_SNAPSHOT_ROWS_COMPLETE_V35', 'operating-finance',
+        count(*)::text, '0', count(*) = 0,
+        '已有快照行不得部分包含 033 五个经营侧报表，也不得包含经营/会计对照或固定经营财务摘要。'
+        from (
+            select snapshot_id
+            from biz_period_report_snapshot
+            group by snapshot_id
+            having count(distinct report_code) filter (
+                    where report_code in ('PROJECT_PROFIT', 'CONTRACT_COLLECTION',
+                        'PROCUREMENT_VARIANCE', 'INVENTORY_CAPITAL', 'RECEIVABLE_PAYABLE')
+                ) not in (0, 5)
+                or count(*) filter (
+                    where report_code in ('OPERATING_ACCOUNTING_RECONCILIATION', 'FINANCIAL_SUMMARY')
+                ) > 0
+        ) operating_finance_snapshot_row_violations
+    union all select 'OPERATING_FINANCE_ACCOUNTING_PROJECT_AUXILIARY_DYNAMIC', 'operating-finance',
+        concat('projectAuxiliary=', project_auxiliary_count, ';missingProject=', missing_project_count),
+        'projectAuxiliary>=0;missingProject=0',
+        missing_project_count = 0,
+        '033 正式零会计事实合法；存在 PROJECT 辅助发生额时必须能关联销售项目，缺失辅助不能被伪装成项目利润。'
+        from (
+            select count(*) filter (where a.dimension_code = 'PROJECT') as project_auxiliary_count,
+                count(*) filter (
+                    where a.dimension_code = 'PROJECT'
+                    and a.object_id is not null
+                    and p.id is null
+                ) as missing_project_count
+            from gl_voucher_line_auxiliary a
+            left join sal_project p on p.id = a.object_id
+        ) operating_finance_project_auxiliary_gate
+    union all select 'OPERATING_FINANCE_FILE_OBJECTS_MIN_DYNAMIC', 'operating-finance',
+        count(*)::text, '>= 8', count(*) >= 8,
+        '033 验收延续对象一致性不少于 8 的动态门禁，不得把本次正式库 18 个对象写成长期固定值。'
+        from platform_file_object
+        where status = 'AVAILABLE'
+    union all select 'OPERATING_FINANCE_P1_RED_SAMPLE_RETAINED_DYNAMIC', 'operating-finance',
+        concat('unpricedLabor=', unpriced_labor_count, ';openBlocking=', open_blocking_count,
+            ';zeroAmount=', zero_amount_count),
+        'unpricedLabor>=1;openBlocking>=1;zeroAmount=0',
+        unpriced_labor_count >= 1 and open_blocking_count >= 1 and zero_amount_count = 0,
+        '033 关闭验收必须保留 P1 未定价 LABOR 红样本，金额不得被写成 0 或静默闭合。'
+        from (
+            select
+                count(distinct cr.id) filter (
+                    where cr.cost_type = 'LABOR'
+                    and cr.source_type = 'AUTO_PRODUCTION'
+                    and cr.basis_type = 'SOURCE_QUANTITY_ONLY'
+                    and cr.amount is null
+                    and cr.business_date between date '2026-08-01' and date '2026-08-31'
+                ) as unpriced_labor_count,
+                count(distinct v.id) filter (
+                    where v.variance_type = 'SOURCE_UNPRICED'
+                    and v.cost_category = 'LABOR'
+                    and v.severity = 'BLOCKING'
+                    and v.status = 'OPEN'
+                ) as open_blocking_count,
+                count(distinct cr.id) filter (
+                    where cr.cost_type = 'LABOR'
+                    and cr.source_type = 'AUTO_PRODUCTION'
+                    and cr.basis_type = 'SOURCE_QUANTITY_ONLY'
+                    and cr.amount = 0
+                    and cr.business_date between date '2026-08-01' and date '2026-08-31'
+                ) as zero_amount_count
+            from sal_project p
+            left join mfg_work_order wo on wo.project_id = p.id
+            left join mfg_cost_record cr on cr.work_order_id = wo.id
+            left join prj_cost_calculation c on c.project_id = p.id
+                and c.cutoff_date between date '2026-08-01' and date '2026-08-31'
+            left join prj_cost_variance v on v.calculation_id = c.id
+            where p.name = '029 项目成本核算验收 P1'
+        ) p1_red_sample_gate
+    union all select 'OPERATING_FINANCE_P1_JULY_PROJECT_ACTIVITY_ZERO_DYNAMIC', 'operating-finance',
+        concat('p1=', p1_count, ';inventory=', july_inventory_count, ';cost=', july_cost_count,
+            ';workOrder=', july_work_order_count),
+        'p1=1;inventory=0;cost=0;workOrder=0',
+        p1_count = 1 and july_inventory_count = 0 and july_cost_count = 0 and july_work_order_count = 0,
+        'P1 红样本必须按期间隔离，2026-07 月结项目活动三类事实来源不得选择到 P1。'
+        from (
+            select
+                count(*) as p1_count,
+                coalesce(sum(july_inventory_count), 0) as july_inventory_count,
+                coalesce(sum(july_cost_count), 0) as july_cost_count,
+                coalesce(sum(july_work_order_count), 0) as july_work_order_count
+            from sal_project p
+            left join lateral (
+                select count(*) as july_inventory_count
+                from inv_value_movement m
+                where m.project_id = p.id
+                and m.business_date between date '2026-07-01' and date '2026-07-31'
+            ) inventory_gate on true
+            left join lateral (
+                select count(*) as july_cost_count
+                from mfg_cost_record cr
+                join mfg_work_order wo on wo.id = cr.work_order_id
+                where wo.project_id = p.id
+                and cr.business_date between date '2026-07-01' and date '2026-07-31'
+            ) cost_gate on true
+            left join lateral (
+                select count(*) as july_work_order_count
+                from mfg_work_order wo
+                where wo.project_id = p.id
+                and wo.planned_start_date is not null
+                and wo.planned_finish_date is not null
+                and wo.planned_start_date <= date '2026-07-31'
+                and wo.planned_finish_date >= date '2026-07-01'
+            ) work_order_gate on true
+            where p.name = '029 项目成本核算验收 P1'
+        ) p1_july_activity_gate
+    union all select 'OPERATING_FINANCE_P2_P3_CURRENT_COST_READY_DYNAMIC', 'operating-finance',
+        concat('current=', current_count, ';openBlocking=', open_blocking_count),
+        'current=2;openBlocking=0',
+        current_count = 2 and open_blocking_count = 0,
+        'P2/P3 必须各自生成 cutoffDate=2026-07-31、CONFIRMED、CURRENT 且无 OPEN/BLOCKING 差异的项目成本运行。'
+        from (
+            select
+                count(distinct c.project_id) as current_count,
+                count(distinct v.id) as open_blocking_count
+            from sal_project p
+            left join prj_cost_calculation c on c.project_id = p.id
+                and c.cutoff_date = date '2026-07-31'
+                and c.status = 'CONFIRMED'
+                and c.is_current = true
+            left join prj_cost_variance v on v.calculation_id = c.id
+                and v.status = 'OPEN'
+                and v.severity = 'BLOCKING'
+            where p.name in ('029 项目成本核算隔离 P2', '029 项目成本核算关闭 P3')
+        ) p2_p3_cost_ready_gate
+    union all select 'OPERATING_FINANCE_JULY_PROJECT_ACTIVITY_COST_READY_DYNAMIC', 'operating-finance',
+        concat('missing=', missing_count, ';stale=', stale_count, ';openBlocking=', open_blocking_count),
+        'missing=0;stale=0;openBlocking=0',
+        missing_count = 0 and stale_count = 0 and open_blocking_count = 0,
+        '所有 2026-07 项目活动都必须有 cutoffDate=2026-07-31 的当前项目成本运行，不能只覆盖 P2/P3 后遗留基础项目阻断。'
+        from (
+            select
+                count(*) filter (where c.id is null) as missing_count,
+                count(*) filter (where c.id is not null and c.is_current is not true) as stale_count,
+                count(*) filter (where coalesce(v.open_blocking_count, 0) > 0) as open_blocking_count
+            from (
+                select distinct project_id
+                from inv_value_movement
+                where project_id is not null
+                and business_date between date '2026-07-01' and date '2026-07-31'
+                union
+                select distinct wo.project_id
+                from mfg_cost_record cr
+                join mfg_work_order wo on wo.id = cr.work_order_id
+                where wo.project_id is not null
+                and cr.business_date between date '2026-07-01' and date '2026-07-31'
+                union
+                select distinct project_id
+                from mfg_work_order
+                where project_id is not null
+                and coalesce(planned_start_date, planned_finish_date, date '2026-07-01') <= date '2026-07-31'
+                and coalesce(planned_finish_date, planned_start_date, date '2026-07-31') >= date '2026-07-01'
+            ) activity
+            left join lateral (
+                select c.id, c.is_current
+                from prj_cost_calculation c
+                where c.project_id = activity.project_id
+                and c.cutoff_date = date '2026-07-31'
+                and c.status = 'CONFIRMED'
+                order by c.id desc
+                limit 1
+            ) c on true
+            left join lateral (
+                select count(*) as open_blocking_count
+                from prj_cost_variance v
+                where v.calculation_id = c.id
+                and v.status = 'OPEN'
+                and v.severity = 'BLOCKING'
+            ) v on true
+        ) july_project_activity_cost_gate
+    union all select 'OPERATING_FINANCE_JULY_OPEN_STOCKTAKE_ZERO_DYNAMIC', 'operating-finance',
+        count(*)::text, '0', count(*) = 0,
+        '2026-07 截止日前不得保留未终态盘点；未盘草稿样例必须移出 7 月或通过正式取消 API 闭合。'
+        from inv_stocktake
+        where business_date <= date '2026-07-31'
+        and status in ('DRAFT', 'COUNTING', 'RECONCILED', 'SUBMITTED')
+    union all select 'OPERATING_FINANCE_STOCKTAKE_RANGE_LOCK_ZERO_DYNAMIC', 'operating-finance',
+        count(*)::text, '0', count(*) = 0,
+        '033 月结验收不得保留未释放盘点范围锁；未盘样例可保留为已取消单据和空 counted_quantity 行。'
+        from inv_stocktake_range_lock
+        where released_at is null
+    union all select 'OPERATING_FINANCE_PROJECT_PROFIT_FACTS_DYNAMIC', 'operating-finance',
+        count(*)::text, '>= 2', count(*) >= 2,
+        '项目利润 LIVE 必须至少有 P2/P3 两个 2026-07 已确认当前项目成本事实。'
+        from prj_cost_calculation c
+        join sal_project p on p.id = c.project_id
+        where c.cutoff_date = date '2026-07-31'
+        and c.status = 'CONFIRMED'
+        and c.is_current = true
+        and c.project_cost_total > 0
+        and p.name in ('029 项目成本核算隔离 P2', '029 项目成本核算关闭 P3')
+    union all select 'OPERATING_FINANCE_ACCOUNTING_FACTS_MIN_DYNAMIC', 'operating-finance',
+        concat('entries=', entry_count, ';projects=', project_count),
+        'entries>=4;projects=2',
+        entry_count >= 4 and project_count = 2,
+        '经营会计对照 LIVE 必须存在 2026-07 POSTED+PROJECT 辅助的真实收入和主营成本分录。'
+        from (
+            select count(*) as entry_count,
+                count(distinct auxiliary.value ->> 'objectCode') as project_count
+            from gl_ledger_entry e
+            join gl_accounting_period gp on gp.id = e.period_id
+            cross join lateral jsonb_array_elements(e.auxiliary_snapshot) as auxiliary(value)
+            where gp.period_code = '2026-07'
+            and auxiliary.value ->> 'dimensionCode' = 'PROJECT'
+            and auxiliary.value ->> 'objectName' in ('029 项目成本核算隔离 P2', '029 项目成本核算关闭 P3')
+            and (
+                e.account_code in ('6001', '6401')
+                or e.account_code like '6001.%'
+                or e.account_code like '6401.%'
+            )
+        ) operating_accounting_fact_gate
 
     union all select 'PROC_ORDERS_MIN_3', 'procurement', count(*)::text, '>= 3', count(*) >= 3,
         '采购订单数量不足。' from proc_purchase_order

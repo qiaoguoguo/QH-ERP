@@ -706,6 +706,14 @@ public enum ApiErrorCode {
 
 	REPORT_TRACE_KEY_INVALID(HttpStatus.BAD_REQUEST, "报表追溯键非法"),
 
+	REPORT_BASIS_INVALID(HttpStatus.BAD_REQUEST, "报表口径非法"),
+
+	REPORT_PERIOD_UNAVAILABLE(HttpStatus.BAD_REQUEST, "报表期间不可用"),
+
+	REPORT_SNAPSHOT_NOT_INCLUDED(HttpStatus.BAD_REQUEST, "报表快照未包含"),
+
+	REPORT_SOURCE_INCOMPLETE(HttpStatus.CONFLICT, "报表来源不完整"),
+
 	REVERSAL_SOURCE_NOT_FOUND(HttpStatus.NOT_FOUND, "反向业务来源不存在"),
 
 	REVERSAL_SOURCE_STATUS_INVALID(HttpStatus.CONFLICT, "来源状态不允许反向业务"),

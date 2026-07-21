@@ -101,7 +101,9 @@ class PeriodCloseAdminControllerTests extends PostgresIntegrationTest {
 		assertThat(this.jdbcTemplate.queryForObject("select status from biz_business_period where id = ?",
 				String.class, periodId)).isEqualTo("LOCKED");
 		assertThat(this.jdbcTemplate.queryForObject("select count(*) from biz_period_report_snapshot where snapshot_id = ?",
-				Long.class, closed.get("snapshotId").longValue())).isEqualTo(8L);
+				Long.class, closed.get("snapshotId").longValue()))
+			.as("030 八类基线快照 + 033 五类经营侧快照")
+			.isEqualTo(13L);
 		assertThatThrownBy(() -> this.businessPeriodGuard.assertWritable(LocalDate.of(2050, 1, 15),
 				BusinessPeriodOperation.POST, "PERIOD_CLOSE_TEST", runId))
 			.isInstanceOfSatisfying(BusinessException.class,
@@ -115,7 +117,9 @@ class PeriodCloseAdminControllerTests extends PostgresIntegrationTest {
 		JsonNode snapshot = data(get("/api/admin/period-closes/" + runId + "/snapshot", admin));
 		assertThat(snapshot.get("runId").longValue()).isEqualTo(runId);
 		assertThat(snapshot.get("status").asText()).isEqualTo("CLOSED");
-		assertThat(snapshot.get("reportCodes")).hasSize(8);
+		assertThat(snapshot.get("reportCodes"))
+			.as("030 八类基线快照 + 033 五类经营侧快照")
+			.hasSize(13);
 
 		JsonNode reopened = data(exchange(HttpMethod.POST, "/api/admin/period-closes/" + runId + "/reopen",
 				Map.of("version", closed.get("version").longValue(), "reason", "补录开放期业务后重新月结",

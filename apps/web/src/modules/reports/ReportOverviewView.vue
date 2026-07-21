@@ -4,7 +4,8 @@ import { businessReportingApi, type ReportOverviewRecord } from '../../shared/ap
 import { useAuthStore } from '../../stores/authStore'
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
-import { reportRouteConfigs } from './reportPageHelpers'
+import { reportPermissions, reportRouteConfigs } from './reportPageHelpers'
+import { displayValue, statusText } from './operatingFinanceReportHelpers'
 
 const filters = reactive<Record<string, string>>({
   dateFrom: '',
@@ -17,10 +18,17 @@ const fields: ReportFilterField[] = [
 const loading = ref(false)
 const error = ref('')
 const record = ref<ReportOverviewRecord | null>(null)
+const operatingFinanceLoading = ref(false)
+const operatingFinanceError = ref('')
+const operatingFinanceRecord = ref<Awaited<ReturnType<typeof businessReportingApi.operatingFinanceOverview.get>> | null>(null)
 const authStore = useAuthStore()
 const fixedReportEntries = computed(() =>
-  reportRouteConfigs.filter((item) => item.routeName !== 'reports-overview' && authStore.hasPermission(item.permission)),
+  reportRouteConfigs.filter((item) => item.routeName !== 'reports-overview' && item.menuVisible !== false && item.group !== 'operatingFinance' && authStore.hasPermission(item.permission)),
 )
+const operatingFinanceEntries = computed(() =>
+  reportRouteConfigs.filter((item) => item.group === 'operatingFinance' && item.menuVisible !== false && authStore.hasPermission(item.permission)),
+)
+const canViewOperatingFinance = computed(() => authStore.hasPermission(reportPermissions.operatingFinanceView))
 
 const metrics = computed(() => record.value ? [
   { label: '销售出库经营金额', value: record.value.salesShipmentAmount },
@@ -36,6 +44,19 @@ const metrics = computed(() => record.value ? [
   { label: '已付金额', value: record.value.paidAmount },
   { label: '经营异常数量', value: record.value.exceptionCount },
 ] : [])
+const operatingFinanceMetrics = computed(() => operatingFinanceRecord.value ? [
+  { label: '项目利润', value: displayValue(operatingFinanceRecord.value.projectProfitAmount) },
+  { label: '合同未收', value: displayValue(operatingFinanceRecord.value.contractUnreceivedAmount) },
+  { label: '采购差异', value: displayValue(operatingFinanceRecord.value.procurementVarianceAmount) },
+  { label: '库存资金', value: displayValue(operatingFinanceRecord.value.inventoryCapitalAmount) },
+  { label: '往来余额', value: displayValue(operatingFinanceRecord.value.receivablePayableBalanceAmount) },
+  { label: '会计差异', value: displayValue(operatingFinanceRecord.value.accountingDifferenceAmount) },
+  { label: '经营/会计定稿', value: statusText(operatingFinanceRecord.value.finalityStatus) },
+  { label: '来源数量', value: operatingFinanceRecord.value.sourceCount },
+] : [])
+function isZeroDecimalText(value: string) {
+  return /^-?0+(?:\.0+)?$/.test(value.trim())
+}
 
 const empty = computed(() => {
   if (!record.value) {
@@ -53,7 +74,7 @@ const empty = computed(() => {
     record.value.payableBalance,
     record.value.receivedAmount,
     record.value.paidAmount,
-  ].every((value) => Number.parseFloat(value) === 0) && record.value.exceptionCount === 0
+  ].every(isZeroDecimalText) && record.value.exceptionCount === 0
 })
 
 function updateFilters(value: Record<string, string | number | undefined>) {
@@ -76,14 +97,35 @@ async function loadOverview() {
   }
 }
 
+async function loadOperatingFinanceOverview() {
+  if (!canViewOperatingFinance.value) {
+    operatingFinanceRecord.value = null
+    return
+  }
+  operatingFinanceLoading.value = true
+  operatingFinanceError.value = ''
+  try {
+    operatingFinanceRecord.value = await businessReportingApi.operatingFinanceOverview.get({
+      analysisMode: 'LIVE',
+    })
+  } catch (cause) {
+    operatingFinanceError.value = cause instanceof Error ? cause.message : '经营财务摘要加载失败'
+    operatingFinanceRecord.value = null
+  } finally {
+    operatingFinanceLoading.value = false
+  }
+}
+
 function reset() {
   filters.dateFrom = ''
   filters.dateTo = ''
   void loadOverview()
+  void loadOperatingFinanceOverview()
 }
 
 onMounted(() => {
   void loadOverview()
+  void loadOperatingFinanceOverview()
 })
 </script>
 
@@ -116,6 +158,36 @@ onMounted(() => {
           {{ entry.menuName }}
         </router-link>
       </nav>
+    </section>
+
+    <section v-if="operatingFinanceEntries.length > 0 || canViewOperatingFinance" class="report-entry-bar" aria-label="项目利润与经营财务分析">
+      <span class="report-entry-bar__label">项目利润与经营财务分析</span>
+      <nav class="report-entry-bar__links">
+        <router-link
+          v-for="entry in operatingFinanceEntries"
+          :key="entry.routeName"
+          data-test="fixed-report-entry"
+          class="report-entry-bar__link"
+          :to="entry.path"
+        >
+          {{ entry.menuName }}
+        </router-link>
+      </nav>
+    </section>
+
+    <section v-if="canViewOperatingFinance" class="report-section report-section--priority">
+      <h2>项目利润与经营财务分析</h2>
+      <el-alert v-if="operatingFinanceError" :title="operatingFinanceError" type="error" show-icon :closable="false" />
+      <div v-if="operatingFinanceLoading" class="report-state">经营财务摘要加载中</div>
+      <template v-else-if="operatingFinanceRecord">
+        <p class="report-note">
+          期间：{{ operatingFinanceRecord.periodCode }}；{{ statusText(operatingFinanceRecord.analysisMode) }}；
+          业务月结 {{ statusText(operatingFinanceRecord.businessPeriodStatus) }}，会计期间 {{ statusText(operatingFinanceRecord.accountingPeriodStatus) }}，财务关闭 {{ statusText(operatingFinanceRecord.financialCloseStatus) }}。
+        </p>
+        <p v-if="operatingFinanceRecord.restrictedReason" class="report-note">{{ operatingFinanceRecord.restrictedReason }}</p>
+        <ReportMetricStrip :metrics="operatingFinanceMetrics" />
+      </template>
+      <el-empty v-else description="暂无经营财务摘要" />
     </section>
 
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" />
@@ -191,5 +263,14 @@ onMounted(() => {
 .report-state {
   color: var(--qherp-steel);
   padding: 16px 0;
+}
+
+.report-section h2 {
+  font-size: 16px;
+  margin: 0 0 8px;
+}
+
+.report-section--priority {
+  margin: 0 0 16px;
 }
 </style>

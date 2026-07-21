@@ -2,6 +2,7 @@ package com.qherp.api.system.reporting;
 
 import com.qherp.api.common.ApiResponse;
 import com.qherp.api.common.PageResponse;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,8 +15,12 @@ public class ReportingAdminController {
 
 	private final ReportingAdminService reportingAdminService;
 
-	public ReportingAdminController(ReportingAdminService reportingAdminService) {
+	private final ReportingStage033Service reportingStage033Service;
+
+	public ReportingAdminController(ReportingAdminService reportingAdminService,
+			ReportingStage033Service reportingStage033Service) {
 		this.reportingAdminService = reportingAdminService;
+		this.reportingStage033Service = reportingStage033Service;
 	}
 
 	@GetMapping("/overview")
@@ -106,6 +111,95 @@ public class ReportingAdminController {
 	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> exceptionTraces(
 			@RequestParam MultiValueMap<String, String> parameters) {
 		return ApiResponse.ok(this.reportingAdminService.exceptionTraces(parameters));
+	}
+
+	@GetMapping("/operating-finance-overview")
+	public ApiResponse<Object> operatingFinanceOverview(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.operatingFinanceOverview(parameters));
+	}
+
+	@GetMapping("/project-profit")
+	public ApiResponse<Object> projectProfit(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.projectProfit(parameters));
+	}
+
+	@GetMapping("/project-profit/{projectId}")
+	public ApiResponse<Object> projectProfitDetail(@PathVariable Long projectId,
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.projectProfitDetail(projectId, parameters));
+	}
+
+	@GetMapping("/project-profit/{projectId}/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> projectProfitTraces(
+			@PathVariable Long projectId, @RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.projectProfitTraces(projectId, parameters));
+	}
+
+	@GetMapping("/contract-collections")
+	public ApiResponse<Object> contractCollections(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.contractCollections(parameters));
+	}
+
+	@GetMapping("/contract-collections/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> contractCollectionTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.contractCollectionTraces(parameters));
+	}
+
+	@GetMapping("/procurement-variances")
+	public ApiResponse<Object> procurementVariances(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.procurementVariances(parameters));
+	}
+
+	@GetMapping("/procurement-variances/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> procurementVarianceTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.procurementVarianceTraces(parameters));
+	}
+
+	@GetMapping("/inventory-capital")
+	public ApiResponse<Object> inventoryCapital(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.inventoryCapital(parameters));
+	}
+
+	@GetMapping("/inventory-capital/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> inventoryCapitalTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.inventoryCapitalTraces(parameters));
+	}
+
+	@GetMapping("/receivable-payable")
+	public ApiResponse<Object> receivablePayable(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.receivablePayable(parameters));
+	}
+
+	@GetMapping("/receivable-payable/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> receivablePayableTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.receivablePayableTraces(parameters));
+	}
+
+	@GetMapping("/operating-accounting-reconciliation")
+	public ApiResponse<Object> operatingAccountingReconciliation(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.operatingAccountingReconciliation(parameters));
+	}
+
+	@GetMapping("/operating-accounting-reconciliation/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> operatingAccountingTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.operatingAccountingTraces(parameters));
+	}
+
+	@GetMapping("/financial-summary")
+	public ApiResponse<Object> financialSummary(@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.financialSummary(parameters));
+	}
+
+	@GetMapping("/financial-summary/traces")
+	public ApiResponse<PageResponse<ReportingAdminService.TraceSourceResponse>> financialSummaryTraces(
+			@RequestParam MultiValueMap<String, String> parameters) {
+		return ApiResponse.ok(this.reportingStage033Service.financialSummaryTraces(parameters));
 	}
 
 }
