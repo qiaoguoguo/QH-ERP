@@ -21,6 +21,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class GeneralLedgerV33MigrationRegressionTests {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
 	private static final int EXPECTED_V29_CHECKSUM = 774334682;
 
 	private static final int EXPECTED_V30_CHECKSUM = 2130342893;
@@ -32,6 +34,10 @@ class GeneralLedgerV33MigrationRegressionTests {
 	private static final int EXPECTED_V33_CHECKSUM = 612501943;
 
 	private static final int EXPECTED_V34_CHECKSUM = -629066235;
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
 
 	private static final List<String> GL_TABLES = List.of("gl_ledger", "gl_accounting_period", "gl_account",
 			"gl_aux_dimension", "gl_aux_item", "gl_account_aux_requirement", "gl_posting_rule",
@@ -77,11 +83,13 @@ class GeneralLedgerV33MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
 		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 32)
@@ -100,11 +108,13 @@ class GeneralLedgerV33MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
 		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertGeneralLedgerSchema(jdbcTemplate);
 	}

@@ -29,6 +29,7 @@ import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/sale
 import { useAuthStore } from '../../stores/authStore'
 import ApprovalStatusPanel from '../platform/components/ApprovalStatusPanel.vue'
 import AttachmentPanel from '../platform/components/AttachmentPanel.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import {
@@ -1603,6 +1604,17 @@ onMounted(() => {
         </el-button>
       </section>
 
+      <FixedPrintAction
+        v-if="config.kind === 'warehouseTransfer'"
+        class="inventory-fixed-print"
+        object-type="INVENTORY_TRANSFER"
+        :object-id="record.id"
+        :object-no="documentNo(record)"
+        :object-status="record.status"
+        :allowed-object-statuses="['POSTED', 'CANCELLED', 'REVERSED']"
+        title="仓库调拨固定打印"
+      />
+
       <div v-if="config.kind === 'warehouseTransfer'" class="table-scroll">
         <el-table :data="(record as InventoryWarehouseTransferRecord).lines ?? []" empty-text="暂无调拨明细" stripe>
           <el-table-column prop="lineNo" label="行号" min-width="80" />
@@ -1842,6 +1854,10 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 8px;
   margin: 12px 0;
+}
+
+.inventory-fixed-print {
+  margin: 14px;
 }
 
 .summary-strip {

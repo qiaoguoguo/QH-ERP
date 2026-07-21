@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import {
   createIdempotencyKey,
   documentPlatformApi,
@@ -8,6 +8,7 @@ import {
   type ResourceId,
 } from '../../../shared/api/documentPlatformApi'
 import { downloadFile } from '../../../shared/file/download'
+import { useAuthStore } from '../../../stores/authStore'
 import { platformErrorMessage, formatPlatformDateTime } from '../platformPageHelpers'
 
 const props = withDefaults(defineProps<{
@@ -29,6 +30,8 @@ const selectedFile = ref<File | null>(null)
 const description = ref('')
 const latestTaskText = ref('')
 const pageSize = 20
+const authStore = useAuthStore()
+const canUpload = computed(() => !props.readonly && authStore.hasPermission('platform:attachment:upload'))
 
 async function loadRecords() {
   if (props.objectId === null || props.objectId === undefined) {
@@ -110,7 +113,9 @@ function canDownload(record: AttachmentRecord): boolean {
 }
 
 function canDelete(record: AttachmentRecord): boolean {
-  return record.availableActions?.includes('DELETE') ?? false
+  return !props.readonly
+    && authStore.hasPermission('platform:attachment:delete')
+    && (record.availableActions?.includes('DELETE') ?? false)
 }
 
 async function downloadAttachment(record: AttachmentRecord) {
@@ -161,7 +166,7 @@ onMounted(() => {
       title="允许 PDF、PNG、JPEG、TXT、CSV、DOCX、XLSX；单对象最多 20 个附件，单文件不超过 20 MiB。"
       :closable="false"
     />
-    <div v-if="!readonly" class="attachment-upload-row">
+    <div v-if="canUpload" class="attachment-upload-row">
       <input data-test="attachment-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.docx,.xlsx" @change="selectFile">
       <el-input v-model="description" placeholder="附件说明" />
       <el-button data-test="upload-attachment" :loading="actionLoading" :disabled="!selectedFile || actionLoading" @click="uploadFile">
@@ -189,7 +194,7 @@ onMounted(() => {
       <el-table-column label="操作" fixed="right" width="160">
         <template #default="{ row }">
           <el-button v-if="canDownload(row)" data-test="download-attachment" size="small" text @click="downloadAttachment(row)">下载</el-button>
-          <el-button v-if="!readonly && canDelete(row)" data-test="delete-attachment" size="small" text type="danger" @click="deleteAttachment(row)">删除</el-button>
+          <el-button v-if="canDelete(row)" data-test="delete-attachment" size="small" text type="danger" @click="deleteAttachment(row)">删除</el-button>
           <el-tag v-if="row.restricted" type="warning" size="small">{{ row.restrictedMessage || '受限' }}</el-tag>
         </template>
       </el-table-column>

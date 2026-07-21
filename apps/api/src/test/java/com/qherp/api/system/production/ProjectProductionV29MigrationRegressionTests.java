@@ -21,6 +21,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @Testcontainers
 class ProjectProductionV29MigrationRegressionTests {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
+
 	@Container
 	static final PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:18-alpine");
 
@@ -44,7 +50,7 @@ class ProjectProductionV29MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(migrationChecksums(jdbcTemplate).entrySet()
 			.stream()
@@ -107,7 +113,7 @@ class ProjectProductionV29MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(tableExists(jdbcTemplate, "mfg_outsourcing_order")).isTrue();
 		assertThat(tableExists(jdbcTemplate, "mfg_action_idempotency")).isTrue();
@@ -285,6 +291,8 @@ class ProjectProductionV29MigrationRegressionTests {
 		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
 		assertThat(migrationChecksum(jdbcTemplate, "33")).isEqualTo(612501943);
 		assertThat(migrationChecksum(jdbcTemplate, "34")).isEqualTo(-629066235);
+		assertThat(migrationChecksum(jdbcTemplate, "35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(migrationChecksum(jdbcTemplate, "36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 	}
 

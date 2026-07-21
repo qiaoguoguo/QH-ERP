@@ -79,6 +79,14 @@ vi.mock('../../shared/api/salesProjectApi', () => ({
   salesProjectApi: salesProjectApiMock,
 }))
 
+vi.mock('../platform/components/FixedPrintAction.vue', () => ({
+  default: {
+    name: 'FixedPrintAction',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
+    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+  },
+}))
+
 const transferRecord = {
   id: 1001,
   documentNo: 'WT-001',
@@ -933,6 +941,21 @@ describe('库存受控单据页', () => {
     expect(adjustment.wrapper.text()).toContain('PRJ-001 一号项目')
     expect(adjustment.wrapper.text()).toContain('成本层')
     expect(adjustment.wrapper.text()).toContain('CL-PRJ-001')
+  })
+
+  it('仓库调拨详情接入 034 固定打印入口', async () => {
+    const { wrapper } = await mountInventoryDocument('/inventory/warehouse-transfers/1001')
+
+    const entry = wrapper.findComponent({ name: 'FixedPrintAction' })
+    expect(entry.exists()).toBe(true)
+    expect(entry.props()).toEqual(expect.objectContaining({
+      objectType: 'INVENTORY_TRANSFER',
+      objectId: 1001,
+      objectNo: 'WT-001',
+      objectStatus: 'DRAFT',
+      allowedObjectStatuses: ['POSTED', 'CANCELLED', 'REVERSED'],
+      title: '仓库调拨固定打印',
+    }))
   })
 
   it('盘点详情严格区分未盘和实盘为零，行保存只发送已填写的脏行 countedQuantity', async () => {

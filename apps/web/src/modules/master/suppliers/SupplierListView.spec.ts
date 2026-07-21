@@ -160,4 +160,17 @@ describe('供应商列表页', () => {
     }))
     expect(apiMock.suppliers.update).not.toHaveBeenCalled()
   })
+
+  it('034 主列表同时提供固定历史导入和可执行批量状态入口', async () => {
+    apiMock.suppliers.list.mockResolvedValue({ items: [supplier], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountSuppliers([
+      'master:supplier:view',
+      'platform:history-import:view',
+      'platform:batch-tool:view',
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="supplier-history-import-entry"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="supplier-batch-status-entry"]').exists()).toBe(true)
+  })
 })

@@ -182,6 +182,11 @@ public class PlatformApprovalService {
 		return submit("FINANCIAL_PERIOD_REOPEN", requestId, request, operator, servletRequest);
 	}
 
+	public ApprovalInstanceRecord submitDataRepairExecution(Long requestId, ApprovalSubmitRequest request,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		return submit("PLATFORM_DATA_REPAIR_EXECUTION", requestId, request, operator, servletRequest);
+	}
+
 	public ApprovalInstanceRecord idempotentSubmitResult(String sceneCode, Long objectId,
 			ApprovalSubmitRequest request, CurrentUser operator) {
 		validateSubmitRequest(request);
@@ -278,6 +283,9 @@ public class PlatformApprovalService {
 			throw new BusinessException(ApiErrorCode.APPROVAL_STATUS_INVALID);
 		}
 		if (task.submittedByUserId().equals(operator.id())) {
+			if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(task.sceneCode())) {
+				throw new BusinessException(ApiErrorCode.DATA_REPAIR_SELF_APPROVAL_FORBIDDEN);
+			}
 			if ("GL_VOUCHER_POST".equals(task.sceneCode())) {
 				throw new BusinessException(ApiErrorCode.GL_APPROVAL_SELF_FORBIDDEN);
 			}
@@ -560,6 +568,30 @@ public class PlatformApprovalService {
 					operator, servletRequest);
 			return;
 		}
+		if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(task.sceneCode())) {
+			int updated = this.jdbcTemplate.update("""
+					update platform_data_repair_request
+					set status = 'READY_TO_EXECUTE', approved_at = ?, updated_at = ?, version = version + 1
+					where id = ?
+					and approval_instance_id = ?
+					and version = ?
+					and status = 'PENDING_APPROVAL'
+					""", OffsetDateTime.now(), OffsetDateTime.now(), task.businessObjectId(), task.instanceId(),
+					task.businessObjectVersion());
+			if (updated == 0) {
+				throw new BusinessException(ApiErrorCode.DATA_REPAIR_OBJECT_CHANGED);
+			}
+			this.jdbcTemplate.update("""
+					insert into platform_data_repair_event (
+						request_id, event_type, operator_user_id, operator_username, status_before, status_after,
+						detail_json
+					)
+					values (?, 'APPROVE', ?, ?, 'PENDING_APPROVAL', 'READY_TO_EXECUTE',
+						cast(? as jsonb))
+					""", task.businessObjectId(), operator.id(), operator.username(),
+					"{\"approvalInstanceId\":" + task.instanceId() + "}");
+			return;
+		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
 
@@ -593,6 +625,23 @@ public class PlatformApprovalService {
 		}
 		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
 			this.financialCloseService.reopenAfterApprovalTerminal(objectId, operator);
+		}
+		if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(sceneCode)) {
+			this.jdbcTemplate.update("""
+					update platform_data_repair_request
+					set status = 'REJECTED', error_summary = '审批未通过或已终止', updated_at = ?,
+					    version = version + 1
+					where id = ?
+					and status = 'PENDING_APPROVAL'
+					""", OffsetDateTime.now(), objectId);
+			this.jdbcTemplate.update("""
+					insert into platform_data_repair_event (
+						request_id, event_type, operator_user_id, operator_username, status_before, status_after,
+						detail_json
+					)
+					values (?, 'APPROVAL_TERMINAL', ?, ?, 'PENDING_APPROVAL', 'REJECTED',
+						cast(? as jsonb))
+					""", objectId, operator.id(), operator.username(), "{\"reason\":\"approval terminal\"}");
 		}
 	}
 
@@ -872,6 +921,20 @@ public class PlatformApprovalService {
 			FinancialCloseService.ApprovalSnapshot snapshot = this.financialCloseService.approvalSnapshot(objectId);
 			return new BusinessObjectSnapshot(snapshot.id(), snapshot.no(), snapshot.summary(),
 					snapshot.approvalStatus(), snapshot.version());
+		}
+		if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(sceneCode)) {
+			return this.jdbcTemplate.query("""
+					select id, request_no, target_object_summary,
+					       case when status in ('DRAFT', 'PENDING_APPROVAL') then 'DRAFT' else status end as approval_status,
+					       version
+					from platform_data_repair_request
+					where id = ?
+					""", (rs, rowNum) -> new BusinessObjectSnapshot(rs.getLong("id"),
+					rs.getString("request_no"), rs.getString("target_object_summary"),
+					rs.getString("approval_status"), rs.getLong("version")), objectId)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.DATA_REPAIR_NOT_FOUND));
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}
@@ -1271,6 +1334,9 @@ public class PlatformApprovalService {
 		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
 			return operator.permissions().contains("financial-close:period:view");
 		}
+		if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(sceneCode)) {
+			return operator.permissions().contains("platform:data-repair:view");
+		}
 		return false;
 	}
 
@@ -1355,6 +1421,9 @@ public class PlatformApprovalService {
 		}
 		if ("FINANCIAL_PERIOD_REOPEN".equals(sceneCode)) {
 			return "financial-close:period:view";
+		}
+		if ("PLATFORM_DATA_REPAIR_EXECUTION".equals(sceneCode)) {
+			return "platform:data-repair:view";
 		}
 		throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 	}

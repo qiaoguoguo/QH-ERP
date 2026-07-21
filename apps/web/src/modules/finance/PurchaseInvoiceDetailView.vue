@@ -8,6 +8,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { financeErrorMessage, financePermissions, financeSourceTypeText, formatFinanceAmount, invoiceStatusText, matchStatusText, settlementStatusText, voucherDraftStatusText } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import FinanceSourceTracePanel from './FinanceSourceTracePanel.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import './Finance028Shared.css'
 
 const route = useRoute()
@@ -182,6 +183,15 @@ onMounted(loadRecord)
       </section>
       <section class="finance-section"><span class="finance-section-title">付款/预付核销</span><p v-for="item in record.settlements" :key="item.documentNo">{{ item.documentNo }} {{ formatFinanceAmount(item.amount) }}</p></section>
       <section class="finance-section"><span class="finance-section-title">凭证草稿</span><p v-if="!record.voucherDrafts?.length">暂无凭证草稿</p><p v-for="draft in record.voucherDrafts" :key="draft.draftNo">{{ draft.draftNo }} {{ voucherDraftStatusText(draft.status) }}</p></section>
+      <FixedPrintAction
+        class="finance-section"
+        object-type="PURCHASE_INVOICE"
+        :object-id="record.id"
+        :object-no="record.invoiceNo"
+        :object-status="record.status"
+        :allowed-object-statuses="['CONFIRMED', 'POSTED', 'CLOSED']"
+        title="采购发票固定打印"
+      />
     </div>
     <FinanceSourceTracePanel v-if="record" :sources="record.sources ?? []" />
   </MasterDataTableView>

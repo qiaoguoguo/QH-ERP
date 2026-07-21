@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, getCurrentInstance, onMounted, reactive, ref, watch } from 'vue'
 import {
   createIdempotencyKey,
   documentPlatformApi,
   type DocumentTaskRecord,
+  type DocumentTaskStatus,
   type DocumentTaskType,
   type ImportFailureRecord,
 } from '../../../shared/api/documentPlatformApi'
+import { platformGovernanceApi } from '../../../shared/api/platformGovernanceApi'
 import { pageItems } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { downloadFile } from '../../../shared/file/download'
@@ -19,8 +21,25 @@ import {
   formatPlatformDateTime,
   platformErrorMessage,
 } from '../platformPageHelpers'
+import { confirmAction } from '../../../shared/ui/confirmDialog'
 
-const filters = reactive<{ keyword: string; taskType?: DocumentTaskType; status?: string }>({ keyword: '', taskType: undefined, status: undefined })
+const filters = reactive<{
+  keyword: string
+  domain: string
+  taskType: DocumentTaskType | ''
+  objectKeyword: string
+  createdByKeyword: string
+  createdAtRange: [string, string] | []
+  status: DocumentTaskStatus | ''
+}>({
+  keyword: '',
+  domain: '',
+  taskType: '',
+  objectKeyword: '',
+  createdByKeyword: '',
+  createdAtRange: [],
+  status: '',
+})
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const records = ref<DocumentTaskRecord[]>([])
 const loading = ref(false)
@@ -36,6 +55,85 @@ const pollingTaskIds = computed(() => records.value
   .map((item) => item.id))
 const polling = useDocumentTaskPolling(pollingTaskIds, (id) => documentPlatformApi.documentTasks.get(id), { intervalMs: 2500 })
 const hasRunningTask = computed(() => records.value.some((item) => !isDocumentTaskTerminalStatus(item.status)))
+const routeProxy = getCurrentInstance()?.proxy as unknown as { $route?: { query?: Record<string, unknown> } } | null
+
+const taskTypeOptions: DocumentTaskType[] = [
+  'MATERIAL_IMPORT',
+  'MATERIAL_EXPORT',
+  'BOM_DRAFT_IMPORT',
+  'BOM_DRAFT_EXPORT',
+  'APPROVAL_PRINT',
+  'PROCUREMENT_REQUISITION_EXPORT',
+  'PROCUREMENT_INQUIRY_EXPORT',
+  'PROCUREMENT_QUOTE_IMPORT',
+  'PROCUREMENT_QUOTE_EXPORT',
+  'PROCUREMENT_PRICE_AGREEMENT_EXPORT',
+  'PROCUREMENT_ORDER_EXPORT',
+  'PROCUREMENT_ORDER_PRINT',
+  'PROCUREMENT_SCHEDULE_EXPORT',
+  'PROCUREMENT_SUPPLY_EXPORT',
+  'SALES_QUOTE_PRINT',
+  'SALES_QUOTE_EXPORT',
+  'SALES_DELIVERY_PLAN_EXPORT',
+  'SALES_EFFECTIVE_DEMAND_EXPORT',
+  'MATERIAL_REQUIREMENT_RUN_EXPORT',
+  'DATA_REPAIR_EXECUTE',
+  'HISTORY_IMPORT_CUSTOMER',
+  'HISTORY_IMPORT_SUPPLIER',
+  'HISTORY_IMPORT_MATERIAL',
+  'HISTORY_IMPORT_BOM_DRAFT',
+  'HISTORY_IMPORT_SALES_PROJECT',
+  'CUSTOMER_MASTER_V1_HISTORY_IMPORT',
+  'SUPPLIER_MASTER_V1_HISTORY_IMPORT',
+  'MATERIAL_MASTER_V1_HISTORY_IMPORT',
+  'BOM_DRAFT_V1_HISTORY_IMPORT',
+  'SALES_PROJECT_V1_HISTORY_IMPORT',
+  'BATCH_CUSTOMER_STATUS_CHANGE',
+  'BATCH_SUPPLIER_STATUS_CHANGE',
+  'BATCH_MATERIAL_STATUS_CHANGE',
+  'FIXED_DOCUMENT_BATCH_PRINT',
+  'SALES_ORDER_PRINT',
+  'SALES_SHIPMENT_PRINT',
+  'PROCUREMENT_RECEIPT_PRINT',
+  'INVENTORY_TRANSFER_PRINT',
+  'PRODUCTION_WORK_ORDER_PRINT',
+  'PRODUCTION_MATERIAL_ISSUE_PRINT',
+  'PRODUCTION_COMPLETION_RECEIPT_PRINT',
+  'SALES_INVOICE_PRINT',
+  'PURCHASE_INVOICE_PRINT',
+  'ACCOUNTING_VOUCHER_PRINT',
+]
+const statusOptions: DocumentTaskStatus[] = [
+  'QUEUED',
+  'RUNNING',
+  'READY_TO_COMMIT',
+  'VALIDATION_FAILED',
+  'SUCCEEDED',
+  'FAILED',
+  'CANCELLED',
+  'EXPIRED',
+]
+const domainOptions = [
+  { value: 'IMPORT_EXPORT', label: '导入导出' },
+  { value: 'PRINT', label: '固定打印' },
+  { value: 'DATA_REPAIR', label: '数据修复' },
+  { value: 'HISTORY_IMPORT', label: '历史导入' },
+  { value: 'BATCH_TOOL', label: '批量工具' },
+]
+
+function queryValue(name: string): string | undefined {
+  const routeValue = routeProxy?.$route?.query?.[name]
+  const normalizedRouteValue = Array.isArray(routeValue) ? routeValue[0] : routeValue
+  if (normalizedRouteValue !== undefined && normalizedRouteValue !== null && String(normalizedRouteValue).trim()) {
+    return String(normalizedRouteValue)
+  }
+  const urlValue = new URLSearchParams(window.location.search).get(name)
+  return urlValue && urlValue.trim() ? urlValue : undefined
+}
+
+const taskIdFilter = computed(() => queryValue('taskId'))
+const batchOperationIdFilter = computed(() => queryValue('batchOperationId'))
+const routeQuerySignature = computed(() => `${taskIdFilter.value ?? ''}|${batchOperationIdFilter.value ?? ''}`)
 
 watch(() => polling.latestTasks.value, (tasks) => {
   if (!tasks.length) {
@@ -63,9 +161,16 @@ async function loadRecords() {
   error.value = ''
   try {
     const page = await documentPlatformApi.documentTasks.list({
+      taskId: taskIdFilter.value,
+      batchOperationId: batchOperationIdFilter.value,
       keyword: filters.keyword,
-      taskType: filters.taskType,
-      status: filters.status as never,
+      domain: filters.domain,
+      taskType: filters.taskType || undefined,
+      objectKeyword: filters.objectKeyword,
+      createdByKeyword: filters.createdByKeyword,
+      createdAtFrom: filters.createdAtRange[0] ?? '',
+      createdAtTo: filters.createdAtRange[1] ?? '',
+      status: filters.status || undefined,
       page: pagination.page,
       pageSize: pagination.pageSize,
     })
@@ -82,6 +187,25 @@ async function loadRecords() {
 }
 
 function search() {
+  pagination.page = 1
+  void loadRecords()
+}
+
+function isHistoryImportTask(record: DocumentTaskRecord): boolean {
+  const taskType = String(record.taskType ?? '')
+  return record.businessDomain === 'HISTORY_IMPORT'
+    || taskType.startsWith('HISTORY_IMPORT_')
+    || taskType.endsWith('_HISTORY_IMPORT')
+}
+
+function resetFilters() {
+  filters.keyword = ''
+  filters.domain = ''
+  filters.taskType = ''
+  filters.objectKeyword = ''
+  filters.createdByKeyword = ''
+  filters.createdAtRange = []
+  filters.status = ''
   pagination.page = 1
   void loadRecords()
 }
@@ -125,13 +249,23 @@ async function downloadTask(record: DocumentTaskRecord) {
 }
 
 async function confirmTask(record: DocumentTaskRecord) {
+  if (!(await confirmAction(`确认提交任务“${record.taskNo}”？确认后将按服务端预检和版本执行。`, { title: '确认任务', risk: 'warning' }))) {
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
-    await documentPlatformApi.imports.confirm(record.id, {
-      version: record.version,
-      idempotencyKey: createIdempotencyKey('document-task-confirm'),
-    })
+    if (isHistoryImportTask(record)) {
+      await platformGovernanceApi.historyImports.confirm(record.id, {
+        version: record.version,
+        idempotencyKey: createIdempotencyKey('history-import-confirm'),
+      })
+    } else {
+      await documentPlatformApi.imports.confirm(record.id, {
+        version: record.version,
+        idempotencyKey: createIdempotencyKey('document-task-confirm'),
+      })
+    }
     await loadRecords()
   } catch (caught) {
     actionError.value = platformErrorMessage(caught)
@@ -141,10 +275,20 @@ async function confirmTask(record: DocumentTaskRecord) {
 }
 
 async function cancelTask(record: DocumentTaskRecord) {
+  if (!(await confirmAction(`确认取消任务“${record.taskNo}”？`, { title: '取消任务', risk: 'warning' }))) {
+    return
+  }
   actionLoading.value = true
   actionError.value = ''
   try {
-    await documentPlatformApi.documentTasks.cancel(record.id, { version: record.version, reason: '用户取消' })
+    if (isHistoryImportTask(record)) {
+      await platformGovernanceApi.historyImports.cancel(record.id, {
+        version: record.version,
+        idempotencyKey: createIdempotencyKey('history-import-cancel'),
+      })
+    } else {
+      await documentPlatformApi.documentTasks.cancel(record.id, { version: record.version, reason: '用户取消' })
+    }
     await loadRecords()
   } catch (caught) {
     actionError.value = platformErrorMessage(caught)
@@ -168,7 +312,16 @@ function confirmActionLabel(record: DocumentTaskRecord): string {
   return record.taskType.endsWith('_IMPORT') ? '确认导入' : '确认提交'
 }
 
+function businessDomainLabel(domain?: string | null): string {
+  return domainOptions.find((item) => item.value === domain)?.label ?? domain ?? '-'
+}
+
 onMounted(() => {
+  void loadRecords()
+})
+
+watch(routeQuerySignature, () => {
+  pagination.page = 1
   void loadRecords()
 })
 </script>
@@ -180,17 +333,43 @@ onMounted(() => {
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="document-task-keyword" clearable placeholder="任务号或对象" />
         </el-form-item>
-        <el-form-item label="类型">
-          <el-select v-model="filters.taskType" clearable placeholder="全部类型">
-            <el-option label="物料导入" value="MATERIAL_IMPORT" />
-            <el-option label="物料导出" value="MATERIAL_EXPORT" />
-            <el-option label="BOM 草稿导入" value="BOM_DRAFT_IMPORT" />
-            <el-option label="BOM 草稿导出" value="BOM_DRAFT_EXPORT" />
-            <el-option label="审批单打印" value="APPROVAL_PRINT" />
+        <el-form-item label="业务域">
+          <el-select v-model="filters.domain" clearable placeholder="全部业务域">
+            <el-option v-for="domain in domainOptions" :key="domain.value" :label="domain.label" :value="domain.value" />
           </el-select>
         </el-form-item>
-        <el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="filters.taskType" clearable filterable placeholder="全部类型">
+            <el-option v-for="type in taskTypeOptions" :key="type" :label="documentTaskTypeLabel(type)" :value="type" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="对象">
+          <el-input v-model="filters.objectKeyword" name="document-task-object-keyword" clearable placeholder="对象编号或名称" />
+        </el-form-item>
+        <el-form-item label="发起人">
+          <el-input v-model="filters.createdByKeyword" name="document-task-created-by" clearable placeholder="发起人姓名" />
+        </el-form-item>
+        <el-form-item label="创建日期">
+          <el-date-picker
+            v-model="filters.createdAtRange"
+            name="document-task-created-at-range"
+            type="daterange"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            value-on-clear=""
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="filters.status" clearable placeholder="全部状态">
+            <el-option v-for="status in statusOptions" :key="status" :label="documentTaskStatusLabel(status)" :value="status" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="操作">
           <el-button data-test="search-document-tasks" type="primary" @click="search">查询</el-button>
+          <el-button data-test="reset-document-tasks" @click="resetFilters">重置</el-button>
         </el-form-item>
       </el-form>
     </template>
@@ -203,8 +382,14 @@ onMounted(() => {
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无文档任务'" stripe>
         <el-table-column prop="taskNo" label="任务号" width="150" show-overflow-tooltip />
+        <el-table-column label="业务域" width="110">
+          <template #default="{ row }">{{ businessDomainLabel(row.businessDomain) }}</template>
+        </el-table-column>
         <el-table-column label="类型" width="130">
           <template #default="{ row }">{{ documentTaskTypeLabel(row.taskType) }}</template>
+        </el-table-column>
+        <el-table-column label="对象" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.objectNo || '-' }} {{ row.objectName || '' }}</template>
         </el-table-column>
         <el-table-column label="阶段" width="90">
           <template #default="{ row }">{{ documentTaskStageLabel(row.stage) }}</template>
@@ -220,7 +405,12 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column prop="totalRows" label="总行数" width="90" />
+        <el-table-column prop="successRows" label="成功数" width="90" />
         <el-table-column prop="failedRows" label="错误数" width="90" />
+        <el-table-column prop="createdByName" label="发起人" width="110" show-overflow-tooltip />
+        <el-table-column label="创建时间" width="160">
+          <template #default="{ row }">{{ formatPlatformDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="完成时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.completedAt) }}</template>
         </el-table-column>
@@ -277,7 +467,7 @@ onMounted(() => {
     <el-pagination
       class="table-pagination"
       layout="total, sizes, prev, pager, next"
-      :page-sizes="[10, 20, 50]"
+      :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"
@@ -286,13 +476,15 @@ onMounted(() => {
     />
 
     <el-drawer v-model="errorDrawerVisible" title="导入错误明细" size="min(720px, 92vw)">
-      <el-table :data="failureRows" :empty-text="'暂无错误明细'" stripe>
-        <el-table-column prop="rowNo" label="行号" width="80" />
-        <el-table-column prop="columnName" label="列名" width="140" show-overflow-tooltip />
-        <el-table-column prop="code" label="错误码" width="180" show-overflow-tooltip />
-        <el-table-column prop="message" label="错误" min-width="220" show-overflow-tooltip />
-        <el-table-column prop="suggestion" label="建议" min-width="180" show-overflow-tooltip />
-      </el-table>
+      <div class="table-scroll">
+        <el-table :data="failureRows" :empty-text="'暂无错误明细'" stripe>
+          <el-table-column prop="rowNo" label="行号" width="80" />
+          <el-table-column prop="columnName" label="列名" width="140" show-overflow-tooltip />
+          <el-table-column prop="code" label="错误码" width="180" show-overflow-tooltip />
+          <el-table-column prop="message" label="错误" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="suggestion" label="建议" min-width="180" show-overflow-tooltip />
+        </el-table>
+      </div>
       <el-pagination
         class="table-pagination"
         layout="total, prev, pager, next"

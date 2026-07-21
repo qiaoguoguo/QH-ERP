@@ -161,4 +161,17 @@ describe('客户列表页', () => {
     }))
     expect(apiMock.customers.update).not.toHaveBeenCalled()
   })
+
+  it('034 主列表同时提供固定历史导入和可执行批量状态入口', async () => {
+    apiMock.customers.list.mockResolvedValue({ items: [customer], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountCustomers([
+      'master:customer:view',
+      'platform:history-import:view',
+      'platform:batch-tool:view',
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="customer-history-import-entry"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="customer-batch-status-entry"]').exists()).toBe(true)
+  })
 })

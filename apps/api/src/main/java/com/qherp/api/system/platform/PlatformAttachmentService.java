@@ -239,7 +239,8 @@ public class PlatformAttachmentService {
 				&& !"INVENTORY_VALUATION_ADJUSTMENT".equals(upload.objectType())
 				&& !"SALES_QUOTE".equals(upload.objectType())
 				&& !"SALES_ORDER_CHANGE".equals(upload.objectType())
-				&& !"SALES_PROJECT".equals(upload.objectType())) {
+				&& !"SALES_PROJECT".equals(upload.objectType())
+				&& !"DATA_REPAIR_REQUEST".equals(upload.objectType())) {
 			throw new BusinessException(ApiErrorCode.APPROVAL_OBJECT_NOT_SUPPORTED);
 		}
 		String extension = extension(upload.originalFilename());
@@ -412,6 +413,10 @@ public class PlatformAttachmentService {
 			requireExists("select count(*) from sal_project where id = ?", objectId);
 			return;
 		}
+		if ("DATA_REPAIR_REQUEST".equals(objectType)) {
+			requireDataRepairAttachmentPermission(objectId, currentUser, mode);
+			return;
+		}
 		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
 			requirePermission(currentUser, "material:bom-eco:view");
 			requireExists("select count(*) from mfg_bom_engineering_change where id = ?", objectId);
@@ -457,6 +462,9 @@ public class PlatformAttachmentService {
 			return currentUser.permissions().contains(permission)
 					&& exists("select count(*) from sal_project where id = ?", objectId);
 		}
+		if ("DATA_REPAIR_REQUEST".equals(objectType)) {
+			return hasDataRepairAttachmentPermission(objectId, currentUser, mode);
+		}
 		if ("BOM_ENGINEERING_CHANGE".equals(objectType)) {
 			return currentUser.permissions().contains("material:bom-eco:view")
 					&& exists("select count(*) from mfg_bom_engineering_change where id = ?", objectId);
@@ -474,6 +482,42 @@ public class PlatformAttachmentService {
 					&& exists("select count(*) from inv_valuation_adjustment where id = ?", objectId);
 		}
 		return false;
+	}
+
+	private void requireDataRepairAttachmentPermission(Long requestId, CurrentUser currentUser,
+			AttachmentAccessMode mode) {
+		if (!hasDataRepairAttachmentPermission(requestId, currentUser, mode)) {
+			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
+		}
+	}
+
+	private boolean hasDataRepairAttachmentPermission(Long requestId, CurrentUser currentUser,
+			AttachmentAccessMode mode) {
+		if (!currentUser.permissions().contains("platform:data-repair:view")) {
+			return false;
+		}
+		DataRepairAttachmentScope scope = dataRepairAttachmentScope(requestId);
+		if (scope == null || !currentUser.permissions().contains(scope.requiredPermissionCode())) {
+			return false;
+		}
+		if (mode == AttachmentAccessMode.VIEW) {
+			return true;
+		}
+		return currentUser.permissions().contains("platform:data-repair:update")
+				&& currentUser.id().equals(scope.createdByUserId()) && "DRAFT".equals(scope.status());
+	}
+
+	private DataRepairAttachmentScope dataRepairAttachmentScope(Long requestId) {
+		return this.jdbcTemplate.query("""
+				select r.created_by_user_id, r.status, d.required_permission_code
+				from platform_data_repair_request r
+				join platform_data_repair_adapter_definition d on d.adapter_code = r.adapter_code
+				where r.id = ?
+				  and d.status = 'ENABLED'
+				""", (rs, rowNum) -> new DataRepairAttachmentScope(rs.getLong("created_by_user_id"),
+				rs.getString("status"), rs.getString("required_permission_code")), requestId).stream()
+			.findFirst()
+			.orElse(null);
 	}
 
 	private void requirePermission(CurrentUser currentUser, String permissionCode) {
@@ -566,6 +610,9 @@ public class PlatformAttachmentService {
 
 	private record AttachmentFile(Long id, String objectType, Long objectId, Long fileId, String objectKey,
 			String originalFilename, String contentType, Long version) {
+	}
+
+	private record DataRepairAttachmentScope(Long createdByUserId, String status, String requiredPermissionCode) {
 	}
 
 	private enum AttachmentAccessMode {

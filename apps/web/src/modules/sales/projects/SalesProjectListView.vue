@@ -146,6 +146,14 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="销售项目" description="维护销售项目、合同摘要和关联销售订单归属。">
     <template #actions>
+      <a
+        v-if="authStore.hasPermission('platform:history-import:view') || authStore.hasPermission('platform:history-import:create')"
+        data-test="sales-project-history-import-entry"
+        class="inline-action-link"
+        href="/platform/history-imports?adapterCode=SALES_PROJECT_DRAFT_V1"
+      >
+        历史导入
+      </a>
       <el-button v-if="canCreate" data-test="create-sales-project" type="primary" @click="createProject">
         新建销售项目
       </el-button>

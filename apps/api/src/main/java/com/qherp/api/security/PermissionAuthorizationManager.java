@@ -215,6 +215,70 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/approvals")) {
 			return "platform:approval:view";
 		}
+		if ("GET".equals(method) && "/api/admin/platform/data-repair-adapters".equals(path)) {
+			return "platform:data-repair:view";
+		}
+		if (matchesBasePath(path, "/api/admin/platform/data-repairs")) {
+			if ("GET".equals(method)) {
+				return "platform:data-repair:view";
+			}
+			if ("POST".equals(method) && "/api/admin/platform/data-repairs".equals(path)) {
+				return "platform:data-repair:create";
+			}
+			if ("PUT".equals(method) && matchesIdPath(path, "/api/admin/platform/data-repairs")) {
+				return "platform:data-repair:update";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/platform/data-repairs") + "/\\d+/submit")) {
+				return "platform:data-repair:submit";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/platform/data-repairs") + "/\\d+/execute")) {
+				return "platform:data-repair:execute";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/platform/data-repairs") + "/\\d+/verify")) {
+				return "platform:data-repair:verify";
+			}
+			if ("POST".equals(method)
+					&& path.matches(Pattern.quote("/api/admin/platform/data-repairs") + "/\\d+/cancel")) {
+				return "platform:data-repair:cancel";
+			}
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/platform/history-import-adapters")) {
+			return "platform:history-import:view";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/platform/history-imports")) {
+			return "platform:history-import:view";
+		}
+		if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/platform/history-imports") + "/[^/]+")) {
+			return "platform:history-import:create";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/platform/history-imports") + "/\\d+/confirm")) {
+			return "platform:history-import:confirm";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/platform/history-imports") + "/\\d+/cancel")) {
+			return "platform:history-import:cancel";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/platform/batch-tools")) {
+			return "platform:batch-tool:view";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/platform/batch-tools") + "/[^/]+/preview")) {
+			return "platform:batch-tool:preview";
+		}
+		if ("GET".equals(method) && matchesBasePath(path, "/api/admin/platform/batch-operations")) {
+			return "platform:batch-tool:view";
+		}
+		if ("POST".equals(method)
+				&& path.matches(Pattern.quote("/api/admin/platform/batch-operations") + "/\\d+/execute")) {
+			return "platform:batch-tool:execute";
+		}
+		if ("GET".equals(method) && "/api/admin/platform/delivery-assets".equals(path)) {
+			return "platform:delivery-asset:view";
+		}
 		if ("POST".equals(method) && path.matches(Pattern.quote("/api/admin/approvals") + "/\\d+/cancel")) {
 			return "platform:approval:cancel";
 		}
@@ -290,6 +354,9 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return "platform:print:generate";
 		}
 		if ("GET".equals(method) && path.matches(Pattern.quote("/api/admin/print-previews") + "/\\d+")) {
+			return "platform:print:generate";
+		}
+		if ("GET".equals(method) && "/api/admin/print-previews".equals(path)) {
 			return "platform:print:generate";
 		}
 		if ("POST".equals(method) && "/api/admin/print-tasks".equals(path)) {

@@ -3,21 +3,27 @@
 begin transaction read only;
 
 with rules(rule_code, category, actual_value, expected_value, passed, message) as (
-    select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
+    select 'FLYWAY_LATEST_V36'::text, 'migration'::text,
         concat(
             'version=', coalesce((array_agg(version::int order by version::int desc))[1]::text, 'none'),
             ';checksum=', coalesce((array_agg(checksum order by version::int desc))[1]::text, 'none')
         ),
-        'latest successful version = 35; checksum recorded'::text,
-        coalesce((array_agg(version::int order by version::int desc))[1], 0) = 35
-            and (array_agg(checksum order by version::int desc))[1] is not null,
-        'Flyway 最新成功版本必须为 V35，V35 checksum 必须已记录；V29-V34 checksum 仍精确锁定。'::text
+        'latest successful version = 36; checksum = 1030907058'::text,
+        coalesce((array_agg(version::int order by version::int desc))[1], 0) = 36
+            and coalesce((array_agg(checksum order by version::int desc))[1], 0) = 1030907058,
+        'Flyway 最新成功版本必须为 V36，V36 checksum 必须保持 1030907058；V29-V35 checksum 仍精确锁定。'::text
     from flyway_schema_history where success and version ~ '^[0-9]+$'
-    union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration',
+    union all select 'FLYWAY_V36_CHECKSUM_RECORDED', 'migration',
+        concat('version=36;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
+        'version 36 checksum = 1030907058',
+        coalesce((array_agg(checksum))[1], 0) = 1030907058,
+        'Flyway V36 checksum 必须保持 1030907058。'
+        from flyway_schema_history where success and version = '36'
+    union all select 'FLYWAY_V35_CHECKSUM', 'migration',
         concat('version=35;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
-        'version 35 checksum is recorded',
-        (array_agg(checksum))[1] is not null,
-        'Flyway V35 checksum 必须存在；冻结后可补充为精确值。'
+        'version 35 checksum = -82801719',
+        coalesce((array_agg(checksum))[1], 0) = -82801719,
+        'Flyway V35 checksum 必须保持 -82801719。'
         from flyway_schema_history where success and version = '35'
     union all select 'FLYWAY_V34_CHECKSUM', 'migration',
         concat('version=34;checksum=', coalesce((array_agg(checksum))[1]::text, 'none')),
@@ -1633,13 +1639,424 @@ with rules(rule_code, category, actual_value, expected_value, passed, message) a
                 and b.import_type = 'MATERIAL_IMPORT'
                 and b.status = 'VALIDATION_FAILED'
         ) import_error_coverage
+
+    union all select 'PLATFORM_DATA_REPAIR_PERMISSIONS_V36', 'stage034-definition', count(*)::text, '8', count(*) = 8,
+        'V36 必须精确初始化数据修复 view/create/update/submit/approve/execute/verify/cancel 八个固定权限。'
+        from sys_permission
+        where code in ('platform:data-repair:view', 'platform:data-repair:create', 'platform:data-repair:update',
+            'platform:data-repair:submit', 'platform:data-repair:approve', 'platform:data-repair:execute',
+            'platform:data-repair:verify', 'platform:data-repair:cancel')
+    union all select 'PLATFORM_HISTORY_IMPORT_PERMISSIONS_V36', 'stage034-definition', count(*)::text, '4', count(*) = 4,
+        'V36 必须精确初始化历史导入 view/create/confirm/cancel 四个固定权限。'
+        from sys_permission
+        where code in ('platform:history-import:view', 'platform:history-import:create',
+            'platform:history-import:confirm', 'platform:history-import:cancel')
+    union all select 'PLATFORM_BATCH_TOOL_PERMISSIONS_V36', 'stage034-definition', count(*)::text, '3', count(*) = 3,
+        'V36 必须精确初始化固定批量工具 view/preview/execute 三个固定权限。'
+        from sys_permission
+        where code in ('platform:batch-tool:view', 'platform:batch-tool:preview', 'platform:batch-tool:execute')
+    union all select 'PLATFORM_DELIVERY_ASSET_PERMISSION_V36', 'stage034-definition', count(*)::text, '1', count(*) = 1,
+        'V36 必须初始化交付资料只读权限。'
+        from sys_permission
+        where code = 'platform:delivery-asset:view'
+    union all select 'PLATFORM_GOVERNANCE_MENUS_V36', 'stage034-definition',
+        concat('routes=', route_count, ';apis=', api_count),
+        'routes>=3;apis>=12',
+        route_count >= 3 and api_count >= 12,
+        'V36 平台治理菜单和 API 权限必须绑定 /platform/data-repairs、/platform/history-imports、/platform/delivery-assets 与 /api/admin/platform。'
+        from (
+            select
+                count(*) filter (where route_path in ('/platform/data-repairs', '/platform/history-imports', '/platform/delivery-assets')) as route_count,
+                count(*) filter (where api_path like '/api/admin/platform/%') as api_count
+            from sys_permission
+            where code like 'platform:%'
+        ) platform_governance_routes
+    union all select 'PLATFORM_HISTORY_IMPORT_ADAPTERS_V36', 'stage034-definition',
+        concat('count=', adapter_count, ';missing=', missing_count),
+        'count=5;missing=0',
+        adapter_count = 5 and missing_count = 0,
+        'V36 必须登记客户、供应商、物料、BOM 草稿和销售项目草稿五个固定历史导入适配器。'
+        from (
+            select
+                count(*) filter (where d.status = 'ENABLED') as adapter_count,
+                (
+                    select count(*)
+                    from (values
+                        ('CUSTOMER_MASTER_V1'), ('SUPPLIER_MASTER_V1'), ('MATERIAL_MASTER_V1'),
+                        ('BOM_DRAFT_V1'), ('SALES_PROJECT_DRAFT_V1')
+                    ) required(adapter_code)
+                    where not exists (
+                        select 1 from platform_import_adapter_definition d2
+                        where d2.adapter_code = required.adapter_code and d2.status = 'ENABLED'
+                    )
+                ) as missing_count
+            from platform_import_adapter_definition d
+            where d.adapter_code in ('CUSTOMER_MASTER_V1', 'SUPPLIER_MASTER_V1', 'MATERIAL_MASTER_V1',
+                'BOM_DRAFT_V1', 'SALES_PROJECT_DRAFT_V1')
+        ) history_import_adapter_gate
+    union all select 'PLATFORM_BATCH_TOOLS_V36', 'stage034-definition',
+        concat('count=', tool_count, ';missing=', missing_count),
+        'count=4;missing=0',
+        tool_count = 4 and missing_count = 0,
+        'V36 必须登记三类主数据状态变更和固定业务单据批量打印四个固定批量工具。'
+        from (
+            select
+                count(*) filter (where d.status = 'ENABLED') as tool_count,
+                (
+                    select count(*)
+                    from (values
+                        ('CUSTOMER_STATUS_CHANGE_V1'), ('SUPPLIER_STATUS_CHANGE_V1'),
+                        ('MATERIAL_STATUS_CHANGE_V1'), ('FIXED_DOCUMENT_BATCH_PRINT_V1')
+                    ) required(tool_code)
+                    where not exists (
+                        select 1 from platform_batch_tool_definition d2
+                        where d2.tool_code = required.tool_code and d2.status = 'ENABLED'
+                    )
+                ) as missing_count
+            from platform_batch_tool_definition d
+            where d.tool_code in ('CUSTOMER_STATUS_CHANGE_V1', 'SUPPLIER_STATUS_CHANGE_V1',
+                'MATERIAL_STATUS_CHANGE_V1', 'FIXED_DOCUMENT_BATCH_PRINT_V1')
+        ) batch_tool_gate
+    union all select 'PRINT_TEMPLATES_034_ALL_14_V36', 'stage034-definition',
+        concat('count=', template_count, ';missing=', missing_count),
+        'count=14;missing=0',
+        template_count = 14 and missing_count = 0,
+        'V36 必须启用四个兼容模板和十个新增核心固定打印模板，模板代码唯一且版本可追溯。'
+        from (
+            select
+                count(*) filter (where t.status = 'ENABLED' and t.template_version is not null) as template_count,
+                (
+                    select count(*)
+                    from (values
+                        ('CONTRACT_ACTIVATION_APPROVAL_V1'), ('BOM_ECO_APPLICATION_APPROVAL_V1'),
+                        ('PROCUREMENT_ORDER_V1'), ('SALES_QUOTE_V1'), ('SALES_ORDER_V1'),
+                        ('SALES_SHIPMENT_V1'), ('PROCUREMENT_RECEIPT_V1'), ('INVENTORY_TRANSFER_V1'),
+                        ('PRODUCTION_WORK_ORDER_V1'), ('PRODUCTION_MATERIAL_ISSUE_V1'),
+                        ('PRODUCTION_COMPLETION_RECEIPT_V1'), ('SALES_INVOICE_V1'),
+                        ('PURCHASE_INVOICE_V1'), ('ACCOUNTING_VOUCHER_V1')
+                    ) required(template_code)
+                    where not exists (
+                        select 1 from platform_print_template t2
+                        where t2.template_code = required.template_code
+                            and t2.status = 'ENABLED'
+                            and t2.template_version is not null
+                    )
+                ) as missing_count
+            from platform_print_template t
+            where t.template_code in ('CONTRACT_ACTIVATION_APPROVAL_V1', 'BOM_ECO_APPLICATION_APPROVAL_V1',
+                'PROCUREMENT_ORDER_V1', 'SALES_QUOTE_V1', 'SALES_ORDER_V1', 'SALES_SHIPMENT_V1',
+                'PROCUREMENT_RECEIPT_V1', 'INVENTORY_TRANSFER_V1', 'PRODUCTION_WORK_ORDER_V1',
+                'PRODUCTION_MATERIAL_ISSUE_V1', 'PRODUCTION_COMPLETION_RECEIPT_V1', 'SALES_INVOICE_V1',
+                'PURCHASE_INVOICE_V1', 'ACCOUNTING_VOUCHER_V1')
+        ) print_template_gate
+    union all select 'PRINT_TEMPLATE_STATUS_FIELDS_V36', 'stage034-definition',
+        concat('templates=', template_count, ';enabled=', enabled_count, ';missingFields=', missing_field_count,
+            ';printPermission=', print_permission_count),
+        'templates=14;enabled=14;missingFields=0;printPermission>=1',
+        template_count = 14 and enabled_count = 14 and missing_field_count = 0 and print_permission_count >= 1,
+        'V36 固定打印模板必须包含模板状态、场景、对象和版本字段，且保留固定打印生成权限。'
+        from (
+            select
+                count(*) as template_count,
+                count(*) filter (where status = 'ENABLED') as enabled_count,
+                count(*) filter (
+                    where coalesce(template_code, '') = ''
+                        or coalesce(scene_code, '') = ''
+                        or coalesce(object_type, '') = ''
+                        or template_version is null
+                        or coalesce(status, '') = ''
+                ) as missing_field_count,
+                (select count(*) from sys_permission where code = 'platform:print:generate') as print_permission_count
+            from platform_print_template
+            where template_code in ('CONTRACT_ACTIVATION_APPROVAL_V1', 'BOM_ECO_APPLICATION_APPROVAL_V1',
+                'PROCUREMENT_ORDER_V1', 'SALES_QUOTE_V1', 'SALES_ORDER_V1', 'SALES_SHIPMENT_V1',
+                'PROCUREMENT_RECEIPT_V1', 'INVENTORY_TRANSFER_V1', 'PRODUCTION_WORK_ORDER_V1',
+                'PRODUCTION_MATERIAL_ISSUE_V1', 'PRODUCTION_COMPLETION_RECEIPT_V1', 'SALES_INVOICE_V1',
+                'PURCHASE_INVOICE_V1', 'ACCOUNTING_VOUCHER_V1')
+        ) print_template_status_gate
+    union all select 'DELIVERY_ASSET_CATALOG_COUNTS_V36', 'stage034-definition',
+        concat('dataRepairAdapters=', data_repair_adapter_count, ';historyImportAdapters=', history_import_adapter_count,
+            ';batchTools=', batch_tool_count, ';printTemplates=', print_template_count),
+        'dataRepairAdapters=3;historyImportAdapters=5;batchTools=4;printTemplates=14',
+        data_repair_adapter_count = 3 and history_import_adapter_count = 5
+            and batch_tool_count = 4 and print_template_count = 14,
+        '034 交付资料只读目录的固定定义来源必须具备三类修复、五类导入、四类批量和十四个模板。'
+        from (
+            select
+                (select count(*) from platform_data_repair_adapter_definition where status = 'ENABLED') as data_repair_adapter_count,
+                (select count(*) from platform_import_adapter_definition where status = 'ENABLED') as history_import_adapter_count,
+                (select count(*) from platform_batch_tool_definition where status = 'ENABLED') as batch_tool_count,
+                (select count(*) from platform_print_template where status = 'ENABLED') as print_template_count
+        ) delivery_asset_catalog_gate
+    union all select 'DATA_REPAIR_RESPONSIBILITY_SEPARATION_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';total=', total_count, ';verified=', verified_count,
+            ';rejected=', rejected_count, ';samePersonViolations=', same_person_violation_count),
+        'Stage034ZeroFacts total=0 or Stage034FullFacts verified>=1 rejected>=1 samePersonViolations=0',
+        (
+            profile <> 'Stage034FullFacts' and total_count = 0
+        ) or (
+            total_count >= 2 and verified_count >= 1 and rejected_count >= 1 and same_person_violation_count = 0
+        ),
+        '034 数据修复演示样本必须支持正式零事实合法；隔离完整样本必须覆盖已验证、已驳回和职责分离。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(*) as total_count,
+                count(*) filter (where status = 'VERIFIED') as verified_count,
+                count(*) filter (where status = 'REJECTED') as rejected_count,
+                count(*) filter (
+                    where created_by_username is not null
+                        and (
+                            exists (
+                                select 1
+                                from platform_approval_history h
+                                where h.instance_id = approval_instance_id
+                                    and h.action in ('APPROVE', 'REJECT')
+                                    and h.operator_username = created_by_username
+                            )
+                            or executed_by_username is not null
+                                and verified_by_username is not null
+                                and executed_by_username = verified_by_username
+                        )
+                ) as same_person_violation_count
+            from platform_data_repair_request
+        ) repair_separation_gate
+    union all select 'DATA_REPAIR_ATTACHMENT_SUPPORT_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';attachments=', attachment_count, ';availableFiles=', available_file_count),
+        'Stage034ZeroFacts attachments=0 or Stage034FullFacts DATA_REPAIR_REQUEST attachments>=1 with available files',
+        (
+            profile <> 'Stage034FullFacts' and attachment_count = 0
+        ) or (
+            attachment_count >= 1 and available_file_count = attachment_count
+        ),
+        '034 数据修复演示样本必须通过既有附件关系支持 DATA_REPAIR_REQUEST 证据附件；正式零事实合法。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(a.id) as attachment_count,
+                count(f.id) filter (where f.status = 'AVAILABLE' and f.size_bytes > 0 and f.sha256 is not null) as available_file_count
+            from platform_business_attachment a
+            left join platform_file_object f on f.id = a.file_id
+            where a.object_type = 'DATA_REPAIR_REQUEST'
+                and a.status = 'AVAILABLE'
+        ) repair_attachment_gate
+    union all select 'DATA_REPAIR_VERIFY_FAILED_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';verifyFailed=', verify_failed_count, ';failedChecks=', failed_check_count,
+            ';verifyEvents=', verify_event_count),
+        'Stage034ZeroFacts verifyFailed=0 or Stage034FullFacts VERIFY_FAILED>=1 with failed check and verify event',
+        (
+            profile <> 'Stage034FullFacts' and verify_failed_count = 0
+        ) or (
+            verify_failed_count >= 1 and failed_check_count >= 1 and verify_event_count >= 1
+        ),
+        '034 数据修复演示样本必须覆盖 VERIFY_FAILED 终态、失败检查和验证事件；正式零事实合法。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(distinct r.id) filter (where r.status = 'VERIFY_FAILED') as verify_failed_count,
+                count(distinct c.id) filter (where c.check_type = 'VERIFICATION' and c.status = 'FAILED') as failed_check_count,
+                count(distinct e.id) filter (where e.event_type = 'VERIFY' and e.status_after = 'VERIFY_FAILED') as verify_event_count
+            from platform_data_repair_request r
+            left join platform_data_repair_check c on c.request_id = r.id
+            left join platform_data_repair_event e on e.request_id = r.id
+        ) repair_verify_failed_gate
+    union all select 'HISTORY_IMPORT_ATOMICITY_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';successfulAdapters=', successful_adapter_count,
+            ';failedBatches=', failed_batch_count, ';partialCommits=', partial_commit_count),
+        'Stage034ZeroFacts successfulAdapters=0 or Stage034FullFacts successfulAdapters=5 failedBatches>=1 partialCommits=0',
+        (
+            profile <> 'Stage034FullFacts' and successful_adapter_count = 0 and failed_batch_count = 0
+        ) or (
+            successful_adapter_count = 5 and failed_batch_count >= 1 and partial_commit_count = 0
+        ),
+        '034 历史导入必须支持零事实合法；隔离完整样本必须五类适配器均成功、保留校验失败且不得出现失败后部分提交。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(distinct b.import_type) filter (
+                    where b.import_type in ('CUSTOMER_MASTER_V1', 'SUPPLIER_MASTER_V1', 'MATERIAL_MASTER_V1',
+                        'BOM_DRAFT_V1', 'SALES_PROJECT_DRAFT_V1')
+                        and b.status = 'COMMITTED'
+                        and t.status = 'SUCCEEDED'
+                ) as successful_adapter_count,
+                count(*) filter (
+                    where b.import_type in ('CUSTOMER_MASTER_V1', 'SUPPLIER_MASTER_V1', 'MATERIAL_MASTER_V1',
+                        'BOM_DRAFT_V1', 'SALES_PROJECT_DRAFT_V1')
+                        and b.status = 'VALIDATION_FAILED'
+                        and t.status = 'VALIDATION_FAILED'
+                ) as failed_batch_count,
+                count(*) filter (
+                    where b.import_type in ('CUSTOMER_MASTER_V1', 'SUPPLIER_MASTER_V1', 'MATERIAL_MASTER_V1',
+                        'BOM_DRAFT_V1', 'SALES_PROJECT_DRAFT_V1')
+                        and t.status in ('VALIDATION_FAILED', 'FAILED', 'CANCELLED', 'EXPIRED')
+                        and b.status = 'COMMITTED'
+                ) as partial_commit_count
+            from platform_import_batch b
+            join platform_document_task t on t.id = b.task_id
+        ) history_import_atomicity_gate
+    union all select 'HISTORY_IMPORT_ERROR_DETAILS_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';failedTasks=', failed_task_count, ';taskErrors=', task_error_count,
+            ';importErrors=', import_error_count),
+        'Stage034ZeroFacts failedTasks=0 or Stage034FullFacts failedTasks>=1 taskErrors>=1 importErrors>=1',
+        (
+            profile <> 'Stage034FullFacts' and failed_task_count = 0 and task_error_count = 0 and import_error_count = 0
+        ) or (
+            failed_task_count >= 1 and task_error_count >= 1 and import_error_count >= 1
+        ),
+        '034 历史导入失败必须能通过既有文档任务错误明细复用端点读取逐行错误，并保留导入错误表明细。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(distinct t.id) filter (where t.status = 'VALIDATION_FAILED' and t.task_type like '%_HISTORY_IMPORT') as failed_task_count,
+                count(distinct te.id) as task_error_count,
+                count(distinct ie.id) as import_error_count
+            from platform_document_task t
+            left join platform_import_batch b on b.task_id = t.id
+            left join platform_document_task_error te on te.task_id = t.id
+            left join platform_import_error ie on ie.batch_id = b.id
+            where t.task_type like '%_HISTORY_IMPORT'
+        ) history_import_error_detail_gate
+    union all select 'HISTORY_IMPORT_CONFIRM_REVALIDATION_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';readyTasks=', ready_task_count, ';validatedBatches=', validated_batch_count),
+        'Stage034ZeroFacts readyTasks=0 or Stage034FullFacts readyTasks>=1 validatedBatches>=1',
+        (
+            profile <> 'Stage034FullFacts' and ready_task_count = 0 and validated_batch_count = 0
+        ) or (
+            ready_task_count >= 1 and validated_batch_count >= 1
+        ),
+        '034 历史导入完整样本必须保留至少一条 READY_TO_COMMIT/VALIDATED 批次，用于证明旧版本 confirm 重校验失败后不会提交。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(distinct t.id) filter (where t.status = 'READY_TO_COMMIT' and t.task_type like '%_HISTORY_IMPORT') as ready_task_count,
+                count(distinct b.id) filter (where b.status = 'VALIDATED') as validated_batch_count
+            from platform_document_task t
+            left join platform_import_batch b on b.task_id = t.id
+            where t.task_type like '%_HISTORY_IMPORT'
+        ) history_import_confirm_revalidation_gate
+    union all select 'DOCUMENT_TASK_IDEMPOTENCY_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';records=', record_count, ';duplicates=', duplicate_count,
+            ';missingFingerprint=', missing_fingerprint_count),
+        'Stage034ZeroFacts records=0 or Stage034FullFacts records>=8 duplicates=0 missingFingerprint=0',
+        (
+            profile <> 'Stage034FullFacts' and record_count = 0
+        ) or (
+            record_count >= 8 and duplicate_count = 0 and missing_fingerprint_count = 0
+        ),
+        '034 修复、历史导入和批量动作必须通过统一幂等记录留痕，同一主体动作资源和幂等键不得产生重复结果。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                count(*) as record_count,
+                count(*) filter (where coalesce(row_data ->> 'request_fingerprint', row_data ->> 'requestFingerprint') is null
+                    or coalesce(row_data ->> 'request_fingerprint', row_data ->> 'requestFingerprint') = '') as missing_fingerprint_count,
+                (
+                    select count(*)
+                    from (
+                        select 1
+                        from (
+                            select
+                                coalesce(row_data ->> 'operator_user_id', row_data ->> 'operatorUserId') as subject_id,
+                                coalesce(row_data ->> 'action', row_data ->> 'action_code', row_data ->> 'actionCode') as action_code,
+                                row_data ->> 'target_type' as resource_type,
+                                row_data ->> 'target_id' as resource_id,
+                                coalesce(row_data ->> 'idempotency_key', row_data ->> 'idempotencyKey') as idempotency_key
+                            from (
+                                select to_jsonb(i) as row_data from platform_action_idempotency i
+                            ) idempotency_rows
+                        ) grouped_idempotency
+                        where idempotency_key is not null and idempotency_key <> ''
+                        group by subject_id, action_code, resource_type, resource_id, idempotency_key
+                        having count(*) > 1
+                    ) duplicate_groups
+                ) as duplicate_count
+            from (
+                select to_jsonb(i) as row_data from platform_action_idempotency i
+            ) idempotency_rows
+        ) document_task_idempotency_gate
+    union all select 'STAGE034_SAMPLE_COVERAGE_DYNAMIC', 'stage034-sample',
+        concat('profile=', profile, ';repairAdapters=', repair_adapter_count,
+            ';batchTools=', batch_tool_count, ';newTemplatePrints=', new_template_print_count,
+            ';taskStatuses=', task_status_count),
+        'Stage034ZeroFacts coverage=0 or Stage034FullFacts repairAdapters=3 batchTools=4 newTemplatePrints=10 taskStatuses>=4',
+        (
+            profile <> 'Stage034FullFacts'
+                and repair_adapter_count = 0
+                and batch_tool_count = 0
+                and new_template_print_count = 0
+        ) or (
+            repair_adapter_count = 3
+                and batch_tool_count = 4
+                and new_template_print_count = 10
+                and task_status_count >= 4
+        ),
+        '034 隔离完整样本必须覆盖三类修复、四类批量、十个新增模板成功打印和至少四类任务状态；正式零事实合法。'
+        from (
+            select
+                coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile,
+                (
+                    select count(distinct row_data ->> 'adapter_code')
+                    from (select to_jsonb(r) as row_data from platform_data_repair_request r) repair_rows
+                    where row_data ->> 'adapter_code' in ('MATERIAL_PROFILE_CORRECTION_V1',
+                        'CUSTOMER_PROFILE_CORRECTION_V1', 'SUPPLIER_PROFILE_CORRECTION_V1')
+                ) as repair_adapter_count,
+                (
+                    select count(distinct row_data ->> 'tool_code')
+                    from (select to_jsonb(o) as row_data from platform_batch_operation o) batch_rows
+                    where row_data ->> 'tool_code' in ('CUSTOMER_STATUS_CHANGE_V1', 'SUPPLIER_STATUS_CHANGE_V1',
+                        'MATERIAL_STATUS_CHANGE_V1', 'FIXED_DOCUMENT_BATCH_PRINT_V1')
+                ) as batch_tool_count,
+                (
+                    select count(distinct request_payload ->> 'templateCode')
+                    from platform_document_task
+                    where status = 'SUCCEEDED'
+                        and request_payload ->> 'templateCode' in ('SALES_ORDER_V1', 'SALES_SHIPMENT_V1',
+                            'PROCUREMENT_RECEIPT_V1', 'INVENTORY_TRANSFER_V1', 'PRODUCTION_WORK_ORDER_V1',
+                            'PRODUCTION_MATERIAL_ISSUE_V1', 'PRODUCTION_COMPLETION_RECEIPT_V1',
+                            'SALES_INVOICE_V1', 'PURCHASE_INVOICE_V1', 'ACCOUNTING_VOUCHER_V1')
+                ) as new_template_print_count,
+                (
+                    select count(distinct status)
+                    from platform_document_task
+                    where (
+                            task_type like '%_HISTORY_IMPORT'
+                            or task_type in ('MATERIAL_IMPORT', 'MATERIAL_EXPORT', 'BOM_DRAFT_IMPORT', 'BOM_DRAFT_EXPORT',
+                                'FIXED_DOCUMENT_PRINT', 'APPROVAL_PRINT')
+                        )
+                        and status in ('READY_TO_COMMIT', 'VALIDATION_FAILED', 'SUCCEEDED', 'CANCELLED', 'EXPIRED')
+                ) as task_status_count
+        ) stage034_sample_gate
     union all select 'AUDIT_LOGS_MIN_100', 'audit', count(*)::text, '>= 100', count(*) >= 100,
         '审计日志数量不足。' from sys_audit_log
     union all select 'AUDIT_DENIED_MIN_1', 'audit', count(*)::text, '>= 1', count(*) >= 1,
         '缺少权限拒绝审计样例。' from sys_audit_log where result <> 'SUCCESS' or error_code is not null
+),
+profile_settings as (
+    select coalesce(nullif(current_setting('qherp.stage034_profile', true), ''), 'Default') as profile
+),
+effective_rules as (
+    select
+        rule_code,
+        category,
+        actual_value,
+        expected_value,
+        case
+            when profile = 'Stage034ZeroFacts'
+                and category not in ('migration', 'stage034-definition', 'stage034-sample')
+            then true
+            else passed
+        end as passed,
+        case
+            when profile = 'Stage034ZeroFacts'
+                and category not in ('migration', 'stage034-definition', 'stage034-sample')
+            then message || '（Stage034ZeroFacts 零业务事实配置不强制该演示业务样本。）'
+            else message
+        end as message
+    from rules
+    cross join profile_settings
 )
 select jsonb_build_object(
-    'validatorVersion', 'demo-data-validator-v1',
+    'validatorVersion', 'demo-data-validator-v2-stage034',
     'checkedAt', now(),
     'status', case when count(*) filter (where not passed) = 0 then 'PASS' else 'FAIL' end,
     'totalRules', count(*),
@@ -1653,6 +2070,6 @@ select jsonb_build_object(
         'message', message
     ) order by rule_code)
 )::text
-from rules;
+from effective_rules;
 
 commit;

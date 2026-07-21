@@ -11,15 +11,25 @@ param(
     [string] $DemoUserPassword = $env:QHERP_DEMO_USER_PASSWORD,
     [string] $RunId = "DEMO-ELEC-20260715-RUN",
     [ValidateSet("WorkerDisabled", "WorkerEnabled")][string] $DocumentWorkerMode = $(if ($env:QHERP_TASK_WORKER_ENABLED -eq "true") { "WorkerEnabled" } else { "WorkerDisabled" }),
+    [string] $PostgresContainer = $(if ($env:QHERP_POSTGRES_CONTAINER) { $env:QHERP_POSTGRES_CONTAINER } else { "qherp-postgres" }),
+    [string] $PostgresUser = $(if ($env:QHERP_POSTGRES_USER) { $env:QHERP_POSTGRES_USER } else { "qherp" }),
     [switch] $Stage029Only,
+    [switch] $Stage034Only,
     [string] $OutputManifestPath = (Join-Path (Get-Location).Path "apps/api/target/demo-data/generate-demo-data-manifest.json")
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "lib/demo-data-common.ps1")
+. (Join-Path $PSScriptRoot "lib/stage034-isolation-strategy.ps1")
 
 $parsedApiBaseUrl = [uri]$ApiBaseUrl
-if ($Mode -eq "Temporary") {
+if ($Stage034Only) {
+    if ($Mode -ne "Temporary") {
+        throw "Stage034Only 模式只允许 Mode=Temporary，并且必须使用冻结 034 隔离资源。"
+    }
+    Assert-Stage034IsolationTarget -Database $Database -MinioBucket $MinioBucket -ApiBaseUrl $ApiBaseUrl
+}
+elseif ($Mode -eq "Temporary") {
     if (-not (Test-DemoResourceName -Value $Database -Prefix "qherp_demo_build_")) {
         throw "Temporary 模式拒绝生成演示数据：数据库名必须以 qherp_demo_build_ 开头，当前为 $Database。"
     }
@@ -100,6 +110,673 @@ function Get-PropertyValue {
         return $null
     }
     return $property.Value
+}
+
+$script:Stage034DataRepairAdapters = @(
+    "MATERIAL_PROFILE_CORRECTION_V1",
+    "CUSTOMER_PROFILE_CORRECTION_V1",
+    "SUPPLIER_PROFILE_CORRECTION_V1"
+)
+$script:Stage034HistoryImportAdapters = @(
+    "CUSTOMER_MASTER_V1",
+    "SUPPLIER_MASTER_V1",
+    "MATERIAL_MASTER_V1",
+    "BOM_DRAFT_V1",
+    "SALES_PROJECT_DRAFT_V1"
+)
+$script:Stage034BatchTools = @(
+    "CUSTOMER_STATUS_CHANGE_V1",
+    "SUPPLIER_STATUS_CHANGE_V1",
+    "MATERIAL_STATUS_CHANGE_V1",
+    "FIXED_DOCUMENT_BATCH_PRINT_V1"
+)
+$script:Stage034PrintTemplates = @(
+    "CONTRACT_ACTIVATION_APPROVAL_V1",
+    "BOM_ECO_APPLICATION_APPROVAL_V1",
+    "PROCUREMENT_ORDER_V1",
+    "SALES_QUOTE_V1",
+    "SALES_ORDER_V1",
+    "SALES_SHIPMENT_V1",
+    "PROCUREMENT_RECEIPT_V1",
+    "INVENTORY_TRANSFER_V1",
+    "PRODUCTION_WORK_ORDER_V1",
+    "PRODUCTION_MATERIAL_ISSUE_V1",
+    "PRODUCTION_COMPLETION_RECEIPT_V1",
+    "SALES_INVOICE_V1",
+    "PURCHASE_INVOICE_V1",
+    "ACCOUNTING_VOUCHER_V1"
+)
+
+function Get-Stage034CodeValue {
+    param($Item)
+
+    foreach ($name in @("code", "adapterCode", "toolCode", "templateCode")) {
+        $value = Get-PropertyValue -Object $Item -Name $name
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+            return [string]$value
+        }
+    }
+    return $null
+}
+
+function Get-Stage034ItemArray {
+    param($Data)
+
+    if ($null -eq $Data) {
+        return @()
+    }
+    $items = Get-PropertyValue -Object $Data -Name "items"
+    if ($null -ne $items) {
+        return @($items)
+    }
+    return @($Data)
+}
+
+function Assert-Stage034CodeCoverage {
+    param(
+        [Parameter(Mandatory = $true)][string] $Name,
+        [Parameter(Mandatory = $true)] $Data,
+        [Parameter(Mandatory = $true)][string[]] $ExpectedCodes
+    )
+
+    $actualCodes = New-Object System.Collections.Generic.HashSet[string]
+    foreach ($item in Get-Stage034ItemArray -Data $Data) {
+        $code = Get-Stage034CodeValue -Item $item
+        if (-not [string]::IsNullOrWhiteSpace($code)) {
+            [void] $actualCodes.Add($code)
+        }
+    }
+    $missing = @($ExpectedCodes | Where-Object { -not $actualCodes.Contains($_) })
+    if ($missing.Count -gt 0) {
+        throw "$Name 缺少固定代码：$($missing -join ',')。"
+    }
+}
+
+function Assert-Stage034DeliveryAssetCatalogContract {
+    param($deliveryAssets)
+    $expectedStaticAssets = @("OPERATION_MANUAL", "DEMO_DATA_TOOLS")
+    if (@($deliveryAssets.historyImportAdapters).Count -ne 5 `
+            -or @($deliveryAssets.dataRepairAdapters).Count -ne 3 `
+            -or @($deliveryAssets.batchTools).Count -ne 4 `
+            -or @($deliveryAssets.printTemplates).Count -ne 14) {
+        throw "034 交付资料目录 DTO 数量不完整：historyImportAdapters=$(@($deliveryAssets.historyImportAdapters).Count) dataRepairAdapters=$(@($deliveryAssets.dataRepairAdapters).Count) batchTools=$(@($deliveryAssets.batchTools).Count) printTemplates=$(@($deliveryAssets.printTemplates).Count)。"
+    }
+    foreach ($adapter in @($deliveryAssets.historyImportAdapters + $deliveryAssets.dataRepairAdapters)) {
+        if ([string]::IsNullOrWhiteSpace($adapter.code) -or [string]::IsNullOrWhiteSpace($adapter.targetObjectType) `
+                -or [string]::IsNullOrWhiteSpace($adapter.status) -or $null -eq $adapter.version) {
+            throw "034 交付资料适配器 DTO 缺少 code/targetObjectType/status/version。"
+        }
+    }
+    foreach ($tool in @($deliveryAssets.batchTools)) {
+        if ([string]::IsNullOrWhiteSpace($tool.code) -or [string]::IsNullOrWhiteSpace($tool.actionCode) `
+                -or [string]::IsNullOrWhiteSpace($tool.status) -or $null -eq $tool.version) {
+            throw "034 交付资料批量工具 DTO 缺少 code/actionCode/status/version。"
+        }
+    }
+    foreach ($template in @($deliveryAssets.printTemplates)) {
+        if ([string]::IsNullOrWhiteSpace($template.templateCode) -or [string]::IsNullOrWhiteSpace($template.objectType) `
+                -or [string]::IsNullOrWhiteSpace($template.status) -or $null -eq $template.templateVersion) {
+            throw "034 交付资料固定模板 DTO 缺少 templateCode/objectType/status/templateVersion。"
+        }
+    }
+    foreach ($code in $expectedStaticAssets) {
+        if (-not @($deliveryAssets.staticAssets | Where-Object { $_.code -eq $code })) {
+            throw "034 交付资料目录缺少固定静态资料：$code。"
+        }
+    }
+}
+
+function Assert-Stage034PrintTemplateContract {
+    param($printTemplates)
+    if (@($printTemplates).Count -lt 14) {
+        throw "034 固定打印模板目录不足 14 项。"
+    }
+    Assert-Stage034CodeCoverage -Name "固定打印模板目录" -Data $printTemplates -ExpectedCodes $script:Stage034PrintTemplates
+    foreach ($template in @($printTemplates | Where-Object { $script:Stage034PrintTemplates -contains $_.templateCode })) {
+        if ([string]::IsNullOrWhiteSpace($template.sceneCode) -or [string]::IsNullOrWhiteSpace($template.objectType) `
+                -or $null -eq $template.templateVersion) {
+            throw "034 固定打印模板目录 DTO 缺少 sceneCode/objectType/templateVersion。"
+        }
+    }
+}
+
+function Assert-Stage034BackendContractsAvailable {
+    try {
+        $deliveryAssets = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/platform/delivery-assets"
+        $dataRepairAdapters = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/platform/data-repair-adapters"
+        $historyImportAdapters = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/platform/history-import-adapters"
+        $batchTools = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/platform/batch-tools"
+        $printTemplates = Invoke-DemoApi -Session $Session -Method Get -Path "/api/admin/print-templates"
+
+        Assert-Stage034CodeCoverage -Name "数据修复适配器目录" -Data $dataRepairAdapters -ExpectedCodes $script:Stage034DataRepairAdapters
+        Assert-Stage034CodeCoverage -Name "历史导入适配器目录" -Data $historyImportAdapters -ExpectedCodes $script:Stage034HistoryImportAdapters
+        Assert-Stage034CodeCoverage -Name "批量工具目录" -Data $batchTools -ExpectedCodes $script:Stage034BatchTools
+        Assert-Stage034CodeCoverage -Name "固定打印模板目录" -Data $printTemplates -ExpectedCodes $script:Stage034PrintTemplates
+        Assert-Stage034DeliveryAssetCatalogContract -deliveryAssets $deliveryAssets
+        Assert-Stage034PrintTemplateContract -printTemplates $printTemplates
+
+        return [pscustomobject]@{
+            deliveryAssets = $deliveryAssets
+            dataRepairAdapters = $dataRepairAdapters
+            historyImportAdapters = $historyImportAdapters
+            batchTools = $batchTools
+            printTemplates = $printTemplates
+        }
+    }
+    catch {
+        throw "034 后端接口尚未可用或固定目录不完整：$($_.Exception.Message)。待执行：V36、修复、五类导入、四类批量、十四模板、任务幂等和文件一致性真实接口稳定后继续生成。"
+    }
+}
+
+function Get-Stage034ApproverSession {
+    if ($null -eq $script:Stage034ApproverSession) {
+        $script:Stage034ApproverSession = New-DemoApiSession -BaseUrl $ApiBaseUrl -Username "$DemoPrefix-approval" -Password $DemoUserPassword
+    }
+    return $script:Stage034ApproverSession
+}
+
+function Get-Stage034FreshObject {
+    param([string] $Path, [long] $Id)
+    return Get-ItemById -Path $Path -Id $Id
+}
+
+function Get-Stage034PendingApprovalTask {
+    param([long] $ApprovalInstanceId)
+    $approverSession = Get-Stage034ApproverSession
+    $tasks = Invoke-DemoApiPage -Session $approverSession -Path "/api/admin/approval-tasks" -Parameters @{ scope = "TODO" }
+    foreach ($task in @($tasks)) {
+        $candidateApprovalId = Get-PropertyValue -Object $task -Name "approvalInstanceId"
+        if ($null -eq $candidateApprovalId) {
+            $candidateApprovalId = Get-PropertyValue -Object $task -Name "id"
+        }
+        if ($null -ne $candidateApprovalId -and [long]$candidateApprovalId -eq $ApprovalInstanceId) {
+            return $task
+        }
+    }
+    foreach ($task in @($tasks)) {
+        $objectType = Get-PropertyValue -Object $task -Name "businessObjectType"
+        if ($null -eq $objectType) {
+            $objectType = Get-PropertyValue -Object $task -Name "objectType"
+        }
+        if ($objectType -eq "DATA_REPAIR_REQUEST") {
+            return $task
+        }
+    }
+    throw "034 数据修复审批实例 $ApprovalInstanceId 未找到待办审批任务。"
+}
+
+function Invoke-Stage034ApprovalTask {
+    param($Repair, [ValidateSet("approve", "reject")][string] $Action, [string] $Key)
+    $approvalId = [long]$Repair.approvalSummary.id
+    $task = Get-Stage034PendingApprovalTask -ApprovalInstanceId $approvalId
+    $taskId = if ($null -ne (Get-PropertyValue -Object $task -Name "taskId")) { [long]$task.taskId } else { [long]$task.id }
+    $approverSession = Get-Stage034ApproverSession
+    return Invoke-DemoApi -Session $approverSession -Method Post -Path "/api/admin/approval-tasks/$taskId/$Action" -Body ([ordered]@{
+        version = [long]$task.version
+        comment = "034 数据修复$Action"
+        idempotencyKey = "$RunId-STAGE034-APPROVAL-$Key-$Action"
+    })
+}
+
+function Invoke-Stage034DataRepairLifecycle {
+    param(
+        [string] $Key,
+        [string] $AdapterCode,
+        [string] $TargetObjectType,
+        [string] $TargetPath,
+        [long] $TargetObjectId,
+        [string] $FieldName,
+        [string] $AfterValue,
+        [ValidateSet("Verified", "Rejected", "VerifyFailed")] [string] $Outcome,
+        [switch] $AttachEvidence
+    )
+    $target = Get-Stage034FreshObject -Path $TargetPath -Id $TargetObjectId
+    $payload = [ordered]@{
+        adapterCode = $AdapterCode
+        targetObjectType = $TargetObjectType
+        targetObjectId = [long]$target.id
+        targetVersion = [long]$target.version
+        reason = "034 演示数据修复 $Key"
+        riskSummary = "仅修复固定白名单字段，形成申请、审批、执行和复核记录链"
+        changes = @([ordered]@{
+            fieldName = $FieldName
+            afterValue = $AfterValue
+        })
+    }
+    $repair = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/data-repairs" -Body $payload `
+        -Headers @{ "Idempotency-Key" = "$RunId-STAGE034-REPAIR-$Key-CREATE" }
+    if ($AttachEvidence.IsPresent) {
+        $attachment = Upload-Attachment -ObjectType "DATA_REPAIR_REQUEST" -ObjectId ([long]$repair.id) `
+            -AssetName "bridge-electrical-quality-note.txt" -Description "034 数据修复证据附件 $Key"
+        $Manifest.AddObject("stage034DataRepairAttachment", $Key, $attachment.id)
+    }
+    if ($repair.status -eq "DRAFT") {
+        $repair = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/data-repairs/$($repair.id)/submit" -Body ([ordered]@{
+            version = [long]$repair.version
+            reason = "034 演示提交数据修复 $Key"
+            idempotencyKey = "$RunId-STAGE034-REPAIR-$Key-SUBMIT"
+        })
+    }
+    if ($Outcome -eq "Rejected") {
+        if ($repair.status -eq "PENDING_APPROVAL") {
+            Invoke-Stage034ApprovalTask -Repair $repair -Action "reject" -Key $Key | Out-Null
+        }
+        $latestRejected = Get-ItemById -Path "/api/admin/platform/data-repairs" -Id $repair.id
+        $Manifest.AddObject("stage034DataRepair", $Key, $latestRejected.id)
+        return $latestRejected
+    }
+    if ($repair.status -eq "PENDING_APPROVAL") {
+        Invoke-Stage034ApprovalTask -Repair $repair -Action "approve" -Key $Key | Out-Null
+        $repair = Get-ItemById -Path "/api/admin/platform/data-repairs" -Id $repair.id
+    }
+    if ($repair.status -eq "READY_TO_EXECUTE") {
+        $repair = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/data-repairs/$($repair.id)/execute" -Body ([ordered]@{
+            version = [long]$repair.version
+            idempotencyKey = "$RunId-STAGE034-REPAIR-$Key-EXECUTE"
+        })
+    }
+    if ($repair.status -eq "EXECUTED") {
+        $approverSession = Get-Stage034ApproverSession
+        $verifyPayload = [ordered]@{
+            version = [long]$repair.version
+            passed = $true
+            comment = "034 演示复核通过 $Key"
+            idempotencyKey = "$RunId-STAGE034-REPAIR-$Key-VERIFY"
+        }
+        if ($Outcome -eq "VerifyFailed") {
+            $verifyPayload.passed = $false
+            $verifyPayload.comment = "034 演示复核失败 $Key"
+        }
+        $repair = Invoke-DemoApi -Session $approverSession -Method Post -Path "/api/admin/platform/data-repairs/$($repair.id)/verify" -Body $verifyPayload
+    }
+    $Manifest.AddObject("stage034DataRepair", $Key, $repair.id)
+    return $repair
+}
+
+function Ensure-Stage034DataRepairSamples {
+    $material = Get-Stage034FreshObject -Path "/api/admin/master/materials" -Id $materials["$DemoPrefix-MAT-AUX-LABEL"].id
+    $customer = Get-Stage034FreshObject -Path "/api/admin/master/customers" -Id $customers[0].id
+    $supplier = Get-Stage034FreshObject -Path "/api/admin/master/suppliers" -Id $suppliers[0].id
+    $verifyFailedCustomer = Get-Stage034FreshObject -Path "/api/admin/master/customers" -Id $customers[1].id
+    $verifiedMaterial = Invoke-Stage034DataRepairLifecycle -Key "MATERIAL-VERIFIED" -AdapterCode "MATERIAL_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "MATERIAL" -TargetPath "/api/admin/master/materials" -TargetObjectId $material.id `
+        -FieldName "remark" -AfterValue "034 已验证物料修复样本" -Outcome "Verified" -AttachEvidence
+    $rejectedCustomer = Invoke-Stage034DataRepairLifecycle -Key "CUSTOMER-REJECTED" -AdapterCode "CUSTOMER_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "CUSTOMER" -TargetPath "/api/admin/master/customers" -TargetObjectId $customer.id `
+        -FieldName "remark" -AfterValue "034 被驳回客户修复样本" -Outcome "Rejected"
+    $verifiedSupplier = Invoke-Stage034DataRepairLifecycle -Key "SUPPLIER-VERIFIED" -AdapterCode "SUPPLIER_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "SUPPLIER" -TargetPath "/api/admin/master/suppliers" -TargetObjectId $supplier.id `
+        -FieldName "remark" -AfterValue "034 已验证供应商修复样本" -Outcome "Verified"
+    $failedVerification = Invoke-Stage034DataRepairLifecycle -Key "CUSTOMER-VERIFY-FAILED" -AdapterCode "CUSTOMER_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "CUSTOMER" -TargetPath "/api/admin/master/customers" -TargetObjectId $verifyFailedCustomer.id `
+        -FieldName "remark" -AfterValue "034 复核失败客户修复样本" -Outcome "VerifyFailed"
+    return @($verifiedMaterial, $rejectedCustomer, $verifiedSupplier, $failedVerification)
+}
+
+function New-Stage034HistoryImportFile {
+    param(
+        [string] $AdapterCode,
+        [string] $Path,
+        [string] $Suffix,
+        [string] $MaterialCostCategory = "AUXILIARY_MATERIAL",
+        [switch] $Invalid
+    )
+    $stageCode = "$DemoPrefix-034-$Suffix"
+    switch ($AdapterCode) {
+        "CUSTOMER_MASTER_V1" {
+            $rows = @(
+                @("code", "name", "contactName", "contactPhone", "status", "remark"),
+                @("$stageCode-CUS", $(if ($Invalid) { "" } else { "034 导入客户 $Suffix" }), "034 客户联系人", "13800003401", "ENABLED", "034 历史客户导入 $Suffix")
+            )
+            New-DemoXlsx -Path $Path -Sheets @{ customers = $rows }
+        }
+        "SUPPLIER_MASTER_V1" {
+            $rows = @(
+                @("code", "name", "contactName", "contactPhone", "status", "remark"),
+                @("$stageCode-SUP", "034 导入供应商 $Suffix", "034 供应商联系人", "13800003402", "ENABLED", "034 历史供应商导入 $Suffix")
+            )
+            New-DemoXlsx -Path $Path -Sheets @{ suppliers = $rows }
+        }
+        "MATERIAL_MASTER_V1" {
+            $rows = @(
+                @("code", "name", "specification", "materialType", "sourceType", "trackingMethod", "categoryCode", "unitCode", "status", "costCategory", "inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark"),
+                @("$stageCode-MAT", "034 导入物料 $Suffix", "S34-IMP", "AUXILIARY", "PURCHASED", "NONE", "$DemoPrefix-CAT-ELEC", "$DemoPrefix-EA", "ENABLED", $MaterialCostCategory, "VALUATED_MATERIAL", "true", "false", "034 导入成本", "034 历史物料导入 $Suffix")
+            )
+            New-DemoXlsx -Path $Path -Sheets @{ materials = $rows }
+        }
+        "BOM_DRAFT_V1" {
+            $rows = @(
+                @("mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode", "name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark"),
+                @("CREATE", "", "", "$stageCode-BOM", $materials["$DemoPrefix-MAT-FG-B"].code, "034A", "034 导入 BOM $Suffix", "1.000000", "$DemoPrefix-SET", "2026-08-01", "", "034 历史 BOM 草稿导入 $Suffix")
+            )
+            $items = @(
+                @("lineNo", "childMaterialCode", "businessUnit", "businessQuantity", "lossRate", "warehouse", "remark"),
+                @("1", $materials["$DemoPrefix-MAT-AUX-LABEL"].code, "$DemoPrefix-EA", "1.000000", "0.000000", "", "034 导入 BOM 子项")
+            )
+            New-DemoXlsx -Path $Path -Sheets @{ bom = $rows; items = $items }
+        }
+        "SALES_PROJECT_DRAFT_V1" {
+            $rows = @(
+                @("projectNo", "name", "customerCode", "ownerUsername", "plannedStartDate", "plannedFinishDate", "targetRevenue", "targetCost", "status", "remark"),
+                @("$stageCode-PROJ", "034 导入销售项目 $Suffix", $customers[0].code, "$DemoPrefix-admin", "2026-08-01", "2026-10-31", "80000.00", "52000.00", "DRAFT", "034 历史销售项目导入 $Suffix")
+            )
+            New-DemoXlsx -Path $Path -Sheets @{ salesProjects = $rows }
+        }
+        default {
+            throw "不支持的 034 历史导入适配器：$AdapterCode。"
+        }
+    }
+    return $Path
+}
+
+function Invoke-Stage034HistoryImport {
+    param(
+        [string] $AdapterCode,
+        [string] $FilePath,
+        [string] $Key,
+        [switch] $Confirm,
+        [switch] $Cancel
+    )
+    $task = Invoke-DemoMultipart -Path "/api/admin/platform/history-imports/$AdapterCode" -FileFieldName "file" -FilePath $FilePath -Fields @{} `
+        -Headers @{ "Idempotency-Key" = "$RunId-STAGE034-HISTORY-$Key-UPLOAD" } `
+        -ContentType "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    if ($Confirm -and $task.status -eq "READY_TO_COMMIT") {
+        $task = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/history-imports/$($task.id)/confirm" -Body ([ordered]@{
+            version = [long]$task.version
+            idempotencyKey = "$RunId-STAGE034-HISTORY-$Key-CONFIRM"
+        })
+    }
+    elseif ($Cancel -and $task.status -eq "READY_TO_COMMIT") {
+        $task = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/history-imports/$($task.id)/cancel" -Body ([ordered]@{
+            version = [long]$task.version
+            reason = "034 演示保留取消历史导入任务"
+            idempotencyKey = "$RunId-STAGE034-HISTORY-$Key-CANCEL"
+        })
+    }
+    $Manifest.AddTask("STAGE034-HISTORY-$Key", $task.id)
+    $Manifest.AddFile([ordered]@{
+        category = "historyImportSource"
+        adapterCode = $AdapterCode
+        taskId = $task.id
+        fileName = (Split-Path -Leaf $FilePath)
+        sha256 = (Get-FileSha256 -Path $FilePath)
+        idempotencyKey = "$RunId-STAGE034-HISTORY-$Key-UPLOAD"
+    })
+    return $task
+}
+
+function Assert-Stage034HistoryImportErrorDetails {
+    param($Task, [string] $Key, [string] $ExpectedColumn)
+    $errors = @(Invoke-DemoApiPage -Session $Session -Path "/api/admin/document-tasks/$($Task.id)/errors" -Parameters @{ pageSize = 50 })
+    $matched = @($errors | Where-Object {
+            $_.columnName -eq $ExpectedColumn -or $_.column -eq $ExpectedColumn -or $_.fieldName -eq $ExpectedColumn
+        })
+    if ($errors.Count -eq 0 -or $matched.Count -eq 0) {
+        throw "034 历史导入错误明细缺失：$Key 必须能通过 /api/admin/document-tasks/$($Task.id)/errors 读取 $ExpectedColumn 对应错误。"
+    }
+    $Manifest.AddObject("stage034HistoryImportErrorDetails", $Key, $errors.Count)
+}
+
+function Invoke-Stage034Sql {
+    param([Parameter(Mandatory = $true)][string] $Sql)
+    if (-not $Stage034Only) {
+        throw "034 历史导入漂移探针只允许在 Stage034Only 隔离资源中执行。"
+    }
+    $result = Invoke-DemoProcess -FilePath "docker" -ArgumentList @(
+        "exec", "-i", $PostgresContainer, "psql", "-q", "-U", $PostgresUser, "-d", $Database,
+        "-v", "ON_ERROR_STOP=1", "-t", "-A", "-f", "-"
+    ) -InputText $Sql
+    return $result.stdout.Trim()
+}
+
+function Quote-Stage034SqlLiteral {
+    param([Parameter(Mandatory = $true)][string] $Value)
+    return "'" + ($Value.Replace("'", "''")) + "'"
+}
+
+function Invoke-Stage034HistoryImportDriftProbe {
+    param(
+        $Task,
+        [string] $Key,
+        [ValidateSet("TemplateVersionDrift", "SourceShaDrift")][string] $DriftType,
+        [string] $ExpectedCode
+    )
+    if ($Task.status -ne "READY_TO_COMMIT") {
+        throw "034 历史导入 $DriftType confirm 重校验样本必须处于 READY_TO_COMMIT，实际 status=$($Task.status)。"
+    }
+    $result = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/history-imports/$($Task.id)/confirm" `
+        -Body ([ordered]@{
+            version = [long]$Task.version
+            idempotencyKey = "$RunId-STAGE034-HISTORY-$Key-$DriftType-CONFIRM"
+        }) -AllowFailure
+    if ($result.failed -ne $true -or "$($result.message)" -notmatch $ExpectedCode) {
+        throw "034 历史导入 confirm 必须在 $DriftType 时稳定返回 $ExpectedCode，实际结果：$($result.message)"
+    }
+    $latest = Get-ItemById -Path "/api/admin/platform/history-imports" -Id $Task.id
+    if ($latest.status -ne "READY_TO_COMMIT") {
+        throw "034 历史导入 $DriftType confirm 被拒后不得改变任务状态，实际 status=$($latest.status)。"
+    }
+    $Manifest.AddObject("stage034HistoryImportConfirmRevalidation", $DriftType, "$($latest.id):$ExpectedCode")
+}
+
+function Assert-Stage034HistoryImportTemplateVersionDrift {
+    param([string] $TaskDirectory)
+
+    $adapterCode = "CUSTOMER_MASTER_V1"
+    $file = New-Stage034HistoryImportFile -AdapterCode $adapterCode -Path (Join-Path $TaskDirectory "$adapterCode-template-drift.xlsx") -Suffix "TEMPLATE-DRIFT"
+    $task = Invoke-Stage034HistoryImport -AdapterCode $adapterCode -FilePath $file -Key "$adapterCode-TEMPLATE-DRIFT"
+    $adapterLiteral = Quote-Stage034SqlLiteral -Value $adapterCode
+    $originalTemplateVersion = Invoke-Stage034Sql -Sql "select template_version from platform_import_adapter_definition where adapter_code = $adapterLiteral;"
+    if ([string]::IsNullOrWhiteSpace($originalTemplateVersion)) {
+        throw "034 历史导入模板版本漂移探针无法读取 $adapterCode 当前 templateVersion。"
+    }
+    try {
+        Invoke-Stage034Sql -Sql "update platform_import_adapter_definition set template_version = template_version + 1, version = version + 1 where adapter_code = $adapterLiteral;" | Out-Null
+        Invoke-Stage034HistoryImportDriftProbe -Task $task -Key "$adapterCode-TEMPLATE-DRIFT" `
+            -DriftType "TemplateVersionDrift" -ExpectedCode "HISTORY_IMPORT_TEMPLATE_VERSION_MISMATCH"
+    }
+    finally {
+        Invoke-Stage034Sql -Sql "update platform_import_adapter_definition set template_version = $originalTemplateVersion, version = version + 1 where adapter_code = $adapterLiteral;" | Out-Null
+    }
+}
+
+function Assert-Stage034HistoryImportSourceShaDrift {
+    param([string] $TaskDirectory)
+
+    $adapterCode = "CUSTOMER_MASTER_V1"
+    $file = New-Stage034HistoryImportFile -AdapterCode $adapterCode -Path (Join-Path $TaskDirectory "$adapterCode-source-sha-drift.xlsx") -Suffix "SOURCE-SHA-DRIFT"
+    $task = Invoke-Stage034HistoryImport -AdapterCode $adapterCode -FilePath $file -Key "$adapterCode-SOURCE-SHA-DRIFT"
+    $taskId = [long]$task.id
+    $sourceSha256 = Invoke-Stage034Sql -Sql "select f.sha256 from platform_file_object f join platform_document_task t on t.source_file_id = f.id where t.id = $taskId;"
+    if ([string]::IsNullOrWhiteSpace($sourceSha256)) {
+        throw "034 历史导入源文件 SHA 漂移探针无法读取 task=$taskId 的 sourceSha256。"
+    }
+    $sourceShaLiteral = Quote-Stage034SqlLiteral -Value $sourceSha256
+    try {
+        Invoke-Stage034Sql -Sql "update platform_file_object set sha256 = repeat('0', 64), version = version + 1 where id = (select source_file_id from platform_document_task where id = $taskId);" | Out-Null
+        Invoke-Stage034HistoryImportDriftProbe -Task $task -Key "$adapterCode-SOURCE-SHA-DRIFT" `
+            -DriftType "SourceShaDrift" -ExpectedCode "DOCUMENT_TASK_CONCURRENT_MODIFICATION"
+    }
+    finally {
+        Invoke-Stage034Sql -Sql "update platform_file_object set sha256 = $sourceShaLiteral, version = version + 1 where id = (select source_file_id from platform_document_task where id = $taskId);" | Out-Null
+    }
+}
+
+function Assert-Stage034HistoryImportConfirmRevalidation {
+    param([string] $TaskDirectory)
+
+    Assert-Stage034HistoryImportTemplateVersionDrift -TaskDirectory $TaskDirectory
+    Assert-Stage034HistoryImportSourceShaDrift -TaskDirectory $TaskDirectory
+}
+
+function Assert-Stage034HistoryImportValidationFailure {
+    param($Task, [string] $Key, [string] $ExpectedColumn)
+    if ($Task.status -ne "VALIDATION_FAILED" -or [int]$Task.failedRows -le 0) {
+        throw "A07/A08 后端严重缺陷：$Key 应在预检阶段进入 VALIDATION_FAILED 并记录逐行错误，实际 status=$($Task.status) failedRows=$($Task.failedRows)；不得继续确认以免撞数据库约束。"
+    }
+    Assert-Stage034HistoryImportErrorDetails -Task $Task -Key $Key -ExpectedColumn $ExpectedColumn
+    $Manifest.AddTask("STAGE034-HISTORY-$Key", $Task.id)
+    $Manifest.AddObject("stage034HistoryImportFailure", $Key, "${ExpectedColumn}:$($Task.id)")
+}
+
+function Ensure-Stage034HistoryImportSamples {
+    $taskDir = New-DemoDirectory -Path (Join-Path (Join-Path ([System.IO.Path]::GetTempPath()) "qherp-demo-data") "$RunId/stage034-history-imports")
+    $successful = New-Object System.Collections.Generic.List[object]
+    $standardCostFile = New-Stage034HistoryImportFile -AdapterCode "MATERIAL_MASTER_V1" -Path (Join-Path $taskDir "MATERIAL_MASTER_V1-standard-invalid.xlsx") `
+        -Suffix "STANDARD-INVALID" -MaterialCostCategory "STANDARD"
+    $standardCostFailure = Invoke-Stage034HistoryImport -AdapterCode "MATERIAL_MASTER_V1" -FilePath $standardCostFile -Key "MATERIAL_MASTER_V1-STANDARD-INVALID"
+    Assert-Stage034HistoryImportValidationFailure -Task $standardCostFailure -Key "MATERIAL_MASTER_V1-STANDARD-INVALID" -ExpectedColumn "costCategory"
+    foreach ($adapterCode in @("CUSTOMER_MASTER_V1", "SUPPLIER_MASTER_V1", "MATERIAL_MASTER_V1", "BOM_DRAFT_V1", "SALES_PROJECT_DRAFT_V1")) {
+        $file = New-Stage034HistoryImportFile -AdapterCode $adapterCode -Path (Join-Path $taskDir "$adapterCode-success.xlsx") -Suffix $adapterCode
+        [void]$successful.Add((Invoke-Stage034HistoryImport -AdapterCode $adapterCode -FilePath $file -Key "$adapterCode-SUCCESS" -Confirm))
+    }
+    $invalidFile = New-Stage034HistoryImportFile -AdapterCode "CUSTOMER_MASTER_V1" -Path (Join-Path $taskDir "CUSTOMER_MASTER_V1-invalid.xlsx") -Suffix "INVALID" -Invalid
+    $failed = Invoke-Stage034HistoryImport -AdapterCode "CUSTOMER_MASTER_V1" -FilePath $invalidFile -Key "CUSTOMER_MASTER_V1-INVALID"
+    $readyFile = New-Stage034HistoryImportFile -AdapterCode "CUSTOMER_MASTER_V1" -Path (Join-Path $taskDir "CUSTOMER_MASTER_V1-ready.xlsx") -Suffix "READY"
+    $ready = Invoke-Stage034HistoryImport -AdapterCode "CUSTOMER_MASTER_V1" -FilePath $readyFile -Key "CUSTOMER_MASTER_V1-READY"
+    Assert-Stage034HistoryImportConfirmRevalidation -TaskDirectory $taskDir
+    $cancelFile = New-Stage034HistoryImportFile -AdapterCode "CUSTOMER_MASTER_V1" -Path (Join-Path $taskDir "CUSTOMER_MASTER_V1-cancel.xlsx") -Suffix "CANCEL"
+    $cancelled = Invoke-Stage034HistoryImport -AdapterCode "CUSTOMER_MASTER_V1" -FilePath $cancelFile -Key "CUSTOMER_MASTER_V1-CANCEL" -Cancel
+    $Manifest.AddObject("stage034HistoryImport", "successfulAdapters", $successful.Count)
+    $Manifest.AddObject("stage034HistoryImport", "failedBatch", $failed.id)
+    $Manifest.AddObject("stage034HistoryImport", "readyBatch", $ready.id)
+    $Manifest.AddObject("stage034HistoryImport", "cancelledBatch", $cancelled.id)
+    return [pscustomobject]@{ successful = $successful.ToArray(); failed = $failed; ready = $ready; cancelled = $cancelled }
+}
+
+function New-Stage034BatchTarget {
+    param($Object)
+    return [ordered]@{
+        targetObjectId = [long]$Object.id
+        version = [long]$Object.version
+    }
+}
+
+function Invoke-Stage034BatchTool {
+    param([string] $ToolCode, [hashtable] $Payload, [string] $Key)
+    $previewPath = switch ($ToolCode) {
+        "CUSTOMER_STATUS_CHANGE_V1" { "/api/admin/platform/batch-tools/CUSTOMER_STATUS_CHANGE_V1/preview" }
+        "SUPPLIER_STATUS_CHANGE_V1" { "/api/admin/platform/batch-tools/SUPPLIER_STATUS_CHANGE_V1/preview" }
+        "MATERIAL_STATUS_CHANGE_V1" { "/api/admin/platform/batch-tools/MATERIAL_STATUS_CHANGE_V1/preview" }
+        "FIXED_DOCUMENT_BATCH_PRINT_V1" { "/api/admin/platform/batch-tools/FIXED_DOCUMENT_BATCH_PRINT_V1/preview" }
+        default { throw "不支持的 034 批量工具：$ToolCode。" }
+    }
+    $operation = Invoke-DemoApi -Session $Session -Method Post -Path $previewPath -Body $Payload
+    if ($operation.status -eq "PRECHECKED") {
+        $operation = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/batch-operations/$($operation.id)/execute" -Body ([ordered]@{
+            version = [long]$operation.version
+            idempotencyKey = "$RunId-STAGE034-BATCH-$Key-EXECUTE"
+        })
+    }
+    $Manifest.AddTask("STAGE034-BATCH-$Key", $operation.id)
+    $Manifest.AddObject("stage034BatchTool", $Key, $operation.id)
+    return $operation
+}
+
+function Ensure-Stage034BatchToolSamples {
+    $customer = Get-ItemByField -Path "/api/admin/master/customers" -FieldName "code" -FieldValue "$DemoPrefix-034-CUSTOMER_MASTER_V1-CUS"
+    $supplier = Get-ItemByField -Path "/api/admin/master/suppliers" -FieldName "code" -FieldValue "$DemoPrefix-034-SUPPLIER_MASTER_V1-SUP"
+    $material = Get-ItemByField -Path "/api/admin/master/materials" -FieldName "code" -FieldValue "$DemoPrefix-034-MATERIAL_MASTER_V1-MAT"
+    if ($null -eq $customer -or $null -eq $supplier -or $null -eq $material) {
+        throw "034 批量工具缺少历史导入生成的客户、供应商或物料目标。"
+    }
+    $customerOperation = Invoke-Stage034BatchTool -ToolCode "CUSTOMER_STATUS_CHANGE_V1" -Key "CUSTOMER_STATUS_CHANGE_V1" -Payload ([ordered]@{
+        actionCode = "STATUS_CHANGE"
+        targetStatus = "DISABLED"
+        reason = "034 演示批量停用客户"
+        targets = @((New-Stage034BatchTarget -Object $customer))
+        idempotencyKey = "$RunId-STAGE034-BATCH-CUSTOMER_STATUS_CHANGE_V1-PREVIEW"
+    })
+    $supplierOperation = Invoke-Stage034BatchTool -ToolCode "SUPPLIER_STATUS_CHANGE_V1" -Key "SUPPLIER_STATUS_CHANGE_V1" -Payload ([ordered]@{
+        actionCode = "STATUS_CHANGE"
+        targetStatus = "DISABLED"
+        reason = "034 演示批量停用供应商"
+        targets = @((New-Stage034BatchTarget -Object $supplier))
+        idempotencyKey = "$RunId-STAGE034-BATCH-SUPPLIER_STATUS_CHANGE_V1-PREVIEW"
+    })
+    $materialOperation = Invoke-Stage034BatchTool -ToolCode "MATERIAL_STATUS_CHANGE_V1" -Key "MATERIAL_STATUS_CHANGE_V1" -Payload ([ordered]@{
+        actionCode = "STATUS_CHANGE"
+        targetStatus = "DISABLED"
+        reason = "034 演示批量停用物料"
+        targets = @((New-Stage034BatchTarget -Object $material))
+        idempotencyKey = "$RunId-STAGE034-BATCH-MATERIAL_STATUS_CHANGE_V1-PREVIEW"
+    })
+    $orderA = Get-Stage034FreshObject -Path "/api/admin/sales/orders" -Id $salesOrderSemiA.id
+    $orderB = Get-Stage034FreshObject -Path "/api/admin/sales/orders" -Id $salesOrderSemiB.id
+    $printOperation = Invoke-Stage034BatchTool -ToolCode "FIXED_DOCUMENT_BATCH_PRINT_V1" -Key "FIXED_DOCUMENT_BATCH_PRINT_V1" -Payload ([ordered]@{
+        actionCode = "BATCH_PRINT"
+        objectType = "SALES_ORDER"
+        templateCode = "SALES_ORDER_V1"
+        reason = "034 演示批量固定打印销售订单"
+        targets = @((New-Stage034BatchTarget -Object $orderA), (New-Stage034BatchTarget -Object $orderB))
+        idempotencyKey = "$RunId-STAGE034-BATCH-FIXED_DOCUMENT_BATCH_PRINT_V1-PREVIEW"
+    })
+    return @($customerOperation, $supplierOperation, $materialOperation, $printOperation)
+}
+
+function Invoke-Stage034FixedPrintTask {
+    param([string] $Key, [string] $ObjectType, [long] $ObjectId, [string] $TemplateCode)
+    $task = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/print-tasks" -Body ([ordered]@{
+        objectType = $ObjectType
+        objectId = $ObjectId
+        templateCode = $TemplateCode
+    }) -Headers @{ "Idempotency-Key" = "$RunId-STAGE034-PRINT-$Key" }
+    $task = Wait-DocumentTaskStatus -Task $task -Statuses @("SUCCEEDED") -Attempts 24
+    $Manifest.AddTask("STAGE034-PRINT-$Key", $task.id)
+    $Manifest.AddFile([ordered]@{
+        category = "stage034FixedPrint"
+        taskType = "FIXED_DOCUMENT_PRINT"
+        objectType = $ObjectType
+        objectId = $ObjectId
+        templateCode = $TemplateCode
+        taskId = $task.id
+        downloadableId = $task.id
+        downloadPath = "/api/admin/document-tasks/$($task.id)/download"
+        idempotencyKey = "$RunId-STAGE034-PRINT-$Key"
+    })
+    return $task
+}
+
+function Ensure-Stage034FixedPrintSamples {
+    $salesInvoice = Ensure-SalesInvoiceConfirmed -Key "034-FIXED-PRINT" -Shipment $shipmentSemiB -InvoiceDate "2026-08-02" -DueDate "2026-09-01"
+    $purchaseInvoice = Ensure-OutsourcingPurchaseInvoiceConfirmed -Key "029-P1-FG" -OutsourcingReceipt $stage029Dataset.outsourcingReceipt `
+        -ActualUnitPrice "190.00" -InvoiceDate "2026-08-02" -DueDate "2026-09-01"
+    $prints = @(
+        (Invoke-Stage034FixedPrintTask -Key "SALES_ORDER_V1" -ObjectType "SALES_ORDER" -ObjectId $salesOrderSemiA.id -TemplateCode "SALES_ORDER_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "SALES_SHIPMENT_V1" -ObjectType "SALES_SHIPMENT" -ObjectId $shipmentSemiA.id -TemplateCode "SALES_SHIPMENT_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "PROCUREMENT_RECEIPT_V1" -ObjectType "PROCUREMENT_RECEIPT" -ObjectId $receiptMain.id -TemplateCode "PROCUREMENT_RECEIPT_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "INVENTORY_TRANSFER_V1" -ObjectType "INVENTORY_TRANSFER" -ObjectId $stage034WarehouseTransfer.id -TemplateCode "INVENTORY_TRANSFER_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "PRODUCTION_WORK_ORDER_V1" -ObjectType "PRODUCTION_WORK_ORDER" -ObjectId $productionExecution.workOrder.id -TemplateCode "PRODUCTION_WORK_ORDER_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "PRODUCTION_MATERIAL_ISSUE_V1" -ObjectType "PRODUCTION_MATERIAL_ISSUE" -ObjectId $productionExecution.issue.id -TemplateCode "PRODUCTION_MATERIAL_ISSUE_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "PRODUCTION_COMPLETION_RECEIPT_V1" -ObjectType "PRODUCTION_COMPLETION_RECEIPT" -ObjectId $productionExecution.receipt.id -TemplateCode "PRODUCTION_COMPLETION_RECEIPT_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "SALES_INVOICE_V1" -ObjectType "SALES_INVOICE" -ObjectId $salesInvoice.id -TemplateCode "SALES_INVOICE_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "PURCHASE_INVOICE_V1" -ObjectType "PURCHASE_INVOICE" -ObjectId $purchaseInvoice.id -TemplateCode "PURCHASE_INVOICE_V1"),
+        (Invoke-Stage034FixedPrintTask -Key "ACCOUNTING_VOUCHER_V1" -ObjectType "ACCOUNTING_VOUCHER" -ObjectId $operatingAccountingFacts.p2Voucher.id -TemplateCode "ACCOUNTING_VOUCHER_V1")
+    )
+    $Manifest.AddObject("stage034FixedPrint", "NewTemplatePrints", $prints.Count)
+    return $prints
+}
+
+function Ensure-Stage034DeliveryGovernanceSamples {
+    Write-Step "执行 034 平台交付治理样本生成入口。"
+    $plan = New-Stage034AcceptanceDataPlan -DatabaseName $Database -MinioBucketName $MinioBucket -ApiBaseUrl $ApiBaseUrl
+    $Manifest.AddNote("Stage034Only：已强制使用 $($plan.database)/$($plan.minioBucket) 与 38080/35174/35173 隔离资源，默认正式资源和 033 验收资源失败关闭。")
+    if ($DocumentWorkerMode -eq "WorkerDisabled") {
+        $Manifest.AddNote("DocumentWorkerMode=WorkerDisabled：034 仅登记租约、取消和待处理任务窗口；真实 API 样本生成延后到 WorkerEnabled。")
+        return
+    }
+
+    $contracts = Assert-Stage034BackendContractsAvailable
+    Ensure-Stage034DataRepairSamples | Out-Null
+    Ensure-Stage034HistoryImportSamples | Out-Null
+    Ensure-Stage034BatchToolSamples | Out-Null
+    Ensure-Stage034FixedPrintSamples | Out-Null
+    $Manifest.AddObject("stage034", "deliveryAssets", "available")
+    $Manifest.AddObject("stage034", "dataRepairAdapters", @($script:Stage034DataRepairAdapters).Count)
+    $Manifest.AddObject("stage034", "historyImportAdapters", @($script:Stage034HistoryImportAdapters).Count)
+    $Manifest.AddObject("stage034", "batchTools", @($script:Stage034BatchTools).Count)
+    $Manifest.AddObject("stage034", "printTemplates", @($script:Stage034PrintTemplates).Count)
+    $Manifest.AddNote("034 接口探测结果：deliveryAssets=$($null -ne $contracts.deliveryAssets)；真实 API 已生成三类修复、五类历史导入、四类批量工具、十个新增模板打印、任务状态和 MinIO 文件一致性样本。")
 }
 
 function Get-ItemByField {
@@ -1966,7 +2643,16 @@ function Ensure-SalesInvoiceConfirmed {
         [string] $DueDate = "2026-08-17"
     )
     $remark = "验收演示销售发票 $Key"
+    $externalInvoiceNo = "$DemoPrefix-SI-$Key"
     $invoice = Get-FirstByRemark -Path "/api/admin/finance/sales-invoices" -Remark $remark
+    if ($null -eq $invoice) {
+        $invoice = Invoke-DemoApiPage -Session $Session -Path "/api/admin/finance/sales-invoices" -Parameters @{
+            keyword = $externalInvoiceNo
+            page = 1
+            pageSize = 20
+        } | Where-Object { $_.externalInvoiceNo -eq $externalInvoiceNo } |
+            Select-Object -First 1
+    }
     if ($null -eq $invoice) {
         $invoice = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/finance/sales-invoices" -Body ([ordered]@{
             sourceType = "SALES_SHIPMENT"
@@ -1974,7 +2660,7 @@ function Ensure-SalesInvoiceConfirmed {
             invoiceDate = $InvoiceDate
             dueDate = $DueDate
             invoiceType = "SPECIAL_VAT"
-            externalInvoiceNo = "$DemoPrefix-SI-$Key"
+            externalInvoiceNo = $externalInvoiceNo
             idempotencyKey = "$RunId-SI-$Key-CREATE"
             version = 0
             remark = $remark
@@ -3507,7 +4193,7 @@ $adminLikeRole = Ensure-Role -Code "$DemoPrefix-ROLE-ADMIN" -Name "桥合演示�
 $warehouseRole = Ensure-Role -Code "$DemoPrefix-ROLE-WAREHOUSE" -Name "桥合仓储角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "inventory:*" -or $_ -like "master:*" -or $_ -like "platform:*" -or $_ -like "system:business-period:*" }) -PermissionMap $permissionMap
 $productionRole = Ensure-Role -Code "$DemoPrefix-ROLE-PRODUCTION" -Name "桥合生产角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "production:*" -or $_ -like "material:*" -or $_ -like "inventory:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
 $financeRole = Ensure-Role -Code "$DemoPrefix-ROLE-FINANCE" -Name "桥合财务角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "finance:*" -or $_ -like "sales:*" -or $_ -like "procurement:*" -or $_ -like "platform:*" }) -PermissionMap $permissionMap
-$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -like "cost:project-cost-adjustment:*" -or $_ -eq "cost:project-cost:view" -or $_ -eq "finance:expense:view" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" -or $_ -eq "sales:order:view" -or $_ -eq "sales:credit:view" -or $_ -eq "sales:credit:override-approve" -or $_ -eq "gl:voucher:view" -or $_ -eq "gl:voucher:approve-post" }) -PermissionMap $permissionMap
+$approvalRole = Ensure-Role -Code "$DemoPrefix-ROLE-APPROVAL" -Name "桥合审批角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "platform:*" -or $_ -like "sales:contract:*" -or $_ -like "material:bom-eco:*" -or $_ -like "inventory:*" -or $_ -like "cost:project-cost-adjustment:*" -or $_ -in @("master:material:update", "master:customer:update", "master:supplier:update") -or $_ -eq "cost:project-cost:view" -or $_ -eq "finance:expense:view" -or $_ -eq "procurement:order:view" -or $_ -eq "procurement:order:exception-approve" -or $_ -eq "sales:order:view" -or $_ -eq "sales:credit:view" -or $_ -eq "sales:credit:override-approve" -or $_ -eq "gl:voucher:view" -or $_ -eq "gl:voucher:approve-post" }) -PermissionMap $permissionMap
 $readonlyRole = Ensure-Role -Code "$DemoPrefix-ROLE-READONLY" -Name "桥合只读角色" -PermissionCodes ($allPermissionCodes | Where-Object { $_ -like "*:view" -or $_ -like "*:export" }) -PermissionMap $permissionMap
 
 $demoAdmin = Ensure-User -Username "$DemoPrefix-admin" -DisplayName "桥合演示管理员" -RoleIds @($adminLikeRole.id)
@@ -3943,7 +4629,7 @@ $ownProjectToPublic = Ensure-OwnershipConversionPosted -Key "PROJECT-CU-RETURN-P
         sourceCostLayerId = $projectCuLayer.id
     }
 )
-Ensure-WarehouseTransferPosted -Key "PROJECT-CU" -Reason "验收演示项目铜排从项目仓调拨至成品仓" -Lines @(
+$stage034WarehouseTransfer = Ensure-WarehouseTransferPosted -Key "PROJECT-CU" -Reason "验收演示项目铜排从项目仓调拨至成品仓" -Lines @(
     [ordered]@{
         lineNo = 1
         sourceWarehouseId = $whProject.id
@@ -3958,7 +4644,7 @@ Ensure-WarehouseTransferPosted -Key "PROJECT-CU" -Reason "验收演示项目铜�
         quantity = "5.000000"
         sourceCostLayerId = $projectCuLayer.id
     }
-) | Out-Null
+)
 Assert-Stage029CurrentProjectCostReady -Key "BASE-PROJ-A" -Project $projectA | Out-Null
 
 Write-Step "创建生产工单、领料、报工和完工入库。"
@@ -4082,6 +4768,14 @@ Ensure-DocumentTaskSamples -ContractApproval $mainContract.approvalSummary -BomE
 
 Write-Step "执行 033 标准业务月结关闭步骤。"
 $periodClose = Ensure-Stage033PeriodCloseFrozen -Period $openPeriod
+
+if ($Stage034Only) {
+    Ensure-Stage034DeliveryGovernanceSamples
+    $Manifest.AddNote("核心业务数据生成坚持 API-only；未使用业务 INSERT/UPDATE SQL。")
+    $Manifest.Save()
+    Write-Step "034 平台交付治理样本入口完成。Manifest=$OutputManifestPath"
+    return
+}
 
 $Manifest.AddNote("核心业务数据生成坚持 API-only；未使用业务 INSERT/UPDATE SQL。")
 $Manifest.Save()

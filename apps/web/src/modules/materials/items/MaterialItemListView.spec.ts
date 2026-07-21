@@ -446,4 +446,17 @@ describe('物料档案页', () => {
     })
     expect(wrapper.text()).toContain('TASK-001')
   })
+
+  it('034 主列表同时提供固定历史导入和可执行批量状态入口', async () => {
+    apiMock.materials.list.mockResolvedValue({ items: [material], page: 1, pageSize: 10, total: 1, totalPages: 1 })
+    const wrapper = mountMaterials([
+      'master:material:view',
+      'platform:history-import:view',
+      'platform:batch-tool:view',
+    ])
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="material-history-import-entry"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="material-batch-status-entry"]').exists()).toBe(true)
+  })
 })

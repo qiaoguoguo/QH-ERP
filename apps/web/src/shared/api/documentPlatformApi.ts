@@ -23,6 +23,7 @@ export type AttachmentObjectType =
   | 'SALES_ORDER_CHANGE'
   | 'BOM_ENGINEERING_CHANGE'
   | 'INVENTORY_STOCKTAKE'
+  | 'DATA_REPAIR_REQUEST'
 export type AttachmentStatus = 'AVAILABLE' | 'DELETED'
 export type AttachmentAction = 'DOWNLOAD' | 'DELETE'
 export type DocumentTaskType =
@@ -45,8 +46,33 @@ export type DocumentTaskType =
   | 'SALES_DELIVERY_PLAN_EXPORT'
   | 'SALES_EFFECTIVE_DEMAND_EXPORT'
   | 'MATERIAL_REQUIREMENT_RUN_EXPORT'
-export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT'
-export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT'
+  | 'DATA_REPAIR_EXECUTE'
+  | 'HISTORY_IMPORT_CUSTOMER'
+  | 'HISTORY_IMPORT_SUPPLIER'
+  | 'HISTORY_IMPORT_MATERIAL'
+  | 'HISTORY_IMPORT_BOM_DRAFT'
+  | 'HISTORY_IMPORT_SALES_PROJECT'
+  | 'CUSTOMER_MASTER_V1_HISTORY_IMPORT'
+  | 'SUPPLIER_MASTER_V1_HISTORY_IMPORT'
+  | 'MATERIAL_MASTER_V1_HISTORY_IMPORT'
+  | 'BOM_DRAFT_V1_HISTORY_IMPORT'
+  | 'SALES_PROJECT_V1_HISTORY_IMPORT'
+  | 'BATCH_CUSTOMER_STATUS_CHANGE'
+  | 'BATCH_SUPPLIER_STATUS_CHANGE'
+  | 'BATCH_MATERIAL_STATUS_CHANGE'
+  | 'FIXED_DOCUMENT_BATCH_PRINT'
+  | 'SALES_ORDER_PRINT'
+  | 'SALES_SHIPMENT_PRINT'
+  | 'PROCUREMENT_RECEIPT_PRINT'
+  | 'INVENTORY_TRANSFER_PRINT'
+  | 'PRODUCTION_WORK_ORDER_PRINT'
+  | 'PRODUCTION_MATERIAL_ISSUE_PRINT'
+  | 'PRODUCTION_COMPLETION_RECEIPT_PRINT'
+  | 'SALES_INVOICE_PRINT'
+  | 'PURCHASE_INVOICE_PRINT'
+  | 'ACCOUNTING_VOUCHER_PRINT'
+export type DocumentTaskDirection = 'IMPORT' | 'EXPORT' | 'PRINT' | 'BATCH' | 'REPAIR'
+export type DocumentTaskStage = 'VALIDATE' | 'COMMIT' | 'EXPORT' | 'PRINT' | 'BATCH' | 'REPAIR'
 export type DocumentTaskStatus =
   | 'QUEUED'
   | 'RUNNING'
@@ -211,6 +237,7 @@ export interface DocumentTaskRecord {
   id: ResourceId
   taskNo: string
   taskType: DocumentTaskType
+  businessDomain?: string | null
   objectType?: string | null
   objectId?: ResourceId | null
   objectNo?: string | null
@@ -232,8 +259,15 @@ export interface DocumentTaskRecord {
 }
 
 export interface DocumentTaskListQuery {
+  taskId?: ResourceId
+  batchOperationId?: ResourceId
   keyword?: string
+  domain?: string
   taskType?: DocumentTaskType
+  objectKeyword?: string
+  createdByKeyword?: string
+  createdAtFrom?: string
+  createdAtTo?: string
   status?: DocumentTaskStatus
   page: number
   pageSize: number
@@ -422,10 +456,15 @@ export interface PrintTemplateRecord {
   name: string
   templateVersion: number
   sceneCode?: string | null
+  objectType?: string | null
+  description?: string | null
+  enabled?: boolean
 }
 
 export interface PrintPreviewRecord {
-  approvalInstanceId: ResourceId
+  approvalInstanceId?: ResourceId
+  objectType?: string | null
+  objectId?: ResourceId | null
   templateCode: string
   templateVersion: number
   sections: Array<{ title: string; fields: Array<{ label: string; value: string | null }> }>
@@ -494,10 +533,11 @@ export interface DocumentPlatformApi {
     createMaterialRequirementRuns(payload: MaterialRequirementRunExportPayload): Promise<DocumentTaskRecord>
   }
   printTemplates: {
-    list(query: { sceneCode: string }): Promise<PrintTemplateRecord[]>
+    list(query: { sceneCode?: string; objectType?: string }): Promise<PrintTemplateRecord[]>
   }
   printPreviews: {
     get(approvalInstanceId: ResourceId): Promise<PrintPreviewRecord>
+    previewObject(payload: { objectType: string; objectId: ResourceId; templateCode: string }): Promise<PrintPreviewRecord>
   }
   printTasks: {
     create(payload: PrintTaskCreatePayload): Promise<DocumentTaskRecord>
@@ -783,6 +823,12 @@ export function createDocumentPlatformApi(options: DocumentPlatformApiOptions = 
     printPreviews: {
       get: (approvalInstanceId) =>
         get<PrintPreviewRecord>(`/api/admin/print-previews/${encodeURIComponent(String(approvalInstanceId))}`),
+      previewObject: (payload) =>
+        get<PrintPreviewRecord>('/api/admin/print-previews', {
+          objectType: payload.objectType,
+          objectId: payload.objectId,
+          templateCode: payload.templateCode,
+        }),
     },
     printTasks: {
       create: (payload) =>

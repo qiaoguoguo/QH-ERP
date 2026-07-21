@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class PeriodCloseV32MigrationRegressionTests {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
 	private static final int EXPECTED_V29_CHECKSUM = 774334682;
 
 	private static final int EXPECTED_V30_CHECKSUM = 2130342893;
@@ -30,6 +32,10 @@ class PeriodCloseV32MigrationRegressionTests {
 	private static final int EXPECTED_V33_CHECKSUM = 612501943;
 
 	private static final int EXPECTED_V34_CHECKSUM = -629066235;
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
 
 	private static final List<String> PERIOD_CLOSE_TABLES = List.of("biz_period_close_run",
 			"biz_period_close_check_run", "biz_period_close_check_item", "biz_period_snapshot",
@@ -74,12 +80,14 @@ class PeriodCloseV32MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);
 		assertThat(latestChecksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
 		assertThat(latestChecksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 31)
@@ -93,12 +101,14 @@ class PeriodCloseV32MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> checksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(checksums);
 		assertThat(checksums.get("32")).isEqualTo(EXPECTED_V32_CHECKSUM);
 		assertThat(checksums.get("33")).isEqualTo(EXPECTED_V33_CHECKSUM);
 		assertThat(checksums.get("34")).isEqualTo(EXPECTED_V34_CHECKSUM);
+		assertThat(checksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(checksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertPeriodCloseSchema(jdbcTemplate);
 	}
 

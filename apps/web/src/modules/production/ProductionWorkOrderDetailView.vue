@@ -24,6 +24,7 @@ import {
   formatCostQuantity,
 } from '../cost/costPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import ProductionWorkOrderActionBar from './ProductionWorkOrderActionBar.vue'
 import ProductionWorkOrderExecutionRecords from './ProductionWorkOrderExecutionRecords.vue'
 import ProductionWorkOrderSourceSummary from './ProductionWorkOrderSourceSummary.vue'
@@ -349,6 +350,16 @@ onMounted(loadRecord)
         <dt>备注</dt>
         <dd>{{ record.remark || '未填写' }}</dd>
       </dl>
+
+      <FixedPrintAction
+        class="section-block"
+        object-type="PRODUCTION_WORK_ORDER"
+        :object-id="record.id"
+        :object-no="record.workOrderNo"
+        :object-status="record.status"
+        :allowed-object-statuses="['RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CLOSED']"
+        title="生产工单固定打印"
+      />
 
       <ProductionWorkOrderSourceSummary :record="record" />
       <ProductionWorkOrderTraceLinks :links="record.traceLinks" />

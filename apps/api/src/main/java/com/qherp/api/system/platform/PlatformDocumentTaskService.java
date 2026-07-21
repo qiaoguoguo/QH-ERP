@@ -69,6 +69,37 @@ public class PlatformDocumentTaskService {
 	private static final Set<String> PROCUREMENT_ORDER_PRINT_STATUSES = Set.of("CONFIRMED", "PARTIALLY_RECEIVED",
 			"RECEIVED", "CLOSED");
 
+	private static final Map<String, FixedPrintDefinition> FIXED_PRINT_DEFINITIONS = Map.ofEntries(
+			Map.entry("SALES_ORDER", new FixedPrintDefinition("SALES_ORDER", "SALES_ORDER_V1",
+					"SALES_ORDER_PRINT", "销售订单固定打印", "sal_sales_order", "order_no", "sales:order:view")),
+			Map.entry("SALES_SHIPMENT", new FixedPrintDefinition("SALES_SHIPMENT", "SALES_SHIPMENT_V1",
+					"SALES_SHIPMENT_PRINT", "销售出库单固定打印", "sal_sales_shipment", "shipment_no",
+					"sales:shipment:view")),
+			Map.entry("PROCUREMENT_RECEIPT", new FixedPrintDefinition("PROCUREMENT_RECEIPT",
+					"PROCUREMENT_RECEIPT_V1", "PROCUREMENT_RECEIPT_PRINT", "采购入库单固定打印",
+					"proc_purchase_receipt", "receipt_no", "procurement:receipt:view")),
+			Map.entry("INVENTORY_TRANSFER", new FixedPrintDefinition("INVENTORY_TRANSFER",
+					"INVENTORY_TRANSFER_V1", "INVENTORY_TRANSFER_PRINT", "仓库调拨单固定打印",
+					"inv_warehouse_transfer", "transfer_no", "inventory:warehouse-transfer:view")),
+			Map.entry("PRODUCTION_WORK_ORDER", new FixedPrintDefinition("PRODUCTION_WORK_ORDER",
+					"PRODUCTION_WORK_ORDER_V1", "PRODUCTION_WORK_ORDER_PRINT", "生产工单固定打印",
+					"mfg_work_order", "work_order_no", "production:work-order:view")),
+			Map.entry("PRODUCTION_MATERIAL_ISSUE", new FixedPrintDefinition("PRODUCTION_MATERIAL_ISSUE",
+					"PRODUCTION_MATERIAL_ISSUE_V1", "PRODUCTION_MATERIAL_ISSUE_PRINT", "生产领料单固定打印",
+					"mfg_material_issue", "issue_no", "production:issue:view")),
+			Map.entry("PRODUCTION_COMPLETION_RECEIPT", new FixedPrintDefinition("PRODUCTION_COMPLETION_RECEIPT",
+					"PRODUCTION_COMPLETION_RECEIPT_V1", "PRODUCTION_COMPLETION_RECEIPT_PRINT", "完工入库单固定打印",
+					"mfg_completion_receipt", "receipt_no", "production:receipt:view")),
+			Map.entry("SALES_INVOICE", new FixedPrintDefinition("SALES_INVOICE", "SALES_INVOICE_V1",
+					"SALES_INVOICE_PRINT", "销售发票固定打印", "fin_sales_invoice", "invoice_no",
+					"finance:sales-invoice:view")),
+			Map.entry("PURCHASE_INVOICE", new FixedPrintDefinition("PURCHASE_INVOICE", "PURCHASE_INVOICE_V1",
+					"PURCHASE_INVOICE_PRINT", "采购发票固定打印", "fin_purchase_invoice", "invoice_no",
+					"finance:purchase-invoice:view")),
+			Map.entry("ACCOUNTING_VOUCHER", new FixedPrintDefinition("ACCOUNTING_VOUCHER",
+					"ACCOUNTING_VOUCHER_V1", "ACCOUNTING_VOUCHER_PRINT", "会计凭证固定打印", "gl_voucher",
+					"coalesce(voucher_no, draft_no)", "gl:voucher:view")));
+
 	static {
 		ZipSecureFile.setMinInflateRatio(0.01d);
 		ZipSecureFile.setMaxEntrySize(20L * 1024L * 1024L);
@@ -209,6 +240,9 @@ public class PlatformDocumentTaskService {
 		validateIdempotencyKey(idempotencyKey);
 		DocumentTaskState task = task(taskId);
 		requireTaskAccess(task, operator);
+		if (isHistoryImportTask(task.taskType())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
 		if (!task.taskType().endsWith("_IMPORT")) {
 			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
 		}
@@ -325,9 +359,19 @@ public class PlatformDocumentTaskService {
 	}
 
 	@Transactional(readOnly = true)
-	public List<PrintTemplateRecord> printTemplates(String sceneCode) {
-		String where = hasText(sceneCode) ? "where scene_code = ? and status = 'ENABLED'" : "where status = 'ENABLED'";
-		Object[] args = hasText(sceneCode) ? new Object[] { sceneCode } : new Object[] {};
+	public List<PrintTemplateRecord> printTemplates(String sceneCode, String objectType) {
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		conditions.add("status = 'ENABLED'");
+		if (hasText(sceneCode)) {
+			conditions.add("scene_code = ?");
+			args.add(sceneCode.trim().toUpperCase());
+		}
+		if (hasText(objectType)) {
+			conditions.add("object_type = ?");
+			args.add(objectType.trim().toUpperCase());
+		}
+		String where = "where " + String.join(" and ", conditions);
 		return this.jdbcTemplate.query("""
 				select template_code, scene_code, name, object_type, template_version
 				from platform_print_template
@@ -335,7 +379,7 @@ public class PlatformDocumentTaskService {
 				order by id
 				""".formatted(where), (rs, rowNum) -> new PrintTemplateRecord(rs.getString("template_code"),
 				rs.getString("scene_code"), rs.getString("name"), rs.getString("object_type"),
-				rs.getInt("template_version")), args);
+				rs.getInt("template_version")), args.toArray());
 	}
 
 	@Transactional(readOnly = true)
@@ -357,6 +401,22 @@ public class PlatformDocumentTaskService {
 								new PrintPreviewField("对象摘要", snapshot.businessObjectSummary())))));
 	}
 
+	@Transactional(readOnly = true)
+	public PrintPreviewRecord printObjectPreview(String objectType, Long objectId, String templateCode,
+			CurrentUser operator) {
+		FixedPrintDefinition definition = fixedPrintDefinition(objectType);
+		if (!definition.templateCode().equals(templateCode)) {
+			throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+		}
+		requireFixedPrintAccess(definition, objectId, operator);
+		FixedPrintSnapshot snapshot = fixedPrintSnapshot(definition, objectId);
+		int templateVersion = printTemplateVersion(templateCode, definition.sceneCode(), definition.objectType());
+		List<PrintPreviewSection> sections = fixedPrintPreviewSections(definition, snapshot,
+				fixedPrintVisibility(definition, operator));
+		return new PrintPreviewRecord(templateCode, templateVersion, definition.sceneCode(), definition.objectType(),
+				snapshot.objectNo(), snapshot.status(), snapshot.status(), null, null, null, null, sections);
+	}
+
 	@Transactional
 	public DocumentTaskRecord createPrintTask(PrintTaskRequest request, String idempotencyKey, CurrentUser operator,
 			HttpServletRequest servletRequest) {
@@ -366,6 +426,9 @@ public class PlatformDocumentTaskService {
 		}
 		if (request != null && "SALES_QUOTE".equals(request.objectType())) {
 			return createSalesQuotePrintTask(request, idempotencyKey, operator, servletRequest);
+		}
+		if (request != null && hasText(request.objectType())) {
+			return createFixedPrintTask(request, idempotencyKey, operator, servletRequest);
 		}
 		if (request == null || request.approvalInstanceId() == null || !hasText(request.templateCode())) {
 			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
@@ -390,6 +453,43 @@ public class PlatformDocumentTaskService {
 			Long taskId = insertQueuedTask("APPROVAL_PRINT", "PRINT", payloadJson, idempotencyKey, null, operator);
 			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId, request.templateCode(),
 					servletRequest);
+			return get(taskId, operator);
+		}
+		catch (DuplicateKeyException exception) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+		}
+	}
+
+	private DocumentTaskRecord createFixedPrintTask(PrintTaskRequest request, String idempotencyKey,
+			CurrentUser operator, HttpServletRequest servletRequest) {
+		if (request.objectId() == null || !hasText(request.templateCode())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		FixedPrintDefinition definition = fixedPrintDefinition(request.objectType());
+		if (!definition.templateCode().equals(request.templateCode())) {
+			throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+		}
+		requireFixedPrintAccess(definition, request.objectId(), operator);
+		FixedPrintSnapshot snapshot = fixedPrintSnapshot(definition, request.objectId());
+		FixedPrintVisibility visibility = fixedPrintVisibility(definition, operator);
+		int templateVersion = printTemplateVersion(request.templateCode(), definition.sceneCode(),
+				definition.objectType());
+		String payloadJson = json(new FixedPrintPayload(definition.objectType(), request.objectId(),
+				request.templateCode(), snapshot.version(), templateVersion, visibility.amountVisible(),
+				visibility.sourceVisible()));
+		List<ExistingTask> existing = existingTask(operator.id(), "FIXED_DOCUMENT_PRINT", idempotencyKey);
+		if (!existing.isEmpty()) {
+			ExistingTask existingTask = existing.getFirst();
+			if (!jsonEquivalent(payloadJson, existingTask.requestPayload())) {
+				throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_IDEMPOTENCY_CONFLICT);
+			}
+			return get(existingTask.id(), operator);
+		}
+		try {
+			Long taskId = insertQueuedTask("FIXED_DOCUMENT_PRINT", "PRINT", payloadJson, idempotencyKey, null,
+					operator);
+			this.auditService.record(operator, "PRINT_TASK_CREATE", "DOCUMENT_TASK", taskId,
+					request.templateCode(), servletRequest);
 			return get(taskId, operator);
 		}
 		catch (DuplicateKeyException exception) {
@@ -519,10 +619,55 @@ public class PlatformDocumentTaskService {
 	}
 
 	@Transactional(readOnly = true)
-	public PageResponse<DocumentTaskRecord> list(int page, int pageSize, CurrentUser currentUser) {
+	public PageResponse<DocumentTaskRecord> list(Long taskId, Long batchOperationId, String taskType,
+			String objectKeyword, String createdByKeyword, String createdAtFrom, String createdAtTo, String status,
+			int page, int pageSize,
+			CurrentUser currentUser) {
 		boolean viewAll = currentUser.permissions().contains("platform:document-task:view-all");
-		String where = viewAll ? "" : "where created_by_user_id = ?";
-		Object[] args = viewAll ? new Object[] {} : new Object[] { currentUser.id() };
+		List<String> conditions = new ArrayList<>();
+		List<Object> args = new ArrayList<>();
+		if (!viewAll) {
+			conditions.add("created_by_user_id = ?");
+			args.add(currentUser.id());
+		}
+		if (taskId != null) {
+			conditions.add("id = ?");
+			args.add(taskId);
+		}
+		if (batchOperationId != null) {
+			conditions.add("""
+					id in (
+						select document_task_id
+						from platform_batch_operation
+						where id = ?
+						  and document_task_id is not null
+					)
+					""");
+			args.add(batchOperationId);
+		}
+		if (hasText(taskType)) {
+			conditions.add("task_type = ?");
+			args.add(taskType.trim().toUpperCase());
+		}
+		if (hasText(status)) {
+			conditions.add("status = ?");
+			args.add(status.trim().toUpperCase());
+		}
+		if (hasText(createdByKeyword)) {
+			conditions.add("created_by_username ilike ?");
+			args.add("%" + createdByKeyword.trim() + "%");
+		}
+		OffsetDateTime fromTime = parseFilterTime(createdAtFrom, false);
+		if (fromTime != null) {
+			conditions.add("created_at >= ?");
+			args.add(fromTime);
+		}
+		OffsetDateTime toTime = parseFilterTime(createdAtTo, true);
+		if (toTime != null) {
+			conditions.add("created_at <= ?");
+			args.add(toTime);
+		}
+		String where = conditions.isEmpty() ? "" : "where " + String.join(" and ", conditions);
 		List<DocumentTaskState> visible = this.jdbcTemplate.query("""
 				select id, task_no, task_type, stage, status, idempotency_key, created_by_user_id,
 				       created_by_username, total_count, success_count, error_count, result_file_id,
@@ -531,21 +676,24 @@ public class PlatformDocumentTaskService {
 				from platform_document_task
 				%s
 				order by created_at desc, id desc
-				""".formatted(where), this::mapTask, args)
+				""".formatted(where), this::mapTask, args.toArray())
 			.stream()
 			.filter((task) -> canAccessTask(task, currentUser))
+			.filter((task) -> matchesObjectKeyword(task, objectKeyword))
 			.toList();
 		int from = Math.min(offset(page, pageSize), visible.size());
 		int to = Math.min(from + limit(pageSize), visible.size());
-		return PageResponse.of(visible.subList(from, to).stream().map(this::toDocumentTaskRecord).toList(), page,
-				limit(pageSize), visible.size());
+		return PageResponse.of(visible.subList(from, to)
+			.stream()
+			.map((task) -> toDocumentTaskRecord(task, currentUser))
+			.toList(), page, limit(pageSize), visible.size());
 	}
 
 	@Transactional(readOnly = true)
 	public DocumentTaskRecord get(Long id, CurrentUser currentUser) {
 		DocumentTaskState task = task(id);
 		requireTaskAccess(task, currentUser);
-		return toDocumentTaskRecord(task);
+		return toDocumentTaskRecord(task, currentUser);
 	}
 
 	@Transactional(noRollbackFor = BusinessException.class)
@@ -792,7 +940,15 @@ public class PlatformDocumentTaskService {
 			case "CONTRACT_ACTIVATION_APPROVAL_V1" -> "合同生效审批单";
 			case "BOM_ECO_APPLICATION_APPROVAL_V1" -> "BOM ECO 应用审批单";
 			case "PROCUREMENT_ORDER_V1" -> "采购订单";
-			default -> throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+			default -> this.jdbcTemplate.query("""
+					select name
+					from platform_print_template
+					where template_code = ?
+					  and status = 'ENABLED'
+					""", (rs, rowNum) -> rs.getString("name"), templateCode)
+				.stream()
+				.findFirst()
+				.orElseThrow(() -> new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED));
 		};
 	}
 
@@ -819,6 +975,9 @@ public class PlatformDocumentTaskService {
 			HttpServletRequest servletRequest) {
 		DocumentTaskState task = task(id);
 		requireTaskAccess(task, operator);
+		if (isHistoryImportTask(task.taskType())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
 		if (request == null || request.version() == null || !request.version().equals(task.version())) {
 			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_CONCURRENT_MODIFICATION);
 		}
@@ -1077,6 +1236,10 @@ public class PlatformDocumentTaskService {
 		return parse(payload, SalesQuotePrintPayload.class);
 	}
 
+	public FixedPrintPayload parseFixedPrintPayload(String payload) {
+		return parse(payload, FixedPrintPayload.class);
+	}
+
 	public ExportedFile printSalesQuoteFile(SalesQuotePrintPayload payload, CurrentUser operator) {
 		requireSalesQuotePrintAccess(payload.quoteId(), operator);
 		SalesQuotePrintSnapshot snapshot = salesQuotePrintSnapshot(payload.quoteId());
@@ -1132,6 +1295,432 @@ public class PlatformDocumentTaskService {
 		catch (IOException exception) {
 			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
 		}
+	}
+
+	public ExportedFile printFixedDocumentFile(FixedPrintPayload payload, CurrentUser operator) {
+		FixedPrintDefinition definition = fixedPrintDefinition(payload.objectType());
+		if (!definition.templateCode().equals(payload.templateCode())) {
+			throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+		}
+		requireFixedPrintAccess(definition, payload.objectId(), operator);
+		FixedPrintSnapshot snapshot = fixedPrintSnapshot(definition, payload.objectId());
+		if (!snapshot.version().equals(payload.objectVersion())
+				|| printTemplateVersion(payload.templateCode(), definition.sceneCode(), definition.objectType())
+						!= payload.templateVersion()) {
+			throw new BusinessException(ApiErrorCode.APPROVAL_BUSINESS_OBJECT_CHANGED);
+		}
+		List<PrintPreviewSection> sections = fixedPrintPreviewSections(definition, snapshot,
+				effectiveFixedPrintVisibility(definition, payload, operator));
+		try (PDDocument document = new PDDocument(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			PDPage page = new PDPage();
+			document.addPage(page);
+			document.getDocumentInformation().setTitle(definition.templateName());
+			document.getDocumentInformation().setSubject(payload.templateCode());
+			document.getDocumentInformation().setCustomMetadataValue("templateVersion",
+					Integer.toString(payload.templateVersion()));
+			document.getDocumentInformation().setCustomMetadataValue("objectType", payload.objectType());
+			document.getDocumentInformation().setCustomMetadataValue("objectId", Long.toString(payload.objectId()));
+			document.getDocumentInformation().setCustomMetadataValue("objectVersion",
+					Long.toString(payload.objectVersion()));
+			PDType0Font font = PDType0Font.load(document,
+					new ClassPathResource("fonts/NotoSansSC-wght.ttf").getInputStream());
+			try (PDPageContentStream content = new PDPageContentStream(document, page)) {
+				content.beginText();
+				content.setFont(font, 12);
+				content.setLeading(20);
+				content.newLineAtOffset(50, 760);
+				List<String> lines = new ArrayList<>();
+				lines.add(definition.templateName());
+				lines.add("模板代码：" + payload.templateCode());
+				lines.add("模板版本：" + payload.templateVersion());
+				for (PrintPreviewSection section : sections) {
+					lines.add(section.title());
+					for (PrintPreviewField field : section.fields()) {
+						lines.add(field.label() + "：" + nullToBlank(field.value()));
+					}
+				}
+				for (String line : lines) {
+					content.showText(line);
+					content.newLine();
+				}
+				content.endText();
+			}
+			document.save(output);
+			return new ExportedFile(payload.objectType().toLowerCase().replace("_", "-") + "-"
+					+ snapshot.objectNo() + ".pdf", "application/pdf", output.toByteArray(), 1);
+		}
+		catch (IOException exception) {
+			throw new BusinessException(ApiErrorCode.SYSTEM_ERROR);
+		}
+	}
+
+	private List<PrintPreviewSection> fixedPrintPreviewSections(FixedPrintDefinition definition,
+			FixedPrintSnapshot snapshot, FixedPrintVisibility visibility) {
+		List<PrintPreviewField> header = new ArrayList<>();
+		header.add(new PrintPreviewField("模板", definition.templateName()));
+		header.add(new PrintPreviewField("对象类型", definition.objectType()));
+		header.add(new PrintPreviewField("单据编号", snapshot.objectNo()));
+		header.add(new PrintPreviewField("业务状态", snapshot.status()));
+		header.add(new PrintPreviewField("对象版本", snapshot.version().toString()));
+		header.addAll(fixedPrintSubjectFields(definition, snapshot.id(), visibility));
+		List<PrintPreviewField> lines = fixedPrintLineFields(definition, snapshot.id(), visibility);
+		List<PrintPreviewField> summary = List.of(new PrintPreviewField("明细行数",
+				Integer.toString(fixedPrintLineCount(definition, snapshot.id()))));
+		return List.of(new PrintPreviewSection("单据抬头", header), new PrintPreviewSection("业务明细", lines),
+				new PrintPreviewSection("业务汇总", summary));
+	}
+
+	private List<PrintPreviewField> fixedPrintSubjectFields(FixedPrintDefinition definition, Long objectId,
+			FixedPrintVisibility visibility) {
+		return switch (definition.objectType()) {
+			case "SALES_ORDER" -> this.jdbcTemplate.query("""
+					select c.name as customer_name, o.order_date, o.expected_ship_date
+					from sal_sales_order o
+					join mst_customer c on c.id = o.customer_id
+					where o.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("客户", rs.getString("customer_name")),
+					new PrintPreviewField("订单日期", stringDate(rs.getObject("order_date", LocalDate.class))),
+					new PrintPreviewField("预计发货日", stringDate(rs.getObject("expected_ship_date",
+							LocalDate.class)))), objectId).stream().findFirst().orElse(List.of());
+			case "SALES_SHIPMENT" -> this.jdbcTemplate.query("""
+					select c.name as customer_name, w.name as warehouse_name, o.order_no, s.business_date
+					from sal_sales_shipment s
+					join mst_customer c on c.id = s.customer_id
+					join mst_warehouse w on w.id = s.warehouse_id
+					join sal_sales_order o on o.id = s.order_id
+					where s.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("客户", rs.getString("customer_name")),
+					new PrintPreviewField("出库仓库", rs.getString("warehouse_name")),
+					new PrintPreviewField("销售订单", rs.getString("order_no")),
+					new PrintPreviewField("业务日期", stringDate(rs.getObject("business_date",
+							LocalDate.class)))), objectId).stream().findFirst().orElse(List.of());
+			case "PROCUREMENT_RECEIPT" -> this.jdbcTemplate.query("""
+					select s.name as supplier_name, w.name as warehouse_name, o.order_no, r.business_date
+					from proc_purchase_receipt r
+					join mst_supplier s on s.id = r.supplier_id
+					join mst_warehouse w on w.id = r.warehouse_id
+					join proc_purchase_order o on o.id = r.order_id
+					where r.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("供应商", rs.getString("supplier_name")),
+					new PrintPreviewField("入库仓库", rs.getString("warehouse_name")),
+					new PrintPreviewField("采购订单", rs.getString("order_no")),
+					new PrintPreviewField("业务日期", stringDate(rs.getObject("business_date",
+							LocalDate.class)))), objectId).stream().findFirst().orElse(List.of());
+			case "INVENTORY_TRANSFER" -> this.jdbcTemplate.query("""
+					select business_date, reason
+					from inv_warehouse_transfer
+					where id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("业务日期", stringDate(rs.getObject(
+							"business_date", LocalDate.class))),
+					new PrintPreviewField("调拨原因", rs.getString("reason"))), objectId).stream()
+				.findFirst()
+				.orElse(List.of());
+			case "PRODUCTION_WORK_ORDER" -> this.jdbcTemplate.query("""
+					select m.code as material_code, m.name as material_name, iw.name as issue_warehouse,
+					       rw.name as receipt_warehouse, w.planned_quantity, w.planned_start_date,
+					       w.planned_finish_date
+					from mfg_work_order w
+					join mst_material m on m.id = w.product_material_id
+					left join mst_warehouse iw on iw.id = w.issue_warehouse_id
+					left join mst_warehouse rw on rw.id = w.receipt_warehouse_id
+					where w.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("产品", rs.getString("material_code")
+							+ " " + nullToBlank(rs.getString("material_name"))),
+					new PrintPreviewField("计划数量", exportCell(rs.getBigDecimal("planned_quantity"))),
+					new PrintPreviewField("领料仓库", nullToBlank(rs.getString("issue_warehouse"))),
+					new PrintPreviewField("入库仓库", nullToBlank(rs.getString("receipt_warehouse"))),
+					new PrintPreviewField("计划开始", stringDate(rs.getObject("planned_start_date",
+							LocalDate.class))),
+					new PrintPreviewField("计划完成", stringDate(rs.getObject("planned_finish_date",
+							LocalDate.class)))), objectId).stream().findFirst().orElse(List.of());
+			case "PRODUCTION_MATERIAL_ISSUE" -> this.jdbcTemplate.query("""
+					select w.work_order_no, i.business_date, i.reason
+					from mfg_material_issue i
+					join mfg_work_order w on w.id = i.work_order_id
+					where i.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("生产工单", rs.getString("work_order_no")),
+					new PrintPreviewField("业务日期", stringDate(rs.getObject("business_date",
+							LocalDate.class))),
+					new PrintPreviewField("领料原因", rs.getString("reason"))), objectId).stream()
+				.findFirst()
+				.orElse(List.of());
+			case "PRODUCTION_COMPLETION_RECEIPT" -> this.jdbcTemplate.query("""
+					select w.work_order_no, wh.name as warehouse_name, r.business_date, r.quantity
+					from mfg_completion_receipt r
+					join mfg_work_order w on w.id = r.work_order_id
+					join mst_warehouse wh on wh.id = r.receipt_warehouse_id
+					where r.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("生产工单", rs.getString("work_order_no")),
+					new PrintPreviewField("入库仓库", rs.getString("warehouse_name")),
+					new PrintPreviewField("业务日期", stringDate(rs.getObject("business_date",
+							LocalDate.class))),
+					new PrintPreviewField("入库数量", exportCell(rs.getBigDecimal("quantity")))), objectId).stream()
+				.findFirst()
+				.orElse(List.of());
+			case "SALES_INVOICE" -> this.jdbcTemplate.query("""
+					select c.name as customer_name, i.source_no, i.invoice_date, i.due_date,
+					       i.invoice_type, i.tax_included_amount
+					from fin_sales_invoice i
+					join mst_customer c on c.id = i.customer_id
+					where i.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("客户", rs.getString("customer_name")),
+					new PrintPreviewField("来源单据", rs.getString("source_no")),
+					new PrintPreviewField("开票日期", stringDate(rs.getObject("invoice_date",
+							LocalDate.class))),
+					new PrintPreviewField("到期日", stringDate(rs.getObject("due_date", LocalDate.class))),
+					new PrintPreviewField("发票类型", rs.getString("invoice_type")),
+					new PrintPreviewField("价税合计", exportCell(rs.getBigDecimal("tax_included_amount")))),
+					objectId).stream().findFirst().orElse(List.of());
+			case "PURCHASE_INVOICE" -> this.jdbcTemplate.query("""
+					select s.name as supplier_name, i.source_no, i.invoice_date, i.due_date,
+					       i.settlement_kind, i.match_status, i.tax_included_amount
+					from fin_purchase_invoice i
+					join mst_supplier s on s.id = i.supplier_id
+					where i.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("供应商", rs.getString("supplier_name")),
+					new PrintPreviewField("来源单据", rs.getString("source_no")),
+					new PrintPreviewField("开票日期", stringDate(rs.getObject("invoice_date",
+							LocalDate.class))),
+					new PrintPreviewField("到期日", stringDate(rs.getObject("due_date", LocalDate.class))),
+					new PrintPreviewField("结算类型", rs.getString("settlement_kind")),
+					new PrintPreviewField("匹配状态", rs.getString("match_status")),
+					new PrintPreviewField("价税合计", exportCell(rs.getBigDecimal("tax_included_amount")))),
+					objectId).stream().findFirst().orElse(List.of());
+			case "ACCOUNTING_VOUCHER" -> this.jdbcTemplate.query("""
+					select l.name as ledger_name, p.period_code, v.voucher_date, v.summary,
+					       v.source_type, v.source_original_type, v.source_no, v.debit_total, v.credit_total
+					from gl_voucher v
+					join gl_ledger l on l.id = v.ledger_id
+					join gl_accounting_period p on p.id = v.accounting_period_id
+					where v.id = ?
+					""", (rs, rowNum) -> List.of(new PrintPreviewField("账簿", rs.getString("ledger_name")),
+					new PrintPreviewField("会计期间", rs.getString("period_code")),
+					new PrintPreviewField("凭证日期", stringDate(rs.getObject("voucher_date",
+							LocalDate.class))),
+					new PrintPreviewField("摘要", visibleVoucherSummary(rs.getString("summary"),
+							rs.getString("source_type"), rs.getString("source_original_type"),
+							visibility.sourceVisible())),
+					new PrintPreviewField("来源单据", visibility.sourceVisible() ? nullToBlank(rs.getString("source_no"))
+							: null),
+					new PrintPreviewField("借方合计", visibility.amountVisible()
+							? exportCell(rs.getBigDecimal("debit_total")) : null),
+					new PrintPreviewField("贷方合计", visibility.amountVisible()
+							? exportCell(rs.getBigDecimal("credit_total")) : null)), objectId)
+				.stream()
+				.findFirst()
+				.orElse(List.of());
+			default -> List.of();
+		};
+	}
+
+	private List<PrintPreviewField> fixedPrintLineFields(FixedPrintDefinition definition, Long objectId,
+			FixedPrintVisibility visibility) {
+		switch (definition.objectType()) {
+			case "SALES_ORDER" -> {
+				return this.jdbcTemplate.query("""
+					select ol.line_no, m.code as material_code, m.name as material_name, ol.quantity
+					from sal_sales_order_line ol
+					join mst_material m on m.id = ol.material_id
+					where ol.order_id = ?
+					order by ol.line_no
+					limit 20
+					""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+					rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+							+ " 数量 " + rs.getBigDecimal("quantity").stripTrailingZeros().toPlainString()),
+					objectId);
+			}
+			case "SALES_SHIPMENT" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.quantity, l.tax_included_amount
+						from sal_sales_shipment_line l
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.shipment_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))
+								+ " 价税合计 " + exportCell(rs.getBigDecimal("tax_included_amount"))),
+						objectId);
+			}
+			case "PROCUREMENT_RECEIPT" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.quantity
+						from proc_purchase_receipt_line l
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.receipt_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))),
+						objectId);
+			}
+			case "INVENTORY_TRANSFER" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, sw.name as source_warehouse, tw.name as target_warehouse,
+						       m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.quality_status, l.quantity
+						from inv_warehouse_transfer_line l
+						join mst_warehouse sw on sw.id = l.source_warehouse_id
+						join mst_warehouse tw on tw.id = l.target_warehouse_id
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.transfer_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						nullToBlank(rs.getString("source_warehouse")) + " -> "
+								+ nullToBlank(rs.getString("target_warehouse"))
+								+ " " + rs.getString("material_code") + " "
+								+ nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))
+								+ " 质量状态 " + rs.getString("quality_status")),
+						objectId);
+			}
+			case "PRODUCTION_WORK_ORDER" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.required_quantity, l.issued_quantity
+						from mfg_work_order_material l
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.work_order_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+								+ " 需求 " + exportCell(rs.getBigDecimal("required_quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))
+								+ " 已领 " + exportCell(rs.getBigDecimal("issued_quantity"))),
+						objectId);
+			}
+			case "PRODUCTION_MATERIAL_ISSUE" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, w.name as warehouse_name, m.code as material_code,
+						       m.name as material_name, u.name as unit_name, l.quantity
+						from mfg_material_issue_line l
+						join mst_warehouse w on w.id = l.warehouse_id
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.issue_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						nullToBlank(rs.getString("warehouse_name")) + " "
+								+ rs.getString("material_code") + " "
+								+ nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))),
+						objectId);
+			}
+			case "PRODUCTION_COMPLETION_RECEIPT" -> {
+				return this.jdbcTemplate.query("""
+						select 1 as line_no, w.work_order_no, m.code as material_code, m.name as material_name,
+						       u.name as unit_name, r.quantity
+						from mfg_completion_receipt r
+						join mfg_work_order w on w.id = r.work_order_id
+						join mst_material m on m.id = w.product_material_id
+						join mst_unit u on u.id = m.unit_id
+						where r.id = ?
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("work_order_no") + " " + rs.getString("material_code") + " "
+								+ nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))),
+						objectId);
+			}
+			case "SALES_INVOICE" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.quantity, l.tax_included_amount
+						from fin_sales_invoice_line l
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.sales_invoice_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))
+								+ " 价税合计 " + exportCell(rs.getBigDecimal("tax_included_amount"))),
+						objectId);
+			}
+			case "PURCHASE_INVOICE" -> {
+				return this.jdbcTemplate.query("""
+						select l.line_no, m.code as material_code, m.name as material_name, u.name as unit_name,
+						       l.quantity, l.tax_included_amount, l.match_status
+						from fin_purchase_invoice_line l
+						join mst_material m on m.id = l.material_id
+						join mst_unit u on u.id = l.unit_id
+						where l.purchase_invoice_id = ?
+						order by l.line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("material_code") + " " + nullToBlank(rs.getString("material_name"))
+								+ " 数量 " + exportCell(rs.getBigDecimal("quantity"))
+								+ " " + nullToBlank(rs.getString("unit_name"))
+								+ " 价税合计 " + exportCell(rs.getBigDecimal("tax_included_amount"))
+								+ " 匹配状态 " + rs.getString("match_status")),
+						objectId);
+			}
+			case "ACCOUNTING_VOUCHER" -> {
+				return this.jdbcTemplate.query("""
+						select line_no, account_code, account_name, summary, debit_amount, credit_amount
+						from gl_voucher_line
+						where voucher_id = ?
+						order by line_no
+						limit 20
+						""", (rs, rowNum) -> new PrintPreviewField("第 " + rs.getInt("line_no") + " 行",
+						rs.getString("account_code") + " " + nullToBlank(rs.getString("account_name"))
+								+ " 摘要 " + nullToBlank(rs.getString("summary"))
+								+ " 借方 " + maskedAmountCell(rs.getBigDecimal("debit_amount"), visibility)
+								+ " 贷方 " + maskedAmountCell(rs.getBigDecimal("credit_amount"), visibility)),
+						objectId);
+			}
+			default -> {
+			}
+		}
+		int count = fixedPrintLineCount(definition, objectId);
+		return count == 0 ? List.of(new PrintPreviewField("明细", "无明细行"))
+				: List.of(new PrintPreviewField("明细", "共 " + count + " 行"));
+	}
+
+	private int fixedPrintLineCount(FixedPrintDefinition definition, Long objectId) {
+		FixedPrintLineSpec spec = fixedPrintLineSpec(definition.objectType());
+		if (spec == null) {
+			return 0;
+		}
+		Integer count = this.jdbcTemplate.queryForObject("""
+				select count(*)
+				from %s
+				where %s = ?
+				""".formatted(spec.tableName(), spec.parentColumn()), Integer.class, objectId);
+		return count == null ? 0 : count;
+	}
+
+	private FixedPrintLineSpec fixedPrintLineSpec(String objectType) {
+		return switch (objectType) {
+			case "SALES_ORDER" -> new FixedPrintLineSpec("sal_sales_order_line", "order_id");
+			case "SALES_SHIPMENT" -> new FixedPrintLineSpec("sal_sales_shipment_line", "shipment_id");
+			case "PROCUREMENT_RECEIPT" -> new FixedPrintLineSpec("proc_purchase_receipt_line", "receipt_id");
+			case "INVENTORY_TRANSFER" -> new FixedPrintLineSpec("inv_warehouse_transfer_line", "transfer_id");
+			case "PRODUCTION_WORK_ORDER" -> new FixedPrintLineSpec("mfg_work_order_material", "work_order_id");
+			case "PRODUCTION_MATERIAL_ISSUE" -> new FixedPrintLineSpec("mfg_material_issue_line", "issue_id");
+			case "PRODUCTION_COMPLETION_RECEIPT" -> new FixedPrintLineSpec("mfg_completion_receipt", "id");
+			case "SALES_INVOICE" -> new FixedPrintLineSpec("fin_sales_invoice_line", "sales_invoice_id");
+			case "PURCHASE_INVOICE" -> new FixedPrintLineSpec("fin_purchase_invoice_line", "purchase_invoice_id");
+			case "ACCOUNTING_VOUCHER" -> new FixedPrintLineSpec("gl_voucher_line", "voucher_id");
+			default -> null;
+		};
 	}
 
 	private ProcurementExportDataset procurementExportDataset(ProcurementExportRequest request) {
@@ -2497,6 +3086,98 @@ public class PlatformDocumentTaskService {
 			.orElseThrow(() -> new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED));
 	}
 
+	private FixedPrintDefinition fixedPrintDefinition(String objectType) {
+		if (!hasText(objectType)) {
+			throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+		}
+		FixedPrintDefinition definition = FIXED_PRINT_DEFINITIONS.get(objectType.trim().toUpperCase());
+		if (definition == null) {
+			throw new BusinessException(ApiErrorCode.PRINT_TEMPLATE_NOT_SUPPORTED);
+		}
+		return definition;
+	}
+
+	private void requireFixedPrintAccess(FixedPrintDefinition definition, Long objectId, CurrentUser operator) {
+		requirePermission(operator, "platform:print:generate");
+		requirePermission(operator, definition.viewPermission());
+		fixedPrintSnapshot(definition, objectId);
+	}
+
+	private void requireFixedPrintPayloadAccess(FixedPrintDefinition definition, FixedPrintPayload payload,
+			CurrentUser operator) {
+		if (!"ACCOUNTING_VOUCHER".equals(definition.objectType())) {
+			return;
+		}
+		if (!Boolean.FALSE.equals(payload.amountVisible())) {
+			requirePermission(operator, "gl:amount:view");
+		}
+		if (!Boolean.FALSE.equals(payload.sourceVisible())) {
+			requirePermission(operator, "gl:source:view");
+		}
+	}
+
+	private FixedPrintVisibility fixedPrintVisibility(FixedPrintDefinition definition, CurrentUser operator) {
+		if (!"ACCOUNTING_VOUCHER".equals(definition.objectType())) {
+			return new FixedPrintVisibility(true, true);
+		}
+		return new FixedPrintVisibility(operator.permissions().contains("gl:amount:view"),
+				operator.permissions().contains("gl:source:view"));
+	}
+
+	private FixedPrintVisibility effectiveFixedPrintVisibility(FixedPrintDefinition definition, FixedPrintPayload payload,
+			CurrentUser operator) {
+		FixedPrintVisibility current = fixedPrintVisibility(definition, operator);
+		if (!"ACCOUNTING_VOUCHER".equals(definition.objectType())) {
+			return current;
+		}
+		boolean amountVisible = current.amountVisible() && !Boolean.FALSE.equals(payload.amountVisible());
+		boolean sourceVisible = current.sourceVisible() && !Boolean.FALSE.equals(payload.sourceVisible());
+		return new FixedPrintVisibility(amountVisible, sourceVisible);
+	}
+
+	private FixedPrintSnapshot fixedPrintSnapshot(FixedPrintDefinition definition, Long objectId) {
+		if (objectId == null) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		FixedPrintSnapshot snapshot = this.jdbcTemplate.query("""
+				select id, %s as object_no, status, version
+				from %s
+				where id = ?
+				""".formatted(definition.objectNoExpression(), definition.tableName()),
+				(rs, rowNum) -> new FixedPrintSnapshot(rs.getLong("id"), rs.getString("object_no"),
+						rs.getString("status"), rs.getLong("version")),
+				objectId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID));
+		if (!fixedPrintAllowedStatuses(definition.objectType()).contains(snapshot.status())) {
+			throw new BusinessException(ApiErrorCode.DOCUMENT_TASK_STATUS_INVALID);
+		}
+		return snapshot;
+	}
+
+	private Set<String> fixedPrintAllowedStatuses(String objectType) {
+		return switch (objectType) {
+			case "SALES_ORDER" -> Set.of("CONFIRMED", "PARTIALLY_SHIPPED", "SHIPPED", "CLOSED");
+			case "SALES_SHIPMENT" -> Set.of("POSTED", "CANCELLED");
+			case "PROCUREMENT_RECEIPT" -> Set.of("POSTED", "REVERSED");
+			case "INVENTORY_TRANSFER" -> Set.of("POSTED", "CANCELLED", "REVERSED");
+			case "PRODUCTION_MATERIAL_ISSUE", "PRODUCTION_COMPLETION_RECEIPT" -> Set.of("POSTED");
+			case "PRODUCTION_WORK_ORDER" -> Set.of("RELEASED", "IN_PROGRESS", "COMPLETED", "CLOSED");
+			case "SALES_INVOICE", "PURCHASE_INVOICE" -> Set.of("CONFIRMED", "POSTED", "CLOSED");
+			case "ACCOUNTING_VOUCHER" -> Set.of("DRAFT", "POSTED");
+			default -> Set.of();
+		};
+	}
+
+	private String maskedAmountCell(BigDecimal amount, FixedPrintVisibility visibility) {
+		return visibility.amountVisible() ? exportCell(amount) : "";
+	}
+
+	private String visibleVoucherSummary(String summary, String sourceType, String sourceOriginalType,
+			boolean sourceVisible) {
+		boolean sourceBacked = "FIN_VOUCHER_DRAFT".equals(sourceType) || sourceOriginalType != null;
+		return !sourceVisible && sourceBacked ? "来源凭证" : summary;
+	}
+
 	private void requirePermission(CurrentUser operator, String permissionCode) {
 		if (!operator.permissions().contains(permissionCode)) {
 			throw new BusinessException(ApiErrorCode.AUTH_FORBIDDEN);
@@ -2628,17 +3309,73 @@ public class PlatformDocumentTaskService {
 				rs.getInt("max_attempts"), rs.getObject("created_at", OffsetDateTime.class),
 				rs.getObject("started_at", OffsetDateTime.class), rs.getObject("finished_at", OffsetDateTime.class),
 				rs.getObject("expires_at", OffsetDateTime.class), rs.getLong("version"),
-				documentTaskAvailableActions(rs.getString("status"), nullableLong(rs, "result_file_id"),
+				documentTaskAvailableActions(rs.getString("task_type"), rs.getString("status"),
+						nullableLong(rs, "result_file_id"),
 						rs.getInt("error_count"), rs.getObject("expires_at", OffsetDateTime.class)));
 	}
 
-	private DocumentTaskRecord toDocumentTaskRecord(DocumentTaskState task) {
+	private DocumentTaskRecord toDocumentTaskRecord(DocumentTaskState task, CurrentUser currentUser) {
 		TaskObjectInfo objectInfo = taskObjectInfo(task);
+		List<String> availableActions = isHistoryImportTask(task.taskType())
+				? historyImportDocumentTaskActions(task, currentUser) : task.availableActions();
 		return new DocumentTaskRecord(task.id(), task.taskNo(), task.taskType(), objectInfo.objectType(),
 				objectInfo.objectId(), objectInfo.objectNo(), objectInfo.objectName(), taskDirection(task.taskType()),
 				task.stage(), task.status(), progressPercent(task.status()), task.totalCount(), task.successCount(),
 				task.errorCount(), task.errorSummary(), task.createdByUsername(), task.createdAt(), task.finishedAt(),
-				task.expiresAt(), task.version(), task.availableActions());
+				task.expiresAt(), task.version(), availableActions);
+	}
+
+	private List<String> historyImportDocumentTaskActions(DocumentTaskState task, CurrentUser currentUser) {
+		List<String> actions = new ArrayList<>();
+		if ("READY_TO_COMMIT".equals(task.status())) {
+			if (currentUser.permissions().contains("platform:history-import:confirm")) {
+				actions.add("CONFIRM");
+			}
+			if (currentUser.permissions().contains("platform:history-import:cancel")) {
+				actions.add("CANCEL");
+			}
+		}
+		if ("VALIDATION_FAILED".equals(task.status())) {
+			if (task.errorCount() > 0) {
+				actions.add("ERRORS");
+			}
+			if (currentUser.permissions().contains("platform:history-import:cancel")) {
+				actions.add("CANCEL");
+			}
+		}
+		if ("SUCCEEDED".equals(task.status()) && task.resultFileId() != null
+				&& (task.expiresAt() == null || task.expiresAt().isAfter(OffsetDateTime.now()))) {
+			actions.add("DOWNLOAD");
+		}
+		return actions;
+	}
+
+	private boolean matchesObjectKeyword(DocumentTaskState task, String objectKeyword) {
+		if (!hasText(objectKeyword)) {
+			return true;
+		}
+		String keyword = objectKeyword.trim().toLowerCase();
+		TaskObjectInfo objectInfo = taskObjectInfo(task);
+		return containsIgnoreCase(objectInfo.objectNo(), keyword) || containsIgnoreCase(objectInfo.objectName(), keyword)
+				|| containsIgnoreCase(objectInfo.objectType(), keyword) || containsIgnoreCase(task.taskNo(), keyword);
+	}
+
+	private boolean containsIgnoreCase(String value, String keyword) {
+		return value != null && value.toLowerCase().contains(keyword);
+	}
+
+	private OffsetDateTime parseFilterTime(String value, boolean endOfDay) {
+		if (!hasText(value)) {
+			return null;
+		}
+		try {
+			return OffsetDateTime.parse(value.trim());
+		}
+		catch (RuntimeException ignored) {
+			LocalDate date = LocalDate.parse(value.trim());
+			return endOfDay ? date.plusDays(1).atStartOfDay().atOffset(OffsetDateTime.now().getOffset())
+					: date.atStartOfDay().atOffset(OffsetDateTime.now().getOffset());
+		}
 	}
 
 	private TaskObjectInfo taskObjectInfo(DocumentTaskState task) {
@@ -2660,6 +3397,13 @@ public class PlatformDocumentTaskService {
 				SalesQuotePrintSnapshot snapshot = salesQuotePrintSnapshot(payload.quoteId());
 				return new TaskObjectInfo("SALES_QUOTE", payload.quoteId(), snapshot.quoteNo(),
 						snapshot.customerName());
+			}
+			if ("FIXED_DOCUMENT_PRINT".equals(task.taskType())) {
+				FixedPrintPayload payload = parseFixedPrintPayload(taskRequestPayload(task.id()));
+				FixedPrintDefinition definition = fixedPrintDefinition(payload.objectType());
+				FixedPrintSnapshot snapshot = fixedPrintSnapshot(definition, payload.objectId());
+				return new TaskObjectInfo(payload.objectType(), payload.objectId(), snapshot.objectNo(),
+						snapshot.status());
 			}
 			if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
 				ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
@@ -2720,8 +3464,8 @@ public class PlatformDocumentTaskService {
 		};
 	}
 
-	private List<String> documentTaskAvailableActions(String status, Long resultFileId, int errorCount,
-			OffsetDateTime expiresAt) {
+	private List<String> documentTaskAvailableActions(String taskType, String status, Long resultFileId,
+			int errorCount, OffsetDateTime expiresAt) {
 		List<String> actions = new ArrayList<>();
 		if ("READY_TO_COMMIT".equals(status)) {
 			actions.add("CONFIRM");
@@ -2738,6 +3482,10 @@ public class PlatformDocumentTaskService {
 			actions.add("CANCEL");
 		}
 		return actions;
+	}
+
+	private static boolean isHistoryImportTask(String taskType) {
+		return taskType != null && taskType.endsWith("_HISTORY_IMPORT");
 	}
 
 	private ClaimedTask mapClaimedTask(ResultSet rs, int rowNum) throws SQLException {
@@ -2777,6 +3525,9 @@ public class PlatformDocumentTaskService {
 		if ("SALES_QUOTE_PRINT".equals(task.taskType())) {
 			return canViewSalesQuotePrintTask(task, currentUser);
 		}
+		if ("FIXED_DOCUMENT_PRINT".equals(task.taskType())) {
+			return canViewFixedPrintTask(task, currentUser);
+		}
 		if (PROCUREMENT_EXPORT_TASK_TYPES.contains(task.taskType())) {
 			return canAccessProcurementExportTask(task, currentUser);
 		}
@@ -2785,6 +3536,9 @@ public class PlatformDocumentTaskService {
 		}
 		if (PLANNING_EXPORT_TASK_TYPES.contains(task.taskType())) {
 			return canAccessPlanningExportTask(task, currentUser);
+		}
+		if (task.taskType() != null && task.taskType().endsWith("_HISTORY_IMPORT")) {
+			return canAccessHistoryImportTask(task, currentUser);
 		}
 		if ("PROCUREMENT_QUOTE_IMPORT".equals(task.taskType())) {
 			return canViewSupplierQuoteImportTask(task, currentUser);
@@ -2826,6 +3580,19 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private boolean canViewFixedPrintTask(DocumentTaskState task, CurrentUser currentUser) {
+		try {
+			FixedPrintPayload payload = parseFixedPrintPayload(taskRequestPayload(task.id()));
+			FixedPrintDefinition definition = fixedPrintDefinition(payload.objectType());
+			requireFixedPrintAccess(definition, payload.objectId(), currentUser);
+			requireFixedPrintPayloadAccess(definition, payload, currentUser);
+			return true;
+		}
+		catch (RuntimeException exception) {
+			return false;
+		}
+	}
+
 	private boolean canAccessProcurementExportTask(DocumentTaskState task, CurrentUser currentUser) {
 		try {
 			ProcurementExportRequest payload = parseProcurementExportRequest(taskRequestPayload(task.id()));
@@ -2859,6 +3626,20 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private boolean canAccessHistoryImportTask(DocumentTaskState task, CurrentUser currentUser) {
+		String adapterCode = task.taskType().substring(0, task.taskType().length() - "_HISTORY_IMPORT".length());
+		String requiredPermission = this.jdbcTemplate.query("""
+				select required_permission_code
+				from platform_import_adapter_definition
+				where adapter_code = ?
+				  and status = 'ENABLED'
+				""", (rs, rowNum) -> rs.getString("required_permission_code"), adapterCode)
+			.stream()
+			.findFirst()
+			.orElse(null);
+		return requiredPermission != null && currentUser.permissions().contains(requiredPermission);
+	}
+
 	private boolean canViewSupplierQuoteImportTask(DocumentTaskState task, CurrentUser currentUser) {
 		try {
 			SupplierQuoteImportPayload payload = parseSupplierQuoteImportPayload(taskRequestPayload(task.id()));
@@ -2879,6 +3660,9 @@ public class PlatformDocumentTaskService {
 	}
 
 	private String taskDomainPermission(String taskType) {
+		if (taskType != null && taskType.endsWith("_HISTORY_IMPORT")) {
+			return "platform:history-import:view";
+		}
 		return switch (taskType) {
 			case "MATERIAL_IMPORT" -> "master:material:import";
 			case "MATERIAL_EXPORT" -> "master:material:export";
@@ -2887,6 +3671,7 @@ public class PlatformDocumentTaskService {
 			case "APPROVAL_PRINT" -> "platform:print:generate";
 			case "PROCUREMENT_ORDER_PRINT" -> "procurement:order:print";
 			case "SALES_QUOTE_PRINT" -> "sales:document:print";
+			case "FIXED_DOCUMENT_PRINT" -> "platform:print:generate";
 			case "PROCUREMENT_QUOTE_IMPORT" -> "procurement:quote:import";
 			case "PROCUREMENT_QUOTE_EXPORT" -> "procurement:quote:export";
 			case "PROCUREMENT_SUPPLY_EXPORT" -> "procurement:supply:export";
@@ -3012,6 +3797,7 @@ public class PlatformDocumentTaskService {
 			case "PROCUREMENT_SCHEDULE_EXPORT" -> "PSEX";
 			case "PROCUREMENT_SUPPLY_EXPORT" -> "PUEX";
 			case "SALES_QUOTE_PRINT" -> "SQPR";
+			case "FIXED_DOCUMENT_PRINT" -> "FDPR";
 			case "SALES_QUOTE_EXPORT" -> "SQEX";
 			case "SALES_DELIVERY_PLAN_EXPORT" -> "SDPX";
 			case "SALES_EFFECTIVE_DEMAND_EXPORT" -> "SDEX";
@@ -3288,6 +4074,16 @@ public class PlatformDocumentTaskService {
 	public record SalesQuotePrintPayload(Long quoteId, String templateCode, Long quoteVersion, int templateVersion) {
 	}
 
+	public record FixedPrintPayload(String objectType, Long objectId, String templateCode, Long objectVersion,
+			int templateVersion, Boolean amountVisible, Boolean sourceVisible) {
+
+		public FixedPrintPayload(String objectType, Long objectId, String templateCode, Long objectVersion,
+				int templateVersion) {
+			this(objectType, objectId, templateCode, objectVersion, templateVersion, null, null);
+		}
+
+	}
+
 	private record ImportTaskPayload(Long sourceFileId, String filename, String sha256) {
 	}
 
@@ -3314,6 +4110,19 @@ public class PlatformDocumentTaskService {
 
 	private record SalesQuotePrintLine(Integer lineNo, String materialCode, String materialName, BigDecimal quantity,
 			BigDecimal taxIncludedUnitPrice) {
+	}
+
+	private record FixedPrintDefinition(String objectType, String templateCode, String sceneCode, String templateName,
+			String tableName, String objectNoExpression, String viewPermission) {
+	}
+
+	private record FixedPrintSnapshot(Long id, String objectNo, String status, Long version) {
+	}
+
+	private record FixedPrintVisibility(boolean amountVisible, boolean sourceVisible) {
+	}
+
+	private record FixedPrintLineSpec(String tableName, String parentColumn) {
 	}
 
 	private record MaterialImportRow(String code, String name, String specification, String materialType,

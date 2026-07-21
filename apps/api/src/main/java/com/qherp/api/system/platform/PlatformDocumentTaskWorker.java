@@ -124,6 +124,15 @@ public class PlatformDocumentTaskWorker {
 						"prints/sales-quotes/" + UUID.randomUUID() + ".pdf", "SALES_QUOTE_PRINT_GENERATE");
 				return true;
 			}
+			if ("FIXED_DOCUMENT_PRINT".equals(task.taskType())) {
+				PlatformDocumentTaskService.FixedPrintPayload request = this.documentTaskService
+					.parseFixedPrintPayload(task.requestPayload());
+				PlatformDocumentTaskService.ExportedFile exportedFile = this.documentTaskService
+					.printFixedDocumentFile(request, operator);
+				this.documentTaskService.completeResult(task, exportedFile, operator,
+						"prints/fixed-documents/" + UUID.randomUUID() + ".pdf", "FIXED_DOCUMENT_PRINT_GENERATE");
+				return true;
+			}
 			throw new IllegalStateException("不支持的任务类型：" + task.taskType());
 		}
 		catch (RuntimeException exception) {

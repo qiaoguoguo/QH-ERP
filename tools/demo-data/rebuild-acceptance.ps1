@@ -15,11 +15,13 @@ param(
     [string] $JavaHome = $env:JAVA_HOME,
     [int] $ApiStartTimeoutSeconds = 180,
     [switch] $RecreateTarget,
-    [switch] $RunGeneratorAndValidate
+    [switch] $RunGeneratorAndValidate,
+    [switch] $Stage034Only
 )
 
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "lib/demo-data-common.ps1")
+. (Join-Path $PSScriptRoot "lib/stage034-isolation-strategy.ps1")
 
 function Write-RebuildInfo {
     param([string] $Message)
@@ -33,6 +35,15 @@ function Assert-RebuildTarget {
     }
     if ([string]::IsNullOrWhiteSpace($env:QHERP_DEMO_USER_PASSWORD)) {
         throw "缺少 QHERP_DEMO_USER_PASSWORD；重建入口不接受仓库内明文默认密码。"
+    }
+    if ($Stage034Only) {
+        if ($Mode -ne "Temporary") {
+            throw "Stage034Only 模式只允许 Mode=Temporary，并且必须使用 034 隔离资源。"
+        }
+        Assert-Stage034IsolationTarget -Database $Database -MinioBucket $MinioBucket -ApiBaseUrl $ApiBaseUrl
+        Assert-Stage034MinioCredentials
+        Write-RebuildInfo "Stage034Only 隔离资源固定为 qherp_034_delivery_governance/qherp-034-delivery-governance，端口 35432/39000/39001/38080/35174/35173。"
+        return
     }
     if ($Mode -eq "Temporary") {
         if (-not (Test-DemoResourceName -Value $Database -Prefix "qherp_demo_build_")) {
@@ -66,6 +77,19 @@ function Assert-RebuildTarget {
     }
     Assert-RepositoryReady
     Assert-PortAvailable -Port 18080
+}
+
+function Assert-Stage034MinioCredentials {
+    $missing = New-Object System.Collections.Generic.List[string]
+    if ([string]::IsNullOrWhiteSpace($env:QHERP_S3_ACCESS_KEY)) {
+        $missing.Add("缺少 QHERP_S3_ACCESS_KEY")
+    }
+    if ([string]::IsNullOrWhiteSpace($env:QHERP_S3_SECRET_KEY)) {
+        $missing.Add("缺少 QHERP_S3_SECRET_KEY")
+    }
+    if ($missing.Count -gt 0) {
+        throw "Stage034Only $($missing -join '；')；MinIO access key/secret 必须通过显式环境变量或安全参数注入，重建入口不提供默认明文密钥。"
+    }
 }
 
 function Assert-LoopbackApiBaseUrl {
@@ -258,11 +282,32 @@ function Stop-StartedManagedApi {
     }
 }
 
+function Get-Stage034UtcNow {
+    return [DateTimeOffset]::UtcNow.ToString("o")
+}
+
+function New-Stage034DeliveryMetadata {
+    param(
+        [ValidateSet("BUILDING", "VALIDATED")][string] $DemoDataStatus,
+        [string] $DemoDataVerifiedAt
+    )
+
+    return [ordered]@{
+        QHERP_DELIVERY_ENVIRONMENT_CODE = "034"
+        QHERP_DELIVERY_MANUAL_VERSION = $(if ($env:QHERP_DELIVERY_MANUAL_VERSION) { $env:QHERP_DELIVERY_MANUAL_VERSION } else { "034" })
+        QHERP_DELIVERY_MANUAL_UPDATED_AT = $(if ($env:QHERP_DELIVERY_MANUAL_UPDATED_AT) { $env:QHERP_DELIVERY_MANUAL_UPDATED_AT } else { Get-Stage034UtcNow })
+        QHERP_DELIVERY_DEMO_DATA_VERSION = $RunId
+        QHERP_DELIVERY_DEMO_DATA_STATUS = $DemoDataStatus
+        QHERP_DELIVERY_DEMO_DATA_VERIFIED_AT = $(if ($DemoDataStatus -eq "VALIDATED") { $DemoDataVerifiedAt } else { "" })
+    }
+}
+
 function Start-ManagedAcceptanceApi {
     param(
         [string] $OutputDirectory,
         [ValidateSet("WorkerDisabled", "WorkerEnabled")][string] $DocumentWorkerMode,
-        [string] $StageName
+        [string] $StageName,
+        [System.Collections.IDictionary] $DeliveryMetadata
     )
     if (-not $RunGeneratorAndValidate) {
         return $null
@@ -279,11 +324,17 @@ function Start-ManagedAcceptanceApi {
     $stdoutPath = Join-Path $OutputDirectory "$StageName-api.out.log"
     $stderrPath = Join-Path $OutputDirectory "$StageName-api.err.log"
     $workerEnabled = $DocumentWorkerMode -eq "WorkerEnabled"
-    $datasourceUrl = "jdbc:postgresql://localhost:15432/$Database"
+    $datasourceUrl = if ($Stage034Only) { "jdbc:postgresql://localhost:35432/$Database" } else { "jdbc:postgresql://localhost:15432/$Database" }
+    if ($Stage034Only -and $null -eq $DeliveryMetadata) {
+        throw "Stage034Only 受管 API 启动必须显式注入交付元数据。"
+    }
     $process = $null
     $previous = @{}
     foreach ($name in @("JAVA_HOME", "Path", "SERVER_PORT", "SPRING_PROFILES_ACTIVE", "QHERP_DATASOURCE_URL",
-            "QHERP_S3_BUCKET", "QHERP_TASK_WORKER_ENABLED")) {
+            "QHERP_S3_ENDPOINT", "QHERP_S3_BUCKET", "QHERP_S3_ACCESS_KEY", "QHERP_S3_SECRET_KEY",
+            "QHERP_TASK_WORKER_ENABLED", "QHERP_DELIVERY_ENVIRONMENT_CODE", "QHERP_DELIVERY_MANUAL_VERSION",
+            "QHERP_DELIVERY_MANUAL_UPDATED_AT", "QHERP_DELIVERY_DEMO_DATA_VERSION",
+            "QHERP_DELIVERY_DEMO_DATA_STATUS", "QHERP_DELIVERY_DEMO_DATA_VERIFIED_AT")) {
         $previous[$name] = [Environment]::GetEnvironmentVariable($name, "Process")
     }
     try {
@@ -292,6 +343,12 @@ function Start-ManagedAcceptanceApi {
         [Environment]::SetEnvironmentVariable("SERVER_PORT", "$($uri.Port)", "Process")
         [Environment]::SetEnvironmentVariable("SPRING_PROFILES_ACTIVE", "dev", "Process")
         [Environment]::SetEnvironmentVariable("QHERP_DATASOURCE_URL", $datasourceUrl, "Process")
+        if ($Stage034Only) {
+            [Environment]::SetEnvironmentVariable("QHERP_S3_ENDPOINT", "http://127.0.0.1:39000", "Process")
+            foreach ($entry in $DeliveryMetadata.GetEnumerator()) {
+                [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
+            }
+        }
         [Environment]::SetEnvironmentVariable("QHERP_S3_BUCKET", $MinioBucket, "Process")
         [Environment]::SetEnvironmentVariable("QHERP_TASK_WORKER_ENABLED", $(if ($workerEnabled) { "true" } else { "false" }), "Process")
         $process = Start-Process -FilePath (Join-Path $apiDirectory "mvnw.cmd") -ArgumentList @("spring-boot:run") `
@@ -358,6 +415,21 @@ function Stop-ManagedApi {
     $ManagedApi.stoppedAt = (Get-Date).ToString("o")
 }
 
+function Restart-Stage034ValidatedApi {
+    param(
+        [string] $OutputDirectory,
+        $ManagedApi,
+        [string] $VerifiedAt
+    )
+    if (-not $Stage034Only) {
+        return $ManagedApi
+    }
+    Stop-ManagedApi -ManagedApi $ManagedApi
+    $validatedMetadata = New-Stage034DeliveryMetadata -DemoDataStatus "VALIDATED" -DemoDataVerifiedAt $VerifiedAt
+    return Start-ManagedAcceptanceApi -OutputDirectory $OutputDirectory `
+        -DocumentWorkerMode "WorkerEnabled" -StageName "worker-enabled" -DeliveryMetadata $validatedMetadata
+}
+
 function Reset-MinioBucket {
     Invoke-MinioShell -Command "mc rb --force qherplocal/$MinioBucket >/dev/null 2>&1 || true; mc mb qherplocal/$MinioBucket >/dev/null" | Out-Null
 }
@@ -379,6 +451,9 @@ function Invoke-Generator {
         (Join-Path $PSScriptRoot "generate-demo-data.ps1"), "-Mode", $Mode, "-ApiBaseUrl", $ApiBaseUrl,
         "-Database", $Database, "-MinioBucket", $MinioBucket, "-DocumentWorkerMode", $DocumentWorkerMode,
         "-RunId", $RunId, "-OutputManifestPath", $ManifestPath)
+    if ($Stage034Only) {
+        $generatorArguments += @("-Stage034Only", "-PostgresContainer", $PostgresContainer, "-PostgresUser", $PostgresUser)
+    }
     if ($Mode -eq "Acceptance") {
         $generatorArguments += @("-AcceptanceAuthorizationPath", $authorizationPath,
             "-AcceptanceAuthorizationToken", $authorizationToken)
@@ -388,13 +463,18 @@ function Invoke-Generator {
 
 function Invoke-Validator {
     param([string] $ValidationPath)
-    Invoke-CheckedProcess -FilePath "pwsh" -ArgumentList @("-NoLogo", "-NoProfile", "-File",
+    $validatorArguments = @("-NoLogo", "-NoProfile", "-File",
         (Join-Path $PSScriptRoot "validate-demo-data.ps1"), "-ApiBaseUrl", $ApiBaseUrl,
         "-PostgresContainer", $PostgresContainer, "-Database", $Database, "-MinioContainer", $MinioContainer,
-        "-MinioBucket", $MinioBucket, "-OutputJsonPath", $ValidationPath) | Out-Null
+        "-MinioBucket", $MinioBucket, "-OutputJsonPath", $ValidationPath)
+    if ($Stage034Only) {
+        $validatorArguments += @("-Stage034Profile", "Stage034FullFacts")
+    }
+    Invoke-CheckedProcess -FilePath "pwsh" -ArgumentList $validatorArguments | Out-Null
     $validation = Get-Content -LiteralPath $ValidationPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    if ($validation.totalRules -ne 114 -or $validation.failedRules -ne 0 -or $validation.status -ne "PASS") {
-        throw "验证器未达到 114/114：status=$($validation.status) total=$($validation.totalRules) failed=$($validation.failedRules)。"
+    if ($validation.failedRules -ne 0 -or $validation.status -ne "PASS") {
+        $target = if ($Stage034Only) { "Stage034FullFacts" } else { "当前演示数据规则" }
+        throw "验证器未达到 $target 全通过：status=$($validation.status) total=$($validation.totalRules) failed=$($validation.failedRules)。"
     }
 }
 
@@ -424,17 +504,20 @@ try {
     }
 
     if ($RunGeneratorAndValidate) {
+        $buildingDeliveryMetadata = $(if ($Stage034Only) { New-Stage034DeliveryMetadata -DemoDataStatus "BUILDING" -DemoDataVerifiedAt "" } else { $null })
         Write-RebuildInfo "启动 worker-disabled 受管 API 并生成取消任务窗口。"
         $workerDisabledApi = Start-ManagedAcceptanceApi -OutputDirectory $output `
-            -DocumentWorkerMode "WorkerDisabled" -StageName "worker-disabled"
+            -DocumentWorkerMode "WorkerDisabled" -StageName "worker-disabled" -DeliveryMetadata $buildingDeliveryMetadata
         Invoke-Generator -ManifestPath $disabledManifestPath -DocumentWorkerMode "WorkerDisabled"
         Stop-ManagedApi -ManagedApi $workerDisabledApi
 
         Write-RebuildInfo "启动 worker-enabled 受管 API，完成导入、导出、打印并执行验证器。"
         $workerEnabledApi = Start-ManagedAcceptanceApi -OutputDirectory $output `
-            -DocumentWorkerMode "WorkerEnabled" -StageName "worker-enabled"
+            -DocumentWorkerMode "WorkerEnabled" -StageName "worker-enabled" -DeliveryMetadata $buildingDeliveryMetadata
         Invoke-Generator -ManifestPath $enabledManifestPath -DocumentWorkerMode "WorkerEnabled"
         Invoke-Validator -ValidationPath $validationPath
+        $workerEnabledApi = Restart-Stage034ValidatedApi -OutputDirectory $output `
+            -ManagedApi $workerEnabledApi -VerifiedAt (Get-Stage034UtcNow)
         $validationSucceeded = $true
     }
 }

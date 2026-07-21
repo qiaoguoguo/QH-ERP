@@ -37,6 +37,21 @@ public class AuditService {
 				clientIp(request), "SUCCESS", null, OffsetDateTime.now());
 	}
 
+	@Transactional
+	public void recordDetail(CurrentUser operator, String action, String targetType, Long targetId,
+			String targetSummary, String detailJson, HttpServletRequest request) {
+		this.jdbcTemplate.update("""
+				insert into sys_audit_log (
+					operator_user_id, operator_username, action, target_type, target_id, target_summary,
+					request_method, request_path, ip_address, result, error_code, detail_json, created_at
+				)
+				values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, cast(? as jsonb), ?)
+				""", operator.id(), operator.username(), action, targetType,
+				targetId == null ? null : targetId.toString(), targetSummary,
+				request == null ? null : request.getMethod(), request == null ? null : request.getRequestURI(),
+				clientIp(request), "SUCCESS", null, detailJson, OffsetDateTime.now());
+	}
+
 	@Transactional(propagation = Propagation.REQUIRES_NEW)
 	public void recordFailure(CurrentUser operator, String action, String targetType, Long targetId,
 			String targetSummary, String errorCode, HttpServletRequest request) {

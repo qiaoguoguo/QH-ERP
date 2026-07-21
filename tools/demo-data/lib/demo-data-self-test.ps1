@@ -69,10 +69,14 @@ $validatorPath = Join-Path $Root "tools/demo-data/validate-demo-data.ps1"
 $validator = Get-Content -LiteralPath $validatorPath -Raw
 $validatorSqlPath = Join-Path $Root "tools/demo-data/sql/validate-demo-data.sql"
 $validatorSql = Get-Content -LiteralPath $validatorSqlPath -Raw
+$stage034IdempotencyPath = Join-Path $Root "tools/demo-data/check-stage034-idempotency.ps1"
+$stage034Idempotency = Get-Content -LiteralPath $stage034IdempotencyPath -Raw
 $stage032IsolationPath = Join-Path $Root "tools/demo-data/lib/stage032-isolation-strategy.ps1"
 $stage032Isolation = if (Test-Path -LiteralPath $stage032IsolationPath) { Get-Content -LiteralPath $stage032IsolationPath -Raw } else { "" }
 $stage033IsolationPath = Join-Path $Root "tools/demo-data/lib/stage033-isolation-strategy.ps1"
 $stage033Isolation = if (Test-Path -LiteralPath $stage033IsolationPath) { Get-Content -LiteralPath $stage033IsolationPath -Raw } else { "" }
+$stage034IsolationPath = Join-Path $Root "tools/demo-data/lib/stage034-isolation-strategy.ps1"
+$stage034Isolation = if (Test-Path -LiteralPath $stage034IsolationPath) { Get-Content -LiteralPath $stage034IsolationPath -Raw } else { "" }
 $apiPomPath = Join-Path $Root "apps/api/pom.xml"
 $apiPom = Get-Content -LiteralPath $apiPomPath -Raw
 $stage023IntegrationPath = Join-Path $Root "apps/api/src/test/java/com/qherp/api/system/stage023/Stage023InventoryValuationIntegrationTests.java"
@@ -80,6 +84,8 @@ $stage023Integration = Get-Content -LiteralPath $stage023IntegrationPath -Raw
 
 Assert-True -Condition ($generator -match '\$OpenPeriodCode = "2026-07"' -and $generator -match '\$LockedPeriodCode = "2026-06"') `
     -Message "033 验收演示期间必须使用标准 YYYY-MM 编码，不能继续使用 DE260715-* 旧短码。"
+Assert-True -Condition ($common.Contains('$_.ErrorDetails.Message') -and $common.Contains('responseBody=')) `
+    -Message "演示数据真实 API 调用失败必须输出响应正文，避免 409/500 只剩 HTTP 状态而无法定位业务错误码。"
 Assert-True -Condition ($generator -notmatch 'DE260715-OPEN' -and $generator -notmatch 'DE260715-LOCK') `
     -Message "033 生成器不得继续生成非标准年月期间编码。"
 Assert-True -Condition ($generator -notmatch 'apps/api/target/demo-data/document-tasks' -and $generator -match '\[System\.IO\.Path\]::GetTempPath\(\).*qherp-demo-data') `
@@ -134,43 +140,52 @@ Assert-True -Condition ($validator -match 'FILE_OBJECTS_AVAILABLE_MIN_8' `
         -and $validator -match 'bucket=\{0\};databaseAvailable=\{1\}' `
         -and $validator -match 'bucket == database available and >= 8') `
     -Message "验证器必须把 MINIO_BUCKET_OBJECTS_MIN_8 升级为 bucket 对象数等于数据库 AVAILABLE 文件对象数且不少于 8。"
+$expectedV36Checksum = "1030907058"
 $expectedV34Checksum = "-629066235"
+$expectedV35Checksum = "-82801719"
 $expectedV33Checksum = "612501943"
 $expectedV32Checksum = "249406902"
 $expectedV31Checksum = "-2074547591"
-$pendingV35ChecksumMarker = "V35_CHECKSUM_" + "PENDING"
-$pendingFlywayV35Rule = "FLYWAY_V35_CHECKSUM_" + "PENDING"
+$pendingV36ChecksumMarker = "V36_CHECKSUM_" + "PENDING"
+$pendingFlywayV36Rule = "FLYWAY_V36_CHECKSUM_" + "PENDING"
 $legacyAdjustedBankBalanceColumn = "adjusted_bank_" + "balance"
 $legacyFinancialCloseAuditEventTargetColumn = "target_" + "type"
 
 function Test-FlywayMigrationRulesAreStrict {
     param([string] $SqlText)
 
-    $flywayLatestV35RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V35") `
-            -and $SqlText.Contains("latest successful version = 35; checksum recorded") `
-            -and $SqlText.Contains("= 35") `
-            -and $SqlText.Contains("is not null") `
-            -and $SqlText.Contains("FLYWAY_V35_CHECKSUM_RECORDED") `
+    $flywayLatestV36RuleIsStrict = ($SqlText.Contains("FLYWAY_LATEST_V36") `
+            -and $SqlText.Contains("latest successful version = 36; checksum = $expectedV36Checksum") `
+            -and $SqlText.Contains("= 36") `
+            -and $SqlText.Contains("= $expectedV36Checksum") `
+            -and $SqlText.Contains("FLYWAY_V36_CHECKSUM_RECORDED") `
+            -and (-not $SqlText.Contains("FLYWAY_LATEST_V35")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V33")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V32")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V31")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V30")) `
             -and (-not $SqlText.Contains("FLYWAY_LATEST_V29")) `
-            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-4])")) `
+            -and (-not ($SqlText -match "FLYWAY_LATEST_V(2[0-9]|3[0-5])")) `
             -and (-not $SqlText.Contains("latest successful version = 33; checksum = $expectedV33Checksum")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V32")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V31")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V30")) `
             -and (-not $SqlText.Contains("Flyway 最新成功版本必须为 V29")) `
-            -and (-not ($SqlText -match ">=\s*35")) `
-            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*35")) `
-            -and (-not ($SqlText -match "version::int\s*>=\s*35")) `
-            -and (-not $SqlText.Contains($pendingV35ChecksumMarker)) `
-            -and (-not $SqlText.Contains($pendingFlywayV35Rule)))
-    $flywayV35ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V35_CHECKSUM_RECORDED") `
-            -and $SqlText.Contains("version 35 checksum is recorded") `
+            -and (-not ($SqlText -match ">=\s*36")) `
+            -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*36")) `
+            -and (-not ($SqlText -match "version::int\s*>=\s*36")) `
+            -and (-not $SqlText.Contains($pendingV36ChecksumMarker)) `
+            -and (-not $SqlText.Contains($pendingFlywayV36Rule)))
+    $flywayV36ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V36_CHECKSUM_RECORDED") `
+            -and $SqlText.Contains("version 36 checksum = $expectedV36Checksum") `
+            -and $SqlText.Contains("version = '36'") `
+            -and $SqlText.Contains("checksum = $expectedV36Checksum") `
+            -and $SqlText.Contains("Flyway V36 checksum 必须保持 $expectedV36Checksum。"))
+    $flywayV35ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V35_CHECKSUM") `
+            -and $SqlText.Contains("version 35 checksum = $expectedV35Checksum") `
             -and $SqlText.Contains("version = '35'") `
-            -and $SqlText.Contains("Flyway V35 checksum 必须存在"))
+            -and $SqlText.Contains("checksum = $expectedV35Checksum") `
+            -and $SqlText.Contains("Flyway V35 checksum 必须保持 $expectedV35Checksum。"))
     $flywayV34ChecksumRuleIsStrict = ($SqlText.Contains("FLYWAY_V34_CHECKSUM") `
             -and $SqlText.Contains("version 34 checksum = $expectedV34Checksum") `
             -and $SqlText.Contains("version = '34'") `
@@ -206,7 +221,8 @@ function Test-FlywayMigrationRulesAreStrict {
             -and $SqlText.Contains("Flyway 不能存在失败迁移记录。") `
             -and $SqlText.Contains("from flyway_schema_history where not success"))
 
-    return ($flywayLatestV35RuleIsStrict `
+    return ($flywayLatestV36RuleIsStrict `
+        -and $flywayV36ChecksumRuleIsStrict `
         -and $flywayV35ChecksumRuleIsStrict `
         -and $flywayV34ChecksumRuleIsStrict `
         -and $flywayV33HistoricalChecksumIsStrict `
@@ -218,17 +234,20 @@ function Test-FlywayMigrationRulesAreStrict {
 }
 
 Assert-True -Condition (Test-FlywayMigrationRulesAreStrict -SqlText $validatorSql) `
-    -Message "正式演示数据验证器必须要求 Flyway 最新成功版本为 V35，V35 checksum 已记录，独立校验 V34/V33/V32/V31/V30/V29 checksum 和失败迁移 0，且不得保留 V35 pending 标记。"
+    -Message "034 演示数据验证器必须要求 Flyway 最新成功版本为 V36，V36 checksum 精确等于 1030907058，独立校验 V35/V34/V33/V32/V31/V30/V29 checksum 和失败迁移 0，且不得保留 V36 pending 标记。"
 $weakenedFlywaySql = @"
-select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
-    'version=35;checksum=123',
-    'latest successful version = 35; checksum recorded',
-    max(version::int) >= 35,
-    'latest V35 must stay exact until checksum freeze'
+select 'FLYWAY_LATEST_V36'::text, 'migration'::text,
+    'version=36;checksum=123',
+    'latest successful version = 36; checksum recorded',
+    max(version::int) >= 36,
+    'latest V36 must stay exact until checksum freeze'
 from flyway_schema_history where success and version ~ '^[0-9]+$';
-union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration', 'version=35;checksum=123',
-    'version 35 checksum is recorded', checksum is not null,
-    'Flyway V35 checksum 必须存在。' from flyway_schema_history where success and version = '35';
+union all select 'FLYWAY_V36_CHECKSUM_RECORDED', 'migration', 'version=36;checksum=123',
+    'version 36 checksum is recorded', checksum is not null,
+    'Flyway V36 checksum 必须存在。' from flyway_schema_history where success and version = '36';
+union all select 'FLYWAY_V35_CHECKSUM', 'migration', 'version=35;checksum=$expectedV35Checksum',
+    'version 35 checksum = $expectedV35Checksum', checksum = $expectedV35Checksum,
+    'Flyway V35 checksum 必须保持 $expectedV35Checksum。' from flyway_schema_history where success and version = '35';
 union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
     'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
     'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
@@ -251,17 +270,20 @@ union all select 'FLYWAY_NO_FAILED', 'migration', count(*)::text, '0', count(*) 
     'Flyway 不能存在失败迁移记录。' from flyway_schema_history where not success;
 "@
 Assert-True -Condition (-not (Test-FlywayMigrationRulesAreStrict -SqlText $weakenedFlywaySql)) `
-    -Message "自测必须拒绝把最新迁移规则弱化为 >= 35 的实现。"
+    -Message "自测必须拒绝把最新迁移规则弱化为 >= 36 的实现。"
 $missingV33ChecksumSql = @"
-select 'FLYWAY_LATEST_V35'::text, 'migration'::text,
-    'version=35;checksum=123',
-    'latest successful version = 35; checksum recorded',
-    version::int = 35 and checksum is not null,
-    'latest V35 must stay exact until checksum freeze'
-from flyway_schema_history where success and version = '35';
-union all select 'FLYWAY_V35_CHECKSUM_RECORDED', 'migration', 'version=35;checksum=123',
-    'version 35 checksum is recorded', checksum is not null,
-    'Flyway V35 checksum 必须存在。' from flyway_schema_history where success and version = '35';
+select 'FLYWAY_LATEST_V36'::text, 'migration'::text,
+    'version=36;checksum=123',
+    'latest successful version = 36; checksum recorded',
+    version::int = 36 and checksum is not null,
+    'latest V36 must stay exact until checksum freeze'
+from flyway_schema_history where success and version = '36';
+union all select 'FLYWAY_V36_CHECKSUM_RECORDED', 'migration', 'version=36;checksum=123',
+    'version 36 checksum is recorded', checksum is not null,
+    'Flyway V36 checksum 必须存在。' from flyway_schema_history where success and version = '36';
+union all select 'FLYWAY_V35_CHECKSUM', 'migration', 'version=35;checksum=$expectedV35Checksum',
+    'version 35 checksum = $expectedV35Checksum', checksum = $expectedV35Checksum,
+    'Flyway V35 checksum 必须保持 $expectedV35Checksum。' from flyway_schema_history where success and version = '35';
 union all select 'FLYWAY_V34_CHECKSUM', 'migration', 'version=34;checksum=$expectedV34Checksum',
     'version 34 checksum = $expectedV34Checksum', checksum = $expectedV34Checksum,
     'Flyway V34 checksum 必须保持 $expectedV34Checksum。' from flyway_schema_history where success and version = '34';
@@ -1002,6 +1024,19 @@ Assert-ContainsInOrder -Text $costRecordFunction -Needles @(
     'dateTo = $BusinessDate',
     'keyword = ""'
 ) -Message "029 手工人工成本记录复跑必须用成本记录 API 的工单/类型/手工来源/日期过滤后再按 remark 匹配，不能依赖不检索 remark 的 keyword。"
+$salesInvoiceStart = $generator.IndexOf("function Ensure-SalesInvoiceConfirmed")
+$salesInvoiceEnd = $generator.IndexOf("function New-PurchaseInvoiceLine", $salesInvoiceStart)
+Assert-True -Condition ($salesInvoiceStart -ge 0 -and $salesInvoiceEnd -gt $salesInvoiceStart) `
+    -Message "自测无法定位 Ensure-SalesInvoiceConfirmed 函数边界。"
+$salesInvoiceFunction = $generator.Substring($salesInvoiceStart, $salesInvoiceEnd - $salesInvoiceStart)
+Assert-ContainsInOrder -Text $salesInvoiceFunction -Needles @(
+    '$externalInvoiceNo = "$DemoPrefix-SI-$Key"',
+    'Path "/api/admin/finance/sales-invoices"',
+    'keyword = $externalInvoiceNo',
+    '$_.externalInvoiceNo -eq $externalInvoiceNo'
+) -Message "029 销售发票复跑必须在 remark 查询失败后按外部发票号和销售发货来源兜底识别既有发票，避免 worker-enabled 二阶段重复创建同来源发票。"
+Assert-True -Condition ($salesInvoiceFunction -notmatch '\$_\.sourceId -eq \$Shipment\.id') `
+    -Message "029 销售发票二阶段兜底不得依赖列表 DTO 的 sourceId 字段；演示生成器外部票号已按 Key 唯一，应以 externalInvoiceNo 识别既有发票。"
 $outsourcingInvoiceStart = $generator.IndexOf("function Ensure-OutsourcingPurchaseInvoiceConfirmed")
 $outsourcingInvoiceEnd = $generator.IndexOf("function Ensure-ExpenseConfirmed", $outsourcingInvoiceStart)
 Assert-True -Condition ($outsourcingInvoiceStart -ge 0 -and $outsourcingInvoiceEnd -gt $outsourcingInvoiceStart) `
@@ -1535,5 +1570,358 @@ function Test-Stage033IsolationStrategyIsStrict {
 
 Assert-True -Condition ((Test-Path -LiteralPath $stage033IsolationPath) -and (Test-Stage033IsolationStrategyIsStrict -ScriptText $stage033Isolation)) `
     -Message "033 隔离数据准备策略必须限制 qherp_033_review/qherp-033-review 或 qherp_demo_build_033_full_*/qherp-demo-build-033-full-*，拒绝正式 qherp/qherp-private，并覆盖快照边界、口径对账、跨期间、权限脱敏、分页候选池和动态对象一致性。"
+
+function Test-Stage034IsolationStrategyIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("qherp_034_delivery_governance") `
+        -and $ScriptText.Contains("qherp-034-delivery-governance") `
+        -and $ScriptText.Contains("35432") `
+        -and $ScriptText.Contains("39000") `
+        -and $ScriptText.Contains("39001") `
+        -and $ScriptText.Contains("38080") `
+        -and $ScriptText.Contains("35174") `
+        -and $ScriptText.Contains("35173") `
+        -and $ScriptText.Contains("Assert-Stage034IsolationTarget") `
+        -and $ScriptText.Contains("Assert-Stage034FormalAndStage033ResourceRejected") `
+        -and $ScriptText.Contains("New-Stage034AcceptanceDataPlan") `
+        -and $ScriptText.Contains("MATERIAL_PROFILE_CORRECTION_V1") `
+        -and $ScriptText.Contains("CUSTOMER_MASTER_V1") `
+        -and $ScriptText.Contains("SUPPLIER_STATUS_CHANGE_V1") `
+        -and $ScriptText.Contains("ACCOUNTING_VOUCHER_V1") `
+        -and $ScriptText.Contains("V36") `
+        -and $ScriptText.Contains("1030907058") `
+        -and $ScriptText.Contains("零事实合法") `
+        -and $ScriptText.Contains("有事实完整") `
+        -and $ScriptText.Contains("真实 API") `
+        -and $ScriptText.Contains("默认正式资源禁止写入") `
+        -and $ScriptText.Contains("033 验收资源禁止写入") `
+        -and (-not $ScriptText.Contains('Database = "qherp"')) `
+        -and (-not $ScriptText.Contains('MinioBucket = "qherp-private"')) `
+        -and (-not $ScriptText.Contains('qherp_033_review"')) `
+        -and (-not $ScriptText.Contains('qherp-033-review"')) `
+        -and (-not $ScriptText.Contains("冻结后再补精确值")))
+}
+
+Assert-True -Condition ((Test-Path -LiteralPath $stage034IsolationPath) -and (Test-Stage034IsolationStrategyIsStrict -ScriptText $stage034Isolation)) `
+    -Message "034 隔离数据准备策略必须固定 qherp_034_delivery_governance/qherp-034-delivery-governance 和 35432/39000/39001/38080/35174/35173，拒绝默认正式资源与 033 验收资源，并覆盖修复、五类导入、四类批量、十四模板、零事实合法和有事实完整。"
+
+function Test-Stage034GeneratorPlanIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("[switch] `$Stage034Only") `
+        -and $ScriptText.Contains("stage034-isolation-strategy.ps1") `
+        -and $ScriptText.Contains("Assert-Stage034IsolationTarget") `
+        -and $ScriptText.Contains("Ensure-Stage034DeliveryGovernanceSamples") `
+        -and $ScriptText.Contains("Assert-Stage034BackendContractsAvailable") `
+        -and $ScriptText.Contains("/api/admin/platform/data-repair-adapters") `
+        -and $ScriptText.Contains("/api/admin/platform/history-import-adapters") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-tools") `
+        -and $ScriptText.Contains("/api/admin/platform/delivery-assets") `
+        -and $ScriptText.Contains("/api/admin/print-templates") `
+        -and $ScriptText.Contains("MATERIAL_PROFILE_CORRECTION_V1") `
+        -and $ScriptText.Contains("SALES_PROJECT_DRAFT_V1") `
+        -and $ScriptText.Contains("FIXED_DOCUMENT_BATCH_PRINT_V1") `
+        -and $ScriptText.Contains("ACCOUNTING_VOUCHER_V1") `
+        -and $ScriptText.Contains("034 后端接口尚未可用") `
+        -and $ScriptText.Contains("DocumentWorkerMode=WorkerDisabled") `
+        -and $ScriptText.Contains("真实 API"))
+}
+
+Assert-True -Condition (Test-Stage034GeneratorPlanIsStrict -ScriptText $generator) `
+    -Message "034 生成器必须提供 Stage034Only 入口，先强制隔离资源，再通过真实平台目录端点探测修复、历史导入、批量、交付资料和十四模板；接口缺失只能登记待执行，不能伪造样本通过。"
+
+function Test-Stage034GeneratorRealApiFlowIsStrict {
+    param([string] $ScriptText)
+
+    $earlyReturnSnippet = @"
+if (`$Stage034Only) {
+    Ensure-Stage034DeliveryGovernanceSamples
+    `$Manifest.Save()
+    Write-Step "034 平台交付治理样本入口完成。Manifest=`$OutputManifestPath"
+    return
+}
+"@
+    $stage034SamplesStart = $ScriptText.IndexOf("function Ensure-Stage034DeliveryGovernanceSamples", [System.StringComparison]::Ordinal)
+    $stage034SamplesEnd = $ScriptText.IndexOf("function Get-ItemByField", $stage034SamplesStart, [System.StringComparison]::Ordinal)
+    if ($stage034SamplesStart -lt 0 -or $stage034SamplesEnd -le $stage034SamplesStart) {
+        return $false
+    }
+    $stage034Samples = $ScriptText.Substring($stage034SamplesStart, $stage034SamplesEnd - $stage034SamplesStart)
+    $fixedPrintStart = $ScriptText.IndexOf("function Ensure-Stage034FixedPrintSamples", [System.StringComparison]::Ordinal)
+    $fixedPrintEnd = $ScriptText.IndexOf("function Ensure-Stage034DeliveryGovernanceSamples", $fixedPrintStart, [System.StringComparison]::Ordinal)
+    if ($fixedPrintStart -lt 0 -or $fixedPrintEnd -le $fixedPrintStart) {
+        return $false
+    }
+    $fixedPrintSamples = $ScriptText.Substring($fixedPrintStart, $fixedPrintEnd - $fixedPrintStart)
+
+    return ((-not $ScriptText.Contains($earlyReturnSnippet)) `
+        -and $ScriptText.Contains("function New-Stage034HistoryImportFile") `
+        -and $ScriptText.Contains("function Invoke-Stage034HistoryImport") `
+        -and $ScriptText.Contains("function Ensure-Stage034HistoryImportSamples") `
+        -and $ScriptText.Contains("function Assert-Stage034HistoryImportValidationFailure") `
+        -and $ScriptText.Contains("function Ensure-Stage034DataRepairSamples") `
+        -and $ScriptText.Contains("function Ensure-Stage034BatchToolSamples") `
+        -and $ScriptText.Contains("function Ensure-Stage034FixedPrintSamples") `
+        -and $ScriptText.Contains("Invoke-DemoMultipart -Path `"/api/admin/platform/history-imports/") `
+        -and $ScriptText.Contains("/api/admin/platform/data-repairs") `
+        -and $ScriptText.Contains("/submit") `
+        -and $ScriptText.Contains("/execute") `
+        -and $ScriptText.Contains("/verify") `
+        -and $ScriptText.Contains("/api/admin/approval-tasks") `
+        -and $ScriptText.Contains("passed = `$true") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-tools/CUSTOMER_STATUS_CHANGE_V1/preview") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-tools/SUPPLIER_STATUS_CHANGE_V1/preview") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-tools/MATERIAL_STATUS_CHANGE_V1/preview") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-tools/FIXED_DOCUMENT_BATCH_PRINT_V1/preview") `
+        -and $ScriptText.Contains("/api/admin/platform/batch-operations/") `
+        -and $ScriptText.Contains("/api/admin/print-tasks") `
+        -and $ScriptText.Contains("Wait-DocumentTaskStatus") `
+        -and $fixedPrintSamples.Contains('Ensure-SalesInvoiceConfirmed -Key "034-FIXED-PRINT" -Shipment $shipmentSemiB') `
+        -and $fixedPrintSamples.Contains('Ensure-SalesInvoiceConfirmed -Key "034-FIXED-PRINT" -Shipment $shipmentSemiB -InvoiceDate "2026-08-02"') `
+        -and $fixedPrintSamples.Contains('Ensure-OutsourcingPurchaseInvoiceConfirmed -Key "029-P1-FG"') `
+        -and $fixedPrintSamples.Contains('-OutsourcingReceipt $stage029Dataset.outsourcingReceipt') `
+        -and (-not $fixedPrintSamples.Contains('outsourcingReceiptP1')) `
+        -and $ScriptText.Contains("NewTemplatePrints") `
+        -and $ScriptText.Contains("CUSTOMER_MASTER_V1") `
+        -and $ScriptText.Contains("SUPPLIER_MASTER_V1") `
+        -and $ScriptText.Contains("MATERIAL_MASTER_V1") `
+        -and $ScriptText.Contains("MATERIAL_MASTER_V1-STANDARD-INVALID") `
+        -and $ScriptText.Contains("STANDARD") `
+        -and $ScriptText.Contains('$MaterialCostCategory, "VALUATED_MATERIAL"') `
+        -and $ScriptText.Contains("VALIDATION_FAILED") `
+        -and $ScriptText.Contains("BOM_DRAFT_V1") `
+        -and $ScriptText.Contains("SALES_PROJECT_DRAFT_V1") `
+        -and $ScriptText.Contains("SALES_ORDER_V1") `
+        -and $ScriptText.Contains("SALES_SHIPMENT_V1") `
+        -and $ScriptText.Contains("PROCUREMENT_RECEIPT_V1") `
+        -and $ScriptText.Contains("INVENTORY_TRANSFER_V1") `
+        -and $ScriptText.Contains("PRODUCTION_WORK_ORDER_V1") `
+        -and $ScriptText.Contains("PRODUCTION_MATERIAL_ISSUE_V1") `
+        -and $ScriptText.Contains("PRODUCTION_COMPLETION_RECEIPT_V1") `
+        -and $ScriptText.Contains("SALES_INVOICE_V1") `
+        -and $ScriptText.Contains("PURCHASE_INVOICE_V1") `
+        -and $ScriptText.Contains("ACCOUNTING_VOUCHER_V1") `
+        -and $stage034Samples.Contains("Ensure-Stage034DataRepairSamples") `
+        -and $stage034Samples.Contains("Ensure-Stage034HistoryImportSamples") `
+        -and $stage034Samples.Contains("Ensure-Stage034BatchToolSamples") `
+        -and $stage034Samples.Contains("Ensure-Stage034FixedPrintSamples"))
+}
+
+Assert-True -Condition (Test-Stage034GeneratorRealApiFlowIsStrict -ScriptText $generator) `
+    -Message "034 生成器必须在 Stage034Only 下完成全量真实业务基线后追加真实 API 样本：三类修复、五类历史导入、四类批量工具、十个新增模板打印、幂等和任务状态；不得早退只做目录探测。"
+
+Assert-ContainsInOrder -Text $generator -Needles @(
+    'Ensure-DocumentTaskSamples',
+    '$periodClose = Ensure-Stage033PeriodCloseFrozen',
+    'if ($Stage034Only) {',
+    'Ensure-Stage034DeliveryGovernanceSamples',
+    '$Manifest.AddNote("核心业务数据生成坚持 API-only'
+) -Message "Stage034Only 必须复用既有 API-only 基础业务样本后追加 034 治理样本，不能在基础数据主流程前返回。"
+
+function Test-Stage034RebuildPlanIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("[switch] `$Stage034Only") `
+        -and $ScriptText.Contains("stage034-isolation-strategy.ps1") `
+        -and $ScriptText.Contains("Assert-Stage034IsolationTarget") `
+        -and $ScriptText.Contains("Assert-Stage034MinioCredentials") `
+        -and $ScriptText.Contains("缺少 QHERP_S3_ACCESS_KEY") `
+        -and $ScriptText.Contains("缺少 QHERP_S3_SECRET_KEY") `
+        -and (-not $ScriptText.Contains('"qherpminio"')) `
+        -and (-not $ScriptText.Contains('"qherpminio123"')) `
+        -and $ScriptText.Contains("Stage034FullFacts") `
+        -and $ScriptText.Contains("Stage034Only 模式只允许 Mode=Temporary") `
+        -and $ScriptText.Contains("jdbc:postgresql://localhost:35432/`$Database") `
+        -and $ScriptText.Contains("qherp_034_delivery_governance") `
+        -and $ScriptText.Contains("qherp-034-delivery-governance") `
+        -and $ScriptText.Contains("QHERP_S3_ENDPOINT") `
+        -and $ScriptText.Contains("http://127.0.0.1:39000") `
+        -and $ScriptText.Contains("38080") `
+        -and $ScriptText.Contains("35174") `
+        -and $ScriptText.Contains("35173") `
+        -and $ScriptText.Contains("RunGeneratorAndValidate") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_ENVIRONMENT_CODE") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_MANUAL_VERSION") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_MANUAL_UPDATED_AT") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_DEMO_DATA_VERSION") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_DEMO_DATA_STATUS") `
+        -and $ScriptText.Contains("QHERP_DELIVERY_DEMO_DATA_VERIFIED_AT") `
+        -and $ScriptText.Contains("BUILDING") `
+        -and $ScriptText.Contains("VALIDATED") `
+        -and $ScriptText.Contains("Get-Stage034UtcNow") `
+        -and $ScriptText.Contains("Restart-Stage034ValidatedApi"))
+}
+
+Assert-True -Condition (Test-Stage034RebuildPlanIsStrict -ScriptText $rebuild) `
+    -Message "034 重建入口必须提供 Stage034Only 隔离模式，只允许 Temporary 精确资源，受管 API 使用 35432/38080，启动时注入交付元数据 BUILDING/未验证，并在 Stage034FullFacts 通过后以 UTC 时间、VALIDATED 重启保留 worker-enabled API。"
+
+function Test-Stage034RebuildMissingMinioCredentialsFailsFast {
+    $previousAccessKey = [Environment]::GetEnvironmentVariable("QHERP_S3_ACCESS_KEY", "Process")
+    $previousSecretKey = [Environment]::GetEnvironmentVariable("QHERP_S3_SECRET_KEY", "Process")
+    $previousInitialAdmin = [Environment]::GetEnvironmentVariable("QHERP_INITIAL_ADMIN_PASSWORD", "Process")
+    $previousDemoUser = [Environment]::GetEnvironmentVariable("QHERP_DEMO_USER_PASSWORD", "Process")
+    try {
+        [Environment]::SetEnvironmentVariable("QHERP_S3_ACCESS_KEY", $null, "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_S3_SECRET_KEY", $null, "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_INITIAL_ADMIN_PASSWORD", "self-test-admin-secret", "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_DEMO_USER_PASSWORD", "self-test-demo-secret", "Process")
+        $result = Invoke-DemoProcess -FilePath "pwsh" -ArgumentList @(
+            "-NoLogo", "-NoProfile", "-File", $rebuildPath,
+            "-Mode", "Temporary",
+            "-Stage034Only",
+            "-Database", "qherp_034_delivery_governance",
+            "-MinioBucket", "qherp-034-delivery-governance",
+            "-ApiBaseUrl", "http://127.0.0.1:38080",
+            "-PostgresContainer", "no-such-stage034-postgres",
+            "-MinioContainer", "no-such-stage034-minio",
+            "-OutputDirectory", (Join-Path $selfTestOutputRoot "missing-minio-credentials"),
+            "-RepositoryRoot", $Root,
+            "-RunId", "STAGE034-MISSING-MINIO-CREDENTIALS"
+        ) -WorkingDirectory $Root -AllowFailure
+        $output = "$($result.stdout)`n$($result.stderr)"
+        return ($result.exitCode -ne 0 `
+            -and $output.Contains("缺少 QHERP_S3_ACCESS_KEY") `
+            -and $output.Contains("缺少 QHERP_S3_SECRET_KEY") `
+            -and (-not $output.Contains("docker")))
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable("QHERP_S3_ACCESS_KEY", $previousAccessKey, "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_S3_SECRET_KEY", $previousSecretKey, "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_INITIAL_ADMIN_PASSWORD", $previousInitialAdmin, "Process")
+        [Environment]::SetEnvironmentVariable("QHERP_DEMO_USER_PASSWORD", $previousDemoUser, "Process")
+    }
+}
+
+Assert-True -Condition (Test-Stage034RebuildMissingMinioCredentialsFailsFast) `
+    -Message "Stage034Only 重建入口缺少 QHERP_S3_ACCESS_KEY/QHERP_S3_SECRET_KEY 时必须在接触 Docker/MinIO 前稳定失败，且不得打印秘密。"
+
+function Test-Stage034ValidatorRulesAreStrict {
+    param([string] $SqlText, [string] $ValidatorScriptText)
+
+    $migrationRulesAreStrict = ($SqlText.Contains("FLYWAY_LATEST_V36") `
+        -and $SqlText.Contains("latest successful version = 36; checksum = 1030907058") `
+        -and $SqlText.Contains("FLYWAY_V36_CHECKSUM_RECORDED") `
+        -and $SqlText.Contains("version 36 checksum = 1030907058") `
+        -and $SqlText.Contains("FLYWAY_V35_CHECKSUM") `
+        -and $SqlText.Contains("version 35 checksum = -82801719") `
+        -and $SqlText.Contains("version 34 checksum = -629066235") `
+        -and $SqlText.Contains("version 29 checksum = 774334682") `
+        -and (-not ($SqlText -match "max\(version::int\)[^`r`n]*>=\s*36")))
+    $definitionRulesAreStrict = ($SqlText.Contains("PLATFORM_DATA_REPAIR_PERMISSIONS_V36") `
+        -and $SqlText.Contains("PLATFORM_HISTORY_IMPORT_PERMISSIONS_V36") `
+        -and $SqlText.Contains("PLATFORM_BATCH_TOOL_PERMISSIONS_V36") `
+        -and $SqlText.Contains("PLATFORM_DELIVERY_ASSET_PERMISSION_V36") `
+        -and $SqlText.Contains("PLATFORM_HISTORY_IMPORT_ADAPTERS_V36") `
+        -and $SqlText.Contains("PLATFORM_BATCH_TOOLS_V36") `
+        -and $SqlText.Contains("PRINT_TEMPLATES_034_ALL_14_V36") `
+        -and $SqlText.Contains("DATA_REPAIR_RESPONSIBILITY_SEPARATION_DYNAMIC") `
+        -and $SqlText.Contains("HISTORY_IMPORT_ATOMICITY_DYNAMIC") `
+        -and $SqlText.Contains("DOCUMENT_TASK_IDEMPOTENCY_DYNAMIC") `
+        -and $SqlText.Contains("STAGE034_SAMPLE_COVERAGE_DYNAMIC") `
+        -and $SqlText.Contains("Stage034ZeroFacts") `
+        -and $SqlText.Contains("Stage034FullFacts"))
+    $stage034TaskStatusCoverageIsStrict = ($SqlText.Contains("task_type like '%_HISTORY_IMPORT'") `
+        -and $SqlText.Contains("task_type in ('MATERIAL_IMPORT', 'MATERIAL_EXPORT', 'BOM_DRAFT_IMPORT', 'BOM_DRAFT_EXPORT'") `
+        -and $SqlText.Contains("'FIXED_DOCUMENT_PRINT', 'APPROVAL_PRINT'"))
+    $v36SchemaRulesAreStrict = ($SqlText.Contains("template_version is not null") `
+        -and (-not $SqlText.Contains("t.version is not null")) `
+        -and $SqlText.Contains("platform_approval_history") `
+        -and $SqlText.Contains("executed_by_username") `
+        -and $SqlText.Contains("verified_by_username") `
+        -and (-not $SqlText.Contains("approved_by_user_id")) `
+        -and $SqlText.Contains("row_data ->> 'target_type'") `
+        -and $SqlText.Contains("row_data ->> 'target_id'") `
+        -and $SqlText.Contains("FIXED_DOCUMENT_PRINT") `
+        -and (-not $SqlText.Contains("'DATA_REPAIR_EXECUTION', 'APPROVAL_PRINT'")))
+    $stage034ContractGatesAreStrict = ($SqlText.Contains("DATA_REPAIR_ATTACHMENT_SUPPORT_DYNAMIC") `
+        -and $SqlText.Contains("DATA_REPAIR_VERIFY_FAILED_DYNAMIC") `
+        -and $SqlText.Contains("HISTORY_IMPORT_ERROR_DETAILS_DYNAMIC") `
+        -and $SqlText.Contains("HISTORY_IMPORT_CONFIRM_REVALIDATION_DYNAMIC") `
+        -and $SqlText.Contains("DELIVERY_ASSET_CATALOG_COUNTS_V36") `
+        -and $SqlText.Contains("PRINT_TEMPLATE_STATUS_FIELDS_V36") `
+        -and $SqlText.Contains("DATA_REPAIR_REQUEST") `
+        -and $SqlText.Contains("VERIFY_FAILED"))
+    $validatorSupportsProfiles = ($ValidatorScriptText.Contains('ValidateSet("Default", "Stage034ZeroFacts", "Stage034FullFacts")') `
+        -and $ValidatorScriptText.Contains("Stage034Profile") `
+        -and $ValidatorScriptText.Contains("Assert-Stage034ValidationTarget") `
+        -and $ValidatorScriptText.Contains("set qherp.stage034_profile"))
+
+    return ($migrationRulesAreStrict -and $definitionRulesAreStrict -and $stage034TaskStatusCoverageIsStrict `
+        -and $v36SchemaRulesAreStrict -and $stage034ContractGatesAreStrict -and $validatorSupportsProfiles)
+}
+
+Assert-True -Condition (Test-Stage034ValidatorRulesAreStrict -SqlText $validatorSql -ValidatorScriptText $validator) `
+    -Message "034 验证器必须锁定 V36、V29-V35 checksum、失败迁移、固定权限/菜单/适配器/工具/十四模板、职责分离、导入原子性、任务幂等、文件一致性，并支持 Stage034ZeroFacts 与 Stage034FullFacts 两种合法状态。"
+
+function Test-Stage034GeneratorContractProbesAreStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("Assert-Stage034DeliveryAssetCatalogContract") `
+        -and $ScriptText.Contains("Assert-Stage034PrintTemplateContract") `
+        -and $ScriptText.Contains("Assert-Stage034HistoryImportErrorDetails") `
+        -and $ScriptText.Contains("Assert-Stage034HistoryImportConfirmRevalidation") `
+        -and $ScriptText.Contains("Assert-Stage034HistoryImportTemplateVersionDrift") `
+        -and $ScriptText.Contains("Assert-Stage034HistoryImportSourceShaDrift") `
+        -and $ScriptText.Contains("Invoke-Stage034HistoryImportDriftProbe") `
+        -and $ScriptText.Contains("/api/admin/document-tasks/`$(`$Task.id)/errors") `
+        -and $ScriptText.Contains("/api/admin/print-templates") `
+        -and $ScriptText.Contains("templateVersion") `
+        -and $ScriptText.Contains("sourceSha256") `
+        -and $ScriptText.Contains("staticAssets") `
+        -and $ScriptText.Contains("deliveryAssets.historyImportAdapters") `
+        -and $ScriptText.Contains("HISTORY_IMPORT_TEMPLATE_VERSION_MISMATCH") `
+        -and $ScriptText.Contains("DOCUMENT_TASK_CONCURRENT_MODIFICATION") `
+        -and $ScriptText.Contains("TemplateVersionDrift") `
+        -and $ScriptText.Contains("SourceShaDrift") `
+        -and $ScriptText.Contains('Upload-Attachment -ObjectType "DATA_REPAIR_REQUEST"') `
+        -and $ScriptText.Contains("stage034DataRepairAttachment") `
+        -and $ScriptText.Contains("DATA_REPAIR_REQUEST") `
+        -and $ScriptText.Contains("VerifyFailed") `
+        -and $ScriptText.Contains("passed = `$false") `
+        -and (-not $ScriptText.Contains("STALE-CONFIRM")) `
+        -and (-not $ScriptText.Contains("`$staleVersion")))
+}
+
+Assert-True -Condition (Test-Stage034GeneratorContractProbesAreStrict -ScriptText $generator) `
+    -Message "034 FullFacts 生成器必须通过真实 API 探测交付目录 DTO/固定数量、打印模板状态字段、历史导入错误明细端点、上传模板版本漂移与源文件 SHA 漂移的 confirm 重校验，并生成 DATA_REPAIR_REQUEST 附件与 VERIFY_FAILED 终态样本；不得用旧 task version 探针替代。"
+
+function Test-Stage034DataRepairApproverHasAdapterPermissions {
+    param([string] $ScriptText)
+
+    $approvalRoleStart = $ScriptText.IndexOf('$approvalRole = Ensure-Role', [System.StringComparison]::Ordinal)
+    $readonlyRoleStart = $ScriptText.IndexOf('$readonlyRole = Ensure-Role', $approvalRoleStart, [System.StringComparison]::Ordinal)
+    if ($approvalRoleStart -lt 0 -or $readonlyRoleStart -le $approvalRoleStart) {
+        return $false
+    }
+    $approvalRoleBlock = $ScriptText.Substring($approvalRoleStart, $readonlyRoleStart - $approvalRoleStart)
+    return ($approvalRoleBlock.Contains('master:material:update') `
+        -and $approvalRoleBlock.Contains('master:customer:update') `
+        -and $approvalRoleBlock.Contains('master:supplier:update'))
+}
+
+Assert-True -Condition (Test-Stage034DataRepairApproverHasAdapterPermissions -ScriptText $generator) `
+    -Message "034 数据修复审批/复核演示账号必须同时具备三类修复适配器的领域权限，避免 VERIFY_FAILED 真实 API 样本因缺 master:*:update 被 403 拦截。"
+
+function Test-Stage034BatchNegativeCoverageIsStrict {
+    param([string] $ScriptText)
+
+    return ($ScriptText.Contains("Run-StatusBatchNegativeChecks") `
+        -and $ScriptText.Contains("A10_SUPPLIER_BATCH_TOOL_PERMISSION_FORBIDDEN") `
+        -and $ScriptText.Contains("A10_SUPPLIER_BATCH_TOOL_STALE_VERSION_BLOCKED") `
+        -and $ScriptText.Contains("A10_SUPPLIER_BATCH_TOOL_UNCHANGED_STATUS_BLOCKED") `
+        -and $ScriptText.Contains("A10_SUPPLIER_BATCH_TOOL_REVALIDATION_ALL_OR_NOTHING") `
+        -and $ScriptText.Contains("A10_MATERIAL_BATCH_TOOL_PERMISSION_FORBIDDEN") `
+        -and $ScriptText.Contains("A10_MATERIAL_BATCH_TOOL_STALE_VERSION_BLOCKED") `
+        -and $ScriptText.Contains("A10_MATERIAL_BATCH_TOOL_UNCHANGED_STATUS_BLOCKED") `
+        -and $ScriptText.Contains("A10_MATERIAL_BATCH_TOOL_OPEN_REFERENCE_BLOCKED") `
+        -and $ScriptText.Contains("A10_MATERIAL_BATCH_TOOL_REVALIDATION_ALL_OR_NOTHING") `
+        -and $ScriptText.Contains("Find-QAOpenReferencedMaterial") `
+        -and $ScriptText.Contains("BATCH_OPERATION_OBJECT_CHANGED") `
+        -and $ScriptText.Contains("BATCH_OPERATION_STATUS_INVALID"))
+}
+
+Assert-True -Condition (Test-Stage034BatchNegativeCoverageIsStrict -ScriptText $stage034Idempotency) `
+    -Message "034 独立检查脚本必须补齐供应商和物料状态批量工具的权限、陈旧版本、不可执行状态、物料开放引用和整批不提交负例。"
 
 Write-Host "demo-data-self-test 通过"

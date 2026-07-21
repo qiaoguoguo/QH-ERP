@@ -765,6 +765,36 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.messages.markAllRead).toHaveBeenCalled()
   })
 
+  it('审批和消息分页补齐 100，切换 pageSize 后回第一页', async () => {
+    const approvalWrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+    const approvalVm = approvalWrapper.vm as unknown as { pagination: { page: number } }
+    approvalVm.pagination.page = 3
+    const approvalPagination = approvalWrapper.findComponent({ name: 'ElPagination' })
+    expect(approvalPagination.props('pageSizes')).toEqual([10, 20, 50, 100])
+    approvalPagination.vm.$emit('size-change', 100)
+    await flushPromises()
+    expect(documentPlatformApiMock.approvalTasks.list).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 100,
+    }))
+    expect(approvalWrapper.text()).toContain('操作')
+
+    const messageWrapper = mountWithAuth(MessageCenterView)
+    await flushPromises()
+    const messageVm = messageWrapper.vm as unknown as { pagination: { page: number } }
+    messageVm.pagination.page = 4
+    const messagePagination = messageWrapper.findComponent({ name: 'ElPagination' })
+    expect(messagePagination.props('pageSizes')).toEqual([10, 20, 50, 100])
+    messagePagination.vm.$emit('size-change', 100)
+    await flushPromises()
+    expect(documentPlatformApiMock.messages.listMine).toHaveBeenLastCalledWith(expect.objectContaining({
+      page: 1,
+      pageSize: 100,
+    }))
+    expect(messageWrapper.text()).toContain('操作')
+  })
+
   it('任务中心展示任务阶段、进度、失败分页、确认导入和下载动作', async () => {
     documentPlatformApiMock.documentTasks.list.mockResolvedValueOnce({
       items: [{

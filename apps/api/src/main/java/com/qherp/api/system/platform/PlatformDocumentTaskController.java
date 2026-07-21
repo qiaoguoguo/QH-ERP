@@ -119,14 +119,22 @@ public class PlatformDocumentTaskController {
 
 	@GetMapping("/print-templates")
 	public ApiResponse<List<PlatformDocumentTaskService.PrintTemplateRecord>> printTemplates(
-			@RequestParam(required = false) String sceneCode) {
-		return ApiResponse.ok(this.documentTaskService.printTemplates(sceneCode));
+			@RequestParam(required = false) String sceneCode, @RequestParam(required = false) String objectType) {
+		return ApiResponse.ok(this.documentTaskService.printTemplates(sceneCode, objectType));
 	}
 
 	@GetMapping("/print-previews/{id}")
 	public ApiResponse<PlatformDocumentTaskService.PrintPreviewRecord> printPreview(@PathVariable Long id,
 			@AuthenticationPrincipal CurrentUser currentUser) {
 		return ApiResponse.ok(this.documentTaskService.printPreview(id, currentUser));
+	}
+
+	@GetMapping("/print-previews")
+	public ApiResponse<PlatformDocumentTaskService.PrintPreviewRecord> printObjectPreview(
+			@RequestParam String objectType, @RequestParam Long objectId, @RequestParam String templateCode,
+			@AuthenticationPrincipal CurrentUser currentUser) {
+		return ApiResponse.ok(this.documentTaskService.printObjectPreview(objectType, objectId, templateCode,
+				currentUser));
 	}
 
 	@PostMapping("/print-tasks")
@@ -140,9 +148,16 @@ public class PlatformDocumentTaskController {
 
 	@GetMapping("/document-tasks")
 	public ApiResponse<PageResponse<PlatformDocumentTaskService.DocumentTaskRecord>> list(
-			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int pageSize,
+			@RequestParam(required = false) Long taskId, @RequestParam(required = false) Long batchOperationId,
+			@RequestParam(required = false) String taskType, @RequestParam(required = false) String objectKeyword,
+			@RequestParam(required = false) String createdByKeyword,
+			@RequestParam(required = false) String createdAtFrom, @RequestParam(required = false) String createdAtTo,
+			@RequestParam(required = false) String status, @RequestParam(defaultValue = "1") int page,
+			@RequestParam(defaultValue = "20") int pageSize,
 			@AuthenticationPrincipal CurrentUser currentUser) {
-		return ApiResponse.ok(this.documentTaskService.list(page, pageSize, currentUser));
+		return ApiResponse.ok(this.documentTaskService.list(taskId, batchOperationId, taskType, objectKeyword,
+				createdByKeyword,
+				createdAtFrom, createdAtTo, status, page, pageSize, currentUser));
 	}
 
 	@GetMapping("/document-tasks/{id}")

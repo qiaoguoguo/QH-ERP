@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { ProjectProductionDocumentSummaryRecord, ProjectProductionWorkOrderDetailRecord } from '../../shared/api/projectProductionApi'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import ProductionDocumentStatusTag from './ProductionDocumentStatusTag.vue'
 import { formatProductionQuantity } from './productionPageHelpers'
 
@@ -35,7 +36,7 @@ const emit = defineEmits<{
         <el-table-column prop="postedByName" label="过账人" min-width="110">
           <template #default="{ row }">{{ row.postedByName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="96" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'DRAFT' && canPostIssue"
@@ -48,6 +49,15 @@ const emit = defineEmits<{
             >
               过账
             </el-button>
+            <FixedPrintAction
+              class="execution-print-entry"
+              object-type="PRODUCTION_MATERIAL_ISSUE"
+              :object-id="row.id"
+              :object-no="row.issueNo || row.documentNo"
+              :object-status="row.status"
+              :allowed-object-statuses="['POSTED']"
+              title="生产领料固定打印"
+            />
           </template>
         </el-table-column>
       </el-table>
@@ -105,7 +115,7 @@ const emit = defineEmits<{
         <el-table-column prop="postedByName" label="过账人" min-width="110">
           <template #default="{ row }">{{ row.postedByName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="96" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'DRAFT' && canPostReceipt"
@@ -118,9 +128,24 @@ const emit = defineEmits<{
             >
               过账
             </el-button>
+            <FixedPrintAction
+              class="execution-print-entry"
+              object-type="PRODUCTION_COMPLETION_RECEIPT"
+              :object-id="row.id"
+              :object-no="row.receiptNo || row.documentNo"
+              :object-status="row.status"
+              :allowed-object-statuses="['POSTED']"
+              title="完工入库固定打印"
+            />
           </template>
         </el-table-column>
       </el-table>
     </div>
   </section>
 </template>
+
+<style scoped>
+.execution-print-entry {
+  margin-top: 4px;
+}
+</style>

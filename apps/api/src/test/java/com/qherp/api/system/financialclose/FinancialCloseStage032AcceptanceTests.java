@@ -41,7 +41,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
 	private static final String ADMIN_PASSWORD = "Qherp@2026!";
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
 
 	private static final AtomicInteger SEQUENCE = new AtomicInteger();
 
@@ -103,13 +109,15 @@ class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 		assertThat(bankExceptionTypes()).containsExactlyInAnyOrderElementsOf(FROZEN_BANK_EXCEPTION_TYPES);
 		assertThat(frontendFinancialCloseRoutesAreFrozen()).isTrue();
 		assertThat(immutableTriggerCount()).isGreaterThanOrEqualTo(4L);
-		assertThat(latestSuccessfulFlywayVersion()).isEqualTo("35");
+		assertThat(latestSuccessfulFlywayVersion()).isEqualTo(LATEST_MIGRATION_VERSION);
 		assertThat(historicalChecksum("29")).isEqualTo(774334682);
 		assertThat(historicalChecksum("30")).isEqualTo(2130342893);
 		assertThat(historicalChecksum("31")).isEqualTo(-2074547591);
 		assertThat(historicalChecksum("32")).isEqualTo(249406902);
 		assertThat(historicalChecksum("33")).isEqualTo(612501943);
 		assertThat(historicalChecksum("34")).isEqualTo(-629066235);
+		assertThat(historicalChecksum("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(historicalChecksum("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(bankStatementPermissionRoutes()).containsExactlyInAnyOrder(
 				"financial-close:bank-reconciliation:view|/gl/bank-statements|GET|/api/admin/bank-statements/**,/api/admin/bank-reconciliations/**",
 				"financial-close:bank-reconciliation:import|/gl/bank-statements|POST|/api/admin/bank-statements/**,/api/admin/bank-statement-lines/**");

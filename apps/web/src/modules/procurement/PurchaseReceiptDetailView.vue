@@ -7,6 +7,7 @@ import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo 
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import PurchaseReceiptStatusTag from './PurchaseReceiptStatusTag.vue'
 import {
@@ -223,6 +224,16 @@ onMounted(loadRecord)
         <dt>备注</dt>
         <dd>{{ record.remark || '未填写' }}</dd>
       </dl>
+
+      <FixedPrintAction
+        class="section-block"
+        object-type="PROCUREMENT_RECEIPT"
+        :object-id="record.id"
+        :object-no="record.receiptNo"
+        :object-status="record.status"
+        :allowed-object-statuses="['POSTED', 'REVERSED']"
+        title="采购入库固定打印"
+      />
 
       <section class="section-block">
         <div class="section-title">来源订单</div>

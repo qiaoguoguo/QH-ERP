@@ -29,7 +29,7 @@ class Stage022MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("36");
 		assertCurrentMigrationChecksums(jdbcTemplate);
 		assertThat(tableExists(jdbcTemplate, "platform_approval_instance")).isTrue();
 		assertThat(columnExists(jdbcTemplate, "sys_audit_log", "detail_json")).isTrue();
@@ -444,6 +444,8 @@ class Stage022MigrationRegressionTests {
 		assertThat(migrationChecksum(jdbcTemplate, "32")).isEqualTo(249406902);
 		assertThat(migrationChecksum(jdbcTemplate, "33")).isEqualTo(612501943);
 		assertThat(migrationChecksum(jdbcTemplate, "34")).isEqualTo(-629066235);
+		assertThat(migrationChecksum(jdbcTemplate, "35")).isEqualTo(-82801719);
+		assertThat(migrationChecksum(jdbcTemplate, "36")).isEqualTo(1030907058);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 	}
 

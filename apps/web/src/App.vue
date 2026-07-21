@@ -87,6 +87,9 @@ const reportMenuPaths = new Set(reportRouteConfigs.map((item) => item.path))
 const platformApprovalPath = '/platform/approvals'
 const platformMessagePath = '/platform/messages'
 const platformDocumentTaskPath = '/platform/document-tasks'
+const platformDataRepairPath = '/platform/data-repairs'
+const platformHistoryImportPath = '/platform/history-imports'
+const platformDeliveryAssetPath = '/platform/delivery-assets'
 const masterUnitPath = '/master/units'
 const masterUnitConversionPath = '/master/unit-conversions'
 const masterCodingRulePath = '/master/coding-rules'
@@ -101,6 +104,9 @@ const supportedMenuPaths = new Set<string>(([
   platformApprovalPath,
   platformMessagePath,
   platformDocumentTaskPath,
+  platformDataRepairPath,
+  platformHistoryImportPath,
+  platformDeliveryAssetPath,
   businessPeriodPath,
   masterUnitPath,
   masterUnitConversionPath,
@@ -213,6 +219,24 @@ const platformChildren: MenuNode[] = [
     code: 'platform:document-task:view',
     name: '任务中心',
     routePath: platformDocumentTaskPath,
+  },
+  {
+    id: 'platform-data-repairs',
+    code: 'platform:data-repair:view',
+    name: '数据修复',
+    routePath: platformDataRepairPath,
+  },
+  {
+    id: 'platform-history-imports',
+    code: 'platform:history-import:view',
+    name: '历史导入',
+    routePath: platformHistoryImportPath,
+  },
+  {
+    id: 'platform-delivery-assets',
+    code: 'platform:delivery-asset:view',
+    name: '交付资料',
+    routePath: platformDeliveryAssetPath,
   },
 ]
 const platformMenuPaths = new Set(platformChildren.map((child) => child.routePath))

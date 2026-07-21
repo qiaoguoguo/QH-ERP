@@ -19,6 +19,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class ReportingV35MigrationRegressionTests {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
+
 	private static final List<String> REPORT_033_PERMISSIONS = List.of("report:operating-finance:view",
 			"report:project-profit:view", "report:contract-collection:view",
 			"report:procurement-variance:view", "report:inventory-capital:view",
@@ -51,14 +57,15 @@ class ReportingV35MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 34)
 			.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))).isEqualTo(v34Checksums);
-		assertThat(latestChecksums.get("35")).isNotNull();
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertThat(upstreamCounts(jdbcTemplate)).isEqualTo(upstreamCounts);
 		assertReporting033Schema(jdbcTemplate);
@@ -69,8 +76,11 @@ class ReportingV35MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
-		assertHistoricalChecksums(migrationChecksums(jdbcTemplate));
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
+		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
+		assertHistoricalChecksums(latestChecksums);
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertReporting033Schema(jdbcTemplate);
 	}

@@ -18,6 +18,7 @@ import {
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import SalesOrderStatusTag from './SalesOrderStatusTag.vue'
 import {
   approvalStatusLabel,
@@ -816,6 +817,16 @@ onMounted(loadRecord)
         <dt>备注</dt>
         <dd>{{ record.remark || '未填写' }}</dd>
       </dl>
+
+      <FixedPrintAction
+        class="section-block"
+        object-type="SALES_ORDER"
+        :object-id="record.id"
+        :object-no="record.orderNo"
+        :object-status="record.status"
+        :allowed-object-statuses="['CONFIRMED', 'PARTIALLY_SHIPPED', 'SHIPPED', 'CLOSED']"
+        title="销售订单固定打印"
+      />
 
       <section class="section-block">
         <div class="section-title">销售明细</div>

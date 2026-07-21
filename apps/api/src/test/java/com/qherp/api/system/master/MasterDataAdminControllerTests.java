@@ -95,6 +95,21 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void partnerResponsesExposeVersionThroughListDetailAndMutations() throws Exception {
+		AuthenticatedSession admin = login("admin", "Qherp@2026!");
+		assertPartnerVersionLifecycle(admin, "/api/admin/master/customers", "mst_customer",
+				Map.of("code", "T3_CUS_VER", "name", "任务三客户版本", "contactName", "客户版本联系人",
+						"contactPhone", "13900001001", "status", "ENABLED", "remark", "客户版本备注"),
+				Map.of("code", "T3_CUS_VER_UPD", "name", "任务三客户版本改", "contactName", "客户版本联系人二",
+						"contactPhone", "13900001002", "remark", "客户版本备注改"));
+		assertPartnerVersionLifecycle(admin, "/api/admin/master/suppliers", "mst_supplier",
+				Map.of("code", "T3_SUP_VER", "name", "任务三供应商版本", "contactName", "供应商版本联系人",
+						"contactPhone", "13800001001", "status", "ENABLED", "remark", "供应商版本备注"),
+				Map.of("code", "T3_SUP_VER_UPD", "name", "任务三供应商版本改", "contactName", "供应商版本联系人二",
+						"contactPhone", "13800001002", "remark", "供应商版本备注改"));
+	}
+
+	@Test
 	void userWithoutPermissionCannotCreateUnit() {
 		AuthenticatedSession admin = login("admin", "Qherp@2026!");
 		createUser("task3-readonly-user", admin);
@@ -250,6 +265,50 @@ class MasterDataAdminControllerTests extends PostgresIntegrationTest {
 			.isEqualTo(HttpStatus.OK);
 		assertThat(data(get(path + "/" + id, admin)).get("status").asText()).isEqualTo("ENABLED");
 		assertAuditLog(targetType + "_ENABLE", targetType, id, updatedCode, "PUT", path + "/" + id + "/enable");
+	}
+
+	private void assertPartnerVersionLifecycle(AuthenticatedSession admin, String path, String tableName,
+			Map<String, Object> create, Map<String, Object> update) throws Exception {
+		ResponseEntity<String> createResponse = exchange(HttpMethod.POST, path, create, admin);
+		assertThat(createResponse.getStatusCode()).isEqualTo(HttpStatus.OK);
+		JsonNode created = data(createResponse);
+		long id = created.get("id").longValue();
+		assertPartnerVersion(created, tableName, id, 0);
+
+		JsonNode listed = data(get(path + "?keyword=" + create.get("code") + "&page=1&pageSize=20", admin))
+			.get("items")
+			.get(0);
+		assertPartnerVersion(listed, tableName, id, 0);
+		assertPartnerVersion(data(get(path + "/" + id, admin)), tableName, id, 0);
+
+		JsonNode updated = data(exchange(HttpMethod.PUT, path + "/" + id, update, admin));
+		assertPartnerVersion(updated, tableName, id, 1);
+
+		JsonNode disabled = data(exchange(HttpMethod.PUT, path + "/" + id + "/disable", Map.of(), admin));
+		assertThat(disabled.get("status").asText()).isEqualTo("DISABLED");
+		assertPartnerVersion(disabled, tableName, id, 2);
+
+		JsonNode enabled = data(exchange(HttpMethod.PUT, path + "/" + id + "/enable", Map.of(), admin));
+		assertThat(enabled.get("status").asText()).isEqualTo("ENABLED");
+		assertPartnerVersion(enabled, tableName, id, 3);
+
+		JsonNode finalDetail = data(get(path + "/" + id, admin));
+		assertPartnerVersion(finalDetail, tableName, id, 3);
+		JsonNode finalListed = data(get(path + "?keyword=" + update.get("code") + "&page=1&pageSize=20", admin))
+			.get("items")
+			.get(0);
+		assertPartnerVersion(finalListed, tableName, id, 3);
+	}
+
+	private void assertPartnerVersion(JsonNode node, String tableName, long id, long expectedVersion) {
+		assertThat(node.hasNonNull("version")).as(node.toString()).isTrue();
+		assertThat(node.get("version").longValue()).isEqualTo(expectedVersion);
+		assertThat(node.get("version").longValue()).isEqualTo(partnerVersion(tableName, id));
+	}
+
+	private long partnerVersion(String tableName, long id) {
+		return this.jdbcTemplate.queryForObject("select version from " + tableName + " where id = ?", Long.class,
+				id);
 	}
 
 	private void assertAuditLog(String action, String targetType, long targetId, String targetSummary,

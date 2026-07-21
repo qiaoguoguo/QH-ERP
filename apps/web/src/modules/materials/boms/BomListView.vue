@@ -185,6 +185,10 @@ const canCopy = computed(() => authStore.hasPermission('material:bom:copy'))
 const canEnable = computed(() => authStore.hasPermission('material:bom:enable'))
 const canDisable = computed(() => authStore.hasPermission('material:bom:disable'))
 const canGenerateCode = computed(() => authStore.hasPermission('master:coding-rule:generate'))
+const canHistoryImport = computed(() => (
+  authStore.hasPermission('platform:history-import:view')
+  || authStore.hasPermission('platform:history-import:create')
+))
 const canEcoCreate = computed(() => authStore.hasPermission('material:bom-eco:create'))
 const canEcoUpdate = computed(() => authStore.hasPermission('material:bom-eco:update'))
 const canEcoApply = computed(() => authStore.hasPermission('material:bom-eco:apply'))
@@ -1275,6 +1279,14 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="BOM 管理" description="维护 BOM 版本、工程变更和替代料治理关系。">
     <template #actions>
+      <a
+        v-if="activeTab === 'versions' && canHistoryImport"
+        data-test="bom-history-import-entry"
+        class="inline-action-link"
+        href="/platform/history-imports?adapterCode=BOM_DRAFT_V1"
+      >
+        历史导入
+      </a>
       <el-button v-if="activeTab === 'versions' && canBomImport" data-test="download-bom-draft-template" @click="downloadBomDraftTemplate">
         下载草稿模板
       </el-button>

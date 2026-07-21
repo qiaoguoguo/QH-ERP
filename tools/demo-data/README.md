@@ -4,6 +4,25 @@
 
 生成器和重建入口依赖 PowerShell 7；验证器同时兼容 Windows PowerShell 5.1 与 PowerShell 7。所有密码只允许通过当前进程环境变量或受控本地配置注入，不写入仓库、manifest 或重建摘要；下面的占位符不得替换成真实密码后留存在命令历史中。
 
+## 034 独立隔离入口
+
+034 平台交付治理只允许使用冻结隔离资源：PostgreSQL `35432/qherp_034_delivery_governance`、MinIO `39000/39001/qherp-034-delivery-governance`、API `38080`、Web 直连 `35174`、代理 `35173`。`Stage034Only` 会拒绝默认正式资源、033 clean5 资源和普通 `qherp_demo_build_*` 临时资源；后端 V36 接口稳定前，真实生成项会以“034 后端接口尚未可用”登记为待执行，不伪造通过。
+
+```powershell
+$env:QHERP_INITIAL_ADMIN_PASSWORD = "<本地环境提供>"
+$env:QHERP_DEMO_USER_PASSWORD = "<本次演示账号密码>"
+pwsh -NoProfile -File .\tools\demo-data\rebuild-acceptance.ps1 `
+  -Mode Temporary `
+  -Stage034Only `
+  -ApiBaseUrl "http://127.0.0.1:38080" `
+  -Database "qherp_034_delivery_governance" `
+  -MinioBucket "qherp-034-delivery-governance" `
+  -RecreateTarget `
+  -RunGeneratorAndValidate
+```
+
+034 验证器支持两种合法档位：`Stage034ZeroFacts` 用于确认 V36、固定权限/菜单/适配器/工具/十四模板存在且业务事实为 0 时合法；`Stage034FullFacts` 用于最终隔离演示样本，必须覆盖三类修复、五类历史导入、四类批量、十个新增模板打印任务、任务状态、幂等、导入原子性和 DB/MinIO 文件一致性。
+
 ## 安全重建入口
 
 临时验证只允许 `qherp_demo_build_*` 数据库、`qherp-demo-build-*` bucket 和非 18080 端口：

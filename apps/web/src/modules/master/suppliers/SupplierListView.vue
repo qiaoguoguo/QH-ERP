@@ -13,6 +13,7 @@ import {
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../shared/MasterDataTableView.vue'
+import BatchStatusToolPanel from '../../platform/components/BatchStatusToolPanel.vue'
 import { invoiceTypeLabel, masterStatusLabel, percentLabel, settlementMethodLabel } from '../shared/masterPageHelpers'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 
@@ -342,6 +343,21 @@ onMounted(loadRecords)
   <MasterDataTableView title="供应商" description="维护采购和委外业务使用的供应商基础资料。">
     <template #actions>
       <el-button v-if="canCreate" data-test="create-record" type="primary" @click="openCreate">新增供应商</el-button>
+      <a
+        v-if="authStore.hasPermission('platform:history-import:view') || authStore.hasPermission('platform:history-import:create')"
+        data-test="supplier-history-import-entry"
+        class="inline-action-link"
+        href="/platform/history-imports?adapterCode=SUPPLIER_MASTER_V1"
+      >
+        历史导入
+      </a>
+      <BatchStatusToolPanel
+        v-if="authStore.hasPermission('platform:batch-tool:view')"
+        tool-code="SUPPLIER_STATUS_CHANGE_V1"
+        title="供应商批量状态"
+        button-test-id="supplier-batch-status-entry"
+        :default-candidates="records"
+      />
     </template>
 
     <template #filters>

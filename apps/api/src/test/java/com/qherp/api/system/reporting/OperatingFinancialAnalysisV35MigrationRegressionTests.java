@@ -19,6 +19,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class OperatingFinancialAnalysisV35MigrationRegressionTests {
 
+	private static final String LATEST_MIGRATION_VERSION = "36";
+
 	private static final int EXPECTED_V29_CHECKSUM = 774334682;
 
 	private static final int EXPECTED_V30_CHECKSUM = 2130342893;
@@ -30,6 +32,10 @@ class OperatingFinancialAnalysisV35MigrationRegressionTests {
 	private static final int EXPECTED_V33_CHECKSUM = 612501943;
 
 	private static final int EXPECTED_V34_CHECKSUM = -629066235;
+
+	private static final int EXPECTED_V35_CHECKSUM = -82801719;
+
+	private static final int EXPECTED_V36_CHECKSUM = 1030907058;
 
 	private static final List<String> OPERATING_FINANCE_PERMISSIONS = List.of(
 			"report:operating-finance:view", "report:project-profit:view",
@@ -70,14 +76,15 @@ class OperatingFinancialAnalysisV35MigrationRegressionTests {
 
 		migrate(null);
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
 		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
 		assertHistoricalChecksums(latestChecksums);
 		assertThat(latestChecksums.entrySet()
 			.stream()
 			.filter((entry) -> Integer.parseInt(entry.getKey()) <= 34)
 			.collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue))).isEqualTo(v34Checksums);
-		assertThat(latestChecksums.get("35")).as("V35 checksum 必须由 Flyway 记录，冻结后再替换为精确值").isNotNull();
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertThat(upstreamCounts(jdbcTemplate)).isEqualTo(upstreamCounts);
 		assertThat(reportPermissionRoutes(jdbcTemplate)).containsAllEntriesOf(legacyReportRoutes);
@@ -89,8 +96,11 @@ class OperatingFinancialAnalysisV35MigrationRegressionTests {
 		migrate(null);
 		JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource());
 
-		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo("35");
-		assertHistoricalChecksums(migrationChecksums(jdbcTemplate));
+		assertThat(currentFlywayVersion(jdbcTemplate)).isEqualTo(LATEST_MIGRATION_VERSION);
+		Map<String, Integer> latestChecksums = migrationChecksums(jdbcTemplate);
+		assertHistoricalChecksums(latestChecksums);
+		assertThat(latestChecksums.get("35")).isEqualTo(EXPECTED_V35_CHECKSUM);
+		assertThat(latestChecksums.get("36")).isEqualTo(EXPECTED_V36_CHECKSUM);
 		assertThat(failedMigrationCount(jdbcTemplate)).isZero();
 		assertOperatingFinanceSeeds(jdbcTemplate);
 	}

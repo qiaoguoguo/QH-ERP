@@ -1139,4 +1139,16 @@ describe('BOM 管理页', () => {
     })
     expect(wrapper.text()).toContain('TASK-BOM-IMPORT')
   })
+
+  it('BOM 版本页签提供 034 固定历史导入入口', async () => {
+    const wrapper = mountBoms([
+      'material:bom:view',
+      'platform:history-import:view',
+    ])
+    await flushPromises()
+
+    const entry = wrapper.find('[data-test="bom-history-import-entry"]')
+    expect(entry.exists()).toBe(true)
+    expect(entry.attributes('href')).toBe('/platform/history-imports?adapterCode=BOM_DRAFT_V1')
+  })
 })

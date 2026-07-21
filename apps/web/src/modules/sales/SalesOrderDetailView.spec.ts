@@ -55,6 +55,14 @@ vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
   createIdempotencyKey: () => 'sales-order-key',
 }))
 
+vi.mock('../platform/components/FixedPrintAction.vue', () => ({
+  default: {
+    name: 'FixedPrintAction',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
+    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+  },
+}))
+
 const draftOrder: SalesOrderDetailRecord = {
   id: 99,
   orderNo: 'SO-20260704-001',
@@ -354,6 +362,21 @@ describe('销售订单详情页', () => {
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).not.toContain('POSTED')
     expect(wrapper.text()).not.toContain('DRAFT')
+  })
+
+  it('销售订单详情接入 034 固定打印入口', async () => {
+    const { wrapper } = await mountDetail(confirmedOrder)
+
+    const entry = wrapper.findComponent({ name: 'FixedPrintAction' })
+    expect(entry.exists()).toBe(true)
+    expect(entry.props()).toEqual(expect.objectContaining({
+      objectType: 'SALES_ORDER',
+      objectId: 99,
+      objectNo: 'SO-20260704-001',
+      objectStatus: 'CONFIRMED',
+      allowedObjectStatuses: ['CONFIRMED', 'PARTIALLY_SHIPPED', 'SHIPPED', 'CLOSED'],
+      title: '销售订单固定打印',
+    }))
   })
 
   it('订单详情头部税价消费后端 canonical taxIncludedAmount 字段', async () => {

@@ -244,7 +244,7 @@ public class MasterDataAdminService {
 				""".formatted(resource.table(), queryParts.where()), Long.class, queryParts.args().toArray());
 		List<Object> args = paginationArgs(queryParts, page, pageSize);
 		List<PartnerResponse> items = this.jdbcTemplate.query("""
-				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark,
+				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark, p.version,
 				       p.created_at, p.updated_at, st.%s is not null as settlement_has_data,
 				       st.tax_no as settlement_tax_no, st.bank_account as settlement_bank_account,
 				       st.default_tax_rate as settlement_default_tax_rate, st.invoice_type as settlement_invoice_type,
@@ -264,7 +264,7 @@ public class MasterDataAdminService {
 	public PartnerResponse getPartner(Resource resource, Long id, CurrentUser operator) {
 		requirePartnerResource(resource);
 		return this.jdbcTemplate.query("""
-				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark,
+				select p.id, p.code, p.name, p.contact_name, p.contact_phone, p.status, p.remark, p.version,
 				       p.created_at, p.updated_at, st.%s is not null as settlement_has_data,
 				       st.tax_no as settlement_tax_no, st.bank_account as settlement_bank_account,
 				       st.default_tax_rate as settlement_default_tax_rate, st.invoice_type as settlement_invoice_type,
@@ -401,7 +401,7 @@ public class MasterDataAdminService {
 				MasterDataStatus.valueOf(rs.getString("status")), rs.getString("remark"),
 				rs.getString("contact_name"), rs.getString("contact_phone"),
 				rs.getObject("created_at", OffsetDateTime.class), rs.getObject("updated_at", OffsetDateTime.class),
-				mapSettlementTaxSummary(rs, resource, operator));
+				mapSettlementTaxSummary(rs, resource, operator), rs.getLong("version"));
 	}
 
 	private SettlementTaxSummary mapSettlementTaxSummary(ResultSet rs, Resource resource, CurrentUser operator)
@@ -619,7 +619,7 @@ public class MasterDataAdminService {
 
 	public record PartnerResponse(Long id, String code, String name, MasterDataStatus status, String remark,
 			String contactName, String contactPhone, OffsetDateTime createdAt, OffsetDateTime updatedAt,
-			SettlementTaxSummary settlementTaxSummary) {
+			SettlementTaxSummary settlementTaxSummary, Long version) {
 	}
 
 	public record SettlementTaxSummary(boolean hasData, boolean sensitiveRestricted, String taxNoMasked,

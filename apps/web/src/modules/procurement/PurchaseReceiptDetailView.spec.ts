@@ -18,6 +18,14 @@ vi.mock('../../shared/api/procurementApi', () => ({
   procurementApi: procurementApiMock,
 }))
 
+vi.mock('../platform/components/FixedPrintAction.vue', () => ({
+  default: {
+    name: 'FixedPrintAction',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
+    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+  },
+}))
+
 const draftReceipt: PurchaseReceiptDetailRecord = {
   id: 700,
   receiptNo: 'PR-20260705-001',
@@ -190,6 +198,21 @@ describe('采购入库详情页', () => {
     expect(wrapper.text()).toContain('待检')
     expect(wrapper.text()).toContain('暂无库存流水追溯')
     expect(wrapper.text()).not.toContain('DRAFT')
+  })
+
+  it('采购入库详情接入 034 固定打印入口', async () => {
+    const { wrapper } = await mountDetail(postedReceipt)
+
+    const entry = wrapper.findComponent({ name: 'FixedPrintAction' })
+    expect(entry.exists()).toBe(true)
+    expect(entry.props()).toEqual(expect.objectContaining({
+      objectType: 'PROCUREMENT_RECEIPT',
+      objectId: 700,
+      objectNo: 'PR-20260705-001',
+      objectStatus: 'POSTED',
+      allowedObjectStatuses: ['POSTED', 'REVERSED'],
+      title: '采购入库固定打印',
+    }))
   })
 
   it('按权限和状态展示操作按钮并可跳转来源订单', async () => {

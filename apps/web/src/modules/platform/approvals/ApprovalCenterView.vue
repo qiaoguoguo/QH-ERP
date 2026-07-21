@@ -76,6 +76,9 @@ const businessObjectPaths: Record<string, string> = {
   SALES_QUOTE: '/sales/quotes',
   GL_VOUCHER: '/gl/vouchers',
   FINANCIAL_PERIOD_REOPEN: '/gl/financial-close',
+  DATA_REPAIR_REQUEST: '/platform/data-repairs',
+  HISTORY_IMPORT_TASK: '/platform/history-imports',
+  BATCH_OPERATION: '/platform/document-tasks',
 }
 
 const businessObjectLabels: Record<string, string> = {
@@ -85,6 +88,9 @@ const businessObjectLabels: Record<string, string> = {
   SALES_QUOTE: '销售报价',
   GL_VOUCHER: '会计凭证',
   FINANCIAL_PERIOD_REOPEN: '反结账申请',
+  DATA_REPAIR_REQUEST: '数据修复',
+  HISTORY_IMPORT_TASK: '历史导入',
+  BATCH_OPERATION: '批量操作',
 }
 
 function businessObjectRoute(record: { sceneCode?: string | null, objectType?: string | null, objectId?: string | number | null }) {
@@ -97,6 +103,15 @@ function businessObjectRoute(record: { sceneCode?: string | null, objectType?: s
   const basePath = businessObjectPaths[record.objectType]
   if (!basePath) {
     return null
+  }
+  if (record.objectType === 'DATA_REPAIR_REQUEST') {
+    return `${basePath}/${encodeURIComponent(String(record.objectId))}?returnTo=${encodeURIComponent('/platform/approvals')}`
+  }
+  if (record.objectType === 'HISTORY_IMPORT_TASK') {
+    return `${basePath}/${encodeURIComponent(String(record.objectId))}?returnTo=${encodeURIComponent('/platform/approvals')}`
+  }
+  if (record.objectType === 'BATCH_OPERATION') {
+    return `${basePath}?batchOperationId=${encodeURIComponent(String(record.objectId))}&returnTo=${encodeURIComponent('/platform/approvals')}`
   }
   const path = `${basePath}/${encodeURIComponent(String(record.objectId))}`
   return record.objectType === 'GL_VOUCHER'
@@ -299,7 +314,7 @@ onMounted(() => {
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="approval-keyword" clearable placeholder="对象编号或名称" />
         </el-form-item>
-        <el-form-item>
+        <el-form-item label="操作">
           <el-button data-test="search-approvals" type="primary" @click="search">查询</el-button>
         </el-form-item>
       </el-form>
@@ -345,7 +360,7 @@ onMounted(() => {
     <el-pagination
       class="table-pagination"
       layout="total, sizes, prev, pager, next"
-      :page-sizes="[10, 20, 50]"
+      :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"

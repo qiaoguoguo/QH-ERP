@@ -256,13 +256,14 @@ function Invoke-DemoApi {
         return $response.data
     }
     catch {
+        $responseBody = if ([string]::IsNullOrWhiteSpace($_.ErrorDetails.Message)) { "" } else { "`nresponseBody=$($_.ErrorDetails.Message)" }
         if ($AllowFailure) {
             return [pscustomobject]@{
                 failed = $true
-                message = "API 请求失败：$Method $Path`n$($_.Exception.Message)"
+                message = "API 请求失败：$Method $Path`n$($_.Exception.Message)$responseBody"
             }
         }
-        throw "API 请求失败：$Method $Path`n$($_.Exception.Message)"
+        throw "API 请求失败：$Method $Path`n$($_.Exception.Message)$responseBody"
     }
 }
 

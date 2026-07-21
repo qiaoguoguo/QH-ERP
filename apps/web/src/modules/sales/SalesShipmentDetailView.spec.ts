@@ -21,6 +21,14 @@ vi.mock('../../shared/api/salesApi', () => ({
   salesApi: salesApiMock,
 }))
 
+vi.mock('../platform/components/FixedPrintAction.vue', () => ({
+  default: {
+    name: 'FixedPrintAction',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
+    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+  },
+}))
+
 const draftShipment: SalesShipmentDetailRecord = {
   id: 700,
   shipmentNo: 'SS-20260705-001',
@@ -205,6 +213,21 @@ describe('销售出库详情页', () => {
     expect(wrapper.text()).toContain('合格')
     expect(wrapper.text()).toContain('暂无库存流水')
     expect(wrapper.text()).not.toContain('DRAFT')
+  })
+
+  it('销售出库详情接入 034 固定打印入口', async () => {
+    const { wrapper } = await mountDetail(postedShipment)
+
+    const entry = wrapper.findComponent({ name: 'FixedPrintAction' })
+    expect(entry.exists()).toBe(true)
+    expect(entry.props()).toEqual(expect.objectContaining({
+      objectType: 'SALES_SHIPMENT',
+      objectId: 700,
+      objectNo: 'SS-20260705-001',
+      objectStatus: 'POSTED',
+      allowedObjectStatuses: ['POSTED', 'CANCELLED'],
+      title: '销售出库固定打印',
+    }))
   })
 
   it('按权限和状态展示操作按钮并可跳转来源订单和库存流水', async () => {

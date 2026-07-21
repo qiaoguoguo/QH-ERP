@@ -67,6 +67,14 @@ vi.mock('../../shared/api/costCollectionApi', () => ({
   costCollectionApi: costCollectionApiMock,
 }))
 
+vi.mock('../platform/components/FixedPrintAction.vue', () => ({
+  default: {
+    name: 'FixedPrintAction',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
+    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+  },
+}))
+
 const detailRecord: ProductionWorkOrderDetailRecord = {
   id: 9,
   workOrderNo: 'WO-20260703-001',
@@ -594,6 +602,83 @@ describe('生产工单详情页', () => {
     expect(wrapper.text()).toContain('MOV-001')
     expect(wrapper.text()).toContain('生产领料')
     expect(wrapper.text()).not.toContain('PRODUCTION_ISSUE')
+  })
+
+  it('生产工单及已过账领料、完工入库接入 034 固定打印入口', async () => {
+    const { wrapper } = await mountDetail(detailRecord, [
+      'production:work-order:view',
+      'production:material-issue:view',
+      'production:completion-receipt:view',
+    ])
+
+    const entries = wrapper.findAllComponents({ name: 'FixedPrintAction' }).map((entry) => entry.props())
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        objectType: 'PRODUCTION_WORK_ORDER',
+        objectId: 9,
+        objectNo: 'WO-20260703-001',
+        objectStatus: 'IN_PROGRESS',
+        allowedObjectStatuses: ['RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CLOSED'],
+        title: '生产工单固定打印',
+      }),
+      expect.objectContaining({
+        objectType: 'PRODUCTION_MATERIAL_ISSUE',
+        objectId: 300,
+        objectNo: 'MI-001',
+        objectStatus: 'POSTED',
+        allowedObjectStatuses: ['POSTED'],
+        title: '生产领料固定打印',
+      }),
+      expect.objectContaining({
+        objectType: 'PRODUCTION_COMPLETION_RECEIPT',
+        objectId: 500,
+        objectNo: 'CR-001',
+        objectStatus: 'POSTED',
+        allowedObjectStatuses: ['POSTED'],
+        title: '完工入库固定打印',
+      }),
+    ]))
+  })
+
+  it('未过账领料和完工入库也传入固定打印状态矩阵，由共享入口显示不允许状态', async () => {
+    const draftExecutionRecord = {
+      ...detailRecord,
+      materialIssues: [{
+        ...detailRecord.materialIssues[0],
+        id: 301,
+        issueNo: 'MI-DRAFT',
+        status: 'DRAFT',
+      }],
+      completionReceipts: [{
+        ...detailRecord.completionReceipts[0],
+        id: 501,
+        receiptNo: 'CR-DRAFT',
+        status: 'DRAFT',
+      }],
+    } as ProductionWorkOrderDetailRecord
+    const { wrapper } = await mountDetail(draftExecutionRecord, [
+      'production:work-order:view',
+      'production:material-issue:view',
+      'production:completion-receipt:view',
+    ])
+
+    const entries = wrapper.findAllComponents({ name: 'FixedPrintAction' }).map((entry) => entry.props())
+    expect(entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        objectType: 'PRODUCTION_MATERIAL_ISSUE',
+        objectId: 301,
+        objectNo: 'MI-DRAFT',
+        objectStatus: 'DRAFT',
+        allowedObjectStatuses: ['POSTED'],
+      }),
+      expect.objectContaining({
+        objectType: 'PRODUCTION_COMPLETION_RECEIPT',
+        objectId: 501,
+        objectNo: 'CR-DRAFT',
+        objectStatus: 'DRAFT',
+        allowedObjectStatuses: ['POSTED'],
+      }),
+    ]))
   })
 
   it('只读用户不展示写操作按钮', async () => {

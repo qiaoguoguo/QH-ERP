@@ -43,6 +43,11 @@ function toggleUnread() {
   void loadRecords()
 }
 
+function search() {
+  pagination.page = 1
+  void loadRecords()
+}
+
 async function markRead(record: MessageRecord) {
   actionLoading.value = true
   actionError.value = ''
@@ -69,6 +74,15 @@ function whitelistedBusinessRoute(record: MessageRecord): string | null {
   }
   if (record.relatedObjectType === 'DOCUMENT_TASK') {
     return `/platform/document-tasks?taskId=${objectId}`
+  }
+  if (record.relatedObjectType === 'DATA_REPAIR_REQUEST') {
+    return `/platform/data-repairs/${objectId}?returnTo=${encodeURIComponent('/platform/messages')}`
+  }
+  if (record.relatedObjectType === 'HISTORY_IMPORT_TASK') {
+    return `/platform/history-imports/${objectId}?returnTo=${encodeURIComponent('/platform/messages')}`
+  }
+  if (record.relatedObjectType === 'BATCH_OPERATION') {
+    return `/platform/document-tasks?batchOperationId=${objectId}&returnTo=${encodeURIComponent('/platform/messages')}`
   }
   return null
 }
@@ -119,7 +133,10 @@ onMounted(() => {
           </el-badge>
         </el-form-item>
         <el-form-item label="关键词">
-          <el-input v-model="filters.keyword" name="message-keyword" clearable placeholder="标题或内容" @keyup.enter="loadRecords" />
+          <el-input v-model="filters.keyword" name="message-keyword" clearable placeholder="标题或内容" @keyup.enter="search" />
+        </el-form-item>
+        <el-form-item label="操作">
+          <el-button data-test="search-messages" type="primary" @click="search">查询</el-button>
         </el-form-item>
       </el-form>
     </template>
@@ -162,7 +179,7 @@ onMounted(() => {
     <el-pagination
       class="table-pagination"
       layout="total, sizes, prev, pager, next"
-      :page-sizes="[10, 20, 50]"
+      :page-sizes="[10, 20, 50, 100]"
       :total="pagination.total"
       :page-size="pagination.pageSize"
       :current-page="pagination.page"

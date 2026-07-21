@@ -78,6 +78,31 @@ export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
     SALES_DELIVERY_PLAN_EXPORT: '交付计划导出',
     SALES_EFFECTIVE_DEMAND_EXPORT: '有效销售需求导出',
     MATERIAL_REQUIREMENT_RUN_EXPORT: '订单缺料分析导出',
+    DATA_REPAIR_EXECUTE: '数据修复执行',
+    HISTORY_IMPORT_CUSTOMER: '客户历史导入',
+    HISTORY_IMPORT_SUPPLIER: '供应商历史导入',
+    HISTORY_IMPORT_MATERIAL: '物料历史导入',
+    HISTORY_IMPORT_BOM_DRAFT: 'BOM 草稿历史导入',
+    HISTORY_IMPORT_SALES_PROJECT: '销售项目草稿历史导入',
+    CUSTOMER_MASTER_V1_HISTORY_IMPORT: '客户历史导入',
+    SUPPLIER_MASTER_V1_HISTORY_IMPORT: '供应商历史导入',
+    MATERIAL_MASTER_V1_HISTORY_IMPORT: '物料历史导入',
+    BOM_DRAFT_V1_HISTORY_IMPORT: 'BOM 草稿历史导入',
+    SALES_PROJECT_V1_HISTORY_IMPORT: '销售项目草稿历史导入',
+    BATCH_CUSTOMER_STATUS_CHANGE: '客户状态批量变更',
+    BATCH_SUPPLIER_STATUS_CHANGE: '供应商状态批量变更',
+    BATCH_MATERIAL_STATUS_CHANGE: '物料状态批量变更',
+    FIXED_DOCUMENT_BATCH_PRINT: '固定单据批量打印',
+    SALES_ORDER_PRINT: '销售订单打印',
+    SALES_SHIPMENT_PRINT: '销售出库打印',
+    PROCUREMENT_RECEIPT_PRINT: '采购入库打印',
+    INVENTORY_TRANSFER_PRINT: '仓库调拨打印',
+    PRODUCTION_WORK_ORDER_PRINT: '生产工单打印',
+    PRODUCTION_MATERIAL_ISSUE_PRINT: '生产领料打印',
+    PRODUCTION_COMPLETION_RECEIPT_PRINT: '完工入库打印',
+    SALES_INVOICE_PRINT: '销售发票打印',
+    PURCHASE_INVOICE_PRINT: '采购发票打印',
+    ACCOUNTING_VOUCHER_PRINT: '会计凭证打印',
   }
   return labels[type] ?? type
 }
@@ -88,6 +113,8 @@ export function documentTaskStageLabel(stage: DocumentTaskStage | string): strin
     COMMIT: '提交',
     EXPORT: '导出',
     PRINT: '打印',
+    BATCH: '批量',
+    REPAIR: '修复',
   }
   return labels[stage] ?? stage
 }

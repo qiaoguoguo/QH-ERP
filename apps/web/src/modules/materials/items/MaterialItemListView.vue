@@ -19,6 +19,7 @@ import { downloadFile } from '../../../shared/file/download'
 import { useAuthStore } from '../../../stores/authStore'
 import { errorMessage, pageItems, statusTagType } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
+import BatchStatusToolPanel from '../../platform/components/BatchStatusToolPanel.vue'
 import {
   masterStatusLabel,
   costCategoryLabel,
@@ -513,6 +514,21 @@ onMounted(() => {
       <el-button v-if="canExportMaterials" data-test="export-materials" :loading="actionLoading" @click="exportMaterials">
         导出当前筛选
       </el-button>
+      <a
+        v-if="authStore.hasPermission('platform:history-import:view') || authStore.hasPermission('platform:history-import:create')"
+        data-test="material-history-import-entry"
+        class="inline-action-link"
+        href="/platform/history-imports?adapterCode=MATERIAL_MASTER_V1"
+      >
+        历史导入
+      </a>
+      <BatchStatusToolPanel
+        v-if="authStore.hasPermission('platform:batch-tool:view')"
+        tool-code="MATERIAL_STATUS_CHANGE_V1"
+        title="物料批量状态"
+        button-test-id="material-batch-status-entry"
+        :default-candidates="records"
+      />
       <el-button v-if="canCreate" data-test="create-material" type="primary" @click="openCreate">
         新增物料
       </el-button>

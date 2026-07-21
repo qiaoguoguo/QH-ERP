@@ -9,6 +9,7 @@ param(
     [string] $MinioBucket = $(if ($env:QHERP_S3_BUCKET) { $env:QHERP_S3_BUCKET } else { "qherp-private" }),
     [string] $SqlPath,
     [string] $OutputJsonPath,
+    [ValidateSet("Default", "Stage034ZeroFacts", "Stage034FullFacts")][string] $Stage034Profile = "Default",
     [switch] $SkipApiHealth,
     [switch] $SkipMinio
 )
@@ -28,6 +29,12 @@ catch {
 if (-not $SqlPath) {
     $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $SqlPath = Join-Path $scriptRoot "sql/validate-demo-data.sql"
+}
+
+if ($Stage034Profile -ne "Default") {
+    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+    . (Join-Path $scriptRoot "lib/stage034-isolation-strategy.ps1")
+    Assert-Stage034ValidationTarget -Database $Database -MinioBucket $MinioBucket -ApiBaseUrl $ApiBaseUrl
 }
 
 function Write-Info {
@@ -175,6 +182,14 @@ function New-MinioObjectConsistencyRule {
         "check failed"
     }
     $databaseActual = if ($null -ne $databaseAvailableCount) { $databaseAvailableCount.ToString() } else { "unavailable" }
+    if ($Stage034Profile -eq "Stage034ZeroFacts") {
+        $zeroFactsPassed = $MinioExitCode -eq 0 -and $minioParsed -and $null -ne $databaseAvailableCount `
+            -and $minioCount -eq 0 -and $databaseAvailableCount -eq 0
+        return New-Rule -RuleCode "MINIO_BUCKET_OBJECTS_ZERO_FACTS" -Category "attachment" `
+            -ActualValue ("bucket={0};databaseAvailable={1}" -f $bucketActual, $databaseActual) `
+            -ExpectedValue "bucket == database available and = 0" -Passed:$zeroFactsPassed `
+            -Message "034 零事实验证要求 MinIO bucket 和数据库 AVAILABLE 文件对象同时为 0。"
+    }
     $passed = $MinioExitCode -eq 0 -and $minioParsed -and $null -ne $databaseAvailableCount `
         -and $minioCount -eq $databaseAvailableCount -and $minioCount -ge 8
     return New-Rule -RuleCode "MINIO_BUCKET_OBJECTS_MIN_8" -Category "attachment" `
@@ -188,6 +203,10 @@ if (-not (Test-Path -LiteralPath $SqlPath)) {
 }
 
 $sql = Get-Content -LiteralPath $SqlPath -Raw -Encoding UTF8
+if ($Stage034Profile -ne "Default") {
+    $stage034ProfileLiteral = $Stage034Profile.Replace("'", "''")
+    $sql = "set qherp.stage034_profile = '$stage034ProfileLiteral';`n" + $sql
+}
 $dockerArgs = @("exec", "-i")
 if ($DbPassword) {
     $dockerArgs += @("-e", "PGPASSWORD=$DbPassword")
@@ -244,6 +263,7 @@ $allRules += @($environmentRules.ToArray())
 $failedRuleCount = @($allRules | Where-Object { -not $_.passed }).Count
 $combinedSummary = [pscustomobject]@{
     validatorVersion = $summary.validatorVersion
+    stage034Profile = $Stage034Profile
     checkedAt = (Get-Date).ToString("o")
     status = $(if ($failedRuleCount -eq 0) { "PASS" } else { "FAIL" })
     totalRules = $allRules.Count

@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { glApi, type GlVoucherRecord } from '../../shared/api/glApi'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
+import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import {
   createGlIdempotencyKey,
   formatGlAmount,
@@ -149,6 +150,15 @@ onMounted(loadRecord)
         <p>{{ record.auditSummary?.length ? `共 ${record.auditSummary.length} 条` : '暂无操作日志' }}</p>
         <el-button text @click="auditDrawerVisible = true">查看操作日志</el-button>
       </section>
+      <FixedPrintAction
+        class="gl-section"
+        object-type="ACCOUNTING_VOUCHER"
+        :object-id="record.id"
+        :object-no="glVoucherDisplayNo(record)"
+        :object-status="record.status"
+        :allowed-object-statuses="['POSTED', 'DRAFT']"
+        title="会计凭证固定打印"
+      />
     </div>
 
     <div class="table-scroll">
