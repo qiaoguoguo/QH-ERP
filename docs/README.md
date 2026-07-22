@@ -5,7 +5,7 @@
 ## 项目与任务
 
 - [项目启动基线](project-startup-baseline.md)
-- [项目交接与后续规划（2026-07-20 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
+- [项目交接与后续规划（2026-07-22 更新，当前权威入口）](handoffs/2026-07-12-project-handoff-current.md)
 - [固定五角色阶段协作与交付流程](ops/stage-collaboration-delivery-process.md)
 - [电气制造业全量演示数据基线与重建验收单](data/electrical-manufacturing-demo-data.md)
 - [当前节点记录（2026-07-05，暂停业务扩展，准备流程梳理与界面治理）](handoffs/2026-07-05-project-checkpoint-before-flow-ui-governance.md)
@@ -51,9 +51,10 @@
 - [031 会计科目、凭证与总账基础任务记录（已正式交付）](tasks/031-accounting-voucher-general-ledger-foundation.md)
 - [032 财务结账与资金税务基础任务记录（已正式交付）](tasks/032-financial-close-funds-tax-foundation.md)
 - [033 项目利润与经营财务分析任务记录（已正式交付）](tasks/033-project-profit-operating-financial-analysis.md)
-- [034 平台交付治理完善任务记录（功能分支实施中）](tasks/034-platform-delivery-governance.md)
+- [034 平台交付治理完善任务记录（已正式交付）](tasks/034-platform-delivery-governance.md)
+- [035 上线准备与最终生产交付任务记录（实施中）](tasks/035-go-live-final-delivery.md)
 
-021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。033 已完成实现、集中审查、整改复审、唯一全量窗口、clean5 192/192、真实桌面差异复验、纯快进合入、远端同步和主分支验收服务核验；034 平台交付治理完善已在功能分支冻结唯一阶段说明并进入整包实现与文档同步，正式交付仍以集中审查、唯一全量验证、合入和主分支验收为准。
+021 起采用单一权威阶段说明：对应任务记录同时承载产品契约、接口、数据迁移、权限、工作包、集中审查和验收结果，不再重复维护含义相同的独立规格、实施计划或测试文档。033 与 034 均已完成实现、集中审查、整改复审、唯一全量窗口、合入、远端同步和主分支验收服务核验；035 是合并原 035、036 后的唯一剩余最终阶段，负责上线准备、候选冻结和最终生产交付验证，不新增业务功能。
 
 ## 产品
 
