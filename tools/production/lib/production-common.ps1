@@ -152,3 +152,251 @@ function Protect-QherpSecretFile {
     $acl.AddAccessRule($rule)
     Set-Acl -LiteralPath $SecretPath -AclObject $acl
 }
+
+function Assert-QherpDockerName {
+    param([Parameter(Mandatory)][string] $Value, [string] $FieldName = "Docker 资源名")
+
+    if ($Value -notmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$') {
+        throw "$FieldName 格式非法：$Value"
+    }
+}
+
+function Assert-QherpDatabaseName {
+    param([Parameter(Mandatory)][string] $Value, [string] $FieldName = "数据库名")
+
+    if ($Value -notmatch '^[A-Za-z_][A-Za-z0-9_]{0,62}$') {
+        throw "$FieldName 格式非法：$Value"
+    }
+}
+
+function Assert-QherpBucketName {
+    param([Parameter(Mandatory)][string] $Value, [string] $FieldName = "bucket")
+
+    if ($Value -notmatch '^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$') {
+        throw "$FieldName 格式非法：$Value"
+    }
+}
+
+function Get-QherpContainerEnvironmentValue {
+    param(
+        [Parameter(Mandatory)][string] $ContainerName,
+        [Parameter(Mandatory)][string] $VariableName
+    )
+
+    Assert-QherpDockerName -Value $ContainerName -FieldName "容器名"
+    if ($VariableName -notmatch '^[A-Z][A-Z0-9_]*$') {
+        throw "容器环境变量名格式非法：$VariableName"
+    }
+    $raw = & docker inspect $ContainerName 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "无法读取容器：$ContainerName"
+    }
+    $inspection = @($raw | ConvertFrom-Json)
+    if ($inspection.Count -ne 1) {
+        throw "容器检查结果不唯一：$ContainerName"
+    }
+    $prefix = "$VariableName="
+    $entry = @($inspection[0].Config.Env | Where-Object { $_.StartsWith($prefix, [StringComparison]::Ordinal) })
+    if ($entry.Count -ne 1) {
+        throw "容器 $ContainerName 缺少环境变量 $VariableName。"
+    }
+    return $entry[0].Substring($prefix.Length)
+}
+
+function Invoke-QherpPostgresScalar {
+    param(
+        [Parameter(Mandatory)][string] $ContainerName,
+        [Parameter(Mandatory)][string] $DatabaseUsername,
+        [Parameter(Mandatory)][string] $DatabaseName,
+        [Parameter(Mandatory)][string] $Sql
+    )
+
+    Assert-QherpDockerName -Value $ContainerName -FieldName "PostgreSQL 容器名"
+    Assert-QherpDatabaseName -Value $DatabaseUsername -FieldName "数据库用户名"
+    Assert-QherpDatabaseName -Value $DatabaseName
+    $output = @(& docker exec $ContainerName psql -X -v ON_ERROR_STOP=1 -U $DatabaseUsername -d $DatabaseName -Atc $Sql)
+    if ($LASTEXITCODE -ne 0) {
+        throw "PostgreSQL 查询失败：$ContainerName/$DatabaseName"
+    }
+    return @($output | ForEach-Object { [string]$_ })
+}
+
+function Get-QherpFileSha256 {
+    param([Parameter(Mandatory)][string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "待计算哈希的文件不存在：$Path"
+    }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+}
+
+function New-QherpBackupFileRecord {
+    param(
+        [Parameter(Mandatory)][string] $RootPath,
+        [Parameter(Mandatory)][string] $FilePath,
+        [Parameter(Mandatory)][string] $Kind
+    )
+
+    $root = [IO.Path]::GetFullPath($RootPath).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $file = [IO.Path]::GetFullPath($FilePath)
+    if (-not $file.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "备份文件不在备份根目录内：$file"
+    }
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+        throw "备份文件不存在：$file"
+    }
+    $item = Get-Item -LiteralPath $file
+    return [pscustomobject]@{
+        Kind = $Kind
+        Path = [IO.Path]::GetRelativePath($root, $file).Replace('\', '/')
+        SizeBytes = [long]$item.Length
+        Sha256 = Get-QherpFileSha256 -Path $file
+    }
+}
+
+function Test-QherpBackupManifest {
+    param([Parameter(Mandatory)][string] $BackupDirectory)
+
+    $root = [IO.Path]::GetFullPath($BackupDirectory)
+    $manifestPath = Join-Path $root "manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "备份清单不存在：$manifestPath"
+    }
+    $manifestHashPath = Join-Path $root "manifest.sha256"
+    if (-not (Test-Path -LiteralPath $manifestHashPath -PathType Leaf)) {
+        throw "备份清单 SHA256 文件不存在：$manifestHashPath"
+    }
+    $expectedManifestHash = (Get-Content -LiteralPath $manifestHashPath -Raw).Trim().ToLowerInvariant()
+    if ($expectedManifestHash -notmatch '^[0-9a-f]{64}$' -or
+        (Get-QherpFileSha256 -Path $manifestPath) -ne $expectedManifestHash) {
+        throw "备份清单 SHA256 不一致。"
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 16
+    if ([int]$manifest.SchemaVersion -ne 1 -or [string]$manifest.Status -ne "COMPLETED") {
+        throw "备份清单版本或状态无效。"
+    }
+    foreach ($field in @("BackupId", "StartedAtUtc", "CompletedAtUtc", "DurationSeconds", "Source", "Files", "Objects")) {
+        if ($null -eq $manifest.PSObject.Properties[$field] -or $null -eq $manifest.$field) {
+            throw "备份清单缺少字段：$field"
+        }
+    }
+    $started = [DateTimeOffset]::Parse([string]$manifest.StartedAtUtc)
+    $completed = [DateTimeOffset]::Parse([string]$manifest.CompletedAtUtc)
+    if ($completed -lt $started -or [double]$manifest.DurationSeconds -lt 0) {
+        throw "备份清单时间范围无效。"
+    }
+    foreach ($field in @(
+        "SourceCommit", "ComposeProject", "PostgresContainer", "DatabaseName",
+        "PostgresVersion", "FlywayVersion", "MinioContainer", "Bucket"
+    )) {
+        if ([string]::IsNullOrWhiteSpace([string]$manifest.Source.$field)) {
+            throw "备份来源缺少字段：$field"
+        }
+    }
+    $seenPaths = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($record in @($manifest.Files)) {
+        if ([string]::IsNullOrWhiteSpace([string]$record.Kind) -or
+            [string]::IsNullOrWhiteSpace([string]$record.Path) -or
+            [string]$record.Sha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+            [long]$record.SizeBytes -lt 0) {
+            throw "备份文件记录无效。"
+        }
+        $relative = ([string]$record.Path).Replace('/', [IO.Path]::DirectorySeparatorChar)
+        $fullPath = [IO.Path]::GetFullPath((Join-Path $root $relative))
+        $rootPrefix = $root.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+        if (-not $fullPath.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "备份文件路径越界：$($record.Path)"
+        }
+        if (-not $seenPaths.Add([string]$record.Path)) {
+            throw "备份文件路径重复：$($record.Path)"
+        }
+        if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
+            throw "备份文件缺失：$($record.Path)"
+        }
+        $item = Get-Item -LiteralPath $fullPath
+        if ([long]$item.Length -ne [long]$record.SizeBytes -or
+            (Get-QherpFileSha256 -Path $fullPath) -ne ([string]$record.Sha256).ToLowerInvariant()) {
+            throw "备份文件大小或 SHA256 不一致：$($record.Path)"
+        }
+    }
+    if (@($manifest.Files).Count -eq 0) {
+        throw "备份清单没有载荷文件。"
+    }
+    foreach ($object in @($manifest.Objects)) {
+        if ([string]::IsNullOrWhiteSpace([string]$object.Key) -or
+            [string]$object.Sha256 -notmatch '^[0-9a-fA-F]{64}$' -or
+            [long]$object.SizeBytes -lt 0) {
+            throw "对象清单记录无效。"
+        }
+    }
+    return $manifest
+}
+
+function Assert-QherpRestoreTarget {
+    param(
+        [Parameter(Mandatory)] $Manifest,
+        [Parameter(Mandatory)][string] $TargetPostgresContainer,
+        [Parameter(Mandatory)][string] $TargetDatabaseName,
+        [Parameter(Mandatory)][string] $TargetMinioContainer,
+        [Parameter(Mandatory)][string] $TargetBucket,
+        [switch] $Confirmed,
+        [switch] $AllowSourceReplacement
+    )
+
+    if (-not $Confirmed) {
+        throw "恢复属于破坏性操作，必须显式传入 -ConfirmRestore。"
+    }
+    Assert-QherpDockerName -Value $TargetPostgresContainer -FieldName "目标 PostgreSQL 容器名"
+    Assert-QherpDatabaseName -Value $TargetDatabaseName -FieldName "目标数据库名"
+    Assert-QherpDockerName -Value $TargetMinioContainer -FieldName "目标 MinIO 容器名"
+    Assert-QherpBucketName -Value $TargetBucket -FieldName "目标 bucket"
+    $sameDatabase = [string]$Manifest.Source.PostgresContainer -eq $TargetPostgresContainer -and
+        [string]$Manifest.Source.DatabaseName -eq $TargetDatabaseName
+    $sameBucket = [string]$Manifest.Source.MinioContainer -eq $TargetMinioContainer -and
+        [string]$Manifest.Source.Bucket -eq $TargetBucket
+    if (($sameDatabase -or $sameBucket) -and -not $AllowSourceReplacement) {
+        throw "恢复目标与备份来源重合；默认禁止覆盖来源。灾难恢复确需覆盖时必须另加 -AllowSourceReplacement。"
+    }
+}
+
+function Wait-QherpContainerHealthy {
+    param([Parameter(Mandatory)][string] $ContainerName, [int] $TimeoutSeconds = 180)
+
+    Assert-QherpDockerName -Value $ContainerName -FieldName "容器名"
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $status = (& docker inspect $ContainerName --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' 2>$null).Trim()
+        if ($LASTEXITCODE -eq 0 -and $status -in @("healthy", "running")) {
+            return
+        }
+        Start-Sleep -Seconds 2
+    } while ((Get-Date) -lt $deadline)
+    throw "容器未在 $TimeoutSeconds 秒内就绪：$ContainerName"
+}
+
+function Stop-QherpApplicationContainers {
+    param([string] $ApiContainer = "qherp035-api-1", [string] $WebContainer = "qherp035-web-1")
+
+    foreach ($container in @($WebContainer, $ApiContainer)) {
+        Assert-QherpDockerName -Value $container -FieldName "应用容器名"
+        & docker stop --time 30 $container | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "停止应用容器失败：$container"
+        }
+    }
+}
+
+function Start-QherpApplicationContainers {
+    param([string] $ApiContainer = "qherp035-api-1", [string] $WebContainer = "qherp035-web-1")
+
+    & docker start $ApiContainer | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "启动 API 容器失败：$ApiContainer"
+    }
+    Wait-QherpContainerHealthy -ContainerName $ApiContainer
+    & docker start $WebContainer | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "启动 Web 容器失败：$WebContainer"
+    }
+    Wait-QherpContainerHealthy -ContainerName $WebContainer
+}

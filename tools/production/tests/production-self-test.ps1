@@ -34,7 +34,12 @@ $expectedFiles = @(
     "apps/web/nginx.production.conf",
     "tools/production/lib/production-common.ps1",
     "tools/production/initialize-secrets.ps1",
-    "tools/production/invoke-production.ps1"
+    "tools/production/invoke-production.ps1",
+    "tools/production/backup-production.ps1",
+    "tools/production/backup-stage034-source.ps1",
+    "tools/production/restore-production.ps1",
+    "tools/production/invoke-migration-rehearsal.ps1",
+    "tools/production/verify-production.ps1"
 )
 
 foreach ($relativePath in $expectedFiles) {
@@ -128,7 +133,13 @@ if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
         "Get-QherpProductionSecretFields",
         "Assert-QherpProductionSecrets",
         "Import-QherpProductionSecrets",
-        "Set-QherpProductionEnvironment"
+        "Set-QherpProductionEnvironment",
+        "Get-QherpContainerEnvironmentValue",
+        "Invoke-QherpPostgresScalar",
+        "Get-QherpFileSha256",
+        "New-QherpBackupFileRecord",
+        "Test-QherpBackupManifest",
+        "Assert-QherpRestoreTarget"
     )) {
         Assert-True -Condition ([bool](Get-Command $functionName -ErrorAction SilentlyContinue)) `
             -Message "生产公共库缺少函数：$functionName"
@@ -172,6 +183,114 @@ if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
         }
         Assert-True -Condition $rejected -Message "缺少数据库密码的密钥载荷必须被拒绝。"
     }
+
+    $backupFunctionsAvailable = @(
+        "Get-QherpFileSha256",
+        "New-QherpBackupFileRecord",
+        "Test-QherpBackupManifest",
+        "Assert-QherpRestoreTarget"
+    ) | ForEach-Object { [bool](Get-Command $_ -ErrorAction SilentlyContinue) }
+    if ($backupFunctionsAvailable -notcontains $false) {
+        $tempBackup = Join-Path ([IO.Path]::GetTempPath()) "qherp-035-self-test-$([guid]::NewGuid().ToString('N'))"
+        try {
+            New-Item -ItemType Directory -Path $tempBackup -Force | Out-Null
+            $payloadPath = Join-Path $tempBackup "database.dump"
+            Set-Content -LiteralPath $payloadPath -Value "qherp-backup-contract" -NoNewline
+            $fileRecord = New-QherpBackupFileRecord -RootPath $tempBackup -FilePath $payloadPath -Kind "POSTGRES_CUSTOM"
+            $manifest = [pscustomobject]@{
+                SchemaVersion = 1
+                BackupId = "self-test"
+                Status = "COMPLETED"
+                StartedAtUtc = "2026-07-22T00:00:00Z"
+                CompletedAtUtc = "2026-07-22T00:00:01Z"
+                DurationSeconds = 1
+                Source = [pscustomobject]@{
+                    SourceCommit = "ce2ae58ba8870368fac653881ec54e68e778ea85"
+                    ComposeProject = "qherp034"
+                    PostgresContainer = "source-postgres"
+                    DatabaseName = "source_db"
+                    PostgresVersion = "16.14"
+                    FlywayVersion = "36"
+                    MinioContainer = "source-minio"
+                    Bucket = "source-bucket"
+                }
+                Files = @($fileRecord)
+                Objects = @()
+            }
+            $manifestPath = Join-Path $tempBackup "manifest.json"
+            $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+            (Get-QherpFileSha256 -Path $manifestPath) | Set-Content `
+                -LiteralPath (Join-Path $tempBackup "manifest.sha256") -Encoding ascii
+            try {
+                [void](Test-QherpBackupManifest -BackupDirectory $tempBackup)
+            }
+            catch {
+                Add-Failure "有效联合备份清单被拒绝：$($_.Exception.Message)"
+            }
+
+            Set-Content -LiteralPath $payloadPath -Value "tampered" -NoNewline
+            $tamperRejected = $false
+            try {
+                [void](Test-QherpBackupManifest -BackupDirectory $tempBackup)
+            }
+            catch {
+                $tamperRejected = $true
+            }
+            Assert-True -Condition $tamperRejected -Message "联合备份载荷被篡改时必须拒绝恢复。"
+
+            Set-Content -LiteralPath $payloadPath -Value "qherp-backup-contract" -NoNewline
+            ("0" * 64) | Set-Content -LiteralPath (Join-Path $tempBackup "manifest.sha256") -Encoding ascii
+            $manifestTamperRejected = $false
+            try {
+                [void](Test-QherpBackupManifest -BackupDirectory $tempBackup)
+            }
+            catch {
+                $manifestTamperRejected = $true
+            }
+            Assert-True -Condition $manifestTamperRejected -Message "联合备份清单 SHA256 被篡改时必须拒绝恢复。"
+
+            $sameTargetRejected = $false
+            try {
+                Assert-QherpRestoreTarget -Manifest $manifest -TargetPostgresContainer "source-postgres" `
+                    -TargetDatabaseName "source_db" -TargetMinioContainer "source-minio" `
+                    -TargetBucket "source-bucket" -Confirmed
+            }
+            catch {
+                $sameTargetRejected = $true
+            }
+            Assert-True -Condition $sameTargetRejected -Message "恢复必须拒绝覆盖来源数据库和 bucket。"
+
+            $missingConfirmationRejected = $false
+            try {
+                Assert-QherpRestoreTarget -Manifest $manifest -TargetPostgresContainer "target-postgres" `
+                    -TargetDatabaseName "target_db" -TargetMinioContainer "target-minio" `
+                    -TargetBucket "target-bucket"
+            }
+            catch {
+                $missingConfirmationRejected = $true
+            }
+            Assert-True -Condition $missingConfirmationRejected -Message "恢复缺少显式确认时必须拒绝执行。"
+        }
+        finally {
+            Remove-Item -LiteralPath $tempBackup -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
+$restorePath = Join-Path $repoRoot "tools/production/restore-production.ps1"
+if (Test-Path -LiteralPath $restorePath -PathType Leaf) {
+    $restore = Get-Content -LiteralPath $restorePath -Raw
+    Assert-Match $restore '\[switch\]\s*\$ConfirmRestore' "恢复入口必须要求显式 ConfirmRestore 开关。"
+    Assert-Match $restore 'Assert-QherpRestoreTarget' "恢复入口必须调用目标隔离保护。"
+    Assert-Match $restore 'docker\s+stop.*api.*web|Stop-QherpApplicationContainers' `
+        "恢复入口必须在写入数据库和 bucket 前停止 API/Web 写入口。"
+}
+
+$verifyPath = Join-Path $repoRoot "tools/production/verify-production.ps1"
+if (Test-Path -LiteralPath $verifyPath -PathType Leaf) {
+    $verify = Get-Content -LiteralPath $verifyPath -Raw
+    Assert-True -Condition ($verify -notmatch '(?m)^\s*exit\s+1\s*$') `
+        -Message "生产验证脚本必须以异常返回失败，确保恢复入口能够执行失败清理。"
 }
 
 if ($script:Failures.Count -gt 0) {
