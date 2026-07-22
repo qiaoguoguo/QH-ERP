@@ -191,7 +191,7 @@ onMounted(() => {
       <el-table-column label="上传时间" width="160">
         <template #default="{ row }">{{ formatPlatformDateTime(row.uploadedAt) }}</template>
       </el-table-column>
-      <el-table-column label="操作" fixed="right" width="160">
+      <el-table-column label="操作" min-width="160">
         <template #default="{ row }">
           <el-button v-if="canDownload(row)" data-test="download-attachment" size="small" text @click="downloadAttachment(row)">下载</el-button>
           <el-button v-if="canDelete(row)" data-test="delete-attachment" size="small" text type="danger" @click="deleteAttachment(row)">删除</el-button>

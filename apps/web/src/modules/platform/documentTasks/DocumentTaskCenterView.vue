@@ -313,7 +313,7 @@ function confirmActionLabel(record: DocumentTaskRecord): string {
 }
 
 function businessDomainLabel(domain?: string | null): string {
-  return domainOptions.find((item) => item.value === domain)?.label ?? domain ?? '-'
+  return domainOptions.find((item) => item.value === domain)?.label ?? (domain ? '未知业务域' : '-')
 }
 
 onMounted(() => {
@@ -417,7 +417,7 @@ watch(routeQuerySignature, () => {
         <el-table-column label="结果过期" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.expiresAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="230">
+        <el-table-column label="操作" min-width="230">
           <template #default="{ row }">
             <el-button
               v-if="(row.availableActions ?? []).includes('CONFIRM')"

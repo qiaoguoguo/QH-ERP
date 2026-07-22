@@ -15,6 +15,7 @@ import {
   dataRepairRiskLabel,
   dataRepairStatusLabel,
   dataRepairStatusTagType,
+  governanceErrorLabel,
 } from '../platformGovernanceLabels'
 
 const props = defineProps<{
@@ -72,9 +73,9 @@ const summaryRows = computed(() => {
 const checkRows = computed(() => (detail.value?.checks ?? []).map((item) => {
   const row = item as unknown as Record<string, unknown>
   return {
-    stage: dataRepairCheckStageLabel(String(row.checkType ?? row.stage ?? '')),
-    status: dataRepairCheckStatusLabel(String(row.status ?? '')),
-    summary: String(row.message ?? row.summary ?? row.code ?? '-'),
+    stageLabel: dataRepairCheckStageLabel(String(row.checkType ?? row.stage ?? '')),
+    statusLabel: dataRepairCheckStatusLabel(String(row.status ?? '')),
+    summary: dataRepairCheckSummary(row),
     checkedAt: String(row.createdAt ?? row.checkedAt ?? ''),
   }
 }))
@@ -119,6 +120,15 @@ function summaryValue(value: unknown): string {
     return JSON.stringify(value)
   }
   return String(value)
+}
+
+function dataRepairCheckSummary(row: Record<string, unknown>): string {
+  const message = summaryValue(row.message ?? row.summary)
+  if (message !== '-') {
+    return message
+  }
+  const code = row.code
+  return code ? governanceErrorLabel(String(code)) : '-'
 }
 
 function eventText(row: Record<string, unknown>): string {
@@ -291,8 +301,12 @@ onMounted(() => {
         <h2>预检与验证</h2>
         <div class="table-scroll">
           <el-table :data="checkRows" empty-text="暂无预检或验证记录" stripe>
-            <el-table-column prop="stage" label="阶段" width="120" />
-            <el-table-column prop="status" label="结果" width="120" />
+            <el-table-column label="阶段" width="120">
+              <template #default="{ row }">{{ row.stageLabel }}</template>
+            </el-table-column>
+            <el-table-column label="结果" width="120">
+              <template #default="{ row }">{{ row.statusLabel }}</template>
+            </el-table-column>
             <el-table-column prop="summary" label="摘要" min-width="220" show-overflow-tooltip />
             <el-table-column label="时间" width="160">
               <template #default="{ row }">{{ formatPlatformDateTime(row.checkedAt) }}</template>

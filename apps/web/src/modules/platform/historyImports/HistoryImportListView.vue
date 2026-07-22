@@ -189,7 +189,7 @@ onMounted(async () => {
           <el-table-column label="领域权限" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ requiredPermission(row) || '-' }}</template>
           </el-table-column>
-          <el-table-column label="操作" fixed="right" width="220">
+          <el-table-column label="操作" min-width="220">
             <template #default="{ row }">
               <el-button data-test="download-history-template" size="small" text :loading="actionLoading" @click="downloadTemplate(row)">
                 下载模板
@@ -228,7 +228,7 @@ onMounted(async () => {
         <el-table-column label="创建时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="120">
+        <el-table-column label="操作" min-width="120">
           <template #default="{ row }">
             <RouterLink data-test="history-import-detail-link" :to="detailRoute(row)">查看详情</RouterLink>
           </template>

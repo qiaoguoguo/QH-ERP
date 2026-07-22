@@ -356,7 +356,7 @@ onMounted(() => {
         <el-table-column label="分配时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.assignedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="120">
+        <el-table-column label="操作" min-width="120">
           <template #default="{ row }">
             <el-button data-test="open-approval-detail" size="small" text @click="openDetail(row)">详情</el-button>
           </template>
