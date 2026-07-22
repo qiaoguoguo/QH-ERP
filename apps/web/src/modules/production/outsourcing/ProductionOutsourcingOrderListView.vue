@@ -9,7 +9,7 @@ import {
 import { useAuthStore } from '../../../stores/authStore'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../../system/shared/pageHelpers'
-import { productionErrorMessage, formatProductionQuantity } from '../productionPageHelpers'
+import { productionErrorMessage, formatProductionQuantity, outsourcingOrderStatusLabel } from '../productionPageHelpers'
 
 const router = useRouter()
 const route = useRoute()
@@ -56,21 +56,6 @@ function routeProjectId() {
 
 function applyProjectContextFromRoute() {
   filters.projectId = routeProjectId()
-}
-
-function statusLabel(status?: string | null, statusName?: string | null) {
-  if (statusName && statusName !== status) {
-    return statusName
-  }
-  const labels: Record<string, string> = {
-    DRAFT: '草稿',
-    RELEASED: '已发布',
-    IN_PROGRESS: '执行中',
-    COMPLETED: '已完成',
-    CLOSED: '已关闭',
-    CANCELLED: '已取消',
-  }
-  return labels[String(status ?? '')] ?? String(status ?? '未知状态')
 }
 
 function ownershipText(row: OutsourcingOrderSummaryRecord) {
@@ -170,15 +155,15 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="outsourcing-keyword" clearable placeholder="单号、物料、项目" />
         </el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.status" data-test="outsourcing-status-filter" clearable placeholder="全部状态">
             <el-option label="草稿" value="DRAFT" />
-            <el-option label="已发布" value="RELEASED" />
-            <el-option label="执行中" value="IN_PROGRESS" />
+            <el-option label="已下达" value="RELEASED" />
+            <el-option label="加工中" value="IN_PROGRESS" />
             <el-option label="已完成" value="COMPLETED" />
             <el-option label="已关闭" value="CLOSED" />
             <el-option label="已取消" value="CANCELLED" />
@@ -243,12 +228,12 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="110">
-          <template #default="{ row }">{{ statusLabel(row.status, row.statusName) }}</template>
+          <template #default="{ row }">{{ outsourcingOrderStatusLabel(row.status, row.statusName) }}</template>
         </el-table-column>
         <el-table-column label="来源建议" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.sourceSuggestionNo || row.sourceMrpSuggestionId || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="120">
           <template #default="{ row }">
             <el-button data-test="view-outsourcing-order" text type="primary" @click="viewOrder(row)">查看</el-button>
           </template>

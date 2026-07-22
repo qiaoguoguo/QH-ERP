@@ -277,7 +277,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="production-work-order-keyword" clearable placeholder="工单号、产品" />
         </el-form-item>
@@ -288,9 +288,9 @@ onMounted(() => {
             placeholder="全部状态"
           >
             <el-option label="草稿" value="DRAFT" />
-            <el-option label="已发布" value="RELEASED" />
-            <el-option label="进行中" value="IN_PROGRESS" />
-            <el-option label="已完成" value="COMPLETED" />
+            <el-option label="已下达" value="RELEASED" />
+            <el-option label="生产中" value="IN_PROGRESS" />
+            <el-option label="已完工" value="COMPLETED" />
             <el-option label="已取消" value="CANCELLED" />
           </el-select>
         </el-form-item>
@@ -380,7 +380,7 @@ onMounted(() => {
             {{ formatProductionDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="430">
+        <el-table-column label="操作" min-width="430">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-production-work-order" @click="viewWorkOrder(row)">详情</el-button>
             <el-button v-if="canEditRecord(row)" size="small" text @click="editWorkOrder(row)">

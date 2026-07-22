@@ -388,7 +388,7 @@ onMounted(() => {
     </template>
 
     <template v-if="!isEdit" #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="候选来源">
           <el-input
             v-model="sourceFilters.keyword"

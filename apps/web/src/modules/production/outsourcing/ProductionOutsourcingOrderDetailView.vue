@@ -10,7 +10,12 @@ import {
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../../stores/authStore'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
-import { productionErrorMessage, formatProductionQuantity } from '../productionPageHelpers'
+import {
+  productionDocumentStatusLabel,
+  productionErrorMessage,
+  formatProductionQuantity,
+  outsourcingOrderStatusLabel,
+} from '../productionPageHelpers'
 
 const route = useRoute()
 const router = useRouter()
@@ -26,15 +31,6 @@ const canClose = computed(() => authStore.hasPermission('production:outsourcing:
 const canCancel = computed(() => authStore.hasPermission('production:outsourcing:cancel'))
 const canIssue = computed(() => authStore.hasPermission('production:outsourcing-issue:create'))
 const canReceipt = computed(() => authStore.hasPermission('production:outsourcing-receipt:create'))
-
-const statusLabels: Record<string, string> = {
-  DRAFT: '草稿',
-  RELEASED: '已发布',
-  IN_PROGRESS: '进行中',
-  CLOSED: '已关闭',
-  CANCELLED: '已取消',
-  POSTED: '已过账',
-}
 
 function hasAction(action: string) {
   return Boolean(record.value?.allowedActions?.includes(action))
@@ -58,10 +54,6 @@ function ownershipText() {
     return [record.value.projectNo, record.value.projectName].filter(Boolean).join(' ') || '项目未返回'
   }
   return '公共/未绑定'
-}
-
-function statusText(status?: string | null, statusName?: string | null) {
-  return statusName || statusLabels[String(status ?? '')] || status || '状态未返回'
 }
 
 function canCreateIssueDocument() {
@@ -196,7 +188,7 @@ onMounted(loadRecord)
           <h2>{{ record.orderNo }}</h2>
           <p>{{ ownershipText() }} · {{ record.supplierName }}</p>
         </div>
-        <el-tag>{{ statusText(record.status, record.statusName) }}</el-tag>
+        <el-tag>{{ outsourcingOrderStatusLabel(record.status, record.statusName) }}</el-tag>
       </div>
       <div class="summary-strip">
         <div><strong>计划数量</strong><span>{{ formatProductionQuantity(record.plannedQuantity) }}</span></div>
@@ -238,7 +230,7 @@ onMounted(loadRecord)
             <template #default="{ row }">{{ row.issueNo || row.receiptNo || row.documentNo }}</template>
           </el-table-column>
           <el-table-column label="状态" min-width="110">
-            <template #default="{ row }">{{ statusText(row.status) }}</template>
+            <template #default="{ row }">{{ productionDocumentStatusLabel(row.status) }}</template>
           </el-table-column>
           <el-table-column prop="businessDate" label="业务日期" min-width="120" />
           <el-table-column prop="lineCount" label="行数" min-width="90" />

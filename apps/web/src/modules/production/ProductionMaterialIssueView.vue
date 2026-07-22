@@ -239,7 +239,7 @@ function validateForm(): ProjectProductionMaterialIssuePayload | null {
     return null
   }
   if (!executable.value) {
-    formError.value = '仅已发布或生产中的工单可领料'
+    formError.value = '仅已下达或生产中的工单可领料'
     return null
   }
   if (!form.businessDate.trim() || !form.reason.trim()) {

@@ -21,14 +21,17 @@ import {
   formatMaterialRequirementDateTime,
   formatMaterialRequirementQuantity,
   hasAllowedAction,
+  materialRequirementReasonText,
   materialRequirementErrorMessage,
   materialRequirementPermissions,
+  ownershipTypeLabel,
   reasonCodeLabel,
   runStatusLabel,
   runStatusTagType,
   suggestionStatusLabel,
   suggestionStatusTagType,
   suggestionTypeLabel,
+  supplyTypeLabel,
 } from './materialRequirementPageHelpers'
 
 type TraceAllocationGroupKey = 'inventory' | 'procurement' | 'production' | 'reservation'
@@ -237,28 +240,8 @@ function estimatedAvailableText(line: MaterialRequirementRequirementLineRecord):
   return `预计可用 ${line.estimatedAvailableDate || '暂无可承诺日期'}`
 }
 
-function ownershipTypeLabel(type?: string | null): string {
-  const labels: Record<string, string> = {
-    PROJECT: '项目库存',
-    PUBLIC: '公共库存',
-  }
-  return labels[String(type ?? '')] ?? String(type ?? '所有权未返回')
-}
-
-function supplyTypeLabel(type?: string | null): string {
-  const labels: Record<string, string> = {
-    PROJECT_STOCK: '项目库存',
-    PUBLIC_STOCK: '公共库存',
-    RESERVED_STOCK: '预留占用库存',
-    PURCHASE_SUPPLY: '采购供给',
-    WORK_ORDER_SUPPLY: '工单供给',
-    PRODUCTION_SUPPLY: '生产供给',
-  }
-  return labels[String(type ?? '')] ?? String(type ?? '供给类型未返回')
-}
-
 function allocationSourceText(row: MaterialRequirementAllocationRecord): string {
-  return `${row.supplyTypeName || supplyTypeLabel(row.supplyType)} ${row.sourceNo || '来源编号未返回'}`
+  return `${supplyTypeLabel(row.supplyType, row.supplyTypeName) } ${row.sourceNo || '来源编号未返回'}`
 }
 
 function allocationOwnershipText(row: MaterialRequirementAllocationRecord): string {
@@ -340,9 +323,9 @@ function suggestionTypeText(row: MaterialRequirementSuggestionRecord): string {
 
 function suggestionDescription(row: MaterialRequirementSuggestionRecord): string {
   if (isOutsourcedProductionSuggestion(row) && row.conversionAllowed === false) {
-    return row.actionDisabledReason || '外协生产建议，027 后可执行'
+    return materialRequirementReasonText(row, '外协生产建议，027 后可执行')
   }
-  return row.actionDisabledReason || row.reasonMessage || reasonCodeLabel(row.reasonCode)
+  return materialRequirementReasonText(row)
 }
 
 function suggestionProjectMaterialText(row: MaterialRequirementSuggestionRecord): string {
@@ -607,7 +590,7 @@ onMounted(() => {
             <el-table-column label="建议类型" min-width="140">
               <template #default="{ row }">{{ suggestionTypeLabel(row.suggestionType) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="110" fixed="right">
+            <el-table-column label="操作" width="110">
               <template #default="{ row }">
                 <el-button :data-test="`trace-requirement-${row.id}`" text type="primary" @click="openTrace(row)">追溯</el-button>
               </template>
@@ -658,7 +641,7 @@ onMounted(() => {
             <el-table-column label="说明" min-width="240" show-overflow-tooltip>
               <template #default="{ row }">{{ suggestionDescription(row) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="240" fixed="right">
+            <el-table-column label="操作" width="240">
               <template #default="{ row }">
                 <el-button
                   v-if="canConfirmSuggestion(row)"

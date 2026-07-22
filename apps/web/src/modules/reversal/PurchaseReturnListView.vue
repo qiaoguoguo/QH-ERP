@@ -211,7 +211,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -301,7 +301,7 @@ onMounted(() => {
             <span class="numeric-cell">{{ returnAmountText(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="220">
+        <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-purchase-return" @click="viewPurchaseReturn(row)">详情</el-button>
             <el-button

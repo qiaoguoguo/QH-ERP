@@ -492,7 +492,7 @@ onMounted(loadRecord)
               </el-table-column>
               <el-table-column prop="businessDate" label="业务日期" min-width="110" />
               <el-table-column prop="recordedByName" label="记录人" min-width="110" />
-              <el-table-column label="操作" fixed="right" min-width="132">
+              <el-table-column label="操作" min-width="132">
                 <template #default="{ row }">
                   <el-button size="small" text @click="viewCostRecord(row)">详情</el-button>
                   <el-button

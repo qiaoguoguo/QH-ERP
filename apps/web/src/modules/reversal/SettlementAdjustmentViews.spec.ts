@@ -221,8 +221,8 @@ describe('往来冲减前端页面', () => {
     expect(wrapper.text()).toContain('新建往来冲减')
     expect(wrapper.text()).toContain('RCPT202607050001')
     expect(wrapper.text()).toContain('可冲金额')
-    expect(wrapper.text()).toContain('收款记录')
-    expect(wrapper.text()).toContain('付款记录')
+    expect(wrapper.text()).toContain('收款')
+    expect(wrapper.text()).toContain('付款')
     expect(wrapper.text()).not.toContain('生产退料')
     expect(wrapper.text()).not.toContain('生产补料')
     expect(returnRefundReversalApiMock.settlementAdjustmentSources.list).toHaveBeenCalledWith({
@@ -384,7 +384,7 @@ describe('往来冲减前端页面', () => {
 
     expect(wrapper.text()).toContain('往来冲减详情')
     expect(wrapper.text()).toContain('SA202607050001')
-    expect(wrapper.text()).toContain('退款记录')
+    expect(wrapper.text()).toContain('退款')
     expect(wrapper.text()).toContain('目标应收/应付')
     expect(wrapper.text()).toContain('冲减前后余额')
     expect(wrapper.find('[data-test="edit-settlement-adjustment-detail"]').exists()).toBe(true)

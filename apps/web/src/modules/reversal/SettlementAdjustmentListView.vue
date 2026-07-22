@@ -15,6 +15,11 @@ import { financeErrorMessage, financePermissions, formatFinanceAmount } from '..
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
+import {
+  settlementAdjustmentSourceTypeLabel,
+  settlementAdjustmentTypeLabel,
+  settlementSideLabel,
+} from './reversalPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const router = useRouter()
@@ -52,30 +57,6 @@ const canCreate = computed(() => authStore.hasPermission(financePermissions.sett
 const canUpdate = computed(() => authStore.hasPermission(financePermissions.settlementAdjustmentUpdate))
 const canPost = computed(() => authStore.hasPermission(financePermissions.settlementAdjustmentPost))
 const canCancel = computed(() => authStore.hasPermission(financePermissions.settlementAdjustmentCancel))
-
-function settlementSideText(value: SettlementSide | string) {
-  return value === 'PAYABLE' ? '应付冲减' : '应收冲减'
-}
-
-function adjustmentTypeText(value: SettlementAdjustmentType | string) {
-  const labels: Record<string, string> = {
-    RETURN_OFFSET: '退货冲减',
-    REFUND: '退款记录',
-    PAYMENT_OFFSET: '付款冲减',
-  }
-  return labels[value] ?? value
-}
-
-function sourceTypeText(value: SettlementAdjustmentSourceType | string) {
-  const labels: Record<string, string> = {
-    SALES_RETURN: '销售退货',
-    PURCHASE_RETURN: '采购退货',
-    RECEIPT: '收款记录',
-    PAYMENT: '付款记录',
-    SETTLEMENT_ADJUSTMENT: '往来冲减',
-  }
-  return labels[value] ?? value
-}
 
 async function loadRecords() {
   loading.value = true
@@ -198,7 +179,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -215,18 +196,18 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="冲减类型">
           <el-select v-model="filters.adjustmentType" clearable placeholder="全部类型">
-            <el-option label="退货冲减" value="RETURN_OFFSET" />
-            <el-option label="退款记录" value="REFUND" />
-            <el-option label="付款冲减" value="PAYMENT_OFFSET" />
+            <el-option label="退货冲抵" value="RETURN_OFFSET" />
+            <el-option label="退款" value="REFUND" />
+            <el-option label="付款冲抵" value="PAYMENT_OFFSET" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源类型">
           <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
             <el-option label="销售退货" value="SALES_RETURN" />
             <el-option label="采购退货" value="PURCHASE_RETURN" />
-            <el-option label="收款记录" value="RECEIPT" />
-            <el-option label="付款记录" value="PAYMENT" />
-            <el-option label="往来冲减" value="SETTLEMENT_ADJUSTMENT" />
+            <el-option label="收款" value="RECEIPT" />
+            <el-option label="付款" value="PAYMENT" />
+            <el-option label="结算调整" value="SETTLEMENT_ADJUSTMENT" />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
@@ -260,14 +241,14 @@ onMounted(() => {
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无往来冲减'" stripe>
         <el-table-column prop="adjustmentNo" label="冲减单号" min-width="170" show-overflow-tooltip />
         <el-table-column label="往来方向" min-width="100">
-          <template #default="{ row }">{{ settlementSideText(row.settlementSide) }}</template>
+          <template #default="{ row }">{{ settlementSideLabel(row.settlementSide) }}</template>
         </el-table-column>
         <el-table-column label="冲减类型" min-width="100">
-          <template #default="{ row }">{{ adjustmentTypeText(row.adjustmentType) }}</template>
+          <template #default="{ row }">{{ settlementAdjustmentTypeLabel(row.adjustmentType) }}</template>
         </el-table-column>
         <el-table-column label="来源" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.source.restricted || !row.source.canViewSource ? row.source.restrictedMessage || '来源无查看权限' : `${sourceTypeText(row.source.sourceType)} ${row.source.sourceNo || ''}` }}
+            {{ row.source.restricted || !row.source.canViewSource ? row.source.restrictedMessage || '来源无查看权限' : `${settlementAdjustmentSourceTypeLabel(row.source.sourceType)} ${row.source.sourceNo || ''}` }}
           </template>
         </el-table-column>
         <el-table-column prop="targetNo" label="目标单号" min-width="150" show-overflow-tooltip />
@@ -287,7 +268,7 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatFinanceAmount(row.targetRemainingAmountAfterPost) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="220">
+        <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-settlement-adjustment" @click="viewSettlementAdjustment(row)">详情</el-button>
             <el-button

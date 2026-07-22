@@ -676,7 +676,7 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('最大可选')
     expect(wrapper.text()).toContain('禁用原因')
     expect(wrapper.text()).toContain('冻结库存不可参与可用量')
-    expect(wrapper.text()).toContain('进行中')
+    expect(wrapper.text()).toContain('生产中')
     expect(wrapper.text()).not.toContain('IN_PROGRESS')
     expect(wrapper.text()).not.toContain('canUse')
 
@@ -1082,7 +1082,7 @@ describe('生产退料补料前端页面', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('库存流水 #901')
-    expect(wrapper.text()).toContain('往来冲减 #777')
+    expect(wrapper.text()).toContain('结算调整 #777')
     expect(wrapper.text()).toContain('成本记录 #1001')
 
     const impactButtons = wrapper.findAll('[data-test="view-reversal-impact-resource"]')
@@ -1217,7 +1217,7 @@ describe('生产退料补料前端页面', () => {
 
       expect(wrapper.text()).toContain('生产补料详情')
       expect(wrapper.text()).toContain('MS202607050001')
-      expect(wrapper.text()).toContain('进行中')
+      expect(wrapper.text()).toContain('生产中')
       expect(wrapper.text()).not.toContain('IN_PROGRESS')
       expect(wrapper.text()).toContain('库存出库影响')
       expect(wrapper.text()).toContain('成本影响')
