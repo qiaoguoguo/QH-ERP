@@ -3,9 +3,12 @@ type RawSourceMap = Record<string, string>
 export type StatusLanguageRiskKind =
   | 'direct-status-column'
   | 'direct-template-output'
+  | 'field-config-placeholder-code'
   | 'label-map-original-fallback'
   | 'return-original-fallback'
   | 'service-name-original-fallback'
+  | 'template-raw-fallback'
+  | 'user-visible-attribute-code'
 
 export interface StatusLanguageRisk {
   kind: StatusLanguageRiskKind
@@ -63,9 +66,12 @@ export const statusLanguageWhitelist: StatusLanguageWhitelistEntry[] = []
 const emptySummary: Record<StatusLanguageRiskKind, number> = {
   'direct-status-column': 0,
   'direct-template-output': 0,
+  'field-config-placeholder-code': 0,
   'label-map-original-fallback': 0,
   'return-original-fallback': 0,
   'service-name-original-fallback': 0,
+  'template-raw-fallback': 0,
+  'user-visible-attribute-code': 0,
 }
 
 function sourceLabel(key: string): string {
@@ -133,24 +139,38 @@ function collectLinePatternRisks(
 const exactRawStatusFields = new Set([
   'action',
   'approvalStatus',
+  'analysisMode',
+  'advanceReceiptStatus',
+  'basis',
   'calculationStatus',
+  'category',
   'completenessStatus',
   'direction',
   'finalityStatus',
   'freshnessStatus',
   'matchStatus',
   'mode',
+  'prepaymentStatus',
   'projectStatus',
   'quantityBasis',
   'reasonCode',
+  'result',
   'reconciliationStatus',
+  'severity',
   'sourceType',
+  'sourceVariant',
   'stage',
   'status',
   'suggestionType',
+  'taxpayerType',
   'type',
   'validationStatus',
 ])
+
+const semanticFieldPattern = /(?:status|type|stage|mode|severity|category|result|reason|sourceType|sourceVariant|basis|direction|approval|finality|reconciliation|validation|match|freshness|completeness|quantityBasis|reasonCode|analysisMode|prepaymentStatus|advanceReceiptStatus|taxpayerType)/i
+const semanticBindingAttributePattern = /\b(?:v-model(?::[\w-]+)?|:model-value|model-value|prop|property|name|key|field)\s*=\s*["'][^"']*(?:status|source[-.]?type|source[-.]?variant|stage|mode|severity|category|result|reason|basis|direction|approval|finality|reconciliation|validation|match|freshness|completeness|quantity[-.]?basis|reason[-.]?code|analysis[-.]?mode|prepayment[-.]?status|advance[-.]?receipt[-.]?status|taxpayer[-.]?type)[^"']*["']/i
+const userVisibleAttributePattern = /(?:placeholder|label|title|description|empty-text|content|aria-label)\s*=\s*["']([^"']*\b[A-Z][A-Z0-9_]{2,}\b[^"']*)["']/gi
+const enumLikeTokenPattern = /\b[A-Z][A-Z0-9_]{2,}\b/
 
 function leafField(field: string): string {
   return field.trim().replace(/[^\w.$].*$/, '').split('.').at(-1) ?? field.trim()
@@ -161,7 +181,7 @@ function isRawStatusField(field: string): boolean {
   if (!leaf || /(Label|Name|Text|Message|Reason)$/.test(leaf)) {
     return false
   }
-  return exactRawStatusFields.has(leaf) || /(Status|Stage|Direction|SourceType|ReasonCode)$/.test(leaf)
+  return exactRawStatusFields.has(leaf) || /(Status|Stage|Direction|SourceType|ReasonCode|Severity|Category|Result|Basis|Mode|Type)$/.test(leaf)
 }
 
 function isRawFallbackExpression(field: string): boolean {
@@ -170,6 +190,94 @@ function isRawFallbackExpression(field: string): boolean {
     return false
   }
   return isRawStatusField(normalized) || /^(?:value|code|type|status|stage|sourceType|reasonCode)$/.test(leafField(normalized))
+}
+
+function hasEnumLikeUserVisibleValue(value: string): boolean {
+  return enumLikeTokenPattern.test(value)
+}
+
+function hasSemanticContext(text: string): boolean {
+  return semanticFieldPattern.test(text)
+}
+
+function hasSemanticBindingContext(tagText: string): boolean {
+  return semanticBindingAttributePattern.test(tagText)
+}
+
+function collectUserVisibleAttributeRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
+  const risks: StatusLanguageRisk[] = []
+  for (const match of sourceText.matchAll(/<[^>]+>/g)) {
+    const tagText = match[0]
+    if (!hasSemanticBindingContext(tagText)) {
+      continue
+    }
+    for (const attributeMatch of tagText.matchAll(userVisibleAttributePattern)) {
+      const value = attributeMatch[1] ?? ''
+      if (!hasEnumLikeUserVisibleValue(value)) {
+        continue
+      }
+      risks.push(risk(
+        'user-visible-attribute-code',
+        sourceKey,
+        sourceText,
+        (match.index ?? 0) + (attributeMatch.index ?? 0),
+        value,
+        '用户可见属性在状态、来源、类型、阶段、口径或原因语境中暴露英文枚举值',
+      ))
+    }
+  }
+  return risks
+}
+
+function collectFieldConfigPlaceholderRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
+  const risks: StatusLanguageRisk[] = []
+  for (const lineMatch of sourceText.matchAll(/^.*$/gm)) {
+    const line = lineMatch[0]
+    const keyMatch = line.match(/\b(?:key|field|prop|name)\s*:\s*['"]([^'"]+)['"]/)
+    const placeholderMatch = line.match(/\b(?:placeholder|label|title|description)\s*:\s*['"]([^'"]*\b[A-Z][A-Z0-9_]{2,}\b[^'"]*)['"]/)
+    if (keyMatch && placeholderMatch && hasSemanticContext(keyMatch[1] ?? '')) {
+      risks.push(risk(
+        'field-config-placeholder-code',
+        sourceKey,
+        sourceText,
+        (lineMatch.index ?? 0) + (placeholderMatch.index ?? 0),
+        keyMatch[1] ?? 'unknown',
+        'TypeScript 字段配置的用户可见文案暴露英文状态、来源、类型、阶段或口径枚举',
+      ))
+    }
+  }
+  return risks
+}
+
+function expressionUsesDisplayHelper(expression: string): boolean {
+  return /\b[A-Za-z_$][\w$]*(?:Text|Label|Name|Display)\s*\(/.test(expression)
+}
+
+function collectTemplateFallbackRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
+  const risks: StatusLanguageRisk[] = []
+  for (const match of sourceText.matchAll(/{{\s*([^{}]*(?:\?\?|\|\|)[^{}]*)\s*}}/g)) {
+    const expression = match[1] ?? ''
+    const operatorMatch = expression.match(/\?\?|\|\|/)
+    const leftExpression = operatorMatch ? expression.slice(0, operatorMatch.index) : expression
+    if (expressionUsesDisplayHelper(leftExpression)) {
+      continue
+    }
+    const rawField = Array.from(leftExpression.matchAll(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g))
+      .map((fieldMatch) => fieldMatch[0])
+      .find(isRawStatusField)
+    if (!rawField) {
+      continue
+    }
+    risks.push(risk(
+      'template-raw-fallback',
+      sourceKey,
+      sourceText,
+      match.index ?? 0,
+      rawField,
+      '模板通过 || 或 ?? 先输出原始状态、来源、类型、阶段、口径或原因字段',
+    ))
+  }
+  return risks
 }
 
 function collectStatusRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
@@ -221,6 +329,9 @@ function collectStatusRisks(sourceKey: string, sourceText: string): StatusLangua
   return dedupeRisks([
     ...directStatusColumns,
     ...directTemplateOutputs,
+    ...collectUserVisibleAttributeRisks(sourceKey, sourceText),
+    ...collectFieldConfigPlaceholderRisks(sourceKey, sourceText),
+    ...collectTemplateFallbackRisks(sourceKey, sourceText),
     ...serviceNameFallbacks,
     ...labelMapFallbacks,
     ...returnFallbacks,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { buildPageSurfaceInventory } from '../../test/pageSurfaceInventory'
 import { formatStatusRiskList, scanStatusLanguage } from '../../test/statusLanguageScan'
 import {
   glAccountCategoryText,
@@ -20,7 +21,6 @@ const glVueSources = import.meta.glob<string>('./**/*.vue', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
 const postedVoucherRawTextPattern = /POSTED\s+凭证/g
 const voucherPostedLegacyTextPattern = /已过账凭证/g
 
@@ -53,8 +53,11 @@ describe('总账页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('总账宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('总账操作列纳入全局 fixed right 与更多下拉契约门禁', () => {
+    const glOperationColumns = buildPageSurfaceInventory().operationColumns
+      .filter((column) => column.sourceFile.startsWith('apps/web/src/modules/gl/'))
+
+    expect(glOperationColumns.length).toBeGreaterThan(0)
   })
 
   it('总账凭证 POSTED 语义固定为已记账，页面不显示 POSTED 凭证或已过账凭证', () => {

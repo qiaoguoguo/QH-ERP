@@ -7,6 +7,7 @@ describe('页面治理路由清单门禁', () => {
 
     expect(inventory.routes, summarizeRouteInventory(inventory)).toHaveLength(231)
     expect(inventory.duplicatePaths).toEqual([])
+    expect(inventory.duplicateAliases).toEqual([])
     expect(inventory.topLevelCounts).toEqual({
       '/': 1,
       '/accounts': 4,
@@ -28,6 +29,42 @@ describe('页面治理路由清单门禁', () => {
       '/sales': 24,
       '/system': 1,
     })
+  })
+
+  it('解释 system 兼容别名但不把别名计入 231 个生产主路由', () => {
+    const inventory = buildRouteInventory()
+
+    expect(inventory.aliasRoutes).toHaveLength(3)
+    expect(inventory.systemCompatibilityAliases.map((route) => ({
+      aliasPath: route.aliasPath,
+      canonicalPath: route.canonicalPath,
+      canonicalName: route.canonicalName,
+      componentSourceFile: route.componentSourceFile,
+      requiredPermissions: route.requiredPermissions,
+    }))).toEqual([
+      {
+        aliasPath: '/system/roles',
+        canonicalPath: '/accounts/roles',
+        canonicalName: 'system-roles',
+        componentSourceFile: 'apps/web/src/modules/system/roles/RoleListView.vue',
+        requiredPermissions: ['system:role:view'],
+      },
+      {
+        aliasPath: '/system/roles/:id/permissions',
+        canonicalPath: '/accounts/roles/:id/permissions',
+        canonicalName: 'system-role-permissions',
+        componentSourceFile: 'apps/web/src/modules/system/roles/RolePermissionView.vue',
+        requiredPermissions: ['system:role:view', 'system:permission:view', 'system:role:assign-permission'],
+      },
+      {
+        aliasPath: '/system/users',
+        canonicalPath: '/accounts/users',
+        canonicalName: 'system-users',
+        componentSourceFile: 'apps/web/src/modules/system/users/UserListView.vue',
+        requiredPermissions: ['system:user:view'],
+      },
+    ])
+    expect(inventory.topLevelCounts['/system']).toBe(1)
   })
 
   it('重定向路由目标存在且不计为独立页面组件', () => {

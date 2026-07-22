@@ -16,14 +16,27 @@ export type RouteInventoryType =
 export interface RouteInventoryRecord {
   path: string
   name: string | null
+  aliases: string[]
   sourceFile: string
   line: number
   redirect: string | null
   componentImport: string | null
+  componentSourceFile: string | null
   requiredPermissions: string[]
   routeType: RouteInventoryType
   isPlaceholder: boolean
   isReportConfig: boolean
+}
+
+export interface RouteAliasRecord {
+  aliasPath: string
+  canonicalPath: string
+  canonicalName: string | null
+  sourceFile: string
+  line: number
+  componentSourceFile: string | null
+  requiredPermissions: string[]
+  routeType: RouteInventoryType
 }
 
 export interface DynamicImportRecord {
@@ -36,7 +49,10 @@ export interface DynamicImportRecord {
 
 export interface RouteInventory {
   routes: RouteInventoryRecord[]
+  aliasRoutes: RouteAliasRecord[]
+  systemCompatibilityAliases: RouteAliasRecord[]
   duplicatePaths: Array<{ path: string; locations: string[] }>
+  duplicateAliases: Array<{ aliasPath: string; locations: string[] }>
   redirects: RouteInventoryRecord[]
   missingRedirectTargets: RouteInventoryRecord[]
   dynamicImports: DynamicImportRecord[]
@@ -136,6 +152,17 @@ function stringArrayProperty(object: ts.ObjectLiteralExpression, name: string): 
   return initializer.elements.filter(isStringLike).map((item) => item.text)
 }
 
+function stringOrStringArrayProperty(object: ts.ObjectLiteralExpression, name: string): string[] {
+  const initializer = propertyInitializer(object, name)
+  if (isStringLike(initializer)) {
+    return [initializer.text]
+  }
+  if (!initializer || !ts.isArrayLiteralExpression(initializer)) {
+    return []
+  }
+  return initializer.elements.filter(isStringLike).map((item) => item.text)
+}
+
 function lineNumber(sourceFile: ts.SourceFile, position: number): number {
   return sourceFile.getLineAndCharacterOfPosition(position).line + 1
 }
@@ -210,13 +237,19 @@ function collectRouteRecords(sourceKey: string, sourceText: string): RouteInvent
       const path = stringProperty(node, ['path'])
       if (path) {
         const component = propertyInitializer(node, 'component')
+        const componentImport = component ? firstImportPath(component) : null
+        const componentResolvedKey = componentImport ? resolveImportKey(sourceKey, componentImport) : null
         const recordWithoutType = {
           path,
           name: stringProperty(node, ['name', 'routeName']),
+          aliases: stringOrStringArrayProperty(node, 'alias'),
           sourceFile: sourceLabel(sourceKey),
           line: lineNumber(sourceFile, node.getStart(sourceFile)),
           redirect: stringProperty(node, ['redirect']),
-          componentImport: component ? firstImportPath(component) : null,
+          componentImport,
+          componentSourceFile: componentResolvedKey && vueSourceModules[componentResolvedKey]
+            ? sourceLabel(componentResolvedKey)
+            : null,
           requiredPermissions: metaPermissions(node),
           isPlaceholder: component?.getText(sourceFile).includes('placeholder(') ?? false,
           isReportConfig,
@@ -281,16 +314,37 @@ export function buildRouteInventory(): RouteInventory {
   const allSources = [...routeSources, ...reportSources]
   const routes = allSources.flatMap(([key, sourceText]) => collectRouteRecords(key, sourceText))
   const pathLocations = new Map<string, string[]>()
+  const aliasLocations = new Map<string, string[]>()
   routes.forEach((route) => {
     const locations = pathLocations.get(route.path) ?? []
     locations.push(`${route.sourceFile}:${route.line}`)
     pathLocations.set(route.path, locations)
+    route.aliases.forEach((aliasPath) => {
+      const aliasRouteLocations = aliasLocations.get(aliasPath) ?? []
+      aliasRouteLocations.push(`${route.sourceFile}:${route.line} -> ${route.path}`)
+      aliasLocations.set(aliasPath, aliasRouteLocations)
+    })
   })
+
+  const aliasRoutes = routes.flatMap((route) => route.aliases.map((aliasPath) => ({
+    aliasPath,
+    canonicalPath: route.path,
+    canonicalName: route.name,
+    sourceFile: route.sourceFile,
+    line: route.line,
+    componentSourceFile: route.componentSourceFile,
+    requiredPermissions: route.requiredPermissions,
+    routeType: route.routeType,
+  }))).sort((left, right) => left.aliasPath.localeCompare(right.aliasPath))
 
   const duplicatePaths = Array.from(pathLocations.entries())
     .filter(([, locations]) => locations.length > 1)
     .map(([path, locations]) => ({ path, locations }))
     .sort((left, right) => left.path.localeCompare(right.path))
+  const duplicateAliases = Array.from(aliasLocations.entries())
+    .filter(([, locations]) => locations.length > 1)
+    .map(([aliasPath, locations]) => ({ aliasPath, locations }))
+    .sort((left, right) => left.aliasPath.localeCompare(right.aliasPath))
 
   const pathSet = new Set(routes.map((route) => route.path))
   const redirects = routes.filter((route) => route.redirect)
@@ -307,7 +361,10 @@ export function buildRouteInventory(): RouteInventory {
 
   return {
     routes: routes.sort((left, right) => left.path.localeCompare(right.path)),
+    aliasRoutes,
+    systemCompatibilityAliases: aliasRoutes.filter((route) => route.aliasPath.startsWith('/system/')),
     duplicatePaths,
+    duplicateAliases,
     redirects,
     missingRedirectTargets: redirects.filter((route) => route.redirect && !pathSet.has(route.redirect)),
     dynamicImports: dynamicImports.sort((left, right) => (
@@ -326,6 +383,7 @@ export function buildRouteInventory(): RouteInventory {
 export function summarizeRouteInventory(inventory: RouteInventory): string {
   return [
     `生产路由 ${inventory.routes.length} 个`,
+    `兼容别名 ${inventory.aliasRoutes.length} 个`,
     `重复路径 ${inventory.duplicatePaths.length} 个`,
     `重定向 ${inventory.redirects.length} 个`,
     `动态 import ${inventory.dynamicImports.length} 个`,

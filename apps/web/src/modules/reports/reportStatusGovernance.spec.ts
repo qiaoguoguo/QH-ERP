@@ -101,9 +101,9 @@ describe('报表页面规范与中文状态治理', () => {
     expect(reportRisks, formatStatusRiskList(reportRisks)).toEqual([])
   })
 
-  it('报表表格不保留右固定来源或操作列，筛选区不回退旧式 inline 查询', () => {
-    const rightFixedColumns = patternMatches(
-      /<el-table-column\b(?=[^>]*\blabel=["'](?:来源|操作)["'])(?=[^>]*\bfixed=["']right["'])[^>]*>/g,
+  it('报表来源列不保留右固定遮挡风险，筛选区不回退旧式 inline 查询', () => {
+    const rightFixedSourceColumns = patternMatches(
+      /<el-table-column\b(?=[^>]*\blabel=["']来源["'])(?=[^>]*\bfixed=["']right["'])[^>]*>/g,
       vueSources,
     )
     const directSemanticColumns = patternMatches(
@@ -115,7 +115,7 @@ describe('报表页面规范与中文状态治理', () => {
       vueSources,
     )
 
-    expect(rightFixedColumns).toEqual([])
+    expect(rightFixedSourceColumns).toEqual([])
     expect(directSemanticColumns).toEqual([])
     expect(inlineQueryForms).toEqual([])
   })
