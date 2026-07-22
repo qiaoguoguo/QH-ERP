@@ -97,12 +97,37 @@ async function mountDocuments(permissions = [
   await router.push('/inventory/documents')
   await router.isReady()
   const wrapper = mount(InventoryDocumentListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 describe('库存单据列表页', () => {
@@ -113,6 +138,7 @@ describe('库存单据列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -151,7 +177,8 @@ describe('库存单据列表页', () => {
     const { wrapper } = await mountDocuments()
 
     expect(wrapper.findAll('[data-test="edit-inventory-document"]')).toHaveLength(1)
-    expect(wrapper.findAll('[data-test="post-inventory-document"]')).toHaveLength(1)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-inventory-document')).toBeTruthy()
     expect(wrapper.findAll('[data-test="view-inventory-document"]')).toHaveLength(2)
   })
 
@@ -181,8 +208,7 @@ describe('库存单据列表页', () => {
     inventoryApiMock.documents.post.mockRejectedValueOnce(new Error('库存不足，调减后库存不能小于 0'))
     const { wrapper } = await mountDocuments()
 
-    await wrapper.find('[data-test="post-inventory-document"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'post-inventory-document')
 
     expect(confirmActionMock).toHaveBeenCalledWith(expect.stringContaining('会影响库存余额且不可撤销'))
     expect(inventoryApiMock.documents.post).toHaveBeenCalledWith(1)

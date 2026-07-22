@@ -11,6 +11,7 @@ import {
 import { pageItems } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import {
+  approvalActionLabel,
   approvalScopeLabel,
   approvalStatusLabel,
   approvalStatusTagType,
@@ -121,6 +122,11 @@ function businessObjectRoute(record: { sceneCode?: string | null, objectType?: s
 
 function businessObjectLabel(objectType?: string | null) {
   return objectType ? businessObjectLabels[objectType] : null
+}
+
+function approvalHistoryText(history: { operatorName?: string | null; comment?: string | null; action?: string | null }) {
+  const comment = history.comment?.trim()
+  return `${history.operatorName || '-'} ${comment || approvalActionLabel(history.action)}`
 }
 
 function isStaleActionError(caught: unknown): boolean {
@@ -350,7 +356,7 @@ onMounted(() => {
         <el-table-column label="分配时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.assignedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="120">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="open-approval-detail" size="small" text @click="openDetail(row)">详情</el-button>
           </template>
@@ -404,11 +410,11 @@ onMounted(() => {
       <h3>审批记录</h3>
       <el-timeline>
         <el-timeline-item v-for="history in detail?.histories ?? []" :key="`${history.action}-${history.operatedAt}`" :timestamp="formatPlatformDateTime(history.operatedAt)">
-          {{ history.operatorName || '-' }} {{ history.comment || history.action }}
+          {{ approvalHistoryText(history) }}
         </el-timeline-item>
       </el-timeline>
       <h3>附件快照</h3>
-      <el-table :data="detail?.attachmentSnapshots ?? []" empty-text="暂无附件快照" stripe>
+      <el-table class="table-scroll" :data="detail?.attachmentSnapshots ?? []" empty-text="暂无附件快照" stripe>
         <el-table-column prop="fileName" label="文件名" min-width="180" show-overflow-tooltip />
         <el-table-column prop="fileSize" label="大小" width="100" />
         <el-table-column prop="sha256" label="SHA-256" min-width="180" show-overflow-tooltip />

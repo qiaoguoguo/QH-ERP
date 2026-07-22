@@ -142,7 +142,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="cost-record-keyword" clearable placeholder="记录号、工单、产品、来源" />
         </el-form-item>
@@ -236,7 +236,7 @@ onMounted(loadRecords)
         <el-table-column label="状态" min-width="90">
           <template #default="{ row }">{{ costStatusLabel(row.status) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="132">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-cost-record" @click="viewRecord(row)">详情</el-button>
             <el-button

@@ -595,14 +595,22 @@ abstract class ReportingStage033QuerySupport {
 	protected ReportingAdminService.TraceSourceResponse trace(String sourceType, Long sourceId, String sourceNo,
 			Long sourceLineId, LocalDate businessDate, String status, BigDecimal quantity, BigDecimal amount,
 			String permissionCode, String resourceRouteName, Map<String, Object> resourceRouteParams) {
+		return trace(sourceType, sourceId, sourceNo, sourceLineId, businessDate, status, quantity, amount,
+				permissionCode, resourceRouteName, resourceRouteParams, null);
+	}
+
+	protected ReportingAdminService.TraceSourceResponse trace(String sourceType, Long sourceId, String sourceNo,
+			Long sourceLineId, LocalDate businessDate, String status, BigDecimal quantity, BigDecimal amount,
+			String permissionCode, String resourceRouteName, Map<String, Object> resourceRouteParams,
+			String statusName) {
 		boolean canView = permissionCode == null || hasPermission(permissionCode);
 		if (!canView) {
 			return new ReportingAdminService.TraceSourceResponse(sourceType, null, null, null, null, null, null, null,
-					null, null, null, false, true, RESTRICTED_MESSAGE);
+					null, null, null, false, true, RESTRICTED_MESSAGE, null);
 		}
 		return new ReportingAdminService.TraceSourceResponse(sourceType, sourceId, sourceNo, sourceLineId,
 				businessDate, status, quantity == null ? null : quantity(quantity), amount == null ? null : amount(amount),
-				resourceRouteName, resourceRouteParams, null, true, false, null);
+				resourceRouteName, resourceRouteParams, null, true, false, null, statusName);
 	}
 
 	protected Map<String, Object> routeParams(Object... keyValues) {

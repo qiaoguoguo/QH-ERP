@@ -45,7 +45,7 @@ const approvalStatusTagTypes: Record<string, 'info' | 'success' | 'warning' | 'd
   APPROVED: 'success',
   REJECTED: 'danger',
   WITHDRAWN: 'warning',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 const sourceTypeLabels: Record<string, string> = {
   PROJECT: '项目来源',

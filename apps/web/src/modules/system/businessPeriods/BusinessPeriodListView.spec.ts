@@ -1,8 +1,8 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useConfirmActionMock } from '../../../test/setup'
 import { useAuthStore } from '../../../stores/authStore'
 import BusinessPeriodListView from './BusinessPeriodListView.vue'
@@ -109,6 +109,7 @@ function mountPeriods(permissions = [
     permissions,
   })
   return mount(BusinessPeriodListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -124,7 +125,50 @@ async function mountPeriodsWithRouter(permissions: string[]) {
   return { wrapper, router }
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
+}
+
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+async function teleportedAction(testId: string) {
+  return waitFor(() => visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`)))
+    .at(-1), `可见更多菜单动作 ${testId}`)
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  const action = await teleportedAction(testId)
+  action.click()
+  await flushPromises()
+}
+
 describe('业务期间管理页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     apiMock.list.mockResolvedValue(emptyPage)
@@ -163,8 +207,10 @@ describe('业务期间管理页', () => {
     expect(wrapper.text()).toContain('开放')
     expect(wrapper.text()).toContain('2026-06')
     expect(wrapper.text()).toContain('已锁定')
-    expect(wrapper.text()).toContain('锁定')
-    expect(wrapper.text()).toContain('解锁')
+    await openMoreActions(wrapper, 0)
+    expect((await teleportedAction('lock-business-period')).textContent).toContain('锁定')
+    await openMoreActions(wrapper, 1)
+    expect((await teleportedAction('unlock-business-period')).textContent).toContain('解锁')
   })
 
   it('支持筛选、重置和分页请求', async () => {
@@ -245,7 +291,7 @@ describe('业务期间管理页', () => {
     const wrapper = mountPeriods()
     await flushPromises()
 
-    await wrapper.find('[data-test="lock-business-period"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'lock-business-period', 0)
     await flushPromises()
     await wrapper.find('textarea[name="period-action-reason"]').setValue('月度经营数据核对完成')
     await wrapper.find('[data-test="submit-period-action"]').trigger('click')
@@ -254,7 +300,7 @@ describe('业务期间管理页', () => {
     expect(confirmActionMock).toHaveBeenCalledWith('确认锁定业务期间“2026-07”？锁定后该期间业务日期的写入会被拒绝。')
     expect(apiMock.lock).toHaveBeenCalledWith(1, { reason: '月度经营数据核对完成' })
 
-    await wrapper.find('[data-test="unlock-business-period"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'unlock-business-period', 1)
     await flushPromises()
     await wrapper.find('textarea[name="period-action-reason"]').setValue('补录已审批反向业务')
     await wrapper.find('[data-test="submit-period-action"]').trigger('click')
@@ -357,7 +403,7 @@ describe('业务期间管理页', () => {
     const wrapper = mountPeriods()
     await flushPromises()
 
-    await wrapper.find('[data-test="lock-business-period"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'lock-business-period')
     await flushPromises()
     await wrapper.find('textarea[name="period-action-reason"]').setValue('月度经营数据核对完成')
     await wrapper.find('[data-test="submit-period-action"]').trigger('click')

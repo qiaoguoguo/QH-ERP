@@ -141,7 +141,7 @@ onMounted(loadRecords)
       <el-button data-test="open-tax-payment-create" type="primary" :disabled="!canManagePayments" @click="openPaymentCreate">登记缴纳</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecords">查询</el-button></el-form-item>
       </el-form>
@@ -164,7 +164,7 @@ onMounted(loadRecords)
         <el-table-column label="权限" min-width="180">
           <template #default="{ row }">{{ sourceVisibleText(row.sourceVisible) }} / {{ bankSensitiveText(row.bankSensitiveVisible) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="100">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="correct-tax-payment" text :disabled="!financialCloseActionState(row, 'CORRECT', canManagePayments, '无税款缴纳更正权限').allowed" :loading="actionLoading" @click="correctTaxPayment(row)">更正</el-button>
           </template>

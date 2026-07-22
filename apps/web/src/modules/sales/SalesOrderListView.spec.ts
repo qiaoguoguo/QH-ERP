@@ -1,13 +1,15 @@
-import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { installElementPlus } from '../../elementPlus'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { SalesOrderSummaryRecord } from '../../shared/api/salesApi'
 import { useAuthStore } from '../../stores/authStore'
 import SalesOrderListView from './SalesOrderListView.vue'
+
+const qherpElementPlusPlugin = { install: installElementPlus }
 
 const salesApiMock = vi.hoisted(() => ({
   orders: {
@@ -116,6 +118,16 @@ const orderPage: PageResult<SalesOrderSummaryRecord> = {
   totalPages: 1,
 }
 
+function orderPageOf(items: SalesOrderSummaryRecord[]): PageResult<SalesOrderSummaryRecord> {
+  return {
+    items,
+    page: 1,
+    pageSize: 10,
+    total: items.length,
+    totalPages: items.length > 0 ? 1 : 0,
+  }
+}
+
 const emptyOrderPage: PageResult<SalesOrderSummaryRecord> = {
   items: [],
   page: 1,
@@ -126,6 +138,62 @@ const emptyOrderPage: PageResult<SalesOrderSummaryRecord> = {
 
 function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
+}
+
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  await closeOpenDropdowns()
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+async function closeOpenDropdowns() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+
+function visibleDropdownPoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) => {
+    return popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none'
+  })
+}
+
+function findVisibleTeleportedAction(testId: string) {
+  for (const popper of visibleDropdownPoppers()) {
+    const action = popper.querySelector<HTMLElement>(`[data-test="${testId}"]`)
+    if (action) {
+      return action
+    }
+  }
+  return null
+}
+
+async function waitForTeleportedAction(testId: string) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const action = findVisibleTeleportedAction(testId)
+    if (action) {
+      return action
+    }
+    await flushPromises()
+  }
+  const action = findVisibleTeleportedAction(testId)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function expectTeleportedMenuItem(testId: string, text: string) {
+  const action = await waitForTeleportedAction(testId)
+  expect(action.textContent?.trim()).toBe(text)
+  expect(action.closest('[role="menuitem"]')).not.toBeNull()
+  return action
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  ;(await waitForTeleportedAction(testId)).click()
+  await flushPromises()
 }
 
 async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
@@ -168,8 +236,9 @@ async function mountList(permissions = [
   await router.push('/sales/orders')
   await router.isReady()
   const wrapper = mount(SalesOrderListView, {
+    attachTo: document.body,
     global: {
-      plugins: [pinia, router, ElementPlus],
+      plugins: [pinia, router, qherpElementPlusPlugin],
     },
   })
   await flushPromises()
@@ -193,6 +262,7 @@ describe('销售订单列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -223,8 +293,8 @@ describe('销售订单列表页', () => {
     expect(wrapper.text()).toContain('华东客户')
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).toContain('100')
-    expect(wrapper.text()).toContain('手工订单')
-    expect(wrapper.text()).toContain('报价 SQ-001')
+    expect(wrapper.text()).toContain('手工录入')
+    expect(wrapper.text()).toContain('报价带入 SQ-001')
     expect(wrapper.text()).toContain('含税 11300')
     expect(wrapper.text()).toContain('信用通过')
     expect(wrapper.text()).toContain('销售员')
@@ -336,19 +406,25 @@ describe('销售订单列表页', () => {
   })
 
   it('按权限和状态展示销售订单行操作', async () => {
-    const { wrapper, router } = await mountList()
+    const { wrapper } = await mountList()
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '确认')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '关闭')).toHaveLength(3)
-    expect(buttonsByText(wrapper, '创建出库')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '更多').length).toBeGreaterThan(0)
+    await openMoreActions(wrapper, 0)
+    await expectTeleportedMenuItem('confirm-sales-order', '确认')
+    await expectTeleportedMenuItem('cancel-sales-order', '取消')
+    await openMoreActions(wrapper, 1)
+    await expectTeleportedMenuItem('close-sales-order', '关闭')
+    await expectTeleportedMenuItem('create-sales-shipment', '创建出库')
 
-    await wrapper.find('[data-test="create-sales-shipment"]').trigger('click')
-    await flushPromises()
-    expect(router.currentRoute.value.name).toBe('sales-shipment-create')
-    expect(router.currentRoute.value.params.orderId).toBe('2')
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    salesApiMock.orders.list.mockResolvedValueOnce(orderPageOf([confirmedOrder]))
+    const target = await mountList()
+    await clickTeleportedAction(target.wrapper, 'create-sales-shipment')
+    expect(target.router.currentRoute.value.name).toBe('sales-shipment-create')
+    expect(target.router.currentRoute.value.params.orderId).toBe('2')
   })
 
   it('只读权限仅展示详情入口', async () => {
@@ -364,37 +440,55 @@ describe('销售订单列表页', () => {
   })
 
   it('确认、取消和关闭动作成功后刷新列表，失败时显示错误', async () => {
-    const { wrapper } = await mountList()
+    salesApiMock.orders.list.mockResolvedValueOnce(orderPageOf([draftOrder]))
+    let { wrapper } = await mountList()
+    let listCallsBeforeAction = salesApiMock.orders.list.mock.calls.length
 
-    await wrapper.find('[data-test="confirm-sales-order"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'confirm-sales-order', 0)
     expect(salesApiMock.orders.confirm).toHaveBeenCalledWith(1, expect.objectContaining({
       version: 4,
       idempotencyKey: expect.any(String),
     }))
     expect(salesApiMock.orders.confirm.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
+    expect(salesApiMock.orders.list).toHaveBeenCalledTimes(listCallsBeforeAction + 1)
 
-    await wrapper.find('[data-test="cancel-sales-order"]').trigger('click')
-    await flushPromises()
-    expect(salesApiMock.orders.cancel).toHaveBeenCalledWith(1, expect.objectContaining({
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    salesApiMock.orders.list.mockResolvedValueOnce(orderPageOf([draftOrder]))
+    ;({ wrapper } = await mountList())
+    listCallsBeforeAction = salesApiMock.orders.list.mock.calls.length
+    await clickTeleportedAction(wrapper, 'cancel-sales-order', 0)
+    const cancelCall = salesApiMock.orders.cancel.mock.calls[0]
+    expect(cancelCall[0]).toBe(1)
+    expect(cancelCall[1]).toEqual(expect.objectContaining({
       version: 4,
       reason: '客户取消',
       idempotencyKey: expect.any(String),
     }))
+    expect(salesApiMock.orders.list).toHaveBeenCalledTimes(listCallsBeforeAction + 1)
 
-    await wrapper.find('[data-test="close-sales-order"]').trigger('click')
-    await flushPromises()
-    expect(salesApiMock.orders.close).toHaveBeenCalledWith(2, expect.objectContaining({
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    salesApiMock.orders.list.mockResolvedValueOnce(orderPageOf([confirmedOrder]))
+    ;({ wrapper } = await mountList())
+    listCallsBeforeAction = salesApiMock.orders.list.mock.calls.length
+    await clickTeleportedAction(wrapper, 'close-sales-order', 0)
+    const closeCall = salesApiMock.orders.close.mock.calls[0]
+    expect(closeCall[0]).toBe(2)
+    expect(closeCall[1]).toEqual(expect.objectContaining({
       version: 4,
       reason: '履约完成',
       idempotencyKey: expect.any(String),
     }))
+    expect(salesApiMock.orders.list).toHaveBeenCalledTimes(listCallsBeforeAction + 1)
 
+    wrapper.unmount()
+    document.body.innerHTML = ''
     salesApiMock.orders.close.mockRejectedValueOnce(new Error('销售订单状态不允许关闭'))
-    await wrapper.find('[data-test="close-sales-order"]').trigger('click')
-    await flushPromises()
+    salesApiMock.orders.list.mockResolvedValueOnce(orderPageOf([confirmedOrder]))
+    ;({ wrapper } = await mountList())
+    await clickTeleportedAction(wrapper, 'close-sales-order', 0)
 
     expect(wrapper.text()).toContain('销售订单状态不允许关闭')
-    expect(salesApiMock.orders.list).toHaveBeenCalledTimes(4)
   })
 })

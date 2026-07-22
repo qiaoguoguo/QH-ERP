@@ -5,7 +5,12 @@ import { createIdempotencyKey, documentPlatformApi, type DocumentTaskRecord } fr
 import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import { useAuthStore } from '../../stores/authStore'
 import { pageItems } from '../system/shared/pageHelpers'
-import { normalizeOptionalId, procurementErrorMessage, procurementModeDisplay } from './procurementPageHelpers'
+import {
+  normalizeOptionalId,
+  procurementErrorMessage,
+  procurementInquiryStatusLabel,
+  procurementModeDisplay,
+} from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import BusinessReferenceSelect from '../system/shared/BusinessReferenceSelect.vue'
@@ -136,7 +141,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" clearable placeholder="询价号、标题、物料" />
         </el-form-item>
@@ -185,12 +190,12 @@ onMounted(() => {
           <template #default="{ row }">{{ row.materialSummary || '物料摘要未返回' }}</template>
         </el-table-column>
         <el-table-column label="业务状态" min-width="130">
-          <template #default="{ row }">业务状态：{{ row.statusName || row.status }}</template>
+          <template #default="{ row }">业务状态：{{ procurementInquiryStatusLabel(row.status, row.statusName) }}</template>
         </el-table-column>
         <el-table-column label="供应商/报价" min-width="170">
           <template #default="{ row }">供应商 {{ row.supplierCount }} 家 / 报价 {{ row.quoteCount }} 条</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <router-link :to="{ name: 'procurement-inquiry-detail', params: { id: String(row.id) } }">详情</router-link>
           </template>

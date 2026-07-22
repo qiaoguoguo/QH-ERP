@@ -282,7 +282,7 @@ onMounted(loadAll)
         <div><span>期间</span><strong>{{ record.periodCode }}</strong></div>
         <div><span>起止日期</span><strong>{{ record.startDate }} 至 {{ record.endDate }}</strong></div>
         <div><span>月结状态</span><PeriodCloseStatusTag :status="record.closeStatus" :label="record.closeStatusName" /></div>
-        <div><span>业务期间状态</span><strong>{{ record.periodStatusName || businessPeriodStatusLabel(record.periodStatus) }}</strong></div>
+        <div><span>业务期间状态</span><strong>{{ businessPeriodStatusLabel(record.periodStatus, record.periodStatusName) }}</strong></div>
         <div><span>版本</span><strong>{{ record.revisionNo }} / {{ record.version }}</strong></div>
         <div><span>最近检查</span><strong>{{ formatPeriodCloseDateTime(record.latestCheckedAt) }}</strong></div>
         <div><span>阻断/警告</span><strong>{{ record.blockingCount }} / {{ record.warningCount }}</strong></div>

@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { glApi, type GlAuxCandidateRecord, type GlAuxDimensionRecord } from '../../shared/api/glApi'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { createGlIdempotencyKey, glActionAllowed, glActionDisabledReason, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
+import { createGlIdempotencyKey, glActionAllowed, glActionDisabledReason, glAuxDimensionTypeText, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
 import './GlShared.css'
 
 const filters = reactive({ keyword: '', enabled: '' })
@@ -253,7 +253,7 @@ onMounted(loadRecords)
       <el-button data-test="create-aux-dimension" type="primary" @click="openCreateDimension">新增自定义维度</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="维度编码或名称" /></el-form-item>
         <el-form-item label="启用">
           <el-select v-model="filters.enabled" clearable placeholder="全部">
@@ -276,10 +276,12 @@ onMounted(loadRecords)
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无辅助核算维度'" stripe>
         <el-table-column prop="code" label="维度编码" min-width="130" />
         <el-table-column prop="name" label="维度名称" min-width="160" />
-        <el-table-column prop="dimensionType" label="维度类型" min-width="120" />
+        <el-table-column label="维度类型" min-width="120">
+          <template #default="{ row }">{{ glAuxDimensionTypeText(row.dimensionType) }}</template>
+        </el-table-column>
         <el-table-column prop="itemCount" label="候选数量" min-width="100" align="right" />
         <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="view-aux-candidates" text @click="openCandidates(row)">候选详情</el-button>
             <el-button data-test="edit-aux-dimension" text @click="openEditDimension(row)">维护</el-button>
@@ -300,7 +302,7 @@ onMounted(loadRecords)
     <el-drawer v-model="candidateDrawerVisible" title="辅助候选详情" size="min(720px, 92vw)" :teleported="false">
       <el-alert type="info" title="候选池独立查询，已选辅助项按对象编码与名称回显。" :closable="false" />
       <el-alert v-if="!selectedDimensionIsCustom" type="warning" title="系统维度不可维护自定义项目，仅允许查看真实业务候选。" :closable="false" />
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="候选关键词">
           <el-input v-model="candidateKeyword" name="gl-aux-candidate-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
@@ -324,7 +326,7 @@ onMounted(loadRecords)
           <el-table-column label="权限状态" min-width="140">
             <template #default="{ row }">{{ row.restricted ? (row.restrictedReason || '无权查看候选') : '可选' }}</template>
           </el-table-column>
-          <el-table-column v-if="selectedDimensionIsCustom" label="操作" fixed="right" min-width="150">
+          <el-table-column v-if="selectedDimensionIsCustom" label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button data-test="edit-custom-aux-item" text :disabled="!glActionAllowed(row, 'UPDATE')" @click="openEditItem(row)">编辑</el-button>
               <el-button data-test="disable-custom-aux-item" text type="danger" :disabled="!glActionAllowed(row, 'DISABLE')" @click="disableCustomItem(row)">停用</el-button>

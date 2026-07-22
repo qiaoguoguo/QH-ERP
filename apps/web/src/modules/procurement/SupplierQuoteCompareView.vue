@@ -8,6 +8,7 @@ import {
   formatProcurementAmount,
   formatProcurementQuantity,
   procurementErrorMessage,
+  procurementPriceSourceDisplay,
 } from './procurementPageHelpers'
 
 const props = defineProps<{
@@ -60,7 +61,7 @@ function priceSourceText(quote: SupplierQuoteRecord): string {
   if (quote.lowestEffectiveQuote) {
     return '最低有效报价'
   }
-  return quote.priceSourceTypeName || quote.priceSourceType || '非最低选价'
+  return procurementPriceSourceDisplay(quote, '非最低选价')
 }
 
 function selectReasonText(quote: SupplierQuoteRecord): string {
@@ -157,7 +158,7 @@ onMounted(() => {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="canSelect(row)"

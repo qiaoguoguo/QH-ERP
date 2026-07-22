@@ -10,6 +10,13 @@ import {
 import { useAuthStore } from '../../../stores/authStore'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import { formatPlatformDateTime, platformErrorMessage } from '../platformPageHelpers'
+import { masterStatusLabel } from '../../master/shared/masterPageHelpers'
+import { statusTagType } from '../../system/shared/pageHelpers'
+import {
+  batchOperationItemStatusLabel,
+  batchOperationItemStatusTagType,
+  batchOperationStatusLabel,
+} from '../platformGovernanceLabels'
 import {
   candidateMissingVersionMessage,
   hasStableCandidateVersion,
@@ -239,39 +246,6 @@ async function executeOperation() {
   }
 }
 
-function operationStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    PRECHECKED: '预检通过',
-    PRECHECK_FAILED: '预检失败',
-    EXECUTING: '执行中',
-    SUCCEEDED: '执行成功',
-    FAILED: '执行失败',
-    CANCELLED: '已取消',
-    EXPIRED: '已过期',
-  }
-  return labels[status] ?? status
-}
-
-function itemStatusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    READY: '可执行',
-    BLOCKED: '阻断',
-    SUCCEEDED: '成功',
-    FAILED: '失败',
-  }
-  return labels[status] ?? status
-}
-
-function itemStatusTagType(status: string): 'success' | 'warning' | 'danger' | 'info' {
-  if (status === 'READY' || status === 'SUCCEEDED') {
-    return 'success'
-  }
-  if (status === 'BLOCKED' || status === 'FAILED') {
-    return 'danger'
-  }
-  return 'warning'
-}
-
 function targetText(item: BatchOperationItemRecord): string {
   return [item.targetObjectNo, item.targetObjectSummary].filter(Boolean).join(' ') || String(item.targetObjectId ?? '-')
 }
@@ -337,9 +311,13 @@ function targetText(item: BatchOperationItemRecord): string {
             <el-table :data="candidates" empty-text="暂无搜索候选" stripe>
               <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
               <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-              <el-table-column prop="status" label="当前状态" min-width="100" />
+              <el-table-column label="当前状态" min-width="100">
+                <template #default="{ row }">
+                  <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="version" label="版本" width="90" />
-              <el-table-column label="操作" width="90">
+              <el-table-column label="操作" fixed="right" width="184">
                 <template #default="{ row }">
                   <el-button
                     v-if="hasStableCandidateVersion(row)"
@@ -370,9 +348,13 @@ function targetText(item: BatchOperationItemRecord): string {
             <el-table :data="selectedCandidates" empty-text="暂无候选" stripe>
               <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
               <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-              <el-table-column prop="status" label="当前状态" min-width="100" />
+              <el-table-column label="当前状态" min-width="100">
+                <template #default="{ row }">
+                  <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
               <el-table-column prop="version" label="版本" width="90" />
-              <el-table-column label="操作" width="90">
+              <el-table-column label="操作" fixed="right" width="184">
                 <template #default="{ row }">
                   <el-button size="small" text @click="removeCandidate(row)">移除</el-button>
                 </template>
@@ -385,7 +367,7 @@ function targetText(item: BatchOperationItemRecord): string {
       <section v-if="operation" class="operation-panel">
         <div class="batch-summary-strip">
           <div><span>操作号</span><strong>{{ operation.operationNo }}</strong></div>
-          <div><span>状态</span><strong>{{ operationStatusLabel(operation.status) }}</strong></div>
+          <div><span>状态</span><strong>{{ batchOperationStatusLabel(operation.status) }}</strong></div>
           <div><span>总数</span><strong>{{ operation.totalRows }}</strong></div>
           <div><span>可执行</span><strong>可执行 {{ readyCount }}</strong></div>
           <div><span>阻断</span><strong>{{ blockedCount }}</strong></div>
@@ -402,7 +384,7 @@ function targetText(item: BatchOperationItemRecord): string {
             <el-table-column prop="targetObjectVersion" label="版本" width="90" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
-                <el-tag :type="itemStatusTagType(row.status)" size="small">{{ itemStatusLabel(row.status) }}</el-tag>
+                <el-tag :type="batchOperationItemStatusTagType(row.status)" size="small">{{ batchOperationItemStatusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="message" label="错误/结果" min-width="220" show-overflow-tooltip />

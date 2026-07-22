@@ -294,7 +294,7 @@ onMounted(loadUsers)
     </header>
 
     <el-card class="query-card" shadow="never">
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="user-keyword" clearable placeholder="账号或姓名" />
         </el-form-item>
@@ -332,21 +332,28 @@ onMounted(loadUsers)
           </el-table-column>
           <el-table-column prop="phone" label="手机号" min-width="130" show-overflow-tooltip />
           <el-table-column prop="email" label="邮箱" min-width="180" show-overflow-tooltip />
-          <el-table-column label="操作" fixed="right" min-width="280">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button v-if="canUpdate" size="small" text data-test="edit-user" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canUpdate" size="small" text data-test="assign-role" @click="openRoleDialog(row)">分配角色</el-button>
-              <el-button v-if="canResetPassword" size="small" text data-test="reset-password" @click="resetPassword(row)">重置密码</el-button>
-              <el-button
-                v-if="canUpdate"
-                size="small"
-                text
-                :type="row.status === 'DISABLED' ? 'success' : 'danger'"
-                :data-test="row.status === 'DISABLED' ? 'enable-user' : 'disable-user'"
-                @click="changeStatus(row)"
-              >
-                {{ row.status === 'DISABLED' ? '启用' : '停用' }}
-              </el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canResetPassword) || (canUpdate)">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button v-if="canResetPassword" size="small" text data-test="reset-password" @click="resetPassword(row)">重置密码</el-button>
+                    <el-button
+                      v-if="canUpdate"
+                      size="small"
+                      text
+                      :type="row.status === 'DISABLED' ? 'success' : 'warning'"
+                      :data-test="row.status === 'DISABLED' ? 'enable-user' : 'disable-user'"
+                      @click="changeStatus(row)"
+                    >
+                      {{ row.status === 'DISABLED' ? '启用' : '停用' }}
+                    </el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>

@@ -228,7 +228,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="receivable-keyword" clearable placeholder="应收单、客户或来源" />
         </el-form-item>
@@ -306,14 +306,21 @@ onMounted(() => {
         <el-table-column label="凭证草稿" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ voucherDraftSummary(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="330">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-receivable" @click="viewReceivable(row)">详情</el-button>
             <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-receivable" @click="editReceivable(row)">编辑</el-button>
-            <el-button v-if="canConfirm && row.status === 'DRAFT'" size="small" text type="success" data-test="confirm-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'confirm')">确认</el-button>
-            <el-button v-if="canCancelPermission && canCancel(row)" size="small" text type="danger" data-test="cancel-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'cancel')">取消</el-button>
-            <el-button v-if="canClosePermission && canClose(row)" size="small" text type="warning" data-test="close-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'close')">关闭</el-button>
-            <el-button v-if="canCreateReceiptPermission && canCreateReceipt(row)" size="small" text data-test="create-receipt" @click="createReceipt(row)">登记收款</el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canConfirm && row.status === 'DRAFT') || (canCancelPermission && canCancel(row)) || (canClosePermission && canClose(row)) || (canCreateReceiptPermission && canCreateReceipt(row))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button v-if="canConfirm && row.status === 'DRAFT'" size="small" text type="success" data-test="confirm-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'confirm')">确认</el-button>
+                  <el-button v-if="canCancelPermission && canCancel(row)" size="small" text type="danger" data-test="cancel-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'cancel')">取消</el-button>
+                  <el-button v-if="canClosePermission && canClose(row)" size="small" text type="warning" data-test="close-receivable" :disabled="actionLoading" @click="runReceivableAction(row, 'close')">关闭</el-button>
+                  <el-button v-if="canCreateReceiptPermission && canCreateReceipt(row)" size="small" text data-test="create-receipt" @click="createReceipt(row)">登记收款</el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

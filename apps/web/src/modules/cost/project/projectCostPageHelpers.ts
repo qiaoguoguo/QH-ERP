@@ -2,6 +2,7 @@ import type { RouteLocationRaw } from 'vue-router'
 import type {
   ProjectCostAdjustmentStatus,
   ProjectCostAdjustmentType,
+  ProjectCostAdjustmentDirection,
   ProjectCostCategory,
   ProjectCostCalculationStatus,
   ProjectCostCompletenessStatus,
@@ -35,8 +36,8 @@ const completenessLabels: Record<ProjectCostCompletenessStatus, string> = {
 }
 
 const freshnessLabels: Record<ProjectCostFreshnessStatus, string> = {
-  CURRENT: '当前',
-  STALE: '历史快照',
+  CURRENT: '当前有效',
+  STALE: '来源已变化',
 }
 
 const categoryLabels: Record<ProjectCostCategory, string> = {
@@ -90,6 +91,18 @@ const adjustmentTypeLabels: Record<ProjectCostAdjustmentType, string> = {
   VARIANCE_SETTLEMENT: '差异结算',
 }
 
+const adjustmentDirectionLabels: Record<ProjectCostAdjustmentDirection, string> = {
+  INCREASE: '增加',
+  DECREASE: '减少',
+}
+
+const projectStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  ACTIVE: '执行中',
+  CLOSED: '已关闭',
+  CANCELLED: '已取消',
+}
+
 const varianceTypeLabels: Record<string, string> = {
   OUTSOURCING_ESTIMATE_ACTUAL: '外协暂估差异',
   UNPRICED_LABOR: '人工未定价',
@@ -112,52 +125,67 @@ const sourceTypeLabels: Record<string, string> = {
 
 export const projectCostSourceTypeOptions = Object.entries(sourceTypeLabels).map(([value, label]) => ({ value, label }))
 
+function labelFromMap(value: string | null | undefined, labels: Record<string, string>, unknownLabel: string): string {
+  if (!value) {
+    return '-'
+  }
+  return labels[value] ?? unknownLabel
+}
+
+export function projectCostProjectStatusLabel(status?: string | null): string {
+  return labelFromMap(status, projectStatusLabels, '未知项目状态')
+}
+
 export function projectCostCalculationStatusLabel(status?: string | null): string {
-  return status ? calculationStatusLabels[status as ProjectCostCalculationStatus] ?? status : '-'
+  return labelFromMap(status, calculationStatusLabels, '未知状态')
 }
 
 export function projectCostCompletenessLabel(status?: string | null): string {
-  return status ? completenessLabels[status as ProjectCostCompletenessStatus] ?? status : '-'
+  return labelFromMap(status, completenessLabels, '未知完整性')
 }
 
 export function projectCostFreshnessLabel(status?: string | null): string {
-  return status ? freshnessLabels[status as ProjectCostFreshnessStatus] ?? status : '-'
+  return labelFromMap(status, freshnessLabels, '未知当前性')
 }
 
 export function projectCostCategoryLabel(category?: string | null): string {
-  return category ? categoryLabels[category as ProjectCostCategory] ?? category : '-'
+  return labelFromMap(category, categoryLabels, '未知分类')
 }
 
 export function projectCostStageLabel(stage?: string | null): string {
-  return stage ? stageLabels[stage as ProjectCostStage] ?? stage : '-'
+  return labelFromMap(stage, stageLabels, '未知阶段')
 }
 
 export function projectCostSourceStatusLabel(status?: string | null): string {
-  return status ? sourceStatusLabels[status as ProjectCostSourceStatus] ?? status : '-'
+  return labelFromMap(status, sourceStatusLabels, '未知来源状态')
 }
 
 export function projectCostVarianceSeverityLabel(severity?: string | null): string {
-  return severity ? varianceSeverityLabels[severity as ProjectCostVarianceSeverity] ?? severity : '-'
+  return labelFromMap(severity, varianceSeverityLabels, '未知严重级别')
 }
 
 export function projectCostVarianceStatusLabel(status?: string | null): string {
-  return status ? varianceStatusLabels[status as ProjectCostVarianceStatus] ?? status : '-'
+  return labelFromMap(status, varianceStatusLabels, '未知差异状态')
 }
 
 export function projectCostAdjustmentStatusLabel(status?: string | null): string {
-  return status ? adjustmentStatusLabels[status as ProjectCostAdjustmentStatus] ?? status : '-'
+  return labelFromMap(status, adjustmentStatusLabels, '未知调整状态')
 }
 
 export function projectCostAdjustmentTypeLabel(type?: string | null): string {
-  return type ? adjustmentTypeLabels[type as ProjectCostAdjustmentType] ?? type : '-'
+  return labelFromMap(type, adjustmentTypeLabels, '未知调整类型')
 }
 
 export function projectCostVarianceTypeLabel(type?: string | null): string {
-  return type ? varianceTypeLabels[type] ?? type : '-'
+  return labelFromMap(type, varianceTypeLabels, '未知差异类型')
 }
 
 export function projectCostSourceTypeLabel(type?: string | null): string {
-  return type ? sourceTypeLabels[type] ?? type : '-'
+  return labelFromMap(type, sourceTypeLabels, '未知来源')
+}
+
+export function projectCostAdjustmentDirectionLabel(direction?: string | null): string {
+  return labelFromMap(direction, adjustmentDirectionLabels, '未知方向')
 }
 
 export function tagTypeForStatus(status?: string | null): 'info' | 'success' | 'warning' | 'danger' {

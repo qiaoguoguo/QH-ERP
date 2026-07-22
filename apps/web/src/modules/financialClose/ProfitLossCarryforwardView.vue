@@ -9,6 +9,7 @@ import {
   canFinancialCloseAction,
   createFinancialCloseIdempotencyKey,
   financialCloseActionDisabledReason,
+  financialCloseBalanceDirectionText,
   financialCloseErrorMessage,
   financialClosePageItems,
   financialClosePageSizes,
@@ -130,7 +131,7 @@ onMounted(loadRecords)
       <el-button data-test="generate-profit-loss" type="primary" :loading="actionLoading" @click="generateTransfer">生成草稿</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecords">查询</el-button></el-form-item>
       </el-form>
@@ -147,7 +148,7 @@ onMounted(loadRecords)
         <el-table :data="previewRecord.lines ?? []" empty-text="无余额需要结转" stripe>
           <el-table-column prop="accountCode" label="科目" min-width="120" />
           <el-table-column prop="accountName" label="名称" min-width="180" />
-          <el-table-column prop="direction" label="方向" min-width="100" />
+          <el-table-column label="方向" min-width="100"><template #default="{ row }">{{ financialCloseBalanceDirectionText(row.direction) }}</template></el-table-column>
           <el-table-column label="结转金额" min-width="130" align="right">
             <template #default="{ row }"><span class="financial-close-amount">{{ formatFinancialCloseAmount(row.transferAmount as string) }}</span></template>
           </el-table-column>
@@ -168,7 +169,7 @@ onMounted(loadRecords)
         <el-table-column label="禁用原因" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ financialCloseActionDisabledReason(row, 'GENERATE') || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="120">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               data-test="profit-loss-voucher-link"

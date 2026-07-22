@@ -14,6 +14,7 @@ import {
   normalizeOptionalId,
   procurementErrorMessage,
   procurementOwnershipDisplay,
+  procurementApprovalStatusLabel,
   procurementRequisitionStatusLabel,
   procurementRequisitionStatusTagType,
 } from './procurementPageHelpers'
@@ -204,7 +205,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" clearable placeholder="请购号、标题、物料" />
         </el-form-item>
@@ -278,7 +279,7 @@ onMounted(() => {
                 {{ procurementRequisitionStatusLabel(row.status, row.statusName) }}
               </el-tag>
             </div>
-            <div>审批状态：{{ row.approvalStatusName || row.approvalStatus || '未提交' }}</div>
+            <div>审批状态：{{ procurementApprovalStatusLabel(row.approvalStatus, row.approvalStatusName) }}</div>
           </template>
         </el-table-column>
         <el-table-column prop="requiredDate" label="需求日期" min-width="110" />
@@ -292,10 +293,10 @@ onMounted(() => {
         <el-table-column label="结案原因" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ row.closeReason || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="300">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text type="primary" @click="viewRecord(row)">详情</el-button>
-          <el-button
+            <el-button
             v-if="allowed(row, 'CREATE_INQUIRY')"
             data-test="create-inquiry-from-requisition-list"
             text
@@ -304,25 +305,32 @@ onMounted(() => {
           >
             创建询价
           </el-button>
-          <el-button
-            v-if="allowed(row, 'CREATE_ORDER')"
-            data-test="create-order-from-requisition-list"
-            text
-            type="primary"
-            @click="createOrderFromRecord(row)"
-          >
-            转采购订单
-          </el-button>
-          <el-button
-            v-if="allowed(row, 'CLOSE')"
-            data-test="close-requisition-list"
-            text
-            type="warning"
-            :disabled="actionLoading"
-            @click="closeRecord(row)"
-          >
-            结案
-          </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(allowed(row, 'CREATE_ORDER')) || (allowed(row, 'CLOSE'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="allowed(row, 'CREATE_ORDER')"
+                    data-test="create-order-from-requisition-list"
+                    text
+                    type="primary"
+                    @click="createOrderFromRecord(row)"
+                  >
+                    转采购订单
+                  </el-button>
+                  <el-button
+                    v-if="allowed(row, 'CLOSE')"
+                    data-test="close-requisition-list"
+                    text
+                    type="warning"
+                    :disabled="actionLoading"
+                    @click="closeRecord(row)"
+                  >
+                    结案
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

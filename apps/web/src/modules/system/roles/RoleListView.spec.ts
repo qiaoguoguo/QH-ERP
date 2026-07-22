@@ -1,8 +1,8 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import RoleListView from './RoleListView.vue'
 import type { PageResult, RoleRecord } from '../../../shared/api/accountPermissionApi'
 import { useAuthStore } from '../../../stores/authStore'
@@ -62,6 +62,7 @@ async function mountRoles(
     permissions,
   })
   const wrapper = mount(RoleListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -69,7 +70,50 @@ async function mountRoles(
   return { router, wrapper }
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
+}
+
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+async function teleportedAction(testId: string) {
+  return waitFor(() => visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`)))
+    .at(-1), `可见更多菜单动作 ${testId}`)
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  const action = await teleportedAction(testId)
+  action.click()
+  await flushPromises()
+}
+
 describe('角色管理页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     apiMock.roles.list.mockResolvedValue(emptyPage)
@@ -164,7 +208,7 @@ describe('角色管理页', () => {
     const { wrapper } = await mountRoles()
     await flushPromises()
 
-    await wrapper.find('[data-test="disable-role"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'disable-role')
     await flushPromises()
 
     expect(wrapper.text()).toContain('角色已被使用，不能停用')

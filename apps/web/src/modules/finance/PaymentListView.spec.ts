@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { PaymentSummaryRecord } from '../../shared/api/financeApi'
 import PaymentListView from './PaymentListView.vue'
-import { mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import { clickTeleportedAction, mountFinanceView, openMoreActions, page, setSelectValue, teleportedAction } from './financeTestHelpers'
 
 const financeApiMock = vi.hoisted(() => ({
   payments: { list: vi.fn(), post: vi.fn(), cancel: vi.fn() },
@@ -42,7 +42,10 @@ describe('付款记录列表页', () => {
     financeApiMock.payments.cancel.mockResolvedValue({ ...payment, status: 'CANCELLED' })
   })
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+  })
 
   it('加载付款记录并支持筛选、分页、空态和错误态', async () => {
     const { wrapper } = await mountFinanceView(PaymentListView, ['finance:payment:view'], '/finance/payments')
@@ -90,13 +93,13 @@ describe('付款记录列表页', () => {
       'finance:payment:update',
       'finance:payment:post',
       'finance:payment:cancel',
-    ], '/finance/payments')
+    ], '/finance/payments', { attachTo: document.body })
 
     expect(wrapper.find('[data-test="edit-payment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-payment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-payment"]').exists()).toBe(true)
-    await wrapper.find('[data-test="post-payment"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-payment')).toBeTruthy()
+    expect(teleportedAction('cancel-payment')).toBeTruthy()
+    await clickTeleportedAction(wrapper, 'post-payment')
     expect(financeApiMock.payments.post).toHaveBeenCalledWith(1)
   })
 })

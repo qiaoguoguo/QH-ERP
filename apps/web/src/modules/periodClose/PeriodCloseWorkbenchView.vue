@@ -219,7 +219,7 @@ onMounted(loadRecords)
           </template>
         </el-table-column>
         <el-table-column label="期间状态" min-width="130">
-          <template #default="{ row }">{{ row.periodStatusName || businessPeriodStatusLabel(row.periodStatus) }}</template>
+          <template #default="{ row }">{{ businessPeriodStatusLabel(row.periodStatus, row.periodStatusName) }}</template>
         </el-table-column>
         <el-table-column prop="revisionNo" label="版本" min-width="90" align="right" />
         <el-table-column label="阻断/警告" min-width="110">
@@ -233,7 +233,7 @@ onMounted(loadRecords)
             <span class="numeric-cell">{{ formatPeriodCloseAmount(row.snapshotValueAmount, restrictedMoneyReason(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button v-if="canViewRun(row)" size="small" text data-test="period-close-run-detail" @click="viewRun(row)">详情</el-button>
             <span v-else class="period-close-muted">无月结快照，请先解锁期间后重新检查</span>

@@ -46,7 +46,7 @@
 
 .financial-close-table-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
 }

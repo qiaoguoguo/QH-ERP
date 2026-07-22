@@ -449,7 +449,7 @@ class ProjectProfitReportQueryService extends ReportingStage033QuerySupport {
 				"project-cost-calculation-detail", routeParams("id", rs.getLong("id"))), projectId, query.dateFrom(),
 				query.dateTo()));
 		traces.addAll(this.jdbcTemplate.query("""
-				select id, source_no, business_date, source_status, quantity, calculated_amount
+				select id, source_type, source_no, business_date, source_status, quantity, calculated_amount
 				from prj_cost_source_line
 				where project_id = ?
 				and business_date between ? and ?
@@ -457,7 +457,8 @@ class ProjectProfitReportQueryService extends ReportingStage033QuerySupport {
 				""", (rs, rowNum) -> trace("PROJECT_COST_SOURCE_LINE", rs.getLong("id"),
 				rs.getString("source_no"), null, rs.getObject("business_date", LocalDate.class),
 				rs.getString("source_status"), rs.getBigDecimal("quantity"), rs.getBigDecimal("calculated_amount"),
-				"cost:project-cost:view", "project-cost-source-line", routeParams("id", rs.getLong("id"))),
+				"cost:project-cost:view", "project-cost-source-line", routeParams("id", rs.getLong("id")),
+				projectCostSourceStatusName(rs.getString("source_type"), rs.getString("source_status"))),
 				projectId, query.dateFrom(), query.dateTo()));
 		traces.addAll(this.jdbcTemplate.query("""
 				select e.id, e.voucher_no, e.voucher_line_id, e.voucher_date, v.status as source_status,
@@ -483,6 +484,21 @@ class ProjectProfitReportQueryService extends ReportingStage033QuerySupport {
 			throw new BusinessException(ApiErrorCode.REPORT_TRACE_KEY_INVALID);
 		}
 		return traces;
+	}
+
+	private static String projectCostSourceStatusName(String sourceType, String status) {
+		if (sourceType == null || sourceType.isBlank() || status == null || status.isBlank()) {
+			return "未知来源状态";
+		}
+		return switch (status) {
+			case "ACTUAL" -> "实际";
+			case "PROVISIONAL" -> "暂估";
+			case "UNPRICED" -> "未定价";
+			case "ADJUSTED" -> "已调整";
+			case "RESTRICTED" -> "来源受限";
+			case "EXCLUDED" -> "已排除";
+			default -> "未知来源状态";
+		};
 	}
 
 }

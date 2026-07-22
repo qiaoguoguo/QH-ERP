@@ -1,13 +1,15 @@
-import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { installElementPlus } from '../../elementPlus'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { ProductionWorkOrderSummaryRecord } from '../../shared/api/productionApi'
 import type { ProjectProductionWorkOrderSummaryRecord } from '../../shared/api/projectProductionApi'
 import { useAuthStore } from '../../stores/authStore'
 import ProductionWorkOrderListView from './ProductionWorkOrderListView.vue'
+
+const qherpElementPlusPlugin = { install: installElementPlus }
 
 const productionApiMock = vi.hoisted(() => ({
   workOrders: {
@@ -202,6 +204,62 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  await closeOpenDropdowns()
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+async function closeOpenDropdowns() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+
+function visibleDropdownPoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) => {
+    return popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none'
+  })
+}
+
+function findVisibleTeleportedAction(testId: string) {
+  for (const popper of visibleDropdownPoppers()) {
+    const action = popper.querySelector<HTMLElement>(`[data-test="${testId}"]`)
+    if (action) {
+      return action
+    }
+  }
+  return null
+}
+
+async function waitForTeleportedAction(testId: string) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const action = findVisibleTeleportedAction(testId)
+    if (action) {
+      return action
+    }
+    await flushPromises()
+  }
+  const action = findVisibleTeleportedAction(testId)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function expectTeleportedMenuItem(testId: string, text: string) {
+  const action = await waitForTeleportedAction(testId)
+  expect(action.textContent?.trim()).toBe(text)
+  expect(action.closest('[role="menuitem"]')).not.toBeNull()
+  return action
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  ;(await waitForTeleportedAction(testId)).click()
+  await flushPromises()
+}
+
 async function mountList(permissions = [
   'production:work-order:view',
   'production:work-order:create',
@@ -235,8 +293,9 @@ async function mountList(permissions = [
   await router.push(path)
   await router.isReady()
   const wrapper = mount(ProductionWorkOrderListView, {
+    attachTo: document.body,
     global: {
-      plugins: [pinia, router, ElementPlus],
+      plugins: [pinia, router, qherpElementPlusPlugin],
     },
   })
   await flushPromises()
@@ -257,6 +316,7 @@ describe('生产工单列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -346,12 +406,18 @@ describe('生产工单列表页', () => {
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '发布')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '领料')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '报工')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '完成')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '更多')).toHaveLength(3)
+
+    await openMoreActions(wrapper, 0)
+    await expectTeleportedMenuItem('release-production-work-order', '发布')
+    await expectTeleportedMenuItem('cancel-production-work-order', '取消')
+
+    await openMoreActions(wrapper, 1)
+    await expectTeleportedMenuItem('create-production-material-issue', '领料')
+    await expectTeleportedMenuItem('create-production-report', '报工')
+    await expectTeleportedMenuItem('create-production-completion-receipt', '完工入库')
+    await expectTeleportedMenuItem('complete-production-work-order', '完成')
+    await expectTeleportedMenuItem('cancel-production-work-order', '取消')
   })
 
   it('生产执行入口按权限和合法状态展示，不依赖工单级 allowedActions 或旧私有码', async () => {
@@ -379,12 +445,9 @@ describe('生产工单列表页', () => {
     })
     const { wrapper, router } = await mountList()
 
-    expect(buttonsByText(wrapper, '领料')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '报工')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '更多')).toHaveLength(1)
 
-    await buttonsByText(wrapper, '领料')[0].trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-production-material-issue')
     expect(router.currentRoute.value.path).toBe('/production/work-orders/30/material-issues')
   })
 
@@ -404,7 +467,7 @@ describe('生产工单列表页', () => {
     expect(wrapper.text()).toContain('项目工单')
     expect(wrapper.text()).toContain('MRP-SUG-027')
     expect(wrapper.text()).toContain('项目工单已被外协转换锁定')
-    expect(buttonsByText(wrapper, '发布')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '更多').length).toBeGreaterThan(0)
 
     await wrapper.find('input[name="production-project-id"]').setValue('3001')
     await setSelectValue(wrapper, 1, 'PROJECT')
@@ -422,8 +485,7 @@ describe('生产工单列表页', () => {
       pageSize: 10,
     })
 
-    await buttonsByText(wrapper, '发布')[0].trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'release-production-work-order')
 
     expect(projectProductionApiMock.workOrders.release).toHaveBeenCalledWith(27, {
       version: 6,

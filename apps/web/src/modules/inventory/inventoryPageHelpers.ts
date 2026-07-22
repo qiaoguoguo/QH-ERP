@@ -8,6 +8,7 @@ import type {
   InventoryValuationState,
   ResourceId,
 } from '../../shared/api/inventoryApi'
+import { createUnknownStatusDisplay, type StatusTone } from '../../shared/status/statusDisplay'
 
 export interface InventoryLineDraft {
   lineNo: number
@@ -58,6 +59,99 @@ const valuationAdjustmentTypeLabels: Record<string, string> = {
   PROVISIONAL_REVALUATION: '暂估重估',
 }
 
+const qualityStatusLabels: Record<string, string> = {
+  PENDING_INSPECTION: '待检',
+  QUALIFIED: '合格',
+  REJECTED: '不合格',
+  FROZEN: '冻结',
+}
+
+const qualityStatusTagTypes: Record<string, StatusTone> = {
+  PENDING_INSPECTION: 'warning',
+  QUALIFIED: 'success',
+  REJECTED: 'danger',
+  FROZEN: 'info',
+}
+
+const inventorySourceTypeLabels: Record<string, string> = {
+  INVENTORY_DOCUMENT: '库存单据',
+  WAREHOUSE_TRANSFER: '仓库调拨',
+  OWNERSHIP_CONVERSION: '所有权转换',
+  STOCKTAKE: '库存盘点',
+  VALUATION_ADJUSTMENT: '估值调整',
+  PURCHASE_RECEIPT: '采购入库',
+  PRODUCTION_RECEIPT: '完工入库',
+  PRODUCTION_COMPLETION: '生产完工',
+  SALES_RETURN: '销售退货',
+  PRODUCTION_RETURN: '生产退料',
+  PRODUCTION_MATERIAL_ISSUE: '生产领料',
+  SALES_SHIPMENT: '销售出库',
+  SALES_ORDER: '销售订单',
+  PRODUCTION_WORK_ORDER: '生产工单',
+  PURCHASE_ORDER: '采购订单',
+}
+
+const reservationTypeLabels: Record<string, string> = {
+  RESERVATION: '预约',
+  OCCUPATION: '占用',
+}
+
+const reservationStatusLabels: Record<string, string> = {
+  ACTIVE: '有效',
+  RELEASED: '已释放',
+  CONSUMED: '已消耗',
+  CANCELLED: '已取消',
+}
+
+const approvalStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '审批中',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
+  WITHDRAWN: '已撤回',
+  CANCELLED: '已取消',
+}
+
+const trackingMethodLabels: Record<string, string> = {
+  NONE: '不追踪',
+  BATCH: '批次管理',
+  SERIAL: '序列号管理',
+}
+
+const stockStatusLabels: Record<string, string> = {
+  IN_STOCK: '在库',
+  RESERVED: '已预约',
+  OCCUPIED: '已占用',
+  OUTBOUND: '已出库',
+  CANCELLED: '已取消',
+}
+
+const traceNodeTypeLabels: Record<string, string> = {
+  SOURCE: '来源',
+  QUALITY_EVENT: '质量事件',
+  OUTBOUND: '出库',
+  RETURN: '退回',
+  MOVEMENT: '库存流水',
+  RESERVATION: '预留/占用',
+  RESTRICTED_SOURCE: '受限来源',
+}
+
+const costLayerStatusLabels: Record<string, string> = {
+  OPEN: '开放',
+  AVAILABLE: '可用',
+  CONSUMED: '已耗用',
+  CLOSED: '已关闭',
+}
+
+const valuationMethodLabels: Record<string, string> = {
+  MOVING_AVERAGE: '移动加权平均',
+  PROJECT_ACTUAL_LAYER: '项目实际成本层',
+  LEGACY_UNVALUED: '历史未估值',
+  NON_VALUED: '无需计价',
+  CURRENT_AVERAGE_PROVISIONAL: '当前平均暂估',
+  MANUAL_PROVISIONAL: '手工暂估',
+}
+
 const movementTypeLabels: Record<InventoryMovementType, string> = {
   OPENING: '期初',
   ADJUSTMENT_INCREASE: '调增',
@@ -70,8 +164,16 @@ const movementTypeLabels: Record<InventoryMovementType, string> = {
   WAREHOUSE_TRANSFER_IN: '调拨入库',
   OWNERSHIP_CONVERSION_OUT: '所有权转出',
   OWNERSHIP_CONVERSION_IN: '所有权转入',
-  STOCKTAKE_GAIN: '盘盈',
-  STOCKTAKE_LOSS: '盘亏',
+  SALES_RETURN_IN: '销售退货入库',
+  PURCHASE_RETURN_OUT: '采购退货出库',
+  PRODUCTION_MATERIAL_RETURN_IN: '生产退料入库',
+  PRODUCTION_MATERIAL_SUPPLEMENT_OUT: '生产补料出库',
+  QUALITY_STATUS_TRANSFER: '质量状态转移',
+  BUSINESS_REVERSAL: '业务反向冲销',
+  STOCKTAKE_VARIANCE_IN: '盘点差异入库',
+  STOCKTAKE_VARIANCE_OUT: '盘点差异出库',
+  OUTSOURCING_ISSUE: '外协发料',
+  OUTSOURCING_RECEIPT: '外协收货',
   VALUATION_ADJUSTMENT: '估值调整',
 }
 
@@ -98,20 +200,76 @@ export function documentStatusLabel(status: InventoryDocumentStatus): string {
   return documentStatusLabels[status]
 }
 
-export function controlledDocumentStatusLabel(status?: string | null): string {
-  return status ? controlledDocumentStatusLabels[status] ?? status : '-'
+function normalizedDisplayText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  return String(value).trim()
 }
 
-export function valuationAdjustmentTypeLabel(type?: string | null): string {
-  return type ? valuationAdjustmentTypeLabels[type] ?? type : '-'
+function hasChineseText(value: string): boolean {
+  return /[\u4e00-\u9fff]/.test(value)
+}
+
+function knownOrFallbackLabel(
+  code: unknown,
+  labels: Record<string, string>,
+  unknownLabel: string,
+  context: { domain: string; field: string },
+  serverName?: unknown,
+): string {
+  const codeText = normalizedDisplayText(code)
+  const serverText = normalizedDisplayText(serverName)
+  if (serverText && serverText !== codeText && hasChineseText(serverText)) {
+    return serverText
+  }
+  if (!codeText && !serverText) {
+    return '-'
+  }
+  const knownLabel = labels[codeText] || labels[serverText]
+  if (knownLabel) {
+    return knownLabel
+  }
+  if (unknownLabel === '未知状态') {
+    return createUnknownStatusDisplay({
+      ...context,
+      code: codeText,
+      statusName: serverText,
+    }).label
+  }
+  return unknownLabel
+}
+
+export function controlledDocumentStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, controlledDocumentStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '受控单据状态',
+  }, statusName)
+}
+
+export function inventoryApprovalStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, approvalStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '审批状态',
+  }, statusName)
+}
+
+export function valuationAdjustmentTypeLabel(type?: string | null, typeName?: string | null): string {
+  return knownOrFallbackLabel(type, valuationAdjustmentTypeLabels, '未知类型', {
+    domain: '库存',
+    field: '估值调整类型',
+  }, typeName)
 }
 
 export function documentStatusTagType(status: InventoryDocumentStatus): 'info' | 'success' {
   return documentStatusTagTypes[status]
 }
 
-export function movementTypeLabel(type: InventoryMovementType): string {
-  return movementTypeLabels[type]
+export function movementTypeLabel(type: InventoryMovementType | string | null | undefined): string {
+  return knownOrFallbackLabel(type, movementTypeLabels, '未知类型', {
+    domain: '库存',
+    field: '库存流水类型',
+  })
 }
 
 export function directionLabel(direction: InventoryDirection): string {
@@ -124,6 +282,67 @@ export function directionTagType(direction: InventoryDirection): 'success' | 'wa
 
 export function adjustmentDirectionLabel(direction?: InventoryAdjustmentDirection | null): string {
   return direction ? adjustmentDirectionLabels[direction] : '-'
+}
+
+export function qualityStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, qualityStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '质量状态',
+  }, statusName)
+}
+
+export function qualityStatusTagType(status?: string | null): StatusTone {
+  const codeText = normalizedDisplayText(status)
+  return qualityStatusTagTypes[codeText] ?? 'warning'
+}
+
+export function inventorySourceTypeLabel(type?: string | null, typeName?: string | null): string {
+  return knownOrFallbackLabel(type, inventorySourceTypeLabels, '未知类型', {
+    domain: '库存',
+    field: '来源类型',
+  }, typeName)
+}
+
+export function reservationTypeLabel(type?: string | null, typeName?: string | null): string {
+  return knownOrFallbackLabel(type, reservationTypeLabels, '未知类型', {
+    domain: '库存',
+    field: '预留占用类型',
+  }, typeName)
+}
+
+export function reservationStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, reservationStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '预留占用状态',
+  }, statusName)
+}
+
+export function inventoryTrackingMethodLabel(method?: string | null, methodName?: string | null): string {
+  return knownOrFallbackLabel(method, trackingMethodLabels, '未知类型', {
+    domain: '库存',
+    field: '追踪方式',
+  }, methodName)
+}
+
+export function inventoryStockStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, stockStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '实物库存状态',
+  }, statusName)
+}
+
+export function inventoryTraceNodeTypeLabel(type?: string | null, typeName?: string | null): string {
+  return knownOrFallbackLabel(type, traceNodeTypeLabels, '未知类型', {
+    domain: '库存',
+    field: '追溯节点',
+  }, typeName)
+}
+
+export function inventoryCostLayerStatusLabel(status?: string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, costLayerStatusLabels, '未知状态', {
+    domain: '库存',
+    field: '成本层状态',
+  }, statusName)
 }
 
 export function validateInventoryQuantity(value: unknown): InventoryQuantityValidationResult {
@@ -257,10 +476,13 @@ export function ownershipTypeLabel(type?: InventoryOwnershipType | string | null
     PUBLIC: '公共库存',
     PROJECT: '项目库存',
   }
-  return type ? labels[type] ?? type : '-'
+  return knownOrFallbackLabel(type, labels, '未知所有权', {
+    domain: '库存',
+    field: '所有权',
+  })
 }
 
-export function valuationStateLabel(state?: InventoryValuationState | string | null): string {
+export function valuationStateLabel(state?: InventoryValuationState | string | null, stateName?: string | null): string {
   const labels: Record<string, string> = {
     VALUED: '已估值',
     PROJECT_ACTUAL_LAYER: '项目实际成本层',
@@ -271,7 +493,28 @@ export function valuationStateLabel(state?: InventoryValuationState | string | n
     MANUAL_PROVISIONAL_REQUIRED: '需录入暂估',
     ABNORMAL: '异常不平衡',
   }
-  return state ? labels[state] ?? state : '-'
+  return knownOrFallbackLabel(state, labels, '未知估值状态', {
+    domain: '库存',
+    field: '估值状态',
+  }, stateName)
+}
+
+export function valuationStateTagType(state?: InventoryValuationState | string | null): StatusTone {
+  const stateText = normalizedDisplayText(state)
+  if (stateText === 'VALUED') {
+    return 'success'
+  }
+  if (['CURRENT_AVERAGE_PROVISIONAL', 'MANUAL_PROVISIONAL', 'MANUAL_PROVISIONAL_REQUIRED', 'ABNORMAL'].includes(stateText)) {
+    return 'warning'
+  }
+  return 'info'
+}
+
+export function valuationMethodLabel(method?: string | null, methodName?: string | null): string {
+  return knownOrFallbackLabel(method, valuationMethodLabels, '未知估值方法', {
+    domain: '库存',
+    field: '计价方法',
+  }, methodName)
 }
 
 export function inventoryActionLabel(action: string): string {
@@ -286,7 +529,10 @@ export function inventoryActionLabel(action: string): string {
     RECONCILE: '确认差异',
     COMPLETE_ZERO_VARIANCE: '结束零差异盘点',
   }
-  return labels[action] ?? action
+  return knownOrFallbackLabel(action, labels, '未知操作', {
+    domain: '库存',
+    field: '操作动作',
+  })
 }
 
 export function validateInventoryMoney(value: unknown, decimalPlaces: number): { payloadValue: string | null; message: string | null } {

@@ -182,7 +182,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -260,7 +260,7 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatSalesAmount(row.totalAmount) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="220">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-return" @click="viewSalesReturn(row)">详情</el-button>
             <el-button
@@ -272,28 +272,35 @@ onMounted(() => {
             >
               编辑
             </el-button>
-            <el-button
-              v-if="canPost && allowed(row, 'POST')"
-              size="small"
-              text
-              type="success"
-              data-test="post-sales-return"
-              :disabled="actionLoading"
-              @click="postSalesReturn(row)"
-            >
-              过账
-            </el-button>
-            <el-button
-              v-if="canCancel && allowed(row, 'CANCEL')"
-              size="small"
-              text
-              type="danger"
-              data-test="cancel-sales-return"
-              :disabled="actionLoading"
-              @click="cancelSalesReturn(row)"
-            >
-              取消
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canPost && allowed(row, 'POST')) || (canCancel && allowed(row, 'CANCEL'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canPost && allowed(row, 'POST')"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="post-sales-return"
+                    :disabled="actionLoading"
+                    @click="postSalesReturn(row)"
+                  >
+                    过账
+                  </el-button>
+                  <el-button
+                    v-if="canCancel && allowed(row, 'CANCEL')"
+                    size="small"
+                    text
+                    type="danger"
+                    data-test="cancel-sales-return"
+                    :disabled="actionLoading"
+                    @click="cancelSalesReturn(row)"
+                  >
+                    取消
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

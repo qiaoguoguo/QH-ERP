@@ -160,7 +160,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="收款记录" description="扫描收款草稿和已过账收款，核对应收余额变化。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="receipt-keyword" clearable placeholder="收款单、应收单、客户" />
         </el-form-item>
@@ -215,34 +215,41 @@ onMounted(() => {
         <el-table-column prop="createdByName" label="创建人" min-width="100" />
         <el-table-column prop="postedByName" label="过账人" min-width="100" />
         <el-table-column prop="postedAt" label="过账时间" min-width="160" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" width="210">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-receipt" @click="viewReceipt(row)">详情</el-button>
             <el-button v-if="canUpdateReceipt(row)" size="small" text data-test="edit-receipt" @click="editReceipt(row)">编辑</el-button>
-            <el-button
-              v-if="canPostReceipt(row)"
-              size="small"
-              text
-              type="success"
-              data-test="post-receipt"
-              :loading="actionLoading"
-              :disabled="actionLoading"
-              @click="runReceiptAction(row, 'post')"
-            >
-              过账
-            </el-button>
-            <el-button
-              v-if="canCancelReceipt(row)"
-              size="small"
-              text
-              type="danger"
-              data-test="cancel-receipt"
-              :loading="actionLoading"
-              :disabled="actionLoading"
-              @click="runReceiptAction(row, 'cancel')"
-            >
-              取消
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canPostReceipt(row)) || (canCancelReceipt(row))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canPostReceipt(row)"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="post-receipt"
+                    :loading="actionLoading"
+                    :disabled="actionLoading"
+                    @click="runReceiptAction(row, 'post')"
+                  >
+                    过账
+                  </el-button>
+                  <el-button
+                    v-if="canCancelReceipt(row)"
+                    size="small"
+                    text
+                    type="danger"
+                    data-test="cancel-receipt"
+                    :loading="actionLoading"
+                    :disabled="actionLoading"
+                    @click="runReceiptAction(row, 'cancel')"
+                  >
+                    取消
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

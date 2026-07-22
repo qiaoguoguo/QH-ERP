@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
-import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import UserListView from './UserListView.vue'
 import type { PageResult, RoleRecord, UserRecord } from '../../../shared/api/accountPermissionApi'
 import { useAuthStore } from '../../../stores/authStore'
@@ -61,13 +61,57 @@ function mountUsers(permissions = ['system:user:view', 'system:user:create', 'sy
     permissions,
   })
   return mount(UserListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, ElementPlus],
     },
   })
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
+}
+
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+async function teleportedAction(testId: string) {
+  return waitFor(() => visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`)))
+    .at(-1), `可见更多菜单动作 ${testId}`)
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  const action = await teleportedAction(testId)
+  action.click()
+  await flushPromises()
+}
+
 describe('用户管理页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     apiMock.users.list.mockResolvedValue(emptyPage)
@@ -126,7 +170,7 @@ describe('用户管理页', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('停用')
-    await wrapper.find('[data-test="enable-user"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'enable-user')
     await flushPromises()
 
     expect(apiMock.users.enable).toHaveBeenCalledWith(2)
@@ -150,7 +194,7 @@ describe('用户管理页', () => {
     const wrapper = mountUsers()
     await flushPromises()
 
-    await wrapper.find('[data-test="reset-password"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'reset-password')
     await flushPromises()
 
     await wrapper.find('input[name="new-password"]').setValue('NewStrong@2026')
@@ -222,7 +266,7 @@ describe('用户管理页', () => {
     const wrapper = mountUsers()
     await flushPromises()
 
-    await wrapper.find('[data-test="reset-password"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'reset-password')
     await flushPromises()
     await wrapper.find('input[name="new-password"]').setValue('weak')
     await wrapper.find('input[name="confirm-password"]').setValue('weak')
@@ -239,7 +283,7 @@ describe('用户管理页', () => {
     const wrapper = mountUsers()
     await flushPromises()
 
-    await wrapper.find('[data-test="enable-user"]').trigger('click')
+    await clickTeleportedAction(wrapper, 'enable-user')
     await flushPromises()
 
     expect(wrapper.text()).toContain('账号状态已变化')

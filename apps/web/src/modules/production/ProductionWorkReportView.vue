@@ -66,7 +66,7 @@ function validateForm(): ProjectProductionWorkReportPayload | null {
     return null
   }
   if (!executable.value) {
-    formError.value = '仅已发布或生产中的工单可报工'
+    formError.value = '仅已下达或生产中的工单可报工'
     return null
   }
   if (!form.businessDate.trim()) {

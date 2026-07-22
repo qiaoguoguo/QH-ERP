@@ -104,8 +104,9 @@ function expectDefaultTableKeepsStatusScannable(wrapper: ReturnType<typeof mount
   ])
   expect(columns[2].label).toBe('状态')
   expect(columns.at(-1)?.label).toBe('操作')
-  expect(columns.at(-1)?.fixed).not.toBe('right')
-  expect(Number(columns.at(-1)?.minWidth)).toBeLessThanOrEqual(230)
+  expect(columns.at(-1)?.fixed).toBe('right')
+  expect(Number(columns.at(-1)?.width)).toBe(184)
+  expect(columns.at(-1)?.minWidth).toBeFalsy()
 }
 
 describe('客户列表页', () => {

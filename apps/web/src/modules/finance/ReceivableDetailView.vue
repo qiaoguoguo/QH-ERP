@@ -203,7 +203,7 @@ onMounted(loadRecord)
             <el-table-column label="过账时间" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ formatFinanceDateTime(row.postedAt) }}</template>
             </el-table-column>
-            <el-table-column v-if="canViewReceipt" label="操作" width="90" fixed="right">
+            <el-table-column v-if="canViewReceipt" label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-receipt-summary" @click="viewReceipt(row.id)">详情</el-button>
               </template>

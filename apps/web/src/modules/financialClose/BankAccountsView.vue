@@ -193,7 +193,7 @@ onMounted(loadRecords)
       </el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="账户、银行或科目" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecords">查询</el-button></el-form-item>
       </el-form>
@@ -216,7 +216,7 @@ onMounted(loadRecords)
           <template #default="{ row }">{{ bankSensitiveText(row.bankSensitiveVisible) }}</template>
         </el-table-column>
         <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.enabled === false ? '停用' : '启用' }}</template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
               <el-button

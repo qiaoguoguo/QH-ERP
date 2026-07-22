@@ -8,6 +8,7 @@ import CategoryTag from './CategoryTag.vue'
 import StageTag from './StageTag.vue'
 import {
   formatProjectCostAmount,
+  projectCostAdjustmentDirectionLabel,
   projectCostAdjustmentStatusLabel,
   projectCostErrorMessage,
   restrictedMoneyReason,
@@ -74,7 +75,7 @@ onMounted(loadRecord)
               </el-table-column>
               <el-table-column label="分类" min-width="120"><template #default="{ row }"><CategoryTag :category="row.costCategory" /></template></el-table-column>
               <el-table-column label="阶段" min-width="120"><template #default="{ row }"><StageTag :stage="row.costStage" /></template></el-table-column>
-              <el-table-column label="方向" min-width="100"><template #default="{ row }">{{ row.direction === 'DECREASE' ? '减少' : '增加' }}</template></el-table-column>
+              <el-table-column label="方向" min-width="100"><template #default="{ row }">{{ projectCostAdjustmentDirectionLabel(row.direction) }}</template></el-table-column>
               <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template></el-table-column>
               <el-table-column label="公共费用行" min-width="130" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.publicExpenseLineId || '-' }}</template>

@@ -7,6 +7,8 @@ import {
   createFinancialCloseIdempotencyKey,
   financialCloseErrorMessage,
   financialClosePageItems,
+  financialClosePageSizes,
+  financialClosePageTotal,
   financialClosePermissions,
   financialCloseStatusText,
   taxpayerTypeText,
@@ -24,6 +26,8 @@ const actionLoading = ref(false)
 const error = ref('')
 const actionError = ref('')
 const maintenanceVisible = ref(false)
+const ratePagination = reactive({ page: 1, pageSize: 10, total: 0 })
+const invoiceTypePagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const profileForm = reactive({
   taxpayerType: 'GENERAL',
   creditCode: '91330000123456789X',
@@ -56,8 +60,8 @@ async function loadRecords() {
   try {
     const [profileRecord, ratePage, invoicePage] = await Promise.all([
       financialCloseApi.taxProfiles.current(),
-      financialCloseApi.taxRateRules.list({ page: 1, pageSize: 10 }),
-      financialCloseApi.taxInvoiceTypes.list({ page: 1, pageSize: 10 }),
+      financialCloseApi.taxRateRules.list({ page: ratePagination.page, pageSize: ratePagination.pageSize }),
+      financialCloseApi.taxInvoiceTypes.list({ page: invoiceTypePagination.page, pageSize: invoiceTypePagination.pageSize }),
     ])
     profile.value = profileRecord
     Object.assign(profileForm, {
@@ -71,11 +75,15 @@ async function loadRecords() {
       version: profileRecord.version,
     })
     rateRules.value = financialClosePageItems(ratePage)
+    ratePagination.total = financialClosePageTotal(ratePage)
     invoiceTypes.value = financialClosePageItems(invoicePage)
+    invoiceTypePagination.total = financialClosePageTotal(invoicePage)
   } catch (caught) {
     profile.value = null
     rateRules.value = []
     invoiceTypes.value = []
+    ratePagination.total = 0
+    invoiceTypePagination.total = 0
     error.value = financialCloseErrorMessage(caught)
   } finally {
     loading.value = false
@@ -88,6 +96,28 @@ function openMaintenance() {
     return
   }
   maintenanceVisible.value = true
+}
+
+function changeRatePage(page: number) {
+  ratePagination.page = page
+  void loadRecords()
+}
+
+function changeRatePageSize(pageSize: number) {
+  ratePagination.page = 1
+  ratePagination.pageSize = pageSize
+  void loadRecords()
+}
+
+function changeInvoiceTypePage(page: number) {
+  invoiceTypePagination.page = page
+  void loadRecords()
+}
+
+function changeInvoiceTypePageSize(pageSize: number) {
+  invoiceTypePagination.page = 1
+  invoiceTypePagination.pageSize = pageSize
+  void loadRecords()
 }
 
 async function saveTaxProfile() {
@@ -197,6 +227,16 @@ onMounted(loadRecords)
           <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ row.enabled === false ? '停用' : financialCloseStatusText(row.status || 'ENABLED') }}</template></el-table-column>
         </el-table>
       </div>
+      <el-pagination
+        class="table-pagination"
+        layout="total, sizes, prev, pager, next"
+        :page-sizes="financialClosePageSizes"
+        :total="ratePagination.total"
+        :page-size="ratePagination.pageSize"
+        :current-page="ratePagination.page"
+        @current-change="changeRatePage"
+        @size-change="changeRatePageSize"
+      />
     </section>
 
     <section class="financial-close-section">
@@ -208,6 +248,16 @@ onMounted(loadRecords)
           <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ row.enabled === false ? '停用' : financialCloseStatusText(row.status || 'ENABLED') }}</template></el-table-column>
         </el-table>
       </div>
+      <el-pagination
+        class="table-pagination"
+        layout="total, sizes, prev, pager, next"
+        :page-sizes="financialClosePageSizes"
+        :total="invoiceTypePagination.total"
+        :page-size="invoiceTypePagination.pageSize"
+        :current-page="invoiceTypePagination.page"
+        @current-change="changeInvoiceTypePage"
+        @size-change="changeInvoiceTypePageSize"
+      />
     </section>
     <el-drawer v-model="maintenanceVisible" title="税务基础维护" size="min(720px, 92vw)">
       <el-form label-position="top">

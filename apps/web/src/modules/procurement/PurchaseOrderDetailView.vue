@@ -17,9 +17,12 @@ import {
   formatProcurementQuantity,
   procurementOwnershipDisplay,
   procurementPriceSourceDisplay,
+  procurementApprovalStatusLabel,
   procurementErrorMessage,
+  purchaseInTransitStatusLabel,
   purchaseReceiptStatusLabel,
   purchaseReceiptStatusTagType,
+  purchaseScheduleStatusLabel,
 } from './procurementPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
@@ -337,7 +340,7 @@ onMounted(loadRecord)
         </div>
         <div>
           <span>在途状态</span>
-          <strong>{{ record.inTransitStatusName || '-' }}</strong>
+          <strong>{{ purchaseInTransitStatusLabel(record.inTransitStatus, record.inTransitStatusName) }}</strong>
         </div>
         <div>
           <span>订单日期</span>
@@ -361,7 +364,7 @@ onMounted(loadRecord)
         <dt>供应商</dt>
         <dd>{{ record.supplierCode }} {{ record.supplierName }}</dd>
         <dt>审批状态</dt>
-        <dd>审批状态：{{ record.approvalStatusName || record.approvalStatus || '未提交' }}</dd>
+        <dd>审批状态：{{ procurementApprovalStatusLabel(record.approvalStatus, record.approvalStatusName) }}</dd>
         <dt>价格来源</dt>
         <dd>价格来源：{{ purchaseOrderPriceSourceText() }}</dd>
         <dt>例外原因</dt>
@@ -430,7 +433,7 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column label="在途状态" min-width="120">
               <template #default="{ row }">
-                {{ row.inTransitStatusName || '-' }}
+                {{ purchaseInTransitStatusLabel(row.inTransitStatus, row.inTransitStatusName) }}
               </template>
             </el-table-column>
             <el-table-column label="采购单价" min-width="110" align="right">
@@ -449,7 +452,7 @@ onMounted(loadRecord)
                   计划/已入库/剩余：{{ formatProcurementQuantity(schedule.plannedQuantity) }}/{{
                     formatProcurementQuantity(schedule.receivedQuantity)
                   }}/{{ formatProcurementQuantity(schedule.remainingQuantity) }}
-                  · {{ schedule.expectedArrivalDate }} · {{ schedule.statusName || schedule.status }}
+                  · {{ schedule.expectedArrivalDate }} · {{ purchaseScheduleStatusLabel(schedule.status, schedule.statusName) }}
                 </div>
                 <span v-if="!(row.schedules ?? []).length">未拆分到货计划</span>
               </template>
@@ -486,7 +489,7 @@ onMounted(loadRecord)
                 {{ formatProcurementDateTime(row.postedAt) }}
               </template>
             </el-table-column>
-            <el-table-column v-if="canViewReceipt" label="操作" width="90" fixed="right">
+            <el-table-column v-if="canViewReceipt" label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-purchase-receipt-summary" @click="viewReceipt(row.id)">
                   详情

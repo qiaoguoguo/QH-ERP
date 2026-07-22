@@ -28,6 +28,7 @@ export const glPermissions = {
 } as const
 
 export const glPageSizes = [10, 20, 50, 100]
+export const glDefaultSourceVariant = 'DEFAULT'
 
 export function glPageItems<T>(page: PageResult<T>): T[] {
   return page.items ?? page.records ?? page.content ?? []
@@ -86,11 +87,15 @@ export function glAccountCategoryText(value: string | null | undefined) {
     COST: '成本',
     PROFIT_LOSS: '损益',
   }
-  return value ? text[value] ?? value : '-'
+  return labelFromMap(value, text, '未知科目类别')
 }
 
 export function glBalanceDirectionText(value: string | null | undefined) {
-  return value === 'CREDIT' ? '贷方' : '借方'
+  const text: Record<string, string> = {
+    DEBIT: '借方',
+    CREDIT: '贷方',
+  }
+  return labelFromMap(value, text, '未知方向')
 }
 
 export function glVoucherStatusText(value: string | null | undefined) {
@@ -100,7 +105,35 @@ export function glVoucherStatusText(value: string | null | undefined) {
     POSTED: '已记账',
     CANCELLED: '已取消',
   }
-  return value ? text[value] ?? value : '-'
+  return labelFromMap(value, text, '未知状态')
+}
+
+export function glVoucherTypeText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    GENERAL: '普通凭证',
+    OPENING: '期初凭证',
+  }
+  return labelFromMap(value, text, '未知凭证类型')
+}
+
+export function glAuxDimensionTypeText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    SYSTEM: '系统维度',
+    CUSTOM: '自定义维度',
+  }
+  return labelFromMap(value, text, '未知维度类型')
+}
+
+export function glApprovalStatusText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    DRAFT: '草稿',
+    SUBMITTED: '审批中',
+    APPROVED: '已审批',
+    REJECTED: '已拒绝',
+    CANCELLED: '已取消',
+    POSTED: '已记账',
+  }
+  return labelFromMap(value, text, '未知审批状态')
 }
 
 export function glPeriodStatusText(value: string | null | undefined) {
@@ -108,7 +141,7 @@ export function glPeriodStatusText(value: string | null | undefined) {
     OPEN: '开放',
     CLOSED: '已关闭',
   }
-  return value ? text[value] ?? value : '-'
+  return labelFromMap(value, text, '未知期间状态')
 }
 
 export function glActionAllowed(record: { allowedActions?: string[] | null }, action: string) {
@@ -145,8 +178,13 @@ export function glAllowedActionsText(actions: string[] | null | undefined) {
     WITHDRAW: '可撤回',
     REVERSE: '可冲销',
     CREATE: '可创建',
+    CREATE_CHILD: '可新增下级',
+    NEW_VERSION: '可复制新版本',
+    VALIDATE: '可预览校验',
+    ACTIVATE: '可激活',
+    DISABLE: '可停用',
   }
-  return actions?.length ? actions.map((action) => labels[action] ?? action).join('、') : '-'
+  return actions?.length ? actions.map((action) => labelFromMap(action, labels, '未知动作')).join('、') : '-'
 }
 
 export function glFinancialCloseStatusText(value: string | null | undefined) {
@@ -159,7 +197,7 @@ export function glFinancialCloseStatusText(value: string | null | undefined) {
     CLOSED: '已关闭',
     OPEN: '开放',
   }
-  return value ? text[value] ?? value : '-'
+  return labelFromMap(value, text, '未知财务结账状态')
 }
 
 export function glBusinessSourceText(record: Pick<GlVoucherRecord, 'businessSourceType' | 'sourceOriginalType' | 'businessSourceNo' | 'sourceOriginalNo' | 'sourceVisible' | 'restrictedReason'>) {
@@ -197,5 +235,43 @@ export function glSourceTypeText(value: string | null | undefined) {
     PURCHASE_INVOICE: '采购发票',
     REVERSAL: '冲销凭证',
   }
-  return value ? text[value] ?? value : '-'
+  return labelFromMap(value, text, '未知来源')
+}
+
+export function glSourceVariantText(value: string | null | undefined) {
+  if (!value) {
+    return '-'
+  }
+  return value === 'DEFAULT' ? '默认变体' : '自定义变体'
+}
+
+export function glPostingRuleStatusText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    DRAFT: '草稿',
+    ACTIVE: '已启用',
+    SUPERSEDED: '已替代',
+    DISABLED: '已停用',
+  }
+  return labelFromMap(value, text, '未知规则状态')
+}
+
+export function glPostingRuleValidationStatusText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    PENDING: '待校验',
+    VALID: '校验通过',
+    INVALID: '校验未通过',
+    WARNING: '校验警告',
+  }
+  return labelFromMap(value, text, '未知校验状态')
+}
+
+export function glPostingRuleDirectionText(value: string | null | undefined) {
+  return glBalanceDirectionText(value)
+}
+
+function labelFromMap(value: string | null | undefined, labels: Record<string, string>, unknownLabel: string): string {
+  if (!value) {
+    return '-'
+  }
+  return labels[value] ?? unknownLabel
 }

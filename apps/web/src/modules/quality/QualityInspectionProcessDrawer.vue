@@ -325,8 +325,7 @@ watch(() => [props.modelValue, props.inspectionId], () => {
           :tracking-method="detailTrackingMethod"
           :allocations="detail.trackingAllocations ?? []"
         />
-        <el-table
-          v-if="trackingRows.length > 1"
+        <el-table class="table-scroll" v-if="trackingRows.length > 1"
           :data="trackingRows"
           empty-text="暂无待检追踪身份"
           stripe
@@ -377,6 +376,7 @@ watch(() => [props.modelValue, props.inspectionId], () => {
             v-model="form.businessDate"
             name="quality-process-business-date"
             type="date"
+            format="YYYY-MM-DD"
             value-on-clear=""
             value-format="YYYY-MM-DD"
             placeholder="选择业务日期"

@@ -798,8 +798,9 @@ describe('033 项目利润与经营财务分析页面', () => {
     const text = wrapper.text()
 
     expect(text).toContain('已收齐')
-    expect(text).toContain('未知状态：CONTRACT_NEEDS_REVIEW')
+    expect(text).toContain('未知状态')
     expect(text).not.toContain('COLLECTED')
+    expect(text).not.toContain('CONTRACT_NEEDS_REVIEW')
   })
 
   it('库存质量 PENDING_INSPECTION、REJECTED 和往来对象类型不裸露后端枚举', async () => {
@@ -1058,7 +1059,7 @@ describe('033 项目利润与经营财务分析页面', () => {
       analysisMode: 'BUSINESS_SNAPSHOT',
     }))
     expect(wrapper.text()).toContain('冻结快照')
-    expect(wrapper.text()).toContain('来源受限/不可用')
+    expect(wrapper.text()).toContain('缺少上游金额权限')
     const traceButton = wrapper.find('[data-test="open-report-trace"]')
     expect(traceButton.attributes('disabled')).toBeDefined()
     await traceButton.trigger('click')

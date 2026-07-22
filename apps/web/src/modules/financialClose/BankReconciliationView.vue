@@ -5,6 +5,7 @@ import { confirmAction } from '../../shared/ui/confirmDialog'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import {
+  bankReconciliationExceptionText,
   createFinancialCloseIdempotencyKey,
   financialCloseActionState,
   financialCloseErrorMessage,
@@ -419,7 +420,7 @@ watch([selectedStatementIds, selectedLedgerIds], syncMatchDetails, { deep: true 
       <el-button data-test="reopen-bank-reconciliation" type="warning" plain :disabled="!reconciliationAction('REOPEN', canReopen, '无银行对账重开权限').allowed" :loading="actionLoading" @click="reopenReconciliation">重开</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecords">查询</el-button></el-form-item>
       </el-form>
@@ -525,7 +526,7 @@ watch([selectedStatementIds, selectedLedgerIds], syncMatchDetails, { deep: true 
       </p>
       <div class="table-scroll">
         <el-table :data="selected?.exceptions ?? []" empty-text="暂无未达项" stripe>
-          <el-table-column label="类型" min-width="180"><template #default="{ row }">{{ row.exceptionType || row.category }}</template></el-table-column>
+          <el-table-column label="类型" min-width="180"><template #default="{ row }">{{ bankReconciliationExceptionText(row.exceptionType || row.category) }}</template></el-table-column>
           <el-table-column prop="amount" label="金额" min-width="120" align="right" />
           <el-table-column prop="reason" label="原因" min-width="220" show-overflow-tooltip />
         </el-table>

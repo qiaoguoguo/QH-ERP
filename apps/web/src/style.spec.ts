@@ -112,6 +112,15 @@ describe('全局样式契约', () => {
     expect(elementPlusSource).toContain("element-plus/theme-chalk/el-skeleton.css")
   })
 
+  it('表格更多菜单使用的下拉组件纳入共享 Element Plus 注册入口和样式入口', () => {
+    expectElementPlusComponentRegistered('ElDropdown')
+    expectElementPlusComponentRegistered('ElDropdownMenu')
+    expectElementPlusComponentRegistered('ElDropdownItem')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-dropdown.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-dropdown-menu.css")
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-dropdown-item.css")
+  })
+
   it('027 外协页面规格不再通过旧挂载降级写法降低类型', () => {
     const outsourcingSpecSource = readFileSync(
       resolve(currentDir, 'modules/production/outsourcing/ProductionOutsourcingViews.spec.ts'),
@@ -129,6 +138,17 @@ describe('全局样式契约', () => {
     expect(styleSource).toContain('.report-filter-bar .el-form-item__content')
     expect(styleSource).toContain('.el-date-editor.el-input')
     expect(styleSource).toContain('height: 40px;')
+  })
+
+  it('共享状态标签支持中文主标签和可选诊断原码，不抹平语义色', () => {
+    expect(styleSource).toContain('.qherp-status-tag')
+    expect(styleSource).toContain('.qherp-status-tag__label')
+    expect(styleSource).toContain('.qherp-status-tag__diagnostic')
+    expect(styleSource).toContain('font-family: var(--qherp-font-mono);')
+    expect(styleSource).toContain('.el-tag.el-tag--success')
+    expect(styleSource).toContain('.el-tag.el-tag--warning')
+    expect(styleSource).toContain('.el-tag.el-tag--danger')
+    expect(styleSource).toContain('.el-tag.el-tag--info')
   })
 
   it('移动端主内容容器覆盖全局高度并允许主区域独立滚动', () => {

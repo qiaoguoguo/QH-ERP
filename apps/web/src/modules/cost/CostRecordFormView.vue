@@ -19,6 +19,7 @@ import CostTypeTag from './CostTypeTag.vue'
 import {
   basisTypeLabel,
   costErrorMessage,
+  costWorkOrderStatusLabel,
   formatCostAmount,
   formatCostQuantity,
   todayText,
@@ -318,7 +319,7 @@ onMounted(async () => {
         </div>
         <div>
           <span>工单状态</span>
-          <strong>{{ selectedWorkOrder.status }}</strong>
+          <strong>{{ costWorkOrderStatusLabel(selectedWorkOrder.status) }}</strong>
         </div>
       </div>
 

@@ -160,7 +160,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="sales-project-keyword" clearable placeholder="项目编号、名称、客户或负责人" />
         </el-form-item>
@@ -253,7 +253,7 @@ onMounted(() => {
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }">{{ formatProjectDateTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="150">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-project" @click="viewProject(row)">详情</el-button>
             <el-button v-if="canUpdate && row.status !== 'CLOSED' && row.status !== 'CANCELLED'" size="small" text data-test="edit-sales-project" @click="editProject(row)">编辑</el-button>

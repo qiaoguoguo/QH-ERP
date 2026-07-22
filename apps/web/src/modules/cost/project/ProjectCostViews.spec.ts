@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import {
@@ -365,6 +365,7 @@ async function mountCostView(component: object, path: string, permissions = [
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -373,7 +374,31 @@ async function mountCostView(component: object, path: string, permissions = [
   return { wrapper, router }
 }
 
+async function openMoreActions(wrapper: VueWrapper) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string) {
+  await openMoreActions(wrapper)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 describe('029 项目成本页面族', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     projectCostApiMock.projectCosts.list.mockResolvedValue(page([workbenchRecord, restrictedWorkbenchRecord], 1, 10))
@@ -631,8 +656,7 @@ describe('029 项目成本页面族', () => {
     expect(list.wrapper.text()).toContain('PCA-202607-001')
     expect(list.wrapper.text()).toContain('50.00')
 
-    await list.wrapper.find('[data-test="submit-project-cost-adjustment"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(list.wrapper, 'submit-project-cost-adjustment')
     expect(confirmActionMock).toHaveBeenCalledWith(
       '提交成本调整/分配“PCA-202607-001”？',
       expect.objectContaining({ title: '提交成本调整', type: 'warning', risk: 'project-cost-adjustment-submit' }),

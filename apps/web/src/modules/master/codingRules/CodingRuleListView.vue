@@ -277,7 +277,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="coding-rule-keyword" clearable placeholder="规则编码或名称" />
         </el-form-item>
@@ -333,34 +333,41 @@ onMounted(loadRecords)
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="190">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-coding-rule" @click="openDetail(row)">详情</el-button>
             <el-button v-if="canUpdate" size="small" text data-test="edit-coding-rule" @click="openEdit(row)">
               编辑
             </el-button>
-            <el-button
-              v-if="canEnable && row.status === 'DISABLED'"
-              size="small"
-              text
-              type="success"
-              :disabled="actionLoading"
-              data-test="enable-coding-rule"
-              @click="enableRecord(row)"
-            >
-              启用
-            </el-button>
-            <el-button
-              v-if="canDisable && row.status === 'ENABLED'"
-              size="small"
-              text
-              type="danger"
-              :disabled="actionLoading"
-              data-test="disable-coding-rule"
-              @click="disableRecord(row)"
-            >
-              停用
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canEnable && row.status === 'DISABLED') || (canDisable && row.status === 'ENABLED')">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canEnable && row.status === 'DISABLED'"
+                    size="small"
+                    text
+                    type="success"
+                    :disabled="actionLoading"
+                    data-test="enable-coding-rule"
+                    @click="enableRecord(row)"
+                  >
+                    启用
+                  </el-button>
+                  <el-button
+                    v-if="canDisable && row.status === 'ENABLED'"
+                    size="small"
+                    text
+                    type="danger"
+                    :disabled="actionLoading"
+                    data-test="disable-coding-rule"
+                    @click="disableRecord(row)"
+                  >
+                    停用
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

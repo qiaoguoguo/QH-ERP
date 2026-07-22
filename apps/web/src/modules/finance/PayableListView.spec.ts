@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { PayableSummaryRecord } from '../../shared/api/financeApi'
 import PayableListView from './PayableListView.vue'
-import { mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import { clickTeleportedAction, mountFinanceView, openMoreActions, page, setSelectValue, teleportedAction } from './financeTestHelpers'
 
 const financeApiMock = vi.hoisted(() => ({
   payables: { list: vi.fn(), confirm: vi.fn(), cancel: vi.fn(), close: vi.fn() },
@@ -50,7 +50,10 @@ describe('应付台账列表页', () => {
     financeApiMock.payables.close.mockResolvedValue({ ...payable, status: 'CLOSED' })
   })
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+  })
 
   it('加载应付台账并支持筛选、分页、空态和错误态', async () => {
     const { wrapper } = await mountFinanceView(PayableListView, ['finance:payable:view'], '/finance/payables')
@@ -109,13 +112,13 @@ describe('应付台账列表页', () => {
       'finance:payable:update',
       'finance:payable:confirm',
       'finance:payable:cancel',
-    ], '/finance/payables')
+    ], '/finance/payables', { attachTo: document.body })
 
     expect(wrapper.find('[data-test="edit-payable"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="confirm-payable"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-payable"]').exists()).toBe(true)
-    await wrapper.find('[data-test="confirm-payable"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    expect(teleportedAction('confirm-payable')).toBeTruthy()
+    expect(teleportedAction('cancel-payable')).toBeTruthy()
+    await clickTeleportedAction(wrapper, 'confirm-payable')
     expect(financeApiMock.payables.confirm).toHaveBeenCalledWith(1)
   })
 })

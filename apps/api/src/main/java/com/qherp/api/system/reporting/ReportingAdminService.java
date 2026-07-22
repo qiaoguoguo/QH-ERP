@@ -2316,12 +2316,12 @@ public class ReportingAdminService {
 		boolean canView = currentUserPermissions().contains(permissionCode);
 		if (!canView) {
 			return new TraceSourceResponse(row.sourceType(), null, null, null, null, null, null, null, null, null,
-					null, false, true, RESTRICTED_MESSAGE);
+					null, false, true, RESTRICTED_MESSAGE, null);
 		}
 		return new TraceSourceResponse(row.sourceType(), row.sourceId(), row.sourceNo(), row.sourceLineId(),
 				row.businessDate(), row.status(), row.quantity() == null ? null : quantity(row.quantity()),
 				row.amount() == null ? null : amount(row.amount()), routeName, routeParams, routeQuery, true, false,
-				null);
+				null, null);
 	}
 
 	private List<String> currentUserPermissions() {
@@ -2848,7 +2848,7 @@ public class ReportingAdminService {
 	public record TraceSourceResponse(String sourceType, Long sourceId, String sourceNo, Long sourceLineId,
 			LocalDate businessDate, String status, String quantity, String amount, String resourceRouteName,
 			Map<String, Object> resourceRouteParams, Map<String, Object> resourceRouteQuery, boolean canViewResource,
-			boolean restricted, String restrictedMessage) {
+			boolean restricted, String restrictedMessage, String statusName) {
 	}
 
 }

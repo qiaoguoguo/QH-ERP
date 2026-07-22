@@ -1,13 +1,19 @@
 import type {
   ResourceId,
+  PriceAgreementStatus,
   PurchaseOrderLineRecord,
   ProcurementMode,
+  ProcurementInquiryStatus,
   ProcurementRequisitionStatus,
+  PurchaseInTransitStatus,
   PurchaseOrderStatus,
   PurchaseReceiptLineRecord,
   PurchaseReceiptStatus,
+  PurchaseScheduleStatus,
+  SupplierQuoteStatus,
 } from '../../shared/api/procurementApi'
 import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
+import { createUnknownStatusDisplay, type StatusTone } from '../../shared/status/statusDisplay'
 
 export interface ProcurementDecimalValidationResult {
   value: string | null
@@ -99,7 +105,7 @@ export interface PurchaseReceiptLineDraft {
   remark: string
 }
 
-const purchaseOrderStatusLabels: Record<PurchaseOrderStatus, string> = {
+const purchaseOrderStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   CONFIRMED: '已确认',
   PARTIALLY_RECEIVED: '部分入库',
@@ -108,21 +114,21 @@ const purchaseOrderStatusLabels: Record<PurchaseOrderStatus, string> = {
   CANCELLED: '已取消',
 }
 
-const purchaseOrderStatusTypes: Record<PurchaseOrderStatus, 'info' | 'success' | 'warning' | 'danger'> = {
+const purchaseOrderStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   CONFIRMED: 'success',
   PARTIALLY_RECEIVED: 'warning',
   RECEIVED: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
-const purchaseReceiptStatusLabels: Record<PurchaseReceiptStatus, string> = {
+const purchaseReceiptStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   POSTED: '已过账',
 }
 
-const purchaseReceiptStatusTypes: Record<PurchaseReceiptStatus, 'info' | 'success'> = {
+const purchaseReceiptStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   POSTED: 'success',
 }
@@ -137,14 +143,74 @@ const procurementRequisitionStatusLabels: Record<string, string> = {
   CANCELLED: '已取消',
 }
 
-const procurementRequisitionStatusTypes: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
+const procurementRequisitionStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   SUBMITTED: 'warning',
   APPROVED: 'success',
   PARTIALLY_ORDERED: 'warning',
   ORDERED: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
+}
+
+const procurementInquiryStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  RELEASED: '已发布',
+  COMPLETED: '已完成',
+  AWARDED: '已定标',
+  CANCELLED: '已取消',
+}
+
+const supplierQuoteStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  VALID: '有效',
+  SELECTED: '已选中',
+  REJECTED: '已拒绝',
+  EXPIRED: '已过期',
+  CANCELLED: '已取消',
+}
+
+const priceAgreementStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  ACTIVE: '生效中',
+  DISABLED: '已停用',
+  EXPIRED: '已过期',
+  CANCELLED: '已取消',
+}
+
+const purchaseScheduleStatusLabels: Record<string, string> = {
+  PLANNED: '计划中',
+  PARTIALLY_RECEIVED: '部分入库',
+  RECEIVED: '已全部入库',
+  CLOSED: '已关闭',
+  CANCELLED: '已取消',
+}
+
+const purchaseInTransitStatusLabels: Record<string, string> = {
+  NORMAL: '正常',
+  DUE_SOON: '即将到期',
+  OVERDUE: '已逾期',
+  NOT_COUNTED: '不计入',
+}
+
+const procurementApprovalStatusLabels: Record<string, string> = {
+  NOT_SUBMITTED: '未提交',
+  NONE: '未提交',
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  APPROVED: '已通过',
+  REJECTED: '已驳回',
+  WITHDRAWN: '已撤回',
+  CANCELLED: '已取消',
+}
+
+const procurementPriceSourceTypeLabels: Record<string, string> = {
+  QUOTE: '供应商报价',
+  QUOTE_SELECTION: '供应商报价',
+  AGREEMENT: '价格协议',
+  PUBLIC_DIRECT: '公共直采例外',
+  MIXED: '混合来源',
 }
 
 const procurementModeLabels: Record<ProcurementMode, string> = {
@@ -157,20 +223,66 @@ const procurementOwnershipTagTypes: Record<ProcurementMode, 'info' | 'success'> 
   PROJECT: 'success',
 }
 
-export function purchaseOrderStatusLabel(status: PurchaseOrderStatus): string {
-  return purchaseOrderStatusLabels[status]
+function normalizedDisplayText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  return String(value).trim()
 }
 
-export function purchaseOrderStatusTagType(status: PurchaseOrderStatus): 'info' | 'success' | 'warning' | 'danger' {
-  return purchaseOrderStatusTypes[status]
+function hasChineseText(value: string): boolean {
+  return /[\u4e00-\u9fff]/.test(value)
 }
 
-export function purchaseReceiptStatusLabel(status: PurchaseReceiptStatus): string {
-  return purchaseReceiptStatusLabels[status]
+function knownOrFallbackLabel(
+  code: unknown,
+  labels: Record<string, string>,
+  unknownLabel: string,
+  context: { domain: string; field: string },
+  serverName?: unknown,
+): string {
+  const codeText = normalizedDisplayText(code).toUpperCase()
+  const serverText = normalizedDisplayText(serverName)
+  if (serverText && serverText !== codeText && hasChineseText(serverText)) {
+    return serverText
+  }
+  if (!codeText && !serverText) {
+    return unknownLabel === '未提交' ? '未提交' : '-'
+  }
+  const knownLabel = labels[codeText] || labels[serverText]
+  if (knownLabel) {
+    return knownLabel
+  }
+  if (unknownLabel === '未知状态') {
+    return createUnknownStatusDisplay({
+      ...context,
+      code: codeText,
+      statusName: serverText,
+    }).label
+  }
+  return unknownLabel
 }
 
-export function purchaseReceiptStatusTagType(status: PurchaseReceiptStatus): 'info' | 'success' {
-  return purchaseReceiptStatusTypes[status]
+export function purchaseOrderStatusLabel(status?: PurchaseOrderStatus | string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, purchaseOrderStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '采购订单状态',
+  }, statusName)
+}
+
+export function purchaseOrderStatusTagType(status?: PurchaseOrderStatus | string | null): StatusTone {
+  return purchaseOrderStatusTypes[normalizeStatusCode(status)] ?? 'warning'
+}
+
+export function purchaseReceiptStatusLabel(status?: PurchaseReceiptStatus | string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, purchaseReceiptStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '采购入库状态',
+  }, statusName)
+}
+
+export function purchaseReceiptStatusTagType(status?: PurchaseReceiptStatus | string | null): StatusTone {
+  return purchaseReceiptStatusTypes[normalizeStatusCode(status)] ?? 'warning'
 }
 
 export function procurementRequisitionStatusLabel(
@@ -179,7 +291,7 @@ export function procurementRequisitionStatusLabel(
 ): string {
   const code = normalizeStatusCode(status)
   const displayName = String(statusName ?? '').trim()
-  if (displayName && displayName !== code && !isRawStatusCode(displayName)) {
+  if (displayName && displayName !== code && hasChineseText(displayName)) {
     return displayName
   }
   if (!code) {
@@ -190,8 +302,62 @@ export function procurementRequisitionStatusLabel(
 
 export function procurementRequisitionStatusTagType(
   status?: ProcurementRequisitionStatus | string | null,
-): 'info' | 'success' | 'warning' | 'danger' {
+): StatusTone {
   return procurementRequisitionStatusTypes[normalizeStatusCode(status)] ?? 'info'
+}
+
+export function procurementInquiryStatusLabel(
+  status?: ProcurementInquiryStatus | string | null,
+  statusName?: string | null,
+): string {
+  return knownOrFallbackLabel(status, procurementInquiryStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '询价状态',
+  }, statusName)
+}
+
+export function supplierQuoteStatusLabel(status?: SupplierQuoteStatus | string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, supplierQuoteStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '供应商报价状态',
+  }, statusName)
+}
+
+export function priceAgreementStatusLabel(status?: PriceAgreementStatus | string | null, statusName?: string | null): string {
+  return knownOrFallbackLabel(status, priceAgreementStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '价格协议状态',
+  }, statusName)
+}
+
+export function purchaseScheduleStatusLabel(
+  status?: PurchaseScheduleStatus | string | null,
+  statusName?: string | null,
+): string {
+  return knownOrFallbackLabel(status, purchaseScheduleStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '到货计划状态',
+  }, statusName)
+}
+
+export function purchaseInTransitStatusLabel(
+  status?: PurchaseInTransitStatus | string | null,
+  statusName?: string | null,
+): string {
+  return knownOrFallbackLabel(status, purchaseInTransitStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '在途状态',
+  }, statusName)
+}
+
+export function procurementApprovalStatusLabel(status?: string | null, statusName?: string | null): string {
+  if (!normalizedDisplayText(status) && !normalizedDisplayText(statusName)) {
+    return '未提交'
+  }
+  return knownOrFallbackLabel(status, procurementApprovalStatusLabels, '未知状态', {
+    domain: '采购',
+    field: '审批状态',
+  }, statusName)
 }
 
 export function procurementErrorMessage(error: unknown): string {
@@ -328,15 +494,12 @@ export function procurementPriceSourceDisplay(
   source?: ProcurementPriceSourceDisplaySource | null,
   fallback = '价格来源未返回',
 ): string {
-  const sourceName = source?.priceSourceTypeName
-    || (source?.priceSourceType === 'QUOTE' ? '供应商报价'
-      : source?.priceSourceType === 'QUOTE_SELECTION' ? '供应商报价'
-        : source?.priceSourceType === 'AGREEMENT' ? '价格协议'
-          : source?.priceSourceType === 'PUBLIC_DIRECT' ? '公共直采例外'
-            : source?.priceSourceType === 'MIXED' ? '混合来源'
-              : source?.priceSourceType)
+  const sourceName = knownOrFallbackLabel(source?.priceSourceType, procurementPriceSourceTypeLabels, '未知价格来源', {
+    domain: '采购',
+    field: '价格来源',
+  }, source?.priceSourceTypeName)
   const sourceNo = source?.priceSourceNo || source?.sourceNo
-  if (!sourceName) {
+  if (!source?.priceSourceType && !source?.priceSourceTypeName) {
     return sourceNo ? `${fallback} ${sourceNo}` : fallback
   }
   return sourceNo ? `${sourceName} ${sourceNo}` : sourceName
@@ -508,10 +671,6 @@ function isZeroDecimal(value: string): boolean {
 
 function normalizeStatusCode(value: unknown): string {
   return String(value ?? '').trim().toUpperCase()
-}
-
-function isRawStatusCode(value: string): boolean {
-  return /^[A-Z][A-Z0-9_]*$/.test(value)
 }
 
 export function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {

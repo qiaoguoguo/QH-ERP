@@ -175,7 +175,7 @@ onMounted(loadRecords)
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="150" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { ResourceId } from '../../shared/api/salesApi'
 import type { MaterialRecord, WarehouseRecord } from '../../shared/api/masterDataApi'
-import { type SalesOrderLineDraft, newSalesOrderLine, nextSalesOrderLineNo } from './salesPageHelpers'
+import { type SalesOrderLineDraft, newSalesOrderLine, nextSalesOrderLineNo, salesPriceSourceLabel } from './salesPageHelpers'
 
 const props = withDefaults(defineProps<{
   lines: SalesOrderLineDraft[]
@@ -54,13 +54,7 @@ function updateText(
 }
 
 function priceSourceLabel(line: SalesOrderLineDraft) {
-  if (line.priceSourceType === 'QUOTE') {
-    return `报价 ${line.priceSourceNo || '来源未返回'}`
-  }
-  if (line.priceSourceType === 'LEGACY_MANUAL') {
-    return '历史手工订单'
-  }
-  return '手工订单'
+  return salesPriceSourceLabel(line)
 }
 
 function addLine() {
@@ -216,7 +210,7 @@ function removeLine(index: number) {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button
               data-test="remove-sales-order-line"

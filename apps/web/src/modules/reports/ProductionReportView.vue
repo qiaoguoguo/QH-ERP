@@ -4,6 +4,7 @@ import { businessReportingApi, type ProductionReportRow, type ProductionReportSu
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
+import { reportStatusText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({ dateFrom: '', dateTo: '', keyword: '', status: '', workOrderId: '', materialId: '' })
 const fields: ReportFilterField[] = [
@@ -129,7 +130,9 @@ onMounted(() => { void loadReport(1) })
         </el-table-column>
         <el-table-column prop="completionReceiptQuantity" label="完工入库" min-width="120" align="right" />
         <el-table-column prop="completionRate" label="完工率" min-width="100" align="right" />
-        <el-table-column prop="status" label="状态" min-width="120" />
+        <el-table-column label="状态" min-width="120">
+          <template #default="{ row }">{{ reportStatusText(row.status) }}</template>
+        </el-table-column>
         <el-table-column label="来源" width="100"><template #default="{ row }"><el-button data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button></template></el-table-column>
       </el-table>
     </div>

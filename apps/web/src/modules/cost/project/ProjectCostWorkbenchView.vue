@@ -22,6 +22,7 @@ import {
   projectCostErrorMessage,
   projectCostFreshnessLabel,
   projectCostMessages,
+  projectCostProjectStatusLabel,
   restrictedMoneyReason,
 } from './projectCostPageHelpers'
 import './ProjectCostShared.css'
@@ -165,16 +166,6 @@ function completenessText(record: ProjectCostWorkbenchRecord) {
     : '成本毛利完整'
 }
 
-function projectStatusText(status: string) {
-  const labels: Record<string, string> = {
-    DRAFT: '草稿',
-    ACTIVE: '执行中',
-    CLOSED: '已关闭',
-    CANCELLED: '已取消',
-  }
-  return labels[status] ?? status
-}
-
 onMounted(loadRecords)
 </script>
 
@@ -197,8 +188,8 @@ onMounted(loadRecords)
         </el-form-item>
         <el-form-item label="当前性">
           <el-select v-model="filters.freshnessStatus" clearable placeholder="全部当前性">
-            <el-option label="当前" value="CURRENT" />
-            <el-option label="历史快照" value="STALE" />
+            <el-option label="当前有效" value="CURRENT" />
+            <el-option label="来源已变化" value="STALE" />
           </el-select>
         </el-form-item>
         <el-form-item label="差异">
@@ -260,7 +251,7 @@ onMounted(loadRecords)
         <el-table-column prop="customerName" label="客户" min-width="140" show-overflow-tooltip />
         <el-table-column prop="ownerDisplayName" label="负责人" min-width="110" show-overflow-tooltip />
         <el-table-column label="项目状态" min-width="100">
-          <template #default="{ row }">{{ projectStatusText(row.projectStatus) }}</template>
+          <template #default="{ row }">{{ projectCostProjectStatusLabel(row.projectStatus) }}</template>
         </el-table-column>
         <el-table-column label="核算状态" min-width="110">
           <template #default="{ row }"><ProjectCostCalculationStatusTag :status="row.calculationStatus" /></template>
@@ -291,7 +282,7 @@ onMounted(loadRecords)
         <el-table-column label="差异" min-width="140">
           <template #default="{ row }">{{ varianceText(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="170">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-project-cost" @click="viewProject(row)">详情</el-button>
             <el-button

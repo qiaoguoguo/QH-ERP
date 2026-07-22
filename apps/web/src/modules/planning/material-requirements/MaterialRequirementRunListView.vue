@@ -288,7 +288,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="项目">
           <BusinessReferenceSelect v-model="filters.projectId" placeholder="项目编号或名称" :load-options="loadProjectOptions" />
         </el-form-item>
@@ -377,7 +377,7 @@ onMounted(() => {
             {{ runAvailabilityText(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text type="primary" @click="viewRun(row)">查看</el-button>
             <el-button

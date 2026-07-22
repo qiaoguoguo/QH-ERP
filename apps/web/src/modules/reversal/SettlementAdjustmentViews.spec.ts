@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettlementAdjustmentDetailView from './SettlementAdjustmentDetailView.vue'
 import SettlementAdjustmentFormView from './SettlementAdjustmentFormView.vue'
 import SettlementAdjustmentListView from './SettlementAdjustmentListView.vue'
@@ -164,12 +164,27 @@ async function mountSettlementView(component: Component, path: string, permissio
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: ReturnType<typeof mount>) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string): HTMLElement {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
 }
 
 describe('往来冲减前端页面', () => {
@@ -183,6 +198,10 @@ describe('往来冲减前端页面', () => {
     returnRefundReversalApiMock.settlementAdjustments.cancel.mockResolvedValue({ ...settlementAdjustmentDetail, status: 'CANCELLED' })
     returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValue(page([settlementAdjustmentSource, paymentSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue([settlementTrace])
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
   })
 
   it('往来冲减列表支持筛选、创建入口和草稿权限按钮', async () => {
@@ -199,8 +218,9 @@ describe('往来冲减前端页面', () => {
     expect(wrapper.text()).toContain('应收冲减')
     expect(wrapper.find('[data-test="create-settlement-adjustment"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-settlement-adjustment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-settlement-adjustment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-settlement-adjustment"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-settlement-adjustment')).toBeTruthy()
+    expect(teleportedAction('cancel-settlement-adjustment')).toBeTruthy()
 
     await wrapper.find('input[name="settlement-adjustment-keyword"]').setValue('SA')
     await wrapper.find('[data-test="search-settlement-adjustments"]').trigger('click')
@@ -221,8 +241,8 @@ describe('往来冲减前端页面', () => {
     expect(wrapper.text()).toContain('新建往来冲减')
     expect(wrapper.text()).toContain('RCPT202607050001')
     expect(wrapper.text()).toContain('可冲金额')
-    expect(wrapper.text()).toContain('收款记录')
-    expect(wrapper.text()).toContain('付款记录')
+    expect(wrapper.text()).toContain('收款')
+    expect(wrapper.text()).toContain('付款')
     expect(wrapper.text()).not.toContain('生产退料')
     expect(wrapper.text()).not.toContain('生产补料')
     expect(returnRefundReversalApiMock.settlementAdjustmentSources.list).toHaveBeenCalledWith({
@@ -384,7 +404,7 @@ describe('往来冲减前端页面', () => {
 
     expect(wrapper.text()).toContain('往来冲减详情')
     expect(wrapper.text()).toContain('SA202607050001')
-    expect(wrapper.text()).toContain('退款记录')
+    expect(wrapper.text()).toContain('退款')
     expect(wrapper.text()).toContain('目标应收/应付')
     expect(wrapper.text()).toContain('冲减前后余额')
     expect(wrapper.find('[data-test="edit-settlement-adjustment-detail"]').exists()).toBe(true)

@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { InventoryCostLayerRecord } from '../../shared/api/inventoryApi'
-import { formatInventoryAmount, formatQuantity, ownershipTypeLabel } from './inventoryPageHelpers'
+import {
+  formatInventoryAmount,
+  formatQuantity,
+  inventoryCostLayerStatusLabel,
+  inventorySourceTypeLabel,
+  ownershipTypeLabel,
+} from './inventoryPageHelpers'
 
 defineProps<{
   modelValue: boolean
@@ -25,18 +31,7 @@ function trackingText(row: InventoryCostLayerRecord) {
 }
 
 function sourceTypeText(row: InventoryCostLayerRecord) {
-  if (row.sourceTypeName) {
-    return row.sourceTypeName
-  }
-  const labels: Record<string, string> = {
-    WAREHOUSE_TRANSFER: '仓库调拨',
-    OWNERSHIP_CONVERSION: '所有权转换',
-    STOCKTAKE: '库存盘点',
-    VALUATION_ADJUSTMENT: '估值调整',
-    PURCHASE_RECEIPT: '采购入库',
-    PRODUCTION_RECEIPT: '完工入库',
-  }
-  return row.sourceType ? labels[String(row.sourceType)] ?? String(row.sourceType) : '-'
+  return inventorySourceTypeLabel(row.sourceType, row.sourceTypeName)
 }
 </script>
 
@@ -102,7 +97,11 @@ function sourceTypeText(row: InventoryCostLayerRecord) {
             <span class="numeric-cell">{{ formatInventoryAmount(row.unitCost, 6) }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="statusName" label="状态" min-width="90" />
+        <el-table-column label="状态" min-width="90">
+          <template #default="{ row }">
+            {{ inventoryCostLayerStatusLabel(row.status, row.statusName) }}
+          </template>
+        </el-table-column>
         <el-table-column label="父层" min-width="110" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.parentLayerNo || row.parentLayerId || '-' }}

@@ -954,8 +954,50 @@ samp {
   color: var(--qherp-danger);
 }
 
-.app-main .el-table .el-button + .el-button {
-  margin-left: 6px;
+.app-main .el-table .el-button + .el-button,
+.app-main .el-table .el-button + .el-dropdown,
+.app-main .el-table .el-dropdown + .el-button,
+.app-main .el-table .el-link + .el-dropdown,
+.app-main .el-table .el-dropdown + .el-link {
+  margin-left: 8px;
+}
+
+.app-main .el-table .el-table__cell[label='操作'] .cell,
+.app-main .el-table .el-table__cell:has(.table-actions-more) .cell {
+  white-space: nowrap;
+}
+
+.table-actions-more {
+  vertical-align: middle;
+}
+
+.table-actions-more-menu {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+}
+
+.table-actions-more-menu .el-button {
+  justify-content: flex-start;
+  margin-left: 0 !important;
+  width: 100%;
+}
+
+.table-actions-more-menu .table-actions-more-item {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.table-actions-more-menu .table-actions-more-item--success {
+  color: var(--el-color-success);
+}
+
+.table-actions-more-menu .table-actions-more-item--warning {
+  color: var(--el-color-warning);
+}
+
+.table-actions-more-menu .table-actions-more-item--danger {
+  color: var(--el-color-danger);
 }
 
 .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):not(.is-link) {
@@ -1178,6 +1220,33 @@ samp {
 .el-tag {
   border-radius: var(--qherp-radius-sm);
   font-weight: 600;
+}
+
+.qherp-status-tag {
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.qherp-status-tag .el-tag__content {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.qherp-status-tag__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qherp-status-tag__diagnostic {
+  color: var(--qherp-stone);
+  font-family: var(--qherp-font-mono);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .el-tag.el-tag--success {

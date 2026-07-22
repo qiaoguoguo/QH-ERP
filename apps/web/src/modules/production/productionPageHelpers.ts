@@ -6,9 +6,9 @@ export interface ProductionQuantityValidationResult {
 
 const workOrderStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
-  RELEASED: '已发布',
-  IN_PROGRESS: '进行中',
-  COMPLETED: '已完成',
+  RELEASED: '已下达',
+  IN_PROGRESS: '生产中',
+  COMPLETED: '已完工',
   CANCELLED: '已取消',
 }
 
@@ -17,7 +17,7 @@ const workOrderStatusTypes: Record<string, 'info' | 'success' | 'warning' | 'dan
   RELEASED: 'success',
   IN_PROGRESS: 'warning',
   COMPLETED: 'success',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
 const productionDocumentStatusLabels: Record<string, string> = {
@@ -29,7 +29,25 @@ const productionDocumentStatusLabels: Record<string, string> = {
 const productionDocumentStatusTypes: Record<string, 'info' | 'success' | 'danger'> = {
   DRAFT: 'info',
   POSTED: 'success',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
+}
+
+const outsourcingOrderStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  RELEASED: '已下达',
+  IN_PROGRESS: '加工中',
+  COMPLETED: '已完成',
+  CLOSED: '已关闭',
+  CANCELLED: '已取消',
+}
+
+const outsourcingOrderStatusTypes: Record<string, 'info' | 'success' | 'warning' | 'danger'> = {
+  DRAFT: 'info',
+  RELEASED: 'success',
+  IN_PROGRESS: 'warning',
+  COMPLETED: 'success',
+  CLOSED: 'info',
+  CANCELLED: 'info',
 }
 
 const productionMovementTypeLabels: Record<string, string> = {
@@ -43,7 +61,7 @@ const productionMovementTypeLabels: Record<string, string> = {
 }
 
 export function workOrderStatusLabel(status: string): string {
-  return workOrderStatusLabels[status] ?? status
+  return workOrderStatusLabels[status] ?? '未知状态'
 }
 
 export function workOrderStatusType(status: string): 'info' | 'success' | 'warning' | 'danger' {
@@ -51,11 +69,27 @@ export function workOrderStatusType(status: string): 'info' | 'success' | 'warni
 }
 
 export function productionDocumentStatusLabel(status: string): string {
-  return productionDocumentStatusLabels[status] ?? status
+  return productionDocumentStatusLabels[status] ?? '未知状态'
 }
 
 export function productionDocumentStatusType(status: string): 'info' | 'success' | 'danger' {
   return productionDocumentStatusTypes[status] ?? 'info'
+}
+
+export function outsourcingOrderStatusLabel(status?: string | null, statusName?: string | null): string {
+  const key = String(status ?? '').trim().toUpperCase()
+  if (key && outsourcingOrderStatusLabels[key]) {
+    return outsourcingOrderStatusLabels[key]
+  }
+  const text = String(statusName ?? '').trim()
+  if (text && text !== key) {
+    return text
+  }
+  return '未知状态'
+}
+
+export function outsourcingOrderStatusType(status: string): 'info' | 'success' | 'warning' | 'danger' {
+  return outsourcingOrderStatusTypes[status] ?? 'info'
 }
 
 export function productionMovementTypeLabel(type?: string | null): string {

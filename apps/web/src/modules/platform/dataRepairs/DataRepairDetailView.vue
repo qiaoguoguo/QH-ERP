@@ -7,8 +7,16 @@ import {
 import { createIdempotencyKey, type ResourceId } from '../../../shared/api/documentPlatformApi'
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import AttachmentPanel from '../components/AttachmentPanel.vue'
-import { formatPlatformDateTime, platformErrorMessage } from '../platformPageHelpers'
-import { dataRepairRiskLabel, dataRepairStatusLabel, dataRepairStatusTagType } from '../platformGovernanceLabels'
+import { approvalStatusLabel, approvalStatusTagType, formatPlatformDateTime, platformErrorMessage } from '../platformPageHelpers'
+import {
+  dataRepairCheckStageLabel,
+  dataRepairCheckStatusLabel,
+  dataRepairEventActionLabel,
+  dataRepairRiskLabel,
+  dataRepairStatusLabel,
+  dataRepairStatusTagType,
+  governanceErrorLabel,
+} from '../platformGovernanceLabels'
 
 const props = defineProps<{
   repairId: ResourceId
@@ -65,9 +73,9 @@ const summaryRows = computed(() => {
 const checkRows = computed(() => (detail.value?.checks ?? []).map((item) => {
   const row = item as unknown as Record<string, unknown>
   return {
-    stage: String(row.checkType ?? row.stage ?? '-'),
-    status: String(row.status ?? '-'),
-    summary: String(row.message ?? row.summary ?? row.code ?? '-'),
+    stageLabel: dataRepairCheckStageLabel(String(row.checkType ?? row.stage ?? '')),
+    statusLabel: dataRepairCheckStatusLabel(String(row.status ?? '')),
+    summary: dataRepairCheckSummary(row),
     checkedAt: String(row.createdAt ?? row.checkedAt ?? ''),
   }
 }))
@@ -81,6 +89,7 @@ const timelineRows = computed(() => (detail.value?.events ?? []).map((item, inde
 }))
 const attachmentObjectId = computed(() => detail.value?.attachmentObjectId ?? detail.value?.id ?? props.repairId)
 const isReadonly = computed(() => !canSubmit.value && !canExecute.value && !canVerify.value && !canCancel.value)
+const approvalStatusValue = computed(() => detail.value?.approvalSummary?.status ?? detail.value?.approvalStatus ?? '')
 
 function objectSummary(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -113,13 +122,24 @@ function summaryValue(value: unknown): string {
   return String(value)
 }
 
+function dataRepairCheckSummary(row: Record<string, unknown>): string {
+  const message = summaryValue(row.message ?? row.summary)
+  if (message !== '-') {
+    return message
+  }
+  const code = row.code
+  return code ? governanceErrorLabel(String(code)) : '-'
+}
+
 function eventText(row: Record<string, unknown>): string {
   const operator = String(row.operatorUsername ?? row.operatorName ?? '-')
   const detailValue = objectSummary(row.detail)
-  const comment = summaryValue(detailValue.comment ?? detailValue.message ?? row.summary ?? row.eventType ?? row.action)
-  const from = row.statusBefore ? String(row.statusBefore) : ''
-  const to = row.statusAfter ? String(row.statusAfter) : ''
-  return [operator, from && to ? `${from} 至 ${to}` : '', comment].filter(Boolean).join(' ')
+  const actionCode = String(row.eventType ?? row.action ?? '')
+  const comment = summaryValue(detailValue.comment ?? detailValue.message ?? row.summary)
+  const actionText = comment === '-' ? dataRepairEventActionLabel(actionCode) : comment
+  const from = row.statusBefore ? dataRepairStatusLabel(String(row.statusBefore)) : ''
+  const to = row.statusAfter ? dataRepairStatusLabel(String(row.statusAfter)) : ''
+  return [operator, from && to ? `${from} 至 ${to}` : '', actionText].filter(Boolean).join(' ')
 }
 
 async function loadDetail() {
@@ -281,8 +301,12 @@ onMounted(() => {
         <h2>预检与验证</h2>
         <div class="table-scroll">
           <el-table :data="checkRows" empty-text="暂无预检或验证记录" stripe>
-            <el-table-column prop="stage" label="阶段" width="120" />
-            <el-table-column prop="status" label="结果" width="120" />
+            <el-table-column label="阶段" width="120">
+              <template #default="{ row }">{{ row.stageLabel }}</template>
+            </el-table-column>
+            <el-table-column label="结果" width="120">
+              <template #default="{ row }">{{ row.statusLabel }}</template>
+            </el-table-column>
             <el-table-column prop="summary" label="摘要" min-width="220" show-overflow-tooltip />
             <el-table-column label="时间" width="160">
               <template #default="{ row }">{{ formatPlatformDateTime(row.checkedAt) }}</template>
@@ -307,7 +331,13 @@ onMounted(() => {
           <dt>审批场景</dt><dd>PLATFORM_DATA_REPAIR_EXECUTION</dd>
           <dt>审批实例</dt><dd>{{ detail.approvalSummary?.id ?? '-' }}</dd>
           <dt>审批任务</dt><dd>{{ detail.approvalSummary?.taskId ?? '-' }}</dd>
-          <dt>审批状态</dt><dd>{{ detail.approvalSummary?.status || detail.approvalStatus || '-' }}</dd>
+          <dt>审批状态</dt>
+          <dd>
+            <el-tag v-if="approvalStatusValue" :type="approvalStatusTagType(approvalStatusValue)" size="small">
+              {{ approvalStatusLabel(approvalStatusValue) }}
+            </el-tag>
+            <span v-else>-</span>
+          </dd>
           <dt>审计摘要</dt><dd>{{ detail.auditSummary?.summary || '-' }}</dd>
         </dl>
       </section>

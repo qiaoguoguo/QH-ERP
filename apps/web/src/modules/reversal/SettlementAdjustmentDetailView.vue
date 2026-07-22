@@ -7,9 +7,6 @@ import {
   type ReversalSourceView,
   type ReversalTraceRecord,
   type SettlementAdjustmentDetail,
-  type SettlementAdjustmentSourceType,
-  type SettlementAdjustmentType,
-  type SettlementSide,
 } from '../../shared/api/returnRefundReversalApi'
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
@@ -17,6 +14,13 @@ import { financeErrorMessage, financePermissions, formatFinanceAmount } from '..
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import {
+  reversalTraceStatusLabel,
+  settlementAdjustmentSourceTypeLabel,
+  settlementAdjustmentTypeLabel,
+  settlementSideLabel,
+  targetSettlementStatusLabel,
+} from './reversalPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
@@ -45,43 +49,6 @@ function sourceRestricted(source?: ReversalSourceView | null) {
 
 function routeValues(values?: Record<string, ReversalRouteValue>) {
   return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]))
-}
-
-function settlementSideText(value: SettlementSide | string) {
-  return value === 'PAYABLE' ? '应付冲减' : '应收冲减'
-}
-
-function adjustmentTypeText(value: SettlementAdjustmentType | string) {
-  const labels: Record<string, string> = {
-    RETURN_OFFSET: '退货冲减',
-    REFUND: '退款记录',
-    PAYMENT_OFFSET: '付款冲减',
-  }
-  return labels[value] ?? value
-}
-
-function sourceTypeText(value: SettlementAdjustmentSourceType | string | undefined) {
-  const labels: Record<string, string> = {
-    SALES_RETURN: '销售退货',
-    PURCHASE_RETURN: '采购退货',
-    RECEIPT: '收款记录',
-    PAYMENT: '付款记录',
-    SETTLEMENT_ADJUSTMENT: '往来冲减',
-  }
-  return value ? labels[value] ?? value : '-'
-}
-
-function targetStatusText(value?: string | null) {
-  const labels: Record<string, string> = {
-    CONFIRMED: '待收款',
-    PARTIALLY_RECEIVED: '部分收款',
-    RECEIVED: '已收清',
-    PARTIALLY_PAID: '部分付款',
-    PAID: '已付清',
-    CLOSED: '已关闭',
-    CANCELLED: '已取消',
-  }
-  return value ? labels[value] ?? value : '-'
 }
 
 async function loadDetail() {
@@ -236,8 +203,8 @@ onMounted(() => {
     <div v-else-if="record" class="detail-layout">
       <el-descriptions :column="3" border>
         <el-descriptions-item label="冲减单号">{{ record.adjustmentNo }}</el-descriptions-item>
-        <el-descriptions-item label="往来方向">{{ settlementSideText(record.settlementSide) }}</el-descriptions-item>
-        <el-descriptions-item label="冲减类型">{{ adjustmentTypeText(record.adjustmentType) }}</el-descriptions-item>
+        <el-descriptions-item label="往来方向">{{ settlementSideLabel(record.settlementSide) }}</el-descriptions-item>
+        <el-descriptions-item label="冲减类型">{{ settlementAdjustmentTypeLabel(record.adjustmentType) }}</el-descriptions-item>
         <el-descriptions-item label="业务日期">{{ record.businessDate }}</el-descriptions-item>
         <el-descriptions-item label="状态">
           <ReversalStatusTag :status="record.status" />
@@ -257,7 +224,7 @@ onMounted(() => {
           :closable="false"
         />
         <el-descriptions v-else :column="3" border>
-          <el-descriptions-item label="来源类型">{{ sourceTypeText(record.source.sourceType) }}</el-descriptions-item>
+          <el-descriptions-item label="来源类型">{{ settlementAdjustmentSourceTypeLabel(record.source.sourceType) }}</el-descriptions-item>
           <el-descriptions-item label="来源单号">
             <el-button
               v-if="record.source.resourceRouteName"
@@ -270,7 +237,7 @@ onMounted(() => {
             </el-button>
             <span v-else>{{ record.source.sourceNo || '-' }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="来源状态">{{ record.source.status || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="来源状态">{{ reversalTraceStatusLabel({ sourceType: record.source.sourceType, status: record.source.status }) }}</el-descriptions-item>
           <el-descriptions-item label="来源日期">{{ record.source.businessDate || '-' }}</el-descriptions-item>
           <el-descriptions-item label="来源金额">
             <span class="numeric-cell">{{ formatFinanceAmount(record.source.amount) }}</span>
@@ -303,7 +270,7 @@ onMounted(() => {
           <el-descriptions-item label="过账后余额">
             <span class="numeric-cell">{{ formatFinanceAmount(record.targetRemainingAmountAfterPost) }}</span>
           </el-descriptions-item>
-          <el-descriptions-item label="过账后目标状态">{{ targetStatusText(record.targetStatusAfterPost) }}</el-descriptions-item>
+          <el-descriptions-item label="过账后目标状态">{{ targetSettlementStatusLabel(record.targetStatusAfterPost) }}</el-descriptions-item>
         </el-descriptions>
       </el-card>
 

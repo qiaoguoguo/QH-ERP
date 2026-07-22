@@ -1,6 +1,8 @@
 import type {
   InventoryBatchSummaryRecord,
+  InventoryQualityStatus,
   InventorySerialSummaryRecord,
+  InventoryStockStatus,
   InventoryTrackingAllocationPayload,
   InventoryTrackingMethod,
   ResourceId,
@@ -13,7 +15,9 @@ export interface TrackingCandidateRecord {
   materialName?: string | null
   warehouseName?: string | null
   qualityStatusName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
   stockStatusName?: string | null
+  stockStatus?: InventoryStockStatus | null
   availableQuantity?: string | number | null
   disabled?: boolean
   disabledReasonCode?: string | null
@@ -151,7 +155,9 @@ export function mapBatchCandidate(item: InventoryBatchSummaryRecord): TrackingCa
     materialName: item.materialName,
     warehouseName: item.warehouseName,
     qualityStatusName: item.qualityStatusName,
+    qualityStatus: item.qualityStatus,
     stockStatusName: item.stockStatusName,
+    stockStatus: item.stockStatus,
     availableQuantity: item.availableQuantity,
     disabled: item.selectable === false,
     disabledReasonCode: item.disabledReasonCode ?? null,
@@ -167,7 +173,9 @@ export function mapSerialCandidate(item: InventorySerialSummaryRecord): Tracking
     materialName: item.materialName,
     warehouseName: item.warehouseName,
     qualityStatusName: item.qualityStatusName,
+    qualityStatus: item.qualityStatus,
     stockStatusName: item.stockStatusName,
+    stockStatus: item.stockStatus,
     availableQuantity: item.availableQuantity,
     disabled: item.selectable === false,
     disabledReasonCode: item.disabledReasonCode ?? null,

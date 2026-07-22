@@ -3,6 +3,9 @@ import {
   bomEffectiveState,
   bomEffectiveStateLabel,
   bomEffectiveStateTagType,
+  bomQuantityBasisLabel,
+  bomStatusLabel,
+  candidateMetaText,
 } from './bomPageHelpers'
 
 describe('BOM 页面工具函数', () => {
@@ -31,5 +34,22 @@ describe('BOM 页面工具函数', () => {
     expect(bomEffectiveStateTagType('CURRENT')).toBe('success')
     expect(bomEffectiveStateTagType('FUTURE')).toBe('warning')
     expect(bomEffectiveStateTagType('EXPIRED')).toBe('info')
+    expect(bomEffectiveStateTagType('DISABLED')).toBe('info')
+  })
+
+  it('BOM 发布状态和数量口径未知值不裸露英文编码', () => {
+    expect(bomStatusLabel('DRAFT')).toBe('草稿')
+    expect(bomStatusLabel('UNKNOWN_STATUS')).toBe('未知状态')
+    expect(bomQuantityBasisLabel('BASE_UNIT')).toBe('基本单位')
+    expect(bomQuantityBasisLabel('CONVERTED_BUSINESS_UNIT')).toBe('换算业务单位')
+    expect(bomQuantityBasisLabel('LEGACY_BUSINESS_UNIT')).toBe('历史业务单位')
+    expect(bomQuantityBasisLabel('UNKNOWN_BASIS')).toBe('未知口径')
+  })
+
+  it('候选元信息优先展示原因和摘要，未知状态使用中文兜底', () => {
+    expect(candidateMetaText({ disabledReason: '已停用不可选', summary: '摘要', status: 'DISABLED' })).toBe('已停用不可选')
+    expect(candidateMetaText({ summary: '摘要', status: 'ENABLED' })).toBe('摘要')
+    expect(candidateMetaText({ status: 'ENABLED' })).toBe('启用')
+    expect(candidateMetaText({ status: 'ARCHIVED' })).toBe('未知状态')
   })
 })

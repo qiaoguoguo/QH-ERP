@@ -174,7 +174,8 @@ describe('034 对象级固定打印入口', () => {
     })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('对象状态 DRAFT 不允许固定打印')
+    expect(wrapper.text()).toContain('对象状态为草稿，不允许固定打印')
+    expect(wrapper.text()).not.toContain('对象状态 DRAFT')
     expect(buttonByTest(wrapper, 'preview-fixed-print').props('disabled')).toBe(true)
     expect(buttonByTest(wrapper, 'create-fixed-print-task').props('disabled')).toBe(true)
 

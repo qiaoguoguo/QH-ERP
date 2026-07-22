@@ -204,7 +204,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="record-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
@@ -239,7 +239,7 @@ onMounted(loadRecords)
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" min-width="160">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button v-if="canUpdate" size="small" text data-test="edit-record" @click="openEdit(row)">编辑</el-button>
             <el-button
@@ -247,7 +247,7 @@ onMounted(loadRecords)
               size="small"
               text
               :disabled="actionLoading"
-              :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+              :type="row.status === 'DISABLED' ? 'success' : 'warning'"
               :data-test="row.status === 'DISABLED' ? 'enable-record' : 'disable-record'"
               @click="changeStatus(row)"
             >

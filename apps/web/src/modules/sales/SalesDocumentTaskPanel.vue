@@ -160,7 +160,7 @@ async function cancelTask() {
     </div>
 
     <el-drawer v-model="errorDrawerVisible" title="任务错误明细" size="min(720px, 92vw)">
-      <el-table :data="failureRows" empty-text="暂无错误明细" stripe>
+      <el-table class="table-scroll" :data="failureRows" empty-text="暂无错误明细" stripe>
         <el-table-column prop="rowNo" label="行号" width="80" />
         <el-table-column prop="columnName" label="列名" width="140" show-overflow-tooltip />
         <el-table-column prop="code" label="错误码" width="160" show-overflow-tooltip />

@@ -23,13 +23,18 @@ import {
 } from '../finance/financePageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
+import {
+  settlementAdjustmentSourceTypeLabel,
+  settlementAdjustmentTypeLabel,
+  settlementSideLabel,
+} from './reversalPageHelpers'
 
 const allowedSourceTypes: Array<{ label: string; value: SettlementAdjustmentSourceType }> = [
   { label: '销售退货', value: 'SALES_RETURN' },
   { label: '采购退货', value: 'PURCHASE_RETURN' },
-  { label: '收款记录', value: 'RECEIPT' },
-  { label: '付款记录', value: 'PAYMENT' },
-  { label: '往来冲减', value: 'SETTLEMENT_ADJUSTMENT' },
+  { label: '收款', value: 'RECEIPT' },
+  { label: '付款', value: 'PAYMENT' },
+  { label: '结算调整', value: 'SETTLEMENT_ADJUSTMENT' },
 ]
 
 const route = useRoute()
@@ -97,23 +102,6 @@ const adjustableAmount = computed(() => selectedSource.value?.adjustableAmount |
 
 function sourceRestricted(source?: ReversalSourceView | null) {
   return !source || source.restricted || !source.canViewSource
-}
-
-function settlementSideText(value: SettlementSide | string) {
-  return value === 'PAYABLE' ? '应付冲减' : '应收冲减'
-}
-
-function adjustmentTypeText(value: SettlementAdjustmentType | string) {
-  const labels: Record<string, string> = {
-    RETURN_OFFSET: '退货冲减',
-    REFUND: '退款记录',
-    PAYMENT_OFFSET: '付款冲减',
-  }
-  return labels[value] ?? value
-}
-
-function sourceTypeText(value: SettlementAdjustmentSourceType | string) {
-  return allowedSourceTypes.find((item) => item.value === value)?.label ?? value
 }
 
 function sourceKey(source: SettlementAdjustmentSource) {
@@ -330,7 +318,7 @@ onMounted(() => {
     </template>
 
     <template v-if="!isEdit" #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="候选来源">
           <el-input
             v-model="sourceFilters.keyword"
@@ -404,7 +392,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="来源类型" min-width="110">
-              <template #default="{ row }">{{ sourceTypeText(row.sourceType) }}</template>
+              <template #default="{ row }">{{ settlementAdjustmentSourceTypeLabel(row.sourceType) }}</template>
             </el-table-column>
             <el-table-column prop="sourceNo" label="来源单号" min-width="160" show-overflow-tooltip />
             <el-table-column prop="targetNo" label="目标单号" min-width="150" show-overflow-tooltip />
@@ -428,15 +416,15 @@ onMounted(() => {
             <span data-test="settlement-adjustment-selected-target">{{ targetDisplayText }}</span>
           </el-form-item>
           <el-form-item label="往来方向">
-            <span>{{ settlementSideText(form.settlementSide) }}</span>
+            <span>{{ settlementSideLabel(form.settlementSide) }}</span>
           </el-form-item>
           <el-form-item label="冲减类型">
             <el-select v-if="!isEdit" v-model="form.adjustmentType" style="width: 160px">
-              <el-option label="退货冲减" value="RETURN_OFFSET" />
-              <el-option label="退款记录" value="REFUND" />
-              <el-option label="付款冲减" value="PAYMENT_OFFSET" />
+              <el-option label="退货冲抵" value="RETURN_OFFSET" />
+              <el-option label="退款" value="REFUND" />
+              <el-option label="付款冲抵" value="PAYMENT_OFFSET" />
             </el-select>
-            <span v-else>{{ adjustmentTypeText(form.adjustmentType) }}</span>
+            <span v-else>{{ settlementAdjustmentTypeLabel(form.adjustmentType) }}</span>
           </el-form-item>
           <el-form-item label="原金额">
             <span>{{ formatFinanceAmount(selectedSource?.originalAmount || editDetail?.targetOriginalAmount) }}</span>

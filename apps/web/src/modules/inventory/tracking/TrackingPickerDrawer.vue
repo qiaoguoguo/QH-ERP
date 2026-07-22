@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod, ResourceId } from '../../../shared/api/inventoryApi'
-import { formatQuantity } from '../inventoryPageHelpers'
+import type {
+  InventoryQualityStatus,
+  InventoryStockStatus,
+  InventoryTrackingAllocationPayload,
+  InventoryTrackingMethod,
+  ResourceId,
+} from '../../../shared/api/inventoryApi'
+import { formatQuantity, inventoryStockStatusLabel, qualityStatusLabel } from '../inventoryPageHelpers'
 import { validateOutboundTrackingAllocations } from './trackingPayloadHelpers'
 
 interface TrackingCandidateRecord {
@@ -11,7 +17,9 @@ interface TrackingCandidateRecord {
   materialName?: string | null
   warehouseName?: string | null
   qualityStatusName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
   stockStatusName?: string | null
+  stockStatus?: InventoryStockStatus | null
   availableQuantity?: string | number | null
   disabled?: boolean
   disabledReasonCode?: string | null
@@ -95,6 +103,7 @@ function candidateAllocation(row: TrackingCandidateRecord): InventoryTrackingAll
       serialId: row.id,
       serialNo: row.trackingNo,
       quantity: '1',
+      ...(row.qualityStatus ? { qualityStatus: row.qualityStatus } : {}),
       ...(row.qualityStatusName ? { qualityStatusName: row.qualityStatusName } : {}),
     }
   }
@@ -102,6 +111,7 @@ function candidateAllocation(row: TrackingCandidateRecord): InventoryTrackingAll
     batchId: row.id,
     batchNo: row.trackingNo,
     quantity: '',
+    ...(row.qualityStatus ? { qualityStatus: row.qualityStatus } : {}),
     ...(row.qualityStatusName ? { qualityStatusName: row.qualityStatusName } : {}),
   }
 }
@@ -190,8 +200,7 @@ watch(() => props.selectedAllocations, () => {
       :closable="false"
     />
     <el-alert v-if="displayError" class="state-alert" type="error" :title="displayError" :closable="false" />
-    <el-table
-      v-loading="loading"
+    <el-table class="table-scroll" v-loading="loading"
       :data="trackingMethod === 'NONE' ? [] : candidates"
       empty-text="暂无可选追踪库存"
       stripe
@@ -207,8 +216,16 @@ watch(() => props.selectedAllocations, () => {
         </template>
       </el-table-column>
       <el-table-column prop="warehouseName" label="仓库" min-width="120" show-overflow-tooltip />
-      <el-table-column prop="qualityStatusName" label="质量状态" min-width="100" />
-      <el-table-column prop="stockStatusName" label="库存状态" min-width="100" />
+      <el-table-column label="质量状态" min-width="100">
+        <template #default="{ row }">
+          {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="库存状态" min-width="100">
+        <template #default="{ row }">
+          {{ inventoryStockStatusLabel(row.stockStatus, row.stockStatusName) }}
+        </template>
+      </el-table-column>
       <el-table-column label="可用量" min-width="110" align="right">
         <template #default="{ row }">
           <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
@@ -228,7 +245,7 @@ watch(() => props.selectedAllocations, () => {
           <span v-else class="candidate-available-text">可选择</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" fixed="right" width="184">
         <template #default="{ row }">
           <el-button size="small" text :disabled="row.disabled" @click="toggleCandidate(row)">
             {{ rowSelected(row) ? '已选' : '选择' }}
@@ -245,7 +262,7 @@ watch(() => props.selectedAllocations, () => {
           业务数量 {{ formatQuantity(expectedQuantity) }}
         </span>
       </div>
-      <el-table :data="draftAllocations" empty-text="尚未选择追踪身份" stripe>
+      <el-table class="table-scroll" :data="draftAllocations" empty-text="尚未选择追踪身份" stripe>
         <el-table-column
           v-if="trackingMethod === 'BATCH'"
           prop="batchNo"
@@ -260,7 +277,11 @@ watch(() => props.selectedAllocations, () => {
           min-width="200"
           show-overflow-tooltip
         />
-        <el-table-column prop="qualityStatusName" label="质量状态" min-width="110" />
+        <el-table-column label="质量状态" min-width="110">
+          <template #default="{ row }">
+            {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+          </template>
+        </el-table-column>
         <el-table-column label="本次分配" min-width="140" align="right">
           <template #default="{ row, $index }">
             <el-input
@@ -274,7 +295,7 @@ watch(() => props.selectedAllocations, () => {
             <span v-else class="numeric-cell">1</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="88">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button size="small" text type="danger" @click="removeAllocation($index)">移除</el-button>
           </template>

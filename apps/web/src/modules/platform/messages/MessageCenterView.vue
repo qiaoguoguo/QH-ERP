@@ -158,7 +158,7 @@ onMounted(() => {
         <el-table-column label="时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.createdAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="200">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'UNREAD'"

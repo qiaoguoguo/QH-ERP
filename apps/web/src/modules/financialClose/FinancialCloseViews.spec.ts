@@ -1,8 +1,8 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import FinancialCloseWorkbenchView from './FinancialCloseWorkbenchView.vue'
 import FinancialCloseRunDetailView from './FinancialCloseRunDetailView.vue'
 import ProfitLossCarryforwardView from './ProfitLossCarryforwardView.vue'
@@ -98,12 +98,33 @@ async function mountFinancialCloseView(
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: VueWrapper) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string) {
+  await openMoreActions(wrapper)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 const periodReady = {
@@ -173,6 +194,10 @@ const blockedRun = {
 }
 
 describe('032 财务结账前端页面族', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     confirmActionMock.mockResolvedValue(true)
@@ -754,6 +779,24 @@ describe('032 财务结账前端页面族', () => {
     expect(settings.wrapper.text()).toContain('一般纳税人')
     expect(settings.wrapper.text()).not.toContain('报送成功')
     expect(settings.wrapper.text()).not.toContain('税控同步')
+    const taxPaginations = settings.wrapper.findAllComponents({ name: 'ElPagination' })
+    expect(taxPaginations).toHaveLength(2)
+    expect(taxPaginations.map((pagination) => pagination.props('pageSizes'))).toEqual([
+      [10, 20, 50, 100],
+      [10, 20, 50, 100],
+    ])
+    expect(financialCloseApiMock.taxRateRules.list).toHaveBeenCalledWith({ page: 1, pageSize: 10 })
+    expect(financialCloseApiMock.taxInvoiceTypes.list).toHaveBeenCalledWith({ page: 1, pageSize: 10 })
+
+    taxPaginations[0].vm.$emit('size-change', 20)
+    await flushPromises()
+    expect(financialCloseApiMock.taxRateRules.list).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 })
+    expect(financialCloseApiMock.taxInvoiceTypes.list).toHaveBeenLastCalledWith({ page: 1, pageSize: 10 })
+
+    taxPaginations[1].vm.$emit('current-change', 2)
+    await flushPromises()
+    expect(financialCloseApiMock.taxRateRules.list).toHaveBeenLastCalledWith({ page: 1, pageSize: 20 })
+    expect(financialCloseApiMock.taxInvoiceTypes.list).toHaveBeenLastCalledWith({ page: 2, pageSize: 10 })
 
     await settings.wrapper.find('[data-test="open-tax-settings-maintenance"]').trigger('click')
     await flushPromises()
@@ -820,13 +863,11 @@ describe('032 财务结账前端页面族', () => {
       reason: expect.stringContaining('调整'),
       idempotencyKey: expect.stringContaining('tax-summary-adjust-'),
     }))
-    await summary.wrapper.find('[data-test="confirm-tax-summary"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(summary.wrapper, 'confirm-tax-summary')
     expect(financialCloseApiMock.taxSummaries.confirm).toHaveBeenCalledWith(501, expect.objectContaining({
       reason: expect.stringContaining('确认税额基础汇总'),
     }))
-    await summary.wrapper.find('[data-test="create-tax-voucher-draft"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(summary.wrapper, 'create-tax-voucher-draft')
     expect(financialCloseApiMock.taxSummaries.createVoucherDraft).toHaveBeenCalledWith(501, expect.objectContaining({
       idempotencyKey: expect.stringContaining('tax-voucher-draft-'),
     }))
@@ -848,7 +889,8 @@ describe('032 财务结账前端页面族', () => {
     }]))
     const readonlySummary = await mountFinancialCloseView(TaxSummaryView, '/gl/tax-summary', ['financial-close:tax-summary:view'])
     expect(readonlySummary.wrapper.find('[data-test="calculate-tax-summary"]').attributes('disabled')).toBeDefined()
-    expect(readonlySummary.wrapper.find('[data-test="confirm-tax-summary"]').attributes('disabled')).toBeDefined()
+    await openMoreActions(readonlySummary.wrapper)
+    expect(teleportedAction('confirm-tax-summary').getAttribute('disabled')).not.toBeNull()
     expect(readonlySummary.wrapper.text()).toContain('已确认不可重新计算')
     expect(readonlySummary.wrapper.text()).toContain('无生成凭证权限')
   })

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { AccountPermissionApiError } from '../../shared/api/accountPermissionApi'
 import { useAuthStore } from '../../stores/authStore'
@@ -501,6 +501,7 @@ async function mountInventoryDocument(path: string, permissions: string[] = [
   await router.push(path)
   await router.isReady()
   const wrapper = mount(InventoryControlledDocumentView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
       stubs: {
@@ -519,6 +520,55 @@ function firstButton(wrapper: VueWrapper, text: string) {
   const button = wrapper.findAllComponents({ name: 'ElButton' }).find((item) => item.text().trim() === text)
   expect(button?.exists()).toBe(true)
   return button as VueWrapper
+}
+
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  if (visiblePoppers().length > 0) {
+    await moreButtons[index].trigger('click')
+    await flushPromises()
+    await waitFor(() => visiblePoppers().length === 0, '关闭已有更多操作菜单')
+  }
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+  await waitFor(() => visiblePoppers().length > 0, '打开更多操作菜单')
+}
+
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
+}
+
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+function visiblePopperButtonByText(text: string) {
+  return visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>('button')))
+    .find((button) => button.textContent?.trim() === text)
+}
+
+async function teleportedButtonByText(text: string) {
+  return waitFor(() => visiblePopperButtonByText(text), `可见更多菜单动作“${text}”`)
+}
+
+async function clickTeleportedButton(wrapper: VueWrapper, text: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  const action = await teleportedButtonByText(text)
+  action.click()
+  await flushPromises()
 }
 
 async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unknown) {
@@ -552,6 +602,10 @@ function deferred<T>() {
 }
 
 describe('库存受控单据页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     inventoryApiMock.warehouseTransfers.list.mockResolvedValue({
@@ -628,10 +682,10 @@ describe('库存受控单据页', () => {
     expect(wrapper.text()).toContain('WT-001')
     expect(wrapper.text()).toContain('仓间补货')
     expect(wrapper.text()).toContain('过账')
-    expect(wrapper.text()).toContain('取消')
+    await openMoreActions(wrapper)
+    expect(await teleportedButtonByText('取消')).toBeTruthy()
 
-    await firstButton(wrapper, '过账').trigger('click')
-    await flushPromises()
+    await clickTeleportedButton(wrapper, '过账')
 
     expect(inventoryApiMock.warehouseTransfers.post).toHaveBeenCalledWith(1001, {
       version: 3,

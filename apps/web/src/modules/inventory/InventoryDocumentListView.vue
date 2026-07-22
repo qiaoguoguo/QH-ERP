@@ -164,7 +164,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -249,7 +249,7 @@ onMounted(loadRecords)
             {{ formatDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="210">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-inventory-document" @click="viewDocument(row)">详情</el-button>
             <el-button
@@ -261,17 +261,24 @@ onMounted(loadRecords)
             >
               编辑
             </el-button>
-            <el-button
-              v-if="canPost && row.status === 'DRAFT'"
-              size="small"
-              text
-              type="success"
-              data-test="post-inventory-document"
-              :disabled="actionLoading"
-              @click="postDocument(row)"
-            >
-              过账
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canPost && row.status === 'DRAFT')">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canPost && row.status === 'DRAFT'"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="post-inventory-document"
+                    :disabled="actionLoading"
+                    @click="postDocument(row)"
+                  >
+                    过账
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

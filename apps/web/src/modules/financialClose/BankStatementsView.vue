@@ -218,7 +218,7 @@ onMounted(loadRecords)
       <el-button data-test="preview-bank-statement-import" type="primary" :disabled="!canWriteStatements" :loading="actionLoading" @click="previewImport">CSV 预览</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="流水号、银行或摘要" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecords">查询</el-button></el-form-item>
       </el-form>
@@ -250,7 +250,7 @@ onMounted(loadRecords)
         <el-table-column label="金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinancialCloseAmount(row.amount, row.amountVisible === false ? row.restrictedReason : null) }}</template></el-table-column>
         <el-table-column label="状态" min-width="120"><template #default="{ row }"><el-tag size="small">{{ financialCloseStatusText(row.status) }}</el-tag></template></el-table-column>
         <el-table-column label="重复" min-width="90"><template #default="{ row }">{{ row.duplicate ? '重复命中' : '-' }}</template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="150">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
               <el-button data-test="open-bank-statement-detail" text @click="openDetail(row)">详情</el-button>

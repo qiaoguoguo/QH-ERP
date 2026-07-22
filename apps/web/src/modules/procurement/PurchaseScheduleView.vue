@@ -19,6 +19,8 @@ import { pageItems } from '../system/shared/pageHelpers'
 import {
   formatProcurementQuantity,
   procurementErrorMessage,
+  purchaseOrderStatusLabel,
+  purchaseScheduleStatusLabel,
 } from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
 
@@ -263,7 +265,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="计划状态">
           <el-select v-model="filters.status" clearable placeholder="全部状态">
             <el-option label="计划中" value="PLANNED" />
@@ -327,7 +329,7 @@ onMounted(() => {
       </div>
       <div>
         <span>状态</span>
-        <strong>{{ order.statusName || order.status }}</strong>
+        <strong>{{ purchaseOrderStatusLabel(order.status, order.statusName) }}</strong>
       </div>
     </section>
 
@@ -382,7 +384,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">
-            {{ row.statusName || row.status }}
+            {{ purchaseScheduleStatusLabel(row.status, row.statusName) }}
           </template>
         </el-table-column>
         <el-table-column label="关闭原因" min-width="220">
@@ -398,7 +400,7 @@ onMounted(() => {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="canClose(row)"

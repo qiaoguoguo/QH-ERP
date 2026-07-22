@@ -10,7 +10,7 @@ import { createIdempotencyKey, type ResourceId } from '../../../shared/api/docum
 import { confirmAction } from '../../../shared/ui/confirmDialog'
 import { pageItems } from '../../system/shared/pageHelpers'
 import { formatPlatformDateTime, platformErrorMessage } from '../platformPageHelpers'
-import { historyImportStatusLabel, historyImportStatusTagType } from '../platformGovernanceLabels'
+import { governanceErrorLabel, historyImportStatusLabel, historyImportStatusTagType } from '../platformGovernanceLabels'
 
 const props = defineProps<{
   taskId: ResourceId
@@ -136,8 +136,9 @@ function changeErrorPageSize(pageSize: number) {
   void loadErrors()
 }
 
-function errorCode(row: HistoryImportErrorRecord) {
-  return row.errorCode || row.code || '-'
+function errorDescription(row: HistoryImportErrorRecord) {
+  const code = row.errorCode ?? row.code
+  return code ? governanceErrorLabel(String(code)) : '-'
 }
 
 onMounted(() => {
@@ -243,8 +244,8 @@ onMounted(() => {
           <el-table :data="errorRows" :empty-text="errorDetailState || '暂无错误明细'" stripe>
             <el-table-column prop="rowNo" label="行号" width="80" />
             <el-table-column prop="columnName" label="列名" width="140" show-overflow-tooltip />
-            <el-table-column label="错误码" width="220" show-overflow-tooltip>
-              <template #default="{ row }">{{ errorCode(row) }}</template>
+            <el-table-column label="错误说明" width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ errorDescription(row) }}</template>
             </el-table-column>
             <el-table-column prop="message" label="错误" min-width="220" show-overflow-tooltip />
             <el-table-column prop="suggestion" label="建议" min-width="180" show-overflow-tooltip />

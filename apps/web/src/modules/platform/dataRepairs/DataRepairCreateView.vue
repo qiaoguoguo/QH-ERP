@@ -9,6 +9,8 @@ import {
 import { createIdempotencyKey } from '../../../shared/api/documentPlatformApi'
 import { useAuthStore } from '../../../stores/authStore'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
+import { masterStatusLabel } from '../../master/shared/masterPageHelpers'
+import { statusTagType } from '../../system/shared/pageHelpers'
 import { platformErrorMessage } from '../platformPageHelpers'
 import {
   candidateMissingVersionMessage,
@@ -274,11 +276,15 @@ onMounted(() => {
               <el-table :data="targetCandidates" empty-text="暂无目标候选" stripe>
                 <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
                 <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-                <el-table-column prop="status" label="状态" min-width="90" />
+                <el-table-column label="状态" min-width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
                 <el-table-column label="版本" width="90">
                   <template #default="{ row }">{{ row.version ?? '-' }}</template>
                 </el-table-column>
-                <el-table-column label="操作" width="100">
+                <el-table-column label="操作" fixed="right" width="184">
                   <template #default="{ row }">
                     <el-button
                       v-if="hasStableCandidateVersion(row)"

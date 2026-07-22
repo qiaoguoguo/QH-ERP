@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import PurchaseReturnDetailView from './PurchaseReturnDetailView.vue'
 import PurchaseReturnFormView from './PurchaseReturnFormView.vue'
 import PurchaseReturnListView from './PurchaseReturnListView.vue'
@@ -313,12 +313,27 @@ async function mountReversalView(component: Component, path: string, permissions
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: ReturnType<typeof mount>) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string): HTMLElement {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
 }
 
 describe('采购退货前端页面', () => {
@@ -368,6 +383,10 @@ describe('采购退货前端页面', () => {
     inventoryApiMock.serials.list.mockResolvedValue(page([], 20))
   })
 
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   it('采购退货列表支持筛选、创建入口、状态展示和权限按钮', async () => {
     const { wrapper, router } = await mountReversalView(PurchaseReturnListView, '/procurement/returns', [
       'procurement:return:view',
@@ -389,8 +408,9 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).not.toContain('冲减应付')
     expect(wrapper.find('[data-test="create-purchase-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-purchase-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-purchase-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-purchase-return"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-purchase-return')).toBeTruthy()
+    expect(teleportedAction('cancel-purchase-return')).toBeTruthy()
 
     await wrapper.find('input[name="purchase-return-keyword"]').setValue('PR')
     await wrapper.find('input[name="purchase-return-supplier-id"]').setValue('9')
@@ -413,8 +433,8 @@ describe('采购退货前端页面', () => {
     expect(wrapper.text()).toContain('PR202607050001')
     expect(wrapper.find('[data-test="create-purchase-return"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="edit-purchase-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="post-purchase-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="cancel-purchase-return"]').exists()).toBe(false)
+    expect(document.body.querySelector('[data-test="post-purchase-return"]')).toBeNull()
+    expect(document.body.querySelector('[data-test="cancel-purchase-return"]')).toBeNull()
   })
 
   it('采购退货列表状态允许但 allowedActions 未授权时隐藏复杂动作', async () => {
@@ -430,8 +450,8 @@ describe('采购退货前端页面', () => {
 
     expect(wrapper.find('[data-test="view-purchase-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-purchase-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="post-purchase-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="cancel-purchase-return"]').exists()).toBe(false)
+    expect(document.body.querySelector('[data-test="post-purchase-return"]')).toBeNull()
+    expect(document.body.querySelector('[data-test="cancel-purchase-return"]')).toBeNull()
   })
 
   it('采购退货表单加载候选采购入库并以字符串数量提交创建请求', async () => {

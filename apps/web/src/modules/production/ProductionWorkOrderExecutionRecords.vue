@@ -36,7 +36,7 @@ const emit = defineEmits<{
         <el-table-column prop="postedByName" label="过账人" min-width="110">
           <template #default="{ row }">{{ row.postedByName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'DRAFT' && canPostIssue"
@@ -80,7 +80,7 @@ const emit = defineEmits<{
           <template #default="{ row }"><span class="numeric-cell">{{ formatProductionQuantity(row.defectiveQuantity) }}</span></template>
         </el-table-column>
         <el-table-column prop="reporterName" label="报工人" min-width="110" />
-        <el-table-column label="操作" width="96" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'DRAFT' && canPostReport"
@@ -115,7 +115,7 @@ const emit = defineEmits<{
         <el-table-column prop="postedByName" label="过账人" min-width="110">
           <template #default="{ row }">{{ row.postedByName || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="row.status === 'DRAFT' && canPostReceipt"

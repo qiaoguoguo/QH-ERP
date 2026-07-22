@@ -11,10 +11,12 @@ import {
   formatGlDateTime,
   glActionAllowed,
   glActionDisabledReason,
+  glApprovalStatusText,
   glBusinessSourceMetaText,
   glBusinessSourceText,
   glErrorMessage,
   glFormalSourceText,
+  glSourceTypeText,
   glVoucherDisplayNo,
   glVoucherStatusText,
 } from './glPageHelpers'
@@ -118,7 +120,7 @@ onMounted(loadRecord)
       <el-button v-if="record && glActionAllowed(record, 'REVERSE')" data-test="reverse-gl-voucher" type="danger" :loading="actionLoading" @click="reverseVoucher">冲销</el-button>
     </template>
     <template #alerts>
-      <el-alert v-if="record?.status === 'POSTED'" type="warning" title="POSTED 凭证不可删除、插入或修改；冲销通过新凭证完成。" :closable="false" />
+      <el-alert v-if="record?.status === 'POSTED'" type="warning" title="已记账凭证不可删除、插入或修改；冲销通过新凭证完成。" :closable="false" />
       <el-alert v-if="record && glActionDisabledReason(record, 'SUBMIT')" type="info" :title="glActionDisabledReason(record, 'SUBMIT')" :closable="false" />
       <el-alert v-if="error" type="error" :title="error" :closable="false" />
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
@@ -137,7 +139,7 @@ onMounted(loadRecord)
     <div v-if="record" class="gl-section-grid">
       <section class="gl-section">
         <span class="gl-section-title">审批摘要</span>
-        <p>{{ record.approvalSummary?.sceneCode || '无审批' }} {{ record.approvalSummary?.status || '' }}</p>
+        <p>{{ record.approvalSummary?.sceneCode || '无审批' }} {{ glApprovalStatusText(record.approvalSummary?.status) }}</p>
         <p class="gl-muted">{{ formatGlDateTime(record.approvalSummary?.submittedAt) }}</p>
       </section>
       <section class="gl-section">
@@ -175,10 +177,10 @@ onMounted(loadRecord)
     </div>
     <el-drawer v-model="sourceDrawerVisible" title="来源追溯" size="min(640px, 92vw)">
       <dl v-if="record" class="gl-drawer-list">
-        <dt>正式来源</dt><dd>{{ record.sourceType || 'MANUAL' }}</dd>
+        <dt>正式来源</dt><dd>{{ glSourceTypeText(record.sourceType || 'MANUAL') }}</dd>
         <dt>正式来源号</dt><dd>{{ record.sourceNo || '-' }}</dd>
         <dt>正式来源 ID</dt><dd>{{ record.sourceId || '-' }}</dd>
-        <dt>业务来源</dt><dd>{{ record.sourceOriginalType || record.businessSourceType || '-' }}</dd>
+        <dt>业务来源</dt><dd>{{ glSourceTypeText(record.sourceOriginalType || record.businessSourceType) }}</dd>
         <dt>业务来源 ID</dt><dd>{{ record.sourceOriginalId || record.businessSourceId || '-' }}</dd>
         <dt>业务单号</dt><dd>{{ record.sourceOriginalNo || record.businessSourceNo || '-' }}</dd>
         <dt>业务来源版本</dt><dd>{{ record.sourceOriginalVersion ?? record.businessSourceVersion ?? '-' }}</dd>

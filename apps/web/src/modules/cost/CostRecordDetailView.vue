@@ -13,8 +13,11 @@ import CostSourceTypeTag from './CostSourceTypeTag.vue'
 import CostTypeTag from './CostTypeTag.vue'
 import {
   basisTypeLabel,
+  costAuditActionLabel,
   costErrorMessage,
+  costSourceStatusLabel,
   costStatusLabel,
+  costWorkOrderStatusLabel,
   formatCostAmount,
   formatCostDateTime,
   formatCostQuantity,
@@ -126,7 +129,7 @@ onMounted(loadRecord)
         <dt>来源单据</dt>
         <dd>{{ sourceDocumentTypeLabel(record.sourceDocumentType) }} {{ record.sourceDocumentNo || '-' }}</dd>
         <dt>工单</dt>
-        <dd>{{ record.workOrderNo }}（{{ record.workOrderStatus }}）</dd>
+        <dd>{{ record.workOrderNo }}（{{ costWorkOrderStatusLabel(record.workOrderStatus) }}）</dd>
         <dt>产品</dt>
         <dd>{{ record.productMaterialCode }} {{ record.productMaterialName }}</dd>
         <dt>物料</dt>
@@ -151,7 +154,7 @@ onMounted(loadRecord)
         <h2>来源摘要</h2>
         <dl v-if="record.sourceSummary" class="detail-list compact">
           <dt>来源状态</dt>
-          <dd>{{ record.sourceSummary.sourceStatus || record.sourceStatus || '-' }}</dd>
+          <dd>{{ costSourceStatusLabel(record.sourceSummary.sourceStatus || record.sourceStatus) }}</dd>
           <dt>来源单号</dt>
           <dd>{{ record.sourceSummary.sourceDocumentNo || record.sourceDocumentNo || '-' }}</dd>
           <dt>来源数量</dt>
@@ -200,7 +203,9 @@ onMounted(loadRecord)
           <el-table :data="record.auditSummary" empty-text="暂无审计记录" stripe>
             <el-table-column prop="id" label="审计标识" min-width="110" />
             <el-table-column prop="operatorUsername" label="操作账号" min-width="130" />
-            <el-table-column prop="action" label="动作" min-width="210" show-overflow-tooltip />
+            <el-table-column label="动作" min-width="210" show-overflow-tooltip>
+              <template #default="{ row }">{{ costAuditActionLabel(row.action) }}</template>
+            </el-table-column>
             <el-table-column label="操作时间" min-width="150">
               <template #default="{ row }">{{ formatCostDateTime(row.createdAt) }}</template>
             </el-table-column>

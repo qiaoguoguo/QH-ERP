@@ -284,6 +284,7 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.approvals.get).toHaveBeenCalledWith(3)
     expect(wrapper.text()).toContain('固定审批')
     expect(wrapper.text()).toContain('提交')
+    expect(wrapper.text()).not.toContain('SUBMIT')
     expect(wrapper.find('[data-test="approval-cancel"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="approval-comment"]').setValue('同意生效')
@@ -981,7 +982,7 @@ describe('022 平台页面', () => {
     })
     expect(wrapper.text()).toContain('合同附件.pdf')
     expect(wrapper.text()).toContain('2.0 KiB')
-    expect(wrapper.text()).toContain('application/pdf')
+    expect(wrapper.text()).toContain('PDF 文件')
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('最多 20 个附件')
     expect(wrapper.find('[data-test="download-attachment"]').exists()).toBe(true)

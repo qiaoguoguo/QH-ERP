@@ -844,6 +844,83 @@ class OperatingFinancialAnalysisStage033AcceptanceTests extends PostgresIntegrat
 
 	@Test
 	@Order(18)
+	void a18_projectCostSourceLineTraceStatusNameContract() throws Exception {
+		OperatingFinanceFixture fixture = seedProjectProfitFixture(1);
+		Map<String, String> expectedStatusNames = new LinkedHashMap<>();
+		expectedStatusNames.put("ACTUAL", "实际");
+		expectedStatusNames.put("PROVISIONAL", "暂估");
+		expectedStatusNames.put("UNPRICED", "未定价");
+		expectedStatusNames.put("ADJUSTED", "已调整");
+		expectedStatusNames.put("RESTRICTED", "来源受限");
+		expectedStatusNames.put("EXCLUDED", "已排除");
+		Map<String, String> sourceNos = new LinkedHashMap<>();
+		int dayOffset = 0;
+		for (Map.Entry<String, String> entry : expectedStatusNames.entrySet()) {
+			String sourceNo = "033-PROFIT-SOURCE-STATUS-" + entry.getKey() + "-"
+					+ SEQUENCE.incrementAndGet();
+			sourceNos.put(entry.getKey(), sourceNo);
+			insertProjectCostSourceLine(fixture.firstProjectId(), sourceNo,
+					LocalDate.of(2097, 1, 21).plusDays(dayOffset), entry.getKey());
+			dayOffset++;
+		}
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		SoftAssertions softly = new SoftAssertions();
+		String reportPath = "/api/admin/reports/project-profit?periodCode=2097-01&analysisMode=LIVE&projectId="
+				+ fixture.firstProjectId() + "&page=1&pageSize=20";
+		JsonNode projectProfit = data(get(admin, reportPath));
+		String tracePath = "/api/admin/reports/project-profit/" + fixture.firstProjectId() + "/traces";
+		JsonNode trace = traceFromFirstItemContaining(softly, admin, projectProfit, tracePath,
+				"项目利润来源状态显示", fixture.firstProjectNo(), "2097-01");
+
+		if (trace != null) {
+			for (Map.Entry<String, String> entry : expectedStatusNames.entrySet()) {
+				String sourceNo = sourceNos.get(entry.getKey());
+				JsonNode source = firstTraceSourceBySourceNo(trace, "PROJECT_COST_SOURCE_LINE", sourceNo);
+				if (source == null) {
+					softly.fail("项目成本来源行 trace 缺少状态样本：" + sourceNo + "，trace：" + trace);
+				}
+				else {
+					softly.assertThat(textOrNull(source, "status"))
+						.as("项目成本来源行必须保留原始技术状态码：" + sourceNo)
+						.isEqualTo(entry.getKey());
+					softly.assertThat(textOrNull(source, "statusName"))
+						.as("项目成本来源行必须返回后端确定的中文状态名：" + entry.getKey())
+						.isEqualTo(entry.getValue());
+					softly.assertThat(textOrNull(source, "sourceType")).as("旧字段 sourceType 不得变化")
+						.isEqualTo("PROJECT_COST_SOURCE_LINE");
+					softly.assertThat(textOrNull(source, "sourceNo")).as("旧字段 sourceNo 不得变化")
+						.isEqualTo(sourceNo);
+					softly.assertThat(textOrNull(source, "resourceRouteName"))
+						.as("旧字段 resourceRouteName 不得变化")
+						.isEqualTo("project-cost-source-line");
+					softly.assertThat(hasNonNullField(source, "sourceId")).as("旧字段 sourceId 必须仍返回")
+						.isTrue();
+					softly.assertThat(hasNonNullField(source, "businessDate")).as("旧字段 businessDate 必须仍返回")
+						.isTrue();
+					softly.assertThat(hasNonNullField(source, "quantity")).as("旧字段 quantity 必须仍返回")
+						.isTrue();
+					softly.assertThat(hasNonNullField(source, "amount")).as("旧字段 amount 必须仍返回")
+						.isTrue();
+					softly.assertThat(booleanField(source, "canViewResource")).as("管理员来源权限不得被削弱")
+						.isTrue();
+					softly.assertThat(booleanField(source, "restricted")).as("管理员来源不得被误标记受限")
+						.isFalse();
+					softly.assertThat(textOrNull(source, "restrictedMessage")).as("管理员来源不得返回受限说明")
+						.isNull();
+				}
+			}
+		}
+		assertSourceRestrictedListAndTrace(softly, "项目利润来源状态显示",
+				createUserAndLogin("033-profit-status-source-missing-", "033_PROFIT_STATUS_SOURCE_MISSING_",
+						List.of("report", "report:project-profit:view", "cost:project-cost:amount-view",
+								"gl:amount:view", "gl:ledger:view")),
+				projectProfit, reportPath, tracePath, "2097-01", fixture.firstProjectNo(),
+				List.copyOf(sourceNos.values()));
+		softly.assertAll();
+	}
+
+	@Test
+	@Order(19)
 	void a12差异项目利润业务快照详情必须保持冻结口径() throws Exception {
 		SnapshotProjectDetailFixture fixture = seedProjectProfitSnapshotDetailFixture("2098-03");
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
@@ -861,7 +938,7 @@ class OperatingFinancialAnalysisStage033AcceptanceTests extends PostgresIntegrat
 	}
 
 	@Test
-	@Order(19)
+	@Order(20)
 	void a11差异固定摘要空来源合法trace必须返回空页() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		JsonNode financialSummary = data(get(admin,
@@ -1242,6 +1319,11 @@ class OperatingFinancialAnalysisStage033AcceptanceTests extends PostgresIntegrat
 	}
 
 	private void insertProjectCostSourceLine(long projectId, String sourceNo, LocalDate businessDate) {
+		insertProjectCostSourceLine(projectId, sourceNo, businessDate, "ACTUAL");
+	}
+
+	private void insertProjectCostSourceLine(long projectId, String sourceNo, LocalDate businessDate,
+			String sourceStatus) {
 		long calculationId = projectCostCalculationId(projectId);
 		long sourceId = SEQUENCE.incrementAndGet();
 		long sourceLineId = SEQUENCE.incrementAndGet();
@@ -1252,8 +1334,8 @@ class OperatingFinancialAnalysisStage033AcceptanceTests extends PostgresIntegrat
 					unit_cost, source_amount, calculated_amount, source_fingerprint
 				)
 				values (?, ?, 'MATERIAL', 'DELIVERED', 'SOURCE_TO_WIP', 'STAGE033_ACCEPTANCE',
-					?, ?, ?, 'ACTUAL', ?, 1.000000, 50.000000, 50.00, 50.00, ?)
-				""", calculationId, projectId, sourceId, sourceLineId, sourceNo, businessDate,
+					?, ?, ?, ?, ?, 1.000000, 50.000000, 50.00, 50.00, ?)
+				""", calculationId, projectId, sourceId, sourceLineId, sourceNo, sourceStatus, businessDate,
 				fingerprint(sourceNo));
 	}
 
@@ -2783,6 +2865,21 @@ class OperatingFinancialAnalysisStage033AcceptanceTests extends PostgresIntegrat
 			JsonNode type = item.get("sourceType");
 			JsonNode id = item.get("sourceId");
 			if (type != null && id != null && sourceType.equals(type.asText()) && id.longValue() == sourceId) {
+				return item;
+			}
+		}
+		return null;
+	}
+
+	private JsonNode firstTraceSourceBySourceNo(JsonNode trace, String sourceType, String sourceNo) {
+		JsonNode items = trace.get("items");
+		if (items == null || !items.isArray()) {
+			return null;
+		}
+		for (JsonNode item : items) {
+			JsonNode type = item.get("sourceType");
+			JsonNode no = item.get("sourceNo");
+			if (type != null && no != null && sourceType.equals(type.asText()) && sourceNo.equals(no.asText())) {
 				return item;
 			}
 		}

@@ -2,6 +2,11 @@
 import { useRoute, useRouter } from 'vue-router'
 import type { ReversalRouteValue, ReversalSourceView, ReversalTraceRecord } from '../../shared/api/returnRefundReversalApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
+import {
+  reversalSourceTypeLabel,
+  reversalTraceDirectionLabel,
+  reversalTraceStatusLabel,
+} from './reversalPageHelpers'
 
 interface ImpactResourceItem {
   key: string
@@ -35,29 +40,6 @@ function sourceRestricted(source?: ReversalSourceView | null) {
 
 function routeValues(values?: Record<string, ReversalRouteValue>) {
   return Object.fromEntries(Object.entries(values ?? {}).map(([key, value]) => [key, String(value)]))
-}
-
-function sourceTypeLabel(sourceType?: string) {
-  const labels: Record<string, string> = {
-    SALES_SHIPMENT: '销售出库来源',
-    SALES_SHIPMENT_LINE: '销售出库行',
-    SALES_RETURN: '销售退货',
-    PURCHASE_RECEIPT: '采购入库来源',
-    PURCHASE_RECEIPT_LINE: '采购入库行',
-    PURCHASE_RETURN: '采购退货',
-    PRODUCTION_MATERIAL_ISSUE: '生产领料来源',
-    PRODUCTION_MATERIAL_ISSUE_LINE: '生产领料行',
-    PRODUCTION_WORK_ORDER: '生产工单',
-    PRODUCTION_WORK_ORDER_MATERIAL: '工单用料行',
-    PRODUCTION_MATERIAL_RETURN: '生产退料',
-    PRODUCTION_MATERIAL_SUPPLEMENT: '生产补料',
-    INVENTORY_MOVEMENT: '库存流水',
-    RECEIVABLE: '应收冲减',
-    PAYABLE: '应付冲减',
-    SETTLEMENT_ADJUSTMENT: '往来冲减',
-    COST_RECORD: '成本记录',
-  }
-  return sourceType ? labels[sourceType] ?? sourceType : '-'
 }
 
 function isPurchaseTrace(row: ReversalTraceRecord) {
@@ -105,7 +87,15 @@ function traceImpactType(row: ReversalTraceRecord) {
   if (row.source.sourceType === 'PRODUCTION_WORK_ORDER' || row.source.sourceType === 'PRODUCTION_WORK_ORDER_MATERIAL') {
     return '生产工单来源'
   }
-  return sourceTypeLabel(row.reverse.sourceType || row.source.sourceType)
+  return reversalSourceTypeLabel(traceStatusSourceType(row))
+}
+
+function traceStatusSourceType(row: ReversalTraceRecord) {
+  return row.reverse.sourceType ? row.reverse.sourceType : row.source.sourceType
+}
+
+function traceStatusText(row: ReversalTraceRecord) {
+  return reversalTraceStatusLabel({ sourceType: traceStatusSourceType(row), status: row.status })
 }
 
 function viewSource(row: ReversalTraceRecord) {
@@ -148,7 +138,7 @@ function settlementImpactLabel(row: ReversalTraceRecord) {
   if (row.source.sourceType?.startsWith('SALES_') || row.reverse.sourceType?.startsWith('SALES_')) {
     return '应收冲减'
   }
-  return '往来冲减'
+  return '结算调整'
 }
 
 function topLevelRoute(row: ReversalTraceRecord) {
@@ -211,7 +201,7 @@ function impactResources(row: ReversalTraceRecord): ImpactResourceItem[] {
 }
 
 function sourceNo(source: ReversalSourceView) {
-  return source.sourceNo || sourceTypeLabel(source.sourceType)
+  return source.sourceNo || reversalSourceTypeLabel(source.sourceType)
 }
 </script>
 
@@ -233,7 +223,7 @@ function sourceNo(source: ReversalSourceView) {
         </el-table-column>
         <el-table-column label="来源类型" min-width="130">
           <template #default="{ row }">
-            {{ sourceTypeLabel(row.source.sourceType) }}
+            {{ reversalSourceTypeLabel(row.source.sourceType) }}
           </template>
         </el-table-column>
         <el-table-column label="来源单据" min-width="180">
@@ -286,7 +276,7 @@ function sourceNo(source: ReversalSourceView) {
         </el-table-column>
         <el-table-column label="方向" min-width="140">
           <template #default="{ row }">
-            <span v-if="!restricted(row)">{{ row.direction === 'REVERSE_TO_SOURCE' ? '反向到来源' : '来源到反向单据' }}</span>
+            <span v-if="!restricted(row)">{{ reversalTraceDirectionLabel(row.direction) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="业务日期" min-width="120">
@@ -296,7 +286,7 @@ function sourceNo(source: ReversalSourceView) {
         </el-table-column>
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">
-            <span v-if="!restricted(row)">{{ row.status || '-' }}</span>
+            <span v-if="!restricted(row)">{{ traceStatusText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="数量" min-width="110" align="right">

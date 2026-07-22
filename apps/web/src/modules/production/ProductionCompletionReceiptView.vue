@@ -142,7 +142,7 @@ function validateForm(): ProjectProductionCompletionReceiptPayload | null {
     return null
   }
   if (!executable.value) {
-    formError.value = '仅已发布或生产中的工单可完工入库'
+    formError.value = '仅已下达或生产中的工单可完工入库'
     return null
   }
   if (!form.businessDate.trim()) {

@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { glApi, type GlAccountingPeriodRecord, type GlAccountRecord, type GlAuxCandidateRecord, type GlAuxDimensionRecord, type GlAuxRequirement, type GlVoucherLineRecord, type GlVoucherRecord } from '../../shared/api/glApi'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { createGlIdempotencyKey, formatGlAmount, glErrorMessage, glPageItems } from './glPageHelpers'
+import { createGlIdempotencyKey, formatGlAmount, glErrorMessage, glPageItems, glVoucherTypeText } from './glPageHelpers'
 import './GlShared.css'
 
 const route = useRoute()
@@ -54,16 +54,16 @@ const periodText = computed(() => {
     return '请先选择凭证日期'
   }
   if (resolvedPeriod.value) {
-    return `${resolvedPeriod.value.periodCode}（由凭证日期匹配唯一 OPEN 会计期间）`
+    return `${resolvedPeriod.value.periodCode}（由凭证日期匹配唯一开放会计期间）`
   }
-  return '未找到匹配的 OPEN 会计期间，保存将被禁用'
+  return '未找到匹配的开放会计期间，保存将被禁用'
 })
 const validationReasons = computed(() => {
   const reasons: string[] = []
   if (!form.voucherDate) {
     reasons.push('请先选择凭证日期')
   } else if (!resolvedPeriod.value) {
-    reasons.push('凭证日期未匹配 OPEN 会计期间')
+    reasons.push('凭证日期未匹配开放会计期间')
   }
   if (form.lines.length < 2) {
     reasons.push('至少两行分录')
@@ -461,7 +461,7 @@ onMounted(() => {
       <el-button data-test="save-gl-voucher" type="primary" :loading="saving" :disabled="saveDisabled" @click="saveVoucher">保存凭证</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline label-position="top">
+      <el-form class="query-form" label-position="top">
         <el-form-item label="凭证日期">
           <el-date-picker
             :model-value="form.voucherDate"
@@ -475,7 +475,7 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="会计期间"><el-input :model-value="periodText" disabled placeholder="由凭证日期解析" /></el-form-item>
         <el-form-item label="凭证摘要"><el-input v-model="form.summary" clearable placeholder="凭证摘要" /></el-form-item>
-        <el-form-item label="类型"><el-input v-model="form.voucherType" disabled /></el-form-item>
+        <el-form-item label="类型"><el-input :model-value="glVoucherTypeText(form.voucherType)" disabled /></el-form-item>
         <el-form-item label="科目候选">
           <el-input
             v-model="accountKeyword"
@@ -493,7 +493,7 @@ onMounted(() => {
       <el-alert v-if="actionError" type="error" :title="actionError" :closable="false" />
       <el-alert v-if="loading" type="info" title="凭证加载中" :closable="false" />
       <el-alert
-        v-if="validationReasons.includes('请先选择凭证日期') || validationReasons.includes('凭证日期未匹配 OPEN 会计期间')"
+        v-if="validationReasons.includes('请先选择凭证日期') || validationReasons.includes('凭证日期未匹配开放会计期间')"
         type="warning"
         :title="periodText"
         :closable="false"
@@ -505,7 +505,7 @@ onMounted(() => {
       <div><span>贷方合计</span><strong>{{ formatGlAmount(creditTotal) }}</strong></div>
       <div><span>差额</span><strong>{{ formatGlAmount(balanceDifference) }}</strong></div>
       <div><span>平衡状态</span><strong>{{ debitTotal === creditTotal ? '借贷平衡' : '借贷不平衡' }}</strong></div>
-      <div><span>禁用原因</span><strong>{{ validationReasons.join('、') || '可保存 GENERAL/OPENING 草稿' }}</strong></div>
+      <div><span>禁用原因</span><strong>{{ validationReasons.join('、') || '可保存普通/期初凭证草稿' }}</strong></div>
     </div>
 
     <div class="gl-toolbar">
@@ -573,7 +573,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="借方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.debitAmount" /></template></el-table-column>
         <el-table-column label="贷方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.creditAmount" /></template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="100">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button data-test="remove-gl-voucher-line" text type="danger" @click="removeLine($index)">删除</el-button>
           </template>

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import UnitConversionListView from './UnitConversionListView.vue'
 import type { CandidatePageResult, UnitConversionRecord } from '../../../shared/api/masterDataApi'
 import { useAuthStore } from '../../../stores/authStore'
@@ -70,10 +70,35 @@ function mountConversions(permissions = [
   })
 
   return mount(UnitConversionListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, ElementPlus],
     },
   })
+}
+
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unknown) {
@@ -84,6 +109,10 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
 }
 
 describe('物料单位换算页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     apiMock.unitConversions.list.mockResolvedValue({ items: [conversion], page: 1, pageSize: 10, total: 1, totalPages: 1 })
@@ -176,8 +205,7 @@ describe('物料单位换算页', () => {
     const wrapper = mountConversions()
     await flushPromises()
 
-    await wrapper.find('[data-test="preview-unit-conversion"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'preview-unit-conversion')
     await wrapper.find('input[name="unit-conversion-preview-quantity"]').setValue('2.0000')
     await wrapper.find('[data-test="submit-unit-conversion-preview"]').trigger('click')
     await flushPromises()

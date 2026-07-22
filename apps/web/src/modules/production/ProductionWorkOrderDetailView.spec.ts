@@ -561,7 +561,7 @@ describe('生产工单详情页', () => {
   it('展示状态标签、数量摘要和工单基础信息', async () => {
     const { wrapper } = await mountDetail({ ...detailRecord, status: 'RELEASED' as const })
 
-    expect(wrapper.text()).toContain('已发布')
+    expect(wrapper.text()).toContain('已下达')
     expect(wrapper.text()).not.toContain('RELEASED')
     expect(wrapper.text()).toContain('计划数量')
     expect(wrapper.text()).toContain('100')
@@ -727,7 +727,7 @@ describe('生产工单详情页', () => {
     }
     const { wrapper } = await mountDetail(completed)
 
-    expect(wrapper.text()).toContain('已完成')
+    expect(wrapper.text()).toContain('已完工')
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(0)
     expect(buttonsByText(wrapper, '发布')).toHaveLength(0)
     expect(buttonsByText(wrapper, '领料')).toHaveLength(0)

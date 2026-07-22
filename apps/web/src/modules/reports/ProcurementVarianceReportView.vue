@@ -15,6 +15,7 @@ import {
   filterText,
   firstKeyword,
   operatingFinanceBaseFields,
+  operatingFinanceLiveAnalysisMode,
   optionalFilterText,
   reportErrorMessage,
   statusText,
@@ -24,7 +25,7 @@ import {
 
 const filters = reactive<Record<string, string | number>>({
   periodCode: '',
-  analysisMode: 'LIVE',
+  analysisMode: operatingFinanceLiveAnalysisMode,
   projectId: '',
   supplierKeyword: '',
   basis: '',
@@ -33,7 +34,7 @@ const filters = reactive<Record<string, string | number>>({
 const fields: ReportFilterField[] = [
   ...operatingFinanceBaseFields,
   supplierKeywordReferenceField,
-  { key: 'basis', label: '采购归属', name: 'report-basis', placeholder: 'PROJECT 或 PUBLIC' },
+  { key: 'basis', label: '采购归属', name: 'report-basis', placeholder: '项目专采或公共采购' },
   { key: 'reconciliationStatus', label: '差异状态', name: 'report-reconciliation-status' },
 ]
 const loading = ref(false)
@@ -84,7 +85,7 @@ async function loadReport(targetPage = page.value) {
 }
 function search() { void loadReport(1) }
 function reset() {
-  Object.assign(filters, { periodCode: '', analysisMode: 'LIVE', projectId: '', supplierKeyword: '', basis: '', reconciliationStatus: '' })
+  Object.assign(filters, { periodCode: '', analysisMode: operatingFinanceLiveAnalysisMode, projectId: '', supplierKeyword: '', basis: '', reconciliationStatus: '' })
   void loadReport(1)
 }
 function changePageSize(size: number) { pageSize.value = size; void loadReport(1) }
@@ -143,7 +144,7 @@ onMounted(() => { void loadReport(1) })
         <el-table-column label="三单匹配差异" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.matchVarianceAmount) }}</span></template></el-table-column>
         <el-table-column label="外协已收未结" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.outsourcingUnsettledAmount) }}</span></template></el-table-column>
         <el-table-column label="差异状态" min-width="110"><template #default="{ row }">{{ statusText(row.reconciliationStatus) }}</template></el-table-column>
-        <el-table-column label="来源" width="100" fixed="right">
+        <el-table-column label="来源" min-width="100">
           <template #default="{ row }">
             <el-button v-if="canOpenTrace(row.traceKey, row.restrictedReason)" data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>
             <span v-else class="trace-unavailable">{{ traceUnavailableText(row.restrictedReason) }}</span>

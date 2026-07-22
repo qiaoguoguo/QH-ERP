@@ -400,7 +400,7 @@ onMounted(() => {
       </span>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="草稿号、来源或往来方" /></el-form-item>
         <el-form-item label="来源类型">
           <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
@@ -454,31 +454,42 @@ onMounted(() => {
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column label="往来方" min-width="150" show-overflow-tooltip><template #default="{ row }">{{ voucherPartyName(row) }}</template></el-table-column>
         <el-table-column label="项目/公共" min-width="130"><template #default="{ row }">{{ ownershipTypeText(row.ownershipType) }} {{ row.projectName ?? '' }}</template></el-table-column>
-        <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ voucherDraftStatusText(row.status) }}</template></el-table-column>
         <el-table-column label="平衡状态" min-width="120"><template #default="{ row }">{{ balanceText(row) }}</template></el-table-column>
         <el-table-column label="借方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.debitTotal) }}</template></el-table-column>
         <el-table-column label="贷方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.creditTotal) }}</template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="160" />
-        <el-table-column label="操作" fixed="right" min-width="190">
+        <el-table-column label="状态" fixed="right" width="126"><template #default="{ row }">{{ voucherDraftStatusText(row.status) }}</template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text @click="router.push({ name: 'finance-voucher-draft-detail', params: { id: row.id } })">详情</el-button>
-            <el-button
-              v-if="linkedGlVoucher(row) && canQueryGlVouchers"
-              data-test="view-gl-voucher"
-              text
-              @click="viewGlVoucher(row)"
+            <el-dropdown
+              v-if="(linkedGlVoucher(row) && canQueryGlVouchers) || (row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers)"
+              trigger="click"
+              class="table-actions-more"
             >
-              查看正式凭证
-            </el-button>
-            <el-button
-              v-else-if="row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers"
-              data-test="convert-gl-voucher"
-              text
-              :loading="glActionLoadingId === row.id"
-              @click="convertToGlVoucher(row)"
-            >
-              生成正式凭证草稿
-            </el-button>
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-dropdown-item
+                    v-if="linkedGlVoucher(row) && canQueryGlVouchers"
+                    class="table-actions-more-item"
+                    data-test="view-gl-voucher"
+                    @click="viewGlVoucher(row)"
+                  >
+                    查看正式凭证
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    v-else-if="row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers"
+                    class="table-actions-more-item"
+                    data-test="convert-gl-voucher"
+                    :disabled="glActionLoadingId === row.id"
+                    @click="convertToGlVoucher(row)"
+                  >
+                    生成正式凭证草稿
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

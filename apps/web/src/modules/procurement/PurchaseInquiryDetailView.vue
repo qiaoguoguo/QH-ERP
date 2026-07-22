@@ -7,6 +7,7 @@ import { useAuthStore } from '../../stores/authStore'
 import {
   formatProcurementQuantity,
   procurementErrorMessage,
+  procurementInquiryStatusLabel,
   procurementModeDisplay,
 } from './procurementPageHelpers'
 import ProcurementDocumentTaskPanel from './ProcurementDocumentTaskPanel.vue'
@@ -89,7 +90,7 @@ onMounted(() => {
   <MasterDataTableView :title="pageTitle" :description="pageDescription">
     <template #actions>
       <div v-if="record" class="state-box">
-          <span>业务状态：{{ record.statusName || record.status }}</span>
+          <span>业务状态：{{ procurementInquiryStatusLabel(record.status, record.statusName) }}</span>
           <span>供应商 {{ record.supplierCount }} 家 / 报价 {{ record.quoteCount }} 条</span>
           <span class="task-actions">
             <label v-if="authStore.hasPermission('procurement:quote:import')" class="file-action">

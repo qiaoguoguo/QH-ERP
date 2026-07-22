@@ -292,7 +292,7 @@ onMounted(loadRecords)
             <span v-if="row.closeReason">关闭原因：{{ row.closeReason }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="180" fixed="right">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button text type="primary" @click="router.push({ name: 'sales-order-detail', params: { id: String(row.orderId) } })">

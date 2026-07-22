@@ -319,11 +319,27 @@ describe('031 会计核算页面族', () => {
   })
 
   it('科目、辅助和规则页面按 page-standards 渲染宽表、状态和动作禁用原因', async () => {
+    glApiMock.accounts.list.mockResolvedValueOnce(page([
+      { ...accountRecord, auxiliaryRequirements: [{ dimensionCode: 'CUSTOMER', dimensionName: '客户', requirement: 'OPTIONAL' }] },
+      {
+        ...accountRecord,
+        id: 6001,
+        code: '6001',
+        name: '主营业务收入',
+        category: 'PROFIT_LOSS',
+        auxiliaryRequirements: [],
+        allowedActions: ['CREATE_CHILD', 'UPDATE', 'LEGACY_ACTION'],
+        actionDisabledReasons: {},
+      },
+    ]))
     const accounts = await mountGlView(GlAccountsView, '/gl/accounts')
     expect(accounts.wrapper.text()).toContain('会计科目')
     expect(accounts.wrapper.text()).toContain('银行存款')
     expect(accounts.wrapper.text()).toContain('客户')
     expect(accounts.wrapper.text()).toContain('已被凭证使用')
+    expect(accounts.wrapper.text()).toContain('可新增下级、可编辑、未知动作')
+    expect(accounts.wrapper.text()).not.toContain('CREATE_CHILD')
+    expect(accounts.wrapper.text()).not.toContain('LEGACY_ACTION')
     expect(accounts.wrapper.findComponent({ name: 'ElPagination' }).props('pageSizes')).toEqual([10, 20, 50, 100])
     expect(accounts.wrapper.find('.table-scroll').exists()).toBe(true)
     await accounts.wrapper.find('[data-test="create-child-account"]').trigger('click')
@@ -354,8 +370,16 @@ describe('031 会计核算页面族', () => {
       idempotencyKey: expect.stringContaining('gl-account-save-'),
     }))
     expect(JSON.stringify(accountCreatePayload)).not.toContain('"dimensionCode":"CUSTOM"')
-    expect(accounts.wrapper.find('[data-test="disable-gl-account"]').attributes('disabled')).toBeDefined()
-    await accounts.wrapper.find('[data-test="disable-gl-account"]').trigger('click')
+    const accountMoreButtons = accounts.wrapper.findAll('button').filter((button) => button.text() === '更多')
+    expect(accountMoreButtons.length).toBeGreaterThan(0)
+    await accountMoreButtons[0].trigger('click')
+    await flushPromises()
+    const disableAccountAction = Array
+      .from(document.body.querySelectorAll<HTMLElement>('[data-test="disable-gl-account"]'))
+      .find((action) => action.getAttribute('title') === '已被凭证使用')
+    expect(disableAccountAction).toBeTruthy()
+    expect(disableAccountAction?.getAttribute('disabled')).not.toBeNull()
+    disableAccountAction?.click()
     await flushPromises()
     expect(glApiMock.accounts.disable).not.toHaveBeenCalled()
 
@@ -423,7 +447,7 @@ describe('031 会计核算页面族', () => {
 
     const rules = await mountGlView(GlPostingRulesView, '/gl/posting-rules')
     expect(rules.wrapper.text()).toContain('自动制证规则')
-    expect(rules.wrapper.text()).toContain('SALES_INVOICE')
+    expect(rules.wrapper.text()).toContain('销售发票')
     expect(rules.wrapper.text()).toContain('预览不制证')
     await rules.wrapper.find('[data-test="create-posting-rule"]').trigger('click')
     await rules.wrapper.find('input[name="gl-rule-name"]').setValue('采购发票默认规则')
@@ -572,7 +596,7 @@ describe('031 会计核算页面族', () => {
     expect(preview.exists()).toBe(true)
     expect(preview.text()).toContain('来源预览')
     expect(preview.text()).toContain('分录建议')
-    expect(preview.text()).toContain('SALES_INVOICE / 11 / 7')
+    expect(preview.text()).toContain('销售发票 / 11 / 7')
     expect(preview.text()).toContain('借方合计')
     expect(preview.text()).toContain('113.00')
     expect(preview.text()).toContain('1122 应收账款')
@@ -780,7 +804,7 @@ describe('031 会计核算页面族', () => {
     const { wrapper } = await mountGlView(GlVoucherDetailView, '/gl/vouchers/91')
 
     expect(wrapper.text()).toContain('凭证详情')
-    expect(wrapper.text()).toContain('POSTED 凭证不可删除、插入或修改')
+    expect(wrapper.text()).toContain('已记账凭证不可删除、插入或修改')
     expect(wrapper.text()).toContain('记-202607-0001')
     expect(wrapper.text()).toContain('审批摘要')
     expect(wrapper.text()).toContain('来源追溯')

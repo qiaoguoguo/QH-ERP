@@ -296,7 +296,7 @@ onMounted(loadData)
     <div class="finance-section-grid">
       <section v-if="form.sourceType !== 'NONE'" class="finance-section">
         <span class="finance-section-title">来源候选</span>
-        <el-form class="query-form" inline>
+        <el-form class="query-form">
           <el-form-item label="关键词"><el-input v-model="sourceFilters.keyword" clearable placeholder="来源单号或摘要" /></el-form-item>
           <el-form-item label="业务日期从">
             <el-date-picker v-model="sourceFilters.businessDateFrom" name="expense-source-date-from" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="开始日期" />
@@ -314,7 +314,7 @@ onMounted(loadData)
             <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
             <el-table-column label="业务日期" min-width="110"><template #default="{ row }">{{ formatFinanceDate(row.businessDate) }}</template></el-table-column>
             <el-table-column label="净可用金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount) }}</template></el-table-column>
-            <el-table-column label="操作" fixed="right" min-width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button data-test="select-expense-source" text :type="selectedSource?.sourceNo === row.sourceNo ? 'primary' : undefined" @click="selectSource(row)">
                   {{ selectedSource?.sourceNo === row.sourceNo ? '已选' : '选择' }}

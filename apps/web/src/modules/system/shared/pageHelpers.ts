@@ -17,10 +17,22 @@ export function errorMessage(error: unknown): string {
   return '操作失败，请稍后重试'
 }
 
-export function statusLabel(status?: string): string {
-  return status === 'DISABLED' ? '停用' : '启用'
+export function statusLabel(status?: string | null): string {
+  if (status === 'ENABLED') {
+    return '启用'
+  }
+  if (status === 'DISABLED') {
+    return '停用'
+  }
+  return '未知状态'
 }
 
-export function statusTagType(status?: string): 'success' | 'info' {
-  return status === 'DISABLED' ? 'info' : 'success'
+export function statusTagType(status?: string | null): 'success' | 'info' | 'warning' {
+  if (status === 'ENABLED') {
+    return 'success'
+  }
+  if (status === 'DISABLED') {
+    return 'info'
+  }
+  return 'warning'
 }
