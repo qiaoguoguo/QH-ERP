@@ -382,6 +382,16 @@ if (Test-Path -LiteralPath $migrationRehearsalPath -PathType Leaf) {
     Assert-True -Condition ($migrationRehearsal -notmatch '-e\s+"(?:POSTGRES_PASSWORD|QHERP_DATASOURCE_PASSWORD|QHERP_INITIAL_ADMIN_PASSWORD|QHERP_S3_ACCESS_KEY|QHERP_S3_SECRET_KEY)=\$') `
         -Message "迁移演练不得把临时密钥拼入 docker run 命令参数。"
     Assert-Match $migrationRehearsal '/run/secrets/' "迁移演练必须通过临时只读 secret 文件注入凭据。"
+    Assert-Match $migrationRehearsal 'Protect-QherpSecretFile' `
+        "迁移演练的临时 secret 目录和文件必须收紧为当前用户 ACL。"
+    Assert-Match $migrationRehearsal '--mount\s+"type=bind,[^"\r\n]+,readonly"' `
+        "迁移演练必须把临时 secret 以只读 bind mount 注入容器。"
+    Assert-True -Condition ($migrationRehearsal -match '\[IO\.Path\]::GetTempPath\(\)' -and
+        $migrationRehearsal -match 'StartsWith\(\$resolvedTempRoot' -and
+        $migrationRehearsal -match 'qherp035-migration-secrets-\*') `
+        -Message "迁移演练清理前必须验证 secret 目录位于系统临时根且名称前缀固定。"
+    Assert-Match $migrationRehearsal 'finally\s*\{[\s\S]*Remove-Item\s+-LiteralPath\s+\$resolvedSecretDirectory\s+-Recurse\s+-Force' `
+        "迁移演练必须在 finally 中清理受边界保护的临时 secret 目录。"
 }
 
 $verifyPath = Join-Path $repoRoot "tools/production/verify-production.ps1"
