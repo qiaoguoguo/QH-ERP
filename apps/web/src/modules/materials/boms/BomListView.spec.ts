@@ -334,6 +334,12 @@ function getBomVersionTableColumnProps(wrapper: VueWrapper) {
   return tables[0].findAllComponents({ name: 'ElTableColumn' }).map((column) => column.props() as Record<string, unknown>)
 }
 
+function getActiveTableColumnProps(wrapper: VueWrapper) {
+  const tables = wrapper.findAllComponents({ name: 'ElTable' })
+  expect(tables.length).toBe(1)
+  return tables[0].findAllComponents({ name: 'ElTableColumn' }).map((column) => column.props() as Record<string, unknown>)
+}
+
 async function fillValidBomForm(wrapper: VueWrapper) {
   await wrapper.find('input[name="bom-code"]').setValue('BOM-FG-A')
   await wrapper.find('input[name="bom-version-code"]').setValue('V1.0')
@@ -546,6 +552,64 @@ describe('BOM 管理页', () => {
     }
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.text()).toContain('当前有效')
+  })
+
+  it('工程变更子表不固定操作列且保留状态和关键字段', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-eco"]').trigger('click')
+    await flushPromises()
+
+    const columns = getActiveTableColumnProps(wrapper)
+
+    expect(columns.map((column) => column.label)).toEqual([
+      '变更编号',
+      '来源 BOM',
+      '目标 BOM',
+      '父项物料',
+      '生效日期',
+      '变更摘要',
+      '状态',
+      '应用人',
+      '应用时间',
+      '操作',
+    ])
+    expect(columns.some((column) => column.label === '状态')).toBe(true)
+    expect(columns.at(-1)?.label).toBe('操作')
+    expect(columns.at(-1)?.fixed).not.toBe('right')
+    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(220)
+    expect(wrapper.find('[data-test="edit-bom-eco"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="apply-bom-eco"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="cancel-bom-eco"]').exists()).toBe(true)
+  })
+
+  it('替代料子表不固定操作列且保留状态、关键字段和行操作', async () => {
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="bom-tab-substitutes"]').trigger('click')
+    await flushPromises()
+
+    const columns = getActiveTableColumnProps(wrapper)
+
+    expect(columns.map((column) => column.label)).toEqual([
+      '主物料',
+      '替代物料',
+      '适用范围',
+      '优先级',
+      '替代比例',
+      '有效期',
+      '状态',
+      '操作',
+    ])
+    expect(columns.slice(0, 3).map((column) => column.label)).toEqual(['主物料', '替代物料', '适用范围'])
+    expect(columns[6].label).toBe('状态')
+    expect(columns.at(-1)?.label).toBe('操作')
+    expect(columns.at(-1)?.fixed).not.toBe('right')
+    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(210)
+    expect(wrapper.find('[data-test="edit-substitute"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="disable-substitute"]').exists()).toBe(true)
   })
 
   it('BOM 列表和详情同时展示发布状态与时效状态，并支持有效日期筛选', async () => {
