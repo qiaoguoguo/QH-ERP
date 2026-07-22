@@ -31,6 +31,8 @@ pwsh -NoProfile -File tools/production/verify-production.ps1
 
 镜像标签由当前 Git 提交派生，API/Web OCI revision 必须等于来源提交。所有基础镜像均锁定 SHA256。启动通过的最低条件是四个容器健康、Web/API HTTP 200、Flyway V36、失败迁移 0、数据库 `AVAILABLE` 文件与 MinIO 对象数量和 SHA256 一致、超级管理员可登录。
 
+启动脚本只在当前 PowerShell 进程中解密 DPAPI 载荷，Compose 使用 `secrets.environment` 将值注入容器内 `/run/secrets` 文件。PostgreSQL 通过 `POSTGRES_PASSWORD_FILE` 读取，MinIO 入口在进程启动时读取，API 由 Spring `configtree:/run/secrets/` 直接读取配置键；Docker 容器配置只保留 secret 文件挂载，不得出现数据库密码、MinIO 根凭据、S3 凭据或初始管理员密码的明文环境变量。禁止绕过统一入口直接用 `docker run -e` 或 Compose `environment` 注入这些值。
+
 当前运行基线固定为 PostgreSQL 18.4 Alpine 3.24、Temurin 21 JRE Alpine、Nginx 1.30.4 Alpine，以及既有 MinIO 开源版固定摘要。API 构建会安装 Alpine 当前安全更新，PostgreSQL JDBC 固定为 42.7.12。任何摘要或依赖版本变化都必须重新构建、扫描并执行恢复后验证，不能只修改标签。
 
 ## 供应链与残余风险
@@ -38,7 +40,7 @@ pwsh -NoProfile -File tools/production/verify-production.ps1
 - API 与 Web 最终运行镜像必须对高危和严重漏洞保持 0；扫描对象是实际成品，而不是仅扫描 Dockerfile 基础镜像。
 - PostgreSQL 使用官方当前 18.4 镜像。扫描器对仅在容器启动时使用的 `gosu` 及未触达的库代码仍可能报告高危项，升级官方摘要后需结合实际执行路径复核，不能直接忽略，也不能为清零统计改用非官方来源。
 - MinIO 开源版已经停止维护，官方 2026 修复版本转为需要许可证的 AIStor。当前候选不得静默切换到商业镜像；在完成许可证或替代对象存储决策前，MinIO 不发布任何宿主端口，只允许 Compose 内部 API 访问，禁止配置 OIDC、LDAP、复制、S3 Select 或额外访问密钥，根凭据只允许通过 DPAPI 注入。
-- 仓库密钥扫描必须为 0；开发与测试夹具不能当作生产凭据使用。实际生产密钥只允许存在于既定 DPAPI 文件和运行进程内存中。
+- 仓库密钥扫描必须为 0；开发与测试夹具不能当作生产凭据使用。宿主长期载体只允许既定 DPAPI 文件；容器通过 `/run/secrets` 只读文件启动，Docker 配置元数据不得保存明文密钥，服务使用期间的明文只允许进入对应进程内存。
 
 ## 日常操作
 

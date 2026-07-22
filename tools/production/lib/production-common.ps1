@@ -203,6 +203,10 @@ function Get-QherpContainerEnvironmentValue {
     return $entry[0].Substring($prefix.Length)
 }
 
+function Get-QherpMinioCredentialShellPrefix {
+    return 'if [ -r "${MINIO_ROOT_USER_FILE:-}" ]; then MINIO_ROOT_USER="$(cat "$MINIO_ROOT_USER_FILE")"; fi; if [ -r "${MINIO_ROOT_PASSWORD_FILE:-}" ]; then MINIO_ROOT_PASSWORD="$(cat "$MINIO_ROOT_PASSWORD_FILE")"; fi; : "${MINIO_ROOT_USER:?缺少 MinIO 根用户}"; : "${MINIO_ROOT_PASSWORD:?缺少 MinIO 根密码}"; export MINIO_ROOT_USER MINIO_ROOT_PASSWORD'
+}
+
 function Invoke-QherpPostgresScalar {
     param(
         [Parameter(Mandatory)][string] $ContainerName,

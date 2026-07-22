@@ -93,7 +93,7 @@ $remoteObjects = "/tmp/qherp-035-verify-$([guid]::NewGuid().ToString('N'))"
 $storageObjects = [Collections.Generic.List[object]]::new()
 try {
     New-Item -ItemType Directory -Path $tempRoot -Force | Out-Null
-    $mirrorCommand = 'set -eu; rm -rf "{0}"; mkdir -p "{0}"; mc alias set qherpverify http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove qherpverify/{1} "{0}"' -f $remoteObjects, $Bucket
+    $mirrorCommand = 'set -eu; {0}; rm -rf "{1}"; mkdir -p "{1}"; mc alias set qherpverify http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove qherpverify/{2} "{1}"' -f (Get-QherpMinioCredentialShellPrefix), $remoteObjects, $Bucket
     & docker exec $MinioContainer sh -c $mirrorCommand | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "读取目标 MinIO bucket 失败。"

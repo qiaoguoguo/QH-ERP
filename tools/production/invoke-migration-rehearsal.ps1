@@ -32,6 +32,13 @@ $databaseName = "qherp_migration_$suffix"
 $databaseUsername = "qherp"
 $databasePassword = "MigAa!$([guid]::NewGuid().ToString('N'))"
 $adminPassword = "AdminAa!$([guid]::NewGuid().ToString('N'))"
+$s3AccessKey = "migration-$suffix"
+$s3SecretKey = "MigS3Aa!$([guid]::NewGuid().ToString('N'))"
+$secretDirectory = Join-Path ([IO.Path]::GetTempPath()) "qherp035-migration-secrets-$suffix"
+$databasePasswordPath = Join-Path $secretDirectory "postgres-password"
+$adminPasswordPath = Join-Path $secretDirectory "initial-admin-password"
+$s3AccessKeyPath = Join-Path $secretDirectory "s3-access-key"
+$s3SecretKeyPath = Join-Path $secretDirectory "s3-secret-key"
 $remoteDump = "/tmp/source-v34.dump"
 $started = [DateTimeOffset]::UtcNow
 $preVersion = if ($Mode -eq "Empty") { "EMPTY" } else { "UNKNOWN" }
@@ -39,13 +46,26 @@ $postVersion = "UNKNOWN"
 $postChecksums = @()
 
 try {
+    New-Item -ItemType Directory -Path $secretDirectory -Force | Out-Null
+    Protect-QherpSecretFile -SecretPath $secretDirectory
+    foreach ($secretFile in @(
+        @{ Path = $databasePasswordPath; Value = $databasePassword },
+        @{ Path = $adminPasswordPath; Value = $adminPassword },
+        @{ Path = $s3AccessKeyPath; Value = $s3AccessKey },
+        @{ Path = $s3SecretKeyPath; Value = $s3SecretKey }
+    )) {
+        [IO.File]::WriteAllText([string]$secretFile.Path, [string]$secretFile.Value, [Text.UTF8Encoding]::new($false))
+        Protect-QherpSecretFile -SecretPath ([string]$secretFile.Path)
+    }
+
     & docker network create $network | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "创建迁移演练网络失败。"
     }
     & docker run -d --name $postgresContainer --network $network `
         -e "POSTGRES_DB=$databaseName" -e "POSTGRES_USER=$databaseUsername" `
-        -e "POSTGRES_PASSWORD=$databasePassword" `
+        -e "POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password" `
+        --mount "type=bind,source=$databasePasswordPath,target=/run/secrets/postgres-password,readonly" `
         "postgres:18-alpine@sha256:1b1689b20d16a014a3d195653381cf2caa75a41a92d93b255a9d6ea29fd353aa" | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "启动迁移演练 PostgreSQL 失败。"
@@ -95,13 +115,14 @@ try {
         -e "SPRING_PROFILES_ACTIVE=production" `
         -e "QHERP_DATASOURCE_URL=jdbc:postgresql://${postgresContainer}:5432/$databaseName" `
         -e "QHERP_DATASOURCE_USERNAME=$databaseUsername" `
-        -e "QHERP_DATASOURCE_PASSWORD=$databasePassword" `
-        -e "QHERP_INITIAL_ADMIN_PASSWORD=$adminPassword" `
         -e "QHERP_S3_ENDPOINT=http://127.0.0.1:9000" `
         -e "QHERP_S3_REGION=us-east-1" -e "QHERP_S3_BUCKET=qherp-migration-$suffix" `
-        -e "QHERP_S3_ACCESS_KEY=migration" -e "QHERP_S3_SECRET_KEY=migration-secret-$suffix" `
         -e "QHERP_S3_PATH_STYLE=true" -e "QHERP_SESSION_COOKIE_SECURE=false" `
         -e "QHERP_TASK_WORKER_ENABLED=false" -e "QHERP_APPROVAL_ENFORCE_DIRECT_ACTIONS=true" `
+        --mount "type=bind,source=$databasePasswordPath,target=/run/secrets/spring.datasource.password,readonly" `
+        --mount "type=bind,source=$adminPasswordPath,target=/run/secrets/qherp.account-permission.initial-admin-password,readonly" `
+        --mount "type=bind,source=$s3AccessKeyPath,target=/run/secrets/qherp.storage.s3.access-key,readonly" `
+        --mount "type=bind,source=$s3SecretKeyPath,target=/run/secrets/qherp.storage.s3.secret-key,readonly" `
         $apiImage | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "启动迁移演练 API 失败。"
@@ -163,6 +184,14 @@ try {
 finally {
     $databasePassword = $null
     $adminPassword = $null
+    $s3AccessKey = $null
+    $s3SecretKey = $null
     & docker rm -f $apiContainer $postgresContainer 2>$null | Out-Null
     & docker network rm $network 2>$null | Out-Null
+    $resolvedTempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+    $resolvedSecretDirectory = [IO.Path]::GetFullPath($secretDirectory)
+    if ($resolvedSecretDirectory.StartsWith($resolvedTempRoot, [StringComparison]::OrdinalIgnoreCase) -and
+        (Split-Path -Leaf $resolvedSecretDirectory) -like "qherp035-migration-secrets-*") {
+        Remove-Item -LiteralPath $resolvedSecretDirectory -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }

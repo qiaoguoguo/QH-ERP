@@ -82,7 +82,7 @@ try {
         }
     }
 
-    $prepareBucket = 'set -eu; mc alias set qherprestore http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; if mc stat qherprestore/{0} >/dev/null 2>&1; then mc rm --recursive --force qherprestore/{0} >/dev/null; mc rb qherprestore/{0} >/dev/null; fi; mc mb qherprestore/{0} >/dev/null; rm -rf "{1}"; mkdir -p "{1}"' -f $TargetBucket, $remoteObjects
+    $prepareBucket = 'set -eu; {0}; mc alias set qherprestore http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; if mc stat qherprestore/{1} >/dev/null 2>&1; then mc rm --recursive --force qherprestore/{1} >/dev/null; mc rb qherprestore/{1} >/dev/null; fi; mc mb qherprestore/{1} >/dev/null; rm -rf "{2}"; mkdir -p "{2}"' -f (Get-QherpMinioCredentialShellPrefix), $TargetBucket, $remoteObjects
     & docker exec $TargetMinioContainer sh -c $prepareBucket
     if ($LASTEXITCODE -ne 0) {
         throw "重建目标 bucket 失败。"
@@ -91,7 +91,7 @@ try {
     if ($LASTEXITCODE -ne 0) {
         throw "复制对象备份到目标容器失败。"
     }
-    $restoreObjects = 'set -eu; mc alias set qherprestore http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove "{0}" qherprestore/{1}' -f $remoteObjects, $TargetBucket
+    $restoreObjects = 'set -eu; {0}; mc alias set qherprestore http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove "{1}" qherprestore/{2}' -f (Get-QherpMinioCredentialShellPrefix), $remoteObjects, $TargetBucket
     & docker exec $TargetMinioContainer sh -c $restoreObjects | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "恢复 MinIO 对象失败。"

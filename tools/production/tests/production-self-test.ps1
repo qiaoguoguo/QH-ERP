@@ -66,9 +66,18 @@ if (Test-Path -LiteralPath $composePath -PathType Leaf) {
     Assert-True -Condition ($compose -notmatch ':latest(?=[\s"'']|$)') -Message "生产 Compose 不得使用 latest 镜像。"
     Assert-True -Condition ($compose -notmatch 'qherp_dev_password|qherpminio123') `
         -Message "生产 Compose 不得含开发或管理员默认密码。"
-    foreach ($variable in @("QHERP_POSTGRES_PASSWORD", "QHERP_MINIO_ROOT_PASSWORD", "QHERP_INITIAL_ADMIN_PASSWORD")) {
-        Assert-Match $compose ([regex]::Escape("`${${variable}:?")) "生产 Compose 必须将 $variable 声明为必填变量。"
+    foreach ($variable in @("QHERP_POSTGRES_PASSWORD", "QHERP_MINIO_ROOT_USER", "QHERP_MINIO_ROOT_PASSWORD", "QHERP_INITIAL_ADMIN_PASSWORD")) {
+        Assert-Match $compose ("environment:\s*" + [regex]::Escape($variable)) "生产 Compose 必须从进程环境创建文件型 secret：$variable。"
     }
+    Assert-Match $compose 'POSTGRES_PASSWORD_FILE:\s*/run/secrets/qherp-postgres-password' `
+        "PostgreSQL 必须通过 /run/secrets 文件读取密码。"
+    Assert-Match $compose 'MINIO_ROOT_USER_FILE:\s*/run/secrets/qherp-minio-root-user' `
+        "MinIO 启动包装必须通过 /run/secrets 文件读取根用户。"
+    foreach ($target in @("spring.datasource.password", "qherp.account-permission.initial-admin-password", "qherp.storage.s3.access-key", "qherp.storage.s3.secret-key")) {
+        Assert-Match $compose ("target:\s*" + [regex]::Escape($target)) "API 必须把文件型 secret 挂载为 Spring configtree 键：$target。"
+    }
+    Assert-True -Condition ($compose -notmatch '(?m)^\s+(?:POSTGRES_PASSWORD|MINIO_ROOT_USER|MINIO_ROOT_PASSWORD|QHERP_DATASOURCE_PASSWORD|QHERP_INITIAL_ADMIN_PASSWORD|QHERP_S3_ACCESS_KEY|QHERP_S3_SECRET_KEY):\s*\$\{') `
+        -Message "生产容器配置不得直接保存数据库、MinIO、S3 或管理员明文密钥。"
     Assert-Match $compose 'SPRING_PROFILES_ACTIVE:\s*production' "API 必须使用 production profile。"
     Assert-Match $compose 'postgres:18\.4-alpine3\.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15' `
         "PostgreSQL 必须锁定已复扫的 18.4 Alpine 3.24 摘要。"
@@ -98,6 +107,7 @@ if (Test-Path -LiteralPath $apiDockerfilePath -PathType Leaf) {
         "API 运行时必须锁定已复扫的 Temurin 21 Alpine 摘要。"
     Assert-Match $apiDockerfile 'apk upgrade --no-cache' "API 运行时必须安装基础镜像安全更新。"
     Assert-Match $apiDockerfile 'addgroup\s+--system|addgroup\s+-S' "API 运行时必须创建非特权组。"
+    Assert-Match $apiDockerfile 'ENTRYPOINT\s*\["java"' "API 镜像必须保持直接 Java 入口，由 Spring configtree 读取 secret。"
 }
 
 $webDockerfilePath = Join-Path $repoRoot "apps/web/Dockerfile"
@@ -120,15 +130,18 @@ if (Test-Path -LiteralPath $productionPropertiesPath -PathType Leaf) {
     foreach ($variable in @(
         "QHERP_DATASOURCE_URL",
         "QHERP_DATASOURCE_USERNAME",
-        "QHERP_DATASOURCE_PASSWORD",
-        "QHERP_INITIAL_ADMIN_PASSWORD",
         "QHERP_S3_ENDPOINT",
-        "QHERP_S3_ACCESS_KEY",
-        "QHERP_S3_SECRET_KEY"
+        "QHERP_S3_BUCKET"
     )) {
         Assert-Match $properties ([regex]::Escape("`${${variable}}")) "生产属性必须无默认值引用 $variable。"
         Assert-True -Condition ($properties -notmatch ([regex]::Escape("`${${variable}:"))) `
             -Message "生产属性中的 $variable 不得提供默认值。"
+    }
+    Assert-Match $properties 'spring\.config\.import=configtree:/run/secrets/' `
+        "生产 API 必须通过 Spring configtree 读取 /run/secrets。"
+    foreach ($secretVariable in @("QHERP_DATASOURCE_PASSWORD", "QHERP_INITIAL_ADMIN_PASSWORD", "QHERP_S3_ACCESS_KEY", "QHERP_S3_SECRET_KEY")) {
+        Assert-True -Condition ($properties -notmatch [regex]::Escape("`${${secretVariable}}")) `
+            -Message "生产属性不得再从容器环境读取明文 secret：$secretVariable。"
     }
     Assert-Match $properties 'server\.servlet\.session\.cookie\.http-only=true' "生产会话 Cookie 必须启用 HttpOnly。"
     Assert-Match $properties 'server\.servlet\.session\.cookie\.same-site=lax' "生产会话 Cookie 必须固定 SameSite=Lax。"
@@ -161,6 +174,9 @@ if (Test-Path -LiteralPath $nginxPath -PathType Leaf) {
 
 $commonPath = Join-Path $repoRoot "tools/production/lib/production-common.ps1"
 if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
+    $commonSource = Get-Content -LiteralPath $commonPath -Raw
+    Assert-Match $commonSource '\[ -r "\$\{MINIO_ROOT_USER_FILE:-\}" \]' `
+        "MinIO 凭据加载必须优先读取可读 secret 文件，并兼容 034 既有环境变量容器。"
     . $commonPath
     foreach ($functionName in @(
         "Get-QherpProductionSecretFields",
@@ -168,6 +184,7 @@ if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
         "Import-QherpProductionSecrets",
         "Set-QherpProductionEnvironment",
         "Get-QherpContainerEnvironmentValue",
+        "Get-QherpMinioCredentialShellPrefix",
         "Invoke-QherpPostgresScalar",
         "Get-QherpFileSha256",
         "New-QherpBackupFileRecord",
@@ -345,6 +362,26 @@ if (Test-Path -LiteralPath $restorePath -PathType Leaf) {
     Assert-Match $restore 'Assert-QherpRestoreTarget' "恢复入口必须调用目标隔离保护。"
     Assert-Match $restore 'docker\s+stop.*api.*web|Stop-QherpApplicationContainers' `
         "恢复入口必须在写入数据库和 bucket 前停止 API/Web 写入口。"
+}
+
+$stage034BackupPath = Join-Path $repoRoot "tools/production/backup-stage034-source.ps1"
+if (Test-Path -LiteralPath $stage034BackupPath -PathType Leaf) {
+    $stage034Backup = Get-Content -LiteralPath $stage034BackupPath -Raw
+    foreach ($variable in @("QHERP_DELIVERY_ENVIRONMENT_CODE", "QHERP_DELIVERY_MANUAL_VERSION", "QHERP_DELIVERY_MANUAL_UPDATED_AT", "QHERP_DELIVERY_DEMO_DATA_VERSION", "QHERP_DELIVERY_DEMO_DATA_STATUS", "QHERP_DELIVERY_DEMO_DATA_VERIFIED_AT")) {
+        Assert-Match $stage034Backup ([regex]::Escape($variable)) "034 来源重启必须恢复交付元数据：$variable。"
+    }
+    Assert-Match $stage034Backup 'Stage034FullFacts' "034 来源重启后必须复验 FullFacts，不能只看健康接口。"
+    Assert-Match $stage034Backup '/api/admin/platform/delivery-assets' "034 来源重启后必须核对交付资料元数据。"
+    Assert-Match $stage034Backup 'TotalSeconds\)\s*-lt\s*1' `
+        "交付资料时间戳比较必须容忍 PowerShell JSON 日期反序列化丢失的亚秒精度。"
+}
+
+$migrationRehearsalPath = Join-Path $repoRoot "tools/production/invoke-migration-rehearsal.ps1"
+if (Test-Path -LiteralPath $migrationRehearsalPath -PathType Leaf) {
+    $migrationRehearsal = Get-Content -LiteralPath $migrationRehearsalPath -Raw
+    Assert-True -Condition ($migrationRehearsal -notmatch '-e\s+"(?:POSTGRES_PASSWORD|QHERP_DATASOURCE_PASSWORD|QHERP_INITIAL_ADMIN_PASSWORD|QHERP_S3_ACCESS_KEY|QHERP_S3_SECRET_KEY)=\$') `
+        -Message "迁移演练不得把临时密钥拼入 docker run 命令参数。"
+    Assert-Match $migrationRehearsal '/run/secrets/' "迁移演练必须通过临时只读 secret 文件注入凭据。"
 }
 
 $verifyPath = Join-Path $repoRoot "tools/production/verify-production.ps1"

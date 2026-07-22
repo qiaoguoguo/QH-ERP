@@ -15,7 +15,9 @@ services:
     environment:
       POSTGRES_DB: ${QHERP_POSTGRES_DB:?缺少 QHERP_POSTGRES_DB}
       POSTGRES_USER: ${QHERP_POSTGRES_USER:?缺少 QHERP_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${QHERP_POSTGRES_PASSWORD:?缺少 QHERP_POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD_FILE: /run/secrets/qherp-postgres-password
+    secrets:
+      - qherp-postgres-password
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
@@ -34,10 +36,18 @@ services:
   minio:
     <<: *service-defaults
     image: minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e
-    command: server /data --console-address ":9001"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        export MINIO_ROOT_USER="$$(cat "$$MINIO_ROOT_USER_FILE")"
+        export MINIO_ROOT_PASSWORD="$$(cat "$$MINIO_ROOT_PASSWORD_FILE")"
+        exec /usr/bin/docker-entrypoint.sh minio server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${QHERP_MINIO_ROOT_USER:?缺少 QHERP_MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${QHERP_MINIO_ROOT_PASSWORD:?缺少 QHERP_MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER_FILE: /run/secrets/qherp-minio-root-user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/qherp-minio-root-password
+    secrets:
+      - qherp-minio-root-user
+      - qherp-minio-root-password
     volumes:
       - minio-data:/data
     healthcheck:
@@ -64,17 +74,22 @@ services:
       SPRING_PROFILES_ACTIVE: production
       QHERP_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${QHERP_POSTGRES_DB:?缺少 QHERP_POSTGRES_DB}
       QHERP_DATASOURCE_USERNAME: ${QHERP_POSTGRES_USER:?缺少 QHERP_POSTGRES_USER}
-      QHERP_DATASOURCE_PASSWORD: ${QHERP_POSTGRES_PASSWORD:?缺少 QHERP_POSTGRES_PASSWORD}
-      QHERP_INITIAL_ADMIN_PASSWORD: ${QHERP_INITIAL_ADMIN_PASSWORD:?缺少 QHERP_INITIAL_ADMIN_PASSWORD}
       QHERP_S3_ENDPOINT: http://minio:9000
       QHERP_S3_REGION: us-east-1
       QHERP_S3_BUCKET: ${QHERP_S3_BUCKET:?缺少 QHERP_S3_BUCKET}
-      QHERP_S3_ACCESS_KEY: ${QHERP_MINIO_ROOT_USER:?缺少 QHERP_MINIO_ROOT_USER}
-      QHERP_S3_SECRET_KEY: ${QHERP_MINIO_ROOT_PASSWORD:?缺少 QHERP_MINIO_ROOT_PASSWORD}
       QHERP_S3_PATH_STYLE: "true"
       QHERP_SESSION_COOKIE_SECURE: ${QHERP_SESSION_COOKIE_SECURE:?缺少 QHERP_SESSION_COOKIE_SECURE}
       QHERP_TASK_WORKER_ENABLED: "true"
       QHERP_APPROVAL_ENFORCE_DIRECT_ACTIONS: "true"
+    secrets:
+      - source: qherp-postgres-password
+        target: spring.datasource.password
+      - source: qherp-initial-admin-password
+        target: qherp.account-permission.initial-admin-password
+      - source: qherp-minio-root-user
+        target: qherp.storage.s3.access-key
+      - source: qherp-minio-root-password
+        target: qherp.storage.s3.secret-key
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,3 +148,13 @@ volumes:
 networks:
   qherp:
     driver: bridge
+
+secrets:
+  qherp-postgres-password:
+    environment: QHERP_POSTGRES_PASSWORD
+  qherp-minio-root-user:
+    environment: QHERP_MINIO_ROOT_USER
+  qherp-minio-root-password:
+    environment: QHERP_MINIO_ROOT_PASSWORD
+  qherp-initial-admin-password:
+    environment: QHERP_INITIAL_ADMIN_PASSWORD

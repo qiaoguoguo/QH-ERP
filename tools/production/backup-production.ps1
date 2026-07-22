@@ -88,7 +88,7 @@ try {
         throw "复制 PostgreSQL dump 失败。"
     }
 
-    $mirrorCommand = 'set -eu; rm -rf "{0}"; mkdir -p "{0}"; mc alias set qherpbackup http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove qherpbackup/{1} "{0}"' -f $remoteObjects, $SourceBucket
+    $mirrorCommand = 'set -eu; {0}; rm -rf "{1}"; mkdir -p "{1}"; mc alias set qherpbackup http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null; mc mirror --overwrite --remove qherpbackup/{2} "{1}"' -f (Get-QherpMinioCredentialShellPrefix), $remoteObjects, $SourceBucket
     & docker exec $SourceMinioContainer sh -c $mirrorCommand | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "MinIO 对象镜像失败。"
