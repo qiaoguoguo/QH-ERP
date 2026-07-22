@@ -1,13 +1,15 @@
-import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { installElementPlus } from '../../elementPlus'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { SalesOrderSummaryRecord } from '../../shared/api/salesApi'
 import { useAuthStore } from '../../stores/authStore'
 import SalesOrderListView from './SalesOrderListView.vue'
+
+const qherpElementPlusPlugin = { install: installElementPlus }
 
 const salesApiMock = vi.hoisted(() => ({
   orders: {
@@ -139,26 +141,58 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
 }
 
 async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  await closeOpenDropdowns()
   const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
   expect(moreButtons.length).toBeGreaterThan(index)
   await moreButtons[index].trigger('click')
   await flushPromises()
 }
 
-function teleportedAction(testId: string) {
-  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
-  const visibleActions = actions.filter((action) => {
-    const popper = action.closest<HTMLElement>('.el-popper')
-    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+async function closeOpenDropdowns() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+
+function visibleDropdownPoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) => {
+    return popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none'
   })
-  const action = visibleActions.at(-1) ?? actions.at(-1)
+}
+
+function findVisibleTeleportedAction(testId: string) {
+  for (const popper of visibleDropdownPoppers()) {
+    const action = popper.querySelector<HTMLElement>(`[data-test="${testId}"]`)
+    if (action) {
+      return action
+    }
+  }
+  return null
+}
+
+async function waitForTeleportedAction(testId: string) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const action = findVisibleTeleportedAction(testId)
+    if (action) {
+      return action
+    }
+    await flushPromises()
+  }
+  const action = findVisibleTeleportedAction(testId)
   expect(action).not.toBeNull()
   return action!
 }
 
+async function expectTeleportedMenuItem(testId: string, text: string) {
+  const action = await waitForTeleportedAction(testId)
+  expect(action.textContent?.trim()).toBe(text)
+  expect(action.closest('[role="menuitem"]')).not.toBeNull()
+  return action
+}
+
 async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
   await openMoreActions(wrapper, moreIndex)
-  teleportedAction(testId).click()
+  ;(await waitForTeleportedAction(testId)).click()
   await flushPromises()
 }
 
@@ -204,7 +238,7 @@ async function mountList(permissions = [
   const wrapper = mount(SalesOrderListView, {
     attachTo: document.body,
     global: {
-      plugins: [pinia, router, ElementPlus],
+      plugins: [pinia, router, qherpElementPlusPlugin],
     },
   })
   await flushPromises()
@@ -378,11 +412,11 @@ describe('销售订单列表页', () => {
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
     expect(buttonsByText(wrapper, '更多').length).toBeGreaterThan(0)
     await openMoreActions(wrapper, 0)
-    expect(teleportedAction('confirm-sales-order')).toBeTruthy()
-    expect(teleportedAction('cancel-sales-order')).toBeTruthy()
+    await expectTeleportedMenuItem('confirm-sales-order', '确认')
+    await expectTeleportedMenuItem('cancel-sales-order', '取消')
     await openMoreActions(wrapper, 1)
-    expect(teleportedAction('close-sales-order')).toBeTruthy()
-    expect(teleportedAction('create-sales-shipment')).toBeTruthy()
+    await expectTeleportedMenuItem('close-sales-order', '关闭')
+    await expectTeleportedMenuItem('create-sales-shipment', '创建出库')
 
     wrapper.unmount()
     document.body.innerHTML = ''

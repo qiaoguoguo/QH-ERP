@@ -60,15 +60,18 @@ describe('平台残留治理静态守卫', () => {
     expect(platformRisks, formatStatusRiskList(platformRisks)).toEqual([])
   })
 
-  it('platform 表格不保留右固定操作列且不直接绑定状态语义列', () => {
-    const rightFixedActionColumns = patternMatches(
-      /<el-table-column\b(?=[^>]*\blabel=["']操作["'])(?=[^>]*\bfixed=["']right["'])[^>]*>/g,
+  it('platform 表格操作列统一遵守右固定 184px 契约且不直接绑定状态语义列', () => {
+    const actionColumns = patternMatches(
+      /<el-table-column\b(?=[^>]*\blabel=["']操作["'])[^>]*>/g,
     )
     const directSemanticColumns = patternMatches(
       /<el-table-column\b[^>]*(?:prop|property)=["'](?:action|reasonCode|resultStatus|sourceType|stage|status|type)["'][^>]*>/g,
     )
 
-    expect(rightFixedActionColumns).toEqual([])
+    expect(actionColumns).toHaveLength(10)
+    expect(actionColumns.filter((column) => !/\bfixed=["']right["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => !/\bwidth=["']184["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => /\bmin-width=/.test(column))).toEqual([])
     expect(directSemanticColumns).toEqual([])
   })
 

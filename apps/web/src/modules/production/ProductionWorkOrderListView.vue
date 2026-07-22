@@ -390,45 +390,57 @@ onMounted(() => {
               <el-button size="small" text>更多</el-button>
               <template #dropdown>
                 <el-dropdown-menu class="table-actions-more-menu">
-                  <el-button
+                  <el-dropdown-item
                     v-if="canReleaseRecord(row)"
-                    size="small"
-                    text
-                    type="success"
+                    class="table-actions-more-item table-actions-more-item--success"
+                    data-test="release-production-work-order"
                     :disabled="actionLoading"
                     @click="runWorkOrderAction(row, 'release')"
                   >
                     发布
-                  </el-button>
-                  <el-button v-if="canCreateIssueRecord(row)" size="small" text @click="createMaterialIssue(row)">
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    v-if="canCreateIssueRecord(row)"
+                    class="table-actions-more-item"
+                    data-test="create-production-material-issue"
+                    @click="createMaterialIssue(row)"
+                  >
                     领料
-                  </el-button>
-                  <el-button v-if="canCreateReportRecord(row)" size="small" text @click="createReport(row)">
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    v-if="canCreateReportRecord(row)"
+                    class="table-actions-more-item"
+                    data-test="create-production-report"
+                    @click="createReport(row)"
+                  >
                     报工
-                  </el-button>
-                  <el-button v-if="canCreateReceiptRecord(row)" size="small" text @click="createCompletionReceipt(row)">
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    v-if="canCreateReceiptRecord(row)"
+                    class="table-actions-more-item"
+                    data-test="create-production-completion-receipt"
+                    @click="createCompletionReceipt(row)"
+                  >
                     完工入库
-                  </el-button>
-                  <el-button
+                  </el-dropdown-item>
+                  <el-dropdown-item
                     v-if="canCompleteRecord(row)"
-                    size="small"
-                    text
-                    type="success"
+                    class="table-actions-more-item table-actions-more-item--success"
+                    data-test="complete-production-work-order"
                     :disabled="actionLoading"
                     @click="runWorkOrderAction(row, 'complete')"
                   >
                     完成
-                  </el-button>
-                  <el-button
+                  </el-dropdown-item>
+                  <el-dropdown-item
                     v-if="canCancelRecord(row)"
-                    size="small"
-                    text
-                    type="danger"
+                    class="table-actions-more-item table-actions-more-item--danger"
+                    data-test="cancel-production-work-order"
                     :disabled="actionLoading"
                     @click="runWorkOrderAction(row, 'cancel')"
                   >
                     取消
-                  </el-button>
+                  </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

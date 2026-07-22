@@ -1,4 +1,4 @@
-import { flushPromises } from '@vue/test-utils'
+import { flushPromises, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SalesInvoiceListView from './SalesInvoiceListView.vue'
 import SalesInvoiceFormView from './SalesInvoiceFormView.vue'
@@ -19,8 +19,56 @@ import PrepaymentDetailView from './PrepaymentDetailView.vue'
 import SettlementWorkbenchView from './SettlementWorkbenchView.vue'
 import VoucherDraftListView from './VoucherDraftListView.vue'
 import VoucherDraftDetailView from './VoucherDraftDetailView.vue'
-import { buttonsByText, clickTeleportedAction, mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import {
+  buttonsByText,
+  mountFinanceView,
+  page,
+  setSelectValue,
+} from './financeTestHelpers'
 import { useConfirmActionMock } from '../../test/setup'
+
+async function closeOpenDropdowns() {
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+  document.body.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await flushPromises()
+}
+
+async function openVisibleMoreActions(wrapper: VueWrapper, index = 0) {
+  await closeOpenDropdowns()
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function visibleDropdownPoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) => {
+    return popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none'
+  })
+}
+
+function visibleTeleportedMenuItem(testId: string) {
+  for (const popper of visibleDropdownPoppers()) {
+    const action = popper.querySelector<HTMLElement>(`[data-test="${testId}"]`)
+    if (action) {
+      return action
+    }
+  }
+  return null
+}
+
+async function waitForVisibleTeleportedMenuItem(testId: string) {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const action = visibleTeleportedMenuItem(testId)
+    if (action) {
+      return action
+    }
+    await flushPromises()
+  }
+  const action = visibleTeleportedMenuItem(testId)
+  expect(action).not.toBeNull()
+  return action!
+}
 
 const invoiceApiMock = vi.hoisted(() => ({
   salesInvoices: { list: vi.fn(), get: vi.fn(), create: vi.fn(), update: vi.fn(), confirm: vi.fn(), cancel: vi.fn() },
@@ -1233,7 +1281,12 @@ describe('028 财务页面', () => {
     }))
     expect(wrapper.text()).toContain('生成正式凭证草稿')
 
-    await clickTeleportedAction(wrapper, 'convert-gl-voucher')
+    await openVisibleMoreActions(wrapper)
+    const convertAction = await waitForVisibleTeleportedMenuItem('convert-gl-voucher')
+    expect(convertAction.textContent?.trim()).toBe('生成正式凭证草稿')
+    expect(convertAction.closest('[role="menuitem"]')).not.toBeNull()
+    convertAction.click()
+    await flushPromises()
 
     expect(glApiMock.vouchers.fromFinanceDraft).toHaveBeenCalledWith(61, expect.objectContaining({
       version: 1,
@@ -1242,6 +1295,42 @@ describe('028 财务页面', () => {
     expect(router.currentRoute.value.name).toBe('gl-voucher-detail')
     expect(router.currentRoute.value.params.id).toBe('91')
     expect(router.currentRoute.value.query.returnTo).toBe('/finance/voucher-drafts')
+  })
+
+  it('凭证草稿列表状态列固定在操作列左侧，避免右固定操作列遮挡', async () => {
+    voucherApiMock.voucherDrafts.list.mockResolvedValueOnce(page([{ ...voucherDraft, status: 'READY', balanced: true }]))
+    const { wrapper } = await mountFinanceView(
+      VoucherDraftListView,
+      ['finance:voucher-draft:view', 'gl:voucher:convert', 'gl:voucher:view'],
+      '/finance/voucher-drafts',
+      { attachTo: document.body },
+    )
+
+    const columns = wrapper
+      .findAllComponents({ name: 'ElTableColumn' })
+      .map((column) => column.props() as Record<string, unknown>)
+    const statusIndex = columns.findIndex((column) => column.label === '状态')
+    const operationIndex = columns.findIndex((column) => column.label === '操作')
+    const statusColumn = columns[statusIndex]
+    const operationColumn = columns[operationIndex]
+
+    expect(statusIndex).toBeGreaterThan(-1)
+    expect(operationIndex).toBe(statusIndex + 1)
+    expect(statusColumn.fixed).toBe('right')
+    expect(String(statusColumn.width)).toBe('126')
+    expect(String(statusColumn.minWidth ?? '')).toBe('')
+    expect(operationColumn.fixed).toBe('right')
+    expect(String(operationColumn.width)).toBe('184')
+    expect(String(operationColumn.minWidth ?? '')).toBe('')
+    expect(columns.find((column) => column.label === '平衡状态')?.fixed).not.toBe('right')
+    expect(buttonsByText(wrapper, '详情')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '更多')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '生成正式凭证草稿')).toHaveLength(0)
+
+    await openVisibleMoreActions(wrapper)
+    const convertAction = await waitForVisibleTeleportedMenuItem('convert-gl-voucher')
+    expect(convertAction.textContent?.trim()).toBe('生成正式凭证草稿')
+    expect(convertAction.closest('[role="menuitem"]')).not.toBeNull()
   })
 
   it('已关联正式凭证的 028 草稿只展示查看正式凭证入口，不重复转换', async () => {

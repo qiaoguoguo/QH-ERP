@@ -22,6 +22,16 @@ describe('Element Plus 共享注册', () => {
     expect(app.component('ElSegmented')).toBeTruthy()
   })
 
+  it('注册表格更多菜单使用的下拉组件，避免生产入口未解析告警', () => {
+    const app = createApp({ render: () => null })
+
+    installElementPlus(app)
+
+    expect(app.component('ElDropdown')).toBeTruthy()
+    expect(app.component('ElDropdownMenu')).toBeTruthy()
+    expect(app.component('ElDropdownItem')).toBeTruthy()
+  })
+
   it('通过官方中文区域设置统一 Element Plus 内置用户文案', async () => {
     const app = createApp({ render: () => null })
     const { elementPlusLocale } = await import('./elementPlus')

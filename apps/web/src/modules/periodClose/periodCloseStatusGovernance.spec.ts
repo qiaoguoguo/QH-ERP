@@ -17,7 +17,7 @@ const periodCloseVueSources = import.meta.glob<string>('./**/*.vue', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="(?:操作|来源)")(?=[^>]*fixed="right")[^>]*>/g
+const actionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")[^>]*>/g
 
 function fileLabel(key: string): string {
   return `apps/web/src/modules/periodClose/${key.replace(/^\.\//, '')}`
@@ -48,8 +48,13 @@ describe('业务月结页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('业务月结宽表操作入口通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('业务月结宽表操作入口统一遵守右固定 184px 契约', () => {
+    const actionColumns = vuePatternMatches(actionColumnPattern)
+
+    expect(actionColumns).toHaveLength(1)
+    expect(actionColumns.filter((column) => !/\bfixed=["']right["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => !/\bwidth=["']184["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => /\bmin-width=/.test(column))).toEqual([])
   })
 
   it('月结状态、期间、检查、领域、级别、动作和快照阶段使用中文语义与未知兜底', () => {

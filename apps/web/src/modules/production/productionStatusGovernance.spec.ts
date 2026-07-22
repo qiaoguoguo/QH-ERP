@@ -22,7 +22,7 @@ const productionTsSources = import.meta.glob<string>('./**/*.ts', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
+const actionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")[^>]*>/g
 const cancelledDangerTagPattern = /CANCELLED:\s*['"]danger['"]/g
 const legacyProductionStatusTextPattern = /已发布|执行中|进行中/g
 
@@ -68,8 +68,13 @@ describe('生产页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('生产宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('生产宽表操作列统一遵守右固定 184px 契约', () => {
+    const actionColumns = vuePatternMatches(actionColumnPattern)
+
+    expect(actionColumns).toHaveLength(6)
+    expect(actionColumns.filter((column) => !/\bfixed=["']right["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => !/\bwidth=["']184["']/.test(column))).toEqual([])
+    expect(actionColumns.filter((column) => /\bmin-width=/.test(column))).toEqual([])
   })
 
   it('生产取消状态不使用失败色', () => {

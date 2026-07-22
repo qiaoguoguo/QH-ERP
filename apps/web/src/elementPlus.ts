@@ -9,6 +9,7 @@ import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
 import { ElDescriptions, ElDescriptionsItem } from 'element-plus/es/components/descriptions/index.mjs'
 import { ElDialog } from 'element-plus/es/components/dialog/index.mjs'
 import { ElDivider } from 'element-plus/es/components/divider/index.mjs'
+import { ElDropdown, ElDropdownItem, ElDropdownMenu } from 'element-plus/es/components/dropdown/index.mjs'
 import { ElDrawer } from 'element-plus/es/components/drawer/index.mjs'
 import { ElEmpty } from 'element-plus/es/components/empty/index.mjs'
 import { ElForm, ElFormItem } from 'element-plus/es/components/form/index.mjs'
@@ -47,6 +48,9 @@ import 'element-plus/theme-chalk/el-descriptions.css'
 import 'element-plus/theme-chalk/el-descriptions-item.css'
 import 'element-plus/theme-chalk/el-dialog.css'
 import 'element-plus/theme-chalk/el-divider.css'
+import 'element-plus/theme-chalk/el-dropdown.css'
+import 'element-plus/theme-chalk/el-dropdown-item.css'
+import 'element-plus/theme-chalk/el-dropdown-menu.css'
 import 'element-plus/theme-chalk/el-drawer.css'
 import 'element-plus/theme-chalk/el-empty.css'
 import 'element-plus/theme-chalk/el-form.css'
@@ -97,6 +101,9 @@ const elementPlusComponents = [
   ElDescriptionsItem,
   ElDialog,
   ElDivider,
+  ElDropdown,
+  ElDropdownItem,
+  ElDropdownMenu,
   ElDrawer,
   ElEmpty,
   ElForm,

@@ -427,48 +427,41 @@ onMounted(() => {
               <el-button size="small" text>更多</el-button>
               <template #dropdown>
                 <el-dropdown-menu class="table-actions-more-menu">
-                  <el-button
+                  <el-dropdown-item
                     v-if="canConfirm && hasAllowedAction(row, 'CONFIRM')"
-                    size="small"
-                    text
-                    type="success"
+                    class="table-actions-more-item table-actions-more-item--success"
                     data-test="confirm-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'confirm')"
                   >
                     确认
-                  </el-button>
-                  <el-button
+                  </el-dropdown-item>
+                  <el-dropdown-item
                     v-if="canCancelPermission && canCancel(row)"
-                    size="small"
-                    text
-                    type="danger"
+                    class="table-actions-more-item table-actions-more-item--danger"
                     data-test="cancel-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'cancel')"
                   >
                     取消
-                  </el-button>
-                  <el-button
+                  </el-dropdown-item>
+                  <el-dropdown-item
                     v-if="canClosePermission && canClose(row)"
-                    size="small"
-                    text
-                    type="warning"
+                    class="table-actions-more-item table-actions-more-item--warning"
                     data-test="close-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'close')"
                   >
                     关闭
-                  </el-button>
-                  <el-button
+                  </el-dropdown-item>
+                  <el-dropdown-item
                     v-if="canCreateShipmentPermission && canCreateShipment(row)"
-                    size="small"
-                    text
+                    class="table-actions-more-item"
                     data-test="create-sales-shipment"
                     @click="createShipment(row)"
                   >
                     创建出库
-                  </el-button>
+                  </el-dropdown-item>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

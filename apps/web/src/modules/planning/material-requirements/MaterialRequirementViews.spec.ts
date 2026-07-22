@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type DOMWrapper, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { AccountPermissionApiError } from '../../../shared/api/accountPermissionApi'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
@@ -375,7 +375,70 @@ async function routerFor(path: string) {
   return router
 }
 
+function suggestionRow(wrapper: VueWrapper, texts: string[]) {
+  const rows = wrapper.findAll('tr').filter((row) =>
+    texts.every((text) => row.text().includes(text)),
+  )
+  expect(rows).toHaveLength(1)
+  return rows[0]
+}
+
+async function openMoreActions(row: DOMWrapper<HTMLTableRowElement>) {
+  const moreButton = row.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton?.exists()).toBe(true)
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
+}
+
+function visiblePopperButtonByText(text: string) {
+  return visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>('button')))
+    .find((button) => button.textContent?.trim() === text)
+}
+
+function visiblePopperAction(testId: string) {
+  return visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`)))
+    .at(-1)
+}
+
+async function expectTeleportedButtonText(row: DOMWrapper<HTMLTableRowElement>, text: string) {
+  await openMoreActions(row)
+  const action = await waitFor(() => visiblePopperButtonByText(text), `可见更多菜单动作“${text}”`)
+  expect(action.textContent?.trim()).toBe(text)
+}
+
+async function clickTeleportedAction(row: DOMWrapper<HTMLTableRowElement>, testId: string) {
+  await openMoreActions(row)
+  const action = await waitFor(() => visiblePopperAction(testId), `可见更多菜单动作 ${testId}`)
+  action.click()
+  await flushPromises()
+}
+
 describe('026 订单缺料分析页面', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     materialRequirementApiMock.runs.list.mockResolvedValue(page([completedRun, staleRun]))
@@ -551,7 +614,7 @@ describe('026 订单缺料分析页面', () => {
       'production:work-order:view',
     ])
     const router = await routerFor('/planning/material-requirements/1001')
-    const wrapper = mount(MaterialRequirementRunDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(MaterialRequirementRunDetailView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
     expect(wrapper.find('.page-heading').exists()).toBe(true)
@@ -580,8 +643,14 @@ describe('026 订单缺料分析页面', () => {
     expect(wrapper.text()).toContain('生产建议')
     expect(wrapper.text()).toContain('项目自制柜')
     expect(wrapper.text()).toContain('项目外协半成品')
-    expect(wrapper.text()).toContain('转生产工单')
-    expect(wrapper.text()).toContain('转外协订单')
+    await expectTeleportedButtonText(
+      suggestionRow(wrapper, ['MS-026-003', 'FG-027', '项目自制柜']),
+      '转生产工单',
+    )
+    await expectTeleportedButtonText(
+      suggestionRow(wrapper, ['MS-026-004', 'SF-027', '项目外协半成品']),
+      '转外协订单',
+    )
     expect(wrapper.text()).not.toContain('生成采购订单')
     expect(wrapper.text()).not.toContain('自动建工单')
     expect(wrapper.text()).not.toContain('齐套承诺')
@@ -622,7 +691,7 @@ describe('026 订单缺料分析页面', () => {
       idempotencyKey: 'material-requirement-key',
     })
 
-    await wrapper.find('[data-test="dismiss-suggestion-SUG-1"]').trigger('click')
+    await clickTeleportedAction(suggestionRow(wrapper, ['MS-026-001', 'M-900']), 'dismiss-suggestion-SUG-1')
     await flushPromises()
     await wrapper.find('[data-test="dismiss-suggestion-reason"]').setValue('客户改期，暂不采购')
     await wrapper.find('[data-test="submit-dismiss-suggestion"]').trigger('click')
@@ -640,7 +709,10 @@ describe('026 订单缺料分析页面', () => {
       idempotencyKey: 'material-requirement-key',
     })
 
-    await wrapper.find('[data-test="convert-work-order-suggestion-SUG-3"]').trigger('click')
+    await clickTeleportedAction(
+      suggestionRow(wrapper, ['MS-026-003', 'FG-027', '项目自制柜']),
+      'convert-work-order-suggestion-SUG-3',
+    )
     await flushPromises()
     expect(materialRequirementApiMock.suggestions.convertWorkOrder).toHaveBeenCalledWith('SUG-3', {
       version: 4,
@@ -652,7 +724,10 @@ describe('026 订单缺料分析页面', () => {
 
     await router.push('/planning/material-requirements/1001')
     await flushPromises()
-    await wrapper.find('[data-test="convert-outsourcing-suggestion-SUG-4"]').trigger('click')
+    await clickTeleportedAction(
+      suggestionRow(wrapper, ['MS-026-004', 'SF-027', '项目外协半成品']),
+      'convert-outsourcing-suggestion-SUG-4',
+    )
     await flushPromises()
     expect(materialRequirementApiMock.suggestions.convertOutsourcingOrder).toHaveBeenCalledWith('SUG-4', {
       version: 5,

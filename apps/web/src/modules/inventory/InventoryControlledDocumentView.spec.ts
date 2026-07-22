@@ -525,26 +525,49 @@ function firstButton(wrapper: VueWrapper, text: string) {
 async function openMoreActions(wrapper: VueWrapper, index = 0) {
   const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
   expect(moreButtons.length).toBeGreaterThan(index)
+  if (visiblePoppers().length > 0) {
+    await moreButtons[index].trigger('click')
+    await flushPromises()
+    await waitFor(() => visiblePoppers().length === 0, '关闭已有更多操作菜单')
+  }
   await moreButtons[index].trigger('click')
   await flushPromises()
+  await waitFor(() => visiblePoppers().length > 0, '打开更多操作菜单')
 }
 
-function visiblePopperButtons() {
-  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper button')).filter((action) => {
-    const popper = action.closest<HTMLElement>('.el-popper')
-    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
-  })
+async function waitFor<T>(condition: () => T | false | null | undefined, description: string, timeoutMs = 1000): Promise<T> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() <= deadline) {
+    const result = condition()
+    if (result) {
+      return result
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    await flushPromises()
+  }
+  throw new Error(`等待${description}超时`)
 }
 
-function teleportedButtonByText(text: string) {
-  const action = visiblePopperButtons().find((button) => button.textContent?.trim() === text)
-  expect(action).not.toBeNull()
-  return action!
+function visiblePoppers() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('.el-popper')).filter((popper) =>
+    popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none',
+  )
+}
+
+function visiblePopperButtonByText(text: string) {
+  return visiblePoppers()
+    .flatMap((popper) => Array.from(popper.querySelectorAll<HTMLElement>('button')))
+    .find((button) => button.textContent?.trim() === text)
+}
+
+async function teleportedButtonByText(text: string) {
+  return waitFor(() => visiblePopperButtonByText(text), `可见更多菜单动作“${text}”`)
 }
 
 async function clickTeleportedButton(wrapper: VueWrapper, text: string, moreIndex = 0) {
   await openMoreActions(wrapper, moreIndex)
-  teleportedButtonByText(text).click()
+  const action = await teleportedButtonByText(text)
+  action.click()
   await flushPromises()
 }
 
@@ -660,7 +683,7 @@ describe('库存受控单据页', () => {
     expect(wrapper.text()).toContain('仓间补货')
     expect(wrapper.text()).toContain('过账')
     await openMoreActions(wrapper)
-    expect(teleportedButtonByText('取消')).toBeTruthy()
+    expect(await teleportedButtonByText('取消')).toBeTruthy()
 
     await clickTeleportedButton(wrapper, '过账')
 
