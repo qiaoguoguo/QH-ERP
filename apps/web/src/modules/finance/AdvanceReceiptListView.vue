@@ -91,7 +91,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="预收款" description="展示已过账收款形成的客户未核销余额。">
     <template #actions><el-button v-if="canCreate" data-test="create-advance-receipt" type="primary" @click="router.push({ name: 'finance-advance-receipt-create' })">登记预收款</el-button></template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="预收单号、收款单号或客户" /></el-form-item>
         <el-form-item label="客户"><el-input v-model="filters.customerId" clearable placeholder="选择客户" /></el-form-item>
         <el-form-item label="项目/公共">
@@ -137,7 +137,7 @@ onMounted(loadRecords)
         <el-table-column label="可用余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount) }}</template></el-table-column>
         <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ settlementStatusText(row.settlementStatus ?? row.status) }}</template></el-table-column>
         <el-table-column prop="lastAllocatedAt" label="最近核销时间" min-width="160" />
-        <el-table-column label="操作" fixed="right" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-advance-receipt-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
+        <el-table-column label="操作" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-advance-receipt-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />

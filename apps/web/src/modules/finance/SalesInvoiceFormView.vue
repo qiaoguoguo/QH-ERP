@@ -266,7 +266,7 @@ onMounted(loadData)
       </div>
     </el-form>
 
-    <el-form class="query-form" inline>
+    <el-form class="query-form">
       <el-form-item label="来源关键词"><el-input data-test="sales-invoice-source-keyword" v-model="candidateFilters.keyword" :disabled="formReadOnly" clearable placeholder="出库号、物料或客户" /></el-form-item>
       <el-form-item><el-button type="primary" :disabled="formReadOnly" @click="searchCandidates">查询来源</el-button></el-form-item>
     </el-form>
@@ -284,7 +284,7 @@ onMounted(loadData)
         <el-table-column prop="taxRate" label="税率" min-width="100" align="right" />
         <el-table-column label="净可开余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount ?? row.totalAmount) }}</template></el-table-column>
         <el-table-column prop="totalAmount" label="含税金额" min-width="120" align="right" />
-        <el-table-column label="操作" fixed="right" min-width="90">
+        <el-table-column label="操作" min-width="90">
           <template #default="{ row }">
             <el-button data-test="select-source-line" text :disabled="formReadOnly" :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectSourceLine(row)">
               {{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}

@@ -160,7 +160,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="付款记录" description="扫描付款草稿和已过账付款，核对应付余额变化。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="payment-keyword" clearable placeholder="付款单、应付单、供应商" />
         </el-form-item>
@@ -215,7 +215,7 @@ onMounted(() => {
         <el-table-column prop="createdByName" label="创建人" min-width="100" />
         <el-table-column prop="postedByName" label="过账人" min-width="100" />
         <el-table-column prop="postedAt" label="过账时间" min-width="160" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" width="210">
+        <el-table-column label="操作" width="210">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-payment" @click="viewPayment(row)">详情</el-button>
             <el-button v-if="canUpdatePayment(row)" size="small" text data-test="edit-payment" @click="editPayment(row)">编辑</el-button>

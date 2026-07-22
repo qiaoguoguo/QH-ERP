@@ -104,7 +104,7 @@ onMounted(loadRecords)
       <el-button @click="loadRecords">刷新</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="会计年度">
           <el-input v-model="filters.year" name="financial-close-year" clearable placeholder="2026" />
         </el-form-item>
@@ -142,7 +142,7 @@ onMounted(loadRecords)
         <el-table-column label="禁用原因" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ financialCloseActionDisabledReason(row, 'REOPEN') || financialCloseActionDisabledReason(row, 'CLOSE') || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="210">
+        <el-table-column label="操作" min-width="210">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
               <el-button

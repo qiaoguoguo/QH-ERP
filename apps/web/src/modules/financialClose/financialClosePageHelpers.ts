@@ -95,6 +95,17 @@ export function bankSensitiveText(visible: boolean | null | undefined) {
   return visible === false ? '账号已脱敏' : '账号明文权限可见'
 }
 
+function financialCloseLabel(
+  labels: Record<string, string>,
+  value: string | null | undefined,
+  unknownText: string,
+) {
+  if (!value) {
+    return '-'
+  }
+  return Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : unknownText
+}
+
 export function financialCloseStatusText(status: string | null | undefined) {
   const labels: Record<string, string> = {
     OPEN: '开放',
@@ -123,7 +134,7 @@ export function financialCloseStatusText(status: string | null | undefined) {
     ENABLED: '启用',
     DISABLED: '停用',
   }
-  return status ? labels[status] ?? status : '-'
+  return financialCloseLabel(labels, status, '未知状态')
 }
 
 export const taxFoundationDisclaimer = '基础汇总/估算，非正式申报'
@@ -135,7 +146,15 @@ export function bankDirectionText(value: string | null | undefined) {
     INFLOW: '银行入账',
     OUTFLOW: '银行出账',
   }
-  return value ? labels[value] ?? value : '-'
+  return financialCloseLabel(labels, value, '未知方向')
+}
+
+export function financialCloseBalanceDirectionText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    DEBIT: '借方',
+    CREDIT: '贷方',
+  }
+  return financialCloseLabel(labels, value, '未知方向')
 }
 
 export function bankAccountTypeText(value: string | null | undefined) {
@@ -146,7 +165,7 @@ export function bankAccountTypeText(value: string | null | undefined) {
     TEMPORARY: '临时户',
     OTHER: '其他',
   }
-  return value ? labels[value] ?? value : '-'
+  return financialCloseLabel(labels, value, '未知账户类型')
 }
 
 export function taxTypeText(value: string | null | undefined) {
@@ -156,7 +175,7 @@ export function taxTypeText(value: string | null | undefined) {
     URBAN_MAINTENANCE: '城市维护建设税',
     EDUCATION_SURCHARGE: '教育费附加',
   }
-  return value ? labels[value] ?? value : '-'
+  return financialCloseLabel(labels, value, '未知税种')
 }
 
 export function taxpayerTypeText(value: string | null | undefined) {
@@ -164,7 +183,7 @@ export function taxpayerTypeText(value: string | null | undefined) {
     GENERAL: '一般纳税人',
     SMALL_SCALE: '小规模纳税人',
   }
-  return value ? labels[value] ?? value : '-'
+  return financialCloseLabel(labels, value, '未知纳税人类型')
 }
 
 export function sourceTypeText(value: string | null | undefined) {
@@ -176,5 +195,25 @@ export function sourceTypeText(value: string | null | undefined) {
     PROFIT_LOSS_TRANSFER: '期末损益结转',
     FIN_VOUCHER_DRAFT: '财务凭证草稿',
   }
-  return value ? labels[value] ?? value : '-'
+  return financialCloseLabel(labels, value, '未知来源')
+}
+
+export function financialCloseSeverityText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    BLOCKER: '阻断',
+    BLOCKING: '阻断',
+    WARNING: '警告',
+    INFO: '提示',
+  }
+  return financialCloseLabel(labels, value, '未知级别')
+}
+
+export function bankReconciliationExceptionText(value: string | null | undefined) {
+  const labels: Record<string, string> = {
+    BANK_ONLY_CREDIT: '银行已收企业未收',
+    BANK_ONLY_DEBIT: '银行已付企业未付',
+    BOOK_ONLY_DEBIT: '企业已收银行未收',
+    BOOK_ONLY_CREDIT: '企业已付银行未付',
+  }
+  return financialCloseLabel(labels, value, '未知未达类型')
 }

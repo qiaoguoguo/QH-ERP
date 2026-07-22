@@ -88,7 +88,7 @@ onMounted(loadRecords)
       <el-button v-if="canCreate" data-test="create-purchase-invoice" type="primary" @click="router.push({ name: 'finance-purchase-invoice-create' })">新增采购发票</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="发票号、供应商或来源" /></el-form-item>
         <el-form-item label="来源类型">
           <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
@@ -142,7 +142,7 @@ onMounted(loadRecords)
         <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="未结余额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unsettledAmount) }}</span></template></el-table-column>
         <el-table-column prop="differenceCount" label="差异数" min-width="90" />
-        <el-table-column label="操作" fixed="right" min-width="120">
+        <el-table-column label="操作" min-width="120">
           <template #default="{ row }"><el-button text @click="router.push({ name: 'finance-purchase-invoice-detail', params: { id: row.id } })">详情</el-button></template>
         </el-table-column>
       </el-table>

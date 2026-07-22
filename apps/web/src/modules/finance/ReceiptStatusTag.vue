@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { ReceiptStatus } from '../../shared/api/financeApi'
-import { receiptStatusTagType, receiptStatusText } from './financePageHelpers'
+import { receiptStatusLabel, receiptStatusType } from './financePageHelpers'
 
-defineProps<{ status: ReceiptStatus }>()
+defineProps<{ status: ReceiptStatus | string | null | undefined }>()
 </script>
 
 <template>
-  <el-tag :type="receiptStatusTagType[status]">
-    {{ receiptStatusText[status] }}
+  <el-tag :type="receiptStatusType(status)">
+    {{ receiptStatusLabel(status) }}
   </el-tag>
 </template>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import type { PaymentStatus } from '../../shared/api/financeApi'
-import { paymentStatusTagType, paymentStatusText } from './financePageHelpers'
+import { paymentStatusLabel, paymentStatusType } from './financePageHelpers'
 
-defineProps<{ status: PaymentStatus }>()
+defineProps<{ status: PaymentStatus | string | null | undefined }>()
 </script>
 
 <template>
-  <el-tag :type="paymentStatusTagType[status]">
-    {{ paymentStatusText[status] }}
+  <el-tag :type="paymentStatusType(status)">
+    {{ paymentStatusLabel(status) }}
   </el-tag>
 </template>

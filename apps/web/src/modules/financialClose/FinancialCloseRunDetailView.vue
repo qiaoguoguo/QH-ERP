@@ -12,9 +12,11 @@ import {
   financialCloseActionDisabledReason,
   financialCloseErrorMessage,
   financialClosePermissions,
+  financialCloseSeverityText,
   financialCloseStatusText,
   formatFinancialCloseAmount,
   sourceVisibleText,
+  sourceTypeText,
 } from './financialClosePageHelpers'
 import './FinancialCloseShared.css'
 
@@ -138,13 +140,13 @@ onMounted(loadRecord)
       <el-table :data="record?.checkItems ?? []" :empty-text="loading ? '加载中' : '暂无检查项'" stripe>
         <el-table-column prop="code" label="检查项" min-width="220" show-overflow-tooltip />
         <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ financialCloseStatusText(row.status) }}</template></el-table-column>
-        <el-table-column prop="severity" label="级别" min-width="100" />
+        <el-table-column label="级别" min-width="100"><template #default="{ row }">{{ financialCloseSeverityText(row.severity) }}</template></el-table-column>
         <el-table-column prop="actualValue" label="实际值" min-width="120" />
         <el-table-column prop="expectedValue" label="期望值" min-width="120" />
         <el-table-column prop="conclusion" label="结论" min-width="220" show-overflow-tooltip />
         <el-table-column label="来源" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.sourceVisible === false ? '来源受限' : `${row.sourceType || '-'} ${row.sourceNo || row.sourceId || ''}` }}
+            {{ row.sourceVisible === false ? '来源受限' : `${sourceTypeText(row.sourceType)} ${row.sourceNo || row.sourceId || ''}` }}
           </template>
         </el-table-column>
       </el-table>
@@ -165,7 +167,7 @@ onMounted(loadRecord)
       <div class="table-scroll">
         <el-table :data="record?.reopenRequests ?? []" empty-text="暂无反结账申请" stripe>
           <el-table-column prop="id" label="申请" min-width="90" />
-          <el-table-column prop="status" label="状态" min-width="120" />
+          <el-table-column label="状态" min-width="120"><template #default="{ row }">{{ financialCloseStatusText(row.status) }}</template></el-table-column>
           <el-table-column prop="approvalSceneCode" label="审批场景" min-width="200" />
           <el-table-column prop="reason" label="原因" min-width="220" show-overflow-tooltip />
         </el-table>

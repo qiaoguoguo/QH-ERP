@@ -129,13 +129,13 @@ export const receivableStatusTagType: Record<ReceivableStatus, TagType> = {
   PARTIALLY_RECEIVED: 'warning',
   RECEIVED: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
 export const receiptStatusTagType: Record<ReceiptStatus, TagType> = {
   DRAFT: 'info',
   POSTED: 'success',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
 export const payableStatusTagType: Record<PayableStatus, TagType> = {
@@ -144,13 +144,66 @@ export const payableStatusTagType: Record<PayableStatus, TagType> = {
   PARTIALLY_PAID: 'warning',
   PAID: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
 export const paymentStatusTagType: Record<PaymentStatus, TagType> = {
   DRAFT: 'info',
   POSTED: 'success',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
+}
+
+function financeLabel(
+  labels: Record<string, string>,
+  value: string | null | undefined,
+  unknownText: string,
+) {
+  if (!value) {
+    return '-'
+  }
+  return Object.prototype.hasOwnProperty.call(labels, value) ? labels[value] : unknownText
+}
+
+function financeTagType(
+  tagTypes: Record<string, TagType>,
+  value: string | null | undefined,
+) {
+  if (!value) {
+    return undefined
+  }
+  return Object.prototype.hasOwnProperty.call(tagTypes, value) ? tagTypes[value] || undefined : 'info'
+}
+
+export function receivableStatusLabel(value: ReceivableStatus | string | null | undefined) {
+  return financeLabel(receivableStatusText, value, '未知状态')
+}
+
+export function receivableStatusType(value: ReceivableStatus | string | null | undefined) {
+  return financeTagType(receivableStatusTagType, value)
+}
+
+export function receiptStatusLabel(value: ReceiptStatus | string | null | undefined) {
+  return financeLabel(receiptStatusText, value, '未知状态')
+}
+
+export function receiptStatusType(value: ReceiptStatus | string | null | undefined) {
+  return financeTagType(receiptStatusTagType, value)
+}
+
+export function payableStatusLabel(value: PayableStatus | string | null | undefined) {
+  return financeLabel(payableStatusText, value, '未知状态')
+}
+
+export function payableStatusType(value: PayableStatus | string | null | undefined) {
+  return financeTagType(payableStatusTagType, value)
+}
+
+export function paymentStatusLabel(value: PaymentStatus | string | null | undefined) {
+  return financeLabel(paymentStatusText, value, '未知状态')
+}
+
+export function paymentStatusType(value: PaymentStatus | string | null | undefined) {
+  return financeTagType(paymentStatusTagType, value)
 }
 
 export function formatFinanceAmount(value: string | number | null | undefined) {
@@ -269,7 +322,7 @@ function fromFinanceCents(cents: bigint) {
   return `${sign}${integer}.${decimal}`
 }
 
-export function financeSourceTypeText(value: FinanceSourceType | string) {
+export function financeSourceTypeText(value: FinanceSourceType | string | null | undefined) {
   const text: Record<string, string> = {
     SALES_SHIPMENT: '销售出库',
     PURCHASE_RECEIPT: '采购入库',
@@ -288,11 +341,15 @@ export function financeSourceTypeText(value: FinanceSourceType | string) {
     VOUCHER_DRAFT: '凭证草稿',
     NONE: '无来源',
   }
-  return text[value] ?? value
+  return financeLabel(text, value, '未知来源')
 }
 
 export function ownershipTypeText(value: string | null | undefined) {
-  return value === 'PROJECT' ? '项目' : '公共'
+  const text: Record<string, string> = {
+    PUBLIC: '公共',
+    PROJECT: '项目',
+  }
+  return financeLabel(text, value, '未知归属')
 }
 
 export function invoiceStatusText(value: string | null | undefined) {
@@ -301,7 +358,7 @@ export function invoiceStatusText(value: string | null | undefined) {
     CONFIRMED: '已确认',
     CANCELLED: '已取消',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知状态')
 }
 
 export function settlementStatusText(value: string | null | undefined) {
@@ -323,7 +380,7 @@ export function settlementStatusText(value: string | null | undefined) {
     POSTED: '已过账',
     CANCELLED: '已取消',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知结算状态')
 }
 
 export function matchStatusText(value: string | null | undefined) {
@@ -332,7 +389,7 @@ export function matchStatusText(value: string | null | undefined) {
     MATCHED: '匹配通过',
     EXCEPTION: '存在差异',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知匹配状态')
 }
 
 export function voucherDraftStatusText(value: string | null | undefined) {
@@ -341,7 +398,7 @@ export function voucherDraftStatusText(value: string | null | undefined) {
     READY: '待正式制证',
     CANCELLED: '已取消',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知凭证草稿状态')
 }
 
 export function voucherBusinessCategoryText(value: string | null | undefined) {
@@ -358,7 +415,7 @@ export function voucherBusinessCategoryText(value: string | null | undefined) {
     RECEIPT_DRAFT: '收款草稿',
     PAYMENT_DRAFT: '付款草稿',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知凭证业务类别')
 }
 
 export function financeMethodText(value: string | null | undefined) {
@@ -368,7 +425,7 @@ export function financeMethodText(value: string | null | undefined) {
     CHECK: '支票',
     OTHER: '其他',
   }
-  return value ? text[value] ?? value : '-'
+  return financeLabel(text, value, '未知结算方式')
 }
 
 export function hasAnyFinanceViewPermission(hasPermission: (permission: string) => boolean) {

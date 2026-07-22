@@ -231,7 +231,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="payable-keyword" clearable placeholder="应付单、供应商或来源" />
         </el-form-item>
@@ -309,7 +309,7 @@ onMounted(() => {
         <el-table-column label="凭证草稿" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ voucherDraftSummary(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="330">
+        <el-table-column label="操作" min-width="330">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-payable" @click="viewPayable(row)">详情</el-button>
             <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-payable" @click="editPayable(row)">编辑</el-button>

@@ -400,7 +400,7 @@ onMounted(() => {
       </span>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="草稿号、来源或往来方" /></el-form-item>
         <el-form-item label="来源类型">
           <el-select v-model="filters.sourceType" clearable placeholder="全部来源">
@@ -459,7 +459,7 @@ onMounted(() => {
         <el-table-column label="借方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.debitTotal) }}</template></el-table-column>
         <el-table-column label="贷方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.creditTotal) }}</template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="160" />
-        <el-table-column label="操作" fixed="right" min-width="190">
+        <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <el-button text @click="router.push({ name: 'finance-voucher-draft-detail', params: { id: row.id } })">详情</el-button>
             <el-button

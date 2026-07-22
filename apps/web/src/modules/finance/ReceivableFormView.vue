@@ -154,7 +154,7 @@ onMounted(async () => {
     </template>
 
     <div v-if="!isEdit" class="source-query">
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="候选来源">
           <el-input v-model="sourceFilters.keyword" name="receivable-source-keyword" placeholder="销售出库、销售订单、客户" />
         </el-form-item>

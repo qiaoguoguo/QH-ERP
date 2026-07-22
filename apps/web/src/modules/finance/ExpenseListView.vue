@@ -96,7 +96,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="费用单" description="记录项目/公共供应商费用归属，供后续成本和凭证阶段消费，不形成正式项目成本。">
     <template #actions><el-button v-if="canCreate" data-test="create-expense" type="primary" @click="router.push({ name: 'finance-expense-create' })">新增费用单</el-button></template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="费用单、供应商或来源" /></el-form-item>
         <el-form-item label="供应商"><el-input v-model="filters.supplierId" clearable placeholder="选择供应商" /></el-form-item>
         <el-form-item label="费用分类"><el-input v-model="filters.categoryId" clearable placeholder="选择费用分类" /></el-form-item>
@@ -153,7 +153,7 @@ onMounted(loadRecords)
         <el-table-column label="税额" min-width="100" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.taxAmount) }}</span></template></el-table-column>
         <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="未结余额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unsettledAmount) }}</span></template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-expense-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
+        <el-table-column label="操作" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-expense-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />
