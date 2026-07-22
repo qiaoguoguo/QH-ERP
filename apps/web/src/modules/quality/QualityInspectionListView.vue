@@ -13,6 +13,7 @@ import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAlloc
 import { inferTrackingMethodFromAllocations } from '../inventory/tracking/trackingPayloadHelpers'
 import QualityStatusTag from './QualityStatusTag.vue'
 import QualityInspectionProcessDrawer from './QualityInspectionProcessDrawer.vue'
+import { qualityInspectionSourceTypeLabel, qualityInspectionStatusLabel } from './qualityPageHelpers'
 
 const authStore = useAuthStore()
 const filters = reactive<{
@@ -154,6 +155,7 @@ onMounted(loadRecords)
             v-model="filters.businessDateFrom"
             name="quality-inspection-date-from"
             type="date"
+            format="YYYY-MM-DD"
             value-on-clear=""
             value-format="YYYY-MM-DD"
             placeholder="起始日期"
@@ -164,6 +166,7 @@ onMounted(loadRecords)
             v-model="filters.businessDateTo"
             name="quality-inspection-date-to"
             type="date"
+            format="YYYY-MM-DD"
             value-on-clear=""
             value-format="YYYY-MM-DD"
             placeholder="截止日期"
@@ -185,7 +188,11 @@ onMounted(loadRecords)
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无质量确认记录'" stripe>
         <el-table-column prop="inspectionNo" label="确认单号" min-width="170" show-overflow-tooltip />
-        <el-table-column prop="sourceTypeName" label="来源类型" min-width="110" />
+        <el-table-column label="来源类型" min-width="110">
+          <template #default="{ row }">
+            {{ qualityInspectionSourceTypeLabel(row.sourceType, row.sourceTypeName) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="sourceDocumentNo" label="来源单号" min-width="170" show-overflow-tooltip />
         <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
         <el-table-column label="物料" min-width="220" show-overflow-tooltip>
@@ -223,7 +230,11 @@ onMounted(loadRecords)
             </span>
           </template>
         </el-table-column>
-        <el-table-column prop="statusName" label="处理状态" min-width="100" />
+        <el-table-column label="处理状态" min-width="100">
+          <template #default="{ row }">
+            {{ qualityInspectionStatusLabel(row.status, row.statusName) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column label="创建时间" min-width="160">
           <template #default="{ row }">

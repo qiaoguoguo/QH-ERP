@@ -16,14 +16,19 @@ import {
 import { masterDataApi, type MaterialRecord, type MaterialType, type WarehouseRecord } from '../../shared/api/masterDataApi'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { materialTypeLabel, trackingMethodLabel } from '../master/shared/masterPageHelpers'
+import { materialTypeLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import QualityStatusTag from '../quality/QualityStatusTag.vue'
 import {
   formatInventoryAmount,
   formatQuantity,
+  inventorySourceTypeLabel,
+  inventoryTrackingMethodLabel,
   ownershipTypeLabel,
+  reservationStatusLabel,
+  reservationTypeLabel,
   valuationStateLabel,
+  valuationStateTagType,
 } from './inventoryPageHelpers'
 import InventoryCostLayerDrawer from './InventoryCostLayerDrawer.vue'
 import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
@@ -586,8 +591,8 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="估值状态" min-width="130">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.valuationState === 'ABNORMAL' ? 'danger' : 'info'">
-              {{ row.valuationStateName || valuationStateLabel(row.valuationState) }}
+            <el-tag size="small" :type="valuationStateTagType(row.valuationState)">
+              {{ valuationStateLabel(row.valuationState, row.valuationStateName) }}
             </el-tag>
           </template>
         </el-table-column>
@@ -637,7 +642,7 @@ onMounted(() => {
         <el-table-column prop="unitName" label="单位" min-width="90" />
         <el-table-column label="追踪方式" min-width="120">
           <template #default="{ row }">
-            {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
+            {{ inventoryTrackingMethodLabel(row.trackingMethod, row.trackingMethodName) }}
           </template>
         </el-table-column>
         <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
@@ -734,9 +739,21 @@ onMounted(() => {
         stripe
       >
         <el-table-column prop="reservationNo" label="台账编号" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="reservationTypeName" label="类型" min-width="100" />
-        <el-table-column prop="statusName" label="状态" min-width="90" />
-        <el-table-column prop="sourceTypeName" label="来源类型" min-width="110" show-overflow-tooltip />
+        <el-table-column label="类型" min-width="100">
+          <template #default="{ row }">
+            {{ reservationTypeLabel(row.reservationType, row.reservationTypeName) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" min-width="90">
+          <template #default="{ row }">
+            {{ reservationStatusLabel(row.status, row.statusName) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="来源类型" min-width="110" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ inventorySourceTypeLabel(row.sourceType, row.sourceTypeName) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="sourceDocumentNo" label="来源单号" min-width="160" show-overflow-tooltip />
         <el-table-column label="剩余数量" min-width="110" align="right">
           <template #default="{ row }">

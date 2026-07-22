@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
+  controlledDocumentStatusLabel,
   formatInventoryAmount,
+  inventoryApprovalStatusLabel,
+  inventorySourceTypeLabel,
   inventoryActionLabel,
   ownershipTypeLabel,
+  qualityStatusLabel,
+  valuationAdjustmentTypeLabel,
+  valuationMethodLabel,
   valuationStateLabel,
   validateInventoryMoney,
 } from './inventoryPageHelpers'
@@ -23,6 +29,25 @@ describe('库存计价页面辅助函数', () => {
     expect(valuationStateLabel('CURRENT_AVERAGE_PROVISIONAL')).toBe('当前平均暂估')
     expect(inventoryActionLabel('SUBMIT_APPROVAL')).toBe('提交审批')
     expect(inventoryActionLabel('COMPLETE_ZERO_VARIANCE')).toBe('结束零差异盘点')
+  })
+
+  it('未知库存状态、类型、质量和动作不把原始编码作为主文案', () => {
+    expect(controlledDocumentStatusLabel('ARCHIVED')).toBe('未知状态')
+    expect(inventoryApprovalStatusLabel('AUTO_CLOSED')).toBe('未知状态')
+    expect(valuationAdjustmentTypeLabel('SPOT_REPRICE')).toBe('未知类型')
+    expect(ownershipTypeLabel('THIRD_PARTY')).toBe('未知所有权')
+    expect(valuationStateLabel('STALE_LAYER')).toBe('未知估值状态')
+    expect(valuationMethodLabel('CURRENT_AVERAGE_PROVISIONAL')).toBe('当前平均暂估')
+    expect(valuationMethodLabel('THIRD_PARTY_METHOD')).toBe('未知估值方法')
+    expect(inventoryActionLabel('FORCE_REOPEN')).toBe('未知操作')
+
+    expect(qualityStatusLabel('REJECTED')).toBe('不合格')
+    expect(qualityStatusLabel('REVIEW_REQUIRED', '需复检')).toBe('需复检')
+    expect(qualityStatusLabel('REVIEW_REQUIRED', 'REVIEW_REQUIRED')).toBe('未知状态')
+
+    expect(inventorySourceTypeLabel('WAREHOUSE_TRANSFER')).toBe('仓库调拨')
+    expect(inventorySourceTypeLabel('OUTSOURCING_RECEIPT', '委外入库')).toBe('委外入库')
+    expect(inventorySourceTypeLabel('OUTSOURCING_RECEIPT', 'OUTSOURCING_RECEIPT')).toBe('未知类型')
   })
 
   it('金额输入只校验十进制字符串精度，不执行库存价值计算', () => {

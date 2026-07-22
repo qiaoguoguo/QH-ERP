@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import type { InventoryTraceDetailRecord, InventoryTraceNodeRecord } from '../../../shared/api/inventoryApi'
 import { trackingMethodLabel } from '../../master/shared/masterPageHelpers'
-import { formatQuantity } from '../inventoryPageHelpers'
+import { formatQuantity, inventoryTraceNodeTypeLabel, qualityStatusLabel } from '../inventoryPageHelpers'
 
 const props = withDefaults(defineProps<{
   modelValue: boolean
@@ -68,7 +68,11 @@ function formatDate(value?: string | null) {
         <h3>当前库存</h3>
         <el-table :data="detail.currentBalances" empty-text="暂无当前库存" stripe>
           <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />
-          <el-table-column prop="qualityStatusName" label="质量状态" min-width="100" />
+          <el-table-column label="质量状态" min-width="100">
+            <template #default="{ row }">
+              {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+            </template>
+          </el-table-column>
           <el-table-column label="现存" min-width="110" align="right">
             <template #default="{ row }">
               <span class="numeric-cell">{{ formatQuantity(row.quantityOnHand) }}</span>
@@ -85,7 +89,11 @@ function formatDate(value?: string | null) {
       <section class="trace-section">
         <h3>来源去向</h3>
         <el-table :data="documentRows" empty-text="暂无来源去向记录" stripe>
-          <el-table-column prop="nodeTypeName" label="节点" min-width="110" show-overflow-tooltip />
+          <el-table-column label="节点" min-width="110" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ inventoryTraceNodeTypeLabel(row.nodeType, row.nodeTypeName) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="documentNo" label="单号" min-width="160" show-overflow-tooltip />
           <el-table-column label="业务日期" min-width="110">
             <template #default="{ row }">
@@ -105,7 +113,11 @@ function formatDate(value?: string | null) {
         <h3>库存流水</h3>
         <el-table :data="detail.movements" empty-text="暂无关联库存流水" stripe>
           <el-table-column prop="documentNo" label="流水或单号" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="nodeTypeName" label="类型" min-width="120" />
+          <el-table-column label="类型" min-width="120">
+            <template #default="{ row }">
+              {{ inventoryTraceNodeTypeLabel(row.nodeType, row.nodeTypeName) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="warehouseName" label="仓库" min-width="120" show-overflow-tooltip />
           <el-table-column label="数量" min-width="100" align="right">
             <template #default="{ row }">
@@ -119,7 +131,11 @@ function formatDate(value?: string | null) {
         <h3>活动预留和占用</h3>
         <el-table :data="detail.activeReservations" stripe>
           <el-table-column prop="documentNo" label="来源单号" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="nodeTypeName" label="类型" min-width="120" />
+          <el-table-column label="类型" min-width="120">
+            <template #default="{ row }">
+              {{ inventoryTraceNodeTypeLabel(row.nodeType, row.nodeTypeName) }}
+            </template>
+          </el-table-column>
           <el-table-column label="数量" min-width="100" align="right">
             <template #default="{ row }">
               <span class="numeric-cell">{{ formatQuantity(row.quantity) }}</span>
@@ -131,7 +147,11 @@ function formatDate(value?: string | null) {
       <section v-if="detail.restrictedSources.length > 0" class="trace-section">
         <el-alert type="warning" title="权限受限" :closable="false" />
         <el-table class="restricted-source-table" :data="detail.restrictedSources" stripe>
-          <el-table-column prop="nodeTypeName" label="受限来源" min-width="120" />
+          <el-table-column label="受限来源" min-width="120">
+            <template #default="{ row }">
+              {{ inventoryTraceNodeTypeLabel(row.nodeType, row.nodeTypeName) }}
+            </template>
+          </el-table-column>
           <el-table-column prop="documentNo" label="摘要单号" min-width="160" show-overflow-tooltip />
           <el-table-column label="业务日期" min-width="110">
             <template #default="{ row }">

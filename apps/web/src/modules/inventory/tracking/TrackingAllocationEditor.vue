@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { InventoryTrackingMethod, ResourceId } from '../../../shared/api/inventoryApi'
-import { formatQuantity, validateInventoryQuantity } from '../inventoryPageHelpers'
+import { formatQuantity, qualityStatusLabel, validateInventoryQuantity } from '../inventoryPageHelpers'
 
 interface TrackingAllocationDraft {
   batchId?: ResourceId | null
@@ -9,6 +9,7 @@ interface TrackingAllocationDraft {
   serialId?: ResourceId | null
   serialNo?: string | null
   quantity?: string | number | null
+  qualityStatus?: string | null
   qualityStatusName?: string | null
   disabledReason?: string | null
 }
@@ -222,7 +223,11 @@ const validationMessages = computed(() => {
             />
           </template>
         </el-table-column>
-        <el-table-column prop="qualityStatusName" label="质量状态" min-width="110" />
+        <el-table-column label="质量状态" min-width="110">
+          <template #default="{ row }">
+            {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+          </template>
+        </el-table-column>
         <el-table-column label="操作" width="88">
           <template #default="{ $index }">
             <el-button size="small" text type="danger" :disabled="disabled" @click="removeRow($index)">

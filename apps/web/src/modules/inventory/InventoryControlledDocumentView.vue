@@ -38,7 +38,9 @@ import {
   formatInventoryAmount,
   formatQuantity,
   inventoryActionLabel,
+  inventoryApprovalStatusLabel,
   ownershipTypeLabel,
+  qualityStatusLabel,
   valuationAdjustmentTypeLabel,
 } from './inventoryPageHelpers'
 
@@ -425,7 +427,7 @@ function documentNo(recordValue: InventoryRecord) {
 }
 
 function statusText(recordValue: InventoryRecord) {
-  return recordValue.statusName || controlledDocumentStatusLabel(String(recordValue.status))
+  return controlledDocumentStatusLabel(String(recordValue.status), recordValue.statusName)
 }
 
 function approvalStatusText(recordValue: InventoryRecord) {
@@ -433,15 +435,7 @@ function approvalStatusText(recordValue: InventoryRecord) {
   if (!status) {
     return '-'
   }
-  const labels: Record<string, string> = {
-    DRAFT: '草稿',
-    SUBMITTED: '审批中',
-    APPROVED: '已通过',
-    REJECTED: '已驳回',
-    WITHDRAWN: '已撤回',
-    CANCELLED: '已取消',
-  }
-  return labels[String(status)] ?? String(status)
+  return inventoryApprovalStatusLabel(String(status))
 }
 
 function amountImpactText(recordValue: InventoryRecord) {
@@ -449,7 +443,7 @@ function amountImpactText(recordValue: InventoryRecord) {
 }
 
 function adjustmentTypeText(recordValue: InventoryValuationAdjustmentRecord) {
-  return recordValue.adjustmentTypeName || valuationAdjustmentTypeLabel(String(recordValue.adjustmentType))
+  return valuationAdjustmentTypeLabel(String(recordValue.adjustmentType), recordValue.adjustmentTypeName)
 }
 
 function formattedDateTime(value?: string | null) {
@@ -1634,7 +1628,7 @@ onMounted(() => {
             <template #default="{ row }">{{ costLayerText(row) }}</template>
           </el-table-column>
           <el-table-column label="质量状态" min-width="110">
-            <template #default="{ row }">{{ row.qualityStatusName || row.qualityStatus || '-' }}</template>
+            <template #default="{ row }">{{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}</template>
           </el-table-column>
           <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
             <template #default="{ row }">{{ trackingIdentityText(row) }}</template>
@@ -1670,7 +1664,7 @@ onMounted(() => {
             <template #default="{ row }">{{ sourceUnitCostText(record, row) }}</template>
           </el-table-column>
           <el-table-column label="质量状态" min-width="110">
-            <template #default="{ row }">{{ row.qualityStatusName || row.qualityStatus || '-' }}</template>
+            <template #default="{ row }">{{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}</template>
           </el-table-column>
           <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>
             <template #default="{ row }">{{ trackingIdentityText(row) }}</template>

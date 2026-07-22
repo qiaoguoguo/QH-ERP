@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import type { InventoryTrackingAllocationPayload, InventoryTrackingMethod, ResourceId } from '../../../shared/api/inventoryApi'
-import { formatQuantity } from '../inventoryPageHelpers'
+import type {
+  InventoryQualityStatus,
+  InventoryStockStatus,
+  InventoryTrackingAllocationPayload,
+  InventoryTrackingMethod,
+  ResourceId,
+} from '../../../shared/api/inventoryApi'
+import { formatQuantity, inventoryStockStatusLabel, qualityStatusLabel } from '../inventoryPageHelpers'
 import { validateOutboundTrackingAllocations } from './trackingPayloadHelpers'
 
 interface TrackingCandidateRecord {
@@ -11,7 +17,9 @@ interface TrackingCandidateRecord {
   materialName?: string | null
   warehouseName?: string | null
   qualityStatusName?: string | null
+  qualityStatus?: InventoryQualityStatus | null
   stockStatusName?: string | null
+  stockStatus?: InventoryStockStatus | null
   availableQuantity?: string | number | null
   disabled?: boolean
   disabledReasonCode?: string | null
@@ -95,6 +103,7 @@ function candidateAllocation(row: TrackingCandidateRecord): InventoryTrackingAll
       serialId: row.id,
       serialNo: row.trackingNo,
       quantity: '1',
+      ...(row.qualityStatus ? { qualityStatus: row.qualityStatus } : {}),
       ...(row.qualityStatusName ? { qualityStatusName: row.qualityStatusName } : {}),
     }
   }
@@ -102,6 +111,7 @@ function candidateAllocation(row: TrackingCandidateRecord): InventoryTrackingAll
     batchId: row.id,
     batchNo: row.trackingNo,
     quantity: '',
+    ...(row.qualityStatus ? { qualityStatus: row.qualityStatus } : {}),
     ...(row.qualityStatusName ? { qualityStatusName: row.qualityStatusName } : {}),
   }
 }
@@ -207,8 +217,16 @@ watch(() => props.selectedAllocations, () => {
         </template>
       </el-table-column>
       <el-table-column prop="warehouseName" label="仓库" min-width="120" show-overflow-tooltip />
-      <el-table-column prop="qualityStatusName" label="质量状态" min-width="100" />
-      <el-table-column prop="stockStatusName" label="库存状态" min-width="100" />
+      <el-table-column label="质量状态" min-width="100">
+        <template #default="{ row }">
+          {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+        </template>
+      </el-table-column>
+      <el-table-column label="库存状态" min-width="100">
+        <template #default="{ row }">
+          {{ inventoryStockStatusLabel(row.stockStatus, row.stockStatusName) }}
+        </template>
+      </el-table-column>
       <el-table-column label="可用量" min-width="110" align="right">
         <template #default="{ row }">
           <span class="numeric-cell">{{ formatQuantity(row.availableQuantity) }}</span>
@@ -260,7 +278,11 @@ watch(() => props.selectedAllocations, () => {
           min-width="200"
           show-overflow-tooltip
         />
-        <el-table-column prop="qualityStatusName" label="质量状态" min-width="110" />
+        <el-table-column label="质量状态" min-width="110">
+          <template #default="{ row }">
+            {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
+          </template>
+        </el-table-column>
         <el-table-column label="本次分配" min-width="140" align="right">
           <template #default="{ row, $index }">
             <el-input

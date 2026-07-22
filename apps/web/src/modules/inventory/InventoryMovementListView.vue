@@ -18,15 +18,15 @@ import { masterDataApi, type MaterialRecord, type WarehouseRecord } from '../../
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { trackingMethodLabel } from '../master/shared/masterPageHelpers'
 import { errorMessage, pageItems } from '../system/shared/pageHelpers'
 import InventoryDirectionTag from './InventoryDirectionTag.vue'
 import {
   formatInventoryAmount,
   formatQuantity,
+  inventoryTrackingMethodLabel,
   movementTypeLabel,
   ownershipTypeLabel,
-  valuationStateLabel,
+  valuationMethodLabel,
 } from './inventoryPageHelpers'
 import InventoryCostLayerDrawer from './InventoryCostLayerDrawer.vue'
 import InventoryTraceDrawer from './tracking/InventoryTraceDrawer.vue'
@@ -708,7 +708,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="计价方法" min-width="140">
           <template #default="{ row }">
-            {{ row.valuationMethodName || valuationStateLabel(row.valuationMethod) }}
+            {{ valuationMethodLabel(row.valuationMethod, row.valuationMethodName) }}
           </template>
         </el-table-column>
         <el-table-column label="变动类型" min-width="100">
@@ -723,7 +723,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="追踪方式" min-width="120">
           <template #default="{ row }">
-            {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
+            {{ inventoryTrackingMethodLabel(row.trackingMethod, row.trackingMethodName) }}
           </template>
         </el-table-column>
         <el-table-column label="批次/序列" min-width="170" show-overflow-tooltip>

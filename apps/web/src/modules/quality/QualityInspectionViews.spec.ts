@@ -4,6 +4,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useAuthStore } from '../../stores/authStore'
 import QualityInspectionListView from './QualityInspectionListView.vue'
+import QualityStatusTag from './QualityStatusTag.vue'
 
 const qualityApiMock = vi.hoisted(() => ({
   inspections: {
@@ -245,6 +246,21 @@ describe('质量确认前端页面', () => {
     expect(wrapper.findComponent({ name: 'ElDrawer' }).props('size')).toBe('min(560px, calc(100vw - 16px))')
     expect(wrapper.text()).toContain('当前质量状态')
     expect(wrapper.text()).toContain('待检')
+  })
+
+  it('质量状态标签未知码使用中文主文案且不裸露原编码', () => {
+    const wrapper = mount(QualityStatusTag, {
+      props: {
+        qualityStatus: 'REVIEW_REQUIRED',
+        qualityStatusName: 'REVIEW_REQUIRED',
+      },
+      global: {
+        plugins: [ElementPlus],
+      },
+    })
+
+    expect(wrapper.text()).toContain('未知状态')
+    expect(wrapper.text()).not.toContain('REVIEW_REQUIRED')
   })
 
   it('提交处理时传递字符串数量，后端错误可见且抽屉保持打开', async () => {

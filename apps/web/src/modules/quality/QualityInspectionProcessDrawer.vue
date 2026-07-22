@@ -377,6 +377,7 @@ watch(() => [props.modelValue, props.inspectionId], () => {
             v-model="form.businessDate"
             name="quality-process-business-date"
             type="date"
+            format="YYYY-MM-DD"
             value-on-clear=""
             value-format="YYYY-MM-DD"
             placeholder="选择业务日期"
