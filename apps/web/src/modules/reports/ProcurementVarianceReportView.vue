@@ -143,7 +143,7 @@ onMounted(() => { void loadReport(1) })
         <el-table-column label="三单匹配差异" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.matchVarianceAmount) }}</span></template></el-table-column>
         <el-table-column label="外协已收未结" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.outsourcingUnsettledAmount) }}</span></template></el-table-column>
         <el-table-column label="差异状态" min-width="110"><template #default="{ row }">{{ statusText(row.reconciliationStatus) }}</template></el-table-column>
-        <el-table-column label="来源" width="100" fixed="right">
+        <el-table-column label="来源" min-width="100">
           <template #default="{ row }">
             <el-button v-if="canOpenTrace(row.traceKey, row.restrictedReason)" data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>
             <span v-else class="trace-unavailable">{{ traceUnavailableText(row.restrictedReason) }}</span>

@@ -4,7 +4,7 @@ import { businessReportingApi, type ReportTraceRecord, type SettlementReportRow,
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
-import { reportSourceTypeText } from './reportPageHelpers'
+import { reportDictionaryText, reportSourceTypeText, reportStatusText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({ dateFrom: '', dateTo: '', keyword: '', status: '', customerId: '', supplierId: '' })
 const fields: ReportFilterField[] = [
@@ -47,14 +47,14 @@ function updateFilters(value: Record<string, string | number | undefined>) {
 }
 
 function settlementTypeText(type: SettlementReportRow['settlementType']) {
-  const map: Record<SettlementReportRow['settlementType'], string> = {
+  const map: Record<string, string> = {
     RECEIVABLE: '应收',
     PAYABLE: '应付',
     RECEIPT: '收款',
     PAYMENT: '付款',
     SETTLEMENT_ADJUSTMENT: '往来冲减',
   }
-  return map[type] ?? type
+  return reportDictionaryText(map, type, '未知往来类型')
 }
 
 async function loadReport(targetPage = page.value) {
@@ -160,7 +160,9 @@ onMounted(() => { void loadReport(1) })
           <template #default="{ row }">{{ row.settlementRemainingAmount ?? row.unsettledAmount ?? '0.00' }}</template>
         </el-table-column>
         <el-table-column prop="totalAmount" label="总金额" min-width="120" align="right" />
-        <el-table-column prop="status" label="状态" min-width="110" />
+        <el-table-column label="状态" min-width="110">
+          <template #default="{ row }">{{ reportStatusText(row.status) }}</template>
+        </el-table-column>
         <el-table-column label="来源" width="100">
           <template #default="{ row }">
             <el-button data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>

@@ -140,7 +140,7 @@ onMounted(() => { void loadReport(1) })
         <el-table-column label="逾期" min-width="110" align="right"><template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.overdueAmount) }}</span></template></el-table-column>
         <el-table-column prop="collectionRate" label="回款率" min-width="100" align="right" />
         <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ statusText(row.status) }}</template></el-table-column>
-        <el-table-column label="来源" width="100" fixed="right">
+        <el-table-column label="来源" min-width="100">
           <template #default="{ row }">
             <el-button v-if="canOpenTrace(row.traceKey, row.restrictedReason)" data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>
             <span v-else class="trace-unavailable">{{ traceUnavailableText(row.restrictedReason) }}</span>

@@ -209,7 +209,7 @@ onMounted(() => { void loadReport(1) })
         <el-table-column label="对账" min-width="110">
           <template #default="{ row }">{{ reconciliationStatusText(row.reconciliationStatus) }}</template>
         </el-table-column>
-        <el-table-column label="来源" width="120" fixed="right">
+        <el-table-column label="来源" min-width="120">
           <template #default="{ row }">
             <el-button v-if="canOpenTrace(row.traceKey, row.restrictedReason)" data-test="open-report-trace" link type="primary" @click="openTrace(row)">追溯</el-button>
             <span v-else class="report-subtext">{{ traceUnavailableText(row.restrictedReason) }}</span>

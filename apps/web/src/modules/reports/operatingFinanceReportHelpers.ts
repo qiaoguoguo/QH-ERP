@@ -12,11 +12,11 @@ import {
   type SalesProjectSummary,
 } from '../../shared/api/salesProjectApi'
 import type { BusinessReferenceId, BusinessReferenceOption } from '../system/shared/businessReferenceSelectTypes'
-import { reportStatusText } from './reportPageHelpers'
+import { reportDictionaryText, reportStatusText } from './reportPageHelpers'
 
 export const operatingFinanceBaseFields: ReportFilterField[] = [
   { key: 'periodCode', label: '期间', name: 'report-period-code', placeholder: '例如 2026-07' },
-  { key: 'analysisMode', label: '口径模式', name: 'report-analysis-mode', placeholder: 'LIVE 或 BUSINESS_SNAPSHOT' },
+  { key: 'analysisMode', label: '口径模式', name: 'report-analysis-mode', placeholder: '实时经营口径或业务月结快照' },
   {
     key: 'projectId',
     label: '项目',
@@ -241,7 +241,7 @@ export function projectProfitRevenueBasisText(basis: string | null | undefined) 
     INVOICE: '开票收入',
     TARGET: '目标收入',
   }
-  return basis ? labels[basis] ?? `未知口径：${basis}` : '受限/不可用'
+  return reportDictionaryText(labels, basis, '未知口径')
 }
 
 export function projectProfitCostStageText(stage: string | null | undefined) {
@@ -252,7 +252,7 @@ export function projectProfitCostStageText(stage: string | null | undefined) {
     DIRECT_PROJECT: '直接项目',
     TOTAL: '合计',
   }
-  return stage ? labels[stage] ?? `未知阶段：${stage}` : '受限/不可用'
+  return reportDictionaryText(labels, stage, '未知阶段')
 }
 
 export function projectProfitVarianceReasonText(reasonCode: string | null | undefined) {
@@ -263,7 +263,7 @@ export function projectProfitVarianceReasonText(reasonCode: string | null | unde
     RESTRICTED: '受限',
     NO_ACCOUNTING_FACT: '无会计事实',
   }
-  return reasonCode ? labels[reasonCode] ?? `未知原因：${reasonCode}` : '受限/不可用'
+  return reportDictionaryText(labels, reasonCode, '未知原因')
 }
 
 export function snapshotUnsupportedMessage(title: string) {

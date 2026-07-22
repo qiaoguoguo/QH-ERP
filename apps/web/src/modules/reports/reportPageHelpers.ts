@@ -213,6 +213,19 @@ export function firstReportRouteByPermission(hasPermission: (permission: string)
   return reportRouteConfigs.find((item) => item.menuVisible !== false && hasPermission(item.permission))?.path ?? null
 }
 
+export function reportDictionaryText(
+  labels: Record<string, string>,
+  value: string | number | null | undefined,
+  unknownText: string,
+  emptyText = '受限/不可用',
+) {
+  if (value === null || value === undefined || String(value).trim() === '') {
+    return emptyText
+  }
+  const key = String(value)
+  return Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : unknownText
+}
+
 export function reportSourceTypeText(sourceType: string | null | undefined) {
   const labels: Record<string, string> = {
     PROJECT_COST_CALCULATION: '项目成本计算',
@@ -260,7 +273,7 @@ export function reportSourceTypeText(sourceType: string | null | undefined) {
     BANK_RECONCILIATION: '银行对账',
     INVENTORY_BALANCE: '库存余额',
   }
-  return sourceType ? labels[sourceType] ?? sourceType : '-'
+  return reportDictionaryText(labels, sourceType, '未知来源', '-')
 }
 
 export function reportStatusText(status: string | null | undefined) {
@@ -284,11 +297,15 @@ export function reportStatusText(status: string | null | undefined) {
     ACTIVE: '启用',
     DISABLED: '停用',
     DRAFT: '草稿',
+    RELEASED: '已下达',
+    IN_PROGRESS: '生产中',
+    COMPLETED: '已完工',
     CALCULATED: '已计算',
     CONFIRMED: '已确认',
     EFFECTIVE: '已生效',
     CANCELLED: '已取消',
     VOIDED: '已作废',
+    REVERSED: '已冲销',
     PROJECT: '项目专采',
     PUBLIC: '公共',
     CUSTOMER: '客户',
@@ -309,8 +326,12 @@ export function reportStatusText(status: string | null | undefined) {
     POSTED: '已过账',
     RECEIVED: '已收款',
     PARTIALLY_RECEIVED: '部分收款',
+    SETTLED: '已结清',
+    PARTIALLY_SETTLED: '部分结清',
+    APPLIED: '已核销',
+    PARTIALLY_APPLIED: '部分核销',
     PAID: '已付款',
     PARTIALLY_PAID: '部分付款',
   }
-  return status ? labels[status] ?? `未知状态：${status}` : '受限/不可用'
+  return reportDictionaryText(labels, status, '未知状态')
 }

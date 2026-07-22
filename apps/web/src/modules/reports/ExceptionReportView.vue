@@ -4,6 +4,7 @@ import { businessReportingApi, type BusinessExceptionType, type ExceptionReportR
 import ReportFilterBar, { type ReportFilterField } from './ReportFilterBar.vue'
 import ReportMetricStrip from './ReportMetricStrip.vue'
 import ReportTracePanel from './ReportTracePanel.vue'
+import { reportDictionaryText } from './reportPageHelpers'
 
 const filters = reactive<Record<string, string>>({
   dateFrom: '',
@@ -50,7 +51,15 @@ function exceptionTypeText(type: BusinessExceptionType | string) {
     RECEIVABLE_OVERDUE: '应收逾期',
     PAYABLE_DUE_SOON: '应付临期',
   }
-  return text[type] ?? type
+  return reportDictionaryText(text, type, '未知异常类型')
+}
+
+function exceptionSeverityText(severity: string | null | undefined) {
+  const text: Record<string, string> = {
+    CRITICAL: '严重',
+    WARNING: '普通',
+  }
+  return reportDictionaryText(text, severity, '未知严重程度')
 }
 
 async function loadReport(targetPage = page.value) {
@@ -145,7 +154,9 @@ onMounted(() => {
         <el-table-column label="异常类型" min-width="140">
           <template #default="{ row }">{{ exceptionTypeText(row.exceptionType) }}</template>
         </el-table-column>
-        <el-table-column prop="severity" label="严重程度" min-width="110" />
+        <el-table-column label="严重程度" min-width="110">
+          <template #default="{ row }">{{ exceptionSeverityText(row.severity) }}</template>
+        </el-table-column>
         <el-table-column label="异常对象" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             <span>{{ row.canViewResource ? row.objectName : '来源受限' }}</span>

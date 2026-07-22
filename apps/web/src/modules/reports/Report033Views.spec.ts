@@ -798,8 +798,9 @@ describe('033 项目利润与经营财务分析页面', () => {
     const text = wrapper.text()
 
     expect(text).toContain('已收齐')
-    expect(text).toContain('未知状态：CONTRACT_NEEDS_REVIEW')
+    expect(text).toContain('未知状态')
     expect(text).not.toContain('COLLECTED')
+    expect(text).not.toContain('CONTRACT_NEEDS_REVIEW')
   })
 
   it('库存质量 PENDING_INSPECTION、REJECTED 和往来对象类型不裸露后端枚举', async () => {
