@@ -1560,7 +1560,7 @@ onMounted(() => {
           <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.status === 'APPLIED' ? '已应用' : row.status === 'CANCELLED' ? '已取消' : '草稿' }}</template></el-table-column>
           <el-table-column prop="appliedBy" label="应用人" min-width="100" />
           <el-table-column label="应用时间" min-width="150"><template #default="{ row }">{{ formatDateTime(row.appliedAt) }}</template></el-table-column>
-          <el-table-column label="操作" min-width="220">
+          <el-table-column label="操作" min-width="300">
             <template #default="{ row }">
               <el-button size="small" text @click="openEcoDetail(row)">详情</el-button>
               <el-button v-if="canEcoUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom-eco" @click="openEditEco(row)">编辑</el-button>

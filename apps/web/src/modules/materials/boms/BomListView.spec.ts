@@ -102,6 +102,8 @@ vi.mock('../../../shared/file/download', () => ({
   triggerBrowserDownload: vi.fn(),
 }))
 
+const ECO_DRAFT_ACTION_COLUMN_MIN_WIDTH = 300
+
 const finishedGood: MaterialRecord = {
   id: 1,
   code: 'FG-A',
@@ -578,7 +580,11 @@ describe('BOM 管理页', () => {
     expect(columns.some((column) => column.label === '状态')).toBe(true)
     expect(columns.at(-1)?.label).toBe('操作')
     expect(columns.at(-1)?.fixed).not.toBe('right')
-    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(220)
+    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(ECO_DRAFT_ACTION_COLUMN_MIN_WIDTH)
+    const rowActionLabels = wrapper.findAllComponents({ name: 'ElButton' })
+      .map((button) => button.text())
+      .filter((label) => ['详情', '编辑', '提交应用审批', '取消'].includes(label))
+    expect(rowActionLabels).toEqual(['详情', '编辑', '提交应用审批', '取消'])
     expect(wrapper.find('[data-test="edit-bom-eco"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="apply-bom-eco"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="cancel-bom-eco"]').exists()).toBe(true)
