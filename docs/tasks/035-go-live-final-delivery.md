@@ -8,7 +8,7 @@
 
 ## 阶段状态
 
-- 状态：执行中；固定测试角色已完成全阶段代码评审及全部整改差异复审，最终结论为阻断 0、严重 0、一般 0；运行时发现的只读 API secret 挂载不兼容和私有 tmpfs 重启丢失问题均已修复，等待提交后重建冻结候选。
+- 状态：执行中；固定测试角色已完成全阶段代码评审及全部整改差异复审，最终结论为阻断 0、严重 0、一般 0；最终候选镜像和五容器拓扑已启动，密钥边界与 API 单容器重启实测通过，等待进入唯一全量验证窗口。
 - 日期：2026-07-22。
 - 用户授权：因本阶段不新增业务，用户授权主代理独立自主推进；实施中阻断问题立即修复，非阻断问题先统一登记，在两个窗口计划内项目完成后集中修复。若涉及代码修改，必须复用固定测试角色进行代码评审。
 - 权威工作区：`F:\zhangqiao\AI-study\qherp-035-go-live-final-delivery`。
@@ -174,8 +174,10 @@
 | B10 | 登录限流初值 5 次/分钟与 20 次合法顺序登录验收冲突 | RESOLVED | 调整为 10 次/秒、突发 20；保留无效登录突发限流能力，待性能工具统一复验 |
 | B11 | 初版 API/Web 运行镜像和 JDBC 驱动存在可修复高严重度漏洞，旧 Web 基础镜像还含严重漏洞 | RESOLVED | JDBC 固定 42.7.12；API 改用 Temurin 21 Alpine 并更新基础包；Web 改用 Nginx 1.30.4 Alpine；实际成品复扫均为高危/严重 0，运行验证通过 |
 | B12 | 034 来源备份脚本重启 API 时未恢复冻结交付元数据，健康 200 不能证明来源仍处于已验收状态 | RESOLVED | 固定恢复 034 环境、手册、演示数据版本/状态/时间并通过认证接口精确核对；重新备份 `C:\Users\14567\.codex\backups\qherp\035-v36-fullfacts-20260722120453`，Stage034FullFacts 211/211、V36、对象 41/41、API/代理 200 |
-| B13 | DPAPI 解密值直接进入容器 `environment`，可由 Docker 配置元数据读取，不满足密钥长期载体边界 | FIXED，代码复审通过，待冻结候选运行复验 | PostgreSQL/MinIO 使用文件型 secret；API 由标准输入写入共享内存型 configtree 卷，容器配置、命令行和宿主持久文件均不含管理员、数据库或 S3 明文密钥 |
-| B14 | Docker Compose 2.37 不允许只读 API 挂载环境来源 secret；改用 API 私有 tmpfs 后又会在容器重启时丢失密钥，破坏自动恢复 | FIXED，代码复审通过，待冻结候选运行复验 | 新增无网络、非 root、删除全部 capability 的密钥保活服务持续挂载 Docker local tmpfs 卷，API 只读共享；隔离原型已验证 API 单独重启后密钥仍保留，整栈恢复由 DPAPI 重新注入 |
+| B13 | DPAPI 解密值直接进入容器 `environment`，可由 Docker 配置元数据读取，不满足密钥长期载体边界 | RESOLVED | PostgreSQL/MinIO 使用文件型 secret；API 由标准输入写入共享内存型 configtree 卷；最终五容器 `Config.Env` 与四类真实密钥值匹配 0，API 文件均为 `0600`、UID/GID `100:101` |
+| B14 | Docker Compose 2.37 不允许只读 API 挂载环境来源 secret；改用 API 私有 tmpfs 后又会在容器重启时丢失密钥，破坏自动恢复 | RESOLVED | 无网络密钥保活服务持续挂载 Docker local tmpfs 卷，API 只读共享；最终候选 API 单容器重启 17.085 秒恢复健康，非空密钥文件保持 4/4，代理健康 200 |
+| B15 | 上一次失败的 Compose recreate 留下仅为 `Created` 的 API 临时替换容器，占用重建状态并导致正式名称冲突 | RESOLVED | 核对容器 ID、项目/服务标签、镜像和状态后只删除该 `qherp035/api` 残留；重试后 API/Web 使用最终提交镜像创建并健康 |
+| B16 | 运行证据脚本在严格模式下直接读取无 healthcheck 保活容器不存在的 `State.Health` 属性 | RESOLVED | 先以自测锁定失败，再改为 `PSObject.Properties["Health"]` 可选读取；生产自测、AST 解析和测试角色差异复审均为 0 问题 |
 
 ### 非阻断问题
 
@@ -263,7 +265,15 @@
 - N12/N13 的补偿控制已写入生产编排：只保留 Web 的 `127.0.0.1:45173`，API、PostgreSQL、MinIO 不发布宿主端口；生产基线自测与 Compose 配置检查通过，待冻结提交重建运行验证后关闭。
 - 固定测试角色对 `64f33e664a2765e5bee824ae2b503c9d4955920e..0f7c32dc37bf3b2c8b0d984212985c86af560b21` 完成只读评审，报告为阻断 1、严重 1、一般 1，并明确禁止直接进入候选重建。
 - 阻断修复真实执行时又暴露两项诊断事实：PowerShell 将接口 ISO 时间转为 `DateTime` 后丢失亚秒精度；034 旧 MinIO 镜像把 `_FILE` 默认成不可读的相对文件名。整改采用一秒内同一时刻比较，并只在 `_FILE` 可读时覆盖既有环境变量；重新执行后联合备份、元数据、FullFacts 211/211 和 41/41 全部通过。
-- 严重问题改为 Compose 文件型 secret 注入，API 直接使用 Spring configtree，避免把明文再导入 Java 进程环境；一般问题改为迁移演练临时 ACL secret 文件。生产基线自测、PowerShell 语法检查、Compose JSON 无明文检查通过；下一门禁是同一固定测试角色差异复审。
+- 严重问题最终采用 PostgreSQL/MinIO 文件型 secret 与 API 共享内存 configtree；一般问题改为迁移演练临时 ACL secret 文件。固定测试角色已对完整整改、API 启动失败安全和共享 tmpfs 架构完成三次差异复审，最终均为阻断 0、严重 0、一般 0。
+
+### 2026-07-22 最终候选重建前置核验
+
+- 密钥架构提交 `ef9f121866a9f435d3ba5ecba7e65127036b3621` 已构建为 `qherp/api:035-ef9f121866a9` 与 `qherp/web:035-ef9f121866a9`；API/Web OCI revision 精确指向该提交。
+- PostgreSQL、MinIO、API、Web 四个业务容器健康，密钥保活容器运行；只有 Web 发布 `127.0.0.1:45173`，其余服务无宿主端口。
+- 五容器 `Config.Env` 与四类真实密钥值匹配为 0；四个 API configtree 文件均为非空 `0600`、UID/GID `100:101`，API 以 `qherp` 身份只读挂载，保活服务无网络。
+- 最终候选 API 单容器重启 17.085 秒恢复健康，内存密钥文件保持 4/4，代理健康 HTTP 200，验证了 B14 的自动恢复路径。
+- 运行证据脚本对无 healthcheck 容器的严格模式兼容修复已按红测转绿，并由固定测试角色差异复审为 0/0/0；下一门禁是唯一全量验证窗口。
 
 ## 当前结论
 

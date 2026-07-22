@@ -411,6 +411,8 @@ if (Test-Path -LiteralPath $runtimeEvidencePath -PathType Leaf) {
     $runtimeEvidence = Get-Content -LiteralPath $runtimeEvidencePath -Raw
     Assert-Match $runtimeEvidence 'qherp035-secret-store-1' "运行证据必须覆盖内存密钥保活服务。"
     Assert-Match $runtimeEvidence 'apps/api/docker-entrypoint\.sh' "候选配置清单必须包含 API 入口脚本。"
+    Assert-Match $runtimeEvidence 'State\.PSObject\.Properties\["Health"\]' `
+        "运行证据必须安全读取无 healthcheck 容器的可选 Health 属性。"
 }
 
 $verifyProductionPath = Join-Path $repoRoot "tools/production/verify-production.ps1"

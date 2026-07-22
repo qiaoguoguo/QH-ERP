@@ -22,7 +22,13 @@ $containers = [Collections.Generic.List[object]]::new()
 $imagesById = @{}
 foreach ($containerName in @("qherp035-postgres-1", "qherp035-minio-1", "qherp035-secret-store-1", "qherp035-api-1", "qherp035-web-1")) {
     $inspection = @(& docker inspect $containerName | ConvertFrom-Json)[0]
-    $health = if ($null -ne $inspection.State.Health) { [string]$inspection.State.Health.Status } else { [string]$inspection.State.Status }
+    $healthProperty = $inspection.State.PSObject.Properties["Health"]
+    $health = if ($null -ne $healthProperty -and $null -ne $healthProperty.Value) {
+        [string]$healthProperty.Value.Status
+    }
+    else {
+        [string]$inspection.State.Status
+    }
     $ports = @($inspection.NetworkSettings.Ports.PSObject.Properties | ForEach-Object {
         $bindings = @($_.Value | ForEach-Object { "$($_.HostIp):$($_.HostPort)" })
         [pscustomobject]@{ ContainerPort = $_.Name; HostBindings = $bindings }
