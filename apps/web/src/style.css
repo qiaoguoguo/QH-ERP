@@ -954,8 +954,33 @@ samp {
   color: var(--qherp-danger);
 }
 
-.app-main .el-table .el-button + .el-button {
-  margin-left: 6px;
+.app-main .el-table .el-button + .el-button,
+.app-main .el-table .el-button + .el-dropdown,
+.app-main .el-table .el-dropdown + .el-button,
+.app-main .el-table .el-link + .el-dropdown,
+.app-main .el-table .el-dropdown + .el-link {
+  margin-left: 8px;
+}
+
+.app-main .el-table .el-table__cell[label='操作'] .cell,
+.app-main .el-table .el-table__cell:has(.table-actions-more) .cell {
+  white-space: nowrap;
+}
+
+.table-actions-more {
+  vertical-align: middle;
+}
+
+.table-actions-more-menu {
+  display: grid;
+  gap: 4px;
+  padding: 4px;
+}
+
+.table-actions-more-menu .el-button {
+  justify-content: flex-start;
+  margin-left: 0 !important;
+  width: 100%;
 }
 
 .el-button:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):not(.is-link) {

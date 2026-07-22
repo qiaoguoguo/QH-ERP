@@ -417,7 +417,7 @@ watch(routeQuerySignature, () => {
         <el-table-column label="结果过期" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.expiresAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="230">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="(row.availableActions ?? []).includes('CONFIRM')"
@@ -439,27 +439,34 @@ watch(routeQuerySignature, () => {
             >
               错误明细
             </el-button>
-            <el-button
-              v-if="row.status !== 'EXPIRED' && (row.availableActions ?? []).includes('DOWNLOAD')"
-              data-test="download-task-result"
-              size="small"
-              text
-              :disabled="actionLoading"
-              @click="downloadTask(row)"
-            >
-              下载结果
-            </el-button>
-            <el-button
-              v-if="(row.availableActions ?? []).includes('CANCEL')"
-              data-test="cancel-document-task"
-              size="small"
-              text
-              type="danger"
-              :disabled="actionLoading"
-              @click="cancelTask(row)"
-            >
-              取消
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(row.status !== 'EXPIRED' && (row.availableActions ?? []).includes('DOWNLOAD')) || ((row.availableActions ?? []).includes('CANCEL'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="row.status !== 'EXPIRED' && (row.availableActions ?? []).includes('DOWNLOAD')"
+                    data-test="download-task-result"
+                    size="small"
+                    text
+                    :disabled="actionLoading"
+                    @click="downloadTask(row)"
+                  >
+                    下载结果
+                  </el-button>
+                  <el-button
+                    v-if="(row.availableActions ?? []).includes('CANCEL')"
+                    data-test="cancel-document-task"
+                    size="small"
+                    text
+                    type="danger"
+                    :disabled="actionLoading"
+                    @click="cancelTask(row)"
+                  >
+                    取消
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

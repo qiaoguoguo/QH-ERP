@@ -216,7 +216,7 @@ onMounted(loadRecords)
           <template #default="{ row }">{{ bankSensitiveText(row.bankSensitiveVisible) }}</template>
         </el-table-column>
         <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.enabled === false ? '停用' : '启用' }}</template></el-table-column>
-        <el-table-column label="操作" min-width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
               <el-button

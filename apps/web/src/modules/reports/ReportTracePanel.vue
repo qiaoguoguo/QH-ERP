@@ -2,7 +2,7 @@
 import { useRoute, useRouter } from 'vue-router'
 import type { ReportTraceRecord } from '../../shared/api/businessReportingApi'
 import { currentRouteReturnTo, queryWithReturnTo, safeReturnTo } from '../../shared/navigation/navigationReturn'
-import { reportSourceTypeText, reportStatusText } from './reportPageHelpers'
+import { reportSourceTypeText, reportTraceStatusText } from './reportPageHelpers'
 
 defineProps<{
   visible: boolean
@@ -85,7 +85,7 @@ function viewSource(row: ReportTraceRecord) {
           </el-table-column>
           <el-table-column label="状态" min-width="110">
             <template #default="{ row }">
-              <span v-if="!restricted(row)">{{ reportStatusText(row.status) }}</span>
+              <span v-if="!restricted(row)">{{ reportTraceStatusText(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="数量" min-width="110" align="right">

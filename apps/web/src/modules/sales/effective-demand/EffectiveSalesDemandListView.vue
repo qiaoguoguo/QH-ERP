@@ -301,7 +301,7 @@ onMounted(loadRecords)
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="120">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default>
             <span>只读视图</span>
           </template>

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Plugin } from 'vue'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import type { BomDetailRecord, BomSummaryRecord } from '../../../shared/api/bomApi'
@@ -102,8 +102,6 @@ vi.mock('../../../shared/file/download', () => ({
   downloadFile: vi.fn(),
   triggerBrowserDownload: vi.fn(),
 }))
-
-const ECO_DRAFT_ACTION_COLUMN_MIN_WIDTH = 300
 
 const finishedGood: MaterialRecord = {
   id: 1,
@@ -270,6 +268,16 @@ const bomPage: PageResult<BomSummaryRecord> = {
   total: 2,
   totalPages: 1,
 }
+
+function bomPageOf(items: BomSummaryRecord[]): PageResult<BomSummaryRecord> {
+  return {
+    items,
+    page: 1,
+    pageSize: 10,
+    total: items.length,
+    totalPages: items.length > 0 ? 1 : 0,
+  }
+}
 const emptyBomPage: PageResult<BomSummaryRecord> = {
   items: [],
   page: 1,
@@ -308,10 +316,35 @@ function mountBoms(
   })
 
   return mount(BomListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, elementPlusPlugin],
     },
   })
+}
+
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unknown) {
@@ -357,6 +390,10 @@ async function fillValidBomForm(wrapper: VueWrapper) {
 }
 
 describe('BOM 管理页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     bomApiMock.list.mockResolvedValue(bomPage)
@@ -546,9 +583,9 @@ describe('BOM 管理页', () => {
     expect(Number(columns[8].width)).toBe(120)
     expect(Number(columns[9].width)).toBe(80)
     expect(Number(columns[10].width)).toBe(150)
-    expect(columns[11].fixed).not.toBe('right')
-    expect(Number(columns[11].minWidth)).toBeGreaterThanOrEqual(320)
-    expect(Number(columns[11].minWidth)).toBeLessThanOrEqual(360)
+    expect(columns[11].fixed).toBe('right')
+    expect(Number(columns[11].width)).toBe(184)
+    expect(columns[11].minWidth).toBeFalsy()
 
     for (const index of [0, 4, 5, 6, 8]) {
       expect(columns[index].showOverflowTooltip).toBe(true)
@@ -557,7 +594,7 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('当前有效')
   })
 
-  it('工程变更子表不固定操作列且保留状态和关键字段', async () => {
+  it('工程变更子表操作列固定右侧且保留状态和关键字段', async () => {
     const wrapper = mountBoms()
     await flushPromises()
 
@@ -580,18 +617,20 @@ describe('BOM 管理页', () => {
     ])
     expect(columns.some((column) => column.label === '状态')).toBe(true)
     expect(columns.at(-1)?.label).toBe('操作')
-    expect(columns.at(-1)?.fixed).not.toBe('right')
-    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(ECO_DRAFT_ACTION_COLUMN_MIN_WIDTH)
+    expect(columns.at(-1)?.fixed).toBe('right')
+    expect(Number(columns.at(-1)?.width)).toBe(184)
+    expect(columns.at(-1)?.minWidth).toBeFalsy()
     const rowActionLabels = wrapper.findAllComponents({ name: 'ElButton' })
       .map((button) => button.text())
-      .filter((label) => ['详情', '编辑', '提交应用审批', '取消'].includes(label))
-    expect(rowActionLabels).toEqual(['详情', '编辑', '提交应用审批', '取消'])
+      .filter((label) => ['详情', '编辑', '更多'].includes(label))
+    expect(rowActionLabels).toEqual(['详情', '编辑', '更多'])
     expect(wrapper.find('[data-test="edit-bom-eco"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="apply-bom-eco"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-bom-eco"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('apply-bom-eco')).toBeTruthy()
+    expect(teleportedAction('cancel-bom-eco')).toBeTruthy()
   })
 
-  it('替代料子表不固定操作列且保留状态、关键字段和行操作', async () => {
+  it('替代料子表操作列固定右侧且保留状态、关键字段和行操作', async () => {
     const wrapper = mountBoms()
     await flushPromises()
 
@@ -613,10 +652,12 @@ describe('BOM 管理页', () => {
     expect(columns.slice(0, 3).map((column) => column.label)).toEqual(['主物料', '替代物料', '适用范围'])
     expect(columns[6].label).toBe('状态')
     expect(columns.at(-1)?.label).toBe('操作')
-    expect(columns.at(-1)?.fixed).not.toBe('right')
-    expect(Number(columns.at(-1)?.minWidth)).toBeGreaterThanOrEqual(210)
+    expect(columns.at(-1)?.fixed).toBe('right')
+    expect(Number(columns.at(-1)?.width)).toBe(184)
+    expect(columns.at(-1)?.minWidth).toBeFalsy()
     expect(wrapper.find('[data-test="edit-substitute"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="disable-substitute"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('disable-substitute')).toBeTruthy()
   })
 
   it('BOM 列表和详情同时展示发布状态与时效状态，并支持有效日期筛选', async () => {
@@ -789,8 +830,9 @@ describe('BOM 管理页', () => {
     await flushPromises()
 
     expect(wrapper.findAll('[data-test="edit-bom"]')).toHaveLength(1)
-    expect(wrapper.find('[data-test="publish-bom"]').exists()).toBe(true)
-    expect(wrapper.text()).toContain('发布')
+    await openMoreActions(wrapper)
+    expect(teleportedAction('publish-bom')).toBeTruthy()
+    expect(document.body.textContent).toContain('发布')
   })
 
   it('表单必填为空时展示错误并不提交', async () => {
@@ -870,11 +912,11 @@ describe('BOM 管理页', () => {
   })
 
   it('点击复制会提交新编码和版本', async () => {
+    bomApiMock.list.mockResolvedValueOnce(bomPageOf([draftBom]))
     const wrapper = mountBoms()
     await flushPromises()
 
-    await wrapper.find('[data-test="copy-bom"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'copy-bom')
     await wrapper.find('input[name="copy-bom-code"]').setValue('BOM-FG-A-V11')
     await wrapper.find('input[name="copy-bom-version-code"]').setValue('V1.1')
     await wrapper.find('input[name="copy-bom-name"]').setValue('成品A标准 BOM V1.1')
@@ -889,15 +931,20 @@ describe('BOM 管理页', () => {
   })
 
   it('点击启用和停用会调用对应接口', async () => {
-    const wrapper = mountBoms()
+    bomApiMock.list.mockResolvedValueOnce(bomPageOf([draftBom]))
+    let wrapper = mountBoms()
     await flushPromises()
 
-    await wrapper.find('[data-test="publish-bom"]').trigger('click')
-    await flushPromises()
-    await wrapper.find('[data-test="disable-bom"]').trigger('click')
-    await flushPromises()
-
+    await clickTeleportedAction(wrapper, 'publish-bom')
     expect(bomApiMock.enable).toHaveBeenCalledWith(1, { version: 3 })
+
+    wrapper.unmount()
+    document.body.innerHTML = ''
+    bomApiMock.list.mockResolvedValueOnce(bomPageOf([draftBom]))
+    wrapper = mountBoms()
+    await flushPromises()
+
+    await clickTeleportedAction(wrapper, 'disable-bom')
     expect(bomApiMock.disable).toHaveBeenCalledWith(1, { version: 3 })
   })
 
@@ -1002,8 +1049,7 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('ECO-202607-0001')
     expect(wrapper.text()).toContain('替换冷轧钢板规格')
 
-    await wrapper.find('[data-test="apply-bom-eco"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'apply-bom-eco')
     await wrapper.find('[data-test="confirm-bom-eco-approval"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('审批提交原因必填')
@@ -1039,8 +1085,7 @@ describe('BOM 管理页', () => {
     ])
     await flushPromises()
 
-    await wrapper.find('[data-test="create-eco-from-bom"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-eco-from-bom')
     expect(bomApiMock.engineeringChanges.sourceBomCandidates).toHaveBeenCalledWith(expect.objectContaining({
       parentMaterialId: 1,
       selectedIds: [2],
@@ -1092,8 +1137,7 @@ describe('BOM 管理页', () => {
     ])
     await flushPromises()
 
-    await wrapper.find('[data-test="create-eco-from-bom"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-eco-from-bom')
     await wrapper.find('[data-test="generate-eco-code"]').trigger('click')
     await flushPromises()
     await setSelectValue(wrapper, 'eco-target-bom-id', 1)
@@ -1138,8 +1182,7 @@ describe('BOM 管理页', () => {
       impactScope: '后续订单',
     }))
 
-    await wrapper.find('[data-test="cancel-bom-eco"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'cancel-bom-eco')
     await wrapper.find('[data-test="submit-cancel-bom-eco"]').trigger('click')
     await flushPromises()
     expect(wrapper.text()).toContain('取消原因必填')
@@ -1164,8 +1207,7 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('冷轧钢板')
     expect(wrapper.text()).toContain('镀锌钢板')
     expect(wrapper.text()).toContain('BOM 范围')
-    await wrapper.find('[data-test="disable-substitute"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'disable-substitute')
 
     expect(bomApiMock.substitutes.disable).toHaveBeenCalledWith(200, { version: 4 })
   })
@@ -1222,7 +1264,8 @@ describe('BOM 管理页', () => {
 
     expect(wrapper.find('[data-test="download-bom-draft-template"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="open-bom-draft-import"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="export-bom-draft"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('export-bom-draft')).toBeTruthy()
 
     await (wrapper.vm as unknown as { downloadBomDraftTemplate: () => Promise<void> }).downloadBomDraftTemplate()
     await flushPromises()

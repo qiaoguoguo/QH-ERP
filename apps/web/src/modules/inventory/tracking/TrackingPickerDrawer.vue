@@ -200,8 +200,7 @@ watch(() => props.selectedAllocations, () => {
       :closable="false"
     />
     <el-alert v-if="displayError" class="state-alert" type="error" :title="displayError" :closable="false" />
-    <el-table
-      v-loading="loading"
+    <el-table class="table-scroll" v-loading="loading"
       :data="trackingMethod === 'NONE' ? [] : candidates"
       empty-text="暂无可选追踪库存"
       stripe
@@ -246,7 +245,7 @@ watch(() => props.selectedAllocations, () => {
           <span v-else class="candidate-available-text">可选择</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="90" fixed="right">
+      <el-table-column label="操作" fixed="right" width="184">
         <template #default="{ row }">
           <el-button size="small" text :disabled="row.disabled" @click="toggleCandidate(row)">
             {{ rowSelected(row) ? '已选' : '选择' }}
@@ -263,7 +262,7 @@ watch(() => props.selectedAllocations, () => {
           业务数量 {{ formatQuantity(expectedQuantity) }}
         </span>
       </div>
-      <el-table :data="draftAllocations" empty-text="尚未选择追踪身份" stripe>
+      <el-table class="table-scroll" :data="draftAllocations" empty-text="尚未选择追踪身份" stripe>
         <el-table-column
           v-if="trackingMethod === 'BATCH'"
           prop="batchNo"
@@ -296,7 +295,7 @@ watch(() => props.selectedAllocations, () => {
             <span v-else class="numeric-cell">1</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="88">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button size="small" text type="danger" @click="removeAllocation($index)">移除</el-button>
           </template>

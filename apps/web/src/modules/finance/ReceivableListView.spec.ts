@@ -3,7 +3,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { ReceivableSummaryRecord } from '../../shared/api/financeApi'
 import ReceivableListView from './ReceivableListView.vue'
-import { buttonsByText, mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import {
+  buttonsByText,
+  clickTeleportedAction,
+  mountFinanceView,
+  openMoreActions,
+  page,
+  setSelectValue,
+  teleportedAction,
+} from './financeTestHelpers'
 
 const financeApiMock = vi.hoisted(() => ({
   receivables: { list: vi.fn(), confirm: vi.fn(), cancel: vi.fn(), close: vi.fn() },
@@ -69,7 +77,10 @@ describe('应收台账列表页', () => {
     financeApiMock.receivables.close.mockResolvedValue({ ...confirmedReceivable, status: 'CLOSED' })
   })
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+  })
 
   it('初始加载客户和应收台账并展示关键字段与安全金额格式', async () => {
     const { wrapper } = await mountFinanceView(ReceivableListView, [
@@ -80,7 +91,7 @@ describe('应收台账列表页', () => {
       'finance:receivable:cancel',
       'finance:receivable:close',
       'finance:receipt:create',
-    ], '/finance/receivables')
+    ], '/finance/receivables', { attachTo: document.body })
 
     expect(masterDataApiMock.customers.list).toHaveBeenCalledWith({ keyword: '', status: 'ENABLED', page: 1, pageSize: 200 })
     expect(financeApiMock.receivables.list).toHaveBeenCalledWith({
@@ -157,18 +168,21 @@ describe('应收台账列表页', () => {
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(3)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '确认')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '取消')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '关闭')).toHaveLength(2)
-    expect(buttonsByText(wrapper, '登记收款')).toHaveLength(2)
+    expect(buttonsByText(wrapper, '更多')).toHaveLength(3)
+    await openMoreActions(wrapper, 0)
+    expect(teleportedAction('confirm-receivable')).toBeTruthy()
+    expect(teleportedAction('cancel-receivable')).toBeTruthy()
+    await openMoreActions(wrapper, 1)
+    expect(teleportedAction('close-receivable')).toBeTruthy()
+    expect(teleportedAction('create-receipt')).toBeTruthy()
 
-    await wrapper.find('[data-test="create-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-receipt', 1)
     expect(router.currentRoute.value.name).toBe('finance-receipt-create')
-    expect(router.currentRoute.value.params.id).toBe('2')
+    expect(router.currentRoute.value.params.id).toBe('3')
 
-    await wrapper.find('[data-test="confirm-receivable"]').trigger('click')
+    await router.push('/finance/receivables')
     await flushPromises()
+    await clickTeleportedAction(wrapper, 'confirm-receivable', 0)
     expect(financeApiMock.receivables.confirm).toHaveBeenCalledWith(1)
 
     const readonly = await mountFinanceView(ReceivableListView, ['finance:receivable:view'], '/finance/receivables')

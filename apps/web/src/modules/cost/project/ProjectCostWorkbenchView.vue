@@ -188,8 +188,8 @@ onMounted(loadRecords)
         </el-form-item>
         <el-form-item label="当前性">
           <el-select v-model="filters.freshnessStatus" clearable placeholder="全部当前性">
-            <el-option label="当前" value="CURRENT" />
-            <el-option label="历史快照" value="STALE" />
+            <el-option label="当前有效" value="CURRENT" />
+            <el-option label="来源已变化" value="STALE" />
           </el-select>
         </el-form-item>
         <el-form-item label="差异">
@@ -282,7 +282,7 @@ onMounted(loadRecords)
         <el-table-column label="差异" min-width="140">
           <template #default="{ row }">{{ varianceText(row) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="170">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-project-cost" @click="viewProject(row)">详情</el-button>
             <el-button

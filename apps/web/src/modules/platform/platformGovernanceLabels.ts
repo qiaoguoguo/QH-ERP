@@ -191,6 +191,24 @@ export function deliveryAssetActionLabel(action?: string | null): string {
   return labelFromMap(action, labels, 'deliveryAssetAction', '未知动作')
 }
 
+export function deliveryAssetObjectTypeLabel(type?: string | null): string {
+  const labels: Record<string, string> = {
+    CUSTOMER: '客户',
+    SUPPLIER: '供应商',
+    MATERIAL: '物料',
+    BOM: 'BOM',
+    SALES_PROJECT: '销售项目',
+    SALES_ORDER: '销售订单',
+    SALES_QUOTE: '销售报价',
+    SALES_PROJECT_CONTRACT: '销售合同',
+    PURCHASE_ORDER: '采购订单',
+    DOCUMENT: '业务单据',
+    GL_VOUCHER: '总账凭证',
+    FINANCIAL_PERIOD_REOPEN: '反结账审批',
+  }
+  return labelFromMap(type, labels, 'deliveryAssetObjectType', '未知对象类型')
+}
+
 export function demoDataStatusLabel(status?: string | null): string {
   const labels: Record<string, string> = {
     VERIFIED: '已验证',

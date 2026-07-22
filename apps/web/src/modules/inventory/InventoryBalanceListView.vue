@@ -370,7 +370,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="库存余额与价值" description="展示公共和项目库存的数量、可用量、估值状态和可授权查看的库存价值。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -601,7 +601,7 @@ onMounted(() => {
             <span class="numeric-cell">{{ costLayerText(row) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="260">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-inventory-movements" @click="viewMovements(row)">
               查看流水
@@ -616,21 +616,28 @@ onMounted(() => {
               追溯
             </el-button>
             <span v-else class="operation-status">{{ traceStatusText(row) }}</span>
-            <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
-              占用
-            </el-button>
-            <el-button
-              v-if="canViewValuation && !isCostRestricted(row) && Number(row.costLayerCount || 0) > 0"
-              size="small"
-              text
-              :data-test="`view-cost-layers-${row.id}`"
-              @click="viewCostLayers(row)"
-            >
-              成本层
-            </el-button>
-            <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
-              在途参考
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button v-if="canViewReservations" size="small" text data-test="view-inventory-reservations" @click="viewReservations(row)">
+                    占用
+                  </el-button>
+                  <el-button
+                    v-if="canViewValuation && !isCostRestricted(row) && Number(row.costLayerCount || 0) > 0"
+                    size="small"
+                    text
+                    :data-test="`view-cost-layers-${row.id}`"
+                    @click="viewCostLayers(row)"
+                  >
+                    成本层
+                  </el-button>
+                  <el-button size="small" text data-test="view-inventory-in-transit" @click="viewInTransit(row)">
+                    在途参考
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
         <el-table-column prop="materialSpec" label="规格" min-width="130" show-overflow-tooltip />
@@ -731,9 +738,7 @@ onMounted(() => {
         <dd>{{ formatQuantity(selectedBalance.availableQuantity) }}</dd>
       </dl>
       <el-alert v-if="reservationError" class="state-alert" type="error" :title="reservationError" :closable="false" />
-      <el-table
-        v-loading="reservationLoading"
-        class="reservation-source-table"
+      <el-table v-loading="reservationLoading" class="reservation-source-table table-scroll"
         :data="reservationRecords"
         empty-text="暂无生效占用预留来源"
         stripe

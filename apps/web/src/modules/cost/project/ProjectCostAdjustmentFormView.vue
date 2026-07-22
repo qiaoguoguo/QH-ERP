@@ -324,7 +324,7 @@ onMounted(loadData)
             <el-table-column label="状态" min-width="100">
               <template #default="{ row }">{{ projectCostProjectStatusLabel(row.projectStatus) }}</template>
             </el-table-column>
-            <el-table-column label="操作" min-width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text :type="isReadOnly ? 'info' : 'primary'" :disabled="isReadOnly" data-test="select-project-cost-project-candidate" @click="selectProject(row)">{{ isReadOnly ? '只读' : '选择' }}</el-button>
               </template>
@@ -358,7 +358,7 @@ onMounted(loadData)
             <el-table-column label="剩余可分配金额" min-width="150" align="right">
               <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.availableAmount, candidateRestrictedReason(row) || restrictedMoneyReason(row) || undefined) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" min-width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text :type="isReadOnly || candidateRestrictedReason(row) ? 'info' : 'primary'" :disabled="isReadOnly || Boolean(candidateRestrictedReason(row))" data-test="select-public-expense-candidate" @click="selectCandidate(row)">{{ isReadOnly ? '只读' : (candidateRestrictedReason(row) ? '受限' : '选择') }}</el-button>
               </template>

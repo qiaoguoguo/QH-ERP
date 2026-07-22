@@ -1569,15 +1569,22 @@ onMounted(() => {
           <el-table-column prop="baseUnitName" label="单位" width="120" show-overflow-tooltip />
           <el-table-column prop="itemCount" label="明细数" width="80" />
           <el-table-column label="更新时间" width="150"><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></el-table-column>
-          <el-table-column label="操作" min-width="340">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button size="small" text data-test="view-bom" @click="openDetail(row)">详情</el-button>
               <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom" @click="openEdit(row)">编辑</el-button>
-              <el-button v-if="canCopy" size="small" text data-test="copy-bom" @click="openCopy(row)">复制新版本</el-button>
-              <el-button v-if="canEnable && row.status === 'DRAFT'" size="small" text type="success" data-test="publish-bom" :disabled="actionLoading" @click="publishRecord(row)">发布</el-button>
-              <el-button v-if="canDisable && row.status !== 'DISABLED'" size="small" text type="warning" data-test="disable-bom" :disabled="actionLoading" @click="disableRecord(row)">停用</el-button>
-              <el-button v-if="row.status === 'DRAFT' && canBomExport" size="small" text data-test="export-bom-draft" :disabled="actionLoading" @click="exportBomDraft(row)">导出草稿</el-button>
-              <el-button v-if="row.status === 'ENABLED' && canEcoCreate" size="small" text data-test="create-eco-from-bom" @click="openCreateEco(row)">创建工程变更</el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canCopy) || (canEnable && row.status === 'DRAFT') || (canDisable && row.status !== 'DISABLED') || (row.status === 'DRAFT' && canBomExport) || (row.status === 'ENABLED' && canEcoCreate)">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button v-if="canCopy" size="small" text data-test="copy-bom" @click="openCopy(row)">复制新版本</el-button>
+                    <el-button v-if="canEnable && row.status === 'DRAFT'" size="small" text type="success" data-test="publish-bom" :disabled="actionLoading" @click="publishRecord(row)">发布</el-button>
+                    <el-button v-if="canDisable && row.status !== 'DISABLED'" size="small" text type="warning" data-test="disable-bom" :disabled="actionLoading" @click="disableRecord(row)">停用</el-button>
+                    <el-button v-if="row.status === 'DRAFT' && canBomExport" size="small" text data-test="export-bom-draft" :disabled="actionLoading" @click="exportBomDraft(row)">导出草稿</el-button>
+                    <el-button v-if="row.status === 'ENABLED' && canEcoCreate" size="small" text data-test="create-eco-from-bom" @click="openCreateEco(row)">创建工程变更</el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>
@@ -1597,12 +1604,19 @@ onMounted(() => {
           <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ engineeringChangeStatusLabel(row.status) }}</template></el-table-column>
           <el-table-column prop="appliedBy" label="应用人" min-width="100" />
           <el-table-column label="应用时间" min-width="150"><template #default="{ row }">{{ formatDateTime(row.appliedAt) }}</template></el-table-column>
-          <el-table-column label="操作" min-width="300">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button size="small" text @click="openEcoDetail(row)">详情</el-button>
               <el-button v-if="canEcoUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom-eco" @click="openEditEco(row)">编辑</el-button>
-              <el-button v-if="canEcoApply && row.status === 'DRAFT' && row.approvalSummary?.status !== 'SUBMITTED'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
-              <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="warning" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canEcoApply && row.status === 'DRAFT' && row.approvalSummary?.status !== 'SUBMITTED') || (canEcoCancel && row.status === 'DRAFT')">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button v-if="canEcoApply && row.status === 'DRAFT' && row.approvalSummary?.status !== 'SUBMITTED'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
+                    <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="warning" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>
@@ -1627,12 +1641,19 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" min-width="210">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button size="small" text @click="openSubstituteDetail(row)">详情</el-button>
               <el-button v-if="canSubstituteUpdate" size="small" text data-test="edit-substitute" @click="openEditSubstitute(row)">编辑</el-button>
-              <el-button v-if="canSubstituteDisable && row.status === 'ENABLED'" size="small" text type="warning" data-test="disable-substitute" @click="disableSubstitute(row)">停用</el-button>
-              <el-button v-if="canSubstituteEnable && row.status === 'DISABLED'" size="small" text type="success" data-test="enable-substitute" @click="enableSubstitute(row)">启用</el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canSubstituteDisable && row.status === 'ENABLED') || (canSubstituteEnable && row.status === 'DISABLED')">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button v-if="canSubstituteDisable && row.status === 'ENABLED'" size="small" text type="warning" data-test="disable-substitute" @click="disableSubstitute(row)">停用</el-button>
+                    <el-button v-if="canSubstituteEnable && row.status === 'DISABLED'" size="small" text type="success" data-test="enable-substitute" @click="enableSubstitute(row)">启用</el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>

@@ -4,12 +4,14 @@ import {
   reportRouteConfigs,
   reportSourceTypeText,
   reportStatusText,
+  reportTraceStatusText,
 } from './reportPageHelpers'
 import {
   operatingFinanceBaseFields,
   projectProfitCostStageText,
   projectProfitRevenueBasisText,
   projectProfitVarianceReasonText,
+  traceUnavailableText,
 } from './operatingFinanceReportHelpers'
 
 const vueSources = import.meta.glob<string>('./*.vue', {
@@ -142,6 +144,13 @@ describe('报表页面规范与中文状态治理', () => {
     expect(reportStatusText('LEGACY_NOT_INCLUDED')).toBe('旧快照未包含')
     expect(reportStatusText('IN_PROGRESS')).toBe('生产中')
     expect(reportStatusText('UNKNOWN_STATUS')).toBe('未知状态')
+    expect(reportTraceStatusText({ sourceType: 'RECEIVABLE', status: 'CONFIRMED' })).toBe('待收款')
+    expect(reportTraceStatusText({ sourceType: 'PAYABLE', status: 'CONFIRMED' })).toBe('待付款')
+    expect(reportTraceStatusText({ sourceType: 'PROJECT_COST', status: 'CURRENT' })).toBe('当前有效')
+    expect(reportTraceStatusText({ sourceType: 'PROJECT_COST', status: 'STALE' })).toBe('来源已变化')
+    expect(reportTraceStatusText({ sourceType: 'PAYABLE', status: 'CONFIRMED', statusName: '服务端待付款' })).toBe('服务端待付款')
+    expect(traceUnavailableText('缺少上游金额权限')).toBe('缺少上游金额权限')
+    expect(traceUnavailableText('TRACE_FORBIDDEN')).toBe('来源受限/不可用')
     expect(projectProfitRevenueBasisText('UNKNOWN_BASIS')).toBe('未知口径')
     expect(projectProfitCostStageText('UNKNOWN_STAGE')).toBe('未知阶段')
     expect(projectProfitVarianceReasonText('UNKNOWN_REASON')).toBe('未知原因')

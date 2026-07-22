@@ -118,7 +118,7 @@ watch(() => [props.projectId, props.restricted, props.canViewDetails, props.summ
             <el-table-column label="业务金额" min-width="120" align="right">
               <template #default="{ row }">{{ formatProjectAmount(row.businessAmount) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button v-if="canViewDetails" data-test="view-project-sales-order" size="small" text @click="viewOrder(row)">详情</el-button>
               </template>

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { MaterialRecord, PartnerRecord } from '../../shared/api/masterDataApi'
@@ -227,13 +227,31 @@ async function setSelectValue(wrapper: ReturnType<typeof mount>, index: number, 
   await flushPromises()
 }
 
-function buttonByText(wrapper: ReturnType<typeof mount>, text: string) {
-  const button = wrapper.findAllComponents({ name: 'ElButton' }).find((candidate) => candidate.text().trim() === text)
-  expect(button?.exists()).toBe(true)
-  return button!
+async function openMoreActions(wrapper: VueWrapper) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string) {
+  await openMoreActions(wrapper)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 describe('采购请购页面', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     procurementApiMock.requisitions.list.mockResolvedValue(requisitionPage)
@@ -277,7 +295,7 @@ describe('采购请购页面', () => {
     ])
     const router = await createTestRouter('/procurement/requisitions')
 
-    const wrapper = mount(PurchaseRequisitionListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(PurchaseRequisitionListView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
     expectStandardListPage(wrapper)
@@ -302,8 +320,9 @@ describe('采购请购页面', () => {
     expect(wrapper.text()).toContain('计划/已转/剩余：100/40/60')
     expect(wrapper.text()).toContain('项目设计变更，未转数量不再采购')
     expect(wrapper.text()).toContain('创建询价')
-    expect(wrapper.text()).toContain('转采购订单')
-    expect(wrapper.text()).toContain('结案')
+    await openMoreActions(wrapper)
+    expect(document.body.textContent).toContain('转采购订单')
+    expect(document.body.textContent).toContain('结案')
 
     await wrapper.find('[data-test="export-requisitions"]').trigger('click')
     await flushPromises()
@@ -351,7 +370,7 @@ describe('采购请购页面', () => {
     })
     const pinia = setupAuth(['procurement:requisition:view'])
     const router = await createTestRouter('/procurement/requisitions')
-    const wrapper = mount(PurchaseRequisitionListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(PurchaseRequisitionListView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
     const businessStatuses = wrapper.findAll('[data-test="requisition-row-business-status"]').map((tag) => tag.text())
@@ -428,15 +447,13 @@ describe('采购请购页面', () => {
 
     await router.push('/procurement/requisitions')
     await flushPromises()
-    await wrapper.find('[data-test="create-order-from-requisition-list"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-order-from-requisition-list')
     expect(router.currentRoute.value.name).toBe('procurement-order-create')
     expect(router.currentRoute.value.query.requisitionId).toBe('1')
 
     await router.push('/procurement/requisitions')
     await flushPromises()
-    await buttonByText(wrapper, '结案').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'close-requisition-list')
     expect(procurementApiMock.requisitions.close).toHaveBeenCalledWith(1, expect.objectContaining({
       version: 3,
       reason: expect.any(String),

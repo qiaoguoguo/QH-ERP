@@ -426,7 +426,7 @@ onMounted(loadRecord)
               <template #default="{ row }"><span class="numeric-cell">{{ formatProjectAmount(row.amount) }}</span></template>
             </el-table-column>
             <el-table-column prop="signedDate" label="签订日期" min-width="110" />
-            <el-table-column label="操作" width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text data-test="edit-sales-project-contract" @click="openEditContract(row)">查看</el-button>
               </template>

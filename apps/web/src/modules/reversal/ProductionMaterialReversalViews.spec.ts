@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ProductionMaterialReturnDetailView from './ProductionMaterialReturnDetailView.vue'
 import ProductionMaterialReturnFormView from './ProductionMaterialReturnFormView.vue'
 import ProductionMaterialReturnListView from './ProductionMaterialReturnListView.vue'
@@ -11,7 +11,6 @@ import ProductionMaterialSupplementDetailView from './ProductionMaterialSuppleme
 import ProductionMaterialSupplementFormView from './ProductionMaterialSupplementFormView.vue'
 import ProductionMaterialSupplementListView from './ProductionMaterialSupplementListView.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
-import { installElementPlus } from '../../elementPlus'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingPickerDrawer from '../inventory/tracking/TrackingPickerDrawer.vue'
 
@@ -416,12 +415,32 @@ async function mountReversalView(component: Component, path: string, permissions
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
-      plugins: [pinia, router, { install: installElementPlus }],
+      plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: ReturnType<typeof mount>) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string): HTMLElement {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(testId: string) {
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 describe('生产退料补料前端页面', () => {
@@ -478,6 +497,10 @@ describe('生产退料补料前端页面', () => {
     inventoryApiMock.serials.list.mockResolvedValue(page([], 20))
   })
 
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   it('生产退料列表支持筛选、创建入口和权限按钮', async () => {
     const { wrapper, router } = await mountReversalView(ProductionMaterialReturnListView, '/production/material-returns', [
       'production:material-return:view',
@@ -492,8 +515,9 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('WO202607050001')
     expect(wrapper.find('[data-test="create-material-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-material-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-material-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-material-return"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-material-return')).toBeTruthy()
+    expect(teleportedAction('cancel-material-return')).toBeTruthy()
 
     await wrapper.find('input[name="material-return-keyword"]').setValue('MR')
     await wrapper.find('input[name="material-return-work-order-id"]').setValue('30')
@@ -518,8 +542,8 @@ describe('生产退料补料前端页面', () => {
       'production:material-return:cancel',
     ])
 
-    await wrapper.find('[data-test="post-material-return"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    await clickTeleportedAction('post-material-return')
     expect(returnRefundReversalApiMock.productionMaterialReturns.post).toHaveBeenCalledTimes(1)
     expect(returnRefundReversalApiMock.productionMaterialReturns.post).toHaveBeenCalledWith(3, {
       version: 5,
@@ -527,8 +551,8 @@ describe('生产退料补料前端页面', () => {
     })
     expect(wrapper.text()).toContain('生产退料版本已变化')
 
-    await wrapper.find('[data-test="cancel-material-return"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    await clickTeleportedAction('cancel-material-return')
     expect(returnRefundReversalApiMock.productionMaterialReturns.cancel).toHaveBeenCalledWith(3, {
       version: 5,
       idempotencyKey: expect.stringMatching(/^production-material-return-cancel-/),
@@ -549,8 +573,9 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('WO202607050001')
     expect(wrapper.find('[data-test="create-material-supplement"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-material-supplement"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-material-supplement"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-material-supplement"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-material-supplement')).toBeTruthy()
+    expect(teleportedAction('cancel-material-supplement')).toBeTruthy()
 
     await wrapper.find('input[name="material-supplement-keyword"]').setValue('MS')
     await wrapper.find('input[name="material-supplement-work-order-id"]').setValue('30')
@@ -574,15 +599,15 @@ describe('生产退料补料前端页面', () => {
       'production:material-supplement:cancel',
     ])
 
-    await wrapper.find('[data-test="post-material-supplement"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    await clickTeleportedAction('post-material-supplement')
     expect(returnRefundReversalApiMock.productionMaterialSupplements.post).toHaveBeenCalledWith(4, {
       version: 6,
       idempotencyKey: expect.stringMatching(/^production-material-supplement-post-/),
     })
 
-    await wrapper.find('[data-test="cancel-material-supplement"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    await clickTeleportedAction('cancel-material-supplement')
     expect(returnRefundReversalApiMock.productionMaterialSupplements.cancel).toHaveBeenCalledWith(4, {
       version: 6,
       idempotencyKey: expect.stringMatching(/^production-material-supplement-cancel-/),

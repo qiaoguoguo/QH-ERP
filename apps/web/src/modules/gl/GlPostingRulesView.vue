@@ -9,6 +9,7 @@ import {
   glActionAllowed,
   glActionDisabledReason,
   glAllowedActionsText,
+  glDefaultSourceVariant,
   glErrorMessage,
   glPageItems,
   glPageSizes,
@@ -17,6 +18,7 @@ import {
   glPostingRuleStatusText,
   glPostingRuleValidationStatusText,
   glSourceTypeText,
+  glSourceVariantText,
 } from './glPageHelpers'
 import './GlShared.css'
 
@@ -42,7 +44,7 @@ const ruleForm = reactive({
   effectiveFrom: '',
   effectiveTo: '',
   sourceType: '',
-  sourceVariant: 'DEFAULT',
+  sourceVariant: glDefaultSourceVariant,
   status: 'DRAFT',
   version: 0,
   linesJson: '[]',
@@ -214,7 +216,7 @@ function openCreateRule() {
   ruleForm.effectiveFrom = ''
   ruleForm.effectiveTo = ''
   ruleForm.sourceType = ''
-  ruleForm.sourceVariant = 'DEFAULT'
+  ruleForm.sourceVariant = glDefaultSourceVariant
   ruleForm.status = 'DRAFT'
   ruleForm.version = 0
   ruleForm.linesJson = '[]'
@@ -284,7 +286,7 @@ async function saveRule() {
       effectiveFrom: ruleForm.effectiveFrom || null,
       effectiveTo: ruleForm.effectiveTo || null,
       sourceType: ruleForm.sourceType,
-      sourceVariant: ruleForm.sourceVariant || 'DEFAULT',
+      sourceVariant: ruleForm.sourceVariant || glDefaultSourceVariant,
       lines: normalizeRuleLinesForPayload(lines),
       version: ruleForm.version,
       idempotencyKey: createGlIdempotencyKey('gl-rule-save'),
@@ -332,7 +334,7 @@ onMounted(loadRecords)
     </template>
     <template #filters>
       <el-form class="query-form" label-position="top">
-        <el-form-item label="来源类型"><el-input v-model="filters.sourceType" clearable placeholder="SALES_INVOICE" /></el-form-item>
+        <el-form-item label="来源类型"><el-input v-model="filters.sourceType" clearable placeholder="销售发票" /></el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.status" clearable placeholder="全部">
             <el-option label="草稿" value="DRAFT" />
@@ -357,7 +359,9 @@ onMounted(loadRecords)
         <el-table-column label="来源类型" min-width="150">
           <template #default="{ row }">{{ glSourceTypeText(row.sourceType) }}</template>
         </el-table-column>
-        <el-table-column prop="sourceVariant" label="来源变体" min-width="140" />
+        <el-table-column label="来源变体" min-width="140">
+          <template #default="{ row }">{{ glSourceVariantText(row.sourceVariant) }}</template>
+        </el-table-column>
         <el-table-column prop="versionNo" label="版本" min-width="90" align="right" />
         <el-table-column label="状态" min-width="110">
           <template #default="{ row }">{{ glPostingRuleStatusText(row.status) }}</template>
@@ -369,7 +373,7 @@ onMounted(loadRecords)
         <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || glAllowedActionsText(row.allowedActions) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="view-posting-rule" text @click="openDetail(row)">详情</el-button>
             <el-button
@@ -381,16 +385,23 @@ onMounted(loadRecords)
             >
               预览校验
             </el-button>
-            <el-button
-              data-test="disable-posting-rule"
-              text
-              type="danger"
-              :title="glActionDisabledReason(row, 'DISABLE')"
-              :disabled="!glActionAllowed(row, 'DISABLE')"
-              @click="runRuleAction('disable', row)"
-            >
-              停用
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    data-test="disable-posting-rule"
+                    text
+                    type="danger"
+                    :title="glActionDisabledReason(row, 'DISABLE')"
+                    :disabled="!glActionAllowed(row, 'DISABLE')"
+                    @click="runRuleAction('disable', row)"
+                  >
+                    停用
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
@@ -485,10 +496,10 @@ onMounted(loadRecords)
           <el-input v-model="ruleForm.description" name="gl-rule-description" clearable placeholder="规则用途说明" />
         </el-form-item>
         <el-form-item label="来源类型">
-          <el-input v-model="ruleForm.sourceType" name="gl-rule-source-type" clearable placeholder="SALES_INVOICE" />
+          <el-input v-model="ruleForm.sourceType" name="gl-rule-source-type" clearable placeholder="销售发票" />
         </el-form-item>
         <el-form-item label="来源变体">
-          <el-input v-model="ruleForm.sourceVariant" name="gl-rule-source-variant" clearable placeholder="DEFAULT" />
+          <el-input v-model="ruleForm.sourceVariant" name="gl-rule-source-variant" clearable placeholder="默认变体" />
         </el-form-item>
         <el-form-item label="生效日期">
           <div class="gl-toolbar">

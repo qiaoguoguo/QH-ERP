@@ -293,10 +293,10 @@ onMounted(() => {
         <el-table-column label="结案原因" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ row.closeReason || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="300">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text type="primary" @click="viewRecord(row)">详情</el-button>
-          <el-button
+            <el-button
             v-if="allowed(row, 'CREATE_INQUIRY')"
             data-test="create-inquiry-from-requisition-list"
             text
@@ -305,25 +305,32 @@ onMounted(() => {
           >
             创建询价
           </el-button>
-          <el-button
-            v-if="allowed(row, 'CREATE_ORDER')"
-            data-test="create-order-from-requisition-list"
-            text
-            type="primary"
-            @click="createOrderFromRecord(row)"
-          >
-            转采购订单
-          </el-button>
-          <el-button
-            v-if="allowed(row, 'CLOSE')"
-            data-test="close-requisition-list"
-            text
-            type="warning"
-            :disabled="actionLoading"
-            @click="closeRecord(row)"
-          >
-            结案
-          </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(allowed(row, 'CREATE_ORDER')) || (allowed(row, 'CLOSE'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="allowed(row, 'CREATE_ORDER')"
+                    data-test="create-order-from-requisition-list"
+                    text
+                    type="primary"
+                    @click="createOrderFromRecord(row)"
+                  >
+                    转采购订单
+                  </el-button>
+                  <el-button
+                    v-if="allowed(row, 'CLOSE')"
+                    data-test="close-requisition-list"
+                    text
+                    type="warning"
+                    :disabled="actionLoading"
+                    @click="closeRecord(row)"
+                  >
+                    结案
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

@@ -515,52 +515,59 @@ onMounted(loadRecords)
             <span v-if="row.amountRestricted">金额受限</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="260">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="row-actions">
-              <el-button text type="primary" @click="viewQuote(row)">详情</el-button>
-              <el-button v-if="allowed(row, 'UPDATE') && authStore.hasPermission('sales:quote:update')" text @click="editQuote(row)">
+            <el-button text type="primary" @click="viewQuote(row)">详情</el-button>
+            <el-button v-if="allowed(row, 'UPDATE') && authStore.hasPermission('sales:quote:update')" text @click="editQuote(row)">
                 编辑
               </el-button>
-              <el-button
-                v-if="allowed(row, 'SUBMIT_APPROVAL') && canSubmit"
-                :data-test="`submit-sales-quote-${row.id}`"
-                text
-                type="success"
-                :disabled="actionLoading"
-                @click="submitQuote(row)"
-              >
-                提交审批
-              </el-button>
-              <el-button
-                v-if="allowed(row, 'CANCEL') && canCancel"
-                :data-test="`cancel-sales-quote-${row.id}`"
-                text
-                type="danger"
-                :disabled="actionLoading"
-                @click="cancelQuote(row)"
-              >
-                取消
-              </el-button>
-              <el-button
-                v-if="allowed(row, 'CONVERT_ORDER') && canConvert"
-                :data-test="`convert-sales-quote-order-${row.id}`"
-                text
-                type="primary"
-                :disabled="actionLoading"
-                @click="convertQuoteOrder(row)"
-              >
-                转订单
-              </el-button>
-              <el-button
-                v-if="allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId"
-                :data-test="`convert-sales-quote-contract-${row.id}`"
-                text
-                :disabled="actionLoading"
-                @click="convertQuoteContract(row)"
-              >
-                转合同
-              </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(allowed(row, 'SUBMIT_APPROVAL') && canSubmit) || (allowed(row, 'CANCEL') && canCancel) || (allowed(row, 'CONVERT_ORDER') && canConvert) || (allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId)">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="allowed(row, 'SUBMIT_APPROVAL') && canSubmit"
+                    :data-test="`submit-sales-quote-${row.id}`"
+                    text
+                    type="success"
+                    :disabled="actionLoading"
+                    @click="submitQuote(row)"
+                  >
+                    提交审批
+                  </el-button>
+                  <el-button
+                    v-if="allowed(row, 'CANCEL') && canCancel"
+                    :data-test="`cancel-sales-quote-${row.id}`"
+                    text
+                    type="danger"
+                    :disabled="actionLoading"
+                    @click="cancelQuote(row)"
+                  >
+                    取消
+                  </el-button>
+                  <el-button
+                    v-if="allowed(row, 'CONVERT_ORDER') && canConvert"
+                    :data-test="`convert-sales-quote-order-${row.id}`"
+                    text
+                    type="primary"
+                    :disabled="actionLoading"
+                    @click="convertQuoteOrder(row)"
+                  >
+                    转订单
+                  </el-button>
+                  <el-button
+                    v-if="allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId"
+                    :data-test="`convert-sales-quote-contract-${row.id}`"
+                    text
+                    :disabled="actionLoading"
+                    @click="convertQuoteContract(row)"
+                  >
+                    转合同
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
               <span v-if="row.actionDisabledReason">{{ row.actionDisabledReason }}</span>
             </div>
           </template>
@@ -686,9 +693,10 @@ onMounted(loadRecords)
 }
 
 .row-actions {
-  display: grid;
-  gap: 12px;
-  justify-items: end;
+  align-items: center;
+  display: inline-flex;
+  flex-wrap: nowrap;
+  gap: 8px;
 }
 
 .table-scroll span {

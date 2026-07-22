@@ -183,7 +183,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
       </el-form>
-      <el-table v-if="candidates.length" :data="candidates" size="small" class="candidate-table">
+      <el-table v-if="candidates.length" :data="candidates" size="small" class="candidate-table table-scroll">
         <el-table-column prop="sourceNo" label="采购入库" min-width="130" />
         <el-table-column prop="purchaseOrderNo" label="采购订单" min-width="130" />
         <el-table-column prop="supplierName" label="供应商" min-width="150" />

@@ -203,7 +203,7 @@ function removeLine(index: number) {
             <span v-else class="tracking-empty-text">不追踪</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button
               data-test="remove-purchase-receipt-line"

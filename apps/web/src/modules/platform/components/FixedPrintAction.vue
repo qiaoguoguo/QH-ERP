@@ -26,10 +26,26 @@ const isObjectStatusAllowed = computed(() => (
   || !props.allowedObjectStatuses?.length
   || props.allowedObjectStatuses.includes(props.objectStatus)
 ))
+
+function objectStatusText(status: string | null | undefined) {
+  const labels: Record<string, string> = {
+    DRAFT: '草稿',
+    SUBMITTED: '已提交',
+    APPROVED: '已批准',
+    CONFIRMED: '已确认',
+    POSTED: '已过账',
+    CLOSED: '已关闭',
+    CANCELLED: '已取消',
+    DISABLED: '已停用',
+  }
+  const code = String(status ?? '').trim()
+  return labels[code] ?? '当前状态'
+}
+
 const objectStatusMessage = computed(() => (
   isObjectStatusAllowed.value
     ? ''
-    : `对象状态 ${props.objectStatus} 不允许固定打印`
+    : `对象状态为${objectStatusText(props.objectStatus)}，不允许固定打印`
 ))
 const templates = ref<PrintTemplateRecord[]>([])
 const loading = ref(false)

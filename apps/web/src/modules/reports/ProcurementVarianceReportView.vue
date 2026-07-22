@@ -15,6 +15,7 @@ import {
   filterText,
   firstKeyword,
   operatingFinanceBaseFields,
+  operatingFinanceLiveAnalysisMode,
   optionalFilterText,
   reportErrorMessage,
   statusText,
@@ -24,7 +25,7 @@ import {
 
 const filters = reactive<Record<string, string | number>>({
   periodCode: '',
-  analysisMode: 'LIVE',
+  analysisMode: operatingFinanceLiveAnalysisMode,
   projectId: '',
   supplierKeyword: '',
   basis: '',
@@ -33,7 +34,7 @@ const filters = reactive<Record<string, string | number>>({
 const fields: ReportFilterField[] = [
   ...operatingFinanceBaseFields,
   supplierKeywordReferenceField,
-  { key: 'basis', label: '采购归属', name: 'report-basis', placeholder: 'PROJECT 或 PUBLIC' },
+  { key: 'basis', label: '采购归属', name: 'report-basis', placeholder: '项目专采或公共采购' },
   { key: 'reconciliationStatus', label: '差异状态', name: 'report-reconciliation-status' },
 ]
 const loading = ref(false)
@@ -84,7 +85,7 @@ async function loadReport(targetPage = page.value) {
 }
 function search() { void loadReport(1) }
 function reset() {
-  Object.assign(filters, { periodCode: '', analysisMode: 'LIVE', projectId: '', supplierKeyword: '', basis: '', reconciliationStatus: '' })
+  Object.assign(filters, { periodCode: '', analysisMode: operatingFinanceLiveAnalysisMode, projectId: '', supplierKeyword: '', basis: '', reconciliationStatus: '' })
   void loadReport(1)
 }
 function changePageSize(size: number) { pageSize.value = size; void loadReport(1) }

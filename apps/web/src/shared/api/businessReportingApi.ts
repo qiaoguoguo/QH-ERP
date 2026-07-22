@@ -412,6 +412,7 @@ export interface ReportTraceRecord {
   sourceLineId: ResourceId | null
   businessDate: string | null
   status: string | null
+  statusName?: string | null
   quantity: ReportDecimal | null
   amount: ReportMoney | null
   resourceRouteName: string | null

@@ -590,7 +590,7 @@ onMounted(() => {
             <el-table-column label="建议类型" min-width="140">
               <template #default="{ row }">{{ suggestionTypeLabel(row.suggestionType) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="110">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button :data-test="`trace-requirement-${row.id}`" text type="primary" @click="openTrace(row)">追溯</el-button>
               </template>
@@ -641,7 +641,7 @@ onMounted(() => {
             <el-table-column label="说明" min-width="240" show-overflow-tooltip>
               <template #default="{ row }">{{ suggestionDescription(row) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="240">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button
                   v-if="canConfirmSuggestion(row)"
@@ -654,16 +654,6 @@ onMounted(() => {
                   确认
                 </el-button>
                 <el-button
-                  v-if="canDismissSuggestion(row)"
-                  :data-test="`dismiss-suggestion-${row.id}`"
-                  text
-                  type="danger"
-                  :loading="actionLoading"
-                  @click="openDismissDialog(row)"
-                >
-                  驳回
-                </el-button>
-                <el-button
                   v-if="canConvertSuggestion(row)"
                   :data-test="`convert-suggestion-${row.id}`"
                   text
@@ -673,26 +663,43 @@ onMounted(() => {
                 >
                   转请购
                 </el-button>
-                <el-button
-                  v-if="canConvertWorkOrderSuggestion(row)"
-                  :data-test="`convert-work-order-suggestion-${row.id}`"
-                  text
-                  type="success"
-                  :loading="actionLoading"
-                  @click="convertWorkOrderSuggestion(row)"
-                >
-                  转生产工单
-                </el-button>
-                <el-button
-                  v-if="canConvertOutsourcingSuggestion(row)"
-                  :data-test="`convert-outsourcing-suggestion-${row.id}`"
-                  text
-                  type="success"
-                  :loading="actionLoading"
-                  @click="convertOutsourcingSuggestion(row)"
-                >
-                  转外协订单
-                </el-button>
+                <el-dropdown trigger="click" class="table-actions-more" v-if="(canDismissSuggestion(row)) || (canConvertWorkOrderSuggestion(row)) || (canConvertOutsourcingSuggestion(row))">
+                  <el-button size="small" text>更多</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu class="table-actions-more-menu">
+                      <el-button
+                        v-if="canDismissSuggestion(row)"
+                        :data-test="`dismiss-suggestion-${row.id}`"
+                        text
+                        type="danger"
+                        :loading="actionLoading"
+                        @click="openDismissDialog(row)"
+                      >
+                        驳回
+                      </el-button>
+                      <el-button
+                        v-if="canConvertWorkOrderSuggestion(row)"
+                        :data-test="`convert-work-order-suggestion-${row.id}`"
+                        text
+                        type="success"
+                        :loading="actionLoading"
+                        @click="convertWorkOrderSuggestion(row)"
+                      >
+                        转生产工单
+                      </el-button>
+                      <el-button
+                        v-if="canConvertOutsourcingSuggestion(row)"
+                        :data-test="`convert-outsourcing-suggestion-${row.id}`"
+                        text
+                        type="success"
+                        :loading="actionLoading"
+                        @click="convertOutsourcingSuggestion(row)"
+                      >
+                        转外协订单
+                      </el-button>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </template>
             </el-table-column>
           </el-table>

@@ -314,20 +314,27 @@ onMounted(() => {
         <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || (row.allowedActions?.join('、') || '-') }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="190">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="create-child-account" text @click="openCreateChild(row)">新增下级</el-button>
             <el-button data-test="edit-gl-account" text :disabled="!glActionAllowed(row, 'UPDATE')" @click="openEditAccount(row)">编辑</el-button>
-            <el-button
-              data-test="disable-gl-account"
-              text
-              type="danger"
-              :title="glActionDisabledReason(row, 'DISABLE')"
-              :disabled="!glActionAllowed(row, 'DISABLE')"
-              @click="glActionAllowed(row, 'DISABLE') && disableAccount(row)"
-            >
-              停用
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    data-test="disable-gl-account"
+                    text
+                    type="danger"
+                    :title="glActionDisabledReason(row, 'DISABLE')"
+                    :disabled="!glActionAllowed(row, 'DISABLE')"
+                    @click="glActionAllowed(row, 'DISABLE') && disableAccount(row)"
+                  >
+                    停用
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

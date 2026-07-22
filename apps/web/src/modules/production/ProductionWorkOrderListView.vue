@@ -380,51 +380,58 @@ onMounted(() => {
             {{ formatProductionDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="430">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-production-work-order" @click="viewWorkOrder(row)">详情</el-button>
             <el-button v-if="canEditRecord(row)" size="small" text @click="editWorkOrder(row)">
               编辑
             </el-button>
-            <el-button
-              v-if="canReleaseRecord(row)"
-              size="small"
-              text
-              type="success"
-              :disabled="actionLoading"
-              @click="runWorkOrderAction(row, 'release')"
-            >
-              发布
-            </el-button>
-            <el-button v-if="canCreateIssueRecord(row)" size="small" text @click="createMaterialIssue(row)">
-              领料
-            </el-button>
-            <el-button v-if="canCreateReportRecord(row)" size="small" text @click="createReport(row)">
-              报工
-            </el-button>
-            <el-button v-if="canCreateReceiptRecord(row)" size="small" text @click="createCompletionReceipt(row)">
-              完工入库
-            </el-button>
-            <el-button
-              v-if="canCompleteRecord(row)"
-              size="small"
-              text
-              type="success"
-              :disabled="actionLoading"
-              @click="runWorkOrderAction(row, 'complete')"
-            >
-              完成
-            </el-button>
-            <el-button
-              v-if="canCancelRecord(row)"
-              size="small"
-              text
-              type="danger"
-              :disabled="actionLoading"
-              @click="runWorkOrderAction(row, 'cancel')"
-            >
-              取消
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canReleaseRecord(row)) || (canCreateIssueRecord(row)) || (canCreateReportRecord(row)) || (canCreateReceiptRecord(row)) || (canCompleteRecord(row)) || (canCancelRecord(row))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canReleaseRecord(row)"
+                    size="small"
+                    text
+                    type="success"
+                    :disabled="actionLoading"
+                    @click="runWorkOrderAction(row, 'release')"
+                  >
+                    发布
+                  </el-button>
+                  <el-button v-if="canCreateIssueRecord(row)" size="small" text @click="createMaterialIssue(row)">
+                    领料
+                  </el-button>
+                  <el-button v-if="canCreateReportRecord(row)" size="small" text @click="createReport(row)">
+                    报工
+                  </el-button>
+                  <el-button v-if="canCreateReceiptRecord(row)" size="small" text @click="createCompletionReceipt(row)">
+                    完工入库
+                  </el-button>
+                  <el-button
+                    v-if="canCompleteRecord(row)"
+                    size="small"
+                    text
+                    type="success"
+                    :disabled="actionLoading"
+                    @click="runWorkOrderAction(row, 'complete')"
+                  >
+                    完成
+                  </el-button>
+                  <el-button
+                    v-if="canCancelRecord(row)"
+                    size="small"
+                    text
+                    type="danger"
+                    :disabled="actionLoading"
+                    @click="runWorkOrderAction(row, 'cancel')"
+                  >
+                    取消
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
             <span v-if="row.status === 'COMPLETED' || row.status === 'CANCELLED'" class="operation-muted">
               {{ workOrderStatusLabel(row.status) }}
             </span>

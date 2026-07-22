@@ -253,7 +253,7 @@ onMounted(() => {
             <span class="numeric-cell">{{ formatSalesAmount(row.totalAmount) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="220">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-material-supplement" @click="viewMaterialSupplement(row)">详情</el-button>
             <el-button
@@ -265,28 +265,35 @@ onMounted(() => {
             >
               编辑
             </el-button>
-            <el-button
-              v-if="canPost && row.status === 'DRAFT'"
-              size="small"
-              text
-              type="success"
-              data-test="post-material-supplement"
-              :disabled="actionLoading"
-              @click="postMaterialSupplement(row)"
-            >
-              过账
-            </el-button>
-            <el-button
-              v-if="canCancel && row.status === 'DRAFT'"
-              size="small"
-              text
-              type="danger"
-              data-test="cancel-material-supplement"
-              :disabled="actionLoading"
-              @click="cancelMaterialSupplement(row)"
-            >
-              取消
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canPost && row.status === 'DRAFT') || (canCancel && row.status === 'DRAFT')">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canPost && row.status === 'DRAFT'"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="post-material-supplement"
+                    :disabled="actionLoading"
+                    @click="postMaterialSupplement(row)"
+                  >
+                    过账
+                  </el-button>
+                  <el-button
+                    v-if="canCancel && row.status === 'DRAFT'"
+                    size="small"
+                    text
+                    type="danger"
+                    data-test="cancel-material-supplement"
+                    :disabled="actionLoading"
+                    @click="cancelMaterialSupplement(row)"
+                  >
+                    取消
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

@@ -224,13 +224,20 @@ onMounted(loadRecords)
         <el-table-column label="所得税估算" min-width="130" align="right"><template #default="{ row }">{{ formatFinancialCloseAmount(row.estimatedIncomeTaxAmount, row.amountVisible === false ? row.restrictedReason : null) }}</template></el-table-column>
         <el-table-column label="来源" min-width="120"><template #default="{ row }">{{ sourceVisibleText(row.sourceVisible) }}</template></el-table-column>
         <el-table-column label="说明" min-width="210" show-overflow-tooltip><template #default="{ row }">{{ row.disclaimer || taxFoundationDisclaimer }}</template></el-table-column>
-        <el-table-column label="操作" min-width="260">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
-              <el-button data-test="calculate-tax-summary" size="small" :disabled="!taxSummaryAction(row, 'CALCULATE', canCalculate, '无税额计算权限').allowed" @click="calculateSummary(row)">计算</el-button>
-              <el-button data-test="add-tax-summary-adjustment" size="small" :disabled="!taxSummaryAction(row, 'ADJUST', canCalculate, '无税额调整权限').allowed" @click="addAdjustment(row)">调整</el-button>
-              <el-button data-test="confirm-tax-summary" size="small" type="primary" plain :disabled="!taxSummaryAction(row, 'CONFIRM', canConfirm, '无税额确认权限').allowed" @click="confirmSummary(row)">确认</el-button>
-              <el-button data-test="create-tax-voucher-draft" size="small" :disabled="!taxSummaryAction(row, 'GENERATE_VOUCHER', canGenerateVoucher, '无生成税务凭证权限').allowed" @click="createVoucherDraft(row)">生成凭证</el-button>
+            <el-button data-test="calculate-tax-summary" size="small" :disabled="!taxSummaryAction(row, 'CALCULATE', canCalculate, '无税额计算权限').allowed" @click="calculateSummary(row)">计算</el-button>
+            <el-button data-test="add-tax-summary-adjustment" size="small" :disabled="!taxSummaryAction(row, 'ADJUST', canCalculate, '无税额调整权限').allowed" @click="addAdjustment(row)">调整</el-button>
+            <el-dropdown trigger="click" class="table-actions-more">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button data-test="confirm-tax-summary" size="small" type="primary" plain :disabled="!taxSummaryAction(row, 'CONFIRM', canConfirm, '无税额确认权限').allowed" @click="confirmSummary(row)">确认</el-button>
+                  <el-button data-test="create-tax-voucher-draft" size="small" :disabled="!taxSummaryAction(row, 'GENERATE_VOUCHER', canGenerateVoucher, '无生成税务凭证权限').allowed" @click="createVoucherDraft(row)">生成凭证</el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
               <span class="financial-close-disabled-reason">
                 {{ taxSummaryActionReasons(row) }}
               </span>

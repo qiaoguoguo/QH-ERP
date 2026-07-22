@@ -233,22 +233,29 @@ onMounted(loadRoles)
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" fixed="right" min-width="260">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button v-if="canUpdate" size="small" text data-test="edit-role" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canAssignPermission" size="small" text data-test="configure-permission" @click="configurePermissions(row)">
                 权限配置
               </el-button>
-              <el-button
-                v-if="canUpdate"
-                size="small"
-                text
-                :type="row.status === 'DISABLED' ? 'success' : 'warning'"
-                :data-test="row.status === 'DISABLED' ? 'enable-role' : 'disable-role'"
-                @click="changeStatus(row)"
-              >
-                {{ row.status === 'DISABLED' ? '启用' : '停用' }}
-              </el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canUpdate)">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button
+                      v-if="canUpdate"
+                      size="small"
+                      text
+                      :type="row.status === 'DISABLED' ? 'success' : 'warning'"
+                      :data-test="row.status === 'DISABLED' ? 'enable-role' : 'disable-role'"
+                      @click="changeStatus(row)"
+                    >
+                      {{ row.status === 'DISABLED' ? '启用' : '停用' }}
+                    </el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
             </template>
           </el-table-column>
         </el-table>

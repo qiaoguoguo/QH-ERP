@@ -309,7 +309,7 @@ onMounted(loadData)
         <el-table-column prop="taxRate" label="税率" min-width="100" align="right" />
         <el-table-column label="净可开余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount ?? row.totalAmount) }}</template></el-table-column>
         <el-table-column prop="totalAmount" label="含税金额" min-width="120" align="right" />
-        <el-table-column label="操作" min-width="90"><template #default="{ row }"><el-button data-test="select-purchase-source-line" text :disabled="formReadOnly" :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectLine(row)">{{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}</el-button></template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="184"><template #default="{ row }"><el-button data-test="select-purchase-source-line" text :disabled="formReadOnly" :type="selected.some((item) => item.sourceLineId === row.sourceLineId) ? 'primary' : undefined" @click="selectLine(row)">{{ selected.some((item) => item.sourceLineId === row.sourceLineId) ? '已选' : '选择' }}</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, prev, pager, next" :total="candidatePagination.total" :page-size="candidatePagination.pageSize" :current-page="candidatePagination.page" @current-change="changeCandidatePage" />

@@ -25,7 +25,7 @@ const reversalTsSources = import.meta.glob<string>('./**/*.ts', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
+const actionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")[^>]*>/g
 const cancelledDangerTagPattern = /CANCELLED:\s*['"]danger['"]/g
 const labelMapOriginalFallbackPattern = /\blabels\[[^\]]+\]\s*\?\?\s*(?:value|sourceType|status|type)/g
 const legacyProductionStatusTextPattern = /已发布|执行中|进行中/g
@@ -72,8 +72,15 @@ describe('反向业务页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('反向业务宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('反向业务操作列统一固定在右侧、宽度 184 且不保留 min-width', () => {
+    const actionColumns = vuePatternMatches(actionColumnPattern)
+
+    expect(actionColumns.length).toBeGreaterThan(0)
+    expect(actionColumns.filter((column) => (
+      !column.includes('fixed="right"')
+      || !column.includes('width="184"')
+      || column.includes('min-width')
+    ))).toEqual([])
   })
 
   it('反向业务取消状态不使用失败色', () => {

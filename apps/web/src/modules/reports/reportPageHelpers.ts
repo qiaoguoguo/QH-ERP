@@ -335,3 +335,37 @@ export function reportStatusText(status: string | null | undefined) {
   }
   return reportDictionaryText(labels, status, '未知状态')
 }
+
+function hasChineseText(value: string): boolean {
+  return /[\u4e00-\u9fff]/.test(value)
+}
+
+export function reportTraceStatusText(source: {
+  sourceType?: string | null
+  status?: string | null
+  statusName?: string | null
+}) {
+  const statusName = String(source.statusName ?? '').trim()
+  const status = String(source.status ?? '').trim()
+  if (statusName && statusName !== status && hasChineseText(statusName)) {
+    return statusName
+  }
+  const traceLabels: Record<string, Record<string, string>> = {
+    RECEIVABLE: {
+      CONFIRMED: '待收款',
+    },
+    PAYABLE: {
+      CONFIRMED: '待付款',
+    },
+    PROJECT_COST: {
+      CURRENT: '当前有效',
+      STALE: '来源已变化',
+    },
+    PROJECT_COST_CALCULATION: {
+      CURRENT: '当前有效',
+      STALE: '来源已变化',
+    },
+  }
+  const sourceType = String(source.sourceType ?? '').trim()
+  return traceLabels[sourceType]?.[status] ?? reportStatusText(status)
+}

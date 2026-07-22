@@ -11,6 +11,7 @@ import {
   financeMethodText,
   financePermissions,
   formatFinanceAmount,
+  settlementStatusText,
   voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -93,6 +94,10 @@ async function runReceiptAction(action: 'post' | 'cancel') {
   }
 }
 
+function advanceReceiptStatusText(status: string | null | undefined) {
+  return status ? settlementStatusText(status) : '未形成预收'
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -121,7 +126,7 @@ onMounted(loadRecord)
         <div><span>已核销金额</span><strong>{{ formatFinanceAmount(record.allocatedAmount ?? record.amount) }}</strong></div>
         <div><span>预收余额</span><strong>{{ formatFinanceAmount(record.availableAmount ?? '0.00') }}</strong></div>
         <div><span>多目标数</span><strong>{{ record.allocationTargetCount ?? record.allocations.length }}</strong></div>
-        <div><span>预收状态</span><strong>{{ record.advanceReceiptStatus ?? '未形成预收' }}</strong></div>
+        <div><span>预收状态</span><strong>{{ advanceReceiptStatusText(record.advanceReceiptStatus) }}</strong></div>
       </section>
 
       <dl class="detail-list">
@@ -142,13 +147,15 @@ onMounted(loadRecord)
 
       <section class="section-block">
         <div class="section-title">多目标核销明细</div>
-        <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
-          <el-table-column prop="receivableNo" label="应收单号" min-width="170" show-overflow-tooltip />
-          <el-table-column prop="customerName" label="客户" min-width="160" show-overflow-tooltip />
-          <el-table-column label="核销金额" min-width="130" align="right">
-            <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
-          </el-table-column>
-        </el-table>
+        <div class="table-scroll">
+          <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
+            <el-table-column prop="receivableNo" label="应收单号" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="customerName" label="客户" min-width="160" show-overflow-tooltip />
+            <el-table-column label="核销金额" min-width="130" align="right">
+              <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
       <section class="section-block">
         <div class="section-title">发票链接</div>

@@ -29,7 +29,7 @@ withDefaults(defineProps<{
       title="不追踪物料无批次或序列号明细"
       :closable="false"
     />
-    <el-table v-else :data="allocations" empty-text="暂无追踪分配" stripe>
+    <el-table v-else class="table-scroll" :data="allocations" empty-text="暂无追踪分配" stripe>
       <el-table-column
         v-if="trackingMethod === 'BATCH'"
         prop="batchNo"

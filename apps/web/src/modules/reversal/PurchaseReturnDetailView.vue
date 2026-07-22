@@ -18,6 +18,7 @@ import { formatProcurementAmount, formatProcurementQuantity, procurementModeDisp
 import { formatSalesDateTime, salesErrorMessage } from '../sales/salesPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
 import ReversalTracePanel from './ReversalTracePanel.vue'
+import { reversalTraceStatusLabel } from './reversalPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
 const route = useRoute()
@@ -461,7 +462,7 @@ onMounted(() => {
             <span v-else>{{ record.source.sourceNo }}</span>
           </el-descriptions-item>
           <el-descriptions-item label="业务日期">{{ record.source.businessDate || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ record.source.status || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ reversalTraceStatusLabel({ sourceType: record.source.sourceType, status: record.source.status }) }}</el-descriptions-item>
           <el-descriptions-item label="原所有权">
             {{ purchaseReturnOwnershipText(record.source) }}
           </el-descriptions-item>

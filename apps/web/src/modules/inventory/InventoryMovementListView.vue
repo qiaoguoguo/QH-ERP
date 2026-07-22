@@ -46,8 +46,16 @@ const routeMovementTypes = new Set<string>([
   'WAREHOUSE_TRANSFER_IN',
   'OWNERSHIP_CONVERSION_OUT',
   'OWNERSHIP_CONVERSION_IN',
-  'STOCKTAKE_GAIN',
-  'STOCKTAKE_LOSS',
+  'SALES_RETURN_IN',
+  'PURCHASE_RETURN_OUT',
+  'PRODUCTION_MATERIAL_RETURN_IN',
+  'PRODUCTION_MATERIAL_SUPPLEMENT_OUT',
+  'QUALITY_STATUS_TRANSFER',
+  'BUSINESS_REVERSAL',
+  'STOCKTAKE_VARIANCE_IN',
+  'STOCKTAKE_VARIANCE_OUT',
+  'OUTSOURCING_ISSUE',
+  'OUTSOURCING_RECEIPT',
   'VALUATION_ADJUSTMENT',
 ])
 const routeQualityStatuses = new Set<string>(['PENDING_INSPECTION', 'QUALIFIED', 'REJECTED', 'FROZEN'])
@@ -489,7 +497,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="库存流水与价值追溯" description="追溯数量流水、所有权、项目归属、计价方法和可授权查看的价值流水。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -590,8 +598,16 @@ onMounted(() => {
             <el-option label="调拨入库" value="WAREHOUSE_TRANSFER_IN" />
             <el-option label="所有权转出" value="OWNERSHIP_CONVERSION_OUT" />
             <el-option label="所有权转入" value="OWNERSHIP_CONVERSION_IN" />
-            <el-option label="盘盈" value="STOCKTAKE_GAIN" />
-            <el-option label="盘亏" value="STOCKTAKE_LOSS" />
+            <el-option label="销售退货入库" value="SALES_RETURN_IN" />
+            <el-option label="采购退货出库" value="PURCHASE_RETURN_OUT" />
+            <el-option label="生产退料入库" value="PRODUCTION_MATERIAL_RETURN_IN" />
+            <el-option label="生产补料出库" value="PRODUCTION_MATERIAL_SUPPLEMENT_OUT" />
+            <el-option label="质量状态转移" value="QUALITY_STATUS_TRANSFER" />
+            <el-option label="业务反向冲销" value="BUSINESS_REVERSAL" />
+            <el-option label="盘点差异入库" value="STOCKTAKE_VARIANCE_IN" />
+            <el-option label="盘点差异出库" value="STOCKTAKE_VARIANCE_OUT" />
+            <el-option label="外协发料" value="OUTSOURCING_ISSUE" />
+            <el-option label="外协收货" value="OUTSOURCING_RECEIPT" />
             <el-option label="估值调整" value="VALUATION_ADJUSTMENT" />
           </el-select>
         </el-form-item>

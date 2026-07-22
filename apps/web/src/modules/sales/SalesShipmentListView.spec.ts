@@ -105,6 +105,30 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
   const select = wrapper.findAllComponents({ name: 'ElSelect' })[index] as VueWrapper | undefined
   expect(select?.exists()).toBe(true)
@@ -135,6 +159,7 @@ async function mountList(permissions = [
   await router.push('/sales/shipments')
   await router.isReady()
   const wrapper = mount(SalesShipmentListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -165,6 +190,7 @@ describe('销售出库列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -264,7 +290,8 @@ describe('销售出库列表页', () => {
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(2)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '过账')).toHaveLength(1)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-sales-shipment')).toBeTruthy()
 
     await wrapper.find('[data-test="view-sales-shipment"]').trigger('click')
     await flushPromises()
@@ -283,8 +310,7 @@ describe('销售出库列表页', () => {
   it('列表过账入口进入详情处理提前交付原因，不直接调用无原因过账', async () => {
     const { wrapper, router } = await mountList()
 
-    await wrapper.find('[data-test="post-sales-shipment"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'post-sales-shipment')
 
     expect(confirmActionMock).not.toHaveBeenCalled()
     expect(salesApiMock.shipments.post).not.toHaveBeenCalled()

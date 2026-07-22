@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SettlementAdjustmentDetailView from './SettlementAdjustmentDetailView.vue'
 import SettlementAdjustmentFormView from './SettlementAdjustmentFormView.vue'
 import SettlementAdjustmentListView from './SettlementAdjustmentListView.vue'
@@ -164,12 +164,27 @@ async function mountSettlementView(component: Component, path: string, permissio
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: ReturnType<typeof mount>) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string): HTMLElement {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
 }
 
 describe('往来冲减前端页面', () => {
@@ -183,6 +198,10 @@ describe('往来冲减前端页面', () => {
     returnRefundReversalApiMock.settlementAdjustments.cancel.mockResolvedValue({ ...settlementAdjustmentDetail, status: 'CANCELLED' })
     returnRefundReversalApiMock.settlementAdjustmentSources.list.mockResolvedValue(page([settlementAdjustmentSource, paymentSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue([settlementTrace])
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
   })
 
   it('往来冲减列表支持筛选、创建入口和草稿权限按钮', async () => {
@@ -199,8 +218,9 @@ describe('往来冲减前端页面', () => {
     expect(wrapper.text()).toContain('应收冲减')
     expect(wrapper.find('[data-test="create-settlement-adjustment"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-settlement-adjustment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-settlement-adjustment"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-settlement-adjustment"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-settlement-adjustment')).toBeTruthy()
+    expect(teleportedAction('cancel-settlement-adjustment')).toBeTruthy()
 
     await wrapper.find('input[name="settlement-adjustment-keyword"]').setValue('SA')
     await wrapper.find('[data-test="search-settlement-adjustments"]').trigger('click')

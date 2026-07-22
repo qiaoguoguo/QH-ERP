@@ -153,7 +153,7 @@ onMounted(loadRecords)
         <el-table-column label="税额" min-width="100" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.taxAmount) }}</span></template></el-table-column>
         <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="未结余额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unsettledAmount) }}</span></template></el-table-column>
-        <el-table-column label="操作" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-expense-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="184"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-expense-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />

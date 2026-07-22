@@ -5,6 +5,7 @@ import {
   inventoryApprovalStatusLabel,
   inventorySourceTypeLabel,
   inventoryActionLabel,
+  movementTypeLabel,
   ownershipTypeLabel,
   qualityStatusLabel,
   valuationAdjustmentTypeLabel,
@@ -48,6 +49,21 @@ describe('库存计价页面辅助函数', () => {
     expect(inventorySourceTypeLabel('WAREHOUSE_TRANSFER')).toBe('仓库调拨')
     expect(inventorySourceTypeLabel('OUTSOURCING_RECEIPT', '委外入库')).toBe('委外入库')
     expect(inventorySourceTypeLabel('OUTSOURCING_RECEIPT', 'OUTSOURCING_RECEIPT')).toBe('未知类型')
+  })
+
+  it('库存流水类型同步后端全集并移除旧盘盈盘亏编码', () => {
+    expect(movementTypeLabel('SALES_RETURN_IN')).toBe('销售退货入库')
+    expect(movementTypeLabel('PURCHASE_RETURN_OUT')).toBe('采购退货出库')
+    expect(movementTypeLabel('PRODUCTION_MATERIAL_RETURN_IN')).toBe('生产退料入库')
+    expect(movementTypeLabel('PRODUCTION_MATERIAL_SUPPLEMENT_OUT')).toBe('生产补料出库')
+    expect(movementTypeLabel('QUALITY_STATUS_TRANSFER')).toBe('质量状态转移')
+    expect(movementTypeLabel('BUSINESS_REVERSAL')).toBe('业务反向冲销')
+    expect(movementTypeLabel('STOCKTAKE_VARIANCE_IN')).toBe('盘点差异入库')
+    expect(movementTypeLabel('STOCKTAKE_VARIANCE_OUT')).toBe('盘点差异出库')
+    expect(movementTypeLabel('OUTSOURCING_ISSUE')).toBe('外协发料')
+    expect(movementTypeLabel('OUTSOURCING_RECEIPT')).toBe('外协收货')
+    expect(movementTypeLabel('STOCKTAKE_GAIN')).toBe('未知类型')
+    expect(movementTypeLabel('STOCKTAKE_LOSS')).toBe('未知类型')
   })
 
   it('金额输入只校验十进制字符串精度，不执行库存价值计算', () => {

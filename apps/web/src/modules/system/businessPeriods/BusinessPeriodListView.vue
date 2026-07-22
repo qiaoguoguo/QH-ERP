@@ -394,7 +394,7 @@ onMounted(loadPeriods)
           <el-table-column v-if="canViewPeriodClose" label="检查结论" min-width="150">
             <template #default="{ row }">{{ closeCheckText(row) }}</template>
           </el-table-column>
-          <el-table-column label="操作" fixed="right" min-width="210">
+          <el-table-column label="操作" fixed="right" width="184">
             <template #default="{ row }">
               <el-button
                 v-if="canViewPeriodClose"
@@ -414,26 +414,33 @@ onMounted(loadPeriods)
               >
                 编辑
               </el-button>
-              <el-button
-                v-if="canLock && row.status === 'OPEN'"
-                size="small"
-                text
-                type="warning"
-                data-test="lock-business-period"
-                @click="openAction(row, 'lock')"
-              >
-                锁定
-              </el-button>
-              <el-button
-                v-if="canUnlockPeriod(row)"
-                size="small"
-                text
-                type="primary"
-                data-test="unlock-business-period"
-                @click="openAction(row, 'unlock')"
-              >
-                解锁
-              </el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canLock && row.status === 'OPEN') || (canUnlockPeriod(row))">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button
+                      v-if="canLock && row.status === 'OPEN'"
+                      size="small"
+                      text
+                      type="warning"
+                      data-test="lock-business-period"
+                      @click="openAction(row, 'lock')"
+                    >
+                      锁定
+                    </el-button>
+                    <el-button
+                      v-if="canUnlockPeriod(row)"
+                      size="small"
+                      text
+                      type="primary"
+                      data-test="unlock-business-period"
+                      @click="openAction(row, 'unlock')"
+                    >
+                      解锁
+                    </el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
               <span v-else-if="canUnlock && row.status === 'LOCKED' && hasCurrentClosedPeriodClose(row)" class="period-close-muted">
                 请通过业务月结重开
               </span>

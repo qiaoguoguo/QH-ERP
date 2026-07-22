@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { buildPageSurfaceInventory, formatOperationColumnViolations } from '../../test/pageSurfaceInventory'
 import { formatStatusRiskList, scanStatusLanguage } from '../../test/statusLanguageScan'
+import { procurementRequisitionStatusLabel } from './procurementPageHelpers'
 
 const procurementVueSources = import.meta.glob<string>('./**/*.vue', {
   eager: true,
@@ -15,7 +17,6 @@ const procurementTsSources = import.meta.glob<string>('./**/*.ts', {
 
 const directServerStatusNamePattern = /\{\{\s*[^}]*\b(?:statusName|approvalStatusName|inTransitStatusName)\b[^}]*\}\}/g
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
 const cancelledDangerTagPattern = /CANCELLED:\s*['"]danger['"]/g
 
 function fileLabel(key: string): string {
@@ -78,11 +79,20 @@ describe('采购页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('采购宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('采购操作列遵循全局 fixed right 与更多下拉展示契约', () => {
+    const procurementViolations = buildPageSurfaceInventory().operationColumnViolations
+      .filter((item) => item.sourceFile.startsWith('apps/web/src/modules/procurement/'))
+
+    expect(procurementViolations, formatOperationColumnViolations(procurementViolations)).toEqual([])
   })
 
   it('采购取消状态不使用失败色', () => {
     expect(productionPatternMatches(cancelledDangerTagPattern)).toEqual([])
+  })
+
+  it('采购请购状态名只采信中文，英文或原码回到确定性中文映射', () => {
+    expect(procurementRequisitionStatusLabel('APPROVED', 'Approved')).toBe('已批准')
+    expect(procurementRequisitionStatusLabel('APPROVED', 'APPROVED')).toBe('已批准')
+    expect(procurementRequisitionStatusLabel('APPROVED', '服务端已批准')).toBe('服务端已批准')
   })
 })

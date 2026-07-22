@@ -377,7 +377,7 @@ onMounted(() => {
             {{ runAvailabilityText(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="190">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text type="primary" @click="viewRun(row)">查看</el-button>
             <el-button

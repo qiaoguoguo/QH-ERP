@@ -158,7 +158,7 @@ onMounted(() => {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="canSelect(row)"

@@ -164,7 +164,7 @@ function searchUnits(keyword: string, currentValue: ResourceId | '') {
             />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="96">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button
               data-test="remove-bom-line"

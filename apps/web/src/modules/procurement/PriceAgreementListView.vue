@@ -289,7 +289,7 @@ onMounted(() => {
         <el-table-column label="有效期" min-width="200">
           <template #default="{ row }">{{ row.validFrom }} 至 {{ row.validTo }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="210">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="canSubmitActivation(row)"

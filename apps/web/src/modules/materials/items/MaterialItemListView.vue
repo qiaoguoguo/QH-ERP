@@ -686,23 +686,30 @@ onMounted(() => {
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" min-width="210">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-material" @click="openDetail(row)">详情</el-button>
             <el-button v-if="canUpdate" size="small" text data-test="edit-material" @click="openEdit(row)">
               编辑
             </el-button>
-            <el-button
-              v-if="canUpdate"
-              size="small"
-              text
-              :disabled="actionLoading"
-              :type="row.status === 'DISABLED' ? 'success' : 'warning'"
-              :data-test="row.status === 'DISABLED' ? 'enable-material' : 'disable-material'"
-              @click="changeStatus(row)"
-            >
-              {{ row.status === 'DISABLED' ? '启用' : '停用' }}
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canUpdate)">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canUpdate"
+                    size="small"
+                    text
+                    :disabled="actionLoading"
+                    :type="row.status === 'DISABLED' ? 'success' : 'warning'"
+                    :data-test="row.status === 'DISABLED' ? 'enable-material' : 'disable-material'"
+                    @click="changeStatus(row)"
+                  >
+                    {{ row.status === 'DISABLED' ? '启用' : '停用' }}
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

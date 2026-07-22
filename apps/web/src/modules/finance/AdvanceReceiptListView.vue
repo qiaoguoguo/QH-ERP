@@ -137,7 +137,7 @@ onMounted(loadRecords)
         <el-table-column label="可用余额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount) }}</template></el-table-column>
         <el-table-column label="状态" min-width="110"><template #default="{ row }">{{ settlementStatusText(row.settlementStatus ?? row.status) }}</template></el-table-column>
         <el-table-column prop="lastAllocatedAt" label="最近核销时间" min-width="160" />
-        <el-table-column label="操作" min-width="110"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-advance-receipt-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
+        <el-table-column label="操作" fixed="right" width="184"><template #default="{ row }"><el-button text @click="router.push({ name: 'finance-advance-receipt-detail', params: { id: row.id } })">详情</el-button></template></el-table-column>
       </el-table>
     </div>
     <el-pagination class="table-pagination" layout="total, sizes, prev, pager, next" :page-sizes="[10, 20, 50, 100]" :total="pagination.total" :page-size="pagination.pageSize" :current-page="pagination.page" @current-change="changePage" @size-change="changePageSize" />

@@ -1,6 +1,7 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+import { expect } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { useAuthStore } from '../../stores/authStore'
 
@@ -14,7 +15,12 @@ export function page<T>(items: T[] = [], pageNumber = 1, pageSize = 20) {
   }
 }
 
-export async function mountFinanceView(component: object, permissions: string[], path = '/') {
+export async function mountFinanceView(
+  component: object,
+  permissions: string[],
+  path = '/',
+  options: { attachTo?: Element } = {},
+) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setSession({
@@ -76,6 +82,7 @@ export async function mountFinanceView(component: object, permissions: string[],
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: options.attachTo,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -86,6 +93,30 @@ export async function mountFinanceView(component: object, permissions: string[],
 
 export function buttonsByText(wrapper: ReturnType<typeof mount>, text: string) {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
+}
+
+export async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+export function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+export async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 export async function setSelectValue(wrapper: ReturnType<typeof mount>, index: number, value: unknown) {

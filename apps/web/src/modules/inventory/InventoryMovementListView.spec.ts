@@ -212,12 +212,12 @@ const stocktakeMovement: InventoryMovementRecord = {
   ...valuedMovement,
   id: 31,
   movementNo: 'MV202607030008',
-  movementType: 'STOCKTAKE_GAIN',
+  movementType: 'STOCKTAKE_VARIANCE_IN',
   sourceType: 'STOCKTAKE',
   sourceId: 1003,
   sourceLineId: 2003,
   targetDocumentNo: 'ST-001',
-  reason: '盘盈入库',
+  reason: '盘点差异入库',
 }
 
 const valuationAdjustmentMovement: InventoryMovementRecord = {
@@ -601,7 +601,7 @@ describe('库存变动流水页', () => {
     }))
   })
 
-  it('变动类型筛选提供生产、采购和销售出库选项并可传递对应流水类型参数', async () => {
+  it('变动类型筛选提供生产、采购、销售、反向和盘点差异选项并可传递对应流水类型参数', async () => {
     const { wrapper } = await mountMovements()
     const movementTypeOptions = wrapper
       .findAllComponents({ name: 'ElOption' })
@@ -613,6 +613,16 @@ describe('库存变动流水页', () => {
         'PRODUCTION_RECEIPT',
         'PURCHASE_RECEIPT',
         'SALES_SHIPMENT',
+        'SALES_RETURN_IN',
+        'PURCHASE_RETURN_OUT',
+        'PRODUCTION_MATERIAL_RETURN_IN',
+        'PRODUCTION_MATERIAL_SUPPLEMENT_OUT',
+        'QUALITY_STATUS_TRANSFER',
+        'BUSINESS_REVERSAL',
+        'STOCKTAKE_VARIANCE_IN',
+        'STOCKTAKE_VARIANCE_OUT',
+        'OUTSOURCING_ISSUE',
+        'OUTSOURCING_RECEIPT',
       ].includes(String(option.props('value'))))
 
     expect(movementTypeOptions.map((option) => option.props('label'))).toEqual([
@@ -623,6 +633,16 @@ describe('库存变动流水页', () => {
       '完工入库',
       '采购入库',
       '销售出库',
+      '销售退货入库',
+      '采购退货出库',
+      '生产退料入库',
+      '生产补料出库',
+      '质量状态转移',
+      '业务反向冲销',
+      '盘点差异入库',
+      '盘点差异出库',
+      '外协发料',
+      '外协收货',
     ])
 
     await setSelectValue(wrapper, 'inventory-movement-type', 'PRODUCTION_ISSUE')
@@ -791,7 +811,7 @@ describe('库存变动流水页', () => {
   it.each([
     [warehouseTransferMovement, 'inventory-warehouse-transfer-detail', '1001', '仓库调拨出库'],
     [ownershipConversionMovement, 'inventory-ownership-conversion-detail', '1002', '所有权转出'],
-    [stocktakeMovement, 'inventory-stocktake-detail', '1003', '盘盈入库'],
+    [stocktakeMovement, 'inventory-stocktake-detail', '1003', '盘点差异入库'],
     [valuationAdjustmentMovement, 'inventory-valuation-adjustment-detail', '1004', '估值调整'],
   ])('受控库存来源流水可跳转到对应受控单据详情', async (sourceMovement, routeName, id, text) => {
     inventoryApiMock.movements.list.mockResolvedValueOnce({

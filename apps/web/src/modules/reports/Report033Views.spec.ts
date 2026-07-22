@@ -1059,7 +1059,7 @@ describe('033 项目利润与经营财务分析页面', () => {
       analysisMode: 'BUSINESS_SNAPSHOT',
     }))
     expect(wrapper.text()).toContain('冻结快照')
-    expect(wrapper.text()).toContain('来源受限/不可用')
+    expect(wrapper.text()).toContain('缺少上游金额权限')
     const traceButton = wrapper.find('[data-test="open-report-trace"]')
     expect(traceButton.attributes('disabled')).toBeDefined()
     await traceButton.trigger('click')

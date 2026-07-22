@@ -108,7 +108,7 @@ onMounted(loadRecords)
 </script>
 
 <template>
-  <MasterDataTableView title="正式凭证工作台" description="处理手工凭证和 028 READY 凭证草稿转正式凭证；审批通过后才同事务记账。">
+  <MasterDataTableView title="正式凭证工作台" description="处理手工凭证和 028 待正式制证凭证草稿转正式凭证；审批通过后才同事务记账。">
     <template #actions>
       <el-button @click="loadRecords">刷新</el-button>
       <el-button type="primary" @click="openCreate">新增手工凭证</el-button>
@@ -125,7 +125,7 @@ onMounted(loadRecords)
           </el-select>
         </el-form-item>
         <el-form-item label="期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
-        <el-form-item label="来源"><el-input v-model="filters.sourceType" clearable placeholder="MANUAL / FIN_VOUCHER_DRAFT" /></el-form-item>
+        <el-form-item label="来源"><el-input v-model="filters.sourceType" clearable placeholder="手工凭证 / 财务凭证草稿" /></el-form-item>
         <el-form-item>
           <el-button type="primary" @click="search">查询</el-button>
           <el-button @click="resetSearch">重置</el-button>
@@ -153,7 +153,7 @@ onMounted(loadRecords)
         <el-table-column label="动作状态" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ glCombinedActionDisabledReason(row) || glActionDisabledReason(row, 'CANCEL') || glAllowedActionsText(row.allowedActions) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="100">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="gl-voucher-detail" text @click="openDetail(row)">详情</el-button>
           </template>

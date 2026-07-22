@@ -270,7 +270,7 @@ onMounted(() => {
             {{ formatSalesDateTime(row.postedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-shipment" @click="viewShipment(row)">详情</el-button>
             <el-button
@@ -282,16 +282,23 @@ onMounted(() => {
             >
               编辑
             </el-button>
-            <el-button
-              v-if="canPostPermission && hasAllowedAction(row, 'POST')"
-              size="small"
-              text
-              type="success"
-              data-test="post-sales-shipment"
-              @click="postShipment(row)"
-            >
-              过账
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canPostPermission && hasAllowedAction(row, 'POST'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canPostPermission && hasAllowedAction(row, 'POST')"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="post-sales-shipment"
+                    @click="postShipment(row)"
+                  >
+                    过账
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

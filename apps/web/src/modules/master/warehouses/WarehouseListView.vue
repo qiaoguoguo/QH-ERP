@@ -175,6 +175,10 @@ async function changeStatus(record: WarehouseRecord) {
   }
 }
 
+function warehouseTypeText(value: string | null | undefined) {
+  return value?.trim() || '-'
+}
+
 onMounted(loadRecords)
 </script>
 
@@ -212,7 +216,9 @@ onMounted(loadRecords)
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无仓库数据'" stripe>
         <el-table-column prop="code" label="编码" min-width="140" show-overflow-tooltip />
         <el-table-column prop="name" label="名称" min-width="150" show-overflow-tooltip />
-        <el-table-column prop="warehouseType" label="类型" min-width="120" show-overflow-tooltip />
+        <el-table-column label="类型" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ warehouseTypeText(row.warehouseType) }}</template>
+        </el-table-column>
         <el-table-column prop="managerName" label="负责人" min-width="120" show-overflow-tooltip />
         <el-table-column prop="address" label="地址" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" min-width="90">
@@ -221,7 +227,7 @@ onMounted(loadRecords)
           </template>
         </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" min-width="160">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button v-if="canUpdate" size="small" text data-test="edit-record" @click="openEdit(row)">编辑</el-button>
             <el-button

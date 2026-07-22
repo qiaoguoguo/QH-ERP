@@ -233,7 +233,7 @@ onMounted(() => {
         <el-table-column label="来源建议" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.sourceSuggestionNo || row.sourceMrpSuggestionId || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="120">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="view-outsourcing-order" text type="primary" @click="viewOrder(row)">查看</el-button>
           </template>

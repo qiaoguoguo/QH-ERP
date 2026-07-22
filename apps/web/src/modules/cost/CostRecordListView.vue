@@ -236,7 +236,7 @@ onMounted(loadRecords)
         <el-table-column label="状态" min-width="90">
           <template #default="{ row }">{{ costStatusLabel(row.status) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="132">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-cost-record" @click="viewRecord(row)">详情</el-button>
             <el-button

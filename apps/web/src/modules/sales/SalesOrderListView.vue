@@ -411,7 +411,7 @@ onMounted(() => {
             {{ formatSalesDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="330">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-order" @click="viewOrder(row)">详情</el-button>
             <el-button
@@ -423,48 +423,55 @@ onMounted(() => {
             >
               编辑
             </el-button>
-            <el-button
-              v-if="canConfirm && hasAllowedAction(row, 'CONFIRM')"
-              size="small"
-              text
-              type="success"
-              data-test="confirm-sales-order"
-              :disabled="actionLoading"
-              @click="runOrderAction(row, 'confirm')"
-            >
-              确认
-            </el-button>
-            <el-button
-              v-if="canCancelPermission && canCancel(row)"
-              size="small"
-              text
-              type="danger"
-              data-test="cancel-sales-order"
-              :disabled="actionLoading"
-              @click="runOrderAction(row, 'cancel')"
-            >
-              取消
-            </el-button>
-            <el-button
-              v-if="canClosePermission && canClose(row)"
-              size="small"
-              text
-              type="warning"
-              data-test="close-sales-order"
-              :disabled="actionLoading"
-              @click="runOrderAction(row, 'close')"
-            >
-              关闭
-            </el-button>
-            <el-button
-              v-if="canCreateShipmentPermission && canCreateShipment(row)"
-              size="small"
-              text
-              data-test="create-sales-shipment"
-              @click="createShipment(row)"
-            >
-              创建出库
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(canConfirm && hasAllowedAction(row, 'CONFIRM')) || (canCancelPermission && canCancel(row)) || (canClosePermission && canClose(row)) || (canCreateShipmentPermission && canCreateShipment(row))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="canConfirm && hasAllowedAction(row, 'CONFIRM')"
+                    size="small"
+                    text
+                    type="success"
+                    data-test="confirm-sales-order"
+                    :disabled="actionLoading"
+                    @click="runOrderAction(row, 'confirm')"
+                  >
+                    确认
+                  </el-button>
+                  <el-button
+                    v-if="canCancelPermission && canCancel(row)"
+                    size="small"
+                    text
+                    type="danger"
+                    data-test="cancel-sales-order"
+                    :disabled="actionLoading"
+                    @click="runOrderAction(row, 'cancel')"
+                  >
+                    取消
+                  </el-button>
+                  <el-button
+                    v-if="canClosePermission && canClose(row)"
+                    size="small"
+                    text
+                    type="warning"
+                    data-test="close-sales-order"
+                    :disabled="actionLoading"
+                    @click="runOrderAction(row, 'close')"
+                  >
+                    关闭
+                  </el-button>
+                  <el-button
+                    v-if="canCreateShipmentPermission && canCreateShipment(row)"
+                    size="small"
+                    text
+                    data-test="create-sales-shipment"
+                    @click="createShipment(row)"
+                  >
+                    创建出库
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

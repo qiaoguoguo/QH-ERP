@@ -28,6 +28,7 @@ export const glPermissions = {
 } as const
 
 export const glPageSizes = [10, 20, 50, 100]
+export const glDefaultSourceVariant = 'DEFAULT'
 
 export function glPageItems<T>(page: PageResult<T>): T[] {
   return page.items ?? page.records ?? page.content ?? []
@@ -113,6 +114,14 @@ export function glVoucherTypeText(value: string | null | undefined) {
     OPENING: '期初凭证',
   }
   return labelFromMap(value, text, '未知凭证类型')
+}
+
+export function glAuxDimensionTypeText(value: string | null | undefined) {
+  const text: Record<string, string> = {
+    SYSTEM: '系统维度',
+    CUSTOM: '自定义维度',
+  }
+  return labelFromMap(value, text, '未知维度类型')
 }
 
 export function glApprovalStatusText(value: string | null | undefined) {
@@ -226,6 +235,13 @@ export function glSourceTypeText(value: string | null | undefined) {
     REVERSAL: '冲销凭证',
   }
   return labelFromMap(value, text, '未知来源')
+}
+
+export function glSourceVariantText(value: string | null | undefined) {
+  if (!value) {
+    return '-'
+  }
+  return value === 'DEFAULT' ? '默认变体' : '自定义变体'
 }
 
 export function glPostingRuleStatusText(value: string | null | undefined) {

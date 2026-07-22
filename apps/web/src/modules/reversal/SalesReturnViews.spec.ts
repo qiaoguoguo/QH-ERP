@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Component } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SalesReturnDetailView from './SalesReturnDetailView.vue'
 import SalesReturnFormView from './SalesReturnFormView.vue'
 import SalesReturnListView from './SalesReturnListView.vue'
@@ -241,12 +241,32 @@ async function mountReversalView(component: Component, path: string, permissions
   await router.push(path)
   await router.isReady()
   const wrapper = mount(component, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
   })
   await flushPromises()
   return { wrapper, router }
+}
+
+async function openMoreActions(wrapper: ReturnType<typeof mount>) {
+  const moreButton = wrapper.findAll('button').find((button) => button.text() === '更多')
+  expect(moreButton).toBeTruthy()
+  await moreButton!.trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string): HTMLElement {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const action = actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(testId: string) {
+  teleportedAction(testId).click()
+  await flushPromises()
 }
 
 describe('销售退货前端页面', () => {
@@ -260,6 +280,10 @@ describe('销售退货前端页面', () => {
     returnRefundReversalApiMock.salesReturns.cancel.mockResolvedValue({ ...salesReturnDetail, status: 'CANCELLED' })
     returnRefundReversalApiMock.salesReturnSources.list.mockResolvedValue(page([salesReturnSource], 20))
     returnRefundReversalApiMock.traces.list.mockResolvedValue(salesReturnDetail.traces)
+  })
+
+  afterEach(() => {
+    document.body.innerHTML = ''
   })
 
   it('状态标签展示销售退货中文状态', () => {
@@ -283,18 +307,18 @@ describe('销售退货前端页面', () => {
     expect(wrapper.text()).toContain('草稿')
     expect(wrapper.find('[data-test="create-sales-return"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="edit-sales-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-sales-return')).toBeTruthy()
+    expect(teleportedAction('cancel-sales-return')).toBeTruthy()
 
-    await wrapper.find('[data-test="post-sales-return"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction('post-sales-return')
     expect(returnRefundReversalApiMock.salesReturns.post).toHaveBeenCalledWith(1, {
       version: 5,
       idempotencyKey: 'sales-return-key',
     })
 
-    await wrapper.find('[data-test="cancel-sales-return"]').trigger('click')
-    await flushPromises()
+    await openMoreActions(wrapper)
+    await clickTeleportedAction('cancel-sales-return')
     expect(returnRefundReversalApiMock.salesReturns.cancel).toHaveBeenCalledWith(1, {
       version: 5,
       reason: '用户取消销售退货',
@@ -322,8 +346,8 @@ describe('销售退货前端页面', () => {
     expect(wrapper.text()).toContain('SR202607050001')
     expect(wrapper.find('[data-test="create-sales-return"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="edit-sales-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(false)
+    expect(document.body.querySelector('[data-test="post-sales-return"]')).toBeNull()
+    expect(document.body.querySelector('[data-test="cancel-sales-return"]')).toBeNull()
   })
 
   it('销售退货列表仅按 allowedActions 和权限展示公开状态动作', async () => {
@@ -342,8 +366,9 @@ describe('销售退货前端页面', () => {
     ])
 
     expect(wrapper.find('[data-test="edit-sales-return"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="post-sales-return"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-sales-return"]').exists()).toBe(false)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-sales-return')).toBeTruthy()
+    expect(document.body.querySelector('[data-test="cancel-sales-return"]')).toBeNull()
   })
 
   it('销售退货表单加载候选来源并以字符串数量提交创建请求', async () => {

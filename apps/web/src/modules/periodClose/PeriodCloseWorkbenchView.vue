@@ -233,7 +233,7 @@ onMounted(loadRecords)
             <span class="numeric-cell">{{ formatPeriodCloseAmount(row.snapshotValueAmount, restrictedMoneyReason(row)) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button v-if="canViewRun(row)" size="small" text data-test="period-close-run-detail" @click="viewRun(row)">详情</el-button>
             <span v-else class="period-close-muted">无月结快照，请先解锁期间后重新检查</span>

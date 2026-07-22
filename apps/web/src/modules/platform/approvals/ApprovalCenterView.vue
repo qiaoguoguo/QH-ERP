@@ -356,7 +356,7 @@ onMounted(() => {
         <el-table-column label="分配时间" width="160">
           <template #default="{ row }">{{ formatPlatformDateTime(row.assignedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="120">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="open-approval-detail" size="small" text @click="openDetail(row)">详情</el-button>
           </template>
@@ -414,7 +414,7 @@ onMounted(() => {
         </el-timeline-item>
       </el-timeline>
       <h3>附件快照</h3>
-      <el-table :data="detail?.attachmentSnapshots ?? []" empty-text="暂无附件快照" stripe>
+      <el-table class="table-scroll" :data="detail?.attachmentSnapshots ?? []" empty-text="暂无附件快照" stripe>
         <el-table-column prop="fileName" label="文件名" min-width="180" show-overflow-tooltip />
         <el-table-column prop="fileSize" label="大小" width="100" />
         <el-table-column prop="sha256" label="SHA-256" min-width="180" show-overflow-tooltip />

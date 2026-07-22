@@ -204,8 +204,16 @@ export function salesMovementTypeLabel(value: string): string {
     WAREHOUSE_TRANSFER_IN: '调拨入库',
     OWNERSHIP_CONVERSION_OUT: '所有权转出',
     OWNERSHIP_CONVERSION_IN: '所有权转入',
-    STOCKTAKE_GAIN: '盘盈入库',
-    STOCKTAKE_LOSS: '盘亏出库',
+    SALES_RETURN_IN: '销售退货入库',
+    PURCHASE_RETURN_OUT: '采购退货出库',
+    PRODUCTION_MATERIAL_RETURN_IN: '生产退料入库',
+    PRODUCTION_MATERIAL_SUPPLEMENT_OUT: '生产补料出库',
+    QUALITY_STATUS_TRANSFER: '质量状态转移',
+    BUSINESS_REVERSAL: '业务反向冲销',
+    STOCKTAKE_VARIANCE_IN: '盘点差异入库',
+    STOCKTAKE_VARIANCE_OUT: '盘点差异出库',
+    OUTSOURCING_ISSUE: '外协发料',
+    OUTSOURCING_RECEIPT: '外协收货',
     VALUATION_ADJUSTMENT: '估值调整',
   }
   return knownOrFallbackLabel(value, labels, '未知类型', {

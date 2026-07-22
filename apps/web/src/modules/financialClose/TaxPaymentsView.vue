@@ -164,7 +164,7 @@ onMounted(loadRecords)
         <el-table-column label="权限" min-width="180">
           <template #default="{ row }">{{ sourceVisibleText(row.sourceVisible) }} / {{ bankSensitiveText(row.bankSensitiveVisible) }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="100">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="correct-tax-payment" text :disabled="!financialCloseActionState(row, 'CORRECT', canManagePayments, '无税款缴纳更正权限').allowed" :loading="actionLoading" @click="correctTaxPayment(row)">更正</el-button>
           </template>

@@ -21,7 +21,7 @@ const financeVueSources = import.meta.glob<string>('./**/*.vue', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
+const actionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")[^>]*>/g
 
 function fileLabel(key: string): string {
   return `apps/web/src/modules/finance/${key.replace(/^\.\//, '')}`
@@ -52,8 +52,15 @@ describe('财务页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('财务宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('财务操作列统一固定在右侧、宽度 184 且不保留 min-width', () => {
+    const actionColumns = vuePatternMatches(actionColumnPattern)
+
+    expect(actionColumns.length).toBeGreaterThan(0)
+    expect(actionColumns.filter((column) => (
+      !column.includes('fixed="right"')
+      || !column.includes('width="184"')
+      || column.includes('min-width')
+    ))).toEqual([])
   })
 
   it('财务状态色遵守取消中性、过账完成为成功的语义', () => {

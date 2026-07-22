@@ -142,7 +142,7 @@ onMounted(loadRecords)
         <el-table-column label="禁用原因" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ financialCloseActionDisabledReason(row, 'REOPEN') || financialCloseActionDisabledReason(row, 'CLOSE') || '-' }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="210">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <div class="financial-close-table-actions">
               <el-button

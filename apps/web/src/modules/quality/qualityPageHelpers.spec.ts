@@ -7,8 +7,8 @@ describe('质量页面辅助函数', () => {
     expect(qualityInspectionSourceTypeLabel('NEW_SOURCE', '委外入库')).toBe('委外入库')
     expect(qualityInspectionSourceTypeLabel('NEW_SOURCE', 'NEW_SOURCE')).toBe('未知类型')
 
-    expect(qualityInspectionStatusLabel('PENDING')).toBe('待处理')
-    expect(qualityInspectionStatusLabel('COMPLETED')).toBe('已处理')
+    expect(qualityInspectionStatusLabel('PENDING')).toBe('待检验')
+    expect(qualityInspectionStatusLabel('COMPLETED')).toBe('已完成')
     expect(qualityInspectionStatusLabel('RECHECK', '需复检')).toBe('需复检')
     expect(qualityInspectionStatusLabel('RECHECK', 'RECHECK')).toBe('未知状态')
   })

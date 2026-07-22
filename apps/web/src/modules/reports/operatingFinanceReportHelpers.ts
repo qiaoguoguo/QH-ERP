@@ -14,6 +14,8 @@ import {
 import type { BusinessReferenceId, BusinessReferenceOption } from '../system/shared/businessReferenceSelectTypes'
 import { reportDictionaryText, reportStatusText } from './reportPageHelpers'
 
+export const operatingFinanceLiveAnalysisMode = 'LIVE'
+
 export const operatingFinanceBaseFields: ReportFilterField[] = [
   { key: 'periodCode', label: '期间', name: 'report-period-code', placeholder: '例如 2026-07' },
   { key: 'analysisMode', label: '口径模式', name: 'report-analysis-mode', placeholder: '实时经营口径或业务月结快照' },
@@ -199,8 +201,9 @@ export function hasTraceKey(traceKey: string | null | undefined): traceKey is st
   return typeof traceKey === 'string' && traceKey.trim() !== ''
 }
 
-export function traceUnavailableText(_restrictedReason?: string | null) {
-  return '来源受限/不可用'
+export function traceUnavailableText(restrictedReason?: string | null) {
+  const reason = String(restrictedReason ?? '').trim()
+  return /[\u4e00-\u9fff]/.test(reason) ? reason : '来源受限/不可用'
 }
 
 export function canOpenTrace(traceKey: string | null | undefined, restrictedReason?: string | null): traceKey is string {

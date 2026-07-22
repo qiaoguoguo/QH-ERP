@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
 import type { InventoryBalanceRecord, InventoryTraceDetailRecord } from '../../shared/api/inventoryApi'
@@ -285,6 +285,7 @@ async function mountBalancesWithPermissions(permissions: string[]) {
   await router.isReady()
 
   const wrapper = mount(InventoryBalanceListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -293,7 +294,35 @@ async function mountBalancesWithPermissions(permissions: string[]) {
   return { wrapper, router }
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 describe('库存余额页', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     inventoryApiMock.balances.list.mockResolvedValue(balancePage)
@@ -457,8 +486,7 @@ describe('库存余额页', () => {
     expect(restrictedRowText).toContain('金额受限')
     expect(restrictedRowText).not.toContain('1325.50')
 
-    await wrapper.find('[data-test="view-cost-layers-13"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'view-cost-layers-13')
 
     expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({
       ownershipType: 'PROJECT',
@@ -523,8 +551,7 @@ describe('库存余额页', () => {
 
     await router.push('/')
     await flushPromises()
-    await wrapper.find('[data-test="view-cost-layers-21"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'view-cost-layers-21')
     expect(inventoryApiMock.costLayers.list).toHaveBeenCalledWith(expect.objectContaining({
       costLayerId: 9001,
     }))
@@ -673,8 +700,7 @@ describe('库存余额页', () => {
     expect(drawers[0].props('size')).toBe('min(520px, 92vw)')
     expect(drawers[1].props('size')).toBe('min(520px, 92vw)')
 
-    await wrapper.find('[data-test="view-inventory-reservations"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'view-inventory-reservations')
 
     expect(inventoryApiMock.reservations.list).toHaveBeenCalledWith({
       warehouseId: 1,
@@ -689,8 +715,7 @@ describe('库存余额页', () => {
     expect(wrapper.text()).toContain('SO-20260711-001')
     expect(wrapper.text()).toContain('12')
 
-    await wrapper.find('[data-test="view-inventory-in-transit"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'view-inventory-in-transit')
 
     expect(wrapper.text()).toContain('采购在途参考摘要')
     expect(wrapper.text()).toContain('采购在途按物料汇总展示，不代表当前仓库现货可用。')

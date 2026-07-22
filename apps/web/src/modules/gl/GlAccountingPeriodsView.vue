@@ -145,7 +145,7 @@ onMounted(loadRecords)
 </script>
 
 <template>
-  <MasterDataTableView title="会计期间" description="单公司、单账簿、人民币总账期间；031 提供 OPEN 记账归属，032 财务结账入口在此承接。">
+  <MasterDataTableView title="会计期间" description="单公司、单账簿、人民币总账期间；031 提供开放记账归属，032 财务结账入口在此承接。">
     <template #actions>
       <el-button @click="loadRecords">刷新</el-button>
       <el-button

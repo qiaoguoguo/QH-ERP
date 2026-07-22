@@ -242,6 +242,30 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 async function mountDetail(
   record: SalesOrderDetailRecord = draftOrder,
   permissions = [
@@ -309,6 +333,7 @@ async function mountDetail(
   await router.push('/sales/orders/99')
   await router.isReady()
   const wrapper = mount(SalesOrderDetailView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -326,6 +351,7 @@ describe('销售订单详情页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -599,8 +625,7 @@ describe('销售订单详情页', () => {
       idempotencyKey: 'sales-order-key',
     })
 
-    await wrapper.find('[data-test="cancel-sales-order-change-920"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'cancel-sales-order-change-920')
     expect(salesFulfillmentApiMock.orderChanges.cancel).toHaveBeenCalledWith(920, {
       version: 3,
       reason: '取消订单变更',

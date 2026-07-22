@@ -1,5 +1,5 @@
 import { flushPromises } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import SalesInvoiceListView from './SalesInvoiceListView.vue'
 import SalesInvoiceFormView from './SalesInvoiceFormView.vue'
 import SalesInvoiceDetailView from './SalesInvoiceDetailView.vue'
@@ -19,7 +19,7 @@ import PrepaymentDetailView from './PrepaymentDetailView.vue'
 import SettlementWorkbenchView from './SettlementWorkbenchView.vue'
 import VoucherDraftListView from './VoucherDraftListView.vue'
 import VoucherDraftDetailView from './VoucherDraftDetailView.vue'
-import { buttonsByText, mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import { buttonsByText, clickTeleportedAction, mountFinanceView, page, setSelectValue } from './financeTestHelpers'
 import { useConfirmActionMock } from '../../test/setup'
 
 const invoiceApiMock = vi.hoisted(() => ({
@@ -332,6 +332,10 @@ const project = {
 }
 
 describe('028 财务页面', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     confirmActionMock.mockResolvedValue(true)
@@ -1218,6 +1222,7 @@ describe('028 财务页面', () => {
       VoucherDraftListView,
       ['finance:voucher-draft:view', 'gl:voucher:convert', 'gl:voucher:view'],
       '/finance/voucher-drafts',
+      { attachTo: document.body },
     )
 
     expect(glApiMock.vouchers.list).toHaveBeenCalledWith(expect.objectContaining({
@@ -1228,8 +1233,7 @@ describe('028 财务页面', () => {
     }))
     expect(wrapper.text()).toContain('生成正式凭证草稿')
 
-    await wrapper.find('[data-test="convert-gl-voucher"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'convert-gl-voucher')
 
     expect(glApiMock.vouchers.fromFinanceDraft).toHaveBeenCalledWith(61, expect.objectContaining({
       version: 1,

@@ -4,7 +4,7 @@ import type { PartnerRecord } from '../../shared/api/masterDataApi'
 import type { ReceiptSummaryRecord } from '../../shared/api/financeApi'
 import { useConfirmActionMock } from '../../test/setup'
 import ReceiptListView from './ReceiptListView.vue'
-import { mountFinanceView, page, setSelectValue } from './financeTestHelpers'
+import { clickTeleportedAction, mountFinanceView, openMoreActions, page, setSelectValue, teleportedAction } from './financeTestHelpers'
 
 const confirmActionMock = useConfirmActionMock()
 
@@ -57,7 +57,10 @@ describe('收款记录列表页', () => {
     financeApiMock.receipts.cancel.mockResolvedValue({ ...draftReceipt, status: 'CANCELLED' })
   })
 
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    document.body.innerHTML = ''
+    vi.unstubAllGlobals()
+  })
 
   it('加载收款记录并支持筛选、空态和错误态', async () => {
     const { wrapper } = await mountFinanceView(ReceiptListView, ['finance:receipt:view'], '/finance/receipts')
@@ -139,11 +142,12 @@ describe('收款记录列表页', () => {
       'finance:receipt:update',
       'finance:receipt:post',
       'finance:receipt:cancel',
-    ], '/finance/receipts')
+    ], '/finance/receipts', { attachTo: document.body })
 
     expect(wrapper.find('[data-test="edit-receipt"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="post-receipt"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-receipt"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-receipt')).toBeTruthy()
+    expect(teleportedAction('cancel-receipt')).toBeTruthy()
 
     await wrapper.find('[data-test="edit-receipt"]').trigger('click')
     await flushPromises()
@@ -152,14 +156,12 @@ describe('收款记录列表页', () => {
 
     await router.push('/finance/receipts')
     await flushPromises()
-    await wrapper.find('[data-test="post-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'post-receipt')
     expect(confirmActionMock).toHaveBeenCalledWith('确认过账收款“RC-DRAFT”，金额 250.00？')
     expect(financeApiMock.receipts.post).toHaveBeenCalledWith(2)
     expect(financeApiMock.receipts.list).toHaveBeenCalledTimes(2)
 
-    await wrapper.find('[data-test="cancel-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'cancel-receipt')
     expect(confirmActionMock).toHaveBeenCalledWith('确认取消收款“RC-DRAFT”，金额 250.00？')
     expect(financeApiMock.receipts.cancel).toHaveBeenCalledWith(2)
     expect(financeApiMock.receipts.list).toHaveBeenCalledTimes(3)

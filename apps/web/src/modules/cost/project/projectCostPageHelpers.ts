@@ -36,7 +36,7 @@ const completenessLabels: Record<ProjectCostCompletenessStatus, string> = {
 }
 
 const freshnessLabels: Record<ProjectCostFreshnessStatus, string> = {
-  CURRENT: '当前',
+  CURRENT: '当前有效',
   STALE: '来源已变化',
 }
 

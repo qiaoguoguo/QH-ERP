@@ -195,7 +195,7 @@ onMounted(() => {
         <el-table-column label="供应商/报价" min-width="170">
           <template #default="{ row }">供应商 {{ row.supplierCount }} 家 / 报价 {{ row.quoteCount }} 条</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <router-link :to="{ name: 'procurement-inquiry-detail', params: { id: String(row.id) } }">详情</router-link>
           </template>

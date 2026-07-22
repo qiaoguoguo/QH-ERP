@@ -934,7 +934,7 @@ onMounted(loadRecord)
               </template>
             </el-table-column>
             <el-table-column prop="closeReason" label="关闭原因" min-width="160" show-overflow-tooltip />
-            <el-table-column v-if="authStore.hasPermission('sales:delivery-plan:manage')" label="操作" width="110">
+            <el-table-column v-if="authStore.hasPermission('sales:delivery-plan:manage')" label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button
                   v-if="canManageDeliveryPlans && (row.allowedActions ?? []).includes('CLOSE')"
@@ -998,7 +998,7 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column prop="reason" label="变更原因" min-width="220" show-overflow-tooltip />
             <el-table-column prop="actionDisabledReason" label="动作限制" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="190">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button
                   v-if="orderChangeAllowed(row, 'UPDATE')"
@@ -1021,17 +1021,24 @@ onMounted(loadRecord)
                 >
                   提交
                 </el-button>
-                <el-button
-                  v-if="orderChangeAllowed(row, 'CANCEL')"
-                  :data-test="`cancel-sales-order-change-${row.id}`"
-                  size="small"
-                  text
-                  type="danger"
-                  :disabled="actionLoading"
-                  @click="cancelOrderChange(row)"
-                >
-                  取消变更
-                </el-button>
+                <el-dropdown trigger="click" class="table-actions-more" v-if="(orderChangeAllowed(row, 'CANCEL'))">
+                  <el-button size="small" text>更多</el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu class="table-actions-more-menu">
+                      <el-button
+                        v-if="orderChangeAllowed(row, 'CANCEL')"
+                        :data-test="`cancel-sales-order-change-${row.id}`"
+                        size="small"
+                        text
+                        type="danger"
+                        :disabled="actionLoading"
+                        @click="cancelOrderChange(row)"
+                      >
+                        取消变更
+                      </el-button>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
               </template>
             </el-table-column>
           </el-table>
@@ -1064,7 +1071,7 @@ onMounted(loadRecord)
                 {{ formatSalesDateTime(row.postedAt) }}
               </template>
             </el-table-column>
-            <el-table-column v-if="canViewShipment" label="操作" width="90">
+            <el-table-column v-if="canViewShipment" label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-sales-shipment-summary" @click="viewShipment(row.id)">
                   详情

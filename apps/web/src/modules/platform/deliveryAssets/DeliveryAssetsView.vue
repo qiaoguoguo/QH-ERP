@@ -4,6 +4,7 @@ import { platformGovernanceApi, type DeliveryAssetRecord } from '../../../shared
 import { formatPlatformDateTime, platformErrorMessage } from '../platformPageHelpers'
 import {
   deliveryAssetActionLabel,
+  deliveryAssetObjectTypeLabel,
   deliveryAssetStatusLabel,
   deliveryAssetStatusTagType,
   demoDataStatusLabel,
@@ -115,7 +116,9 @@ onMounted(() => {
           <el-table :data="printTemplates" empty-text="暂无固定打印模板" stripe>
             <el-table-column prop="templateCode" label="模板代码" min-width="220" show-overflow-tooltip />
             <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="objectType" label="对象类型" min-width="160" show-overflow-tooltip />
+            <el-table-column label="对象类型" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ deliveryAssetObjectTypeLabel(row.objectType) }}</template>
+            </el-table-column>
             <el-table-column prop="templateVersion" label="版本" width="90" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
@@ -132,7 +135,9 @@ onMounted(() => {
           <el-table :data="historyImportAdapters" empty-text="暂无历史导入适配器" stripe>
             <el-table-column prop="code" label="适配器代码" min-width="220" show-overflow-tooltip />
             <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="targetObjectType" label="对象类型" width="130" show-overflow-tooltip />
+            <el-table-column label="对象类型" width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ deliveryAssetObjectTypeLabel(row.targetObjectType) }}</template>
+            </el-table-column>
             <el-table-column prop="version" label="版本" width="90" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
@@ -149,7 +154,9 @@ onMounted(() => {
           <el-table :data="dataRepairAdapters" empty-text="暂无数据修复适配器" stripe>
             <el-table-column prop="code" label="适配器代码" min-width="220" show-overflow-tooltip />
             <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="targetObjectType" label="对象类型" width="130" show-overflow-tooltip />
+            <el-table-column label="对象类型" width="130" show-overflow-tooltip>
+              <template #default="{ row }">{{ deliveryAssetObjectTypeLabel(row.targetObjectType) }}</template>
+            </el-table-column>
             <el-table-column prop="version" label="版本" width="90" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
@@ -166,7 +173,9 @@ onMounted(() => {
           <el-table :data="batchTools" empty-text="暂无批量工具" stripe>
             <el-table-column prop="code" label="工具代码" min-width="220" show-overflow-tooltip />
             <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="targetObjectType" label="对象类型" min-width="140" show-overflow-tooltip />
+            <el-table-column label="对象类型" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ deliveryAssetObjectTypeLabel(row.targetObjectType) }}</template>
+            </el-table-column>
             <el-table-column label="动作" width="120" show-overflow-tooltip>
               <template #default="{ row }">{{ deliveryAssetActionLabel(row.actionCode) }}</template>
             </el-table-column>

@@ -536,7 +536,7 @@ onMounted(() => {
         <el-table-column label="更新时间" min-width="150">
           <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="250">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-unit-conversion" @click="openDetail(row)">详情</el-button>
             <el-button
@@ -548,29 +548,36 @@ onMounted(() => {
             >
               编辑
             </el-button>
-            <el-button size="small" text data-test="preview-unit-conversion" @click="openPreview(row)">换算预览</el-button>
-            <el-button
-              v-if="canEnable && row.status === 'DISABLED'"
-              size="small"
-              text
-              type="success"
-              :disabled="actionLoading"
-              data-test="enable-unit-conversion"
-              @click="enableRecord(row)"
-            >
-              启用
-            </el-button>
-            <el-button
-              v-if="canDisable && row.status === 'ENABLED'"
-              size="small"
-              text
-              type="danger"
-              :disabled="actionLoading"
-              data-test="disable-unit-conversion"
-              @click="disableRecord(row)"
-            >
-              停用
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button size="small" text data-test="preview-unit-conversion" @click="openPreview(row)">换算预览</el-button>
+                  <el-button
+                    v-if="canEnable && row.status === 'DISABLED'"
+                    size="small"
+                    text
+                    type="success"
+                    :disabled="actionLoading"
+                    data-test="enable-unit-conversion"
+                    @click="enableRecord(row)"
+                  >
+                    启用
+                  </el-button>
+                  <el-button
+                    v-if="canDisable && row.status === 'ENABLED'"
+                    size="small"
+                    text
+                    type="danger"
+                    :disabled="actionLoading"
+                    data-test="disable-unit-conversion"
+                    @click="disableRecord(row)"
+                  >
+                    停用
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

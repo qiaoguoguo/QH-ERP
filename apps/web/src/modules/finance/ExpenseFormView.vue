@@ -314,7 +314,7 @@ onMounted(loadData)
             <el-table-column prop="supplierName" label="供应商" min-width="150" show-overflow-tooltip />
             <el-table-column label="业务日期" min-width="110"><template #default="{ row }">{{ formatFinanceDate(row.businessDate) }}</template></el-table-column>
             <el-table-column label="净可用金额" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.availableAmount) }}</template></el-table-column>
-            <el-table-column label="操作" min-width="90">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button data-test="select-expense-source" text :type="selectedSource?.sourceNo === row.sourceNo ? 'primary' : undefined" @click="selectSource(row)">
                   {{ selectedSource?.sourceNo === row.sourceNo ? '已选' : '选择' }}

@@ -350,7 +350,7 @@ onMounted(loadPools)
             <el-table-column label="项目/公共" min-width="130"><template #default="{ row }">{{ ownershipTypeText(row.ownershipType) }} {{ row.projectName ?? '' }}</template></el-table-column>
             <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ settlementStatusText(row.status) }}</template></el-table-column>
             <el-table-column label="受限原因" min-width="130"><template #default="{ row }">{{ row.restrictedReason ?? '无' }}</template></el-table-column>
-            <el-table-column label="操作" min-width="100">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button data-test="select-settlement-fund" size="small" text :type="selectedFund?.id === row.id ? 'primary' : undefined" @click="selectFund(row)">
                   {{ selectedFund?.id === row.id ? '已选' : '选择' }}
@@ -390,7 +390,7 @@ onMounted(loadPools)
             </el-table-column>
             <el-table-column label="状态" min-width="100"><template #default="{ row }">{{ settlementStatusText(row.status) }}</template></el-table-column>
             <el-table-column label="受限原因" min-width="130"><template #default="{ row }">{{ row.restrictedReason ?? '无' }}</template></el-table-column>
-            <el-table-column label="操作" min-width="100">
+            <el-table-column label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button data-test="select-settlement-target" size="small" text :type="isTargetSelected(row) ? 'primary' : undefined" @click="selectTarget(row)">
                   {{ isTargetSelected(row) ? '已选' : '选择' }}

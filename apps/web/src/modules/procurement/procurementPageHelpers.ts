@@ -291,7 +291,7 @@ export function procurementRequisitionStatusLabel(
 ): string {
   const code = normalizeStatusCode(status)
   const displayName = String(statusName ?? '').trim()
-  if (displayName && displayName !== code && !isRawStatusCode(displayName)) {
+  if (displayName && displayName !== code && hasChineseText(displayName)) {
     return displayName
   }
   if (!code) {
@@ -671,10 +671,6 @@ function isZeroDecimal(value: string): boolean {
 
 function normalizeStatusCode(value: unknown): string {
   return String(value ?? '').trim().toUpperCase()
-}
-
-function isRawStatusCode(value: string): boolean {
-  return /^[A-Z][A-Z0-9_]*$/.test(value)
 }
 
 export function normalizeOptionalId(value: ResourceId | ''): ResourceId | undefined {

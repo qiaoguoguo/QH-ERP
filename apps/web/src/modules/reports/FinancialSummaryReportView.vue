@@ -11,16 +11,17 @@ import ReportTracePanel from './ReportTracePanel.vue'
 import {
   canOpenTrace,
   displayValue,
+  operatingFinanceLiveAnalysisMode,
   reportErrorMessage,
   snapshotUnsupportedMessage,
   statusText,
   traceUnavailableText,
 } from './operatingFinanceReportHelpers'
 
-const filters = reactive<Record<string, string>>({ periodCode: '', analysisMode: 'LIVE', finalityStatus: '' })
+const filters = reactive<Record<string, string>>({ periodCode: '', analysisMode: operatingFinanceLiveAnalysisMode, finalityStatus: '' })
 const fields: ReportFilterField[] = [
   { key: 'periodCode', label: '期间', name: 'report-period-code', placeholder: '例如 2026-07' },
-  { key: 'analysisMode', label: '口径模式', name: 'report-analysis-mode', placeholder: 'LIVE' },
+  { key: 'analysisMode', label: '口径模式', name: 'report-analysis-mode', placeholder: '实时经营口径' },
   { key: 'finalityStatus', label: '定稿状态', name: 'report-finality-status' },
 ]
 const loading = ref(false)
@@ -70,7 +71,7 @@ async function loadSummary() {
     loading.value = false
   }
 }
-function reset() { Object.assign(filters, { periodCode: '', analysisMode: 'LIVE', finalityStatus: '' }); void loadSummary() }
+function reset() { Object.assign(filters, { periodCode: '', analysisMode: operatingFinanceLiveAnalysisMode, finalityStatus: '' }); void loadSummary() }
 async function openTrace() {
   const traceKey = record.value?.traceKey
   if (!record.value || !canOpenTrace(traceKey, record.value.restrictedReason)) {
@@ -125,7 +126,9 @@ onMounted(() => { void loadSummary() })
       <ReportMetricStrip :metrics="metrics" />
       <div data-test="report-table-scroll" class="report-table-scroll">
         <el-table :data="balanceRows" empty-text="暂无类别余额" stripe>
-          <el-table-column prop="category" label="分类" min-width="180" fixed />
+          <el-table-column label="分类" min-width="180" fixed>
+            <template #default="{ row }">{{ row.category }}</template>
+          </el-table-column>
           <el-table-column label="金额" min-width="160" align="right">
             <template #default="{ row }"><span class="numeric-cell">{{ displayValue(row.amount) }}</span></template>
           </el-table-column>

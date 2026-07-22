@@ -2,8 +2,8 @@ import type { QualityInspectionStatus } from '../../shared/api/qualityInventoryS
 import { inventorySourceTypeLabel } from '../inventory/inventoryPageHelpers'
 
 const inspectionStatusLabels: Record<QualityInspectionStatus | string, string> = {
-  PENDING: '待处理',
-  COMPLETED: '已处理',
+  PENDING: '待检验',
+  COMPLETED: '已完成',
 }
 
 function normalizedDisplayText(value: unknown): string {

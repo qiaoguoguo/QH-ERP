@@ -117,6 +117,30 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
   const select = wrapper.findAllComponents({ name: 'ElSelect' })[index] as VueWrapper | undefined
   expect(select?.exists()).toBe(true)
@@ -147,6 +171,7 @@ async function mountList(permissions = [
   await router.push('/procurement/receipts')
   await router.isReady()
   const wrapper = mount(PurchaseReceiptListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -177,6 +202,7 @@ describe('采购入库列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -281,7 +307,8 @@ describe('采购入库列表页', () => {
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(2)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '过账')).toHaveLength(1)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('post-purchase-receipt')).toBeTruthy()
 
     await wrapper.find('[data-test="view-purchase-receipt"]').trigger('click')
     await flushPromises()
@@ -313,8 +340,7 @@ describe('采购入库列表页', () => {
   it('过账动作成功后刷新列表，失败时显示错误', async () => {
     const { wrapper } = await mountList()
 
-    await wrapper.find('[data-test="post-purchase-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'post-purchase-receipt')
     expect(procurementApiMock.receipts.post).toHaveBeenCalledWith(700, expect.objectContaining({
       version: 21,
       idempotencyKey: expect.any(String),
@@ -323,8 +349,7 @@ describe('采购入库列表页', () => {
     expect(procurementApiMock.receipts.list).toHaveBeenCalledTimes(2)
 
     procurementApiMock.receipts.post.mockRejectedValueOnce(new Error('采购入库已过账，不能重复过账'))
-    await wrapper.find('[data-test="post-purchase-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'post-purchase-receipt')
 
     expect(wrapper.text()).toContain('采购入库已过账，不能重复过账')
     expect(procurementApiMock.receipts.list).toHaveBeenCalledTimes(3)

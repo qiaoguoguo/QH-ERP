@@ -1088,7 +1088,7 @@ onMounted(() => {
       </el-button>
     </template>
     <template v-if="isList" #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="inventory-controlled-keyword" clearable placeholder="单号或原因" />
         </el-form-item>
@@ -1142,59 +1142,66 @@ onMounted(() => {
             {{ formattedDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="260">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button size="small" text @click="routeToDetail(row)">详情</el-button>
             <el-button v-if="actionVisible(row, 'UPDATE')" size="small" text @click="routeToEdit(row)">编辑</el-button>
-            <el-button
-              v-if="actionVisible(row, 'POST')"
-              size="small"
-              text
-              type="success"
-              :loading="actionLoading"
-              @click="runAction(row, 'POST')"
-            >
-              {{ inventoryActionLabel('POST') }}
-            </el-button>
-            <el-button
-              v-if="actionVisible(row, 'START')"
-              size="small"
-              text
-              type="primary"
-              :loading="actionLoading"
-              @click="runAction(row, 'START')"
-            >
-              {{ inventoryActionLabel('START') }}
-            </el-button>
-            <el-button
-              v-if="actionVisible(row, 'SUBMIT_APPROVAL')"
-              size="small"
-              text
-              type="primary"
-              :loading="actionLoading"
-              @click="runAction(row, 'SUBMIT_APPROVAL')"
-            >
-              {{ inventoryActionLabel('SUBMIT_APPROVAL') }}
-            </el-button>
-            <el-button
-              v-if="actionVisible(row, 'WITHDRAW')"
-              size="small"
-              text
-              :loading="actionLoading"
-              @click="runAction(row, 'WITHDRAW')"
-            >
-              {{ inventoryActionLabel('WITHDRAW') }}
-            </el-button>
-            <el-button
-              v-if="actionVisible(row, 'CANCEL')"
-              size="small"
-              text
-              type="danger"
-              :loading="actionLoading"
-              @click="runAction(row, 'CANCEL')"
-            >
-              {{ inventoryActionLabel('CANCEL') }}
-            </el-button>
+            <el-dropdown trigger="click" class="table-actions-more" v-if="(actionVisible(row, 'POST')) || (actionVisible(row, 'START')) || (actionVisible(row, 'SUBMIT_APPROVAL')) || (actionVisible(row, 'WITHDRAW')) || (actionVisible(row, 'CANCEL'))">
+              <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
+                  <el-button
+                    v-if="actionVisible(row, 'POST')"
+                    size="small"
+                    text
+                    type="success"
+                    :loading="actionLoading"
+                    @click="runAction(row, 'POST')"
+                  >
+                    {{ inventoryActionLabel('POST') }}
+                  </el-button>
+                  <el-button
+                    v-if="actionVisible(row, 'START')"
+                    size="small"
+                    text
+                    type="primary"
+                    :loading="actionLoading"
+                    @click="runAction(row, 'START')"
+                  >
+                    {{ inventoryActionLabel('START') }}
+                  </el-button>
+                  <el-button
+                    v-if="actionVisible(row, 'SUBMIT_APPROVAL')"
+                    size="small"
+                    text
+                    type="primary"
+                    :loading="actionLoading"
+                    @click="runAction(row, 'SUBMIT_APPROVAL')"
+                  >
+                    {{ inventoryActionLabel('SUBMIT_APPROVAL') }}
+                  </el-button>
+                  <el-button
+                    v-if="actionVisible(row, 'WITHDRAW')"
+                    size="small"
+                    text
+                    :loading="actionLoading"
+                    @click="runAction(row, 'WITHDRAW')"
+                  >
+                    {{ inventoryActionLabel('WITHDRAW') }}
+                  </el-button>
+                  <el-button
+                    v-if="actionVisible(row, 'CANCEL')"
+                    size="small"
+                    text
+                    type="danger"
+                    :loading="actionLoading"
+                    @click="runAction(row, 'CANCEL')"
+                  >
+                    {{ inventoryActionLabel('CANCEL') }}
+                  </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

@@ -1,7 +1,7 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import type { PageResult } from '../../../shared/api/accountPermissionApi'
 import type { MaterialRecord, PartnerRecord } from '../../../shared/api/masterDataApi'
@@ -263,6 +263,30 @@ function pageResult<T>(items: T[]): PageResult<T> {
   return { items, total: items.length, page: 1, pageSize: 10 }
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 async function updateComponentModel(wrapper: ReturnType<typeof mount>, dataTest: string, value: string | number) {
   const component = wrapper
     .findAllComponents({ name: 'BusinessReferenceSelect' })
@@ -297,6 +321,10 @@ async function expectReferenceLabels(wrapper: ReturnType<typeof mount>, dataTest
 }
 
 describe('025 销售报价页面', () => {
+  afterEach(() => {
+    document.body.innerHTML = ''
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
     salesFulfillmentApiMock.quotes.list.mockResolvedValue(pageResult([quoteSummary]))
@@ -344,7 +372,7 @@ describe('025 销售报价页面', () => {
       'sales:document:export',
     ])
     const router = await createTestRouter('/sales/quotes')
-    const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(SalesQuoteListView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
     expectStandardListPage(wrapper)
@@ -355,13 +383,13 @@ describe('025 销售报价页面', () => {
     expect(wrapper.text()).toContain('未税 1000')
     expect(wrapper.text()).toContain('含税 1130')
     expect(wrapper.text()).toContain('CNY')
-    expect(wrapper.find('[data-test="submit-sales-quote-9"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="cancel-sales-quote-9"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="convert-sales-quote-order-9"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="convert-sales-quote-contract-9"]').exists()).toBe(true)
+    await openMoreActions(wrapper)
+    expect(teleportedAction('submit-sales-quote-9')).toBeTruthy()
+    expect(teleportedAction('cancel-sales-quote-9')).toBeTruthy()
+    expect(teleportedAction('convert-sales-quote-order-9')).toBeTruthy()
+    expect(teleportedAction('convert-sales-quote-contract-9')).toBeTruthy()
 
-    await wrapper.find('[data-test="convert-sales-quote-order-9"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'convert-sales-quote-order-9')
     expect(salesFulfillmentApiMock.quotes.convertOrder).not.toHaveBeenCalled()
     expect(salesProjectApiMock.listOrderLinkCandidates).toHaveBeenCalledWith({
       customerId: 8,
@@ -379,8 +407,7 @@ describe('025 销售报价页面', () => {
       idempotencyKey: 'sales-doc-key',
     })
 
-    await wrapper.find('[data-test="convert-sales-quote-contract-9"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'convert-sales-quote-contract-9')
     await wrapper.find('[data-test="quote-convert-contract-type"]').setValue('SUPPLEMENT')
     await wrapper.find('[data-test="quote-convert-main-contract"]').setValue('20:55')
     await wrapper.find('[data-test="confirm-sales-quote-conversion"]').trigger('click')
@@ -416,7 +443,7 @@ describe('025 销售报价页面', () => {
       'sales:document:export',
     ])
     const router = await createTestRouter('/sales/quotes')
-    const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(SalesQuoteListView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
     const optionValues = wrapper.findAllComponents({ name: 'ElOption' }).map((option) => option.props('value'))
@@ -453,8 +480,7 @@ describe('025 销售报价页面', () => {
     const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
-    await wrapper.find('[data-test="convert-sales-quote-order-9"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'convert-sales-quote-order-9')
     expect(wrapper.text()).not.toContain('第25合同')
 
     await wrapper.find('[data-test="quote-convert-candidate-search"]').setValue('第25')
@@ -647,11 +673,10 @@ describe('025 销售报价页面', () => {
     }]))
     const pinia = setup(['sales:quote:view', 'sales:quote:convert'])
     const router = await createTestRouter('/sales/quotes')
-    const wrapper = mount(SalesQuoteListView, { global: { plugins: [pinia, router, ElementPlus] } })
+    const wrapper = mount(SalesQuoteListView, { attachTo: document.body, global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
 
-    await wrapper.find('[data-test="convert-sales-quote-order-9"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'convert-sales-quote-order-9')
 
     expect(salesFulfillmentApiMock.quotes.convertOrder).toHaveBeenCalledWith(9, {
       version: 3,

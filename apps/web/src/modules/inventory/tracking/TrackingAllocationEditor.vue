@@ -192,7 +192,7 @@ const validationMessages = computed(() => {
         </ul>
       </el-alert>
 
-      <el-table :data="rows" empty-text="暂无追踪分配" stripe>
+      <el-table class="table-scroll" :data="rows" empty-text="暂无追踪分配" stripe>
         <el-table-column v-if="trackingMethod === 'BATCH'" label="批次号" min-width="180">
           <template #default="{ row, $index }">
             <el-input
@@ -228,7 +228,7 @@ const validationMessages = computed(() => {
             {{ qualityStatusLabel(row.qualityStatus, row.qualityStatusName) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="88">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ $index }">
             <el-button size="small" text type="danger" :disabled="disabled" @click="removeRow($index)">
               删除

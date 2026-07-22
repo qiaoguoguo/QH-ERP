@@ -136,7 +136,7 @@ onMounted(loadRecords)
         <el-table-column label="含税金额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.totalAmount) }}</span></template></el-table-column>
         <el-table-column label="未结余额" min-width="120" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.unsettledAmount) }}</span></template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="160" show-overflow-tooltip />
-        <el-table-column label="操作" min-width="110">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text data-test="view-sales-invoice" @click="router.push({ name: 'finance-sales-invoice-detail', params: { id: row.id } })">详情</el-button>
           </template>

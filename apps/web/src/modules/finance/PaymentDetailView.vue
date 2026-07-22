@@ -11,6 +11,7 @@ import {
   financeMethodText,
   financePermissions,
   formatFinanceAmount,
+  settlementStatusText,
   voucherDraftStatusText,
 } from './financePageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -93,6 +94,10 @@ async function runPaymentAction(action: 'post' | 'cancel') {
   }
 }
 
+function prepaymentStatusText(status: string | null | undefined) {
+  return status ? settlementStatusText(status) : '未形成预付'
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -121,7 +126,7 @@ onMounted(loadRecord)
         <div><span>已核销金额</span><strong>{{ formatFinanceAmount(record.allocatedAmount ?? record.amount) }}</strong></div>
         <div><span>预付余额</span><strong>{{ formatFinanceAmount(record.availableAmount ?? '0.00') }}</strong></div>
         <div><span>多目标数</span><strong>{{ record.allocationTargetCount ?? record.allocations.length }}</strong></div>
-        <div><span>预付状态</span><strong>{{ record.prepaymentStatus ?? '未形成预付' }}</strong></div>
+        <div><span>预付状态</span><strong>{{ prepaymentStatusText(record.prepaymentStatus) }}</strong></div>
       </section>
 
       <dl class="detail-list">
@@ -142,13 +147,15 @@ onMounted(loadRecord)
 
       <section class="section-block">
         <div class="section-title">多目标核销明细</div>
-        <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
-          <el-table-column prop="payableNo" label="应付单号" min-width="170" show-overflow-tooltip />
-          <el-table-column prop="supplierName" label="供应商" min-width="160" show-overflow-tooltip />
-          <el-table-column label="核销金额" min-width="130" align="right">
-            <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
-          </el-table-column>
-        </el-table>
+        <div class="table-scroll">
+          <el-table :data="record.allocations" empty-text="暂无核销记录" stripe>
+            <el-table-column prop="payableNo" label="应付单号" min-width="170" show-overflow-tooltip />
+            <el-table-column prop="supplierName" label="供应商" min-width="160" show-overflow-tooltip />
+            <el-table-column label="核销金额" min-width="130" align="right">
+              <template #default="{ row }"><span class="numeric-cell">{{ formatFinanceAmount(row.allocatedAmount) }}</span></template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
       <section class="section-block">
         <div class="section-title">费用链接</div>

@@ -489,7 +489,7 @@ onMounted(loadRecord)
                 {{ formatProcurementDateTime(row.postedAt) }}
               </template>
             </el-table-column>
-            <el-table-column v-if="canViewReceipt" label="操作" width="90">
+            <el-table-column v-if="canViewReceipt" label="操作" fixed="right" width="184">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-purchase-receipt-summary" @click="viewReceipt(row.id)">
                   详情

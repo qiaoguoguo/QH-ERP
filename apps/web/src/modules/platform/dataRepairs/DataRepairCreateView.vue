@@ -284,7 +284,7 @@ onMounted(() => {
                 <el-table-column label="版本" width="90">
                   <template #default="{ row }">{{ row.version ?? '-' }}</template>
                 </el-table-column>
-                <el-table-column label="操作" width="100">
+                <el-table-column label="操作" fixed="right" width="184">
                   <template #default="{ row }">
                     <el-button
                       v-if="hasStableCandidateVersion(row)"

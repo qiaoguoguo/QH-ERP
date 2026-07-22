@@ -459,9 +459,17 @@ onMounted(() => {
         <el-table-column label="借方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.debitTotal) }}</template></el-table-column>
         <el-table-column label="贷方合计" min-width="120" align="right"><template #default="{ row }">{{ formatFinanceAmount(row.creditTotal) }}</template></el-table-column>
         <el-table-column prop="updatedAt" label="更新时间" min-width="160" />
-        <el-table-column label="操作" min-width="190">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button text @click="router.push({ name: 'finance-voucher-draft-detail', params: { id: row.id } })">详情</el-button>
+            <el-dropdown
+              v-if="(linkedGlVoucher(row) && canQueryGlVouchers) || (row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers)"
+              trigger="click"
+              class="table-actions-more"
+            >
+            <el-button size="small" text>更多</el-button>
+              <template #dropdown>
+                <el-dropdown-menu class="table-actions-more-menu">
             <el-button
               v-if="linkedGlVoucher(row) && canQueryGlVouchers"
               data-test="view-gl-voucher"
@@ -479,6 +487,9 @@ onMounted(() => {
             >
               生成正式凭证草稿
             </el-button>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>

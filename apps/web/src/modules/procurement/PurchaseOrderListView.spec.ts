@@ -170,6 +170,30 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openMoreActions(wrapper: VueWrapper, index = 0) {
+  const moreButtons = wrapper.findAll('button').filter((button) => button.text() === '更多')
+  expect(moreButtons.length).toBeGreaterThan(index)
+  await moreButtons[index].trigger('click')
+  await flushPromises()
+}
+
+function teleportedAction(testId: string) {
+  const actions = Array.from(document.body.querySelectorAll<HTMLElement>(`[data-test="${testId}"]`))
+  const visibleActions = actions.filter((action) => {
+    const popper = action.closest<HTMLElement>('.el-popper')
+    return !popper || (popper.getAttribute('aria-hidden') !== 'true' && popper.style.display !== 'none')
+  })
+  const action = visibleActions.at(-1) ?? actions.at(-1)
+  expect(action).not.toBeNull()
+  return action!
+}
+
+async function clickTeleportedAction(wrapper: VueWrapper, testId: string, moreIndex = 0) {
+  await openMoreActions(wrapper, moreIndex)
+  teleportedAction(testId).click()
+  await flushPromises()
+}
+
 async function setSelectValue(wrapper: VueWrapper, index: number, value: unknown) {
   const select = wrapper.findAllComponents({ name: 'ElSelect' })[index] as VueWrapper | undefined
   expect(select?.exists()).toBe(true)
@@ -212,6 +236,7 @@ async function mountList(permissions = [
   await router.push('/procurement/orders')
   await router.isReady()
   const wrapper = mount(PurchaseOrderListView, {
+    attachTo: document.body,
     global: {
       plugins: [pinia, router, ElementPlus],
     },
@@ -247,6 +272,7 @@ describe('采购订单列表页', () => {
   })
 
   afterEach(() => {
+    document.body.innerHTML = ''
     vi.unstubAllGlobals()
   })
 
@@ -446,13 +472,15 @@ describe('采购订单列表页', () => {
 
     expect(buttonsByText(wrapper, '详情')).toHaveLength(4)
     expect(buttonsByText(wrapper, '编辑')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '确认')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '取消')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '关闭')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '创建入库')).toHaveLength(1)
+    expect(buttonsByText(wrapper, '更多').length).toBeGreaterThan(0)
+    await openMoreActions(wrapper, 0)
+    expect(teleportedAction('confirm-purchase-order')).toBeTruthy()
+    expect(teleportedAction('cancel-purchase-order')).toBeTruthy()
+    await openMoreActions(wrapper, 1)
+    expect(teleportedAction('close-purchase-order')).toBeTruthy()
+    expect(teleportedAction('create-purchase-receipt')).toBeTruthy()
 
-    await wrapper.find('[data-test="create-purchase-receipt"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'create-purchase-receipt', 1)
     expect(router.currentRoute.value.name).toBe('procurement-receipt-create')
     expect(router.currentRoute.value.params.orderId).toBe('2')
   })
@@ -489,24 +517,21 @@ describe('采购订单列表页', () => {
   it('确认、取消和关闭动作成功后刷新列表，失败时显示错误', async () => {
     const { wrapper } = await mountList()
 
-    await wrapper.find('[data-test="confirm-purchase-order"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'confirm-purchase-order', 0)
     expect(procurementApiMock.orders.confirm).toHaveBeenCalledWith(1, expect.objectContaining({
       version: 11,
       idempotencyKey: expect.any(String),
     }))
     expect(procurementApiMock.orders.confirm.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
-    await wrapper.find('[data-test="cancel-purchase-order"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'cancel-purchase-order', 0)
     expect(procurementApiMock.orders.cancel).toHaveBeenCalledWith(1, expect.objectContaining({
       version: 11,
       idempotencyKey: expect.any(String),
     }))
     expect(procurementApiMock.orders.cancel.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
-    await wrapper.find('[data-test="close-purchase-order"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'close-purchase-order', 1)
     expect(procurementApiMock.orders.close).toHaveBeenCalledWith(3, expect.objectContaining({
       version: 13,
       idempotencyKey: expect.any(String),
@@ -514,8 +539,7 @@ describe('采购订单列表页', () => {
     expect(procurementApiMock.orders.close.mock.calls[0][1].idempotencyKey).not.toHaveLength(0)
 
     procurementApiMock.orders.close.mockRejectedValueOnce(new Error('采购订单状态不允许关闭'))
-    await wrapper.find('[data-test="close-purchase-order"]').trigger('click')
-    await flushPromises()
+    await clickTeleportedAction(wrapper, 'close-purchase-order', 1)
 
     expect(wrapper.text()).toContain('采购订单状态不允许关闭')
     expect(procurementApiMock.orders.list).toHaveBeenCalledTimes(5)

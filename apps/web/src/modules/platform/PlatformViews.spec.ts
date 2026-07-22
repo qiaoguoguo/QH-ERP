@@ -982,7 +982,7 @@ describe('022 平台页面', () => {
     })
     expect(wrapper.text()).toContain('合同附件.pdf')
     expect(wrapper.text()).toContain('2.0 KiB')
-    expect(wrapper.text()).toContain('application/pdf')
+    expect(wrapper.text()).toContain('PDF 文件')
     expect(wrapper.text()).toContain('管理员')
     expect(wrapper.text()).toContain('最多 20 个附件')
     expect(wrapper.find('[data-test="download-attachment"]').exists()).toBe(true)

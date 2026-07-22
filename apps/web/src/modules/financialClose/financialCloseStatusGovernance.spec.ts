@@ -19,7 +19,7 @@ const financialCloseVueSources = import.meta.glob<string>('./**/*.vue', {
 })
 
 const inlineQueryFormPattern = /<el-form\b[^>]*class="query-form"[^>]*\binline\b/g
-const rightFixedActionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")(?=[^>]*fixed="right")[^>]*>/g
+const actionColumnPattern = /<el-table-column\b(?=[^>]*label="操作")[^>]*>/g
 
 function fileLabel(key: string): string {
   return `apps/web/src/modules/financialClose/${key.replace(/^\.\//, '')}`
@@ -50,8 +50,15 @@ describe('财务关账页面状态语言治理', () => {
     expect(vuePatternMatches(inlineQueryFormPattern)).toEqual([])
   })
 
-  it('财务关账宽表操作列通过表格内部横向滚动可达，不保留右固定列遮挡风险', () => {
-    expect(vuePatternMatches(rightFixedActionColumnPattern)).toEqual([])
+  it('财务关账操作列统一固定在右侧、宽度 184 且不保留 min-width', () => {
+    const actionColumns = vuePatternMatches(actionColumnPattern)
+
+    expect(actionColumns.length).toBeGreaterThan(0)
+    expect(actionColumns.filter((column) => (
+      !column.includes('fixed="right"')
+      || !column.includes('width="184"')
+      || column.includes('min-width')
+    ))).toEqual([])
   })
 
   it('关账、银行、税务和来源状态使用中文语义与未知兜底', () => {

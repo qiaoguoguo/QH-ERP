@@ -325,8 +325,7 @@ watch(() => [props.modelValue, props.inspectionId], () => {
           :tracking-method="detailTrackingMethod"
           :allocations="detail.trackingAllocations ?? []"
         />
-        <el-table
-          v-if="trackingRows.length > 1"
+        <el-table class="table-scroll" v-if="trackingRows.length > 1"
           :data="trackingRows"
           empty-text="暂无待检追踪身份"
           stripe

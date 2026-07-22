@@ -108,6 +108,22 @@ function formatFileSize(size: number | null | undefined): string {
   return `${(value / 1024 / 1024).toFixed(1)} MiB`
 }
 
+function attachmentContentTypeLabel(value: string | null | undefined): string {
+  const labels: Record<string, string> = {
+    'application/pdf': 'PDF 文件',
+    'image/png': 'PNG 图片',
+    'image/jpeg': 'JPEG 图片',
+    'text/plain': '文本文件',
+    'text/csv': 'CSV 文件',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'Word 文档',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'Excel 工作簿',
+  }
+  if (!value) {
+    return '-'
+  }
+  return labels[value] ?? '其他文件类型'
+}
+
 function canDownload(record: AttachmentRecord): boolean {
   return record.availableActions?.includes('DOWNLOAD') ?? false
 }
@@ -173,31 +189,35 @@ onMounted(() => {
         上传附件
       </el-button>
     </div>
-    <el-table :data="records" :empty-text="loading ? '加载中' : '暂无附件'" stripe>
-      <el-table-column prop="fileName" label="文件名" min-width="180" show-overflow-tooltip />
-      <el-table-column label="大小" width="90">
-        <template #default="{ row }">{{ formatFileSize(row.fileSize) }}</template>
-      </el-table-column>
-      <el-table-column prop="contentType" label="类型" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="uploadedByName" label="上传人" width="110" show-overflow-tooltip />
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'AVAILABLE' ? 'success' : 'info'" size="small">
-            {{ row.status === 'AVAILABLE' ? '可用' : '已删除' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
-      <el-table-column label="上传时间" width="160">
-        <template #default="{ row }">{{ formatPlatformDateTime(row.uploadedAt) }}</template>
-      </el-table-column>
-      <el-table-column label="操作" min-width="160">
-        <template #default="{ row }">
-          <el-button v-if="canDownload(row)" data-test="download-attachment" size="small" text @click="downloadAttachment(row)">下载</el-button>
-          <el-button v-if="canDelete(row)" data-test="delete-attachment" size="small" text type="danger" @click="deleteAttachment(row)">删除</el-button>
-          <el-tag v-if="row.restricted" type="warning" size="small">{{ row.restrictedMessage || '受限' }}</el-tag>
-        </template>
-      </el-table-column>
-    </el-table>
+    <div class="table-scroll">
+      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无附件'" stripe>
+        <el-table-column prop="fileName" label="文件名" min-width="180" show-overflow-tooltip />
+        <el-table-column label="大小" width="90">
+          <template #default="{ row }">{{ formatFileSize(row.fileSize) }}</template>
+        </el-table-column>
+        <el-table-column label="类型" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ attachmentContentTypeLabel(row.contentType) }}</template>
+        </el-table-column>
+        <el-table-column prop="uploadedByName" label="上传人" width="110" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'AVAILABLE' ? 'success' : 'info'" size="small">
+              {{ row.status === 'AVAILABLE' ? '可用' : '已删除' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
+        <el-table-column label="上传时间" width="160">
+          <template #default="{ row }">{{ formatPlatformDateTime(row.uploadedAt) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" width="184">
+          <template #default="{ row }">
+            <el-button v-if="canDownload(row)" data-test="download-attachment" size="small" text @click="downloadAttachment(row)">下载</el-button>
+            <el-button v-if="canDelete(row)" data-test="delete-attachment" size="small" text type="danger" @click="deleteAttachment(row)">删除</el-button>
+            <el-tag v-if="row.restricted" type="warning" size="small">{{ row.restrictedMessage || '受限' }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
   </section>
 </template>

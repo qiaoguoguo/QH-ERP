@@ -117,7 +117,7 @@ onMounted(loadRecords)
     description="待检库存经质量确认转为合格、不合格或冻结，合格库存才参与出库和领料。"
   >
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -146,8 +146,8 @@ onMounted(loadRecords)
             clearable
             placeholder="全部状态"
           >
-            <el-option label="待处理" value="PENDING" />
-            <el-option label="已处理" value="COMPLETED" />
+            <el-option label="待检验" value="PENDING" />
+            <el-option label="已完成" value="COMPLETED" />
           </el-select>
         </el-form-item>
         <el-form-item label="开始日期">
@@ -241,7 +241,7 @@ onMounted(loadRecords)
             {{ formatDateTime(row.createdAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button
               v-if="canProcess"
