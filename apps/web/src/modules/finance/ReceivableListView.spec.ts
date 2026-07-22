@@ -176,9 +176,12 @@ describe('应收台账列表页', () => {
     expect(teleportedAction('close-receivable')).toBeTruthy()
     expect(teleportedAction('create-receipt')).toBeTruthy()
 
-    await clickTeleportedAction(wrapper, 'create-receipt', 1)
+    const createReceiptActions = Array.from(document.body.querySelectorAll<HTMLElement>('[data-test="create-receipt"]'))
+    expect(createReceiptActions).toHaveLength(2)
+    createReceiptActions[0]?.click()
+    await flushPromises()
     expect(router.currentRoute.value.name).toBe('finance-receipt-create')
-    expect(router.currentRoute.value.params.id).toBe('3')
+    expect(router.currentRoute.value.params.id).toBe('2')
 
     await router.push('/finance/receivables')
     await flushPromises()

@@ -7,7 +7,9 @@ export type StatusLanguageRiskKind =
   | 'label-map-original-fallback'
   | 'return-original-fallback'
   | 'service-name-original-fallback'
+  | 'template-visible-text-code'
   | 'template-raw-fallback'
+  | 'user-visible-action-code-output'
   | 'user-visible-attribute-code'
 
 export interface StatusLanguageRisk {
@@ -70,7 +72,9 @@ const emptySummary: Record<StatusLanguageRiskKind, number> = {
   'label-map-original-fallback': 0,
   'return-original-fallback': 0,
   'service-name-original-fallback': 0,
+  'template-visible-text-code': 0,
   'template-raw-fallback': 0,
+  'user-visible-action-code-output': 0,
   'user-visible-attribute-code': 0,
 }
 
@@ -171,6 +175,40 @@ const semanticFieldPattern = /(?:status|type|stage|mode|severity|category|result
 const semanticBindingAttributePattern = /\b(?:v-model(?::[\w-]+)?|:model-value|model-value|prop|property|name|key|field)\s*=\s*["'][^"']*(?:status|source[-.]?type|source[-.]?variant|stage|mode|severity|category|result|reason|basis|direction|approval|finality|reconciliation|validation|match|freshness|completeness|quantity[-.]?basis|reason[-.]?code|analysis[-.]?mode|prepayment[-.]?status|advance[-.]?receipt[-.]?status|taxpayer[-.]?type)[^"']*["']/i
 const userVisibleAttributePattern = /(?:placeholder|label|title|description|empty-text|content|aria-label)\s*=\s*["']([^"']*\b[A-Z][A-Z0-9_]{2,}\b[^"']*)["']/gi
 const enumLikeTokenPattern = /\b[A-Z][A-Z0-9_]{2,}\b/
+const enumLikeTokenGlobalPattern = /\b[A-Z][A-Z0-9_]{2,}\b/g
+const templateSemanticTokens = new Set([
+  'ACTIVE',
+  'ADJUSTED',
+  'APPROVED',
+  'ARCHIVED',
+  'CANCELLED',
+  'CLOSED',
+  'COMPLETED',
+  'CONFIRMED',
+  'CURRENT',
+  'DEFAULT',
+  'DISABLED',
+  'DRAFT',
+  'EFFECTIVE',
+  'ENABLED',
+  'EXCLUDED',
+  'EXPIRED',
+  'FAILED',
+  'FROZEN',
+  'IN_PROGRESS',
+  'LIVE',
+  'LOCKED',
+  'OPEN',
+  'PARTIALLY_RECEIVED',
+  'POSTED',
+  'READY',
+  'REJECTED',
+  'RELEASED',
+  'RESTRICTED',
+  'STALE',
+  'SUBMITTED',
+  'UNPRICED',
+])
 
 function leafField(field: string): string {
   return field.trim().replace(/[^\w.$].*$/, '').split('.').at(-1) ?? field.trim()
@@ -202,6 +240,71 @@ function hasSemanticContext(text: string): boolean {
 
 function hasSemanticBindingContext(tagText: string): boolean {
   return semanticBindingAttributePattern.test(tagText)
+}
+
+function templateRanges(sourceText: string): Array<{ start: number; text: string }> {
+  const visibleText = sourceText.replace(/<(?:script|style)\b[\s\S]*?<\/(?:script|style)>/g, (match) => ' '.repeat(match.length))
+  return [{ start: 0, text: visibleText }]
+}
+
+function visibleTemplateTokens(text: string): string[] {
+  const tokens = Array.from(text.matchAll(enumLikeTokenGlobalPattern)).map((match) => match[0])
+  return Array.from(new Set(tokens.filter((token) => templateSemanticTokens.has(token))))
+}
+
+function collectTemplateVisibleTextRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
+  if (!sourceKey.endsWith('.vue')) {
+    return []
+  }
+  const risks: StatusLanguageRisk[] = []
+  for (const range of templateRanges(sourceText)) {
+    for (const match of range.text.matchAll(/>([^<{}]+)</g)) {
+      const visibleText = (match[1] ?? '').replace(/\s+/g, ' ').trim()
+      if (!visibleText) {
+        continue
+      }
+      const tokens = visibleTemplateTokens(visibleText)
+      if (tokens.length === 0) {
+        continue
+      }
+      risks.push(risk(
+        'template-visible-text-code',
+        sourceKey,
+        sourceText,
+        range.start + (match.index ?? 0) + 1,
+        tokens.join(', '),
+        '模板普通可见文本节点暴露英文状态、阶段、类型或动作语义',
+      ))
+    }
+  }
+  return risks
+}
+
+function collectVisibleActionCodeOutputRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
+  if (!sourceKey.endsWith('.vue')) {
+    return []
+  }
+  const risks: StatusLanguageRisk[] = []
+  for (const range of templateRanges(sourceText)) {
+    for (const match of range.text.matchAll(/{{\s*([^{}]+?)\s*}}/g)) {
+      const expression = match[1] ?? ''
+      if (expressionUsesDisplayHelper(expression)) {
+        continue
+      }
+      const actionFieldMatches = Array.from(expression.matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.(?:allowedActions|availableActions))/g))
+      actionFieldMatches.forEach((fieldMatch) => {
+        risks.push(risk(
+          'user-visible-action-code-output',
+          sourceKey,
+          sourceText,
+          range.start + (match.index ?? 0),
+          fieldMatch[1] ?? 'unknown',
+          '模板用户可见输出直接插值或 join allowedActions/availableActions 原始动作码',
+        ))
+      })
+    }
+  }
+  return risks
 }
 
 function collectUserVisibleAttributeRisks(sourceKey: string, sourceText: string): StatusLanguageRisk[] {
@@ -330,6 +433,8 @@ function collectStatusRisks(sourceKey: string, sourceText: string): StatusLangua
     ...directStatusColumns,
     ...directTemplateOutputs,
     ...collectUserVisibleAttributeRisks(sourceKey, sourceText),
+    ...collectTemplateVisibleTextRisks(sourceKey, sourceText),
+    ...collectVisibleActionCodeOutputRisks(sourceKey, sourceText),
     ...collectFieldConfigPlaceholderRisks(sourceKey, sourceText),
     ...collectTemplateFallbackRisks(sourceKey, sourceText),
     ...serviceNameFallbacks,
@@ -361,13 +466,7 @@ export function validateStatusLanguageWhitelist(entries: StatusLanguageWhitelist
   })
 }
 
-export function scanStatusLanguage(): StatusLanguageScanResult {
-  const sources = {
-    ...moduleVueSources,
-    ...moduleTsSources,
-    ...sharedVueSources,
-    ...sharedTsSources,
-  }
+export function scanStatusLanguageSources(sources: RawSourceMap): StatusLanguageScanResult {
   const entries = Object.entries(sources)
     .filter(([key]) => !key.endsWith('.spec.ts') && !key.endsWith('.d.ts'))
     .sort(([left], [right]) => sourceLabel(left).localeCompare(sourceLabel(right)))
@@ -385,6 +484,15 @@ export function scanStatusLanguage(): StatusLanguageScanResult {
     whitelist: statusLanguageWhitelist,
     whitelistErrors: validateStatusLanguageWhitelist(statusLanguageWhitelist),
   }
+}
+
+export function scanStatusLanguage(): StatusLanguageScanResult {
+  return scanStatusLanguageSources({
+    ...moduleVueSources,
+    ...moduleTsSources,
+    ...sharedVueSources,
+    ...sharedTsSources,
+  })
 }
 
 export function formatStatusRiskList(risks: StatusLanguageRisk[], limit = 40): string {

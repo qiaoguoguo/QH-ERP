@@ -467,26 +467,26 @@ onMounted(() => {
               trigger="click"
               class="table-actions-more"
             >
-            <el-button size="small" text>更多</el-button>
+              <el-button size="small" text>更多</el-button>
               <template #dropdown>
                 <el-dropdown-menu class="table-actions-more-menu">
-            <el-button
-              v-if="linkedGlVoucher(row) && canQueryGlVouchers"
-              data-test="view-gl-voucher"
-              text
-              @click="viewGlVoucher(row)"
-            >
-              查看正式凭证
-            </el-button>
-            <el-button
-              v-else-if="row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers"
-              data-test="convert-gl-voucher"
-              text
-              :loading="glActionLoadingId === row.id"
-              @click="convertToGlVoucher(row)"
-            >
-              生成正式凭证草稿
-            </el-button>
+                  <el-button
+                    v-if="linkedGlVoucher(row) && canQueryGlVouchers"
+                    data-test="view-gl-voucher"
+                    text
+                    @click="viewGlVoucher(row)"
+                  >
+                    查看正式凭证
+                  </el-button>
+                  <el-button
+                    v-else-if="row.status === 'READY' && canConvertGlVoucher && canQueryGlVouchers"
+                    data-test="convert-gl-voucher"
+                    text
+                    :loading="glActionLoadingId === row.id"
+                    @click="convertToGlVoucher(row)"
+                  >
+                    生成正式凭证草稿
+                  </el-button>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>

@@ -51,6 +51,7 @@ export type OperationColumnViolationKind =
   | 'missing-more-dropdown'
   | 'min-width-disallowed'
   | 'too-many-direct-actions'
+  | 'unexpected-more-direct-actions'
   | 'wrong-width'
 
 export interface OperationColumnOccurrence extends SurfaceOccurrence {
@@ -67,6 +68,12 @@ export interface OperationColumnViolation {
   line: number
   evidence: string
   detail: string
+}
+
+export interface OperationMoreDropdownDirectActionException {
+  sourceFile: string
+  directActionCount: number
+  reason: string
 }
 
 export interface PageSurfaceInventory {
@@ -118,6 +125,14 @@ export const paginationRouteExemptions: Array<{ path: string; reason: string }> 
   { path: '/gl/trial-balance', reason: '阶段说明记录：试算结果为计算型宽表，无分页接口' },
   { path: '/materials/categories', reason: '阶段说明记录：物料分类为树形维护表面，无分页接口' },
   { path: '/platform/delivery-assets', reason: '阶段说明记录：交付资料为固定清单表面，无分页接口' },
+]
+
+export const operationMoreDropdownDirectActionExceptions: OperationMoreDropdownDirectActionException[] = [
+  {
+    sourceFile: 'apps/web/src/modules/finance/VoucherDraftListView.vue',
+    directActionCount: 1,
+    reason: '详情 + 互斥长文案更多',
+  },
 ]
 
 function sourceLabel(key: string): string {
@@ -234,6 +249,15 @@ function operationColumnViolations(column: OperationColumnOccurrence): Operation
       detail: `min-width=${column.minWidthValue}，操作列不得用 min-width 替代固定宽度`,
     })
   }
+  if (column.hasMoreDropdown && column.directActionCount < 2 && !operationMoreDropdownDirectActionExceptions.some((item) => (
+    item.sourceFile === column.sourceFile && item.directActionCount === column.directActionCount
+  ))) {
+    violations.push({
+      ...base,
+      kind: 'unexpected-more-direct-actions',
+      detail: `含“更多”的操作列直显动作 ${column.directActionCount} 个，默认要求 2 个；唯一 1+更多例外为 VoucherDraftListView.vue`,
+    })
+  }
   if (column.directActionCount > 2) {
     violations.push({
       ...base,
@@ -249,6 +273,14 @@ function operationColumnViolations(column: OperationColumnOccurrence): Operation
     }
   }
   return violations
+}
+
+export function collectOperationColumnsFromSource(sourceFile: string, sourceText: string): OperationColumnOccurrence[] {
+  return collectOperationColumns(`../${sourceFile.replace(/^apps\/web\/src\//, '')}`, sourceText)
+}
+
+export function collectOperationColumnViolations(columns: OperationColumnOccurrence[]): OperationColumnViolation[] {
+  return columns.flatMap(operationColumnViolations)
 }
 
 function isNonScrollableTableConcluded(table: TableSurfaceOccurrence): boolean {
@@ -390,4 +422,12 @@ export function formatOperationColumnViolations(violations: OperationColumnViola
     ...visible,
     ...omitted,
   ].join('\n')
+}
+
+export function formatOperationColumns(columns: OperationColumnOccurrence[], limit = 80): string {
+  const visible = columns.slice(0, limit).map((item) => (
+    `${item.sourceFile}:${item.line} directActionCount=${item.directActionCount} hasMoreDropdown=${item.hasMoreDropdown} - ${item.text}`
+  ))
+  const omitted = columns.length > limit ? [`... 另有 ${columns.length - limit} 条未列出`] : []
+  return visible.concat(omitted).join('\n')
 }

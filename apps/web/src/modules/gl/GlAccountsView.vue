@@ -8,6 +8,7 @@ import {
   glAccountCategoryText,
   glActionAllowed,
   glActionDisabledReason,
+  glAllowedActionsText,
   glBalanceDirectionText,
   createGlIdempotencyKey,
   glErrorMessage,
@@ -312,7 +313,7 @@ onMounted(() => {
         <el-table-column label="辅助核算" min-width="220" show-overflow-tooltip><template #default="{ row }">{{ auxiliaryText(row) }}</template></el-table-column>
         <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.enabled ? '启用' : '停用' }}</template></el-table-column>
         <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || (row.allowedActions?.join('、') || '-') }}</template>
+          <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || glAllowedActionsText(row.allowedActions) }}</template>
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">

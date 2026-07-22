@@ -624,7 +624,7 @@ onMounted(loadRecords)
             data-test="quote-convert-project-contract"
             :disabled="conversionDialog.loading"
           >
-            <option value="">请选择 ACTIVE 项目与同客户 EFFECTIVE 合同</option>
+            <option value="">请选择已启用项目与同客户已生效合同</option>
             <option
               v-for="candidate in conversionDialog.candidates"
               :key="projectContractKey(candidate)"

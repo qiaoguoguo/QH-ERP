@@ -3,6 +3,7 @@ import { buildPageSurfaceInventory } from '../../test/pageSurfaceInventory'
 import { formatStatusRiskList, scanStatusLanguage } from '../../test/statusLanguageScan'
 import {
   glAccountCategoryText,
+  glAllowedActionsText,
   glApprovalStatusText,
   glBalanceDirectionText,
   glFinancialCloseStatusText,
@@ -87,5 +88,6 @@ describe('总账页面状态语言治理', () => {
     expect(glPostingRuleStatusText('LEGACY_STATUS')).toBe('未知规则状态')
     expect(glPostingRuleValidationStatusText('VALID')).toBe('校验通过')
     expect(glPostingRuleValidationStatusText('LEGACY_STATUS')).toBe('未知校验状态')
+    expect(glAllowedActionsText(['CREATE_CHILD', 'UPDATE', 'LEGACY_ACTION'])).toBe('可新增下级、可编辑、未知动作')
   })
 })

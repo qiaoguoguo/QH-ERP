@@ -178,6 +178,7 @@ export function glAllowedActionsText(actions: string[] | null | undefined) {
     WITHDRAW: '可撤回',
     REVERSE: '可冲销',
     CREATE: '可创建',
+    CREATE_CHILD: '可新增下级',
     NEW_VERSION: '可复制新版本',
     VALIDATE: '可预览校验',
     ACTIVATE: '可激活',

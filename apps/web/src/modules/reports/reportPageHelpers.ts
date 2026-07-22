@@ -365,6 +365,14 @@ export function reportTraceStatusText(source: {
       CURRENT: '当前有效',
       STALE: '来源已变化',
     },
+    PROJECT_COST_SOURCE_LINE: {
+      ACTUAL: '实际',
+      PROVISIONAL: '暂估',
+      UNPRICED: '未定价',
+      ADJUSTED: '已调整',
+      RESTRICTED: '来源受限',
+      EXCLUDED: '已排除',
+    },
   }
   const sourceType = String(source.sourceType ?? '').trim()
   return traceLabels[sourceType]?.[status] ?? reportStatusText(status)

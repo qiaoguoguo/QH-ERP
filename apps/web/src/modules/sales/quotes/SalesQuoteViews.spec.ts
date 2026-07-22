@@ -397,6 +397,12 @@ describe('025 销售报价页面', () => {
       page: 1,
       pageSize: 50,
     })
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .toContain('请选择已启用项目与同客户已生效合同')
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .not.toContain('ACTIVE')
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .not.toContain('EFFECTIVE')
     await wrapper.find('[data-test="quote-convert-project-contract"]').setValue('20:55')
     await wrapper.find('[data-test="confirm-sales-quote-conversion"]').trigger('click')
     await flushPromises()
@@ -562,6 +568,12 @@ describe('025 销售报价页面', () => {
 
     await wrapper.find('[data-test="convert-sales-quote-order"]').trigger('click')
     await flushPromises()
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .toContain('请选择已启用项目与同客户已生效合同')
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .not.toContain('ACTIVE')
+    expect(wrapper.find('[data-test="quote-convert-project-contract"]').text())
+      .not.toContain('EFFECTIVE')
     await wrapper.find('[data-test="quote-convert-project-contract"]').setValue('20:55')
     await wrapper.find('[data-test="confirm-sales-quote-conversion"]').trigger('click')
     await flushPromises()

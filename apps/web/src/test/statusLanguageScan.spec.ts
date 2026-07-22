@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatStatusRiskList,
   scanStatusLanguage,
+  scanStatusLanguageSources,
   statusLanguageWhitelist,
   validateStatusLanguageWhitelist,
   type StatusLanguageWhitelistEntry,
@@ -60,10 +61,59 @@ describe('页面治理状态语言静态门禁', () => {
     ])
   })
 
+  it('扫描模板普通可见文本节点中的状态编码，但不误报业务技术缩写', () => {
+    const result = scanStatusLanguageSources({
+      '../modules/sales/quotes/VisibleTextFixture.vue': `
+        <template>
+          <select name="project">
+            <option value="">请选择 ACTIVE 项目与同客户 EFFECTIVE 合同</option>
+          </select>
+          <p>BOM 与 SKU 编码由用户录入维护，API 文档另见接口说明</p>
+        </template>
+      `,
+    })
+
+    expect(result.risks).toEqual([
+      expect.objectContaining({
+        kind: 'template-visible-text-code',
+        sourceFile: 'apps/web/src/modules/sales/quotes/VisibleTextFixture.vue',
+        field: 'ACTIVE, EFFECTIVE',
+      }),
+    ])
+  })
+
+  it('扫描模板用户可见输出中 allowedActions 或 availableActions 的原始动作码直出', () => {
+    const result = scanStatusLanguageSources({
+      '../modules/gl/ActionOutputFixture.vue': `
+        <template>
+          <el-table-column label="动作状态">
+            <template #default="{ row }">{{ row.allowedActions?.join('、') || '-' }}</template>
+          </el-table-column>
+          <span>{{ task.availableActions }}</span>
+        </template>
+        <script setup lang="ts">
+        const hidden = model.allowedActions?.join(',')
+        </script>
+      `,
+    })
+
+    expect(result.risks).toEqual([
+      expect.objectContaining({
+        kind: 'user-visible-action-code-output',
+        field: 'row.allowedActions',
+      }),
+      expect.objectContaining({
+        kind: 'user-visible-action-code-output',
+        field: 'task.availableActions',
+      }),
+    ])
+  })
+
   it('集中审查点名的状态残留若仍存在，必须被扫描规则解释到风险清单', () => {
     const result = scanStatusLanguage()
     const namedResiduals = [
       { file: 'apps/web/src/modules/gl/GlVoucherWorkbenchView.vue', value: 'MANUAL / FIN_VOUCHER_DRAFT' },
+      { file: 'apps/web/src/modules/gl/GlAccountsView.vue', value: 'row.allowedActions?.join' },
       { file: 'apps/web/src/modules/gl/GlPostingRulesView.vue', value: 'SALES_INVOICE' },
       { file: 'apps/web/src/modules/gl/GlPostingRulesView.vue', value: 'DEFAULT' },
       { file: 'apps/web/src/modules/reports/FinancialSummaryReportView.vue', value: 'LIVE' },
@@ -72,6 +122,8 @@ describe('页面治理状态语言静态门禁', () => {
       { file: 'apps/web/src/modules/reversal/PurchaseReturnDetailView.vue', value: 'record.source.status ||' },
       { file: 'apps/web/src/modules/finance/PaymentDetailView.vue', value: 'record.prepaymentStatus ??' },
       { file: 'apps/web/src/modules/finance/ReceiptDetailView.vue', value: 'record.advanceReceiptStatus ??' },
+      { file: 'apps/web/src/modules/sales/quotes/SalesQuoteListView.vue', value: '请选择 ACTIVE 项目与同客户 EFFECTIVE 合同' },
+      { file: 'apps/web/src/modules/sales/quotes/SalesQuoteDetailView.vue', value: '请选择 ACTIVE 项目与同客户 EFFECTIVE 合同' },
     ]
 
     namedResiduals.forEach((residual) => {

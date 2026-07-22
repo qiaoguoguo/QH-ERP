@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPageSurfaceInventory,
+  collectOperationColumnViolations,
+  collectOperationColumnsFromSource,
+  formatOperationColumns,
   formatOperationColumnViolations,
   formatPaginationRequirements,
   formatSurfaceOccurrences,
@@ -109,6 +112,61 @@ describe('页面治理表面清单门禁', () => {
       inventory.operationColumnViolations,
       formatOperationColumnViolations(inventory.operationColumnViolations),
     ).toHaveLength(0)
+  })
+
+  it('含更多的 38 个操作列必须默认两个直显，仅允许凭证草稿长文案 1+更多例外', () => {
+    const inventory = buildPageSurfaceInventory()
+    const moreColumns = inventory.operationColumns.filter((item) => item.hasMoreDropdown)
+    const singleDirectMoreColumns = moreColumns.filter((item) => item.directActionCount === 1)
+
+    expect(moreColumns, formatOperationColumns(moreColumns)).toHaveLength(38)
+    expect(
+      moreColumns.filter((item) => item.directActionCount === 2),
+      formatOperationColumns(moreColumns),
+    ).toHaveLength(37)
+    expect(
+      singleDirectMoreColumns.map((item) => item.sourceFile),
+      formatOperationColumns(singleDirectMoreColumns),
+    ).toEqual(['apps/web/src/modules/finance/VoucherDraftListView.vue'])
+    expect(
+      moreColumns.filter((item) => item.directActionCount === 0 || item.directActionCount > 2),
+      formatOperationColumns(moreColumns),
+    ).toHaveLength(0)
+  })
+
+  it('操作列门禁用 fixture 捕获未登记的 1+更多或 0+更多异常', () => {
+    const columns = collectOperationColumnsFromSource('apps/web/src/modules/demo/DemoListView.vue', `
+      <template>
+        <el-table>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <el-button>详情</el-button>
+              <el-dropdown trigger="click" class="table-actions-more">
+                <el-dropdown-menu>
+                  <el-dropdown-item>提交</el-dropdown-item>
+                  <el-dropdown-item>取消</el-dropdown-item>
+                </el-dropdown-menu>
+              </el-dropdown>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <el-dropdown trigger="click" class="table-actions-more">
+                <el-dropdown-menu>
+                  <el-dropdown-item>启用</el-dropdown-item>
+                </el-dropdown-menu>
+              </el-dropdown>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+    `)
+    const violations = collectOperationColumnViolations(columns)
+
+    expect(
+      violations,
+      formatOperationColumnViolations(violations),
+    ).toHaveLength(2)
   })
 
   it('非路由状态标签、抽屉、面板、追溯、编辑器和选择器进入清单', () => {
