@@ -17,7 +17,8 @@ RUN apk upgrade --no-cache \
 WORKDIR /app
 COPY --from=build --chown=qherp:qherp /workspace/target/api-0.0.1-SNAPSHOT.jar /app/app.jar
 COPY --chown=qherp:qherp docker-entrypoint.sh /app/docker-entrypoint.sh
-RUN chmod 0555 /app/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh \
+    && chmod 0555 /app/docker-entrypoint.sh
 
 USER qherp
 EXPOSE 8080

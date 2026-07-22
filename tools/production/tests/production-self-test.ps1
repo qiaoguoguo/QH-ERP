@@ -25,6 +25,7 @@ function Assert-Match {
 }
 
 $expectedFiles = @(
+    ".gitattributes",
     "compose.production.yaml",
     "apps/api/Dockerfile",
     "apps/api/docker-entrypoint.sh",
@@ -121,8 +122,17 @@ if (Test-Path -LiteralPath $apiDockerfilePath -PathType Leaf) {
     Assert-Match $apiDockerfile 'apk upgrade --no-cache' "API 运行时必须安装基础镜像安全更新。"
     Assert-Match $apiDockerfile 'addgroup\s+--system|addgroup\s+-S' "API 运行时必须创建非特权组。"
     Assert-Match $apiDockerfile 'COPY[^\r\n]+docker-entrypoint\.sh' "API 镜像必须复制密钥等待入口。"
+    Assert-Match $apiDockerfile ([regex]::Escape("sed -i 's/\r$//' /app/docker-entrypoint.sh")) `
+        "API 镜像构建必须防御性移除 Windows CRLF，确保入口脚本可执行。"
     Assert-Match $apiDockerfile 'ENTRYPOINT\s*\["/app/docker-entrypoint\.sh"\]' `
         "API 镜像必须由受控入口等待内存型 configtree 密钥。"
+}
+
+$gitAttributesPath = Join-Path $repoRoot ".gitattributes"
+if (Test-Path -LiteralPath $gitAttributesPath -PathType Leaf) {
+    $gitAttributes = Get-Content -LiteralPath $gitAttributesPath -Raw
+    Assert-Match $gitAttributes '(?m)^\*\.sh\s+text\s+eol=lf\s*$' `
+        "Git 必须将所有 shell 脚本固定为 LF，避免 Windows 工作树构建出不可执行入口。"
 }
 
 $apiEntrypointPath = Join-Path $repoRoot "apps/api/docker-entrypoint.sh"
