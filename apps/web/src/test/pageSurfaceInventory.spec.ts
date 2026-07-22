@@ -61,10 +61,10 @@ describe('页面治理表面清单门禁', () => {
     ).toHaveLength(0)
   })
 
-  it('分页、弹窗、抽屉、returnTo 表面全部有矩阵项', () => {
+  it('分页、弹窗、抽屉、returnTo 表面全部有矩阵项，税务基础设置新增两个分页器后分页总数为 108', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.paginations).toHaveLength(106)
+    expect(inventory.paginations).toHaveLength(108)
     expect(inventory.dialogs).toHaveLength(45)
     expect(inventory.drawers).toHaveLength(34)
     expect(inventory.returnContexts.length).toBeGreaterThan(0)
