@@ -283,131 +283,133 @@ function targetText(item: BatchOperationItemRecord): string {
   </el-button>
 
   <el-dialog v-model="visible" :title="title" width="min(920px, 96vw)" :teleported="false">
-    <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
-    <el-alert v-if="loading" class="state-alert" type="info" title="批量工具处理中" :closable="false" />
-    <el-alert
-      v-if="tool && !hasToolPermission"
-      class="state-alert"
-      type="warning"
-      :title="`缺少业务权限 ${tool.requiredPermissionCode}`"
-      :closable="false"
-    />
+    <div class="batch-dialog-scroll-region" data-test="batch-dialog-scroll-region">
+      <el-alert v-if="actionError" class="state-alert" type="error" :title="actionError" :closable="false" />
+      <el-alert v-if="loading" class="state-alert" type="info" title="批量工具处理中" :closable="false" />
+      <el-alert
+        v-if="tool && !hasToolPermission"
+        class="state-alert"
+        type="warning"
+        :title="`缺少业务权限 ${tool.requiredPermissionCode}`"
+        :closable="false"
+      />
 
-    <section class="batch-tool-grid">
-      <el-form label-position="top">
-        <el-form-item label="目标状态">
-          <el-select v-model="targetStatus" data-test="batch-target-status">
-            <el-option label="启用" value="ENABLED" />
-            <el-option label="停用" value="DISABLED" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="原因">
-          <el-input v-model="reason" name="batch-operation-reason" type="textarea" :rows="3" maxlength="200" show-word-limit />
-        </el-form-item>
-      </el-form>
+      <section class="batch-tool-grid">
+        <el-form label-position="top">
+          <el-form-item label="目标状态">
+            <el-select v-model="targetStatus" data-test="batch-target-status">
+              <el-option label="启用" value="ENABLED" />
+              <el-option label="停用" value="DISABLED" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="原因">
+            <el-input v-model="reason" name="batch-operation-reason" type="textarea" :rows="3" maxlength="200" show-word-limit />
+          </el-form-item>
+        </el-form>
 
-      <section class="candidate-panel">
-        <div class="section-title-row">
-          <h3>候选池</h3>
-          <div class="batch-toolbar">
-            <el-button data-test="select-current-batch-candidates" @click="selectCurrentCandidates">
-              加入当前页
-            </el-button>
-            <el-button @click="clearCandidates">清空</el-button>
+        <section class="candidate-panel">
+          <div class="section-title-row">
+            <h3>候选池</h3>
+            <div class="batch-toolbar">
+              <el-button data-test="select-current-batch-candidates" @click="selectCurrentCandidates">
+                加入当前页
+              </el-button>
+              <el-button @click="clearCandidates">清空</el-button>
+            </div>
           </div>
-        </div>
-        <div class="candidate-search-row">
-          <el-input
-            v-model="candidateKeyword"
-            name="batch-candidate-keyword"
-            clearable
-            placeholder="按编码或名称搜索候选对象"
-          />
+          <div class="candidate-search-row">
+            <el-input
+              v-model="candidateKeyword"
+              name="batch-candidate-keyword"
+              clearable
+              placeholder="按编码或名称搜索候选对象"
+            />
+            <el-button
+              data-test="search-batch-candidates"
+              :loading="candidateLoading"
+              :disabled="candidateLoading"
+              @click="searchCandidates"
+            >
+              搜索
+            </el-button>
+          </div>
+          <div class="table-scroll candidate-table">
+            <el-table :data="candidates" empty-text="暂无搜索候选" stripe>
+              <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
+              <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="status" label="当前状态" min-width="100" />
+              <el-table-column prop="version" label="版本" width="90" />
+              <el-table-column label="操作" width="90">
+                <template #default="{ row }">
+                  <el-button
+                    v-if="hasStableCandidateVersion(row)"
+                    size="small"
+                    text
+                    :data-test="`select-batch-candidate-${row.id}`"
+                    @click="selectCandidate(row)"
+                  >
+                    加入
+                  </el-button>
+                  <span v-else class="candidate-error">缺少版本</span>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
           <el-button
-            data-test="search-batch-candidates"
+            v-if="canLoadMoreCandidates"
+            data-test="load-more-batch-candidates"
+            class="load-more-button"
             :loading="candidateLoading"
             :disabled="candidateLoading"
-            @click="searchCandidates"
+            @click="loadMoreCandidates"
           >
-            搜索
+            继续加载
           </el-button>
+          <h3 class="selected-title">已选候选</h3>
+          <div class="table-scroll candidate-table">
+            <el-table :data="selectedCandidates" empty-text="暂无候选" stripe>
+              <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
+              <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
+              <el-table-column prop="status" label="当前状态" min-width="100" />
+              <el-table-column prop="version" label="版本" width="90" />
+              <el-table-column label="操作" width="90">
+                <template #default="{ row }">
+                  <el-button size="small" text @click="removeCandidate(row)">移除</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+        </section>
+      </section>
+
+      <section v-if="operation" class="operation-panel">
+        <div class="batch-summary-strip">
+          <div><span>操作号</span><strong>{{ operation.operationNo }}</strong></div>
+          <div><span>状态</span><strong>{{ operationStatusLabel(operation.status) }}</strong></div>
+          <div><span>总数</span><strong>{{ operation.totalRows }}</strong></div>
+          <div><span>可执行</span><strong>可执行 {{ readyCount }}</strong></div>
+          <div><span>阻断</span><strong>{{ blockedCount }}</strong></div>
+          <div><span>创建人</span><strong>{{ operation.createdByName || '-' }}</strong></div>
+          <div><span>创建时间</span><strong>{{ formatPlatformDateTime(operation.createdAt) }}</strong></div>
         </div>
-        <div class="table-scroll candidate-table">
-          <el-table :data="candidates" empty-text="暂无搜索候选" stripe>
-            <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
-            <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="status" label="当前状态" min-width="100" />
-            <el-table-column prop="version" label="版本" width="90" />
-            <el-table-column label="操作" width="90">
+
+        <div class="table-scroll">
+          <el-table :data="operation.items ?? []" empty-text="暂无批量明细" stripe>
+            <el-table-column prop="lineNo" label="行号" width="78" />
+            <el-table-column label="目标" min-width="220" show-overflow-tooltip>
+              <template #default="{ row }">{{ targetText(row) }}</template>
+            </el-table-column>
+            <el-table-column prop="targetObjectVersion" label="版本" width="90" />
+            <el-table-column label="状态" width="110">
               <template #default="{ row }">
-                <el-button
-                  v-if="hasStableCandidateVersion(row)"
-                  size="small"
-                  text
-                  :data-test="`select-batch-candidate-${row.id}`"
-                  @click="selectCandidate(row)"
-                >
-                  加入
-                </el-button>
-                <span v-else class="candidate-error">缺少版本</span>
+                <el-tag :type="itemStatusTagType(row.status)" size="small">{{ itemStatusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-          </el-table>
-        </div>
-        <el-button
-          v-if="canLoadMoreCandidates"
-          data-test="load-more-batch-candidates"
-          class="load-more-button"
-          :loading="candidateLoading"
-          :disabled="candidateLoading"
-          @click="loadMoreCandidates"
-        >
-          继续加载
-        </el-button>
-        <h3 class="selected-title">已选候选</h3>
-        <div class="table-scroll candidate-table">
-          <el-table :data="selectedCandidates" empty-text="暂无候选" stripe>
-            <el-table-column prop="code" label="编码" min-width="130" show-overflow-tooltip />
-            <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="status" label="当前状态" min-width="100" />
-            <el-table-column prop="version" label="版本" width="90" />
-            <el-table-column label="操作" width="90">
-              <template #default="{ row }">
-                <el-button size="small" text @click="removeCandidate(row)">移除</el-button>
-              </template>
-            </el-table-column>
+            <el-table-column prop="message" label="错误/结果" min-width="220" show-overflow-tooltip />
           </el-table>
         </div>
       </section>
-    </section>
-
-    <section v-if="operation" class="operation-panel">
-      <div class="batch-summary-strip">
-        <div><span>操作号</span><strong>{{ operation.operationNo }}</strong></div>
-        <div><span>状态</span><strong>{{ operationStatusLabel(operation.status) }}</strong></div>
-        <div><span>总数</span><strong>{{ operation.totalRows }}</strong></div>
-        <div><span>可执行</span><strong>可执行 {{ readyCount }}</strong></div>
-        <div><span>阻断</span><strong>{{ blockedCount }}</strong></div>
-        <div><span>创建人</span><strong>{{ operation.createdByName || '-' }}</strong></div>
-        <div><span>创建时间</span><strong>{{ formatPlatformDateTime(operation.createdAt) }}</strong></div>
-      </div>
-
-      <div class="table-scroll">
-        <el-table :data="operation.items ?? []" empty-text="暂无批量明细" stripe>
-          <el-table-column prop="lineNo" label="行号" width="78" />
-          <el-table-column label="目标" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ targetText(row) }}</template>
-          </el-table-column>
-          <el-table-column prop="targetObjectVersion" label="版本" width="90" />
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag :type="itemStatusTagType(row.status)" size="small">{{ itemStatusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="message" label="错误/结果" min-width="220" show-overflow-tooltip />
-        </el-table>
-      </div>
-    </section>
+    </div>
 
     <template #footer>
       <el-button @click="visible = false">关闭</el-button>
@@ -429,6 +431,13 @@ function targetText(item: BatchOperationItemRecord): string {
 </template>
 
 <style scoped>
+.batch-dialog-scroll-region {
+  max-height: calc(100vh - 220px);
+  max-height: calc(100svh - 220px);
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
 .batch-tool-grid {
   display: grid;
   grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);

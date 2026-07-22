@@ -298,7 +298,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="审批待办" description="处理固定审批待办、查看已处理和我发起的审批。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="范围">
           <el-radio-group :model-value="activeScope">
             <el-radio-button

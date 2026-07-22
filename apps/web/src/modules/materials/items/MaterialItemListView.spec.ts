@@ -142,6 +142,16 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
   await flushPromises()
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: VueWrapper) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 async function fillValidMaterialForm(wrapper: VueWrapper) {
   await wrapper.find('input[name="material-code"]').setValue('MAT-RAW-001')
   await wrapper.find('input[name="material-name"]').setValue('冷轧钢板')
@@ -456,6 +466,7 @@ describe('物料档案页', () => {
     ])
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(wrapper.find('[data-test="material-history-import-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="material-batch-status-entry"]').exists()).toBe(true)
   })

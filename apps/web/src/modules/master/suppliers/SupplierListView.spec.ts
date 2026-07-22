@@ -80,6 +80,16 @@ function mountSuppliers(permissions = ['master:supplier:view', 'master:supplier:
   })
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountSuppliers>) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 describe('供应商列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -170,6 +180,7 @@ describe('供应商列表页', () => {
     ])
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(wrapper.find('[data-test="supplier-history-import-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="supplier-batch-status-entry"]').exists()).toBe(true)
   })

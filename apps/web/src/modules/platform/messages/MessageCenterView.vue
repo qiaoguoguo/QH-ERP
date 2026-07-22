@@ -124,7 +124,7 @@ onMounted(() => {
       </el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="未读">
           <el-badge :value="unreadCount" :hidden="unreadCount === 0">
             <el-button data-test="filter-unread-messages" :type="filters.unreadOnly ? 'primary' : 'default'" @click="toggleUnread">

@@ -58,8 +58,10 @@ if (Test-Path -LiteralPath $composePath -PathType Leaf) {
     foreach ($service in @("postgres", "minio", "api", "web")) {
         Assert-Match $compose "(?m)^  $service`:" "生产 Compose 缺少 $service 服务。"
     }
-    foreach ($port in @(45173, 48080, 45432, 49000, 49001)) {
-        Assert-Match $compose ([regex]::Escape("127.0.0.1:${port}:")) "端口 $port 必须只绑定 127.0.0.1。"
+    Assert-Match $compose ([regex]::Escape("127.0.0.1:45173:80")) "Web 必须作为唯一宿主访问入口并只绑定 127.0.0.1。"
+    foreach ($port in @(48080, 45432, 49000, 49001)) {
+        Assert-True -Condition ($compose -notmatch [regex]::Escape("127.0.0.1:${port}:")) `
+            -Message "API、数据库和对象存储不得将内部端口 $port 发布到宿主。"
     }
     Assert-True -Condition ($compose -notmatch ':latest(?=[\s"'']|$)') -Message "生产 Compose 不得使用 latest 镜像。"
     Assert-True -Condition ($compose -notmatch 'qherp_dev_password|qherpminio123') `

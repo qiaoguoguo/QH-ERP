@@ -1310,7 +1310,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form v-if="activeTab === 'versions'" class="query-form" inline>
+      <el-form v-if="activeTab === 'versions'" class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="bom-keyword" clearable placeholder="BOM 编码、版本或物料" />
         </el-form-item>
@@ -1365,7 +1365,7 @@ onMounted(() => {
           <el-button data-test="reset-bom" @click="resetSearch">重置</el-button>
         </el-form-item>
       </el-form>
-      <el-form v-else-if="activeTab === 'eco'" class="query-form" inline>
+      <el-form v-else-if="activeTab === 'eco'" class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="ecoFilters.keyword" clearable placeholder="变更编号或摘要" />
         </el-form-item>
@@ -1380,7 +1380,7 @@ onMounted(() => {
           <el-button type="primary" @click="loadEcoRecords">查询</el-button>
         </el-form-item>
       </el-form>
-      <el-form v-else class="query-form" inline>
+      <el-form v-else class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="substituteFilters.keyword" clearable placeholder="物料或 BOM" />
         </el-form-item>

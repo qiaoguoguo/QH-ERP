@@ -318,6 +318,16 @@ async function setSelectValue(wrapper: VueWrapper, dataTest: string, value: unkn
   await flushPromises()
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: VueWrapper) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 function getBomVersionTableColumnProps(wrapper: VueWrapper) {
   const tables = wrapper.findAllComponents({ name: 'ElTable' })
   expect(tables.length).toBeGreaterThan(0)
@@ -1147,6 +1157,7 @@ describe('BOM 管理页', () => {
     ])
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     const entry = wrapper.find('[data-test="bom-history-import-entry"]')
     expect(entry.exists()).toBe(true)
     expect(entry.attributes('href')).toBe('/platform/history-imports?adapterCode=BOM_DRAFT_V1')

@@ -11,6 +11,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.servlet.NoHandlerFoundException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.List;
 import java.util.logging.Level;
@@ -74,6 +76,12 @@ public class GlobalExceptionHandler {
 			HttpServletRequest request) {
 		return build(HttpStatus.FORBIDDEN, ApiErrorCode.AUTH_FORBIDDEN, ApiErrorCode.AUTH_FORBIDDEN.message(),
 				List.of(), request);
+	}
+
+	@ExceptionHandler({ NoResourceFoundException.class, NoHandlerFoundException.class })
+	public ResponseEntity<ApiResponse<Void>> handleNotFoundException(Exception exception, HttpServletRequest request) {
+		return build(HttpStatus.NOT_FOUND, ApiErrorCode.NOT_FOUND, ApiErrorCode.NOT_FOUND.message(), List.of(),
+				request);
 	}
 
 	@ExceptionHandler(Exception.class)

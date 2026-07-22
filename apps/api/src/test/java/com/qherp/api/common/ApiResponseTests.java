@@ -17,6 +17,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -129,6 +130,39 @@ class ApiResponseTests {
 		assertThat(body.get("message").asText()).isEqualTo("无访问权限");
 		assertThat(body.get("traceId").asText()).isNotBlank();
 		assertThat(body.get("timestamp").asText()).isNotBlank();
+	}
+
+	@Test
+	void unauthenticatedMissingStaticResourceStillReturnsUnauthorizedEnvelope() throws Exception {
+		var response = this.mockMvc.perform(get("/assets/missing-stage035-n11.css"))
+			.andExpect(status().isUnauthorized())
+			.andReturn()
+			.getResponse();
+
+		JsonNode body = this.objectMapper.readTree(response.getContentAsString());
+		assertThat(body.get("success").asBoolean()).isFalse();
+		assertThat(body.get("code").asText()).isEqualTo("AUTH_UNAUTHORIZED");
+		assertThat(body.get("message").asText()).isEqualTo("未认证或登录已过期");
+		assertThat(body.get("traceId").asText()).isNotBlank();
+		assertThat(body.get("timestamp").asText()).isNotBlank();
+		assertThat(body.get("details").isArray()).isTrue();
+	}
+
+	@Test
+	@WithMockUser
+	void authenticatedMissingStaticResourceReturnsNotFoundEnvelope() throws Exception {
+		var response = this.mockMvc.perform(get("/assets/missing-stage035-n11.css"))
+			.andExpect(status().isNotFound())
+			.andReturn()
+			.getResponse();
+
+		JsonNode body = this.objectMapper.readTree(response.getContentAsString());
+		assertThat(body.get("success").asBoolean()).isFalse();
+		assertThat(body.get("code").asText()).isEqualTo("NOT_FOUND");
+		assertThat(body.get("message").asText()).isEqualTo("资源不存在");
+		assertThat(body.get("traceId").asText()).isNotBlank();
+		assertThat(body.get("timestamp").asText()).isNotBlank();
+		assertThat(body.get("details").isArray()).isTrue();
 	}
 
 	@Test

@@ -99,6 +99,16 @@ function buttonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string)
   return button!
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountWithAuth>) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 async function clickButtonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string) {
   const button = buttonByTest(wrapper, testId)
   const onClick = (button.props() as Record<string, unknown>).onClick
@@ -262,6 +272,7 @@ describe('022 平台页面', () => {
     const wrapper = mountWithAuth(ApprovalCenterView)
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(documentPlatformApiMock.approvalTasks.list).toHaveBeenCalledWith(expect.objectContaining({ scope: 'TODO' }))
     expect(wrapper.text()).toContain('我的待办')
     expect(wrapper.text()).toContain('已处理')
@@ -429,6 +440,58 @@ describe('022 平台页面', () => {
       expect(link.text()).toContain('会计凭证')
     }
     expect(link.attributes('data-to')).toBe(expectedPath)
+  })
+
+  it('审批中心提供数据修复真实待办的稳定浏览器跳转样本', async () => {
+    documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
+      items: [{
+        id: 51,
+        taskId: 751,
+        taskNo: 'AT-DR-001',
+        sceneCode: 'PLATFORM_DATA_REPAIR_EXECUTION',
+        objectType: 'DATA_REPAIR_REQUEST',
+        objectId: 501,
+        objectNo: 'DR-202607-0001',
+        objectName: '修正物料规格说明',
+        status: 'PENDING',
+        currentStepName: '固定审批',
+        applicantName: '资料员',
+        assignedAt: '2026-07-22T09:00:00+08:00',
+        availableActions: [],
+        version: 1,
+      }],
+      total: 1,
+      page: 1,
+      pageSize: 10,
+    })
+    documentPlatformApiMock.approvals.get.mockResolvedValueOnce({
+      id: 51,
+      taskId: 751,
+      taskVersion: 2,
+      sceneCode: 'PLATFORM_DATA_REPAIR_EXECUTION',
+      objectType: 'DATA_REPAIR_REQUEST',
+      objectId: 501,
+      objectNo: 'DR-202607-0001',
+      objectName: '修正物料规格说明',
+      status: 'SUBMITTED',
+      applicantName: '资料员',
+      submittedAt: '2026-07-22T09:00:00+08:00',
+      version: 3,
+      availableActions: ['APPROVE', 'REJECT'],
+      steps: [{ taskId: 751, stepName: '固定审批', status: 'PENDING', candidatePermission: 'platform:data-repair:approve', version: 2 }],
+      histories: [{ action: 'SUBMIT', operatorName: '资料员', operatedAt: '2026-07-22T09:00:00+08:00', comment: '提交修复审批' }],
+      attachmentSnapshots: [],
+    })
+    const wrapper = mountWithAuth(ApprovalCenterView)
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('DR-202607-0001')
+    expect(wrapper.find('[data-to="/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals"]').exists()).toBe(true)
+    await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals')
+    expect(wrapper.find('[data-test="approve-task"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="reject-task"]').exists()).toBe(true)
   })
 
   it('GL_VOUCHER_POST 最终审批在审批中心显示通过并记账，不提供直接 GL 编辑', async () => {
@@ -745,6 +808,7 @@ describe('022 平台页面', () => {
     const wrapper = mountWithAuth(MessageCenterView)
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(documentPlatformApiMock.messages.listMine).toHaveBeenCalledWith(expect.objectContaining({ unreadOnly: false }))
     expect(wrapper.text()).toContain('审批已通过')
     expect(wrapper.text()).toContain('未读 1')

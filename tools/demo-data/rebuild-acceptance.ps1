@@ -271,10 +271,10 @@ function Stop-StartedManagedApi {
     if ($null -ne $LauncherProcess -and $LauncherProcess.Id -gt 0) {
         $candidatePids += [int]$LauncherProcess.Id
     }
-    foreach ($pid in ($candidatePids | Select-Object -Unique)) {
-        $process = Get-Process -Id $pid -ErrorAction SilentlyContinue
+    foreach ($processId in ($candidatePids | Select-Object -Unique)) {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
         if ($null -ne $process) {
-            Stop-Process -Id $pid -Force
+            Stop-Process -Id $processId -Force
         }
     }
     if ($candidatePids.Count -gt 0) {

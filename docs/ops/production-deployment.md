@@ -2,15 +2,15 @@
 
 ## 适用范围
 
-本手册适用于 035 冻结的单机生产式候选：PostgreSQL、MinIO、API、Web/Nginx 统一由 `compose.production.yaml` 管理。默认只绑定 `127.0.0.1`，供本机验收或受控反向代理使用；需要非本机访问时，必须另行提供受控 TLS 入口并使用 `-SecureCookie`，不得直接扩大当前端口绑定。
+本手册适用于 035 冻结的单机生产式候选：PostgreSQL、MinIO、API、Web/Nginx 统一由 `compose.production.yaml` 管理。只有 Web/Nginx 发布宿主端口并绑定 `127.0.0.1`；API、PostgreSQL 和 MinIO 仅在 Compose 内部网络可达。需要非本机访问时，必须另行提供受控 TLS 入口并使用 `-SecureCookie`，不得直接扩大当前端口绑定。
 
 ## 固定资源
 
 - Compose 项目：`qherp035`。
 - Web：`http://127.0.0.1:45173/`。
-- API 健康：`http://127.0.0.1:48080/api/health`。
-- PostgreSQL：`127.0.0.1:45432/qherp_035_candidate`。
-- MinIO：`127.0.0.1:49000/49001`，bucket 为 `qherp-035-candidate`。
+- API 健康：经 Web 反向代理访问 `http://127.0.0.1:45173/api/health`；API 不发布宿主端口。
+- PostgreSQL：Compose 内部地址 `postgres:5432/qherp_035_candidate`，不发布宿主端口；运维检查使用受控脚本或 `docker compose exec`。
+- MinIO：Compose 内部地址 `minio:9000/9001`，bucket 为 `qherp-035-candidate`，不发布宿主端口。
 - DPAPI 密钥：`C:\Users\14567\.codex\secrets\qherp\035\runtime-secrets.clixml`。
 
 ## 首次初始化
@@ -37,7 +37,7 @@ pwsh -NoProfile -File tools/production/verify-production.ps1
 
 - API 与 Web 最终运行镜像必须对高危和严重漏洞保持 0；扫描对象是实际成品，而不是仅扫描 Dockerfile 基础镜像。
 - PostgreSQL 使用官方当前 18.4 镜像。扫描器对仅在容器启动时使用的 `gosu` 及未触达的库代码仍可能报告高危项，升级官方摘要后需结合实际执行路径复核，不能直接忽略，也不能为清零统计改用非官方来源。
-- MinIO 开源版已经停止维护，官方 2026 修复版本转为需要许可证的 AIStor。当前候选不得静默切换到商业镜像；在完成许可证或替代对象存储决策前，MinIO 只能绑定 `127.0.0.1`，禁止配置 OIDC、LDAP、复制、S3 Select 或额外访问密钥，根凭据只允许通过 DPAPI 注入。
+- MinIO 开源版已经停止维护，官方 2026 修复版本转为需要许可证的 AIStor。当前候选不得静默切换到商业镜像；在完成许可证或替代对象存储决策前，MinIO 不发布任何宿主端口，只允许 Compose 内部 API 访问，禁止配置 OIDC、LDAP、复制、S3 Select 或额外访问密钥，根凭据只允许通过 DPAPI 注入。
 - 仓库密钥扫描必须为 0；开发与测试夹具不能当作生产凭据使用。实际生产密钥只允许存在于既定 DPAPI 文件和运行进程内存中。
 
 ## 日常操作

@@ -80,6 +80,16 @@ function mountCustomers(permissions = ['master:customer:view', 'master:customer:
   })
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountCustomers>) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 describe('客户列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -171,6 +181,7 @@ describe('客户列表页', () => {
     ])
     await flushPromises()
 
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(wrapper.find('[data-test="customer-history-import-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="customer-batch-status-entry"]').exists()).toBe(true)
   })

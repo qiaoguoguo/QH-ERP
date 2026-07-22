@@ -1,6 +1,27 @@
 import { defineConfig } from 'vitest/config'
 import vue from '@vitejs/plugin-vue'
 
+function manualChunks(id: string) {
+  const normalized = id.replace(/\\/g, '/')
+  if (normalized.includes('/node_modules/')) {
+    if (
+      normalized.includes('/node_modules/@element-plus/icons-vue/')
+      || normalized.includes('/node_modules/element-plus/')
+    ) {
+      return 'vendor-element-plus'
+    }
+    if (
+      normalized.includes('/node_modules/@vue/')
+      || normalized.includes('/node_modules/vue/')
+      || normalized.includes('/node_modules/vue-router/')
+      || normalized.includes('/node_modules/pinia/')
+    ) {
+      return 'vendor-vue'
+    }
+    return 'vendor'
+  }
+}
+
 export default defineConfig({
   plugins: [vue()],
   server: {
@@ -13,6 +34,9 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
+      output: {
+        manualChunks,
+      },
       onwarn(warning, warn) {
         if (
           warning.code === 'INVALID_ANNOTATION' &&

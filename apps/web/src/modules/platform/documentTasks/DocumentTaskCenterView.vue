@@ -329,7 +329,7 @@ watch(routeQuerySignature, () => {
 <template>
   <MasterDataTableView title="任务中心" description="查看导入、导出和固定打印任务。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="document-task-keyword" clearable placeholder="任务号或对象" />
         </el-form-item>

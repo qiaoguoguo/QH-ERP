@@ -123,6 +123,16 @@ function buttonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string)
   return button!
 }
 
+function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountWithAuth>) {
+  const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
+    .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
+  expect(queryForms.length).toBeGreaterThan(0)
+  queryForms.forEach((form) => {
+    expect(form.props('inline')).not.toBe(true)
+    expect(form.props('labelPosition')).toBe('top')
+  })
+}
+
 async function clickButtonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string) {
   const button = buttonByTest(wrapper, testId)
   const onClick = (button.props() as Record<string, unknown>).onClick
@@ -413,6 +423,7 @@ describe('034 平台治理页面', () => {
     await flushPromises()
 
     expectStandardListPage(wrapper)
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(platformGovernanceApiMock.dataRepairAdapters.list).toHaveBeenCalled()
     expect(platformGovernanceApiMock.dataRepairs.list).toHaveBeenCalledWith(expect.objectContaining({ page: 1, pageSize: 10 }))
     expect(wrapper.text()).toContain('数据修复记录')
@@ -663,6 +674,45 @@ describe('034 平台治理页面', () => {
     expect(wrapper.find('[data-test="execute-data-repair"]').exists()).toBe(false)
   })
 
+  it('数据修复草稿和已取消详情提供稳定浏览器状态样本', async () => {
+    platformGovernanceApiMock.dataRepairs.get.mockResolvedValueOnce({
+      ...dataRepairDetail,
+      status: 'DRAFT',
+      availableActions: ['SUBMIT', 'CANCEL'],
+      version: 7,
+    })
+    const draftWrapper = mountWithAuth(DataRepairDetailView, [
+      'platform:data-repair:view',
+      'platform:data-repair:submit',
+      'platform:data-repair:cancel',
+      'platform:attachment:view',
+    ], { repairId: 501 })
+    await flushPromises()
+
+    expect(draftWrapper.text()).toContain('草稿')
+    expect(draftWrapper.find('[data-test="submit-data-repair"]').exists()).toBe(true)
+    expect(draftWrapper.find('[data-test="cancel-data-repair"]').exists()).toBe(true)
+    expect(draftWrapper.find('[data-test="execute-data-repair"]').exists()).toBe(false)
+
+    platformGovernanceApiMock.dataRepairs.get.mockResolvedValueOnce({
+      ...dataRepairDetail,
+      status: 'CANCELLED',
+      availableActions: [],
+      version: 8,
+    })
+    const cancelledWrapper = mountWithAuth(DataRepairDetailView, [
+      'platform:data-repair:view',
+      'platform:attachment:view',
+    ], { repairId: 501 })
+    await flushPromises()
+
+    expect(cancelledWrapper.text()).toContain('已取消')
+    expect(cancelledWrapper.text()).toContain('当前记录为只读状态')
+    expect(cancelledWrapper.find('[data-test="submit-data-repair"]').exists()).toBe(false)
+    expect(cancelledWrapper.find('[data-test="cancel-data-repair"]').exists()).toBe(false)
+    expect(cancelledWrapper.find('[data-test="execute-data-repair"]').exists()).toBe(false)
+  })
+
   it('历史导入列表展示适配器目录、批次和模板下载，不提供运行时字段映射编辑', async () => {
     const wrapper = mountWithAuth(HistoryImportListView, [
       'platform:history-import:view',
@@ -672,6 +722,7 @@ describe('034 平台治理页面', () => {
     await flushPromises()
 
     expectStandardListPage(wrapper)
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(wrapper.text()).toContain('历史数据导入')
     expect(wrapper.text()).toContain('客户历史导入')
     expect(wrapper.text()).toContain('HI-202607-0001')
@@ -697,6 +748,20 @@ describe('034 平台治理页面', () => {
       page: 1,
       pageSize: 10,
     })
+  })
+
+  it('历史导入列表消费 adapterCode 深链并预置适配器筛选', async () => {
+    window.history.pushState({}, '', '/platform/history-imports?adapterCode=CUSTOMER_MASTER_V1')
+    const wrapper = mountWithAuth(HistoryImportListView, ['platform:history-import:view'])
+    await flushPromises()
+
+    expectQueryFormsUseStandardGrid(wrapper)
+    expect(platformGovernanceApiMock.historyImports.list).toHaveBeenCalledWith(expect.objectContaining({
+      adapterCode: 'CUSTOMER_MASTER_V1',
+      page: 1,
+      pageSize: 10,
+    }))
+    expect((wrapper.vm as unknown as { filters: { adapterCode: string } }).filters.adapterCode).toBe('CUSTOMER_MASTER_V1')
   })
 
   it('历史导入上传入口只对本地创建权限和适配器业务权限同时满足者开放', async () => {
@@ -735,6 +800,38 @@ describe('034 平台治理页面', () => {
       version: 4,
       idempotencyKey: expect.stringContaining('history-import-confirm-'),
     })
+  })
+
+  it('历史导入错误明细支持稳定多页浏览器样本', async () => {
+    platformGovernanceApiMock.historyImports.get.mockResolvedValueOnce({
+      ...historyImportDetail,
+      failedRows: 23,
+      errorSummary: { totalErrors: 23, summary: '存在 23 条错误' },
+      availableActions: ['ERRORS'],
+    })
+    platformGovernanceApiMock.historyImports.errors
+      .mockResolvedValueOnce({
+        items: [{ rowNo: 3, columnName: '客户编码', code: 'HISTORY_IMPORT_ALREADY_EXISTS', message: '客户编码已存在', suggestion: '改用新增编码' }],
+        total: 23,
+        page: 1,
+        pageSize: 10,
+      })
+      .mockResolvedValueOnce({
+        items: [{ rowNo: 13, columnName: '客户名称', code: 'HISTORY_IMPORT_FIELD_REQUIRED', message: '客户名称必填', suggestion: '补充客户名称' }],
+        total: 23,
+        page: 2,
+        pageSize: 10,
+      })
+    const wrapper = mountWithAuth(HistoryImportDetailView, ['platform:history-import:view'], { taskId: 601 })
+    await flushPromises()
+
+    await clickButtonByTest(wrapper, 'view-history-import-errors')
+    const errorPagination = wrapper.findComponent({ name: 'ElPagination' })
+    errorPagination.vm.$emit('current-change', 2)
+    await flushPromises()
+
+    expect(platformGovernanceApiMock.historyImports.errors).toHaveBeenLastCalledWith(601, { page: 2, pageSize: 10 })
+    expect(wrapper.text()).toContain('客户名称必填')
   })
 
   it('历史导入错误汇总大于 0 但明细为空时显示异常，不伪装为空表', async () => {
@@ -816,6 +913,7 @@ describe('034 平台治理页面', () => {
     await flushPromises()
 
     await clickButtonByTest(wrapper, 'customer-batch-status-entry')
+    expect(wrapper.find('[data-test="batch-dialog-scroll-region"]').exists()).toBe(true)
     expect(wrapper.text()).not.toContain('对象ID,版本,编码,名称')
     expect(wrapper.find('[data-test="add-manual-batch-candidates"]').exists()).toBe(false)
 
@@ -927,7 +1025,7 @@ describe('034 平台治理页面', () => {
   })
 
   it('批量候选搜索返回无稳定 version 时失败关闭，不允许加入或预检', async () => {
-    masterDataApiMock.customers.list.mockResolvedValueOnce({
+    masterDataApiMock.customers.list.mockResolvedValue({
       items: [{ ...customerCandidate, id: 88, code: 'CUS-NV', version: undefined }],
       total: 1,
       page: 1,
@@ -962,6 +1060,7 @@ describe('034 平台治理页面', () => {
     await flushPromises()
 
     expectStandardListPage(wrapper)
+    expectQueryFormsUseStandardGrid(wrapper)
     expect(wrapper.text()).toContain('业务域')
     expect(wrapper.text()).toContain('发起人')
     expect(wrapper.text()).toContain('创建日期')

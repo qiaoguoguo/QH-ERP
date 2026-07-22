@@ -15,7 +15,8 @@ import { formatPlatformDateTime, platformErrorMessage } from '../platformPageHel
 import { historyImportStatusLabel, historyImportStatusTagType } from '../platformGovernanceLabels'
 
 const authStore = useAuthStore()
-const filters = reactive({ keyword: '', adapterCode: '', status: '' })
+const initialAdapterCode = new URLSearchParams(window.location.search).get('adapterCode')?.trim() ?? ''
+const filters = reactive({ keyword: '', adapterCode: initialAdapterCode, status: '' })
 const pagination = reactive({ page: 1, pageSize: 10, total: 0 })
 const adapters = ref<HistoryImportAdapterRecord[]>([])
 const records = ref<HistoryImportRecord[]>([])
@@ -150,7 +151,7 @@ onMounted(async () => {
 <template>
   <MasterDataTableView title="历史数据导入" description="固定适配器模板下载、上传预检、错误明细和人工确认。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="history-import-keyword" clearable placeholder="批次号、任务号或文件名" />
         </el-form-item>

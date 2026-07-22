@@ -1178,6 +1178,8 @@ Assert-True -Condition ($rebuild -match 'WorkerDisabled' -and $rebuild -match 'W
     -Message "重建入口必须编排 worker-disabled 到 worker-enabled 两阶段受管 API，不能只用 WorkerEnabled 跳过取消任务窗口。"
 Assert-True -Condition ($rebuild -match 'Get-NetTCPConnection[\s\S]*OwningProcess' -and $rebuild -match 'launcherPid') `
     -Message "受管 API 必须记录并停止实际监听端口的 Java PID，不能只记录 Maven wrapper 启动器 PID。"
+Assert-True -Condition ($rebuild -notmatch 'foreach\s*\(\s*\$pid\b') `
+    -Message "重建入口不得把 PowerShell 只读自动变量 `$PID 用作循环变量。"
 Assert-True -Condition ($rebuild -match 'Wait-ManagedApiLoginReady' -and $rebuild.IndexOf('Wait-ManagedApiLoginReady') -gt $rebuild.IndexOf('Wait-ApiHealth')) `
     -Message "受管 API 健康 UP 后必须等待初始管理员可登录，再运行生成器，避免账号权限初始化竞态。"
 Assert-True -Condition ($rebuild -match 'function Stop-StartedManagedApi' -and $rebuild -match 'catch\s*\{[\s\S]*Stop-StartedManagedApi') `

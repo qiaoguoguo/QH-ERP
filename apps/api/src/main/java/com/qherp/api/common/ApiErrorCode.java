@@ -12,6 +12,8 @@ public enum ApiErrorCode {
 
 	AUTH_FORBIDDEN("AUTH_FORBIDDEN", "无访问权限", HttpStatus.FORBIDDEN),
 
+	NOT_FOUND("NOT_FOUND", "资源不存在", HttpStatus.NOT_FOUND),
+
 	AUTH_ACCOUNT_DISABLED("AUTH_ACCOUNT_DISABLED", "账号已停用", HttpStatus.FORBIDDEN),
 
 	AUTH_USERNAME_EXISTS("AUTH_USERNAME_EXISTS", "用户名已存在", HttpStatus.CONFLICT),

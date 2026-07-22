@@ -123,7 +123,7 @@ onMounted(async () => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="data-repair-keyword" clearable placeholder="修复编号、对象编号或标题" />
         </el-form-item>
