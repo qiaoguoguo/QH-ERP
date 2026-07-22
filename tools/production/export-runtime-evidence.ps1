@@ -20,7 +20,7 @@ $secrets = Import-QherpProductionSecrets
 $databaseUsername = Get-QherpContainerEnvironmentValue -ContainerName "qherp035-postgres-1" -VariableName "POSTGRES_USER"
 $containers = [Collections.Generic.List[object]]::new()
 $imagesById = @{}
-foreach ($containerName in @("qherp035-postgres-1", "qherp035-minio-1", "qherp035-api-1", "qherp035-web-1")) {
+foreach ($containerName in @("qherp035-postgres-1", "qherp035-minio-1", "qherp035-secret-store-1", "qherp035-api-1", "qherp035-web-1")) {
     $inspection = @(& docker inspect $containerName | ConvertFrom-Json)[0]
     $health = if ($null -ne $inspection.State.Health) { [string]$inspection.State.Health.Status } else { [string]$inspection.State.Status }
     $ports = @($inspection.NetworkSettings.Ports.PSObject.Properties | ForEach-Object {
@@ -101,6 +101,7 @@ $secretAcl = Get-Acl -LiteralPath $secretPath
 $configurationFiles = @(
     "compose.production.yaml",
     "apps/api/Dockerfile",
+    "apps/api/docker-entrypoint.sh",
     "apps/api/src/main/resources/application-production.properties",
     "apps/web/Dockerfile",
     "apps/web/nginx.production.conf"
@@ -147,7 +148,7 @@ $report | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $reportPath -Encod
 (Get-QherpFileSha256 -Path $reportPath) | Set-Content -LiteralPath (Join-Path $OutputDirectory "runtime-evidence.sha256") -Encoding ascii
 
 if ($report.Database.FlywayVersion -ne "36" -or $report.Database.FailedMigrationCount -ne 0 -or
-    $report.Database.PermissionCount -ne 507 -or @($containers | Where-Object { $_.Health -ne "healthy" }).Count -ne 0 -or
+    $report.Database.PermissionCount -ne 507 -or @($containers | Where-Object { $_.Health -notin @("healthy", "running") }).Count -ne 0 -or
     -not $report.SecretCarrier.InheritanceProtected -or $report.SecretCarrier.AccessRuleCount -ne 1) {
     throw "运行证据未满足 V36、507 权限、容器健康或 DPAPI ACL 门禁。"
 }

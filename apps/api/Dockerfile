@@ -16,7 +16,9 @@ RUN apk upgrade --no-cache \
     && adduser -S -D -G qherp -h /app -s /sbin/nologin qherp
 WORKDIR /app
 COPY --from=build --chown=qherp:qherp /workspace/target/api-0.0.1-SNAPSHOT.jar /app/app.jar
+COPY --chown=qherp:qherp docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod 0555 /app/docker-entrypoint.sh
 
 USER qherp
 EXPOSE 8080
-ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75.0", "-XX:+ExitOnOutOfMemoryError", "-jar", "/app/app.jar"]
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

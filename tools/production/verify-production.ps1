@@ -3,6 +3,7 @@ param(
     [string] $BackupDirectory,
     [string] $PostgresContainer = "qherp035-postgres-1",
     [string] $MinioContainer = "qherp035-minio-1",
+    [string] $SecretStoreContainer = "qherp035-secret-store-1",
     [string] $ApiContainer = "qherp035-api-1",
     [string] $WebContainer = "qherp035-web-1",
     [string] $DatabaseName,
@@ -26,13 +27,19 @@ Assert-QherpBucketName -Value $Bucket
 $databaseUsername = Get-QherpContainerEnvironmentValue -ContainerName $PostgresContainer -VariableName "POSTGRES_USER"
 $failures = [Collections.Generic.List[string]]::new()
 
-foreach ($container in @($PostgresContainer, $MinioContainer, $ApiContainer, $WebContainer)) {
+foreach ($container in @($PostgresContainer, $MinioContainer, $SecretStoreContainer, $ApiContainer, $WebContainer)) {
     try {
         Wait-QherpContainerHealthy -ContainerName $container -TimeoutSeconds 10
     }
     catch {
         $failures.Add($_.Exception.Message)
     }
+}
+
+$secretMetadataCommand = 'set -eu; for name in spring.datasource.password qherp.account-permission.initial-admin-password qherp.storage.s3.access-key qherp.storage.s3.secret-key; do path="/run/secrets/$name"; test -s "$path"; test "$(stat -c %a "$path")" = 600; test "$(stat -c %u:%g "$path")" = 100:101; done'
+& docker exec $SecretStoreContainer sh -c $secretMetadataCommand
+if ($LASTEXITCODE -ne 0) {
+    $failures.Add("API 内存密钥文件缺失或权限不正确。")
 }
 
 $expectedChecksums = [ordered]@{

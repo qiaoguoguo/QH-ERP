@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-本手册适用于 035 冻结的单机生产式候选：PostgreSQL、MinIO、API、Web/Nginx 统一由 `compose.production.yaml` 管理。只有 Web/Nginx 发布宿主端口并绑定 `127.0.0.1`；API、PostgreSQL 和 MinIO 仅在 Compose 内部网络可达。需要非本机访问时，必须另行提供受控 TLS 入口并使用 `-SecureCookie`，不得直接扩大当前端口绑定。
+本手册适用于 035 冻结的单机生产式候选：PostgreSQL、MinIO、API、Web/Nginx 和无网络的 API 内存密钥保活服务统一由 `compose.production.yaml` 管理。只有 Web/Nginx 发布宿主端口并绑定 `127.0.0.1`；API、PostgreSQL 和 MinIO 仅在 Compose 内部网络可达，密钥保活服务不接入任何网络。需要非本机访问时，必须另行提供受控 TLS 入口并使用 `-SecureCookie`，不得直接扩大当前端口绑定。
 
 ## 固定资源
 
@@ -29,9 +29,9 @@ pwsh -NoProfile -File tools/production/invoke-production.ps1 -Action Up
 pwsh -NoProfile -File tools/production/verify-production.ps1
 ```
 
-镜像标签由当前 Git 提交派生，API/Web OCI revision 必须等于来源提交。所有基础镜像均锁定 SHA256。启动通过的最低条件是四个容器健康、Web/API HTTP 200、Flyway V36、失败迁移 0、数据库 `AVAILABLE` 文件与 MinIO 对象数量和 SHA256 一致、超级管理员可登录。
+镜像标签由当前 Git 提交派生，API/Web OCI revision 必须等于来源提交。所有基础镜像均锁定 SHA256。启动通过的最低条件是 PostgreSQL、MinIO、API、Web 四个业务容器健康，密钥保活容器运行，Web/API HTTP 200、Flyway V36、失败迁移 0、数据库 `AVAILABLE` 文件与 MinIO 对象数量和 SHA256 一致、超级管理员可登录。
 
-启动脚本只在当前 PowerShell 进程中解密 DPAPI 载荷，Compose 使用 `secrets.environment` 将值注入容器内 `/run/secrets` 文件。PostgreSQL 通过 `POSTGRES_PASSWORD_FILE` 读取，MinIO 入口在进程启动时读取，API 由 Spring `configtree:/run/secrets/` 直接读取配置键；Docker 容器配置只保留 secret 文件挂载，不得出现数据库密码、MinIO 根凭据、S3 凭据或初始管理员密码的明文环境变量。禁止绕过统一入口直接用 `docker run -e` 或 Compose `environment` 注入这些值。
+启动脚本只在当前 PowerShell 进程中解密 DPAPI 载荷。PostgreSQL 和 MinIO 使用 Compose `secrets.environment` 生成文件型 secret，分别通过 `POSTGRES_PASSWORD_FILE` 和 MinIO 启动入口读取。只读 API 不直接挂载 Compose 的环境来源 secret：统一入口先启动无网络、非 root 的密钥保活容器，再经 `docker exec -i` 标准输入把四个 API 配置键写入 Docker 本机 `tmpfs` 卷；API 以只读方式挂载该卷，并由 Spring `configtree:/run/secrets/` 读取。文件固定为 `0600`、卷固定为 `0700` 和 UID/GID `100:101`。Docker 容器配置不得出现数据库密码、MinIO 根凭据、S3 凭据或初始管理员密码的明文环境变量，宿主不得形成 DPAPI 之外的持久明文文件；禁止绕过统一入口直接用 `docker run -e` 或 Compose `environment` 注入这些值。
 
 当前运行基线固定为 PostgreSQL 18.4 Alpine 3.24、Temurin 21 JRE Alpine、Nginx 1.30.4 Alpine，以及既有 MinIO 开源版固定摘要。API 构建会安装 Alpine 当前安全更新，PostgreSQL JDBC 固定为 42.7.12。任何摘要或依赖版本变化都必须重新构建、扫描并执行恢复后验证，不能只修改标签。
 
@@ -40,7 +40,7 @@ pwsh -NoProfile -File tools/production/verify-production.ps1
 - API 与 Web 最终运行镜像必须对高危和严重漏洞保持 0；扫描对象是实际成品，而不是仅扫描 Dockerfile 基础镜像。
 - PostgreSQL 使用官方当前 18.4 镜像。扫描器对仅在容器启动时使用的 `gosu` 及未触达的库代码仍可能报告高危项，升级官方摘要后需结合实际执行路径复核，不能直接忽略，也不能为清零统计改用非官方来源。
 - MinIO 开源版已经停止维护，官方 2026 修复版本转为需要许可证的 AIStor。当前候选不得静默切换到商业镜像；在完成许可证或替代对象存储决策前，MinIO 不发布任何宿主端口，只允许 Compose 内部 API 访问，禁止配置 OIDC、LDAP、复制、S3 Select 或额外访问密钥，根凭据只允许通过 DPAPI 注入。
-- 仓库密钥扫描必须为 0；开发与测试夹具不能当作生产凭据使用。宿主长期载体只允许既定 DPAPI 文件；容器通过 `/run/secrets` 只读文件启动，Docker 配置元数据不得保存明文密钥，服务使用期间的明文只允许进入对应进程内存。
+- 仓库密钥扫描必须为 0；开发与测试夹具不能当作生产凭据使用。宿主长期载体只允许既定 DPAPI 文件；API 密钥只存在于 Docker 本机内存型卷与对应进程内存，Docker 配置元数据不得保存明文密钥。密钥保活服务固定镜像摘要、无网络、只读根文件系统、删除全部 Linux capability，并只以数字身份 `100:101` 访问内存卷。
 
 ## 日常操作
 
@@ -54,7 +54,8 @@ pwsh -NoProfile -File tools/production/verify-production.ps1
 
 ## 稳定性和故障处置
 
-- 四服务均使用 `unless-stopped`、健康检查和 JSON 日志轮转；内存上限分别为 PostgreSQL 1GiB、MinIO 512MiB、API 1GiB、Web 256MiB。
+- PostgreSQL、MinIO、API、Web 均使用 `unless-stopped`、健康检查和 JSON 日志轮转；内存上限分别为 PostgreSQL 1GiB、MinIO 512MiB、API 1GiB、Web 256MiB。密钥保活服务使用 `unless-stopped`、32MiB 内存、0.1 CPU 和 16 PID 上限。
+- API 单独异常重启时，密钥保活服务持续挂载内存卷，API 能自动重新读取密钥。整栈停止或 Docker 守护进程重启会清空内存卷；恢复时必须执行统一 `Up` 或 `Restart`，由 DPAPI 重新注入后再开放 Web/API，禁止直接同时启动 API 与 Web。
 - Web 502/504 时先检查 API 健康和日志；API 不健康时继续检查 PostgreSQL、MinIO、Flyway 与只读根文件系统的 `/tmp` 空间。
 - 数据库或 bucket 不一致时立即停止 API/Web，不允许继续写入；按备份恢复手册先验证清单和哈希，再恢复。
 - 缺少生产环境变量、DPAPI 解密失败、迁移失败、容器持续不健康或管理员无法登录均为阻断问题，不得绕过启动入口。

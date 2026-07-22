@@ -63,6 +63,23 @@ services:
     networks:
       - qherp
 
+  secret-store:
+    <<: *service-defaults
+    image: alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40
+    command: ["sleep", "infinity"]
+    user: "100:101"
+    network_mode: none
+    volumes:
+      - api-secrets:/run/secrets
+    mem_limit: 32m
+    cpus: 0.1
+    pids_limit: 16
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   api:
     <<: *service-defaults
     image: qherp/api:${QHERP_IMAGE_TAG:?缺少 QHERP_IMAGE_TAG}
@@ -81,20 +98,15 @@ services:
       QHERP_SESSION_COOKIE_SECURE: ${QHERP_SESSION_COOKIE_SECURE:?缺少 QHERP_SESSION_COOKIE_SECURE}
       QHERP_TASK_WORKER_ENABLED: "true"
       QHERP_APPROVAL_ENFORCE_DIRECT_ACTIONS: "true"
-    secrets:
-      - source: qherp-postgres-password
-        target: spring.datasource.password
-      - source: qherp-initial-admin-password
-        target: qherp.account-permission.initial-admin-password
-      - source: qherp-minio-root-user
-        target: qherp.storage.s3.access-key
-      - source: qherp-minio-root-password
-        target: qherp.storage.s3.secret-key
     depends_on:
       postgres:
         condition: service_healthy
       minio:
         condition: service_healthy
+      secret-store:
+        condition: service_started
+    volumes:
+      - api-secrets:/run/secrets:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/health"]
       interval: 10s
@@ -144,6 +156,12 @@ services:
 volumes:
   postgres-data:
   minio-data:
+  api-secrets:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=64k,mode=0700,uid=100,gid=101
 
 networks:
   qherp:
@@ -156,5 +174,3 @@ secrets:
     environment: QHERP_MINIO_ROOT_USER
   qherp-minio-root-password:
     environment: QHERP_MINIO_ROOT_PASSWORD
-  qherp-initial-admin-password:
-    environment: QHERP_INITIAL_ADMIN_PASSWORD

@@ -99,7 +99,6 @@ function Set-QherpProductionEnvironment {
         QHERP_POSTGRES_PASSWORD = ConvertFrom-QherpSecureString $Secrets.DatabasePassword
         QHERP_MINIO_ROOT_USER = [string]$Secrets.MinioRootUser
         QHERP_MINIO_ROOT_PASSWORD = ConvertFrom-QherpSecureString $Secrets.MinioRootPassword
-        QHERP_INITIAL_ADMIN_PASSWORD = ConvertFrom-QherpSecureString $Secrets.InitialAdminPassword
         QHERP_S3_BUCKET = [string]$Secrets.S3Bucket
         QHERP_SESSION_COOKIE_SECURE = $SecureCookie.ToString().ToLowerInvariant()
         QHERP_SOURCE_COMMIT = $commit
@@ -129,6 +128,97 @@ function Invoke-QherpCompose {
     & docker compose --project-directory $RepoRoot -f $composePath @Arguments
     if ($LASTEXITCODE -ne 0) {
         throw "docker compose 执行失败：$($Arguments -join ' ')"
+    }
+}
+
+function Write-QherpApiRuntimeSecret {
+    param(
+        [Parameter(Mandatory)][string] $ContainerName,
+        [Parameter(Mandatory)][ValidateSet(
+            "spring.datasource.password",
+            "qherp.account-permission.initial-admin-password",
+            "qherp.storage.s3.access-key",
+            "qherp.storage.s3.secret-key"
+        )][string] $SecretName,
+        [Parameter(Mandatory)][Security.SecureString] $Value
+    )
+
+    Assert-QherpDockerName -Value $ContainerName -FieldName "API 容器名"
+    if ($Value.Length -eq 0) {
+        throw "API 运行时密钥不能为空：$SecretName"
+    }
+
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = "docker"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardInput = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    foreach ($argument in @(
+        "exec",
+        "-i",
+        $ContainerName,
+        "sh",
+        "-c",
+        'set -eu; umask 077; target="/run/secrets/$1"; temporary="${target}.tmp"; trap ''rm -f "$temporary"'' EXIT; cat > "$temporary"; test -s "$temporary"; mv -f "$temporary" "$target"; trap - EXIT',
+        "qherp-secret-writer",
+        $SecretName
+    )) {
+        [void]$startInfo.ArgumentList.Add($argument)
+    }
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    $plainText = $null
+    $started = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) {
+            throw "无法启动 API 运行时密钥注入进程。"
+        }
+        $plainText = ConvertFrom-QherpSecureString -Value $Value
+        $process.StandardInput.Write($plainText)
+        $process.StandardInput.Close()
+        $process.WaitForExit()
+        $standardError = $process.StandardError.ReadToEnd().Trim()
+        if ($process.ExitCode -ne 0) {
+            if ([string]::IsNullOrWhiteSpace($standardError)) {
+                $standardError = "docker exec 返回 $($process.ExitCode)"
+            }
+            throw "API 运行时密钥注入失败（$SecretName）：$standardError"
+        }
+    }
+    finally {
+        $plainText = $null
+        if ($started -and -not $process.HasExited) {
+            $process.Kill($true)
+        }
+        $process.Dispose()
+    }
+}
+
+function Set-QherpApiRuntimeSecrets {
+    param(
+        [Parameter(Mandatory)] $Secrets,
+        [string] $ContainerName = "qherp035-secret-store-1"
+    )
+
+    Assert-QherpProductionSecrets -Secrets $Secrets
+    Assert-QherpDockerName -Value $ContainerName -FieldName "API 容器名"
+    $minioRootUser = ConvertTo-SecureString ([string]$Secrets.MinioRootUser) -AsPlainText -Force
+    try {
+        foreach ($entry in @(
+            [pscustomobject]@{ Name = "spring.datasource.password"; Value = $Secrets.DatabasePassword },
+            [pscustomobject]@{ Name = "qherp.account-permission.initial-admin-password"; Value = $Secrets.InitialAdminPassword },
+            [pscustomobject]@{ Name = "qherp.storage.s3.access-key"; Value = $minioRootUser },
+            [pscustomobject]@{ Name = "qherp.storage.s3.secret-key"; Value = $Secrets.MinioRootPassword }
+        )) {
+            Write-QherpApiRuntimeSecret -ContainerName $ContainerName -SecretName $entry.Name -Value $entry.Value
+        }
+    }
+    finally {
+        $minioRootUser.Dispose()
     }
 }
 
@@ -391,18 +481,34 @@ function Stop-QherpApplicationContainers {
 }
 
 function Start-QherpApplicationContainers {
-    param([string] $ApiContainer = "qherp035-api-1", [string] $WebContainer = "qherp035-web-1")
+    param(
+        [string] $ApiContainer = "qherp035-api-1",
+        [string] $WebContainer = "qherp035-web-1",
+        [string] $SecretStoreContainer = "qherp035-secret-store-1",
+        $Secrets
+    )
+
+    if ($null -eq $Secrets) {
+        $Secrets = Import-QherpProductionSecrets
+    }
 
     & docker start $ApiContainer | Out-Null
     if ($LASTEXITCODE -ne 0) {
         throw "启动 API 容器失败：$ApiContainer"
     }
-    Wait-QherpContainerHealthy -ContainerName $ApiContainer
-    & docker start $WebContainer | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "启动 Web 容器失败：$WebContainer"
+    try {
+        Set-QherpApiRuntimeSecrets -Secrets $Secrets -ContainerName $SecretStoreContainer
+        Wait-QherpContainerHealthy -ContainerName $ApiContainer
+        & docker start $WebContainer | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw "启动 Web 容器失败：$WebContainer"
+        }
+        Wait-QherpContainerHealthy -ContainerName $WebContainer
     }
-    Wait-QherpContainerHealthy -ContainerName $WebContainer
+    catch {
+        & docker stop --time 30 $WebContainer $ApiContainer 2>$null | Out-Null
+        throw
+    }
 }
 
 function Get-QherpPercentile {

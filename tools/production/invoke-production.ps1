@@ -18,6 +18,20 @@ $repoRoot = Get-QherpRepoRoot
 $secrets = Import-QherpProductionSecrets -SecretPath $SecretPath
 $context = Set-QherpProductionEnvironment -Secrets $secrets -RepoRoot $repoRoot -SecureCookie:$SecureCookie
 
+function Start-QherpProductionApiAndWeb {
+    try {
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--no-deps", "api")
+        Set-QherpApiRuntimeSecrets -Secrets $secrets -ContainerName "qherp035-secret-store-1"
+        Wait-QherpContainerHealthy -ContainerName "qherp035-api-1"
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--no-deps", "web")
+        Wait-QherpContainerHealthy -ContainerName "qherp035-web-1"
+    }
+    catch {
+        & docker stop --time 30 qherp035-web-1 qherp035-api-1 2>$null | Out-Null
+        throw
+    }
+}
+
 switch ($Action) {
     "Config" {
         Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("config", "--quiet")
@@ -29,7 +43,8 @@ switch ($Action) {
     }
     "Up" {
         Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("config", "--quiet")
-        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "180")
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--remove-orphans", "--wait", "--wait-timeout", "180", "postgres", "minio", "secret-store")
+        Start-QherpProductionApiAndWeb
         Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("ps")
     }
     "Down" {
@@ -40,13 +55,18 @@ switch ($Action) {
         Invoke-QherpCompose -RepoRoot $repoRoot -Arguments $arguments
     }
     "Restart" {
-        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("restart")
-        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--wait", "--wait-timeout", "180")
+        Stop-QherpApplicationContainers
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("restart", "postgres", "minio")
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("up", "-d", "--no-deps", "secret-store")
+        Wait-QherpContainerHealthy -ContainerName "qherp035-postgres-1"
+        Wait-QherpContainerHealthy -ContainerName "qherp035-minio-1"
+        Wait-QherpContainerHealthy -ContainerName "qherp035-secret-store-1"
+        Start-QherpApplicationContainers -Secrets $secrets
     }
     "Status" {
         Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("ps")
     }
     "Logs" {
-        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("logs", "--tail", "200", "api", "web", "postgres", "minio")
+        Invoke-QherpCompose -RepoRoot $repoRoot -Arguments @("logs", "--tail", "200", "api", "web", "postgres", "minio", "secret-store")
     }
 }
