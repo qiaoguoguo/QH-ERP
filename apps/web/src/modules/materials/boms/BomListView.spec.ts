@@ -537,7 +537,7 @@ describe('BOM 管理页', () => {
     expect(Number(columns[8].width)).toBe(120)
     expect(Number(columns[9].width)).toBe(80)
     expect(Number(columns[10].width)).toBe(150)
-    expect(columns[11].fixed).toBe('right')
+    expect(columns[11].fixed).not.toBe('right')
     expect(Number(columns[11].minWidth)).toBeGreaterThanOrEqual(320)
     expect(Number(columns[11].minWidth)).toBeLessThanOrEqual(360)
 

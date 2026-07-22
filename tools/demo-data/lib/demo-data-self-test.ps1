@@ -65,6 +65,12 @@ $rebuildPath = Join-Path $Root "tools/demo-data/rebuild-acceptance.ps1"
 $rebuild = Get-Content -LiteralPath $rebuildPath -Raw
 $commonPath = Join-Path $Root "tools/demo-data/lib/demo-data-common.ps1"
 $common = Get-Content -LiteralPath $commonPath -Raw
+$minioCredentialShellPath = Join-Path $Root "tools/demo-data/lib/minio-credential-shell.ps1"
+$minioCredentialShell = if (Test-Path -LiteralPath $minioCredentialShellPath -PathType Leaf) {
+    Get-Content -LiteralPath $minioCredentialShellPath -Raw
+} else {
+    ""
+}
 $validatorPath = Join-Path $Root "tools/demo-data/validate-demo-data.ps1"
 $validator = Get-Content -LiteralPath $validatorPath -Raw
 $validatorSqlPath = Join-Path $Root "tools/demo-data/sql/validate-demo-data.sql"
@@ -94,6 +100,16 @@ Assert-True -Condition ($validator -match 'function Test-PostgresContainerHealth
     -Message "无 Docker healthcheck 的 PostgreSQL 隔离容器必须通过 pg_isready 兜底校验，不能把 running 误判为失败。"
 Assert-True -Condition ($validator -match 'function Test-MinioContainerHealthy' -and $validator -match '/minio/health/live') `
     -Message "无 Docker healthcheck 的 MinIO 隔离容器必须通过真实健康端点兜底校验，不能把 running 误判为失败。"
+Assert-True -Condition ($minioCredentialShell -match 'function Get-DemoMinioCredentialShellPrefix' -and
+    $minioCredentialShell -match '\[ -r \$\{MINIO_ROOT_USER_FILE:-/[^}]+\} \]' -and
+    $minioCredentialShell -match '\[ -r \$\{MINIO_ROOT_PASSWORD_FILE:-/[^}]+\} \]' -and
+    $minioCredentialShell -notmatch '"') `
+    -Message "演示数据工具必须通过统一 shell 前缀优先读取可读的 MinIO 文件型密钥，并兼容既有环境变量容器。"
+Assert-True -Condition ($validator -match 'lib/minio-credential-shell\.ps1' -and
+    $validator -notmatch 'lib/demo-data-common\.ps1' -and $validator -match 'Get-DemoMinioCredentialShellPrefix') `
+    -Message "FullFacts 校验器必须只加载无运行时副作用的 MinIO 文件型密钥兼容前缀。"
+Assert-True -Condition ($common -match 'minio-credential-shell\.ps1' -and $rebuild -match 'Get-DemoMinioCredentialShellPrefix') `
+    -Message "重建验收工具必须通过通用演示数据库加载统一 MinIO 文件型密钥兼容前缀。"
 
 $firstByRemarkStart = $generator.IndexOf("function Get-FirstByRemark")
 $firstByRemarkEnd = $generator.IndexOf("function Ensure-PurchaseOrder", $firstByRemarkStart)
@@ -1667,6 +1683,15 @@ if (`$Stage034Only) {
         -and $ScriptText.Contains("function Ensure-Stage034FixedPrintSamples") `
         -and $ScriptText.Contains("Invoke-DemoMultipart -Path `"/api/admin/platform/history-imports/") `
         -and $ScriptText.Contains("/api/admin/platform/data-repairs") `
+        -and $ScriptText.Contains('[ValidateSet("Draft", "Cancelled", "Verified", "Rejected", "VerifyFailed")]') `
+        -and $ScriptText.Contains('if ($Outcome -eq "Draft")') `
+        -and $ScriptText.Contains('if ($Outcome -eq "Cancelled")') `
+        -and $ScriptText.Contains('/api/admin/platform/data-repairs/$($repair.id)/cancel') `
+        -and $ScriptText.Contains('$RunId-STAGE034-REPAIR-$Key-CANCEL') `
+        -and $ScriptText.Contains('-Key "CUSTOMER-DRAFT"') `
+        -and $ScriptText.Contains('-AfterValue "034 草稿客户修复样本" -Outcome "Draft"') `
+        -and $ScriptText.Contains('-Key "SUPPLIER-CANCELLED"') `
+        -and $ScriptText.Contains('-AfterValue "034 已取消供应商修复样本" -Outcome "Cancelled"') `
         -and $ScriptText.Contains("/submit") `
         -and $ScriptText.Contains("/execute") `
         -and $ScriptText.Contains("/verify") `
@@ -1711,7 +1736,7 @@ if (`$Stage034Only) {
 }
 
 Assert-True -Condition (Test-Stage034GeneratorRealApiFlowIsStrict -ScriptText $generator) `
-    -Message "034 生成器必须在 Stage034Only 下完成全量真实业务基线后追加真实 API 样本：三类修复、五类历史导入、四类批量工具、十个新增模板打印、幂等和任务状态；不得早退只做目录探测。"
+    -Message "034 生成器必须在 Stage034Only 下完成全量真实业务基线后追加真实 API 样本：五类数据修复状态、五类历史导入、四类批量工具、十个新增模板打印、幂等和任务状态；不得早退只做目录探测。"
 
 Assert-ContainsInOrder -Text $generator -Needles @(
     'Ensure-DocumentTaskSamples',

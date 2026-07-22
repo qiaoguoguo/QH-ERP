@@ -26,13 +26,14 @@ catch {
     # 某些宿主不允许修改控制台编码；不影响 JSON 摘要和退出码。
 }
 
+$scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+. (Join-Path $scriptRoot "lib/minio-credential-shell.ps1")
+
 if (-not $SqlPath) {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     $SqlPath = Join-Path $scriptRoot "sql/validate-demo-data.sql"
 }
 
 if ($Stage034Profile -ne "Default") {
-    $scriptRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
     . (Join-Path $scriptRoot "lib/stage034-isolation-strategy.ps1")
     Assert-Stage034ValidationTarget -Database $Database -MinioBucket $MinioBucket -ApiBaseUrl $ApiBaseUrl
 }
@@ -139,7 +140,7 @@ function Test-MinioContainerHealthy {
             }
         }
     }
-    $minioReadyCommand = "MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc ready qherplocal"
+    $minioReadyCommand = "$(Get-DemoMinioCredentialShellPrefix); MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc ready qherplocal"
     docker exec $ContainerName sh -c $minioReadyCommand 2>&1 | Out-Null
     [pscustomobject]@{
         passed = ($LASTEXITCODE -eq 0)
@@ -240,7 +241,7 @@ if (-not $SkipMinio) {
     $environmentRules.Add((Get-ContainerHealth -ContainerName $MinioContainer -FallbackProbe {
                 Test-MinioContainerHealthy -ContainerName $MinioContainer
             }))
-    $minioCommand = "MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc find qherplocal/$MinioBucket | wc -l"
+    $minioCommand = "$(Get-DemoMinioCredentialShellPrefix); MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`" mc find qherplocal/$MinioBucket | wc -l"
     $minioOutput = docker exec $MinioContainer sh -c $minioCommand 2>&1
     $minioExitCode = $LASTEXITCODE
     $minioCountText = (($minioOutput | ForEach-Object { $_.ToString().Trim() }) | Where-Object { $_ } | Select-Object -Last 1)

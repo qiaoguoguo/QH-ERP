@@ -9,6 +9,7 @@ function Assert-DemoPwshRuntime {
 }
 
 Assert-DemoPwshRuntime
+. (Join-Path $PSScriptRoot "minio-credential-shell.ps1")
 
 function Test-DemoResourceName {
     param(

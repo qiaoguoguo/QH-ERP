@@ -388,6 +388,11 @@ onMounted(loadRecords)
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无供应商数据'" stripe>
         <el-table-column prop="code" label="编码" min-width="140" show-overflow-tooltip />
         <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+        <el-table-column label="状态" min-width="90">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="contactName" label="联系人" min-width="120" show-overflow-tooltip />
         <el-table-column prop="contactPhone" label="联系电话" min-width="140" show-overflow-tooltip />
         <el-table-column label="结算税务摘要" min-width="240" show-overflow-tooltip>
@@ -403,13 +408,8 @@ onMounted(loadRecords)
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="90">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" min-width="230">
+        <el-table-column label="操作" min-width="230">
           <template #default="{ row }">
             <el-button v-if="canUpdate" size="small" text data-test="edit-record" @click="openEdit(row)">编辑</el-button>
             <el-button

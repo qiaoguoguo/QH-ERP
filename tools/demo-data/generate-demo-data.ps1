@@ -327,7 +327,7 @@ function Invoke-Stage034DataRepairLifecycle {
         [long] $TargetObjectId,
         [string] $FieldName,
         [string] $AfterValue,
-        [ValidateSet("Verified", "Rejected", "VerifyFailed")] [string] $Outcome,
+        [ValidateSet("Draft", "Cancelled", "Verified", "Rejected", "VerifyFailed")] [string] $Outcome,
         [switch] $AttachEvidence
     )
     $target = Get-Stage034FreshObject -Path $TargetPath -Id $TargetObjectId
@@ -349,6 +349,27 @@ function Invoke-Stage034DataRepairLifecycle {
         $attachment = Upload-Attachment -ObjectType "DATA_REPAIR_REQUEST" -ObjectId ([long]$repair.id) `
             -AssetName "bridge-electrical-quality-note.txt" -Description "034 数据修复证据附件 $Key"
         $Manifest.AddObject("stage034DataRepairAttachment", $Key, $attachment.id)
+    }
+    if ($Outcome -eq "Draft") {
+        if ($repair.status -ne "DRAFT") {
+            throw "034 数据修复 $Key 预期保留 DRAFT，实际状态 $($repair.status)。"
+        }
+        $Manifest.AddObject("stage034DataRepair", $Key, $repair.id)
+        return $repair
+    }
+    if ($Outcome -eq "Cancelled") {
+        if ($repair.status -eq "DRAFT" -or $repair.status -eq "PENDING_APPROVAL") {
+            $repair = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/data-repairs/$($repair.id)/cancel" -Body ([ordered]@{
+                version = [long]$repair.version
+                reason = "034 演示取消数据修复 $Key"
+                idempotencyKey = "$RunId-STAGE034-REPAIR-$Key-CANCEL"
+            })
+        }
+        if ($repair.status -ne "CANCELLED") {
+            throw "034 数据修复 $Key 预期生成 CANCELLED，实际状态 $($repair.status)。"
+        }
+        $Manifest.AddObject("stage034DataRepair", $Key, $repair.id)
+        return $repair
     }
     if ($repair.status -eq "DRAFT") {
         $repair = Invoke-DemoApi -Session $Session -Method Post -Path "/api/admin/platform/data-repairs/$($repair.id)/submit" -Body ([ordered]@{
@@ -396,7 +417,9 @@ function Invoke-Stage034DataRepairLifecycle {
 function Ensure-Stage034DataRepairSamples {
     $material = Get-Stage034FreshObject -Path "/api/admin/master/materials" -Id $materials["$DemoPrefix-MAT-AUX-LABEL"].id
     $customer = Get-Stage034FreshObject -Path "/api/admin/master/customers" -Id $customers[0].id
+    $draftCustomer = Get-Stage034FreshObject -Path "/api/admin/master/customers" -Id $customers[2].id
     $supplier = Get-Stage034FreshObject -Path "/api/admin/master/suppliers" -Id $suppliers[0].id
+    $cancelledSupplier = Get-Stage034FreshObject -Path "/api/admin/master/suppliers" -Id $suppliers[2].id
     $verifyFailedCustomer = Get-Stage034FreshObject -Path "/api/admin/master/customers" -Id $customers[1].id
     $verifiedMaterial = Invoke-Stage034DataRepairLifecycle -Key "MATERIAL-VERIFIED" -AdapterCode "MATERIAL_PROFILE_CORRECTION_V1" `
         -TargetObjectType "MATERIAL" -TargetPath "/api/admin/master/materials" -TargetObjectId $material.id `
@@ -410,7 +433,13 @@ function Ensure-Stage034DataRepairSamples {
     $failedVerification = Invoke-Stage034DataRepairLifecycle -Key "CUSTOMER-VERIFY-FAILED" -AdapterCode "CUSTOMER_PROFILE_CORRECTION_V1" `
         -TargetObjectType "CUSTOMER" -TargetPath "/api/admin/master/customers" -TargetObjectId $verifyFailedCustomer.id `
         -FieldName "remark" -AfterValue "034 复核失败客户修复样本" -Outcome "VerifyFailed"
-    return @($verifiedMaterial, $rejectedCustomer, $verifiedSupplier, $failedVerification)
+    $draftCustomerRepair = Invoke-Stage034DataRepairLifecycle -Key "CUSTOMER-DRAFT" -AdapterCode "CUSTOMER_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "CUSTOMER" -TargetPath "/api/admin/master/customers" -TargetObjectId $draftCustomer.id `
+        -FieldName "remark" -AfterValue "034 草稿客户修复样本" -Outcome "Draft"
+    $cancelledSupplierRepair = Invoke-Stage034DataRepairLifecycle -Key "SUPPLIER-CANCELLED" -AdapterCode "SUPPLIER_PROFILE_CORRECTION_V1" `
+        -TargetObjectType "SUPPLIER" -TargetPath "/api/admin/master/suppliers" -TargetObjectId $cancelledSupplier.id `
+        -FieldName "remark" -AfterValue "034 已取消供应商修复样本" -Outcome "Cancelled"
+    return @($verifiedMaterial, $rejectedCustomer, $verifiedSupplier, $failedVerification, $draftCustomerRepair, $cancelledSupplierRepair)
 }
 
 function New-Stage034HistoryImportFile {
@@ -776,7 +805,7 @@ function Ensure-Stage034DeliveryGovernanceSamples {
     $Manifest.AddObject("stage034", "historyImportAdapters", @($script:Stage034HistoryImportAdapters).Count)
     $Manifest.AddObject("stage034", "batchTools", @($script:Stage034BatchTools).Count)
     $Manifest.AddObject("stage034", "printTemplates", @($script:Stage034PrintTemplates).Count)
-    $Manifest.AddNote("034 接口探测结果：deliveryAssets=$($null -ne $contracts.deliveryAssets)；真实 API 已生成三类修复、五类历史导入、四类批量工具、十个新增模板打印、任务状态和 MinIO 文件一致性样本。")
+    $Manifest.AddNote("034 接口探测结果：deliveryAssets=$($null -ne $contracts.deliveryAssets)；真实 API 已生成五类数据修复状态、五类历史导入、四类批量工具、十个新增模板打印、任务状态和 MinIO 文件一致性样本。")
 }
 
 function Get-ItemByField {

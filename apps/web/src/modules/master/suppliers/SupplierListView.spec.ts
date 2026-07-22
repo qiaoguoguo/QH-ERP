@@ -90,6 +90,24 @@ function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountSupplie
   })
 }
 
+function expectDefaultTableKeepsStatusScannable(wrapper: ReturnType<typeof mountSuppliers>) {
+  const columns = wrapper.findAllComponents({ name: 'ElTableColumn' }).map((column) => column.props() as Record<string, unknown>)
+  expect(columns.map((column) => column.label)).toEqual([
+    '编码',
+    '名称',
+    '状态',
+    '联系人',
+    '联系电话',
+    '结算税务摘要',
+    '备注',
+    '操作',
+  ])
+  expect(columns[2].label).toBe('状态')
+  expect(columns.at(-1)?.label).toBe('操作')
+  expect(columns.at(-1)?.fixed).not.toBe('right')
+  expect(Number(columns.at(-1)?.minWidth)).toBeLessThanOrEqual(230)
+}
+
 describe('供应商列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -181,6 +199,7 @@ describe('供应商列表页', () => {
     await flushPromises()
 
     expectQueryFormsUseStandardGrid(wrapper)
+    expectDefaultTableKeepsStatusScannable(wrapper)
     expect(wrapper.find('[data-test="supplier-history-import-entry"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="supplier-batch-status-entry"]').exists()).toBe(true)
   })

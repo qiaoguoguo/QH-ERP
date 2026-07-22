@@ -130,7 +130,7 @@ try {
     $deadline = (Get-Date).AddSeconds(180)
     $healthy = $false
     do {
-        & docker exec $apiContainer curl --fail --silent --show-error http://127.0.0.1:8080/api/health 2>$null | Out-Null
+        & docker exec $apiContainer wget -q -O /dev/null http://127.0.0.1:8080/api/health 2>$null | Out-Null
         $healthy = $LASTEXITCODE -eq 0
         if (-not $healthy) {
             $running = (& docker inspect $apiContainer --format '{{.State.Running}}' 2>$null).Trim()

@@ -1532,7 +1532,7 @@ onMounted(() => {
           <el-table-column prop="baseUnitName" label="单位" width="120" show-overflow-tooltip />
           <el-table-column prop="itemCount" label="明细数" width="80" />
           <el-table-column label="更新时间" width="150"><template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template></el-table-column>
-          <el-table-column label="操作" fixed="right" min-width="340">
+          <el-table-column label="操作" min-width="340">
             <template #default="{ row }">
               <el-button size="small" text data-test="view-bom" @click="openDetail(row)">详情</el-button>
               <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom" @click="openEdit(row)">编辑</el-button>

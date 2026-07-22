@@ -453,6 +453,10 @@ if (Test-Path -LiteralPath $migrationRehearsalPath -PathType Leaf) {
         "迁移演练的临时 secret 目录和文件必须收紧为当前用户 ACL。"
     Assert-Match $migrationRehearsal '--mount\s+"type=bind,[^"\r\n]+,readonly"' `
         "迁移演练必须把临时 secret 以只读 bind mount 注入容器。"
+    Assert-True -Condition ($migrationRehearsal -notmatch '(?m)docker\s+exec\s+\$apiContainer\s+curl\b') `
+        -Message "迁移演练健康探测不得依赖最终 API 镜像未安装的 curl。"
+    Assert-Match $migrationRehearsal 'docker\s+exec\s+\$apiContainer\s+wget\s+-q\s+-O\s+/dev/null\s+http://127\.0\.0\.1:8080/api/health' `
+        "迁移演练健康探测必须使用最终 API 镜像内置的 wget。"
     Assert-True -Condition ($migrationRehearsal -match '\[IO\.Path\]::GetTempPath\(\)' -and
         $migrationRehearsal -match 'StartsWith\(\$resolvedTempRoot' -and
         $migrationRehearsal -match 'qherp035-migration-secrets-\*') `

@@ -631,7 +631,17 @@ onMounted(() => {
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无物料档案数据'" stripe>
         <el-table-column prop="code" label="编码" min-width="150" show-overflow-tooltip />
         <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="状态" min-width="90">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="specification" label="规格型号" min-width="140" show-overflow-tooltip />
+        <el-table-column label="物料类型" min-width="110">
+          <template #default="{ row }">
+            {{ materialTypeLabel(row.materialType) }}
+          </template>
+        </el-table-column>
         <el-table-column prop="categoryName" label="分类" min-width="120" show-overflow-tooltip />
         <el-table-column prop="unitName" label="基本单位" min-width="100" show-overflow-tooltip />
         <el-table-column prop="businessUnitSummary" label="业务单位" min-width="140" show-overflow-tooltip>
@@ -665,11 +675,6 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="物料类型" min-width="110">
-          <template #default="{ row }">
-            {{ materialTypeLabel(row.materialType) }}
-          </template>
-        </el-table-column>
         <el-table-column label="来源属性" min-width="110">
           <template #default="{ row }">
             {{ sourceTypeLabel(row.sourceType) }}
@@ -680,13 +685,8 @@ onMounted(() => {
             {{ row.trackingMethodName || trackingMethodLabel(row.trackingMethod) }}
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="90">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ masterStatusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="remark" label="备注" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" min-width="210">
+        <el-table-column label="操作" min-width="210">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-material" @click="openDetail(row)">详情</el-button>
             <el-button v-if="canUpdate" size="small" text data-test="edit-material" @click="openEdit(row)">

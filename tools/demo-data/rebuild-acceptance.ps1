@@ -179,7 +179,7 @@ function Backup-PostgresDatabase {
 
 function Invoke-MinioShell {
     param([string] $Command, [switch] $AllowFailure)
-    $wrapped = "MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`"; export MC_HOST_qherplocal; $Command"
+    $wrapped = "$(Get-DemoMinioCredentialShellPrefix); MC_HOST_qherplocal=`"http://`${MINIO_ROOT_USER}:`${MINIO_ROOT_PASSWORD}@127.0.0.1:9000`"; export MC_HOST_qherplocal; $Command"
     return Invoke-CheckedProcess -FilePath "docker" -ArgumentList @("exec", $MinioContainer, "sh", "-c", $wrapped) `
         -AllowFailure:$AllowFailure
 }

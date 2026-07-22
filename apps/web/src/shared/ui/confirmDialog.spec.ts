@@ -1,9 +1,9 @@
-import { ElMessageBox } from 'element-plus'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index.mjs'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.unmock('./confirmDialog')
 
-vi.mock('element-plus', () => ({
+vi.mock('element-plus/es/components/message-box/index.mjs', () => ({
   ElMessageBox: {
     confirm: vi.fn(),
   },
