@@ -171,7 +171,7 @@ onMounted(loadRecords)
       </el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="会计年度">
           <el-input v-model="filters.year" name="gl-period-year" clearable placeholder="2026" />
         </el-form-item>

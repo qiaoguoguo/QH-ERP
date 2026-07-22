@@ -34,7 +34,7 @@ onMounted(loadRecord)
   <MasterDataTableView title="试算平衡" description="按会计期间核对借贷发生额和余额；不平衡时失败关闭并列示差异。">
     <template #actions><el-button @click="loadRecord">刷新</el-button></template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item><el-button type="primary" @click="loadRecord">查询</el-button></el-form-item>
       </el-form>

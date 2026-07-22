@@ -134,7 +134,7 @@ onMounted(loadAll)
         </el-table-column>
         <el-table-column prop="businessImpact" label="影响口径" min-width="180" show-overflow-tooltip />
         <el-table-column prop="suggestion" label="处理建议" min-width="220" show-overflow-tooltip />
-        <el-table-column label="来源" fixed="right" min-width="120">
+        <el-table-column label="来源" min-width="120">
           <template #default="{ row }">
             <el-button v-if="canTracePeriodCloseSource(row)" size="small" text data-test="period-close-source-trace" @click="openSource(row)">来源追溯</el-button>
             <span v-else class="period-close-muted">{{ restrictedSourceReason(row) || '无来源入口' }}</span>

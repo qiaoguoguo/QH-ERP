@@ -149,7 +149,7 @@ onMounted(loadRecord)
                 <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template>
               </el-table-column>
               <el-table-column prop="sourceCount" label="来源数" min-width="100" />
-              <el-table-column label="操作" fixed="right" min-width="90">
+              <el-table-column label="操作" min-width="90">
                 <template #default="{ row }">
                   <el-button size="small" text data-test="trace-project-cost-category" :disabled="!latestCalculationId" @click="openCategoryTrace(row.category)">追溯</el-button>
                 </template>
@@ -168,7 +168,7 @@ onMounted(loadRecord)
               <el-table-column label="金额" min-width="150" align="right">
                 <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.amount, amountRestrictedReason || undefined) }}</span></template>
               </el-table-column>
-              <el-table-column label="操作" fixed="right" min-width="90">
+              <el-table-column label="操作" min-width="90">
                 <template #default="{ row }">
                   <el-button size="small" text data-test="trace-project-cost-stage" :disabled="!latestCalculationId" @click="openStageTrace(row.stage)">追溯</el-button>
                 </template>
@@ -211,7 +211,7 @@ onMounted(loadRecord)
               <el-table-column label="计算时间" min-width="150">
                 <template #default="{ row }">{{ formatProjectCostDateTime(row.calculatedAt) }}</template>
               </el-table-column>
-              <el-table-column label="操作" fixed="right" min-width="90">
+              <el-table-column label="操作" min-width="90">
                 <template #default="{ row }">
                   <el-button size="small" text data-test="view-cost-calculation" @click="viewCalculation(row.id)">详情</el-button>
                 </template>

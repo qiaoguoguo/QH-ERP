@@ -76,7 +76,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="明细账" description="按凭证分录展示科目明细，支持跳转正式凭证与来源追溯。">
     <template #actions><el-button @click="loadRecords">刷新</el-button></template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item label="科目"><el-input v-model="filters.accountKeyword" clearable placeholder="编码或名称" /></el-form-item>
         <el-form-item label="辅助核算"><el-input v-model="filters.auxiliaryKeyword" clearable placeholder="辅助对象" /></el-form-item>

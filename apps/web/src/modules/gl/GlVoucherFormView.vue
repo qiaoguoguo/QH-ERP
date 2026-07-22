@@ -461,7 +461,7 @@ onMounted(() => {
       <el-button data-test="save-gl-voucher" type="primary" :loading="saving" :disabled="saveDisabled" @click="saveVoucher">保存凭证</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline label-position="top">
+      <el-form class="query-form" label-position="top">
         <el-form-item label="凭证日期">
           <el-date-picker
             :model-value="form.voucherDate"
@@ -573,7 +573,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="借方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.debitAmount" /></template></el-table-column>
         <el-table-column label="贷方金额" min-width="130" align="right"><template #default="{ row }"><el-input v-model="row.creditAmount" /></template></el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="100">
+        <el-table-column label="操作" min-width="100">
           <template #default="{ $index }">
             <el-button data-test="remove-gl-voucher-line" text type="danger" @click="removeLine($index)">删除</el-button>
           </template>

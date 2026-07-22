@@ -9,6 +9,6 @@ const props = defineProps<{
 
 <template>
   <el-tag :type="periodCloseStatusTagType(props.status)" effect="plain">
-    {{ props.label || periodCloseStatusLabel(props.status) }}
+    {{ periodCloseStatusLabel(props.status, props.label) }}
   </el-tag>
 </template>

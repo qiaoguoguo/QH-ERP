@@ -423,7 +423,7 @@ describe('031 会计核算页面族', () => {
 
     const rules = await mountGlView(GlPostingRulesView, '/gl/posting-rules')
     expect(rules.wrapper.text()).toContain('自动制证规则')
-    expect(rules.wrapper.text()).toContain('SALES_INVOICE')
+    expect(rules.wrapper.text()).toContain('销售发票')
     expect(rules.wrapper.text()).toContain('预览不制证')
     await rules.wrapper.find('[data-test="create-posting-rule"]').trigger('click')
     await rules.wrapper.find('input[name="gl-rule-name"]').setValue('采购发票默认规则')
@@ -572,7 +572,7 @@ describe('031 会计核算页面族', () => {
     expect(preview.exists()).toBe(true)
     expect(preview.text()).toContain('来源预览')
     expect(preview.text()).toContain('分录建议')
-    expect(preview.text()).toContain('SALES_INVOICE / 11 / 7')
+    expect(preview.text()).toContain('销售发票 / 11 / 7')
     expect(preview.text()).toContain('借方合计')
     expect(preview.text()).toContain('113.00')
     expect(preview.text()).toContain('1122 应收账款')
@@ -780,7 +780,7 @@ describe('031 会计核算页面族', () => {
     const { wrapper } = await mountGlView(GlVoucherDetailView, '/gl/vouchers/91')
 
     expect(wrapper.text()).toContain('凭证详情')
-    expect(wrapper.text()).toContain('POSTED 凭证不可删除、插入或修改')
+    expect(wrapper.text()).toContain('已记账凭证不可删除、插入或修改')
     expect(wrapper.text()).toContain('记-202607-0001')
     expect(wrapper.text()).toContain('审批摘要')
     expect(wrapper.text()).toContain('来源追溯')

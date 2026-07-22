@@ -21,6 +21,7 @@ import {
   periodCloseErrorMessage,
   periodCloseReportCodes,
   periodCloseReportLabels,
+  periodCloseSnapshotStageLabel,
   restrictedMoneyReason,
 } from './periodClosePageHelpers'
 import './PeriodCloseShared.css'
@@ -261,7 +262,9 @@ onMounted(loadAll)
             <el-table-column prop="projectNo" label="项目" min-width="130" show-overflow-tooltip />
             <el-table-column prop="workOrderNo" label="工单" min-width="130" show-overflow-tooltip />
             <el-table-column prop="materialCode" label="物料" min-width="130" />
-            <el-table-column prop="stage" label="阶段" min-width="100" />
+            <el-table-column label="阶段" min-width="100">
+              <template #default="{ row }">{{ periodCloseSnapshotStageLabel(row.stage) }}</template>
+            </el-table-column>
             <el-table-column label="在制数量" min-width="130" align="right">
               <template #default="{ row }"><span class="numeric-cell">{{ formatPeriodCloseQuantity(row.wipQuantity) }}</span></template>
             </el-table-column>

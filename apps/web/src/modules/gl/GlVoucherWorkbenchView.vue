@@ -114,7 +114,7 @@ onMounted(loadRecords)
       <el-button type="primary" @click="openCreate">新增手工凭证</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="凭证号、草稿号或摘要" /></el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.status" clearable placeholder="全部状态">
@@ -153,7 +153,7 @@ onMounted(loadRecords)
         <el-table-column label="动作状态" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ glCombinedActionDisabledReason(row) || glActionDisabledReason(row, 'CANCEL') || glAllowedActionsText(row.allowedActions) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="100">
+        <el-table-column label="操作" min-width="100">
           <template #default="{ row }">
             <el-button data-test="gl-voucher-detail" text @click="openDetail(row)">详情</el-button>
           </template>

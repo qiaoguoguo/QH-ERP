@@ -15,6 +15,7 @@ import {
   formatProjectCostAmount,
   projectCostMessages,
   projectCostErrorMessage,
+  projectCostProjectStatusLabel,
   restrictedMoneyReason,
   restrictedSourceReason,
 } from './projectCostPageHelpers'
@@ -320,8 +321,10 @@ onMounted(loadData)
             <el-table-column prop="projectNo" label="项目编号" min-width="150" show-overflow-tooltip />
             <el-table-column prop="projectName" label="项目名称" min-width="180" show-overflow-tooltip />
             <el-table-column prop="ownerDisplayName" label="负责人" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="projectStatus" label="状态" min-width="100" />
-            <el-table-column label="操作" fixed="right" min-width="90">
+            <el-table-column label="状态" min-width="100">
+              <template #default="{ row }">{{ projectCostProjectStatusLabel(row.projectStatus) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" min-width="90">
               <template #default="{ row }">
                 <el-button size="small" text :type="isReadOnly ? 'info' : 'primary'" :disabled="isReadOnly" data-test="select-project-cost-project-candidate" @click="selectProject(row)">{{ isReadOnly ? '只读' : '选择' }}</el-button>
               </template>
@@ -355,7 +358,7 @@ onMounted(loadData)
             <el-table-column label="剩余可分配金额" min-width="150" align="right">
               <template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.availableAmount, candidateRestrictedReason(row) || restrictedMoneyReason(row) || undefined) }}</span></template>
             </el-table-column>
-            <el-table-column label="操作" fixed="right" min-width="90">
+            <el-table-column label="操作" min-width="90">
               <template #default="{ row }">
                 <el-button size="small" text :type="isReadOnly || candidateRestrictedReason(row) ? 'info' : 'primary'" :disabled="isReadOnly || Boolean(candidateRestrictedReason(row))" data-test="select-public-expense-candidate" @click="selectCandidate(row)">{{ isReadOnly ? '只读' : (candidateRestrictedReason(row) ? '受限' : '选择') }}</el-button>
               </template>

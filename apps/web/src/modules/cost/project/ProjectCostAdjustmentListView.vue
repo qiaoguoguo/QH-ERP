@@ -192,7 +192,7 @@ onMounted(loadRecords)
         <el-table-column prop="businessDate" label="业务日期" min-width="110" />
         <el-table-column label="金额" min-width="140" align="right"><template #default="{ row }"><span class="numeric-cell">{{ formatProjectCostAmount(row.totalAmount, restrictedMoneyReason(row) || undefined) }}</span></template></el-table-column>
         <el-table-column prop="reason" label="原因" min-width="190" show-overflow-tooltip />
-        <el-table-column label="操作" fixed="right" min-width="220">
+        <el-table-column label="操作" min-width="220">
           <template #default="{ row }">
             <el-button size="small" text @click="viewAdjustment(row)">详情</el-button>
             <el-button v-if="canEdit(row)" size="small" text @click="editAdjustment(row)">编辑</el-button>

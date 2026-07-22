@@ -1,6 +1,7 @@
 import type { RouteLocationRaw } from 'vue-router'
 import type {
   BusinessPeriodCloseCheckDomain,
+  BusinessPeriodCloseCheckResult,
   BusinessPeriodCloseCheckSeverity,
   BusinessPeriodCloseReportCode,
   BusinessPeriodCloseSourceRoute,
@@ -52,6 +53,19 @@ const severityLabels: Record<BusinessPeriodCloseCheckSeverity, string> = {
   INFO: '提示',
 }
 
+const checkResultLabels: Record<BusinessPeriodCloseCheckResult, string> = {
+  BLOCKING: '阻断',
+  WARNING: '警告',
+  PASSED: '通过',
+}
+
+const snapshotStageLabels: Record<string, string> = {
+  WIP: '在制',
+  FINISHED: '完工',
+  DELIVERED: '已交付',
+  DIRECT_PROJECT: '直接项目',
+}
+
 export const periodCloseReportLabels: Record<BusinessPeriodCloseReportCode, string> = {
   OVERVIEW: '经营概览',
   SALES_SUMMARY: '销售汇总',
@@ -65,24 +79,57 @@ export const periodCloseReportLabels: Record<BusinessPeriodCloseReportCode, stri
 
 export const periodCloseReportCodes = Object.keys(periodCloseReportLabels) as BusinessPeriodCloseReportCode[]
 
-export function periodCloseStatusLabel(status?: string | null): string {
-  return status ? closeStatusLabels[status as BusinessPeriodCloseStatus] ?? status : '-'
+const chineseTextPattern = /[\u4e00-\u9fff]/
+
+function labelFromMap(
+  value: string | null | undefined,
+  labels: Record<string, string>,
+  unknownLabel: string,
+  serverLabel?: string | null,
+): string {
+  if (!value) {
+    return '-'
+  }
+  const knownLabel = labels[value]
+  if (knownLabel) {
+    return knownLabel
+  }
+  const normalizedServerLabel = serverLabel?.trim()
+  if (normalizedServerLabel && normalizedServerLabel !== value && chineseTextPattern.test(normalizedServerLabel)) {
+    return normalizedServerLabel
+  }
+  if (chineseTextPattern.test(value)) {
+    return value
+  }
+  return unknownLabel
 }
 
-export function businessPeriodStatusLabel(status?: string | null): string {
-  return status ? periodStatusLabels[status] ?? status : '-'
+export function periodCloseStatusLabel(status?: string | null, statusName?: string | null): string {
+  return labelFromMap(status, closeStatusLabels, '未知状态', statusName)
+}
+
+export function businessPeriodStatusLabel(status?: string | null, statusName?: string | null): string {
+  return labelFromMap(status, periodStatusLabels, '未知期间状态', statusName)
 }
 
 export function periodCloseAuditActionLabel(action?: string | null): string {
-  return action ? auditActionLabels[action] ?? action : '-'
+  return labelFromMap(action, auditActionLabels, '未知动作')
 }
 
 export function periodCloseDomainLabel(domain?: string | null): string {
-  return domain ? domainLabels[domain as BusinessPeriodCloseCheckDomain] ?? domain : '-'
+  return labelFromMap(domain, domainLabels, '未知领域')
 }
 
 export function periodCloseSeverityLabel(severity?: string | null): string {
-  return severity ? severityLabels[severity as BusinessPeriodCloseCheckSeverity] ?? severity : '-'
+  return labelFromMap(severity, severityLabels, '未知级别')
+}
+
+export function periodCloseCheckResultLabel(result?: string | null): string {
+  return labelFromMap(result, checkResultLabels, '未知检查结果')
+}
+
+export function periodCloseSnapshotStageLabel(stage?: string | null): string {
+  return labelFromMap(stage, snapshotStageLabels, '未知阶段')
 }
 
 export function periodCloseStatusTagType(status?: string | null): 'success' | 'info' | 'warning' | 'danger' {

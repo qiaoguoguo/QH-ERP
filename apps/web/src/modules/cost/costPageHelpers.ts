@@ -42,8 +42,44 @@ const statusLabels: Record<CostRecordStatus, string> = {
   VOIDED: '已作废',
 }
 
+const workOrderStatusLabels: Record<string, string> = {
+  DRAFT: '草稿',
+  RELEASED: '已下达',
+  IN_PROGRESS: '生产中',
+  COMPLETED: '已完工',
+  CANCELLED: '已取消',
+  CLOSED: '已关闭',
+}
+
+const sourceStatusLabels: Record<string, string> = {
+  ACTIVE: '有效',
+  VOIDED: '已作废',
+  DRAFT: '草稿',
+  RELEASED: '已下达',
+  IN_PROGRESS: '生产中',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+  POSTED: '已过账',
+}
+
+const auditActionLabels: Record<string, string> = {
+  MFG_COST_RECORD_CREATE: '成本记录创建',
+  MFG_COST_RECORD_UPDATE: '成本记录更新',
+  MFG_COST_RECORD_VOID: '成本记录作废',
+  COST_RECORD_CREATE: '成本记录创建',
+  COST_RECORD_UPDATE: '成本记录更新',
+  COST_RECORD_VOID: '成本记录作废',
+}
+
+function labelFromMap(value: string | null | undefined, labels: Record<string, string>, unknownLabel: string): string {
+  if (!value) {
+    return '-'
+  }
+  return labels[value] ?? unknownLabel
+}
+
 export function costTypeLabel(type?: CostType | string | null): string {
-  return type && type in costTypeLabels ? costTypeLabels[type as CostType] : '-'
+  return labelFromMap(type, costTypeLabels, '未知成本类型')
 }
 
 export function costTypeTagType(type?: CostType | string | null): 'success' | 'warning' | 'info' | 'primary' {
@@ -60,7 +96,7 @@ export function costTypeTagType(type?: CostType | string | null): 'success' | 'w
 }
 
 export function costSourceTypeLabel(type?: CostSourceType | string | null): string {
-  return type && type in sourceTypeLabels ? sourceTypeLabels[type as CostSourceType] : '-'
+  return labelFromMap(type, sourceTypeLabels, '未知来源')
 }
 
 export function costSourceTypeTagType(type?: CostSourceType | string | null): 'success' | 'info' {
@@ -68,15 +104,27 @@ export function costSourceTypeTagType(type?: CostSourceType | string | null): 's
 }
 
 export function sourceDocumentTypeLabel(type?: CostSourceDocumentType | string | null): string {
-  return type && type in sourceDocumentTypeLabels ? sourceDocumentTypeLabels[type as CostSourceDocumentType] : '-'
+  return labelFromMap(type, sourceDocumentTypeLabels, '未知来源单据')
 }
 
 export function basisTypeLabel(type?: CostBasisType | string | null): string {
-  return type && type in basisTypeLabels ? basisTypeLabels[type as CostBasisType] : '-'
+  return labelFromMap(type, basisTypeLabels, '未知口径')
 }
 
 export function costStatusLabel(status?: CostRecordStatus | string | null): string {
-  return status && status in statusLabels ? statusLabels[status as CostRecordStatus] : '-'
+  return labelFromMap(status, statusLabels, '未知状态')
+}
+
+export function costWorkOrderStatusLabel(status?: string | null): string {
+  return labelFromMap(status, workOrderStatusLabels, '未知工单状态')
+}
+
+export function costSourceStatusLabel(status?: string | null): string {
+  return labelFromMap(status, sourceStatusLabels, '未知来源状态')
+}
+
+export function costAuditActionLabel(action?: string | null): string {
+  return labelFromMap(action, auditActionLabels, '未知动作')
 }
 
 export function formatCostQuantity(value: unknown): string {

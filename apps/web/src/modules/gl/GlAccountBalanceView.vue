@@ -60,7 +60,7 @@ onMounted(loadRecords)
   <MasterDataTableView title="科目余额" description="查看科目余额基线，金额权限受限时展示后端原因，不以 0 替代。">
     <template #actions><el-button @click="loadRecords">刷新</el-button></template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="会计期间"><el-input v-model="filters.periodCode" clearable placeholder="2026-07" /></el-form-item>
         <el-form-item label="科目"><el-input v-model="filters.accountKeyword" clearable placeholder="编码或名称" /></el-form-item>
         <el-form-item label="辅助核算"><el-input v-model="filters.auxiliaryKeyword" clearable placeholder="辅助对象" /></el-form-item>

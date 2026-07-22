@@ -3,7 +3,21 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { glApi, type GlPostingRulePreviewLineRecord, type GlPostingRuleRecord, type GlPostingRuleValidationSummary } from '../../shared/api/glApi'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
-import { createGlIdempotencyKey, formatGlAmount, glActionAllowed, glActionDisabledReason, glErrorMessage, glPageItems, glPageSizes, glPageTotal } from './glPageHelpers'
+import {
+  createGlIdempotencyKey,
+  formatGlAmount,
+  glActionAllowed,
+  glActionDisabledReason,
+  glAllowedActionsText,
+  glErrorMessage,
+  glPageItems,
+  glPageSizes,
+  glPageTotal,
+  glPostingRuleDirectionText,
+  glPostingRuleStatusText,
+  glPostingRuleValidationStatusText,
+  glSourceTypeText,
+} from './glPageHelpers'
 import './GlShared.css'
 
 const filters = reactive({ sourceType: '', status: '' })
@@ -100,7 +114,7 @@ async function runRuleAction(action: 'newVersion' | 'validate' | 'activate' | 'd
     return
   }
   const label = action === 'newVersion' ? '复制新版本' : action === 'validate' ? '预览校验' : action === 'activate' ? '激活规则' : '停用规则'
-  if (action !== 'validate' && !(await confirmAction(`${label} ${row.sourceType}/${row.sourceVariant} V${row.versionNo}？`))) {
+  if (action !== 'validate' && !(await confirmAction(`${label} ${glSourceTypeText(row.sourceType)}/${row.sourceVariant} V${row.versionNo}？`))) {
     return
   }
   actionLoading.value = true
@@ -132,7 +146,7 @@ async function runRuleAction(action: 'newVersion' | 'validate' | 'activate' | 'd
       detail.value = await glApi.postingRules.validate(row.id, payload)
       const summary = detail.value.validationSummary
       if (summary?.sourcePreview) {
-        sourcePreviewContext.value = `${sourceType} / ${sourceId} / ${sourceVersion || '-'}`
+        sourcePreviewContext.value = `${glSourceTypeText(sourceType)} / ${sourceId} / ${sourceVersion || '-'}`
         if ((summary.previewLines ?? []).length > 0) {
           sourcePreviewSummary.value = summary
           actionMessage.value = '预览校验完成，已返回分录建议'
@@ -161,13 +175,7 @@ async function runRuleAction(action: 'newVersion' | 'validate' | 'activate' | 'd
 }
 
 function previewDirectionText(value: string | null | undefined) {
-  if (value === 'DEBIT') {
-    return '借方'
-  }
-  if (value === 'CREDIT') {
-    return '贷方'
-  }
-  return value || '-'
+  return glPostingRuleDirectionText(value)
 }
 
 function previewAccountText(line: GlPostingRulePreviewLineRecord) {
@@ -323,7 +331,7 @@ onMounted(loadRecords)
       <el-button data-test="create-posting-rule" type="primary" @click="openCreateRule">新增规则</el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="来源类型"><el-input v-model="filters.sourceType" clearable placeholder="SALES_INVOICE" /></el-form-item>
         <el-form-item label="状态">
           <el-select v-model="filters.status" clearable placeholder="全部">
@@ -346,16 +354,22 @@ onMounted(loadRecords)
 
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无自动制证规则'" stripe>
-        <el-table-column prop="sourceType" label="来源类型" min-width="150" />
+        <el-table-column label="来源类型" min-width="150">
+          <template #default="{ row }">{{ glSourceTypeText(row.sourceType) }}</template>
+        </el-table-column>
         <el-table-column prop="sourceVariant" label="来源变体" min-width="140" />
         <el-table-column prop="versionNo" label="版本" min-width="90" align="right" />
-        <el-table-column prop="status" label="状态" min-width="110" />
-        <el-table-column prop="validationStatus" label="校验状态" min-width="120" />
+        <el-table-column label="状态" min-width="110">
+          <template #default="{ row }">{{ glPostingRuleStatusText(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="校验状态" min-width="120">
+          <template #default="{ row }">{{ glPostingRuleValidationStatusText(row.validationStatus) }}</template>
+        </el-table-column>
         <el-table-column prop="lineCount" label="分录行数" min-width="100" align="right" />
         <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || (row.allowedActions?.join('、') || '-') }}</template>
+          <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || glAllowedActionsText(row.allowedActions) }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" min-width="180">
           <template #default="{ row }">
             <el-button data-test="view-posting-rule" text @click="openDetail(row)">详情</el-button>
             <el-button
@@ -396,14 +410,14 @@ onMounted(loadRecords)
       <dl v-if="detail" class="gl-drawer-list">
         <dt>规则名称</dt><dd>{{ detail.name || '-' }}</dd>
         <dt>规则说明</dt><dd>{{ detail.description || '-' }}</dd>
-        <dt>来源类型</dt><dd>{{ detail.sourceType }}</dd>
+        <dt>来源类型</dt><dd>{{ glSourceTypeText(detail.sourceType) }}</dd>
         <dt>来源变体</dt><dd>{{ detail.sourceVariant }}</dd>
         <dt>生效日期</dt><dd>{{ detail.effectiveFrom || '-' }} 至 {{ detail.effectiveTo || '长期' }}</dd>
         <dt>版本</dt><dd>{{ detail.versionNo }}</dd>
-        <dt>状态</dt><dd>{{ detail.status }}</dd>
-        <dt>校验状态</dt><dd>{{ detail.validationStatus || '-' }}</dd>
+        <dt>状态</dt><dd>{{ glPostingRuleStatusText(detail.status) }}</dd>
+        <dt>校验状态</dt><dd>{{ glPostingRuleValidationStatusText(detail.validationStatus) }}</dd>
       </dl>
-      <el-form class="query-form" inline label-position="top">
+      <el-form class="query-form" label-position="top">
         <el-form-item label="预览来源类型"><el-input v-model="previewContext.sourceType" placeholder="默认使用规则来源" /></el-form-item>
         <el-form-item label="来源ID"><el-input v-model="previewContext.sourceId" name="gl-rule-preview-source-id" clearable placeholder="来源ID" /></el-form-item>
         <el-form-item label="来源版本"><el-input v-model="previewContext.sourceVersion" name="gl-rule-preview-source-version" clearable placeholder="版本" /></el-form-item>
@@ -454,7 +468,9 @@ onMounted(loadRecords)
       <div class="table-scroll">
         <el-table :data="detail?.lines ?? []" empty-text="暂无规则行">
           <el-table-column prop="normalizedFactCode" label="事实代码" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="direction" label="方向" min-width="100" />
+          <el-table-column label="方向" min-width="100">
+            <template #default="{ row }">{{ glPostingRuleDirectionText(row.direction) }}</template>
+          </el-table-column>
           <el-table-column prop="accountCode" label="科目" min-width="140" show-overflow-tooltip />
           <el-table-column prop="summaryTemplate" label="摘要模板" min-width="200" show-overflow-tooltip />
         </el-table>

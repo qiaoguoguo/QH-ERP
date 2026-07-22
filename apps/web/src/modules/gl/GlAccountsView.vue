@@ -266,7 +266,7 @@ onMounted(() => {
       </el-button>
     </template>
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词"><el-input v-model="filters.keyword" clearable placeholder="科目编码或名称" /></el-form-item>
         <el-form-item label="分类">
           <el-select v-model="filters.category" clearable placeholder="全部分类">
@@ -314,7 +314,7 @@ onMounted(() => {
         <el-table-column label="动作状态" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ glActionDisabledReason(row, 'DISABLE') || (row.allowedActions?.join('、') || '-') }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="190">
+        <el-table-column label="操作" min-width="190">
           <template #default="{ row }">
             <el-button data-test="create-child-account" text @click="openCreateChild(row)">新增下级</el-button>
             <el-button data-test="edit-gl-account" text :disabled="!glActionAllowed(row, 'UPDATE')" @click="openEditAccount(row)">编辑</el-button>

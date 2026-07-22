@@ -195,7 +195,7 @@ describe('成本记录详情页', () => {
     expect(wrapper.text()).toContain('CR-001')
     expect(wrapper.text()).toContain('审计摘要')
     expect(wrapper.text()).toContain('cost_admin')
-    expect(wrapper.text()).toContain('MFG_COST_RECORD_UPDATE')
+    expect(wrapper.text()).toContain('成本记录更新')
   })
 
   it('可进入生产工单和手工成本编辑页', async () => {
