@@ -39,7 +39,11 @@ $expectedFiles = @(
     "tools/production/backup-stage034-source.ps1",
     "tools/production/restore-production.ps1",
     "tools/production/invoke-migration-rehearsal.ps1",
-    "tools/production/verify-production.ps1"
+    "tools/production/verify-production.ps1",
+    "tools/production/invoke-performance-check.ps1",
+    "tools/production/export-runtime-evidence.ps1",
+    "docs/ops/production-deployment.md",
+    "docs/ops/production-backup-recovery.md"
 )
 
 foreach ($relativePath in $expectedFiles) {
@@ -64,6 +68,10 @@ if (Test-Path -LiteralPath $composePath -PathType Leaf) {
         Assert-Match $compose ([regex]::Escape("`${${variable}:?")) "生产 Compose 必须将 $variable 声明为必填变量。"
     }
     Assert-Match $compose 'SPRING_PROFILES_ACTIVE:\s*production' "API 必须使用 production profile。"
+    Assert-Match $compose 'postgres:18\.4-alpine3\.24@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15' `
+        "PostgreSQL 必须锁定已复扫的 18.4 Alpine 3.24 摘要。"
+    Assert-Match $compose 'wget"\s*,\s*"-q"\s*,\s*"-O"\s*,\s*"/dev/null"' `
+        "API 健康检查必须兼容 Alpine 运行时并使用 wget。"
     Assert-Match $compose '(?m)^\s+restart:\s*unless-stopped\s*$' "生产服务必须配置 unless-stopped 重启策略。"
     Assert-Match $compose '(?m)^\s+logging:\s*$' "生产服务必须配置日志轮转。"
     Assert-Match $compose '(?m)^\s+healthcheck:\s*$' "生产服务必须配置健康检查。"
@@ -79,6 +87,29 @@ foreach ($dockerfile in @("apps/api/Dockerfile", "apps/web/Dockerfile")) {
                 "$dockerfile 的所有基础镜像必须使用 SHA256 摘要锁定：$fromLine"
         }
     }
+}
+
+$apiDockerfilePath = Join-Path $repoRoot "apps/api/Dockerfile"
+if (Test-Path -LiteralPath $apiDockerfilePath -PathType Leaf) {
+    $apiDockerfile = Get-Content -LiteralPath $apiDockerfilePath -Raw
+    Assert-Match $apiDockerfile 'eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c' `
+        "API 运行时必须锁定已复扫的 Temurin 21 Alpine 摘要。"
+    Assert-Match $apiDockerfile 'apk upgrade --no-cache' "API 运行时必须安装基础镜像安全更新。"
+    Assert-Match $apiDockerfile 'addgroup\s+--system|addgroup\s+-S' "API 运行时必须创建非特权组。"
+}
+
+$webDockerfilePath = Join-Path $repoRoot "apps/web/Dockerfile"
+if (Test-Path -LiteralPath $webDockerfilePath -PathType Leaf) {
+    $webDockerfile = Get-Content -LiteralPath $webDockerfilePath -Raw
+    Assert-Match $webDockerfile 'nginx:1\.30\.4-alpine3\.24@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46' `
+        "Web 运行时必须锁定已复扫且无高危漏洞的 Nginx 1.30.4 Alpine 摘要。"
+}
+
+$pomPath = Join-Path $repoRoot "apps/api/pom.xml"
+if (Test-Path -LiteralPath $pomPath -PathType Leaf) {
+    $pom = Get-Content -LiteralPath $pomPath -Raw
+    Assert-Match $pom '<postgresql\.version>42\.7\.12</postgresql\.version>' `
+        "PostgreSQL JDBC 驱动必须固定到修复 CVE-2026-54291 的 42.7.12。"
 }
 
 $productionPropertiesPath = Join-Path $repoRoot "apps/api/src/main/resources/application-production.properties"
@@ -139,7 +170,10 @@ if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
         "Get-QherpFileSha256",
         "New-QherpBackupFileRecord",
         "Test-QherpBackupManifest",
-        "Assert-QherpRestoreTarget"
+        "Assert-QherpRestoreTarget",
+        "Get-QherpPercentile",
+        "New-QherpHttpSummary",
+        "Test-QherpPerformanceThreshold"
     )) {
         Assert-True -Condition ([bool](Get-Command $functionName -ErrorAction SilentlyContinue)) `
             -Message "生产公共库缺少函数：$functionName"
@@ -275,6 +309,31 @@ if (Test-Path -LiteralPath $commonPath -PathType Leaf) {
             Remove-Item -LiteralPath $tempBackup -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
+
+    $performanceFunctionsAvailable = @(
+        "Get-QherpPercentile",
+        "New-QherpHttpSummary",
+        "Test-QherpPerformanceThreshold"
+    ) | ForEach-Object { [bool](Get-Command $_ -ErrorAction SilentlyContinue) }
+    if ($performanceFunctionsAvailable -notcontains $false) {
+        $samples = @(
+            [pscustomobject]@{ StatusCode = 200; DurationMs = 10.0 },
+            [pscustomobject]@{ StatusCode = 200; DurationMs = 20.0 },
+            [pscustomobject]@{ StatusCode = 200; DurationMs = 30.0 },
+            [pscustomobject]@{ StatusCode = 500; DurationMs = 40.0 }
+        )
+        Assert-True -Condition ((Get-QherpPercentile -Values @(10, 20, 30, 40) -Percentile 50) -eq 20) `
+            -Message "性能百分位必须使用可重复的最近秩算法。"
+        Assert-True -Condition ((Get-QherpPercentile -Values @(10, 20, 30, 40) -Percentile 95) -eq 40) `
+            -Message "P95 最近秩计算不正确。"
+        $summary = New-QherpHttpSummary -Name "self-test" -Samples $samples -ExpectedStatusCodes @(200)
+        Assert-True -Condition ($summary.SampleCount -eq 4 -and $summary.UnexpectedCount -eq 1 -and
+            $summary.ServerErrorCount -eq 1 -and $summary.P95Ms -eq 40) `
+            -Message "HTTP 性能汇总的状态分类或百分位不正确。"
+        Assert-True -Condition (-not (Test-QherpPerformanceThreshold -Summary $summary `
+            -MaxP95Ms 35 -MaxUnexpectedRate 0.1 -RequireZeroServerErrors)) `
+            -Message "性能阈值判定必须拒绝超 P95、错误率或 5xx 样本。"
+    }
 }
 
 $restorePath = Join-Path $repoRoot "tools/production/restore-production.ps1"
@@ -291,6 +350,25 @@ if (Test-Path -LiteralPath $verifyPath -PathType Leaf) {
     $verify = Get-Content -LiteralPath $verifyPath -Raw
     Assert-True -Condition ($verify -notmatch '(?m)^\s*exit\s+1\s*$') `
         -Message "生产验证脚本必须以异常返回失败，确保恢复入口能够执行失败清理。"
+}
+
+$performancePath = Join-Path $repoRoot "tools/production/invoke-performance-check.ps1"
+if (Test-Path -LiteralPath $performancePath -PathType Leaf) {
+    $performance = Get-Content -LiteralPath $performancePath -Raw
+    Assert-True -Condition ($performance -notmatch 'Qherp@2026!|qherp_dev_password|qherpminio123') `
+        -Message "性能脚本不得包含管理员或开发默认密码明文。"
+    foreach ($token in @("1000", "20", "300", "10", "1500", "250", "3000")) {
+        Assert-Match $performance ([regex]::Escape($token)) "性能脚本缺少冻结指标：$token"
+    }
+}
+
+$runtimeEvidencePath = Join-Path $repoRoot "tools/production/export-runtime-evidence.ps1"
+if (Test-Path -LiteralPath $runtimeEvidencePath -PathType Leaf) {
+    $runtimeEvidence = Get-Content -LiteralPath $runtimeEvidencePath -Raw
+    Assert-Match $runtimeEvidence 'Config\.PSObject\.Properties\["Labels"\]' `
+        "运行证据必须先安全判断镜像 Config 是否包含 Labels。"
+    Assert-Match $runtimeEvidence 'PSObject\.Properties\["org\.opencontainers\.image\.revision"\]' `
+        "运行证据必须安全读取仅 API/Web 才具备的可选 OCI revision 标签。"
 }
 
 if ($script:Failures.Count -gt 0) {

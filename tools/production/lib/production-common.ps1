@@ -400,3 +400,69 @@ function Start-QherpApplicationContainers {
     }
     Wait-QherpContainerHealthy -ContainerName $WebContainer
 }
+
+function Get-QherpPercentile {
+    param(
+        [Parameter(Mandatory)][double[]] $Values,
+        [Parameter(Mandatory)][ValidateRange(0, 100)][double] $Percentile
+    )
+
+    if ($Values.Count -eq 0) {
+        throw "百分位计算至少需要一个样本。"
+    }
+    $ordered = @($Values | Sort-Object)
+    $rank = [math]::Ceiling(($Percentile / 100.0) * $ordered.Count)
+    $index = [math]::Max(0, [math]::Min($ordered.Count - 1, $rank - 1))
+    return [double]$ordered[$index]
+}
+
+function New-QherpHttpSummary {
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [Parameter(Mandatory)][object[]] $Samples,
+        [int[]] $ExpectedStatusCodes = @(200)
+    )
+
+    if ($Samples.Count -eq 0) {
+        throw "HTTP 性能汇总至少需要一个样本。"
+    }
+    $durations = @($Samples | ForEach-Object { [double]$_.DurationMs })
+    $unexpected = @($Samples | Where-Object { [int]$_.StatusCode -notin $ExpectedStatusCodes }).Count
+    $serverErrors = @($Samples | Where-Object { [int]$_.StatusCode -ge 500 }).Count
+    $distribution = @($Samples | Group-Object StatusCode | Sort-Object { [int]$_.Name } | ForEach-Object {
+        [pscustomobject]@{ StatusCode = [int]$_.Name; Count = [int]$_.Count }
+    })
+    return [pscustomobject]@{
+        Name = $Name
+        SampleCount = $Samples.Count
+        ExpectedStatusCodes = @($ExpectedStatusCodes)
+        UnexpectedCount = $unexpected
+        UnexpectedRate = [math]::Round($unexpected / [double]$Samples.Count, 6)
+        ServerErrorCount = $serverErrors
+        AverageMs = [math]::Round((($durations | Measure-Object -Average).Average), 3)
+        P50Ms = [math]::Round((Get-QherpPercentile -Values $durations -Percentile 50), 3)
+        P95Ms = [math]::Round((Get-QherpPercentile -Values $durations -Percentile 95), 3)
+        P99Ms = [math]::Round((Get-QherpPercentile -Values $durations -Percentile 99), 3)
+        MinMs = [math]::Round((($durations | Measure-Object -Minimum).Minimum), 3)
+        MaxMs = [math]::Round((($durations | Measure-Object -Maximum).Maximum), 3)
+        StatusDistribution = $distribution
+    }
+}
+
+function Test-QherpPerformanceThreshold {
+    param(
+        [Parameter(Mandatory)] $Summary,
+        [Parameter(Mandatory)][double] $MaxP95Ms,
+        [Parameter(Mandatory)][double] $MaxUnexpectedRate,
+        [switch] $RequireZeroServerErrors
+    )
+
+    if ([double]$Summary.P95Ms -gt $MaxP95Ms -or
+        [double]$Summary.UnexpectedRate -gt $MaxUnexpectedRate) {
+        return $false
+    }
+    if ($RequireZeroServerErrors -and [int]$Summary.ServerErrorCount -ne 0) {
+        return $false
+    }
+    return $true
+}

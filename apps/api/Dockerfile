@@ -5,13 +5,15 @@ COPY pom.xml ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 mvn -B -DskipTests package
 
-FROM eclipse-temurin:21-jdk@sha256:1eeacc8c295ed4805f6ffead2417b1936aad296b02ea9e56b457230befc9e98d
+FROM eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c
 
 ARG QHERP_SOURCE_COMMIT=unknown
 LABEL org.opencontainers.image.title="QH ERP API" \
       org.opencontainers.image.revision="${QHERP_SOURCE_COMMIT}"
 
-RUN groupadd --system qherp && useradd --system --gid qherp --home-dir /app --shell /usr/sbin/nologin qherp
+RUN apk upgrade --no-cache \
+    && addgroup -S qherp \
+    && adduser -S -D -G qherp -h /app -s /sbin/nologin qherp
 WORKDIR /app
 COPY --from=build --chown=qherp:qherp /workspace/target/api-0.0.1-SNAPSHOT.jar /app/app.jar
 

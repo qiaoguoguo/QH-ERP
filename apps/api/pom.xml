@@ -31,6 +31,7 @@
 		<aws.sdk.version>2.47.5</aws.sdk.version>
 		<apache.poi.version>5.5.1</apache.poi.version>
 		<pdfbox.version>3.0.8</pdfbox.version>
+		<postgresql.version>42.7.12</postgresql.version>
 		<testcontainers.version>2.0.5</testcontainers.version>
 	</properties>
 	<dependencyManagement>
