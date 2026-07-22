@@ -6,6 +6,11 @@ import { procurementApi, type PurchaseReceiptDetailRecord, type ResourceId } fro
 import { currentRouteReturnTo, queryWithReturnTo, returnLocation, routeReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
 import TrackingAllocationReadonlyTable from '../inventory/tracking/TrackingAllocationReadonlyTable.vue'
+import {
+  directionLabel,
+  movementTypeLabel,
+  valuationStateLabel,
+} from '../inventory/inventoryPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import FixedPrintAction from '../platform/components/FixedPrintAction.vue'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
@@ -16,6 +21,7 @@ import {
   formatProcurementQuantity,
   procurementModeDisplay,
   procurementErrorMessage,
+  procurementPriceSourceDisplay,
 } from './procurementPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -52,28 +58,6 @@ function receiptLineCostText(row: {
 
 function allowed(action: string) {
   return (record.value?.allowedActions ?? []).includes(action)
-}
-
-function movementTypeLabel(value: string): string {
-  const labels: Record<string, string> = {
-    PURCHASE_RECEIPT: '采购入库',
-    OPENING: '期初',
-    ADJUSTMENT_INCREASE: '调增',
-    ADJUSTMENT_DECREASE: '调减',
-    PRODUCTION_ISSUE: '生产领料',
-    PRODUCTION_RECEIPT: '完工入库',
-  }
-  return labels[value] ?? value
-}
-
-function movementDirectionLabel(value: string): string {
-  if (value === 'IN') {
-    return '入库'
-  }
-  if (value === 'OUT') {
-    return '出库'
-  }
-  return value
 }
 
 async function loadRecord() {
@@ -196,7 +180,7 @@ onMounted(loadRecord)
         </div>
         <div>
           <span>估值状态</span>
-          <strong>估值状态：{{ record.valuationStateName || record.valuationState || '未返回' }}</strong>
+          <strong>估值状态：{{ valuationStateLabel(record.valuationState, record.valuationStateName) }}</strong>
         </div>
         <div>
           <span>成本</span>
@@ -249,7 +233,7 @@ onMounted(loadRecord)
           <dt>采购模式</dt>
           <dd>{{ procurementModeDisplay(record.orderSummary.procurementMode ?? record.procurementMode, record.orderSummary.projectCode ?? record.projectCode, record.orderSummary.projectName ?? record.projectName) }}</dd>
           <dt>价格来源</dt>
-          <dd>价格来源：{{ record.orderSummary.priceSourceTypeName || record.orderSummary.priceSourceType || '未返回' }}</dd>
+          <dd>价格来源：{{ procurementPriceSourceDisplay(record.orderSummary) }}</dd>
           <dt>订单总数量</dt>
           <dd>{{ formatProcurementQuantity(record.orderSummary.totalQuantity) }}</dd>
           <dt>订单未入库</dt>
@@ -350,7 +334,7 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column label="方向" min-width="90">
               <template #default="{ row }">
-                {{ movementDirectionLabel(row.direction) }}
+                {{ directionLabel(row.direction) }}
               </template>
             </el-table-column>
             <el-table-column prop="warehouseName" label="仓库" min-width="130" show-overflow-tooltip />

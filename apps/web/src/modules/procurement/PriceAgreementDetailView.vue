@@ -6,6 +6,8 @@ import { procurementApi, type PriceAgreementDetailRecord, type ResourceId } from
 import { useAuthStore } from '../../stores/authStore'
 import {
   formatProcurementAmount,
+  priceAgreementStatusLabel,
+  procurementApprovalStatusLabel,
   procurementErrorMessage,
   procurementOwnershipDisplay,
 } from './procurementPageHelpers'
@@ -74,8 +76,8 @@ async function submitActivation() {
     <template #actions>
       <template v-if="record">
         <div class="state-box">
-          <span>业务状态：{{ record.statusName || record.status }}</span>
-          <span>审批状态：{{ record.approvalStatusName || record.approvalStatus || '未提交' }}</span>
+          <span>业务状态：{{ priceAgreementStatusLabel(record.status, record.statusName) }}</span>
+          <span>审批状态：{{ procurementApprovalStatusLabel(record.approvalStatus, record.approvalStatusName) }}</span>
         </div>
         <el-button
           v-if="canSubmitActivation"
@@ -129,7 +131,7 @@ async function submitActivation() {
         </div>
         <div>
           <h2>审批</h2>
-          <p>审批状态：{{ record.approvalStatusName || record.approvalStatus || '未提交' }}</p>
+          <p>审批状态：{{ procurementApprovalStatusLabel(record.approvalStatus, record.approvalStatusName) }}</p>
         </div>
         <div>
           <h2>附件</h2>

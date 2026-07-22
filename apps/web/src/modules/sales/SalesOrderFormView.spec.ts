@@ -407,12 +407,12 @@ describe('销售订单表单页', () => {
     }))
   })
 
-  it('新建态可见并提交手工订单价格来源和税价字符串', async () => {
+  it('新建态可见并提交手工录入价格来源和税价字符串', async () => {
     const { wrapper } = await mountForm()
 
     await fillValidOrder(wrapper)
     expect(wrapper.text()).toContain('价格来源')
-    expect(wrapper.text()).toContain('手工订单')
+    expect(wrapper.text()).toContain('手工录入')
     expect(wrapper.text()).toContain('未税单价')
     expect(wrapper.text()).toContain('含税单价')
     expect(wrapper.text()).toContain('税率')

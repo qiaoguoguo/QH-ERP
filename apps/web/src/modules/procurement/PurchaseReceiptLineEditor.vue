@@ -3,6 +3,7 @@ import type { ResourceId } from '../../shared/api/procurementApi'
 import TrackingAllocationEditor from '../inventory/tracking/TrackingAllocationEditor.vue'
 import {
   formatProcurementQuantity,
+  purchaseInTransitStatusLabel,
   type PurchaseReceiptLineDraft,
   type PurchaseReceiptSourceLine,
   newPurchaseReceiptLine,
@@ -125,7 +126,7 @@ function removeLine(index: number) {
                 <span class="line-option-meta">
                   未入库 {{ formatProcurementQuantity(sourceLine.remainingQuantityBefore) }} /
                   采购在途参考 {{ formatProcurementQuantity(sourceLine.inTransitQuantity) }} /
-                  {{ sourceLine.inTransitStatusName || '-' }}
+                  {{ purchaseInTransitStatusLabel(sourceLine.inTransitStatus, sourceLine.inTransitStatusName) }}
                 </span>
               </el-option>
             </el-select>
@@ -163,7 +164,7 @@ function removeLine(index: number) {
         </el-table-column>
         <el-table-column label="在途状态" width="120">
           <template #default="{ row }">
-            {{ row.inTransitStatusName || '-' }}
+            {{ purchaseInTransitStatusLabel(row.inTransitStatus, row.inTransitStatusName) }}
           </template>
         </el-table-column>
         <el-table-column label="本次入库数量" width="150" align="right">
@@ -202,7 +203,7 @@ function removeLine(index: number) {
             <span v-else class="tracking-empty-text">不追踪</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="90">
           <template #default="{ $index }">
             <el-button
               data-test="remove-purchase-receipt-line"

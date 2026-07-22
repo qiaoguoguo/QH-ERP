@@ -515,7 +515,7 @@ onMounted(loadRecords)
             <span v-if="row.amountRestricted">金额受限</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="260" fixed="right">
+        <el-table-column label="操作" min-width="260">
           <template #default="{ row }">
             <div class="row-actions">
               <el-button text type="primary" @click="viewQuote(row)">详情</el-button>

@@ -158,7 +158,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="销售出库" description="维护销售出库草稿，过账后扣减库存并形成销售出库流水。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -270,7 +270,7 @@ onMounted(() => {
             {{ formatSalesDateTime(row.postedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" min-width="180">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-shipment" @click="viewShipment(row)">详情</el-button>
             <el-button

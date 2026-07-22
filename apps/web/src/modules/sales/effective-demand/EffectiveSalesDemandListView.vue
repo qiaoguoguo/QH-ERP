@@ -18,7 +18,14 @@ import BusinessReferenceSelect from '../../system/shared/BusinessReferenceSelect
 import type { BusinessReferenceOption } from '../../system/shared/businessReferenceSelectTypes'
 import { pageItems, pageTotal } from '../../system/shared/pageHelpers'
 import SalesDocumentTaskPanel from '../SalesDocumentTaskPanel.vue'
-import { formatSalesDecimal, optionalSalesId, salesFulfillmentErrorMessage, salesSourceChainLabel } from '../salesFulfillmentPageHelpers'
+import {
+  effectiveDemandExcludedReasonLabel,
+  effectiveDemandStatusLabel,
+  formatSalesDecimal,
+  optionalSalesId,
+  salesFulfillmentErrorMessage,
+  salesSourceChainLabel,
+} from '../salesFulfillmentPageHelpers'
 
 const authStore = useAuthStore()
 const records = ref<SalesEffectiveDemandRecord[]>([])
@@ -231,9 +238,9 @@ onMounted(loadRecords)
       </el-form-item>
       <el-form-item label="状态">
         <el-select v-model="filters.status" clearable placeholder="需求状态">
-          <el-option label="开放" value="OPEN" />
-          <el-option label="部分履约" value="PARTIALLY_SHIPPED" />
-          <el-option label="逾期" value="OVERDUE" />
+          <el-option label="待处理" value="OPEN" />
+          <el-option label="部分出库" value="PARTIALLY_SHIPPED" />
+          <el-option label="已逾期" value="OVERDUE" />
           <el-option label="已排除" value="EXCLUDED" />
         </el-select>
       </el-form-item>
@@ -288,10 +295,13 @@ onMounted(loadRecords)
             <span>订单 {{ formatSalesDecimal(row.orderQuantity) }} / 计划 {{ formatSalesDecimal(row.plannedQuantity) }}</span>
             <span>已发 {{ formatSalesDecimal(row.shippedQuantity) }} / 退货 {{ formatSalesDecimal(row.returnedQuantity) }}</span>
             <span>开放需求 {{ formatSalesDecimal(row.openQuantity) }}</span>
-            <span v-if="!row.countedAsEffectiveDemand">排除原因：{{ row.excludedReasonCode || '未返回' }}</span>
+            <span>需求状态：{{ effectiveDemandStatusLabel(row.status) }}</span>
+            <span v-if="!row.countedAsEffectiveDemand">
+              排除原因：{{ effectiveDemandExcludedReasonLabel(undefined, row.excludedReasonCode) }}
+            </span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" min-width="120" fixed="right">
+        <el-table-column label="操作" min-width="120">
           <template #default>
             <span>只读视图</span>
           </template>

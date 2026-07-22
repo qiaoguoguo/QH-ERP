@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   formatProcurementAmount,
   formatProcurementQuantity,
+  procurementApprovalStatusLabel,
   procurementModeLabel,
   procurementOwnershipTagType,
+  procurementPriceSourceDisplay,
+  purchaseInTransitStatusLabel,
+  purchaseOrderStatusTagType,
   validateProcurementDecimal,
 } from './procurementPageHelpers'
 
@@ -28,5 +32,17 @@ describe('采购页面公共 helper', () => {
     expect(procurementModeLabel('PROJECT')).toBe('项目专采')
     expect(procurementOwnershipTagType('PUBLIC')).toBe('info')
     expect(procurementOwnershipTagType('PROJECT')).toBe('success')
+  })
+
+  it('状态和价格来源未知值使用中文兜底，不裸露原始编码', () => {
+    expect(purchaseInTransitStatusLabel('OVERDUE', 'OVERDUE')).toBe('已逾期')
+    expect(purchaseInTransitStatusLabel('REVIEW_REQUIRED', 'REVIEW_REQUIRED')).toBe('未知状态')
+    expect(procurementApprovalStatusLabel('REJECTED', 'REJECTED')).toBe('已驳回')
+    expect(procurementApprovalStatusLabel('REVIEW_REQUIRED', 'REVIEW_REQUIRED')).toBe('未知状态')
+    expect(procurementPriceSourceDisplay({ priceSourceType: 'LEGACY_MANUAL', priceSourceNo: 'PS-001' })).toBe('未知价格来源 PS-001')
+  })
+
+  it('采购取消状态使用中性色，不误标为失败', () => {
+    expect(purchaseOrderStatusTagType('CANCELLED')).toBe('info')
   })
 })

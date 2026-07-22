@@ -21,6 +21,7 @@ import {
   normalizeOptionalId,
   salesErrorMessage,
   salesOrderTaxIncludedAmount,
+  salesPriceSourceLabel,
 } from './salesPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -193,13 +194,7 @@ function canCreateShipment(record: SalesOrderSummaryRecord) {
 }
 
 function sourceSummary(record: SalesOrderSummaryRecord) {
-  if (record.priceSourceType === 'QUOTE') {
-    return `报价 ${record.priceSourceNo ?? record.sourceQuoteNo ?? '来源未返回'}`
-  }
-  if (record.priceSourceType === 'LEGACY_MANUAL') {
-    return '历史手工订单'
-  }
-  return '手工订单'
+  return salesPriceSourceLabel(record)
 }
 
 function projectSummary(record: SalesOrderSummaryRecord) {
@@ -278,7 +273,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="sales-order-keyword" clearable placeholder="订单号、客户或物料" />
         </el-form-item>
@@ -416,7 +411,7 @@ onMounted(() => {
             {{ formatSalesDateTime(row.updatedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="330">
+        <el-table-column label="操作" min-width="330">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-sales-order" @click="viewOrder(row)">详情</el-button>
             <el-button

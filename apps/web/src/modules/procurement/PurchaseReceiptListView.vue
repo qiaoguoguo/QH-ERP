@@ -10,6 +10,7 @@ import {
 } from '../../shared/api/procurementApi'
 import { currentRouteReturnTo, queryWithReturnTo } from '../../shared/navigation/navigationReturn'
 import { useAuthStore } from '../../stores/authStore'
+import { valuationStateLabel } from '../inventory/inventoryPageHelpers'
 import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import {
@@ -183,7 +184,7 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="采购入库" description="维护采购入库草稿，过账后形成库存入库流水。">
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input
             v-model="filters.keyword"
@@ -291,7 +292,7 @@ onMounted(() => {
         <el-table-column label="估值/成本" min-width="190" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="stacked-cell">
-              <span>估值状态：{{ row.valuationStateName || row.valuationState || '未返回' }}</span>
+              <span>估值状态：{{ valuationStateLabel(row.valuationState, row.valuationStateName) }}</span>
               <span v-if="row.costVisible === false">成本无权限</span>
               <span v-else>未税金额 {{ formatProcurementAmount(row.taxExcludedAmount) }}</span>
             </div>
@@ -310,7 +311,7 @@ onMounted(() => {
             {{ formatProcurementDateTime(row.postedAt) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="180">
+        <el-table-column label="操作" min-width="180">
           <template #default="{ row }">
             <el-button size="small" text data-test="view-purchase-receipt" @click="viewReceipt(row)">详情</el-button>
             <el-button

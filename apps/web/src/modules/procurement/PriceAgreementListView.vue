@@ -12,6 +12,8 @@ import { pageItems } from '../system/shared/pageHelpers'
 import {
   formatProcurementAmount,
   normalizeOptionalId,
+  priceAgreementStatusLabel,
+  procurementApprovalStatusLabel,
   procurementErrorMessage,
   procurementOwnershipDisplay,
 } from './procurementPageHelpers'
@@ -208,7 +210,7 @@ onMounted(() => {
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" clearable placeholder="协议号、供应商、物料" />
         </el-form-item>
@@ -273,8 +275,8 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="业务/审批状态" min-width="190">
           <template #default="{ row }">
-            <div>业务状态：{{ row.statusName || row.status }}</div>
-            <div>审批状态：{{ row.approvalStatusName || row.approvalStatus || '未提交' }}</div>
+            <div>业务状态：{{ priceAgreementStatusLabel(row.status, row.statusName) }}</div>
+            <div>审批状态：{{ procurementApprovalStatusLabel(row.approvalStatus, row.approvalStatusName) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="税价" min-width="260" show-overflow-tooltip>
@@ -287,7 +289,7 @@ onMounted(() => {
         <el-table-column label="有效期" min-width="200">
           <template #default="{ row }">{{ row.validFrom }} 至 {{ row.validTo }}</template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" min-width="210">
+        <el-table-column label="操作" min-width="210">
           <template #default="{ row }">
             <el-button
               v-if="canSubmitActivation(row)"

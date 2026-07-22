@@ -8,6 +8,7 @@ import type {
   SalesShipmentStatus,
 } from '../../shared/api/salesApi'
 import type { InventoryQualityStatus, InventoryTrackingAllocationPayload, InventoryTrackingMethod } from '../../shared/api/inventoryApi'
+import { createUnknownStatusDisplay, type StatusTone } from '../../shared/status/statusDisplay'
 
 export interface SalesDecimalValidationResult {
   value: number | null
@@ -100,7 +101,7 @@ export interface SalesShipmentLineDraft {
   remark: string
 }
 
-const salesOrderStatusLabels: Record<SalesOrderStatus, string> = {
+const salesOrderStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   CONFIRMED: '已确认',
   PARTIALLY_SHIPPED: '部分出库',
@@ -109,66 +110,131 @@ const salesOrderStatusLabels: Record<SalesOrderStatus, string> = {
   CANCELLED: '已取消',
 }
 
-const salesOrderStatusTypes: Record<SalesOrderStatus, 'info' | 'success' | 'warning' | 'danger'> = {
+const salesOrderStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   CONFIRMED: 'success',
   PARTIALLY_SHIPPED: 'warning',
   SHIPPED: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
-const salesShipmentStatusLabels: Record<SalesShipmentStatus, string> = {
+const salesShipmentStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   POSTED: '已过账',
 }
 
-const salesShipmentStatusTypes: Record<SalesShipmentStatus, 'info' | 'success'> = {
+const salesShipmentStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   POSTED: 'success',
 }
 
-export function salesOrderStatusLabel(status: SalesOrderStatus): string {
-  return salesOrderStatusLabels[status]
+const salesPriceSourceLabels: Record<string, string> = {
+  MANUAL: '手工录入',
+  QUOTE: '报价带入',
+  LEGACY_MANUAL: '历史手工价',
 }
 
-export function salesOrderStatusTagType(status: SalesOrderStatus): 'info' | 'success' | 'warning' | 'danger' {
-  return salesOrderStatusTypes[status]
+function normalizedDisplayText(value: unknown): string {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  return String(value).trim()
+}
+
+function knownOrFallbackLabel(
+  code: unknown,
+  labels: Record<string, string>,
+  unknownLabel: string,
+  context: { domain: string; field: string },
+): string {
+  const codeText = normalizedDisplayText(code).toUpperCase()
+  if (!codeText) {
+    return '-'
+  }
+  const knownLabel = labels[codeText]
+  if (knownLabel) {
+    return knownLabel
+  }
+  if (unknownLabel === '未知状态') {
+    return createUnknownStatusDisplay({
+      ...context,
+      code: codeText,
+    }).label
+  }
+  return unknownLabel
+}
+
+export function salesOrderStatusLabel(status?: SalesOrderStatus | string | null): string {
+  return knownOrFallbackLabel(status, salesOrderStatusLabels, '未知状态', {
+    domain: '销售',
+    field: '销售订单状态',
+  })
+}
+
+export function salesOrderStatusTagType(status?: SalesOrderStatus | string | null): StatusTone {
+  return salesOrderStatusTypes[normalizedDisplayText(status).toUpperCase()] ?? 'warning'
 }
 
 export function salesOrderTaxIncludedAmount(record: Pick<SalesOrderSummaryRecord, 'totalTaxIncludedAmount' | 'taxIncludedAmount'>): string | null | undefined {
   return record.taxIncludedAmount ?? record.totalTaxIncludedAmount
 }
 
-export function salesShipmentStatusLabel(status: SalesShipmentStatus): string {
-  return salesShipmentStatusLabels[status]
+export function salesShipmentStatusLabel(status?: SalesShipmentStatus | string | null): string {
+  return knownOrFallbackLabel(status, salesShipmentStatusLabels, '未知状态', {
+    domain: '销售',
+    field: '销售出库状态',
+  })
 }
 
-export function salesShipmentStatusTagType(status: SalesShipmentStatus): 'info' | 'success' {
-  return salesShipmentStatusTypes[status]
+export function salesShipmentStatusTagType(status?: SalesShipmentStatus | string | null): StatusTone {
+  return salesShipmentStatusTypes[normalizedDisplayText(status).toUpperCase()] ?? 'warning'
 }
 
 export function salesMovementTypeLabel(value: string): string {
   const labels: Record<string, string> = {
-    SALES_SHIPMENT: '销售出库',
-    PURCHASE_RECEIPT: '采购入库',
-    OPENING: '期初',
-    ADJUSTMENT_INCREASE: '调增',
-    ADJUSTMENT_DECREASE: '调减',
+    OPENING: '期初入库',
+    ADJUSTMENT_INCREASE: '调整入库',
+    ADJUSTMENT_DECREASE: '调整出库',
     PRODUCTION_ISSUE: '生产领料',
     PRODUCTION_RECEIPT: '完工入库',
+    PURCHASE_RECEIPT: '采购入库',
+    SALES_SHIPMENT: '销售出库',
+    WAREHOUSE_TRANSFER_OUT: '调拨出库',
+    WAREHOUSE_TRANSFER_IN: '调拨入库',
+    OWNERSHIP_CONVERSION_OUT: '所有权转出',
+    OWNERSHIP_CONVERSION_IN: '所有权转入',
+    STOCKTAKE_GAIN: '盘盈入库',
+    STOCKTAKE_LOSS: '盘亏出库',
+    VALUATION_ADJUSTMENT: '估值调整',
   }
-  return labels[value] ?? value
+  return knownOrFallbackLabel(value, labels, '未知类型', {
+    domain: '销售',
+    field: '库存流水类型',
+  })
 }
 
 export function salesMovementDirectionLabel(value: string): string {
-  if (value === 'IN') {
-    return '入库'
-  }
-  if (value === 'OUT') {
-    return '出库'
-  }
-  return value
+  return knownOrFallbackLabel(value, {
+    IN: '入库',
+    OUT: '出库',
+  }, '未知方向', {
+    domain: '销售',
+    field: '库存流水方向',
+  })
+}
+
+export function salesPriceSourceLabel(source: {
+  priceSourceType?: SalesPriceSourceType | string | null
+  priceSourceNo?: string | null
+  sourceQuoteNo?: string | null
+}): string {
+  const label = knownOrFallbackLabel(source.priceSourceType, salesPriceSourceLabels, '未知价格来源', {
+    domain: '销售',
+    field: '销售价格来源',
+  })
+  const sourceNo = normalizedDisplayText(source.priceSourceNo ?? source.sourceQuoteNo)
+  return sourceNo ? `${label} ${sourceNo}` : label
 }
 
 export function salesErrorMessage(error: unknown): string {

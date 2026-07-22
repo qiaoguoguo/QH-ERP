@@ -6,9 +6,10 @@ import {
   type ProjectSalesOrderAggregate,
   type ProjectSalesOrderSummary,
 } from '../../../shared/api/salesProjectApi'
-import type { ResourceId, SalesOrderStatus } from '../../../shared/api/salesApi'
+import type { ResourceId } from '../../../shared/api/salesApi'
 import { pageItems } from '../../system/shared/pageHelpers'
 import SalesOrderStatusTag from '../SalesOrderStatusTag.vue'
+import { salesOrderStatusLabel } from '../salesPageHelpers'
 import { formatProjectAmount, projectApiErrorMessage } from './salesProjectPageHelpers'
 
 const props = defineProps<{
@@ -24,15 +25,6 @@ const loading = ref(false)
 const error = ref('')
 const orders = ref<ProjectSalesOrderSummary[]>([])
 const pagination = reactive({ page: 1, pageSize: 5, total: 0 })
-
-const statusLabels: Record<SalesOrderStatus, string> = {
-  DRAFT: '草稿',
-  CONFIRMED: '已确认',
-  PARTIALLY_SHIPPED: '部分出库',
-  SHIPPED: '全部出库',
-  CLOSED: '已关闭',
-  CANCELLED: '已取消',
-}
 
 async function loadOrders() {
   if (props.restricted || !props.canViewDetails || !props.summary) {
@@ -117,7 +109,7 @@ watch(() => [props.projectId, props.restricted, props.canViewDetails, props.summ
               </template>
             </el-table-column>
             <el-table-column label="状态摘要" min-width="100">
-              <template #default="{ row }">{{ statusLabels[row.status as SalesOrderStatus] }}</template>
+              <template #default="{ row }">{{ salesOrderStatusLabel(row.status) }}</template>
             </el-table-column>
             <el-table-column prop="orderDate" label="订单日期" min-width="110" />
             <el-table-column label="数量" min-width="110" align="right">
@@ -126,7 +118,7 @@ watch(() => [props.projectId, props.restricted, props.canViewDetails, props.summ
             <el-table-column label="业务金额" min-width="120" align="right">
               <template #default="{ row }">{{ formatProjectAmount(row.businessAmount) }}</template>
             </el-table-column>
-            <el-table-column label="操作" fixed="right" width="90">
+            <el-table-column label="操作" width="90">
               <template #default="{ row }">
                 <el-button v-if="canViewDetails" data-test="view-project-sales-order" size="small" text @click="viewOrder(row)">详情</el-button>
               </template>

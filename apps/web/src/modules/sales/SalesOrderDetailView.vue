@@ -34,6 +34,7 @@ import {
   formatSalesQuantity,
   salesErrorMessage,
   salesOrderTaxIncludedAmount,
+  salesPriceSourceLabel,
   salesShipmentStatusLabel,
   salesShipmentStatusTagType,
 } from './salesPageHelpers'
@@ -536,13 +537,7 @@ function sourceSummary() {
   if (!record.value) {
     return '-'
   }
-  if (record.value.priceSourceType === 'QUOTE') {
-    return `报价 ${record.value.priceSourceNo ?? record.value.sourceQuoteNo ?? '来源未返回'}`
-  }
-  if (record.value.priceSourceType === 'LEGACY_MANUAL') {
-    return '历史手工订单'
-  }
-  return '手工订单'
+  return salesPriceSourceLabel(record.value)
 }
 
 function amountSummary() {
@@ -566,13 +561,7 @@ function creditSummary() {
 }
 
 function linePriceSource(line: SalesOrderLineRecord) {
-  if (line.priceSourceType === 'QUOTE') {
-    return `报价 ${line.priceSourceNo ?? '来源未返回'}`
-  }
-  if (line.priceSourceType === 'LEGACY_MANUAL') {
-    return '历史手工'
-  }
-  return '手工'
+  return salesPriceSourceLabel(line)
 }
 
 function deliveryPlanQuantitySummary(plan: SalesDeliveryPlanRecord) {
@@ -945,7 +934,7 @@ onMounted(loadRecord)
               </template>
             </el-table-column>
             <el-table-column prop="closeReason" label="关闭原因" min-width="160" show-overflow-tooltip />
-            <el-table-column v-if="authStore.hasPermission('sales:delivery-plan:manage')" label="操作" width="110" fixed="right">
+            <el-table-column v-if="authStore.hasPermission('sales:delivery-plan:manage')" label="操作" width="110">
               <template #default="{ row }">
                 <el-button
                   v-if="canManageDeliveryPlans && (row.allowedActions ?? []).includes('CLOSE')"
@@ -1009,7 +998,7 @@ onMounted(loadRecord)
             </el-table-column>
             <el-table-column prop="reason" label="变更原因" min-width="220" show-overflow-tooltip />
             <el-table-column prop="actionDisabledReason" label="动作限制" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="190" fixed="right">
+            <el-table-column label="操作" width="190">
               <template #default="{ row }">
                 <el-button
                   v-if="orderChangeAllowed(row, 'UPDATE')"
@@ -1075,7 +1064,7 @@ onMounted(loadRecord)
                 {{ formatSalesDateTime(row.postedAt) }}
               </template>
             </el-table-column>
-            <el-table-column v-if="canViewShipment" label="操作" width="90" fixed="right">
+            <el-table-column v-if="canViewShipment" label="操作" width="90">
               <template #default="{ row }">
                 <el-button size="small" text data-test="view-sales-shipment-summary" @click="viewShipment(row.id)">
                   详情

@@ -27,6 +27,7 @@ import {
   newPurchaseOrderLine,
   normalizeOptionalId,
   normalizeRequiredId,
+  procurementApprovalStatusLabel,
   procurementErrorMessage,
   procurementModeFrom,
   procurementModeDisplay,
@@ -502,7 +503,7 @@ onMounted(async () => {
         </div>
         <div>
           <span>审批/例外</span>
-          <strong>审批状态：{{ editingRecord.approvalStatusName || editingRecord.approvalStatus || '未提交' }} / 例外审批：{{ exceptionApprovalText(editingRecord) }}</strong>
+          <strong>审批状态：{{ procurementApprovalStatusLabel(editingRecord.approvalStatus, editingRecord.approvalStatusName) }} / 例外审批：{{ exceptionApprovalText(editingRecord) }}</strong>
         </div>
         <div>
           <span>税价</span>

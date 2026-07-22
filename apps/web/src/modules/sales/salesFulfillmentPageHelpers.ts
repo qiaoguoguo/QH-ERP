@@ -2,10 +2,12 @@ import type {
   SalesApprovalStatus,
   SalesDeliveryPlanRecord,
   SalesDeliveryPlanStatus,
+  SalesEffectiveDemandStatus,
   SalesOrderChangeStatus,
   SalesQuoteLineRecord,
   SalesQuoteStatus,
 } from '../../shared/api/salesFulfillmentApi'
+import { createUnknownStatusDisplay } from '../../shared/status/statusDisplay'
 
 export function salesFulfillmentErrorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : '操作失败，请稍后重试'
@@ -31,6 +33,27 @@ export function optionalSalesId(value: unknown): string | number | undefined {
   return normalizeSalesId(value)
 }
 
+function normalizedStatusCode(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase()
+}
+
+function knownStatusLabel(
+  status: unknown,
+  labels: Record<string, string>,
+  field: string,
+  emptyLabel = '-',
+): string {
+  const code = normalizedStatusCode(status)
+  if (!code) {
+    return emptyLabel
+  }
+  return labels[code] ?? createUnknownStatusDisplay({
+    domain: '销售',
+    field,
+    code,
+  }).label
+}
+
 export function quoteStatusLabel(status: SalesQuoteStatus | string): string {
   const labels: Record<string, string> = {
     DRAFT: '草稿',
@@ -39,7 +62,7 @@ export function quoteStatusLabel(status: SalesQuoteStatus | string): string {
     EXPIRED: '已过期',
     CANCELLED: '已取消',
   }
-  return labels[status] ?? status
+  return knownStatusLabel(status, labels, '销售报价状态')
 }
 
 export function approvalStatusLabel(status?: SalesApprovalStatus | string | null): string {
@@ -53,7 +76,7 @@ export function approvalStatusLabel(status?: SalesApprovalStatus | string | null
     WITHDRAWN: '已撤回',
     CANCELLED: '已取消',
   }
-  return labels[status] ?? status
+  return knownStatusLabel(status, labels, '销售审批状态', '未提交')
 }
 
 export function deliveryPlanStatusLabel(status: SalesDeliveryPlanStatus | string): string {
@@ -64,7 +87,7 @@ export function deliveryPlanStatusLabel(status: SalesDeliveryPlanStatus | string
     CLOSED: '已关闭',
     CANCELLED: '已取消',
   }
-  return labels[status] ?? status
+  return knownStatusLabel(status, labels, '销售交付计划状态')
 }
 
 export function deliveryPlanDate(plan: Pick<SalesDeliveryPlanRecord, 'plannedDate' | 'planDate'>): string {
@@ -77,7 +100,33 @@ export function orderChangeStatusLabel(status: SalesOrderChangeStatus | string):
     APPLIED: '已应用',
     CANCELLED: '已取消',
   }
-  return labels[status] ?? status
+  return knownStatusLabel(status, labels, '销售订单变更状态')
+}
+
+export function effectiveDemandStatusLabel(status: SalesEffectiveDemandStatus | string): string {
+  const labels: Record<string, string> = {
+    OPEN: '待处理',
+    PARTIALLY_SHIPPED: '部分出库',
+    OVERDUE: '已逾期',
+    EXCLUDED: '已排除',
+  }
+  return knownStatusLabel(status, labels, '有效销售需求状态')
+}
+
+function hasChineseText(value: string): boolean {
+  return /[\u4e00-\u9fa5]/.test(value)
+}
+
+export function effectiveDemandExcludedReasonLabel(reason?: string | null, reasonCode?: string | null): string {
+  const reasonText = String(reason ?? '').trim()
+  const codeText = normalizedStatusCode(reasonCode)
+  if (reasonText && reasonText !== codeText && hasChineseText(reasonText)) {
+    return reasonText
+  }
+  if (!reasonText && !codeText) {
+    return '未返回'
+  }
+  return '未知原因'
 }
 
 export function salesSourceChainLabel(hasQuote: boolean): string {

@@ -109,7 +109,7 @@ function fulfillmentBlockReasonText(reason: string) {
     OPEN_DEMAND: '项目仍有开放销售需求，不能关闭销售履约。',
     OPEN_DELIVERY_PLAN: '项目仍有开放交付计划，不能关闭销售履约。',
   }
-  return labels[reason] ?? reason
+  return labels[reason] ?? '未知原因'
 }
 
 function resolveContractCreateState(project: SalesProjectDetail | null, hasCreatePermission: boolean) {
@@ -426,7 +426,7 @@ onMounted(loadRecord)
               <template #default="{ row }"><span class="numeric-cell">{{ formatProjectAmount(row.amount) }}</span></template>
             </el-table-column>
             <el-table-column prop="signedDate" label="签订日期" min-width="110" />
-            <el-table-column label="操作" fixed="right" width="90">
+            <el-table-column label="操作" width="90">
               <template #default="{ row }">
                 <el-button size="small" text data-test="edit-sales-project-contract" @click="openEditContract(row)">查看</el-button>
               </template>

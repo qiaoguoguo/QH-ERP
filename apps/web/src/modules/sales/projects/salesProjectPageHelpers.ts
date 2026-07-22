@@ -1,20 +1,21 @@
 import type { SalesProjectContractStatus, SalesProjectContractType, SalesProjectStatus } from '../../../shared/api/salesProjectApi'
+import { createUnknownStatusDisplay, type StatusTone } from '../../../shared/status/statusDisplay'
 
-const projectStatusLabels: Record<SalesProjectStatus, string> = {
+const projectStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   ACTIVE: '执行中',
   CLOSED: '已关闭',
   CANCELLED: '已取消',
 }
 
-const projectStatusTypes: Record<SalesProjectStatus, 'info' | 'success' | 'warning' | 'danger'> = {
+const projectStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   ACTIVE: 'success',
   CLOSED: 'info',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
-const contractStatusLabels: Record<SalesProjectContractStatus, string> = {
+const contractStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   EFFECTIVE: '已生效',
   CLOSED: '已关闭',
@@ -22,30 +23,46 @@ const contractStatusLabels: Record<SalesProjectContractStatus, string> = {
   CANCELLED: '已取消',
 }
 
-const contractStatusTypes: Record<SalesProjectContractStatus, 'info' | 'success' | 'warning' | 'danger'> = {
+const contractStatusTypes: Record<string, StatusTone> = {
   DRAFT: 'info',
   EFFECTIVE: 'success',
   CLOSED: 'info',
   TERMINATED: 'warning',
-  CANCELLED: 'danger',
+  CANCELLED: 'info',
 }
 
-export function salesProjectStatusLabel(status: SalesProjectStatus): string {
-  return projectStatusLabels[status] ?? status
+function normalizedStatusCode(value: unknown): string {
+  return String(value ?? '').trim().toUpperCase()
 }
 
-export function salesProjectStatusTagType(status: SalesProjectStatus): 'info' | 'success' | 'warning' | 'danger' {
-  return projectStatusTypes[status] ?? 'info'
+function knownStatusLabel(status: unknown, labels: Record<string, string>, field: string): string {
+  const code = normalizedStatusCode(status)
+  if (!code) {
+    return '-'
+  }
+  return labels[code] ?? createUnknownStatusDisplay({
+    domain: '销售项目',
+    field,
+    code,
+  }).label
 }
 
-export function salesProjectContractStatusLabel(status: SalesProjectContractStatus): string {
-  return contractStatusLabels[status] ?? status
+export function salesProjectStatusLabel(status: SalesProjectStatus | string | null | undefined): string {
+  return knownStatusLabel(status, projectStatusLabels, '项目状态')
+}
+
+export function salesProjectStatusTagType(status: SalesProjectStatus | string | null | undefined): StatusTone {
+  return projectStatusTypes[normalizedStatusCode(status)] ?? 'warning'
+}
+
+export function salesProjectContractStatusLabel(status: SalesProjectContractStatus | string | null | undefined): string {
+  return knownStatusLabel(status, contractStatusLabels, '项目合同状态')
 }
 
 export function salesProjectContractStatusTagType(
-  status: SalesProjectContractStatus,
-): 'info' | 'success' | 'warning' | 'danger' {
-  return contractStatusTypes[status] ?? 'info'
+  status: SalesProjectContractStatus | string | null | undefined,
+): StatusTone {
+  return contractStatusTypes[normalizedStatusCode(status)] ?? 'warning'
 }
 
 export function salesProjectContractTypeLabel(type: SalesProjectContractType): string {
