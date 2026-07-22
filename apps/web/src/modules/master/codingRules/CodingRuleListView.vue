@@ -277,7 +277,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="coding-rule-keyword" clearable placeholder="规则编码或名称" />
         </el-form-item>

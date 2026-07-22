@@ -697,7 +697,7 @@ onMounted(() => {
               size="small"
               text
               :disabled="actionLoading"
-              :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+              :type="row.status === 'DISABLED' ? 'success' : 'warning'"
               :data-test="row.status === 'DISABLED' ? 'enable-material' : 'disable-material'"
               @click="changeStatus(row)"
             >

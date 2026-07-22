@@ -284,6 +284,7 @@ describe('022 平台页面', () => {
     expect(documentPlatformApiMock.approvals.get).toHaveBeenCalledWith(3)
     expect(wrapper.text()).toContain('固定审批')
     expect(wrapper.text()).toContain('提交')
+    expect(wrapper.text()).not.toContain('SUBMIT')
     expect(wrapper.find('[data-test="approval-cancel"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="approval-comment"]').setValue('同意生效')

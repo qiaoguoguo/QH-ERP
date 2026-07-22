@@ -28,13 +28,13 @@ const materialTypeLabels: Record<MaterialType, string> = {
 const sourceTypeLabels: Record<MaterialSourceType, string> = {
   PURCHASED: '外购',
   SELF_MADE: '自制',
-  OUTSOURCED: '委外',
+  OUTSOURCED: '外协',
 }
 
 const trackingMethodLabels: Record<MaterialTrackingMethod, string> = {
   NONE: '不追踪',
-  BATCH: '批次管理',
-  SERIAL: '序列号管理',
+  BATCH: '批次',
+  SERIAL: '序列号',
 }
 
 const costCategoryLabels: Record<CostCategory, string> = {
@@ -95,52 +95,59 @@ const settlementMethodLabels: Record<SettlementMethod, string> = {
   CUSTOM: '自定义',
 }
 
-export function masterStatusLabel(status: MasterDataStatus): string {
-  return masterStatusLabels[status]
+function labelFromMap(value: string | null | undefined, labels: Record<string, string>, fallback: string): string {
+  return value ? labels[value] ?? fallback : fallback
 }
 
-export function materialTypeLabel(materialType: MaterialType): string {
-  return materialTypeLabels[materialType]
+export function masterStatusLabel(status?: MasterDataStatus | string | null): string {
+  return labelFromMap(status, masterStatusLabels, '未知状态')
 }
 
-export function sourceTypeLabel(sourceType: MaterialSourceType): string {
-  return sourceTypeLabels[sourceType]
+export function materialTypeLabel(materialType?: MaterialType | string | null): string {
+  return labelFromMap(materialType, materialTypeLabels, '未知类型')
 }
 
-export function trackingMethodLabel(trackingMethod?: MaterialTrackingMethod | null): string {
-  return trackingMethod ? trackingMethodLabels[trackingMethod] : '不追踪'
+export function sourceTypeLabel(sourceType?: MaterialSourceType | string | null): string {
+  return labelFromMap(sourceType, sourceTypeLabels, '未知来源')
 }
 
-export function costCategoryLabel(value?: CostCategory | null): string {
-  return value ? costCategoryLabels[value] : '未分类'
+export function trackingMethodLabel(trackingMethod?: MaterialTrackingMethod | string | null): string {
+  if (!trackingMethod) {
+    return '不追踪'
+  }
+  return labelFromMap(trackingMethod, trackingMethodLabels, '未知追踪方式')
 }
 
-export function inventoryValuationCategoryLabel(value?: InventoryValuationCategory | null): string {
-  return value ? inventoryValuationCategoryLabels[value] : '未分类'
+export function costCategoryLabel(value?: CostCategory | string | null): string {
+  return value ? labelFromMap(value, costCategoryLabels, '未知成本类别') : '未分类'
 }
 
-export function roundingModeLabel(value?: RoundingMode | null): string {
-  return value ? roundingModeLabels[value] : '-'
+export function inventoryValuationCategoryLabel(value?: InventoryValuationCategory | string | null): string {
+  return value ? labelFromMap(value, inventoryValuationCategoryLabels, '未知计价类别') : '未分类'
 }
 
-export function codingObjectTypeLabel(value?: CodingObjectType | null): string {
-  return value ? codingObjectTypeLabels[value] : '-'
+export function roundingModeLabel(value?: RoundingMode | string | null): string {
+  return value ? labelFromMap(value, roundingModeLabels, '未知舍入方式') : '-'
 }
 
-export function codingDatePatternLabel(value?: CodingDatePattern | null): string {
-  return value ? codingDatePatternLabels[value] : '-'
+export function codingObjectTypeLabel(value?: CodingObjectType | string | null): string {
+  return value ? labelFromMap(value, codingObjectTypeLabels, '未知对象') : '-'
 }
 
-export function codingResetCycleLabel(value?: CodingResetCycle | null): string {
-  return value ? codingResetCycleLabels[value] : '-'
+export function codingDatePatternLabel(value?: CodingDatePattern | string | null): string {
+  return value ? labelFromMap(value, codingDatePatternLabels, '未知日期格式') : '-'
 }
 
-export function invoiceTypeLabel(value?: InvoiceType | null): string {
-  return value ? invoiceTypeLabels[value] : '-'
+export function codingResetCycleLabel(value?: CodingResetCycle | string | null): string {
+  return value ? labelFromMap(value, codingResetCycleLabels, '未知重置周期') : '-'
 }
 
-export function settlementMethodLabel(value?: SettlementMethod | null): string {
-  return value ? settlementMethodLabels[value] : '-'
+export function invoiceTypeLabel(value?: InvoiceType | string | null): string {
+  return value ? labelFromMap(value, invoiceTypeLabels, '未知发票类型') : '-'
+}
+
+export function settlementMethodLabel(value?: SettlementMethod | string | null): string {
+  return value ? labelFromMap(value, settlementMethodLabels, '未知结算方式') : '-'
 }
 
 export function percentLabel(value?: string | number | null): string {

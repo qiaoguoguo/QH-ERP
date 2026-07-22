@@ -202,7 +202,7 @@ onMounted(loadRoles)
     </header>
 
     <el-card class="query-card" shadow="never">
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="role-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
@@ -243,7 +243,7 @@ onMounted(loadRoles)
                 v-if="canUpdate"
                 size="small"
                 text
-                :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+                :type="row.status === 'DISABLED' ? 'success' : 'warning'"
                 :data-test="row.status === 'DISABLED' ? 'enable-role' : 'disable-role'"
                 @click="changeStatus(row)"
               >

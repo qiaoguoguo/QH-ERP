@@ -7,6 +7,7 @@ import type {
   DocumentTaskType,
   MessageStatus,
 } from '../../shared/api/documentPlatformApi'
+import { createUnknownStatusDisplay } from '../../shared/status/statusDisplay'
 
 export function platformErrorMessage(caught: unknown): string {
   return caught instanceof Error ? caught.message : '请求失败，请重试'
@@ -37,24 +38,41 @@ export function approvalStatusLabel(status: ApprovalInstanceStatus | ApprovalTas
     CANCELLED: '已取消',
     PENDING: '待处理',
   }
-  return labels[status] ?? status
+  return labelFromMap(status, labels, 'status', '未知状态')
 }
 
 export function approvalStatusTagType(status: string): 'info' | 'success' | 'warning' | 'danger' {
   if (status === 'APPROVED') {
     return 'success'
   }
-  if (status === 'REJECTED' || status === 'CANCELLED') {
+  if (status === 'REJECTED') {
     return 'danger'
   }
-  if (status === 'WITHDRAWN') {
+  if (!knownApprovalStatuses.has(status)) {
     return 'warning'
   }
   return 'info'
 }
 
-export function messageStatusLabel(status: MessageStatus): string {
-  return status === 'UNREAD' ? '未读' : '已读'
+export function approvalActionLabel(action?: string | null): string {
+  const labels: Record<string, string> = {
+    SUBMIT: '提交',
+    APPROVE: '通过',
+    REJECT: '驳回',
+    WITHDRAW: '撤回',
+    CANCEL: '取消',
+  }
+  return labelFromMap(action, labels, 'action', '未知动作')
+}
+
+export function messageStatusLabel(status: MessageStatus | string): string {
+  if (status === 'UNREAD') {
+    return '未读'
+  }
+  if (status === 'READ') {
+    return '已读'
+  }
+  return unknownStatusLabel('messageStatus', status)
 }
 
 export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
@@ -104,7 +122,7 @@ export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
     PURCHASE_INVOICE_PRINT: '采购发票打印',
     ACCOUNTING_VOUCHER_PRINT: '会计凭证打印',
   }
-  return labels[type] ?? type
+  return labelFromMap(type, labels, 'taskType', '未知任务')
 }
 
 export function documentTaskStageLabel(stage: DocumentTaskStage | string): string {
@@ -116,7 +134,7 @@ export function documentTaskStageLabel(stage: DocumentTaskStage | string): strin
     BATCH: '批量',
     REPAIR: '修复',
   }
-  return labels[stage] ?? stage
+  return labelFromMap(stage, labels, 'taskStage', '未知阶段')
 }
 
 export function documentTaskStatusLabel(status: DocumentTaskStatus | string): string {
@@ -130,18 +148,36 @@ export function documentTaskStatusLabel(status: DocumentTaskStatus | string): st
     CANCELLED: '已取消',
     EXPIRED: '结果过期',
   }
-  return labels[status] ?? status
+  return labelFromMap(status, labels, 'taskStatus', '未知状态')
 }
 
 export function documentTaskStatusTagType(status: DocumentTaskStatus | string): 'info' | 'success' | 'warning' | 'danger' {
   if (status === 'SUCCEEDED' || status === 'READY_TO_COMMIT') {
     return 'success'
   }
-  if (status === 'VALIDATION_FAILED' || status === 'FAILED' || status === 'EXPIRED') {
+  if (status === 'VALIDATION_FAILED' || status === 'FAILED') {
     return 'danger'
   }
-  if (status === 'CANCELLED') {
+  if (status === 'EXPIRED' || !knownDocumentTaskStatuses.has(status)) {
     return 'warning'
   }
   return 'info'
 }
+
+function labelFromMap(value: string | null | undefined, labels: Record<string, string>, field: string, fallback: string): string {
+  return value && labels[value] ? labels[value] : unknownStatusLabel(field, value, fallback)
+}
+
+function unknownStatusLabel(field: string, code: unknown, fallback = '未知状态'): string {
+  if (!code && fallback !== '未知状态') {
+    return fallback
+  }
+  if (!code) {
+    return createUnknownStatusDisplay({ domain: 'platform', field, code }).label
+  }
+  const display = createUnknownStatusDisplay({ domain: 'platform', field, code })
+  return display.label === '未知状态' ? fallback : display.label
+}
+
+const knownApprovalStatuses = new Set(['SUBMITTED', 'APPROVED', 'REJECTED', 'WITHDRAWN', 'CANCELLED', 'PENDING'])
+const knownDocumentTaskStatuses = new Set(['QUEUED', 'RUNNING', 'READY_TO_COMMIT', 'VALIDATION_FAILED', 'SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'])

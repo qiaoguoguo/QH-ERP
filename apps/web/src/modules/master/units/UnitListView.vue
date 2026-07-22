@@ -204,7 +204,7 @@ onMounted(loadRecords)
     </template>
 
     <template #filters>
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="record-keyword" clearable placeholder="编码或名称" />
         </el-form-item>
@@ -247,7 +247,7 @@ onMounted(loadRecords)
               size="small"
               text
               :disabled="actionLoading"
-              :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+              :type="row.status === 'DISABLED' ? 'success' : 'warning'"
               :data-test="row.status === 'DISABLED' ? 'enable-record' : 'disable-record'"
               @click="changeStatus(row)"
             >

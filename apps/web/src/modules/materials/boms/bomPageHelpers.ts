@@ -1,4 +1,4 @@
-import type { BomStatus, ResourceId } from '../../../shared/api/bomApi'
+import type { BomStatus, CandidateItem, QuantityBasis, ResourceId } from '../../../shared/api/bomApi'
 
 export type BomEffectiveState = 'CURRENT' | 'FUTURE' | 'EXPIRED' | 'UNPUBLISHED' | 'DISABLED'
 
@@ -11,7 +11,7 @@ export interface BomLineDraft {
   remark: string
 }
 
-const bomStatusLabels: Record<BomStatus, string> = {
+const bomStatusLabels: Record<string, string> = {
   DRAFT: '草稿',
   ENABLED: '已发布',
   DISABLED: '停用',
@@ -20,7 +20,7 @@ const bomStatusLabels: Record<BomStatus, string> = {
 const bomStatusTagTypes: Record<BomStatus, 'info' | 'success' | 'warning'> = {
   DRAFT: 'info',
   ENABLED: 'success',
-  DISABLED: 'warning',
+  DISABLED: 'info',
 }
 
 const bomEffectiveStateLabels: Record<BomEffectiveState, string> = {
@@ -31,20 +31,29 @@ const bomEffectiveStateLabels: Record<BomEffectiveState, string> = {
   DISABLED: '已停用',
 }
 
-const bomEffectiveStateTagTypes: Record<BomEffectiveState, 'info' | 'success' | 'warning' | 'danger'> = {
+const bomEffectiveStateTagTypes: Record<BomEffectiveState, 'info' | 'success' | 'warning'> = {
   CURRENT: 'success',
   FUTURE: 'warning',
   EXPIRED: 'info',
   UNPUBLISHED: 'info',
-  DISABLED: 'danger',
+  DISABLED: 'info',
 }
 
-export function bomStatusLabel(status: BomStatus): string {
-  return bomStatusLabels[status]
+const quantityBasisLabels: Record<QuantityBasis, string> = {
+  BASE_UNIT: '基本单位',
+  CONVERTED_BUSINESS_UNIT: '换算业务单位',
+  LEGACY_BUSINESS_UNIT: '历史业务单位',
 }
 
-export function bomStatusTagType(status: BomStatus): 'info' | 'success' | 'warning' {
-  return bomStatusTagTypes[status]
+export function bomStatusLabel(status?: BomStatus | string | null): string {
+  return status ? bomStatusLabels[status] ?? '未知状态' : '未知状态'
+}
+
+export function bomStatusTagType(status?: BomStatus | string | null): 'info' | 'success' | 'warning' {
+  if (status === 'DRAFT' || status === 'ENABLED' || status === 'DISABLED') {
+    return bomStatusTagTypes[status]
+  }
+  return 'warning'
 }
 
 export function todayText(): string {
@@ -85,8 +94,37 @@ export function bomEffectiveStateLabel(state: BomEffectiveState): string {
   return bomEffectiveStateLabels[state]
 }
 
-export function bomEffectiveStateTagType(state: BomEffectiveState): 'info' | 'success' | 'warning' | 'danger' {
+export function bomEffectiveStateTagType(state: BomEffectiveState): 'info' | 'success' | 'warning' {
   return bomEffectiveStateTagTypes[state]
+}
+
+export function bomQuantityBasisLabel(value?: QuantityBasis | string | null): string {
+  return value ? quantityBasisLabels[value as QuantityBasis] ?? '未知口径' : '-'
+}
+
+export function candidateMetaText(candidate: Pick<CandidateItem, 'disabledReason' | 'summary' | 'status'>): string {
+  const disabledReason = candidate.disabledReason?.trim()
+  if (disabledReason) {
+    return disabledReason
+  }
+  const summary = candidate.summary?.trim()
+  if (summary) {
+    return summary
+  }
+  return candidate.status ? candidateStatusLabel(candidate.status) : '状态未返回'
+}
+
+function candidateStatusLabel(status: string): string {
+  if (status === 'ENABLED') {
+    return '启用'
+  }
+  if (status === 'DISABLED') {
+    return '停用'
+  }
+  if (status === 'DRAFT') {
+    return '草稿'
+  }
+  return '未知状态'
 }
 
 export function positiveNumber(value: unknown): number | null {

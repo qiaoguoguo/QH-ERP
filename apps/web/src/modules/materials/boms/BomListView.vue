@@ -34,6 +34,9 @@ import {
   bomEffectiveState,
   bomEffectiveStateLabel,
   bomEffectiveStateTagType,
+  bomQuantityBasisLabel,
+  bomStatusLabel,
+  candidateMetaText,
   type BomLineDraft,
   lossRateDecimalString,
   newBomLine,
@@ -1057,9 +1060,10 @@ function openEcoDetail(record: BomEngineeringChangeRecord) {
 }
 
 function scopeTypeLabel(value?: MaterialSubstituteScopeType | null) {
+  if (value === 'GLOBAL') return '全局'
   if (value === 'BOM') return 'BOM 范围'
   if (value === 'PARENT_MATERIAL') return '父项物料范围'
-  return '全局'
+  return '未知范围'
 }
 
 function searchSubstituteMaterials(keyword: string) {
@@ -1249,7 +1253,7 @@ function formatBomSnapshot(snapshot?: BomStateSnapshot | null) {
   if (!snapshot) {
     return '-'
   }
-  return `${snapshot.bomCode || '-'} / ${snapshot.versionCode || '-'} | ${snapshot.status || '-'} | ${formatDate(snapshot.effectiveFrom)} 至 ${formatDate(snapshot.effectiveTo)}`
+  return `${snapshot.bomCode || '-'} / ${snapshot.versionCode || '-'} | ${bomStatusLabel(snapshot.status)} | ${formatDate(snapshot.effectiveFrom)} 至 ${formatDate(snapshot.effectiveTo)}`
 }
 
 function formatBomVersion(code?: string | null, version?: string | null) {
@@ -1260,14 +1264,47 @@ function historyRelationLabel(relationType: BomHistoryRelationRecord['relationTy
   return relationType === 'SOURCE' ? '作为来源' : '作为目标'
 }
 
-function engineeringChangeStatusLabel(status: BomEngineeringChangeStatus) {
+function engineeringChangeStatusLabel(status?: BomEngineeringChangeStatus | string | null) {
   if (status === 'APPLIED') {
     return '已应用'
   }
   if (status === 'CANCELLED') {
     return '已取消'
   }
-  return '草稿'
+  if (status === 'DRAFT') {
+    return '草稿'
+  }
+  return '未知状态'
+}
+
+function engineeringChangeStatusTagType(status?: BomEngineeringChangeStatus | string | null): 'success' | 'info' | 'warning' {
+  if (status === 'APPLIED') {
+    return 'success'
+  }
+  if (status === 'DRAFT' || status === 'CANCELLED') {
+    return 'info'
+  }
+  return 'warning'
+}
+
+function substituteStatusLabel(status?: string | null) {
+  if (status === 'ENABLED') {
+    return '启用'
+  }
+  if (status === 'DISABLED') {
+    return '停用'
+  }
+  return '未知状态'
+}
+
+function substituteStatusTagType(status?: string | null): 'success' | 'info' | 'warning' {
+  if (status === 'ENABLED') {
+    return 'success'
+  }
+  if (status === 'DISABLED') {
+    return 'info'
+  }
+  return 'warning'
 }
 
 onMounted(() => {
@@ -1339,7 +1376,7 @@ onMounted(() => {
               :disabled="Boolean(material.disabled)"
             >
               <span>{{ material.code }} {{ material.name }}</span>
-              <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+              <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -1402,7 +1439,7 @@ onMounted(() => {
               :disabled="Boolean(material.disabled)"
             >
               <span>{{ material.code }} {{ material.name }}</span>
-              <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+              <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -1424,7 +1461,7 @@ onMounted(() => {
               :disabled="Boolean(material.disabled)"
             >
               <span>{{ material.code }} {{ material.name }}</span>
-              <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+              <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -1453,7 +1490,7 @@ onMounted(() => {
               :disabled="Boolean(record.disabled)"
             >
               <span>{{ record.code }} {{ record.name }}</span>
-              <span class="line-option-meta">{{ record.disabledReason || record.summary || record.status }}</span>
+              <span class="line-option-meta">{{ candidateMetaText(record) }}</span>
             </el-option>
           </el-select>
         </el-form-item>
@@ -1538,7 +1575,7 @@ onMounted(() => {
               <el-button v-if="canUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canCopy" size="small" text data-test="copy-bom" @click="openCopy(row)">复制新版本</el-button>
               <el-button v-if="canEnable && row.status === 'DRAFT'" size="small" text type="success" data-test="publish-bom" :disabled="actionLoading" @click="publishRecord(row)">发布</el-button>
-              <el-button v-if="canDisable && row.status !== 'DISABLED'" size="small" text type="danger" data-test="disable-bom" :disabled="actionLoading" @click="disableRecord(row)">停用</el-button>
+              <el-button v-if="canDisable && row.status !== 'DISABLED'" size="small" text type="warning" data-test="disable-bom" :disabled="actionLoading" @click="disableRecord(row)">停用</el-button>
               <el-button v-if="row.status === 'DRAFT' && canBomExport" size="small" text data-test="export-bom-draft" :disabled="actionLoading" @click="exportBomDraft(row)">导出草稿</el-button>
               <el-button v-if="row.status === 'ENABLED' && canEcoCreate" size="small" text data-test="create-eco-from-bom" @click="openCreateEco(row)">创建工程变更</el-button>
             </template>
@@ -1557,7 +1594,7 @@ onMounted(() => {
           <el-table-column label="父项物料" min-width="170"><template #default="{ row }">{{ row.parentMaterialCode }} {{ row.parentMaterialName }}</template></el-table-column>
           <el-table-column prop="effectiveFrom" label="生效日期" min-width="110" />
           <el-table-column prop="changeSummary" label="变更摘要" min-width="220" show-overflow-tooltip />
-          <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ row.status === 'APPLIED' ? '已应用' : row.status === 'CANCELLED' ? '已取消' : '草稿' }}</template></el-table-column>
+          <el-table-column label="状态" min-width="90"><template #default="{ row }">{{ engineeringChangeStatusLabel(row.status) }}</template></el-table-column>
           <el-table-column prop="appliedBy" label="应用人" min-width="100" />
           <el-table-column label="应用时间" min-width="150"><template #default="{ row }">{{ formatDateTime(row.appliedAt) }}</template></el-table-column>
           <el-table-column label="操作" min-width="300">
@@ -1565,7 +1602,7 @@ onMounted(() => {
               <el-button size="small" text @click="openEcoDetail(row)">详情</el-button>
               <el-button v-if="canEcoUpdate && row.status === 'DRAFT'" size="small" text data-test="edit-bom-eco" @click="openEditEco(row)">编辑</el-button>
               <el-button v-if="canEcoApply && row.status === 'DRAFT' && row.approvalSummary?.status !== 'SUBMITTED'" size="small" text type="success" data-test="apply-bom-eco" @click="applyEco(row)">提交应用审批</el-button>
-              <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="danger" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
+              <el-button v-if="canEcoCancel && row.status === 'DRAFT'" size="small" text type="warning" data-test="cancel-bom-eco" @click="cancelEco(row)">取消</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1585,8 +1622,8 @@ onMounted(() => {
           <el-table-column label="有效期" min-width="180"><template #default="{ row }">{{ formatDate(row.effectiveFrom) }} 至 {{ formatDate(row.effectiveTo) }}</template></el-table-column>
           <el-table-column label="状态" min-width="90">
             <template #default="{ row }">
-              <el-tag :type="row.status === 'ENABLED' ? 'success' : 'info'" size="small">
-                {{ row.status === 'ENABLED' ? '启用' : '停用' }}
+              <el-tag :type="substituteStatusTagType(row.status)" size="small">
+                {{ substituteStatusLabel(row.status) }}
               </el-tag>
             </template>
           </el-table-column>
@@ -1594,7 +1631,7 @@ onMounted(() => {
             <template #default="{ row }">
               <el-button size="small" text @click="openSubstituteDetail(row)">详情</el-button>
               <el-button v-if="canSubstituteUpdate" size="small" text data-test="edit-substitute" @click="openEditSubstitute(row)">编辑</el-button>
-              <el-button v-if="canSubstituteDisable && row.status === 'ENABLED'" size="small" text type="danger" data-test="disable-substitute" @click="disableSubstitute(row)">停用</el-button>
+              <el-button v-if="canSubstituteDisable && row.status === 'ENABLED'" size="small" text type="warning" data-test="disable-substitute" @click="disableSubstitute(row)">停用</el-button>
               <el-button v-if="canSubstituteEnable && row.status === 'DISABLED'" size="small" text type="success" data-test="enable-substitute" @click="enableSubstitute(row)">启用</el-button>
             </template>
           </el-table-column>
@@ -1632,7 +1669,7 @@ onMounted(() => {
                 :value="material.id"
                 :disabled="Boolean(material.disabled)"
               >
-                <span>{{ material.code }} {{ material.name }}</span><span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+                <span>{{ material.code }} {{ material.name }}</span><span class="line-option-meta">{{ candidateMetaText(material) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -1655,7 +1692,7 @@ onMounted(() => {
                 :value="unit.id"
                 :disabled="Boolean(unit.disabled)"
               >
-                <span>{{ unit.code }} {{ unit.name }}</span><span class="line-option-meta">{{ unit.disabledReason || unit.summary || unit.status }}</span>
+                <span>{{ unit.code }} {{ unit.name }}</span><span class="line-option-meta">{{ candidateMetaText(unit) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -1754,7 +1791,7 @@ onMounted(() => {
               <div class="history-relation-header">
                 <strong>{{ relation.ecoNo }}</strong>
                 <el-tag size="small">{{ historyRelationLabel(relation.relationType) }}</el-tag>
-                <el-tag size="small" type="success">{{ engineeringChangeStatusLabel(relation.status) }}</el-tag>
+                <el-tag size="small" :type="engineeringChangeStatusTagType(relation.status)">{{ engineeringChangeStatusLabel(relation.status) }}</el-tag>
               </div>
               <dl class="history-relation-detail">
                 <dt>来源版本</dt><dd>{{ formatBomVersion(relation.sourceBomCode, relation.sourceVersionCode) }}</dd>
@@ -1791,7 +1828,7 @@ onMounted(() => {
           <el-table-column prop="baseQuantity" label="基本数量" width="110" />
           <el-table-column prop="baseUnitName" label="基本单位" width="100" />
           <el-table-column prop="lossRate" label="损耗率" width="90" />
-          <el-table-column prop="quantityBasis" label="数量口径" width="140" />
+          <el-table-column label="数量口径" width="140"><template #default="{ row }">{{ bomQuantityBasisLabel(row.quantityBasis) }}</template></el-table-column>
         </el-table>
       </div>
     </el-drawer>
@@ -1834,7 +1871,7 @@ onMounted(() => {
                 :disabled="Boolean(record.disabled)"
               >
                 <span>{{ record.code }} {{ record.name }}</span>
-                <span class="line-option-meta">{{ record.disabledReason || record.summary || record.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(record) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -1855,7 +1892,7 @@ onMounted(() => {
                 :disabled="Boolean(record.disabled)"
               >
                 <span>{{ record.code }} {{ record.name }}</span>
-                <span class="line-option-meta">{{ record.disabledReason || record.summary || record.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(record) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -1876,7 +1913,7 @@ onMounted(() => {
         <dt>来源 BOM</dt><dd>{{ ecoDetailRecord.sourceBomCode }} {{ ecoDetailRecord.sourceVersionCode }}</dd>
         <dt>目标 BOM</dt><dd>{{ ecoDetailRecord.targetBomCode }} {{ ecoDetailRecord.targetVersionCode }}</dd>
         <dt>变更摘要</dt><dd>{{ ecoDetailRecord.changeSummary }}</dd>
-        <dt>状态</dt><dd>{{ ecoDetailRecord.status === 'APPLIED' ? '已应用' : ecoDetailRecord.status === 'CANCELLED' ? '已取消' : '草稿' }}</dd>
+        <dt>状态</dt><dd>{{ engineeringChangeStatusLabel(ecoDetailRecord.status) }}</dd>
       </dl>
       <section v-if="ecoDetailRecord && 'sourceBomBefore' in ecoDetailRecord" class="eco-apply-result">
         <h3>应用结果</h3>
@@ -1978,7 +2015,7 @@ onMounted(() => {
                 :disabled="Boolean(material.disabled)"
               >
                 <span>{{ material.code }} {{ material.name }}</span>
-                <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -1999,7 +2036,7 @@ onMounted(() => {
                 :disabled="Boolean(material.disabled)"
               >
                 <span>{{ material.code }} {{ material.name }}</span>
-                <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -2022,7 +2059,7 @@ onMounted(() => {
                 :disabled="Boolean(record.disabled)"
               >
                 <span>{{ record.code }} {{ record.name }}</span>
-                <span class="line-option-meta">{{ record.disabledReason || record.summary || record.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(record) }}</span>
               </el-option>
             </el-select>
           </el-form-item>
@@ -2043,7 +2080,7 @@ onMounted(() => {
         <dt>范围</dt><dd>{{ scopeTypeLabel(substituteDetailRecord.scopeType) }}</dd>
         <dt>优先级</dt><dd>{{ substituteDetailRecord.priority }}</dd>
         <dt>替代比例</dt><dd>{{ substituteDetailRecord.substituteRate }}</dd>
-        <dt>状态</dt><dd>{{ substituteDetailRecord.status === 'ENABLED' ? '启用' : '停用' }}</dd>
+        <dt>状态</dt><dd>{{ substituteStatusLabel(substituteDetailRecord.status) }}</dd>
         <dt>版本</dt><dd>{{ substituteDetailRecord.version }}</dd>
       </dl>
     </el-drawer>

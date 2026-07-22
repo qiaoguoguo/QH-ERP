@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { CandidateItem, ResourceId } from '../../../shared/api/bomApi'
-import { type BomLineDraft, newBomLine, nextLineNo } from './bomPageHelpers'
+import { candidateMetaText, type BomLineDraft, newBomLine, nextLineNo } from './bomPageHelpers'
 
 const props = withDefaults(defineProps<{
   lines: BomLineDraft[]
@@ -101,7 +101,7 @@ function searchUnits(keyword: string, currentValue: ResourceId | '') {
                 :disabled="Boolean(material.disabled)"
               >
                 <span>{{ material.code }} {{ material.name }}</span>
-                <span class="line-option-meta">{{ material.disabledReason || material.summary || material.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(material) }}</span>
               </el-option>
             </el-select>
           </template>
@@ -139,7 +139,7 @@ function searchUnits(keyword: string, currentValue: ResourceId | '') {
                 :disabled="Boolean(unit.disabled)"
               >
                 <span>{{ unit.code }} {{ unit.name }}</span>
-                <span class="line-option-meta">{{ unit.disabledReason || unit.summary || unit.status }}</span>
+                <span class="line-option-meta">{{ candidateMetaText(unit) }}</span>
               </el-option>
             </el-select>
           </template>

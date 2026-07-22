@@ -294,7 +294,7 @@ onMounted(loadUsers)
     </header>
 
     <el-card class="query-card" shadow="never">
-      <el-form class="query-form" inline>
+      <el-form class="query-form" label-position="top">
         <el-form-item label="关键词">
           <el-input v-model="filters.keyword" name="user-keyword" clearable placeholder="账号或姓名" />
         </el-form-item>
@@ -341,7 +341,7 @@ onMounted(loadUsers)
                 v-if="canUpdate"
                 size="small"
                 text
-                :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+                :type="row.status === 'DISABLED' ? 'success' : 'warning'"
                 :data-test="row.status === 'DISABLED' ? 'enable-user' : 'disable-user'"
                 @click="changeStatus(row)"
               >

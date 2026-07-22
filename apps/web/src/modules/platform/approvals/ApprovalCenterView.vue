@@ -11,6 +11,7 @@ import {
 import { pageItems } from '../../system/shared/pageHelpers'
 import MasterDataTableView from '../../master/shared/MasterDataTableView.vue'
 import {
+  approvalActionLabel,
   approvalScopeLabel,
   approvalStatusLabel,
   approvalStatusTagType,
@@ -121,6 +122,11 @@ function businessObjectRoute(record: { sceneCode?: string | null, objectType?: s
 
 function businessObjectLabel(objectType?: string | null) {
   return objectType ? businessObjectLabels[objectType] : null
+}
+
+function approvalHistoryText(history: { operatorName?: string | null; comment?: string | null; action?: string | null }) {
+  const comment = history.comment?.trim()
+  return `${history.operatorName || '-'} ${comment || approvalActionLabel(history.action)}`
 }
 
 function isStaleActionError(caught: unknown): boolean {
@@ -404,7 +410,7 @@ onMounted(() => {
       <h3>审批记录</h3>
       <el-timeline>
         <el-timeline-item v-for="history in detail?.histories ?? []" :key="`${history.action}-${history.operatedAt}`" :timestamp="formatPlatformDateTime(history.operatedAt)">
-          {{ history.operatorName || '-' }} {{ history.comment || history.action }}
+          {{ approvalHistoryText(history) }}
         </el-timeline-item>
       </el-timeline>
       <h3>附件快照</h3>

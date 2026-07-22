@@ -426,7 +426,7 @@ onMounted(loadRecords)
               size="small"
               text
               :disabled="actionLoading"
-              :type="row.status === 'DISABLED' ? 'success' : 'danger'"
+              :type="row.status === 'DISABLED' ? 'success' : 'warning'"
               :data-test="row.status === 'DISABLED' ? 'enable-record' : 'disable-record'"
               @click="changeStatus(row)"
             >

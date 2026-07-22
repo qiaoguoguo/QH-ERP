@@ -9,6 +9,7 @@ import type { MaterialRecord, UnitRecord } from '../../../shared/api/masterDataA
 import { installElementPlus } from '../../../elementPlus'
 import { useAuthStore } from '../../../stores/authStore'
 import BomListView from './BomListView.vue'
+import { candidateMetaText } from './bomPageHelpers'
 
 const bomApiMock = vi.hoisted(() => ({
   list: vi.fn(),
@@ -911,6 +912,43 @@ describe('BOM 管理页', () => {
     expect(wrapper.text()).toContain('已发布 BOM 不允许普通编辑')
     expect(wrapper.text()).toContain('复制新版本')
     expect(wrapper.findAll('[data-test="edit-bom"]')).toHaveLength(1)
+  })
+
+  it('BOM 详情数量口径和候选元信息不裸露英文状态编码', async () => {
+    bomApiMock.get.mockResolvedValueOnce({
+      ...draftDetail,
+      items: [
+        {
+          ...draftDetail.items[0],
+          quantityBasis: 'BASE_UNIT',
+        },
+      ],
+    })
+    const wrapper = mountBoms()
+    await flushPromises()
+
+    await wrapper.find('[data-test="view-bom"]').trigger('click')
+    await flushPromises()
+    bomApiMock.materialCandidates.mockResolvedValueOnce({
+      items: [
+        { id: 1, code: 'FG-A', name: '成品A', status: 'ARCHIVED' as never },
+        { id: 2, code: 'RM-STEEL', name: '冷轧钢板', status: 'ENABLED', summary: '原材料' },
+      ],
+      selectedItems: [],
+      page: 1,
+      pageSize: 20,
+      total: 2,
+      totalPages: 1,
+    })
+    await wrapper.find('[data-test="create-bom"]').trigger('click')
+    await flushPromises()
+
+    const loadedCandidates = (wrapper.vm as unknown as { bomMaterialCandidates: Array<{ status?: string }> }).bomMaterialCandidates
+    expect(wrapper.text()).toContain('基本单位')
+    expect(loadedCandidates[0].status).toBe('ARCHIVED')
+    expect(candidateMetaText(loadedCandidates[0])).toBe('未知状态')
+    expect(wrapper.text()).not.toContain('BASE_UNIT')
+    expect(wrapper.text()).not.toContain('ARCHIVED')
   })
 
   it('BOM 详情按真实工程变更关系展示历史版本信息', async () => {
