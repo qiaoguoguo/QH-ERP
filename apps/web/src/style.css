@@ -1180,6 +1180,33 @@ samp {
   font-weight: 600;
 }
 
+.qherp-status-tag {
+  max-width: 100%;
+  vertical-align: middle;
+}
+
+.qherp-status-tag .el-tag__content {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.qherp-status-tag__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.qherp-status-tag__diagnostic {
+  color: var(--qherp-stone);
+  font-family: var(--qherp-font-mono);
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .el-tag.el-tag--success {
   --el-tag-bg-color: rgba(0, 212, 164, 0.14);
   --el-tag-border-color: rgba(0, 180, 138, 0.26);

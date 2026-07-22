@@ -131,6 +131,17 @@ describe('全局样式契约', () => {
     expect(styleSource).toContain('height: 40px;')
   })
 
+  it('共享状态标签支持中文主标签和可选诊断原码，不抹平语义色', () => {
+    expect(styleSource).toContain('.qherp-status-tag')
+    expect(styleSource).toContain('.qherp-status-tag__label')
+    expect(styleSource).toContain('.qherp-status-tag__diagnostic')
+    expect(styleSource).toContain('font-family: var(--qherp-font-mono);')
+    expect(styleSource).toContain('.el-tag.el-tag--success')
+    expect(styleSource).toContain('.el-tag.el-tag--warning')
+    expect(styleSource).toContain('.el-tag.el-tag--danger')
+    expect(styleSource).toContain('.el-tag.el-tag--info')
+  })
+
   it('移动端主内容容器覆盖全局高度并允许主区域独立滚动', () => {
     const mobileMedia = styleSource.slice(styleSource.indexOf('@media (max-width: 760px)'))
 

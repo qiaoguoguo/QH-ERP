@@ -9,6 +9,8 @@ import { describe, expect, it } from 'vitest'
 import { installElementPlus } from './elementPlus'
 
 const sourceRoot = dirname(fileURLToPath(import.meta.url))
+const elementPlusSource = readFileSync(join(sourceRoot, 'elementPlus.ts'), 'utf8')
+const appSource = readFileSync(join(sourceRoot, 'App.vue'), 'utf8')
 
 describe('Element Plus 共享注册', () => {
   it('注册核销工作台和加载态使用的组件，避免未解析告警', () => {
@@ -18,6 +20,34 @@ describe('Element Plus 共享注册', () => {
 
     expect(app.component('ElSkeleton')).toBeTruthy()
     expect(app.component('ElSegmented')).toBeTruthy()
+  })
+
+  it('通过官方中文区域设置统一 Element Plus 内置用户文案', async () => {
+    const app = createApp({ render: () => null })
+    const { elementPlusLocale } = await import('./elementPlus')
+
+    installElementPlus(app)
+
+    expect(app.component('ElConfigProvider')).toBeTruthy()
+    expect(elementPlusLocale).toMatchObject({
+      name: 'zh-cn',
+      el: {
+        pagination: {
+          total: '共 {total} 条',
+          goto: '前往',
+          pagesize: '条/页',
+        },
+        datepicker: {
+          today: '今天',
+          clear: '清空',
+          confirm: '确定',
+        },
+      },
+    })
+    expect(elementPlusSource).toContain("element-plus/es/locale/lang/zh-cn.mjs")
+    expect(elementPlusSource).not.toContain('Total')
+    expect(elementPlusSource).not.toContain('/page')
+    expect(appSource).toContain('<el-config-provider :locale="elementPlusLocale">')
   })
 
   it('032 受影响分页使用 v-model 写法，避免 Element Plus 当前废弃提示', () => {

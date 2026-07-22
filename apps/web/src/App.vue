@@ -37,6 +37,7 @@ import {
 import { reportMenuChildren, reportRouteConfigs } from './modules/reports/reportPageHelpers'
 import { activeMenuPath } from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
+import { elementPlusLocale } from './elementPlus'
 import qhLogoUrl from './assets/logo.ico'
 import { costChildren, costMenuPaths } from './navigation/costMenu'
 import { applyRegisteredModuleMenus, registeredModuleMenuPaths } from './navigation/appMenuRegistry'
@@ -1078,105 +1079,107 @@ async function logout() {
 </script>
 
 <template>
-  <el-alert v-if="logoutError" class="global-alert" type="warning" :title="logoutError" show-icon :closable="false" />
-  <router-view v-if="isLogin" />
+  <el-config-provider :locale="elementPlusLocale">
+    <el-alert v-if="logoutError" class="global-alert" type="warning" :title="logoutError" show-icon :closable="false" />
+    <router-view v-if="isLogin" />
 
-  <el-container v-else class="app-shell">
-    <el-aside
-      :class="['app-sidebar', { 'is-collapsed': sidebarCollapsed }]"
-      :width="sidebarCollapsed ? '72px' : '232px'"
-    >
-      <div class="brand">
-        <img data-test="app-logo" class="brand-logo" :src="qhLogoUrl" alt="QH ERP 系统标识">
-        <div class="brand-copy">
-          <strong>QH ERP</strong>
-          <span>制造业生产管理 ERP</span>
+    <el-container v-else class="app-shell">
+      <el-aside
+        :class="['app-sidebar', { 'is-collapsed': sidebarCollapsed }]"
+        :width="sidebarCollapsed ? '72px' : '232px'"
+      >
+        <div class="brand">
+          <img data-test="app-logo" class="brand-logo" :src="qhLogoUrl" alt="QH ERP 系统标识">
+          <div class="brand-copy">
+            <strong>QH ERP</strong>
+            <span>制造业生产管理 ERP</span>
+          </div>
+          <el-tooltip :content="sidebarToggleLabel" placement="right" :show-after="250">
+            <button
+              data-test="sidebar-toggle-button"
+              class="sidebar-toggle"
+              type="button"
+              :aria-label="sidebarToggleLabel"
+              :title="sidebarToggleLabel"
+              @click="toggleSidebarCollapsed"
+            >
+              <component
+                :is="sidebarToggleIcon"
+                class="sidebar-toggle-icon"
+                :data-test="sidebarCollapsed ? 'sidebar-toggle-icon-expand' : 'sidebar-toggle-icon-fold'"
+              />
+            </button>
+          </el-tooltip>
         </div>
-        <el-tooltip :content="sidebarToggleLabel" placement="right" :show-after="250">
-          <button
-            data-test="sidebar-toggle-button"
-            class="sidebar-toggle"
-            type="button"
-            :aria-label="sidebarToggleLabel"
-            :title="sidebarToggleLabel"
-            @click="toggleSidebarCollapsed"
+        <el-scrollbar class="side-menu-scroll">
+          <el-menu
+            :default-active="sideMenuActivePath"
+            :collapse="sidebarCollapsed"
+            :collapse-transition="false"
+            router
+            class="side-menu"
+            unique-opened
           >
-            <component
-              :is="sidebarToggleIcon"
-              class="sidebar-toggle-icon"
-              :data-test="sidebarCollapsed ? 'sidebar-toggle-icon-expand' : 'sidebar-toggle-icon-fold'"
-            />
-          </button>
-        </el-tooltip>
-      </div>
-      <el-scrollbar class="side-menu-scroll">
-        <el-menu
-          :default-active="sideMenuActivePath"
-          :collapse="sidebarCollapsed"
-          :collapse-transition="false"
-          router
-          class="side-menu"
-          unique-opened
-        >
-          <el-menu-item index="/">
-            <House class="side-menu-icon" data-test="main-menu-icon-home" />
-            <span>工作台</span>
-          </el-menu-item>
-          <template v-for="menu in menuTree" :key="menu.code">
-            <el-sub-menu v-if="hasChildren(menu)" :index="menuIndex(menu)">
-              <template #title>
+            <el-menu-item index="/">
+              <House class="side-menu-icon" data-test="main-menu-icon-home" />
+              <span>工作台</span>
+            </el-menu-item>
+            <template v-for="menu in menuTree" :key="menu.code">
+              <el-sub-menu v-if="hasChildren(menu)" :index="menuIndex(menu)">
+                <template #title>
+                  <component
+                    :is="mainMenuIcon(menu)"
+                    class="side-menu-icon"
+                    :data-test="`main-menu-icon-${mainMenuIconKey(menu)}`"
+                  />
+                  <span>{{ menu.name }}</span>
+                </template>
+                <el-menu-item
+                  v-for="child in menu.children"
+                  :key="child.code"
+                  :index="menuIndex(child)"
+                >
+                  {{ child.name }}
+                </el-menu-item>
+              </el-sub-menu>
+              <el-menu-item v-else-if="menu.routePath" :index="menu.routePath">
                 <component
                   :is="mainMenuIcon(menu)"
                   class="side-menu-icon"
                   :data-test="`main-menu-icon-${mainMenuIconKey(menu)}`"
                 />
                 <span>{{ menu.name }}</span>
-              </template>
-              <el-menu-item
-                v-for="child in menu.children"
-                :key="child.code"
-                :index="menuIndex(child)"
-              >
-                {{ child.name }}
               </el-menu-item>
-            </el-sub-menu>
-            <el-menu-item v-else-if="menu.routePath" :index="menu.routePath">
-              <component
-                :is="mainMenuIcon(menu)"
-                class="side-menu-icon"
-                :data-test="`main-menu-icon-${mainMenuIconKey(menu)}`"
-              />
-              <span>{{ menu.name }}</span>
-            </el-menu-item>
-          </template>
-        </el-menu>
-      </el-scrollbar>
-    </el-aside>
+            </template>
+          </el-menu>
+        </el-scrollbar>
+      </el-aside>
 
-    <el-container>
-      <el-header class="app-header">
-        <div>
-          <strong>QH ERP</strong>
-          <span>账号与权限基础</span>
-        </div>
-        <div class="header-user">
-          <span>{{ displayName }}</span>
-          <el-button
-            data-test="logout-button"
-            link
-            type="primary"
-            :loading="logoutLoading"
-            :disabled="logoutLoading"
-            @click="logout"
-          >
-            {{ logoutLoading ? '退出中' : '退出' }}
-          </el-button>
-        </div>
-      </el-header>
+      <el-container>
+        <el-header class="app-header">
+          <div>
+            <strong>QH ERP</strong>
+            <span>账号与权限基础</span>
+          </div>
+          <div class="header-user">
+            <span>{{ displayName }}</span>
+            <el-button
+              data-test="logout-button"
+              link
+              type="primary"
+              :loading="logoutLoading"
+              :disabled="logoutLoading"
+              @click="logout"
+            >
+              {{ logoutLoading ? '退出中' : '退出' }}
+            </el-button>
+          </div>
+        </el-header>
 
-      <el-main class="app-main">
-        <router-view />
-      </el-main>
+        <el-main class="app-main">
+          <router-view />
+        </el-main>
+      </el-container>
     </el-container>
-  </el-container>
+  </el-config-provider>
 </template>

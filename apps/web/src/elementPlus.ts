@@ -3,6 +3,7 @@ import { ElAlert } from 'element-plus/es/components/alert/index.mjs'
 import { ElBadge } from 'element-plus/es/components/badge/index.mjs'
 import { ElButton } from 'element-plus/es/components/button/index.mjs'
 import { ElCard } from 'element-plus/es/components/card/index.mjs'
+import { ElConfigProvider } from 'element-plus/es/components/config-provider/index.mjs'
 import { ElAside, ElContainer, ElHeader, ElMain } from 'element-plus/es/components/container/index.mjs'
 import { ElDatePicker } from 'element-plus/es/components/date-picker/index.mjs'
 import { ElDescriptions, ElDescriptionsItem } from 'element-plus/es/components/descriptions/index.mjs'
@@ -31,12 +32,14 @@ import { ElTimeline, ElTimelineItem } from 'element-plus/es/components/timeline/
 import { ElTooltip } from 'element-plus/es/components/tooltip/index.mjs'
 import { ElTree } from 'element-plus/es/components/tree/index.mjs'
 import { ElUpload } from 'element-plus/es/components/upload/index.mjs'
+import zhCn from 'element-plus/es/locale/lang/zh-cn.mjs'
 import 'element-plus/theme-chalk/base.css'
 import 'element-plus/theme-chalk/el-alert.css'
 import 'element-plus/theme-chalk/el-aside.css'
 import 'element-plus/theme-chalk/el-badge.css'
 import 'element-plus/theme-chalk/el-button.css'
 import 'element-plus/theme-chalk/el-card.css'
+import 'element-plus/theme-chalk/el-config-provider.css'
 import 'element-plus/theme-chalk/el-container.css'
 import 'element-plus/theme-chalk/el-date-picker.css'
 import 'element-plus/theme-chalk/el-date-picker-panel.css'
@@ -87,6 +90,7 @@ const elementPlusComponents = [
   ElBadge,
   ElButton,
   ElCard,
+  ElConfigProvider,
   ElContainer,
   ElDatePicker,
   ElDescriptions,
@@ -127,6 +131,8 @@ const elementPlusComponents = [
   ElTree,
   ElUpload,
 ] as Plugin[]
+
+export const elementPlusLocale = zhCn
 
 export function installElementPlus(app: App) {
   for (const component of elementPlusComponents) {
