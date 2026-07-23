@@ -44,7 +44,7 @@
   - `approvalTitle(record: ApprovalTaskRecord): string`
   - `documentTaskRoute(id: string | number, status?: string): string`
 
-- [ ] **步骤 1：先写金额、数字、时间和进度的失败测试**
+- [x] **步骤 1：先写金额、数字、时间和进度的失败测试**
 
 ```ts
 expect(formatWorkbenchMoney('1286400.00')).toBe('¥1,286,400.00')
@@ -56,7 +56,7 @@ expect(clampProgress(-1)).toBe(0)
 expect(clampProgress(undefined)).toBeNull()
 ```
 
-- [ ] **步骤 2：运行辅助模块测试并确认因模块不存在而失败**
+- [x] **步骤 2：运行辅助模块测试并确认因模块不存在而失败**
 
 运行：
 
@@ -66,7 +66,7 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts
 
 预期：失败，原因是 `workbenchPageHelpers.ts` 尚不存在。
 
-- [ ] **步骤 3：实现最小格式化函数**
+- [x] **步骤 3：实现最小格式化函数**
 
 实现规则：
 
@@ -82,7 +82,7 @@ const moneyFormatter = new Intl.NumberFormat('zh-CN', {
 
 非法数值统一返回 `—`；时间沿用平台页面的 `YYYY-MM-DD HH:mm` 口径；进度只允许 `0..100`。
 
-- [ ] **步骤 4：运行测试并确认第一组转绿**
+- [x] **步骤 4：运行测试并确认第一组转绿**
 
 运行：
 
@@ -92,13 +92,13 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts
 
 预期：第一组测试通过。
 
-- [ ] **步骤 5：先写中文字典、排序、汇总和路由的失败测试**
+- [x] **步骤 5：先写中文字典、排序、汇总和路由的失败测试**
 
 ```ts
 expect(taskStatusText('RUNNING')).toBe('执行中')
 expect(taskStatusText('VALIDATION_FAILED')).toBe('校验失败')
 expect(taskStatusText('FUTURE_STATUS')).toBe('未知任务状态')
-expect(taskDisplayName(materialImportTask)).toBe('物料主数据导入')
+expect(taskDisplayName(materialImportTask)).toBe('物料导入')
 expect(exceptionTypeText('INVENTORY_SHORTAGE')).toBe('库存不足')
 expect(exceptionSeverityText('CRITICAL')).toBe('严重')
 
@@ -114,7 +114,7 @@ expect(approvalTitle(approvalWithOnlyNo)).toBe('SC-001')
 expect(documentTaskRoute(91, 'FAILED')).toBe('/platform/document-tasks?taskId=91&status=FAILED&returnTo=%2F')
 ```
 
-- [ ] **步骤 6：运行测试并确认因函数缺失而失败**
+- [x] **步骤 6：运行测试并确认因函数缺失而失败**
 
 运行：
 
@@ -124,7 +124,7 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts
 
 预期：新增断言失败，且失败原因是目标函数尚未实现。
 
-- [ ] **步骤 7：实现中文字典、合并排序和安全路由**
+- [x] **步骤 7：实现中文字典、合并排序和安全路由**
 
 实现要求：
 
@@ -134,7 +134,7 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts
 - `total` 为各查询页 `total` 的数值和，不以当前返回条数代替。
 - 所有查询参数使用 `URLSearchParams` 构造，固定携带 `returnTo=/`。
 
-- [ ] **步骤 8：运行辅助模块测试并确认全部通过**
+- [x] **步骤 8：运行辅助模块测试并确认全部通过**
 
 运行：
 
@@ -144,7 +144,7 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts
 
 预期：全部通过，无告警。
 
-- [ ] **步骤 9：提交纯数据适配层**
+- [x] **步骤 9：提交纯数据适配层**
 
 ```powershell
 git add apps/web/src/modules/workbench/workbenchPageHelpers.ts apps/web/src/modules/workbench/workbenchPageHelpers.spec.ts
