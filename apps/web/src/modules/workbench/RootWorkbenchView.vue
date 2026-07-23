@@ -2,14 +2,13 @@
 import type { Component } from 'vue'
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import {
-  Box,
-  Briefcase,
   Calendar,
   CircleCheck,
-  Cpu,
   Document,
+  House,
   Refresh,
   ShoppingCart,
+  Tickets,
   TrendCharts,
   Warning,
 } from '@element-plus/icons-vue'
@@ -52,6 +51,7 @@ interface QuickEntry {
   to: string
   permission: string
   icon: Component
+  tone: 'green' | 'orange' | 'blue' | 'purple' | 'teal'
 }
 
 interface KeyStatusRow {
@@ -66,11 +66,11 @@ const authStore = useAuthStore()
 const router = useRouter()
 
 const quickEntryDefinitions: QuickEntry[] = [
-  { label: '销售项目', to: '/sales/projects/create', permission: 'sales:project:create', icon: Briefcase },
-  { label: '采购请购', to: '/procurement/requisitions/create', permission: 'procurement:requisition:create', icon: ShoppingCart },
-  { label: '生产工单', to: '/production/work-orders/create', permission: 'production:work-order:create', icon: Cpu },
-  { label: '库存单据', to: '/inventory/documents/create', permission: 'inventory:document:create', icon: Box },
-  { label: '质量检验', to: '/quality/inspections', permission: 'quality:inspection:view', icon: CircleCheck },
+  { label: '销售项目', to: '/sales/projects/create', permission: 'sales:project:create', icon: Document, tone: 'green' },
+  { label: '采购请购', to: '/procurement/requisitions/create', permission: 'procurement:requisition:create', icon: ShoppingCart, tone: 'orange' },
+  { label: '生产工单', to: '/production/work-orders/create', permission: 'production:work-order:create', icon: Tickets, tone: 'blue' },
+  { label: '库存单据', to: '/inventory/documents/create', permission: 'inventory:document:create', icon: House, tone: 'purple' },
+  { label: '质量检验', to: '/quality/inspections', permission: 'quality:inspection:view', icon: CircleCheck, tone: 'teal' },
 ]
 const activeTaskStatuses: DocumentTaskStatus[] = ['QUEUED', 'RUNNING', 'READY_TO_COMMIT']
 const failedTaskStatuses: DocumentTaskStatus[] = ['VALIDATION_FAILED', 'FAILED']
@@ -432,7 +432,11 @@ onBeforeUnmount(() => {
           class="workbench-quick__button"
           @click="navigate(entry.to)"
         >
-          <el-icon><component :is="entry.icon" /></el-icon>
+          <component
+            :is="entry.icon"
+            :class="['workbench-quick__icon', `workbench-quick__icon--${entry.tone}`]"
+            data-test="workbench-quick-icon"
+          />
           <span>{{ entry.label }}</span>
         </el-button>
       </div>
@@ -475,7 +479,16 @@ onBeforeUnmount(() => {
               </div>
               <time>{{ formatWorkbenchDateTime(item.assignedAt) }}</time>
               <router-link class="action-button-link" to="/platform/approvals">
-                <el-button tag="span" text type="primary" size="small">处理</el-button>
+                <el-button
+                  class="workbench-row-action"
+                  data-test="workbench-row-action"
+                  tag="span"
+                  plain
+                  type="primary"
+                  size="small"
+                >
+                  处理
+                </el-button>
               </router-link>
             </article>
           </div>
@@ -516,7 +529,16 @@ onBeforeUnmount(() => {
                 <time>{{ formatWorkbenchDateTime(item.createdAt) }}</time>
               </div>
               <router-link class="action-button-link" :to="documentTaskRoute(item.id, item.status)">
-                <el-button tag="span" text type="primary" size="small">查看</el-button>
+                <el-button
+                  class="workbench-row-action"
+                  data-test="workbench-row-action"
+                  tag="span"
+                  plain
+                  type="primary"
+                  size="small"
+                >
+                  查看
+                </el-button>
               </router-link>
             </article>
           </div>
@@ -550,7 +572,16 @@ onBeforeUnmount(() => {
                 <time>{{ formatWorkbenchDateTime(item.completedAt || item.createdAt) }}</time>
               </div>
               <router-link class="action-button-link" :to="documentTaskRoute(item.id, item.status)">
-                <el-button tag="span" text type="primary" size="small">处理</el-button>
+                <el-button
+                  class="workbench-row-action"
+                  data-test="workbench-row-action"
+                  tag="span"
+                  plain
+                  type="primary"
+                  size="small"
+                >
+                  处理
+                </el-button>
               </router-link>
             </article>
           </div>
@@ -598,7 +629,18 @@ onBeforeUnmount(() => {
             <div v-for="row in keyStatusRows" :key="row.label" class="workbench-status-row">
               <span>{{ row.label }}</span>
               <el-tag size="small" :type="businessStatusType(row.rawStatus)">{{ row.value }}</el-tag>
-              <router-link v-if="row.to" class="workbench-section-link" :to="row.to">{{ row.actionLabel }}</router-link>
+              <router-link v-if="row.to" class="action-button-link" :to="row.to">
+                <el-button
+                  class="workbench-row-action"
+                  data-test="workbench-row-action"
+                  tag="span"
+                  plain
+                  type="primary"
+                  size="small"
+                >
+                  {{ row.actionLabel }}
+                </el-button>
+              </router-link>
               <span v-else class="workbench-status-row__placeholder">—</span>
             </div>
           </div>
@@ -635,7 +677,16 @@ onBeforeUnmount(() => {
           </div>
           <time>{{ item.canViewResource ? (item.businessDate || '—') : '—' }}</time>
           <router-link class="action-button-link" to="/reports/exceptions">
-            <el-button tag="span" text type="primary" size="small">进入清单</el-button>
+            <el-button
+              class="workbench-row-action"
+              data-test="workbench-row-action"
+              tag="span"
+              plain
+              type="primary"
+              size="small"
+            >
+              进入清单
+            </el-button>
           </router-link>
         </article>
       </div>
@@ -721,10 +772,12 @@ onBeforeUnmount(() => {
 
 .workbench-quick__button.el-button {
   width: 100%;
-  height: 42px;
-  justify-content: flex-start;
+  height: 44px;
+  justify-content: center;
+  gap: 10px;
   margin: 0;
   padding: 0 14px;
+  border-radius: var(--qherp-radius-sm) !important;
   color: var(--qherp-charcoal);
   background: var(--qherp-surface);
   border-color: var(--qherp-border);
@@ -737,11 +790,46 @@ onBeforeUnmount(() => {
   border-color: var(--qherp-stone);
 }
 
-.workbench-quick__button .el-icon {
-  width: 17px;
-  height: 17px;
-  margin-right: 8px;
-  color: var(--qherp-brand-green-deep);
+.workbench-quick__icon {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+
+.workbench-quick__icon--green {
+  color: #1aa981;
+}
+
+.workbench-quick__icon--orange {
+  color: #e98a20;
+}
+
+.workbench-quick__icon--blue {
+  color: var(--qherp-brand-tag);
+}
+
+.workbench-quick__icon--purple {
+  color: #7c5ce7;
+}
+
+.workbench-quick__icon--teal {
+  color: #179d8b;
+}
+
+.workbench-row-action.el-button {
+  min-width: 48px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: var(--qherp-radius-sm) !important;
+  --el-button-bg-color: var(--qherp-surface);
+  --el-button-border-color: rgba(55, 114, 207, 0.44);
+  --el-button-text-color: var(--qherp-brand-tag);
+  --el-button-hover-bg-color: rgba(55, 114, 207, 0.08);
+  --el-button-hover-border-color: var(--qherp-brand-tag);
+  --el-button-hover-text-color: var(--qherp-brand-tag);
+  --el-button-active-bg-color: rgba(55, 114, 207, 0.14);
+  --el-button-active-border-color: var(--qherp-brand-tag);
+  --el-button-active-text-color: var(--qherp-brand-tag);
 }
 
 .workbench-primary-grid {

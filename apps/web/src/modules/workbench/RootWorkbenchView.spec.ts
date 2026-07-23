@@ -205,6 +205,16 @@ describe('根工作台', () => {
 
     expect(wrapper.get('[data-test="workbench-title"]').text()).toContain('工作台')
     expect(wrapper.findAll('[data-test="workbench-quick-entry"]')).toHaveLength(5)
+    const quickEntryIcons = wrapper.findAll('[data-test="workbench-quick-icon"]')
+    expect(quickEntryIcons).toHaveLength(5)
+    expect(quickEntryIcons.map((icon) => icon.classes().find((className) =>
+      className.startsWith('workbench-quick__icon--')))).toEqual([
+      'workbench-quick__icon--green',
+      'workbench-quick__icon--orange',
+      'workbench-quick__icon--blue',
+      'workbench-quick__icon--purple',
+      'workbench-quick__icon--teal',
+    ])
     expect(documentPlatformApiMock.approvalTasks.list).toHaveBeenCalledWith({
       scope: 'TODO',
       page: 1,
@@ -232,6 +242,21 @@ describe('根工作台', () => {
     expect(wrapper.text()).not.toContain('RUNNING')
     expect(wrapper.text()).not.toContain('CRITICAL')
     expect(wrapper.text()).not.toContain('NOT_CLOSED')
+
+    const rowActions = wrapper.findAll('[data-test="workbench-row-action"]')
+    expect(rowActions).toHaveLength(9)
+    expect(rowActions.map((action) => action.text())).toEqual(expect.arrayContaining([
+      '查看',
+      '处理',
+      '进入月结',
+      '管理期间',
+      '查看详情',
+      '进入清单',
+    ]))
+    for (const action of rowActions) {
+      expect(action.classes()).toContain('is-plain')
+      expect(action.classes()).not.toContain('is-text')
+    }
   })
 
   it('只请求和展示当前账号有权限的分区与快捷入口', async () => {
