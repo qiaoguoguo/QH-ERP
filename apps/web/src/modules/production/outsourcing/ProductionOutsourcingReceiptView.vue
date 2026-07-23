@@ -49,6 +49,7 @@ const canSaveDocument = computed(() => {
   return authStore.hasPermission('production:outsourcing-receipt:create')
     && Boolean(order.value.allowedActions?.includes('RECEIPT'))
 })
+const formReadOnly = computed(() => !canSaveDocument.value)
 const canPostDocument = computed(() => authStore.hasPermission('production:outsourcing-receipt:post')
   && Boolean(documentRecord.value?.allowedActions?.includes('POST')))
 const canCancelDocument = computed(() => authStore.hasPermission('production:outsourcing-receipt:cancel')
@@ -231,10 +232,10 @@ onMounted(loadPage)
     </template>
 
     <el-empty v-if="hasLoadFailure" :description="error || '外协收货不存在或无权查看'" />
-    <section v-else class="section-block">
+    <section v-else class="section-block outsourcing-execution-section">
       <h2>{{ order?.orderNo || '外协订单' }} 收货草稿</h2>
-      <el-form label-position="top">
-        <div class="form-grid">
+      <el-form class="outsourcing-execution-form" label-position="top">
+        <div class="form-grid outsourcing-execution-form-grid">
           <el-form-item label="业务日期">
             <el-date-picker
               v-model="form.businessDate"
@@ -244,31 +245,64 @@ onMounted(loadPage)
               format="YYYY-MM-DD"
               value-format="YYYY-MM-DD"
               value-on-clear=""
+              :disabled="formReadOnly"
               placeholder="请选择业务日期"
             />
           </el-form-item>
           <el-form-item label="收货仓库">
-            <el-select v-model="form.receiptWarehouseId" data-test="outsourcing-receipt-warehouse-id" placeholder="请选择收货仓库">
+            <el-select
+              v-model="form.receiptWarehouseId"
+              data-test="outsourcing-receipt-warehouse-id"
+              :disabled="formReadOnly"
+              placeholder="请选择收货仓库"
+            >
               <el-option v-if="order?.receiptWarehouseId" :label="order.receiptWarehouseName || String(order.receiptWarehouseId)" :value="order.receiptWarehouseId" />
             </el-select>
           </el-form-item>
           <el-form-item label="合格数量">
-            <el-input v-model="form.acceptedQuantity" name="outsourcing-receipt-accepted-quantity" />
+            <el-input v-model="form.acceptedQuantity" name="outsourcing-receipt-accepted-quantity" :disabled="formReadOnly" />
           </el-form-item>
           <el-form-item label="不合格数量">
-            <el-input v-model="form.rejectedQuantity" name="outsourcing-receipt-rejected-quantity" />
+            <el-input v-model="form.rejectedQuantity" name="outsourcing-receipt-rejected-quantity" :disabled="formReadOnly" />
           </el-form-item>
           <el-form-item v-if="costVisible" label="暂估单价">
-            <el-input v-model="form.provisionalUnitCost" name="outsourcing-receipt-provisional-unit-cost" />
+            <el-input v-model="form.provisionalUnitCost" name="outsourcing-receipt-provisional-unit-cost" :disabled="formReadOnly" />
           </el-form-item>
           <el-form-item label="序列号">
-            <el-input v-model="form.serialNo" name="outsourcing-receipt-serial" />
+            <el-input v-model="form.serialNo" name="outsourcing-receipt-serial" :disabled="formReadOnly" />
           </el-form-item>
           <el-form-item label="序列数量">
-            <el-input v-model="form.serialQuantity" name="outsourcing-receipt-serial-quantity" />
+            <el-input v-model="form.serialQuantity" name="outsourcing-receipt-serial-quantity" :disabled="formReadOnly" />
           </el-form-item>
         </div>
       </el-form>
     </section>
   </MasterDataTableView>
 </template>
+
+<style scoped>
+.outsourcing-execution-section {
+  background: var(--qherp-surface);
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.outsourcing-execution-section h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.outsourcing-execution-form-grid {
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.outsourcing-execution-form-grid :deep(.el-select),
+.outsourcing-execution-form-grid :deep(.el-date-editor) {
+  width: 100%;
+}
+</style>

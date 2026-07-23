@@ -12,11 +12,15 @@ import {
   summarizePageSurfaceInventory,
 } from './pageSurfaceInventory'
 
+const productionReversalTraceDrawerSourceFile = 'apps/web/src/modules/reversal/ProductionReversalTraceDrawer.vue'
+const outsourcingTraceLinksTableSourceFile = 'apps/web/src/modules/production/outsourcing/ProductionOutsourcingOrderDetailView.vue'
+
 describe('页面治理表面清单门禁', () => {
   it('统计 175 个 View 页面和模块分布', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(241)
+    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(242)
+    expect(inventory.moduleVueFiles).toContain(productionReversalTraceDrawerSourceFile)
     expect(inventory.viewFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(175)
     expect(inventory.viewModuleCounts).toEqual({
       auth: 1,
@@ -43,8 +47,12 @@ describe('页面治理表面清单门禁', () => {
   it('记录全部表格实例且不以文件级滚动命中替代实例清单', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.tables, summarizePageSurfaceInventory(inventory)).toHaveLength(245)
-    expect(inventory.tableColumns).toHaveLength(2036)
+    expect(inventory.tables, summarizePageSurfaceInventory(inventory)).toHaveLength(246)
+    expect(inventory.tables).toContainEqual(expect.objectContaining({
+      sourceFile: outsourcingTraceLinksTableSourceFile,
+      text: '<el-table :data="record.traceLinks ?? []" :empty-text="record.sourceSuggestionNo || \'暂无来源建议\'" stripe>',
+    }))
+    expect(inventory.tableColumns).toHaveLength(2038)
     inventory.tables.forEach((table) => {
       expect(table.sourceFile).toMatch(/^apps\/web\/src\//)
       expect(table.line).toBeGreaterThan(0)
@@ -69,7 +77,11 @@ describe('页面治理表面清单门禁', () => {
 
     expect(inventory.paginations).toHaveLength(108)
     expect(inventory.dialogs).toHaveLength(45)
-    expect(inventory.drawers).toHaveLength(34)
+    expect(inventory.drawers).toHaveLength(35)
+    expect(inventory.drawers).toContainEqual(expect.objectContaining({
+      sourceFile: productionReversalTraceDrawerSourceFile,
+      text: '<el-drawer',
+    }))
     expect(inventory.returnContexts.length).toBeGreaterThan(0)
     expect(inventory.tooltips.length).toBeGreaterThan(0)
   })
@@ -173,9 +185,11 @@ describe('页面治理表面清单门禁', () => {
     const inventory = buildPageSurfaceInventory()
 
     expect(inventory.namedStatusTags).toHaveLength(28)
-    expect(inventory.namedDrawers).toHaveLength(7)
+    expect(inventory.namedDrawers).toHaveLength(8)
+    expect(inventory.namedDrawers).toContain(productionReversalTraceDrawerSourceFile)
     expect(inventory.namedPanels).toHaveLength(11)
-    expect(inventory.namedTraces).toHaveLength(7)
+    expect(inventory.namedTraces).toHaveLength(8)
+    expect(inventory.namedTraces).toContain(productionReversalTraceDrawerSourceFile)
     expect(inventory.namedEditorsOrPickers).toHaveLength(7)
   })
 })

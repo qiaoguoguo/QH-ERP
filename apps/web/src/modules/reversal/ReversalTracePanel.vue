@@ -16,12 +16,15 @@ interface ImpactResourceItem {
   routeQuery?: Record<string, ReversalRouteValue>
 }
 
-defineProps<{
+withDefaults(defineProps<{
   visible: boolean
   rows: ReversalTraceRecord[]
   loading?: boolean
   error?: string
-}>()
+  contentOnly?: boolean
+}>(), {
+  contentOnly: false,
+})
 
 const emit = defineEmits<{
   close: []
@@ -206,15 +209,19 @@ function sourceNo(source: ReversalSourceView) {
 </script>
 
 <template>
-  <section v-if="visible" class="reversal-trace-panel">
-    <div class="reversal-trace-panel__header">
+  <section
+    v-if="visible"
+    class="reversal-trace-panel"
+    :class="{ 'reversal-trace-panel--content-only': contentOnly }"
+  >
+    <div v-if="!contentOnly" class="reversal-trace-panel__header">
       <h2>反向追溯</h2>
       <el-button link type="primary" @click="emit('close')">关闭</el-button>
     </div>
     <el-alert v-if="error" class="state-alert" :title="error" type="error" show-icon :closable="false" />
     <div v-if="loading" class="reversal-state">追溯加载中</div>
     <el-empty v-else-if="rows.length === 0" description="暂无反向追溯" />
-    <div v-else class="table-scroll">
+    <div v-else data-test="production-reversal-trace-table-scroll" class="table-scroll">
       <el-table :data="rows" stripe>
         <el-table-column label="影响类型" min-width="130">
           <template #default="{ row }">
@@ -310,6 +317,12 @@ function sourceNo(source: ReversalSourceView) {
   border-radius: 6px;
   margin-top: 16px;
   padding: 14px;
+}
+
+.reversal-trace-panel--content-only {
+  border: 0;
+  margin-top: 0;
+  padding: 0;
 }
 
 .reversal-trace-panel__header {

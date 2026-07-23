@@ -213,6 +213,9 @@ onMounted(() => {
     <div class="table-scroll">
       <el-table :data="records" :empty-text="loading ? '加载中' : '暂无外协订单'" stripe>
         <el-table-column prop="orderNo" label="外协单号" min-width="160" fixed show-overflow-tooltip />
+        <el-table-column label="状态" min-width="110">
+          <template #default="{ row }">{{ outsourcingOrderStatusLabel(row.status, row.statusName) }}</template>
+        </el-table-column>
         <el-table-column label="项目/归属" min-width="190" show-overflow-tooltip>
           <template #default="{ row }">{{ ownershipText(row) }}</template>
         </el-table-column>
@@ -226,9 +229,6 @@ onMounted(() => {
             {{ formatProductionQuantity(row.issuedQuantity) }} /
             {{ formatProductionQuantity(row.receivedQuantity) }}
           </template>
-        </el-table-column>
-        <el-table-column label="状态" min-width="110">
-          <template #default="{ row }">{{ outsourcingOrderStatusLabel(row.status, row.statusName) }}</template>
         </el-table-column>
         <el-table-column label="来源建议" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ row.sourceSuggestionNo || row.sourceMrpSuggestionId || '-' }}</template>

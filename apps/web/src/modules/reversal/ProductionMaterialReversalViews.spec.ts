@@ -443,6 +443,13 @@ async function clickTeleportedAction(testId: string) {
   await flushPromises()
 }
 
+function expectTeleportedTraceDrawer(testId: string) {
+  const drawer = document.body.querySelector<HTMLElement>(`[data-test="${testId}"]`)
+  expect(drawer).not.toBeNull()
+  expect(drawer?.querySelector('[data-test="production-reversal-trace-table-scroll"]')).not.toBeNull()
+  expect(drawer?.querySelector('[data-test="close-production-reversal-trace"]')).not.toBeNull()
+}
+
 describe('生产退料补料前端页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -621,6 +628,9 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('MI202607050001')
     expect(wrapper.text()).toContain('已领数量')
     expect(wrapper.text()).toContain('可退数量')
+    expect(wrapper.find('[data-test="material-return-source-table-scroll"]').classes()).toContain('table-scroll')
+    expect(wrapper.find('[data-test="material-return-line-table-scroll"]').classes()).toContain('table-scroll')
+    expect(wrapper.find('[data-test="material-return-form-actions"]').classes()).toContain('form-actions--stable')
     expect(returnRefundReversalApiMock.productionMaterialReturnSources.list).toHaveBeenCalledWith({
       keyword: '',
       page: 1,
@@ -666,6 +676,9 @@ describe('生产退料补料前端页面', () => {
     expect(wrapper.text()).toContain('WO202607050001')
     expect(wrapper.text()).toContain('已领数量')
     expect(wrapper.text()).toContain('可用库存')
+    expect(wrapper.find('[data-test="material-supplement-source-table-scroll"]').classes()).toContain('table-scroll')
+    expect(wrapper.find('[data-test="material-supplement-line-table-scroll"]').classes()).toContain('table-scroll')
+    expect(wrapper.find('[data-test="material-supplement-form-actions"]').classes()).toContain('form-actions--stable')
     expect(wrapper.text()).not.toContain('已退数量')
     expect(wrapper.text()).not.toContain('可退数量')
     expect(returnRefundReversalApiMock.productionMaterialSupplementSources.list).toHaveBeenCalledWith({
@@ -1169,6 +1182,10 @@ describe('生产退料补料前端页面', () => {
       expect(wrapper.text()).toContain('MR202607050001')
       expect(wrapper.text()).toContain('已过账')
       expect(wrapper.text()).not.toContain('POSTED')
+      expect(wrapper.findAllComponents({ name: 'ElDescriptions' })).toHaveLength(0)
+      expect(wrapper.find('[data-test="material-return-detail-summary"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="material-return-detail-fields"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="material-return-lines-table-scroll"]').classes()).toContain('table-scroll')
       expect(wrapper.text()).toContain('库存入库影响')
       expect(wrapper.text()).toContain('成本影响')
       expect(wrapper.text()).toContain('成本记录 #1001')
@@ -1184,6 +1201,7 @@ describe('生产退料补料前端页面', () => {
         direction: 'REVERSE_TO_SOURCE',
         includeRestricted: true,
       })
+      expectTeleportedTraceDrawer('material-return-reversal-trace-drawer')
       expect(wrapper.text()).toContain('生产退料')
       expect(wrapper.text()).toContain('库存流水 #901')
       expect(wrapper.text()).toContain('成本记录 #1001')
@@ -1244,6 +1262,10 @@ describe('生产退料补料前端页面', () => {
       expect(wrapper.text()).toContain('MS202607050001')
       expect(wrapper.text()).toContain('生产中')
       expect(wrapper.text()).not.toContain('IN_PROGRESS')
+      expect(wrapper.findAllComponents({ name: 'ElDescriptions' })).toHaveLength(0)
+      expect(wrapper.find('[data-test="material-supplement-detail-summary"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="material-supplement-detail-fields"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="material-supplement-lines-table-scroll"]').classes()).toContain('table-scroll')
       expect(wrapper.text()).toContain('库存出库影响')
       expect(wrapper.text()).toContain('成本影响')
       expect(wrapper.text()).toContain('补料数量')
@@ -1258,6 +1280,7 @@ describe('生产退料补料前端页面', () => {
         direction: 'REVERSE_TO_SOURCE',
         includeRestricted: true,
       })
+      expectTeleportedTraceDrawer('material-supplement-reversal-trace-drawer')
       expect(wrapper.text()).toContain('生产补料')
       expect(wrapper.text()).toContain('库存流水 #902')
       expect(wrapper.text()).toContain('成本记录 #1002')

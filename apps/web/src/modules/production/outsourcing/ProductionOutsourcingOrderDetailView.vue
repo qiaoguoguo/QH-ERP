@@ -64,6 +64,9 @@ function canCreateReceiptDocument() {
   return canReceipt.value && hasAction('RECEIPT')
 }
 
+const showDetailMoreActions = computed(() => Boolean(record.value)
+  && (canRelease.value || canClose.value || canCancel.value || canIssue.value))
+
 function traceTarget(link: OutsourcingTraceLink) {
   if (link.restricted) {
     return null
@@ -82,6 +85,26 @@ function openTraceLink(link: OutsourcingTraceLink) {
     return
   }
   void router.push(target)
+}
+
+function openIssueDocument() {
+  if (!record.value || !canCreateIssueDocument()) {
+    return
+  }
+  void router.push({
+    name: 'production-outsourcing-order-material-issues',
+    params: { id: String(record.value.id) },
+  })
+}
+
+function openReceiptDocument() {
+  if (!record.value || !canCreateReceiptDocument()) {
+    return
+  }
+  void router.push({
+    name: 'production-outsourcing-order-receipts',
+    params: { id: String(record.value.id) },
+  })
 }
 
 async function runOrderAction(action: 'release' | 'close' | 'cancel') {
@@ -114,60 +137,87 @@ async function runOrderAction(action: 'release' | 'close' | 'cancel') {
   }
 }
 
+async function handleDetailMoreAction(command: string | number | object) {
+  const action = String(command)
+  if (action === 'release' && canRelease.value && hasAction('RELEASE')) {
+    await runOrderAction('release')
+  } else if (action === 'close' && canClose.value && hasAction('CLOSE')) {
+    await runOrderAction('close')
+  } else if (action === 'cancel' && canCancel.value && hasAction('CANCEL')) {
+    await runOrderAction('cancel')
+  } else if (action === 'issue') {
+    openIssueDocument()
+  }
+}
+
 onMounted(loadRecord)
 </script>
 
 <template>
   <MasterDataTableView title="外协订单详情" description="查看外协项目归属、供应商、来源建议、用料、发料、收货和追溯入口。">
     <template #actions>
-      <el-button @click="router.push({ name: 'production-outsourcing-orders' })">返回列表</el-button>
-      <el-button
-        v-if="record && canRelease"
-        data-test="release-outsourcing-order"
-        :disabled="!hasAction('RELEASE')"
-        :loading="actionLoading"
-        @click="runOrderAction('release')"
+      <div
+        data-test="outsourcing-detail-actions"
+        class="outsourcing-detail-actions outsourcing-detail-actions--single-line"
       >
-        发布
-      </el-button>
-      <el-button
-        v-if="record && canClose"
-        data-test="close-outsourcing-order"
-        :disabled="!hasAction('CLOSE')"
-        :loading="actionLoading"
-        @click="runOrderAction('close')"
-      >
-        关闭
-      </el-button>
-      <el-button
-        v-if="record && canCancel"
-        data-test="cancel-outsourcing-order"
-        type="danger"
-        :disabled="!hasAction('CANCEL')"
-        :loading="actionLoading"
-        @click="runOrderAction('cancel')"
-      >
-        取消
-      </el-button>
-      <el-button
-        v-if="record && canIssue"
-        data-test="create-outsourcing-issue"
-        :disabled="!canCreateIssueDocument()"
-        :title="canCreateIssueDocument() ? '' : record.actionDisabledReason || '当前外协订单不可发料'"
-        @click="router.push({ name: 'production-outsourcing-order-material-issues', params: { id: String(record.id) } })"
-      >
-        外协发料
-      </el-button>
-      <el-button
-        v-if="record && canReceipt"
-        data-test="create-outsourcing-receipt"
-        type="primary"
-        :disabled="!canCreateReceiptDocument()"
-        :title="canCreateReceiptDocument() ? '' : record.actionDisabledReason || '当前外协订单不可收货'"
-        @click="router.push({ name: 'production-outsourcing-order-receipts', params: { id: String(record.id) } })"
-      >
-        外协收货
-      </el-button>
+        <el-button data-test="back-outsourcing-order-list" @click="router.push({ name: 'production-outsourcing-orders' })">返回列表</el-button>
+        <el-button
+          v-if="record && canReceipt"
+          data-test="create-outsourcing-receipt"
+          type="primary"
+          :disabled="!canCreateReceiptDocument()"
+          :title="canCreateReceiptDocument() ? '' : record.actionDisabledReason || '当前外协订单不可收货'"
+          @click="openReceiptDocument"
+        >
+          外协收货
+        </el-button>
+        <el-dropdown
+          v-if="showDetailMoreActions"
+          data-test="outsourcing-detail-more-actions"
+          trigger="click"
+          @command="handleDetailMoreAction"
+        >
+          <el-button data-test="outsourcing-detail-more-trigger">更多</el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                v-if="record && canRelease"
+                data-test="release-outsourcing-order"
+                command="release"
+                :disabled="actionLoading || !hasAction('RELEASE')"
+              >
+                发布
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-if="record && canClose"
+                data-test="close-outsourcing-order"
+                command="close"
+                :disabled="actionLoading || !hasAction('CLOSE')"
+              >
+                关闭
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-if="record && canCancel"
+                data-test="cancel-outsourcing-order"
+                class="outsourcing-detail-more-action--danger"
+                command="cancel"
+                :disabled="actionLoading || !hasAction('CANCEL')"
+              >
+                取消
+              </el-dropdown-item>
+              <el-dropdown-item
+                v-if="record && canIssue"
+                data-test="create-outsourcing-issue"
+                command="issue"
+                :disabled="!canCreateIssueDocument()"
+                :title="canCreateIssueDocument() ? '' : record.actionDisabledReason || '当前外协订单不可发料'"
+              >
+                外协发料
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
     </template>
 
     <template #alerts>
@@ -190,7 +240,7 @@ onMounted(loadRecord)
         </div>
         <el-tag>{{ outsourcingOrderStatusLabel(record.status, record.statusName) }}</el-tag>
       </div>
-      <div class="summary-strip">
+      <div data-test="outsourcing-detail-summary" class="summary-strip outsourcing-detail-summary">
         <div><strong>计划数量</strong><span>{{ formatProductionQuantity(record.plannedQuantity) }}</span></div>
         <div><strong>已发数量</strong><span>{{ formatProductionQuantity(record.issuedQuantity) }}</span></div>
         <div><strong>已收数量</strong><span>{{ formatProductionQuantity(record.receivedQuantity) }}</span></div>
@@ -198,6 +248,32 @@ onMounted(loadRecord)
         <div><strong>BOM</strong><span>{{ [record.bomCode, record.bomVersionCode].filter(Boolean).join(' / ') || '-' }}</span></div>
         <div><strong>成本状态</strong><span>{{ record.costVisible === false ? '成本受限' : '可查看' }}</span></div>
       </div>
+      <dl data-test="outsourcing-detail-fields" class="outsourcing-detail-fields">
+        <div>
+          <dt>项目/归属</dt>
+          <dd>{{ ownershipText() }}</dd>
+        </div>
+        <div>
+          <dt>供应商</dt>
+          <dd>{{ record.supplierName }}</dd>
+        </div>
+        <div>
+          <dt>物料</dt>
+          <dd>{{ record.productMaterialCode }} {{ record.productMaterialName }}</dd>
+        </div>
+        <div>
+          <dt>计划发料</dt>
+          <dd>{{ record.plannedIssueDate || '-' }}</dd>
+        </div>
+        <div>
+          <dt>计划收货</dt>
+          <dd>{{ record.plannedReceiptDate || '-' }}</dd>
+        </div>
+        <div>
+          <dt>更新时间</dt>
+          <dd>{{ record.updatedAt || '-' }}</dd>
+        </div>
+      </dl>
       <el-alert
         v-if="record.costVisible === false"
         type="warning"
@@ -209,7 +285,7 @@ onMounted(loadRecord)
 
     <section v-if="record" class="section-block">
       <h2>外协用料</h2>
-      <div class="table-scroll">
+      <div data-test="outsourcing-materials-table-scroll" class="table-scroll">
         <el-table :data="record.materials" empty-text="暂无外协用料" stripe>
           <el-table-column prop="lineNo" label="行号" width="90" />
           <el-table-column label="材料" min-width="220" show-overflow-tooltip>
@@ -224,7 +300,7 @@ onMounted(loadRecord)
 
     <section v-if="record" class="section-block">
       <h2>发料与收货</h2>
-      <div class="table-scroll">
+      <div data-test="outsourcing-executions-table-scroll" class="table-scroll">
         <el-table :data="[...record.materialIssues, ...record.receipts]" empty-text="暂无执行单据" stripe>
           <el-table-column label="单号" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.issueNo || row.receiptNo || row.documentNo }}</template>
@@ -240,23 +316,131 @@ onMounted(loadRecord)
 
     <section v-if="record" class="section-block">
       <h2>来源追溯</h2>
-      <p v-for="link in record.traceLinks" :key="link.label">
-        <el-button
-          v-if="traceTarget(link)"
-          data-test="outsourcing-trace-link"
-          link
-          type="primary"
-          @click="openTraceLink(link)"
-        >
-          {{ link.label }}
-        </el-button>
-        <span v-else>
-          {{ link.label }}
-          <span v-if="link.restrictedReason" class="operation-muted"> {{ link.restrictedReason }}</span>
-        </span>
-      </p>
-      <p v-if="!record.traceLinks?.length">{{ record.sourceSuggestionNo || '暂无来源建议' }}</p>
+      <div class="table-scroll">
+        <el-table :data="record.traceLinks ?? []" :empty-text="record.sourceSuggestionNo || '暂无来源建议'" stripe>
+          <el-table-column label="来源" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <el-button
+                v-if="traceTarget(row)"
+                data-test="outsourcing-trace-link"
+                link
+                type="primary"
+                @click="openTraceLink(row)"
+              >
+                {{ row.label }}
+              </el-button>
+              <span v-else>{{ row.label }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              <span v-if="row.restrictedReason" class="operation-muted">{{ row.restrictedReason }}</span>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </div>
     </section>
     <el-empty v-else-if="!loading" description="暂无外协订单详情" />
   </MasterDataTableView>
 </template>
+
+<style scoped>
+.outsourcing-detail-actions {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.outsourcing-detail-actions--single-line {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+.outsourcing-detail-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.outsourcing-detail-more-action--danger {
+  color: var(--el-color-danger);
+}
+
+.section-block {
+  background: var(--qherp-surface);
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-block h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.detail-title-line {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.detail-title-line h2 {
+  font-size: 18px;
+  margin: 0 0 4px;
+}
+
+.detail-title-line p {
+  color: var(--qherp-muted);
+  margin: 0;
+}
+
+.summary-strip {
+  background: #f7f9fc;
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 12px 14px;
+}
+
+.summary-strip div,
+.outsourcing-detail-fields > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.summary-strip strong,
+.outsourcing-detail-fields dt {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.summary-strip span,
+.outsourcing-detail-fields dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.outsourcing-detail-fields {
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.table-scroll {
+  overflow-x: auto;
+}
+
+.operation-muted {
+  color: var(--qherp-muted);
+}
+</style>

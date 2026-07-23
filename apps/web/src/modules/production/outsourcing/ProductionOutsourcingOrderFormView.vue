@@ -199,10 +199,15 @@ onMounted(loadPage)
     </template>
 
     <el-empty v-if="!loading && !canShowForm" description="外协订单不存在或无权查看" />
-    <el-form v-else-if="canShowForm" class="detail-form" label-position="top">
-      <section class="section-block">
+    <el-form
+      v-else-if="canShowForm"
+      data-test="outsourcing-order-form"
+      class="detail-form outsourcing-order-form"
+      label-position="top"
+    >
+      <section data-test="outsourcing-form-section" class="section-block outsourcing-form-section">
         <h2>归属与来源</h2>
-        <div class="form-grid">
+        <div data-test="outsourcing-form-grid" class="form-grid outsourcing-form-grid">
           <el-form-item label="归属">
             <el-select v-model="form.ownershipType" data-test="outsourcing-ownership-type" placeholder="请选择归属">
               <el-option label="项目" value="PROJECT" />
@@ -229,9 +234,9 @@ onMounted(loadPage)
         </div>
       </section>
 
-      <section class="section-block">
+      <section data-test="outsourcing-form-section" class="section-block outsourcing-form-section">
         <h2>物料与计划</h2>
-        <div class="form-grid">
+        <div data-test="outsourcing-form-grid" class="form-grid outsourcing-form-grid">
           <el-form-item label="成品物料">
             <el-select v-model="form.productMaterialId" data-test="outsourcing-product-material-id" filterable placeholder="请选择成品物料">
               <el-option v-for="material in materials" :key="material.id" :label="material.label" :value="material.id" />
@@ -272,9 +277,9 @@ onMounted(loadPage)
         </div>
       </section>
 
-      <section class="section-block">
+      <section data-test="outsourcing-form-section" class="section-block outsourcing-form-section">
         <h2>仓库</h2>
-        <div class="form-grid">
+        <div data-test="outsourcing-form-grid" class="form-grid outsourcing-form-grid">
           <el-form-item label="发料仓库">
             <el-select v-model="form.issueWarehouseId" data-test="outsourcing-issue-warehouse-id" filterable placeholder="请选择发料仓库">
               <el-option v-for="warehouse in warehouses" :key="warehouse.id" :label="warehouse.label" :value="warehouse.id" />
@@ -287,7 +292,7 @@ onMounted(loadPage)
           </el-form-item>
         </div>
       </section>
-      <div data-test="outsourcing-order-form-bottom-actions" class="form-actions">
+      <div data-test="outsourcing-order-form-bottom-actions" class="form-actions form-footer">
         <el-button @click="router.push({ name: 'production-outsourcing-orders' })">返回列表</el-button>
         <el-button
           v-if="canShowSave"
@@ -304,11 +309,45 @@ onMounted(loadPage)
 </template>
 
 <style scoped>
+.outsourcing-order-form {
+  display: grid;
+  gap: 14px;
+}
+
+.outsourcing-form-section {
+  background: var(--qherp-surface);
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.outsourcing-form-section h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.outsourcing-form-grid {
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.outsourcing-form-grid :deep(.el-select),
+.outsourcing-form-grid :deep(.el-date-editor) {
+  width: 100%;
+}
+
 .form-actions {
+  background: var(--qherp-surface);
   border-top: 1px solid var(--qherp-border);
+  bottom: 0;
   display: flex;
   gap: 10px;
   justify-content: flex-end;
   padding-top: 14px;
+  position: sticky;
+  z-index: 2;
 }
 </style>

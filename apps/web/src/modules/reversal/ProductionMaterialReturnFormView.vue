@@ -424,7 +424,11 @@ onMounted(() => {
       <el-card v-if="!isEdit" class="section-card" shadow="never">
         <template #header>可退来源</template>
         <el-empty v-if="!loading && sources.length === 0" description="暂无可退生产领料" />
-        <div v-else class="table-scroll">
+        <div
+          v-else
+          data-test="material-return-source-table-scroll"
+          class="table-scroll form-table-scroll form-table-scroll--source"
+        >
           <el-table :data="sources" :empty-text="loading ? '加载中' : '暂无可退生产领料'" stripe>
             <el-table-column label="选择" width="80">
               <template #default="{ row }">
@@ -473,7 +477,7 @@ onMounted(() => {
 
       <el-card class="section-card" shadow="never">
         <template #header>退料明细</template>
-        <div class="table-scroll">
+        <div data-test="material-return-line-table-scroll" class="table-scroll form-table-scroll form-table-scroll--lines">
           <el-table :data="lines" :empty-text="loading ? '加载中' : '暂无可退明细'" stripe>
             <el-table-column prop="lineNo" label="行号" width="80" />
             <el-table-column label="物料" min-width="180" show-overflow-tooltip>
@@ -551,7 +555,7 @@ onMounted(() => {
         </div>
       </el-card>
 
-      <div class="form-actions">
+      <div data-test="material-return-form-actions" class="form-actions form-actions--stable">
         <el-button @click="backToList">取消</el-button>
         <el-button
           data-test="submit-material-return"
@@ -585,6 +589,21 @@ onMounted(() => {
   overflow-x: auto;
 }
 
+.form-table-scroll {
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+}
+
+.form-table-scroll--source {
+  max-height: 280px;
+  overflow: auto;
+}
+
+.form-table-scroll--lines {
+  max-height: 420px;
+  overflow: auto;
+}
+
 .numeric-cell {
   display: inline-block;
   min-width: 72px;
@@ -607,5 +626,14 @@ onMounted(() => {
   display: flex;
   gap: 10px;
   justify-content: flex-end;
+}
+
+.form-actions--stable {
+  background: var(--qherp-surface);
+  border-top: 1px solid #dcdfe6;
+  bottom: 0;
+  padding-top: 12px;
+  position: sticky;
+  z-index: 2;
 }
 </style>

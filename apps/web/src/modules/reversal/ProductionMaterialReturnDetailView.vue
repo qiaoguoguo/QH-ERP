@@ -17,7 +17,7 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { formatSalesAmount } from '../sales/salesPageHelpers'
 import { formatProductionDateTime, formatProductionQuantity, productionErrorMessage } from '../production/productionPageHelpers'
 import ReversalStatusTag from './ReversalStatusTag.vue'
-import ReversalTracePanel from './ReversalTracePanel.vue'
+import ProductionReversalTraceDrawer from './ProductionReversalTraceDrawer.vue'
 import { productionSourceStatusLabel, reversalTraceStatusLabel } from './reversalPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
 
@@ -240,26 +240,53 @@ onMounted(() => {
 
     <el-empty v-if="!loading && !record" description="生产退料不存在或无权查看" />
     <div v-else-if="record" class="detail-layout">
-      <el-descriptions :column="3" border>
-        <el-descriptions-item label="退料单号">{{ record.returnNo }}</el-descriptions-item>
-        <el-descriptions-item label="生产工单">{{ record.workOrderNo }}</el-descriptions-item>
-        <el-descriptions-item label="仓库">{{ record.warehouseName }}</el-descriptions-item>
-        <el-descriptions-item label="业务日期">{{ record.businessDate }}</el-descriptions-item>
-        <el-descriptions-item label="状态">
+      <section data-test="material-return-detail-summary" class="detail-summary-strip">
+        <div class="detail-summary-strip__item">
+          <span>退料单号</span>
+          <strong>{{ record.returnNo }}</strong>
+        </div>
+        <div class="detail-summary-strip__item">
+          <span>状态</span>
           <ReversalStatusTag :status="record.status" />
-        </el-descriptions-item>
-        <el-descriptions-item label="更新时间">{{ formatProductionDateTime(record.updatedAt) }}</el-descriptions-item>
-        <el-descriptions-item label="退料数量">
-          <span class="numeric-cell">{{ formatProductionQuantity(record.totalQuantity) }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="影响金额">
-          <span class="numeric-cell">{{ formatSalesAmount(record.totalAmount) }}</span>
-        </el-descriptions-item>
-        <el-descriptions-item label="备注">{{ record.remark || '-' }}</el-descriptions-item>
-      </el-descriptions>
+        </div>
+        <div class="detail-summary-strip__item">
+          <span>退料数量</span>
+          <strong class="numeric-cell">{{ formatProductionQuantity(record.totalQuantity) }}</strong>
+        </div>
+        <div class="detail-summary-strip__item">
+          <span>影响金额</span>
+          <strong class="numeric-cell">{{ formatSalesAmount(record.totalAmount) }}</strong>
+        </div>
+      </section>
 
-      <el-card class="section-card" shadow="never">
-        <template #header>来源生产领料</template>
+      <section class="section-card">
+        <h2>基础信息</h2>
+        <dl data-test="material-return-detail-fields" class="detail-field-list">
+          <div>
+            <dt>生产工单</dt>
+            <dd>{{ record.workOrderNo }}</dd>
+          </div>
+          <div>
+            <dt>仓库</dt>
+            <dd>{{ record.warehouseName }}</dd>
+          </div>
+          <div>
+            <dt>业务日期</dt>
+            <dd>{{ record.businessDate }}</dd>
+          </div>
+          <div>
+            <dt>更新时间</dt>
+            <dd>{{ formatProductionDateTime(record.updatedAt) }}</dd>
+          </div>
+          <div class="detail-field-list__wide">
+            <dt>备注</dt>
+            <dd>{{ record.remark || '-' }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="section-card">
+        <h2>来源生产领料</h2>
         <el-alert
           v-if="sourceRestricted(record.source)"
           type="warning"
@@ -267,33 +294,44 @@ onMounted(() => {
           :closable="false"
           show-icon
         />
-        <el-descriptions v-else :column="3" border>
-          <el-descriptions-item label="来源单号">
-            <el-button
-              v-if="record.source.resourceRouteName"
-              data-test="view-source-document"
-              link
-              type="primary"
-              @click="viewSourceDocument(record.source)"
-            >
-              {{ record.source.sourceNo }}
-            </el-button>
-            <span v-else>{{ record.source.sourceNo }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="业务日期">{{ record.source.businessDate || '-' }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ productionSourceStatusLabel(record.source.status) }}</el-descriptions-item>
-          <el-descriptions-item label="来源数量">
-            <span class="numeric-cell">{{ formatProductionQuantity(record.source.quantity) }}</span>
-          </el-descriptions-item>
-          <el-descriptions-item label="来源金额">
-            <span class="numeric-cell">{{ formatSalesAmount(record.source.amount) }}</span>
-          </el-descriptions-item>
-        </el-descriptions>
-      </el-card>
+        <dl v-else class="detail-field-list">
+          <div>
+            <dt>来源单号</dt>
+            <dd>
+              <el-button
+                v-if="record.source.resourceRouteName"
+                data-test="view-source-document"
+                link
+                type="primary"
+                @click="viewSourceDocument(record.source)"
+              >
+                {{ record.source.sourceNo }}
+              </el-button>
+              <span v-else>{{ record.source.sourceNo }}</span>
+            </dd>
+          </div>
+          <div>
+            <dt>业务日期</dt>
+            <dd>{{ record.source.businessDate || '-' }}</dd>
+          </div>
+          <div>
+            <dt>状态</dt>
+            <dd>{{ productionSourceStatusLabel(record.source.status) }}</dd>
+          </div>
+          <div>
+            <dt>来源数量</dt>
+            <dd><span class="numeric-cell">{{ formatProductionQuantity(record.source.quantity) }}</span></dd>
+          </div>
+          <div>
+            <dt>来源金额</dt>
+            <dd><span class="numeric-cell">{{ formatSalesAmount(record.source.amount) }}</span></dd>
+          </div>
+        </dl>
+      </section>
 
-      <el-card class="section-card" shadow="never">
-        <template #header>退料明细</template>
-        <div class="table-scroll">
+      <section class="section-card">
+        <h2>退料明细</h2>
+        <div data-test="material-return-lines-table-scroll" class="table-scroll">
           <el-table :data="record.lines" stripe>
             <el-table-column prop="lineNo" label="行号" width="80" />
             <el-table-column label="来源行" min-width="190" show-overflow-tooltip>
@@ -335,10 +373,10 @@ onMounted(() => {
             <el-table-column prop="reason" label="原因" min-width="160" show-overflow-tooltip />
           </el-table>
         </div>
-      </el-card>
+      </section>
 
-      <el-card class="section-card" shadow="never">
-        <template #header>库存入库影响</template>
+      <section class="section-card">
+        <h2>库存入库影响</h2>
         <el-empty v-if="inventoryImpactRows.length === 0" description="暂无库存入库影响" />
         <div v-else class="table-scroll">
           <el-table :data="inventoryImpactRows" stripe>
@@ -369,10 +407,10 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </div>
-      </el-card>
+      </section>
 
-      <el-card class="section-card" shadow="never">
-        <template #header>成本影响</template>
+      <section class="section-card">
+        <h2>成本影响</h2>
         <el-empty v-if="costImpactRows.length === 0" description="暂无成本影响" />
         <div v-else class="table-scroll">
           <el-table :data="costImpactRows" stripe>
@@ -403,11 +441,12 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </div>
-      </el-card>
+      </section>
 
-      <ReversalTracePanel
+      <ProductionReversalTraceDrawer
         :visible="traceVisible"
         :rows="traceRows"
+        data-test="material-return-reversal-trace-drawer"
         :loading="traceLoading"
         :error="traceError"
         @close="closeTrace"
@@ -422,8 +461,71 @@ onMounted(() => {
   gap: 14px;
 }
 
-.section-card {
+.detail-summary-strip {
+  background: #f7f9fc;
+  border: 1px solid #dcdfe6;
   border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 14px 16px;
+}
+
+.detail-summary-strip__item {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.detail-summary-strip__item span {
+  color: var(--qherp-muted);
+  font-size: 12px;
+}
+
+.detail-summary-strip__item strong {
+  font-size: 16px;
+  line-height: 1.4;
+}
+
+.section-card {
+  background: var(--qherp-surface);
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.section-card h2 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.detail-field-list {
+  display: grid;
+  gap: 10px 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 0;
+}
+
+.detail-field-list > div {
+  min-width: 0;
+}
+
+.detail-field-list__wide {
+  grid-column: span 3;
+}
+
+.detail-field-list dt {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.detail-field-list dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .table-scroll {

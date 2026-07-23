@@ -290,6 +290,74 @@ function expectButtonDisabled(wrapper: VueWrapper, testId: string, disabled: boo
   expect(Boolean((button.props() as { disabled?: boolean }).disabled)).toBe(disabled)
 }
 
+function detailMoreDropdown(wrapper: VueWrapper) {
+  const dropdown = wrapper.findComponent('[data-test="outsourcing-detail-more-actions"]') as VueWrapper
+  expect(dropdown.exists()).toBe(true)
+  return dropdown
+}
+
+interface DropdownSlotNode {
+  props?: Record<string, unknown> | null
+  children?: unknown
+}
+
+function dropdownSlotNodes(value: unknown): DropdownSlotNode[] {
+  if (Array.isArray(value)) {
+    return value.flatMap(dropdownSlotNodes)
+  }
+  if (!value || typeof value !== 'object') {
+    return []
+  }
+  const node = value as DropdownSlotNode
+  const children = node.children
+  const slotChildren = children && typeof children === 'object' && !Array.isArray(children)
+    ? (children as { default?: () => unknown }).default?.()
+    : children
+  return [node, ...dropdownSlotNodes(slotChildren)]
+}
+
+function dropdownNodeText(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number') {
+    return String(value)
+  }
+  if (Array.isArray(value)) {
+    return value.map(dropdownNodeText).join('')
+  }
+  if (!value || typeof value !== 'object') {
+    return ''
+  }
+  const node = value as DropdownSlotNode
+  const children = node.children
+  const slotChildren = children && typeof children === 'object' && !Array.isArray(children)
+    ? (children as { default?: () => unknown }).default?.()
+    : children
+  return dropdownNodeText(slotChildren)
+}
+
+function classText(value: unknown): string {
+  if (typeof value === 'string') {
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map(classText).join(' ')
+  }
+  return ''
+}
+
+function expectOverflowAction(wrapper: VueWrapper, testId: string, label: string, disabled: boolean) {
+  const nodes = dropdownSlotNodes(detailMoreDropdown(wrapper).vm.$slots.dropdown?.() ?? [])
+  const item = nodes.find((node) => node.props?.['data-test'] === testId)
+  expect(item).toBeTruthy()
+  expect(dropdownNodeText(item)).toContain(label)
+  expect(Boolean(item?.props?.disabled)).toBe(disabled)
+  return item
+}
+
+async function runDetailMoreAction(wrapper: VueWrapper, command: string) {
+  detailMoreDropdown(wrapper).vm.$emit('command', command)
+  await flushPromises()
+}
+
 function expectSelectPlaceholder(wrapper: VueWrapper, testId: string, placeholder: string) {
   const select = wrapper.findComponent(`[data-test="${testId}"]`) as VueWrapper
   expect(select.exists()).toBe(true)
@@ -311,6 +379,19 @@ function expectDatePickerContract(wrapper: VueWrapper, testId: string, placehold
 function datePickerByName(wrapper: VueWrapper, name: string): VueWrapper | undefined {
   return wrapper.findAllComponents({ name: 'ElDatePicker' })
     .find((picker) => picker.props('name') === name)
+}
+
+function expectComponentDisabled(wrapper: VueWrapper, testId: string) {
+  const component = wrapper.findComponent(`[data-test="${testId}"]`) as VueWrapper
+  const target = component.exists() ? component : datePickerByName(wrapper, testId)
+  expect(target?.exists()).toBe(true)
+  expect(Boolean((target?.props() as { disabled?: boolean } | undefined)?.disabled)).toBe(true)
+}
+
+function expectInputDisabled(wrapper: VueWrapper, name: string) {
+  const input = wrapper.find(`input[name="${name}"]`)
+  expect(input.exists()).toBe(true)
+  expect(input.attributes('disabled')).toBeDefined()
 }
 
 describe('027 外协执行页面族', () => {
@@ -366,6 +447,11 @@ describe('027 外协执行页面族', () => {
     expect(wrapper.text()).toContain('外协供应商')
     expect(wrapper.text()).toContain('MS-027-004')
     expect(wrapper.find('[data-test="create-outsourcing-order"]').exists()).toBe(true)
+    const columnLabels = wrapper.findAllComponents({ name: 'ElTableColumn' }).map((column) => column.props('label'))
+    expect(columnLabels.indexOf('状态')).toBe(1)
+    expect(columnLabels.indexOf('计划/已发/已收')).toBeGreaterThan(columnLabels.indexOf('物料'))
+    const operationColumn = wrapper.findAllComponents({ name: 'ElTableColumn' }).find((column) => column.props('label') === '操作')
+    expect(operationColumn?.props()).toMatchObject({ fixed: 'right', width: '184' })
 
     await wrapper.find('input[name="outsourcing-keyword"]').setValue('OS-027')
     await setSelect(wrapper, 'outsourcing-status-filter', 'RELEASED')
@@ -470,7 +556,11 @@ describe('027 外协执行页面族', () => {
     expectSelectPlaceholder(wrapper, 'outsourcing-receipt-warehouse-id', '请选择收货仓库')
     expectDatePickerContract(wrapper, 'outsourcing-planned-issue-date', '请选择计划发料日期')
     expectDatePickerContract(wrapper, 'outsourcing-planned-receipt-date', '请选择计划收货日期')
+    expect(wrapper.find('[data-test="outsourcing-order-form"]').exists()).toBe(true)
+    expect(wrapper.findAll('[data-test="outsourcing-form-section"]').length).toBeGreaterThanOrEqual(3)
+    expect(wrapper.findAll('[data-test="outsourcing-form-grid"]').at(0)?.classes()).toContain('outsourcing-form-grid')
     expect(wrapper.find('[data-test="outsourcing-order-form-bottom-actions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="outsourcing-order-form-bottom-actions"]').classes()).toContain('form-footer')
     expect(wrapper.find('[data-test="bottom-save-outsourcing-order"]').exists()).toBe(true)
   })
 
@@ -538,6 +628,11 @@ describe('027 外协执行页面族', () => {
     expect(wrapper.text()).toContain('OSR-027-001')
     expect(wrapper.text()).toContain('可查看')
     expect(wrapper.text()).toContain('无销售项目查看权限')
+    expect(wrapper.find('[data-test="outsourcing-detail-actions"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="outsourcing-detail-summary"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="outsourcing-detail-fields"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="outsourcing-materials-table-scroll"]').classes()).toContain('table-scroll')
+    expect(wrapper.find('[data-test="outsourcing-executions-table-scroll"]').classes()).toContain('table-scroll')
     const traceLinks = wrapper.findAll('[data-test="outsourcing-trace-link"]')
     expect(traceLinks).toHaveLength(1)
     await traceLinks[0].trigger('click')
@@ -545,10 +640,11 @@ describe('027 外协执行页面族', () => {
     expect(router.currentRoute.value.path).toBe('/planning/material-requirements/1001')
     await router.push('/production/outsourcing-orders/77')
     await flushPromises()
-    expectButtonDisabled(wrapper, 'release-outsourcing-order', false)
-    expectButtonDisabled(wrapper, 'close-outsourcing-order', false)
+    expectOverflowAction(wrapper, 'release-outsourcing-order', '发布', false)
+    expectOverflowAction(wrapper, 'close-outsourcing-order', '关闭', false)
+    expectOverflowAction(wrapper, 'cancel-outsourcing-order', '取消', false)
 
-    await wrapper.find('[data-test="release-outsourcing-order"]').trigger('click')
+    await runDetailMoreAction(wrapper, 'release')
     await flushPromises()
     expect(outsourcingApiMock.orders.release).toHaveBeenCalledWith(77, {
       version: 6,
@@ -561,11 +657,11 @@ describe('027 外协执行页面族', () => {
       409,
       'trace-close',
     ))
-    await wrapper.find('[data-test="close-outsourcing-order"]').trigger('click')
+    await runDetailMoreAction(wrapper, 'close')
     await flushPromises()
     expect(wrapper.text()).toContain('外协订单状态不允许关闭')
 
-    await wrapper.find('[data-test="cancel-outsourcing-order"]').trigger('click')
+    await runDetailMoreAction(wrapper, 'cancel')
     await flushPromises()
     expect(outsourcingApiMock.orders.cancel).toHaveBeenCalledWith(77, {
       version: 6,
@@ -585,9 +681,38 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing:close',
     ])
 
-    expectButtonDisabled(wrapper, 'release-outsourcing-order', false)
-    expectButtonDisabled(wrapper, 'close-outsourcing-order', true)
+    expectOverflowAction(wrapper, 'release-outsourcing-order', '发布', false)
+    expectOverflowAction(wrapper, 'close-outsourcing-order', '关闭', true)
     expect(wrapper.text()).toContain('外协订单尚未达到关闭条件')
+  })
+
+  it('详情页保持单行动作承载，并把次级动作收入更多且保留原事件路径', async () => {
+    const { wrapper, router } = await mountWithRouter(ProductionOutsourcingOrderDetailView, '/production/outsourcing-orders/77', [
+      'production:outsourcing:view',
+      'production:outsourcing:release',
+      'production:outsourcing:close',
+      'production:outsourcing:cancel',
+      'production:outsourcing-issue:create',
+      'production:outsourcing-receipt:create',
+    ])
+
+    const actions = wrapper.find('[data-test="outsourcing-detail-actions"]')
+    expect(actions.exists()).toBe(true)
+    expect(actions.classes()).toContain('outsourcing-detail-actions--single-line')
+    expect(actions.findAllComponents({ name: 'ElButton' }).map((button: VueWrapper) => button.text())).toEqual([
+      '返回列表',
+      '外协收货',
+      '更多',
+    ])
+    expectButtonDisabled(wrapper, 'create-outsourcing-receipt', false)
+    expectOverflowAction(wrapper, 'release-outsourcing-order', '发布', false)
+    expectOverflowAction(wrapper, 'close-outsourcing-order', '关闭', false)
+    const cancelItem = expectOverflowAction(wrapper, 'cancel-outsourcing-order', '取消', false)
+    expect(classText(cancelItem?.props?.class)).toContain('outsourcing-detail-more-action--danger')
+    expectOverflowAction(wrapper, 'create-outsourcing-issue', '外协发料', false)
+
+    await runDetailMoreAction(wrapper, 'issue')
+    expect(router.currentRoute.value.path).toBe('/production/outsourcing-orders/77/material-issues')
   })
 
   it('详情执行单据状态显示中文，不裸露 DRAFT 或 POSTED', async () => {
@@ -608,6 +733,20 @@ describe('027 外协执行页面族', () => {
     expect(wrapper.text()).not.toContain('POSTED')
   })
 
+  it('详情追溯缺失或空值 traceLinks 时给追溯表格传入空数组', async () => {
+    outsourcingApiMock.orders.get.mockResolvedValueOnce({
+      ...outsourcingOrder,
+      traceLinks: null,
+    } as unknown as OutsourcingOrderDetailRecord)
+    const { wrapper } = await mountWithRouter(ProductionOutsourcingOrderDetailView, '/production/outsourcing-orders/77', [
+      'production:outsourcing:view',
+    ])
+
+    const traceTable = wrapper.findAllComponents({ name: 'ElTable' }).at(-1)
+    expect(traceTable?.exists()).toBe(true)
+    expect(traceTable?.props('data')).toEqual([])
+  })
+
   it('订单级创建入口只接受后端 canonical ISSUE 和 RECEIPT 动作码', async () => {
     outsourcingApiMock.orders.get.mockResolvedValueOnce({
       ...outsourcingOrder,
@@ -619,9 +758,9 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing-receipt:create',
     ])
 
-    expectButtonDisabled(wrapper, 'create-outsourcing-issue', false)
+    expectOverflowAction(wrapper, 'create-outsourcing-issue', '外协发料', false)
     expectButtonDisabled(wrapper, 'create-outsourcing-receipt', false)
-    await wrapper.find('[data-test="create-outsourcing-issue"]').trigger('click')
+    await runDetailMoreAction(wrapper, 'issue')
     await flushPromises()
     expect(router.currentRoute.value.path).toBe('/production/outsourcing-orders/77/material-issues')
     await router.push('/production/outsourcing-orders/77')
@@ -644,7 +783,7 @@ describe('027 外协执行页面族', () => {
       'production:outsourcing-receipt:create',
     ])
 
-    expectButtonDisabled(wrapper, 'create-outsourcing-issue', true)
+    expectOverflowAction(wrapper, 'create-outsourcing-issue', '外协发料', true)
     expectButtonDisabled(wrapper, 'create-outsourcing-receipt', true)
   })
 
@@ -663,12 +802,25 @@ describe('027 外协执行页面族', () => {
     ])
     expect(issue.wrapper.find('[data-test="save-outsourcing-issue"]').exists()).toBe(false)
     expect(issue.wrapper.text()).toContain('没有外协发料写入权限')
+    expectComponentDisabled(issue.wrapper, 'outsourcing-issue-business-date')
+    expectComponentDisabled(issue.wrapper, 'outsourcing-issue-warehouse-id')
+    expectComponentDisabled(issue.wrapper, 'outsourcing-issue-line-material')
+    expectComponentDisabled(issue.wrapper, 'outsourcing-issue-line-ownership')
+    expectInputDisabled(issue.wrapper, 'outsourcing-issue-line-quantity')
+    expectInputDisabled(issue.wrapper, 'outsourcing-issue-line-project')
+    expectInputDisabled(issue.wrapper, 'outsourcing-issue-line-batch')
 
     const receipt = await mountWithRouter(ProductionOutsourcingReceiptView, '/production/outsourcing-orders/77/receipts', [
       'production:outsourcing:view',
     ])
     expect(receipt.wrapper.find('[data-test="save-outsourcing-receipt"]').exists()).toBe(false)
     expect(receipt.wrapper.text()).toContain('没有外协收货写入权限')
+    expectComponentDisabled(receipt.wrapper, 'outsourcing-receipt-business-date')
+    expectComponentDisabled(receipt.wrapper, 'outsourcing-receipt-warehouse-id')
+    expectInputDisabled(receipt.wrapper, 'outsourcing-receipt-accepted-quantity')
+    expectInputDisabled(receipt.wrapper, 'outsourcing-receipt-rejected-quantity')
+    expectInputDisabled(receipt.wrapper, 'outsourcing-receipt-serial')
+    expectInputDisabled(receipt.wrapper, 'outsourcing-receipt-serial-quantity')
   })
 
   it('外协发料和收货表单提供中文占位', async () => {
