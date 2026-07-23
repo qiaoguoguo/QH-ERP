@@ -1319,10 +1319,10 @@ onMounted(() => {
       <a
         v-if="activeTab === 'versions' && canHistoryImport"
         data-test="bom-history-import-entry"
-        class="inline-action-link"
+        class="action-button-link"
         href="/platform/history-imports?adapterCode=BOM_DRAFT_V1"
       >
-        历史导入
+        <el-button tag="span">历史导入</el-button>
       </a>
       <el-button v-if="activeTab === 'versions' && canBomImport" data-test="download-bom-draft-template" @click="downloadBomDraftTemplate">
         下载草稿模板

@@ -31,6 +31,13 @@ const canConfirm = computed(() => actionSet.value.has('CONFIRM'))
 const canCancel = computed(() => actionSet.value.has('CANCEL'))
 const canViewErrors = computed(() => actionSet.value.has('ERRORS'))
 const expectedErrorTotal = computed(() => Number(detail.value?.errorSummary?.totalErrors ?? detail.value?.failedRows ?? 0))
+const relatedDocumentTaskId = computed(() => detail.value?.relatedTaskId ?? detail.value?.taskId ?? detail.value?.id ?? null)
+const relatedDocumentTaskRoute = computed(() => {
+  const taskId = relatedDocumentTaskId.value
+  return taskId === null || taskId === undefined
+    ? ''
+    : `/platform/document-tasks?taskId=${encodeURIComponent(String(taskId))}&returnTo=${encodeURIComponent('/platform/history-imports')}`
+})
 
 async function loadDetail() {
   loading.value = true
@@ -192,11 +199,19 @@ onMounted(() => {
           <dt>关联任务</dt>
           <dd>
             <RouterLink
-              v-if="detail.relatedTaskId || detail.taskId"
-              data-test="history-import-task-link"
-              :to="`/platform/document-tasks?taskId=${encodeURIComponent(String(detail.relatedTaskId ?? detail.taskId))}&returnTo=${encodeURIComponent('/platform/history-imports')}`"
+              v-if="relatedDocumentTaskRoute"
+              :to="relatedDocumentTaskRoute"
+              custom
+              v-slot="{ navigate }"
             >
-              查看文档任务
+              <a
+                data-test="history-import-task-link"
+                class="action-button-link"
+                :href="relatedDocumentTaskRoute"
+                @click="navigate"
+              >
+                <el-button tag="span" size="small" text>查看文档任务</el-button>
+              </a>
             </RouterLink>
             <span v-else>-</span>
           </dd>

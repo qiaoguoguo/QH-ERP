@@ -121,6 +121,11 @@ describe('全局样式契约', () => {
     expect(elementPlusSource).toContain("element-plus/theme-chalk/el-dropdown-item.css")
   })
 
+  it('固定打印紧凑弹层使用的 Popover 纳入共享 Element Plus 注册入口和样式入口', () => {
+    expectElementPlusComponentRegistered('ElPopover')
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-popover.css")
+  })
+
   it('027 外协页面规格不再通过旧挂载降级写法降低类型', () => {
     const outsourcingSpecSource = readFileSync(
       resolve(currentDir, 'modules/production/outsourcing/ProductionOutsourcingViews.spec.ts'),

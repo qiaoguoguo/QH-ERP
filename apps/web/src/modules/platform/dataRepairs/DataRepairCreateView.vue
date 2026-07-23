@@ -209,7 +209,11 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="新增修复申请" description="按冻结适配器字段创建受控数据修复申请，后续由审批、执行和验证链路处理。">
     <template #actions>
-      <RouterLink class="inline-action-link" to="/platform/data-repairs">返回列表</RouterLink>
+      <RouterLink to="/platform/data-repairs" custom v-slot="{ navigate }">
+        <a data-test="back-data-repair-list" class="action-button-link" href="/platform/data-repairs" @click="navigate">
+          <el-button tag="span">返回列表</el-button>
+        </a>
+      </RouterLink>
     </template>
 
     <template #alerts>

@@ -47,14 +47,18 @@ export interface PaginationRouteRequirement {
 }
 
 export type OperationColumnViolationKind =
+  | 'bare-operation-link'
   | 'missing-fixed-right'
   | 'missing-more-dropdown'
   | 'min-width-disallowed'
+  | 'operation-column-full-panel'
   | 'too-many-direct-actions'
+  | 'unregistered-composite-action'
   | 'unexpected-more-direct-actions'
   | 'wrong-width'
 
 export interface OperationColumnOccurrence extends SurfaceOccurrence {
+  blockText: string
   fixedValue: string | null
   widthValue: string | null
   minWidthValue: string | null
@@ -73,6 +77,31 @@ export interface OperationColumnViolation {
 export interface OperationMoreDropdownDirectActionException {
   sourceFile: string
   directActionCount: number
+  reason: string
+}
+
+export type ActionControlViolationKind =
+  | 'missing-page-action-link'
+  | 'ordinary-page-action-link'
+
+export interface ActionControlViolation {
+  kind: ActionControlViolationKind
+  sourceFile: string
+  line: number
+  testId: string
+  evidence: string
+  detail: string
+}
+
+export interface PageActionLinkRequirement {
+  sourceFile: string
+  testId: string
+  reason: string
+}
+
+export interface PageActionLinkCandidateExemption {
+  sourceFile: string
+  text: string
   reason: string
 }
 
@@ -98,6 +127,7 @@ export interface PageSurfaceInventory {
   fixedRightColumns: SurfaceOccurrence[]
   operationColumns: OperationColumnOccurrence[]
   operationColumnViolations: OperationColumnViolation[]
+  actionControlViolations: ActionControlViolation[]
   tooltips: SurfaceOccurrence[]
   returnContexts: SurfaceOccurrence[]
   namedStatusTags: string[]
@@ -135,8 +165,33 @@ export const operationMoreDropdownDirectActionExceptions: OperationMoreDropdownD
   },
 ]
 
+export const pageActionLinkRequirements: PageActionLinkRequirement[] = [
+  { sourceFile: 'apps/web/src/modules/platform/dataRepairs/DataRepairListView.vue', testId: 'create-data-repair', reason: '039 B06 数据修复新增修复申请入口' },
+  { sourceFile: 'apps/web/src/modules/platform/dataRepairs/DataRepairListView.vue', testId: 'data-repair-detail-link', reason: '039 B06 数据修复列表查看详情入口' },
+  { sourceFile: 'apps/web/src/modules/platform/dataRepairs/DataRepairCreateView.vue', testId: 'back-data-repair-list', reason: '039 B06 数据修复新建返回列表入口' },
+  { sourceFile: 'apps/web/src/modules/master/customers/CustomerListView.vue', testId: 'customer-history-import-entry', reason: '039 B07 客户历史导入入口' },
+  { sourceFile: 'apps/web/src/modules/master/suppliers/SupplierListView.vue', testId: 'supplier-history-import-entry', reason: '039 B07 供应商历史导入入口' },
+  { sourceFile: 'apps/web/src/modules/materials/items/MaterialItemListView.vue', testId: 'material-history-import-entry', reason: '039 B07 物料历史导入入口' },
+  { sourceFile: 'apps/web/src/modules/materials/boms/BomListView.vue', testId: 'bom-history-import-entry', reason: '039 B07 BOM 历史导入入口' },
+  { sourceFile: 'apps/web/src/modules/sales/projects/SalesProjectListView.vue', testId: 'sales-project-history-import-entry', reason: '039 B07 项目历史导入入口' },
+  { sourceFile: 'apps/web/src/modules/platform/historyImports/HistoryImportListView.vue', testId: 'history-import-detail-link', reason: '039 B08 历史导入批次查看详情入口' },
+  { sourceFile: 'apps/web/src/modules/platform/historyImports/HistoryImportDetailView.vue', testId: 'history-import-task-link', reason: '039 B08 历史导入详情查看文档任务入口' },
+  { sourceFile: 'apps/web/src/modules/platform/messages/MessageCenterView.vue', testId: 'message-business-link', reason: '039 B09 消息中心查看业务入口' },
+  { sourceFile: 'apps/web/src/modules/procurement/PurchaseInquiryListView.vue', testId: 'purchase-inquiry-detail-link', reason: '039 B10 采购询价列表详情入口' },
+  { sourceFile: 'apps/web/src/modules/procurement/PriceAgreementListView.vue', testId: 'price-agreement-detail-link', reason: '039 B10 价格协议列表详情入口' },
+  { sourceFile: 'apps/web/src/modules/platform/approvals/ApprovalCenterView.vue', testId: 'approval-business-link', reason: '039 B11 审批列表查看业务单据入口' },
+  { sourceFile: 'apps/web/src/modules/platform/approvals/ApprovalCenterView.vue', testId: 'approval-detail-business-link', reason: '039 B11 审批详情查看业务单据入口' },
+]
+
+export const pageActionLinkCandidateExemptions: PageActionLinkCandidateExemption[] = []
+
 function sourceLabel(key: string): string {
   return `apps/web/src/${key.replace(/^\.\.\//, '')}`
+}
+
+function sourceKeyFromSourceFile(sourceFile: string): string {
+  const normalized = sourceFile.replace(/\\/g, '/').replace(/^apps\/web\/src\//, '')
+  return `../${normalized}`
 }
 
 function lineNumberAt(text: string, index: number): number {
@@ -197,9 +252,30 @@ function attributeValue(openingTag: string, name: string): string | null {
   return match?.[1] ?? null
 }
 
+function countMatches(text: string, pattern: RegExp): number {
+  return Array.from(text.matchAll(pattern)).length
+}
+
+function stripCompliantActionButtonLinks(text: string): string {
+  return text
+    .replace(/<(?:RouterLink|router-link)\b[\s\S]*?<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*\baction-button-link\b[^"']*["'])[\s\S]*?<el-button\b[\s\S]*?<\/a>[\s\S]*?<\/(?:RouterLink|router-link)>/g, '')
+    .replace(/<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*\baction-button-link\b[^"']*["'])[\s\S]*?<el-button\b[\s\S]*?<\/a>/g, '')
+}
+
 function countDirectActions(blockText: string): number {
   const withoutDropdowns = blockText.replace(/<el-dropdown\b[\s\S]*?<\/el-dropdown>/g, '')
-  return Array.from(withoutDropdowns.matchAll(/<(?:el-button|el-link|RouterLink|router-link)\b/g)).length
+  const compliantActionLinkCount = countMatches(
+    withoutDropdowns,
+    /<a\b(?=[^>]*\bclass\s*=\s*["'][^"']*\baction-button-link\b[^"']*["'])[\s\S]*?<el-button\b[\s\S]*?<\/a>/g,
+  )
+  const withoutActionButtonLinks = stripCompliantActionButtonLinks(withoutDropdowns)
+  const compactCompositeActionCount = countMatches(
+    withoutActionButtonLinks,
+    /<FixedPrintAction\b(?=[^>]*\bvariant\s*=\s*["']compact["'])/g,
+  )
+  return compliantActionLinkCount
+    + compactCompositeActionCount
+    + countMatches(withoutActionButtonLinks, /<(?:el-button|el-link|RouterLink|router-link|a)\b/g)
 }
 
 function collectOperationColumns(sourceKey: string, sourceText: string): OperationColumnOccurrence[] {
@@ -212,6 +288,7 @@ function collectOperationColumns(sourceKey: string, sourceText: string): Operati
       sourceFile: sourceLabel(sourceKey),
       line,
       text: lineTextAt(sourceText, line),
+      blockText,
       fixedValue: attributeValue(openingTag, 'fixed'),
       widthValue: attributeValue(openingTag, 'width'),
       minWidthValue: attributeValue(openingTag, 'min-width'),
@@ -247,6 +324,29 @@ function operationColumnViolations(column: OperationColumnOccurrence): Operation
       ...base,
       kind: 'min-width-disallowed',
       detail: `min-width=${column.minWidthValue}，操作列不得用 min-width 替代固定宽度`,
+    })
+  }
+  const operationBlock = column.blockText
+  const blockWithoutCompliantLinks = stripCompliantActionButtonLinks(operationBlock)
+  if (/<(?:RouterLink|router-link|a)\b/.test(blockWithoutCompliantLinks)) {
+    violations.push({
+      ...base,
+      kind: 'bare-operation-link',
+      detail: '操作列内存在未使用 action-button-link + ElButton 承载的链接式动作',
+    })
+  }
+  if (/<(?:section|div)\b(?=[^>]*\bclass\s*=\s*["'][^"']*\b(?:platform-panel|fixed-print-action|fixed-print-panel)\b[^"']*["'])/.test(operationBlock) || /<h[1-4]\b/.test(operationBlock)) {
+    violations.push({
+      ...base,
+      kind: 'operation-column-full-panel',
+      detail: '操作列内不得嵌入标题、说明或完整面板',
+    })
+  }
+  if (Array.from(operationBlock.matchAll(/<FixedPrintAction\b[^>]*>/g)).some((match) => !/\bvariant\s*=\s*["']compact["']/.test(match[0]))) {
+    violations.push({
+      ...base,
+      kind: 'unregistered-composite-action',
+      detail: '操作列内 FixedPrintAction 必须以 variant="compact" 登记为单个复合动作',
     })
   }
   if (column.hasMoreDropdown && column.directActionCount < 2 && !operationMoreDropdownDirectActionExceptions.some((item) => (
@@ -294,6 +394,203 @@ function collectInlineQueryForms(sourceKey: string, sourceText: string): Surface
     sourceText,
     /<el-form\b(?=[^>]*\bclass=["'][^"']*\bquery-form\b[^"']*["'])(?=[^>]*\binline(?:\s|=|>|$))[^>]*>/g,
   )
+}
+
+function snippetAround(sourceText: string, index: number, radius = 520): string {
+  return sourceText.slice(Math.max(0, index - radius), Math.min(sourceText.length, index + radius))
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+interface VueElementBlock {
+  tagName: string
+  start: number
+  end: number
+  openingTag: string
+  blockText: string
+}
+
+function elementOpeningAt(sourceText: string, start: number): { tagName: string; openingTag: string } | null {
+  const match = sourceText.slice(start).match(/^<([A-Za-z][\w.-]*)\b[^>]*>/)
+  if (!match) {
+    return null
+  }
+  return {
+    tagName: match[1],
+    openingTag: match[0],
+  }
+}
+
+function elementBlockFromOpening(sourceText: string, start: number): VueElementBlock | null {
+  const opening = elementOpeningAt(sourceText, start)
+  if (!opening) {
+    return null
+  }
+  if (/\/\s*>$/.test(opening.openingTag)) {
+    return {
+      ...opening,
+      start,
+      end: start + opening.openingTag.length,
+      blockText: opening.openingTag,
+    }
+  }
+
+  const tagPattern = new RegExp(`</?${escapeRegExp(opening.tagName)}\\b[^>]*>`, 'g')
+  tagPattern.lastIndex = start
+  let depth = 0
+  for (const match of sourceText.matchAll(tagPattern)) {
+    const tagText = match[0]
+    const tagStart = match.index ?? 0
+    if (tagStart < start) {
+      continue
+    }
+    if (tagText.startsWith('</')) {
+      depth -= 1
+    } else if (!/\/\s*>$/.test(tagText)) {
+      depth += 1
+    }
+    if (depth === 0) {
+      const end = tagStart + tagText.length
+      return {
+        ...opening,
+        start,
+        end,
+        blockText: sourceText.slice(start, end),
+      }
+    }
+  }
+
+  return {
+    ...opening,
+    start,
+    end: start + opening.openingTag.length,
+    blockText: opening.openingTag,
+  }
+}
+
+function elementBlockContaining(sourceText: string, index: number): VueElementBlock | null {
+  let start = sourceText.lastIndexOf('<', index)
+  while (start >= 0) {
+    if (!sourceText.startsWith('</', start)) {
+      const block = elementBlockFromOpening(sourceText, start)
+      if (block && block.start <= index && block.end >= index) {
+        return block
+      }
+    }
+    start = sourceText.lastIndexOf('<', start - 1)
+  }
+  return null
+}
+
+function attributeFromOpening(openingTag: string, name: string): string | null {
+  return attributeValue(openingTag, name)
+}
+
+function hasButtonizedActionLink(blockText: string): boolean {
+  return /\bclass\s*=\s*["'][^"']*\baction-button-link\b[^"']*["']/.test(blockText)
+    && /<el-button\b(?=[^>]*\btag\s*=\s*["']span["'])/.test(blockText)
+}
+
+function visibleText(blockText: string): string {
+  return blockText
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/{{[\s\S]*?}}/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const actionCandidateWords = ['新增', '返回', '查看', '历史导入', '下载', '上传', '打印', '生成', '提交', '处理']
+const actionCandidateContextPattern = /\b(?:page-header|page-actions|detail-actions|section-title-row|header-actions|form-actions|drawer-actions|toolbar|action-bar|template\s+#actions)\b/
+
+function isCandidateExempted(sourceFile: string, text: string): boolean {
+  return pageActionLinkCandidateExemptions.some((item) =>
+    item.sourceFile === sourceFile && text.includes(item.text),
+  )
+}
+
+function collectLinkBlocks(sourceText: string): VueElementBlock[] {
+  const seen = new Set<number>()
+  return Array.from(sourceText.matchAll(/<(?:RouterLink|router-link|a)\b/g)).flatMap((match) => {
+    const start = match.index ?? 0
+    if (seen.has(start)) {
+      return []
+    }
+    const block = elementBlockFromOpening(sourceText, start)
+    if (!block) {
+      return []
+    }
+    seen.add(start)
+    return [block]
+  })
+}
+
+function collectActionControlViolations(sourceKey: string, sourceText: string): ActionControlViolation[] {
+  const sourceFile = sourceLabel(sourceKey)
+  const violations: ActionControlViolation[] = []
+  pageActionLinkRequirements.filter((item) => item.sourceFile === sourceFile).forEach((requirement) => {
+    const escapedTestId = escapeRegExp(requirement.testId)
+    const matches = Array.from(sourceText.matchAll(new RegExp(`data-test\\s*=\\s*["']${escapedTestId}["']`, 'g')))
+    if (matches.length === 0) {
+      violations.push({
+        kind: 'missing-page-action-link',
+        sourceFile,
+        line: 1,
+        testId: requirement.testId,
+        evidence: requirement.testId,
+        detail: `${requirement.reason} 缺少已登记动作入口`,
+      })
+      return
+    }
+    matches.forEach((match) => {
+      const index = match.index ?? 0
+      const line = lineNumberAt(sourceText, index)
+      const block = elementBlockContaining(sourceText, index)
+      if (!block || !hasButtonizedActionLink(block.blockText)) {
+        violations.push({
+          kind: 'ordinary-page-action-link',
+          sourceFile,
+          line,
+          testId: requirement.testId,
+          evidence: lineTextAt(sourceText, line),
+          detail: `${requirement.reason} 必须使用 action-button-link + ElButton tag="span" 承载`,
+        })
+      }
+    })
+  })
+  collectLinkBlocks(sourceText).forEach((block) => {
+    if (hasButtonizedActionLink(block.blockText)) {
+      return
+    }
+    const text = visibleText(block.blockText)
+    if (!text || !actionCandidateWords.some((word) => text.includes(word))) {
+      return
+    }
+    if (!actionCandidateContextPattern.test(snippetAround(sourceText, block.start))) {
+      return
+    }
+    if (isCandidateExempted(sourceFile, text)) {
+      return
+    }
+    const line = lineNumberAt(sourceText, block.start)
+    violations.push({
+      kind: 'ordinary-page-action-link',
+      sourceFile,
+      line,
+      testId: attributeFromOpening(block.openingTag, 'data-test') ?? `${block.tagName}:${text}`,
+      evidence: lineTextAt(sourceText, line),
+      detail: `页面标题区或详情动作区的动作式链接“${text}”必须使用 action-button-link + ElButton tag="span" 承载，或登记精确排除原因`,
+    })
+  })
+  return violations
+}
+
+export function collectActionControlViolationsFromSource(sourceFile: string, sourceText: string): ActionControlViolation[] {
+  return collectActionControlViolations(sourceKeyFromSourceFile(sourceFile), sourceText)
 }
 
 function collectPaginationRequirements(
@@ -347,6 +644,7 @@ export function buildPageSurfaceInventory(): PageSurfaceInventory {
   const paginations = allVueEntries.flatMap(([key, text]) => collectOccurrences('pagination', key, text, /<el-pagination(?:\s|>)/g))
   const paginationRequirements = collectPaginationRequirements(tables, paginations)
   const operationColumns = allVueEntries.flatMap(([key, text]) => collectOperationColumns(key, text))
+  const actionControlViolations = allVueEntries.flatMap(([key, text]) => collectActionControlViolations(key, text))
 
   return {
     moduleVueFiles: moduleVueFiles.map(sourceLabel),
@@ -371,6 +669,8 @@ export function buildPageSurfaceInventory(): PageSurfaceInventory {
     operationColumns,
     operationColumnViolations: operationColumns.flatMap(operationColumnViolations)
       .sort((left, right) => `${left.sourceFile}:${left.line}:${left.kind}`.localeCompare(`${right.sourceFile}:${right.line}:${right.kind}`)),
+    actionControlViolations: actionControlViolations
+      .sort((left, right) => `${left.sourceFile}:${left.line}:${left.testId}`.localeCompare(`${right.sourceFile}:${right.line}:${right.testId}`)),
     tooltips: allVueEntries.flatMap(([key, text]) => collectOccurrences('tooltip', key, text, /\bshow-overflow-tooltip\b/g)),
     returnContexts: allVueEntries.flatMap(([key, text]) => collectOccurrences('return-context', key, text, /\b(?:returnTo|returnQuery|returnRoute|fromRoute|backTo|goBack)\b/g)),
     namedStatusTags: sourceFiles.filter((file) => /(Status|Severity|Stage|Source|Completeness|Category|Direction|Type)Tag\.vue$/.test(file)),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildPageSurfaceInventory,
+  collectActionControlViolationsFromSource,
   collectOperationColumnViolations,
   collectOperationColumnsFromSource,
   formatOperationColumns,
@@ -179,6 +180,118 @@ describe('页面治理表面清单门禁', () => {
       violations,
       formatOperationColumnViolations(violations),
     ).toHaveLength(2)
+  })
+
+  it('操作列门禁用 fixture 捕获裸动作链接、完整面板和未登记复合动作', () => {
+    const columns = collectOperationColumnsFromSource('apps/web/src/modules/demo/DemoListView.vue', `
+      <template>
+        <el-table>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <RouterLink :to="detailRoute(row)" custom v-slot="{ navigate }">
+                <a class="action-button-link" :href="detailRoute(row)" @click="navigate">
+                  <el-button tag="span" size="small" text>详情</el-button>
+                </a>
+              </RouterLink>
+              <FixedPrintAction variant="compact" :object-id="row.id" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <RouterLink :to="detailRoute(row)">详情</RouterLink>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <a :href="detailRoute(row)">详情</a>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <FixedPrintAction :object-id="row.id" />
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" fixed="right" width="184">
+            <template #default="{ row }">
+              <section class="platform-panel">
+                <h2>固定打印</h2>
+                <el-button>预览</el-button>
+              </section>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+    `)
+    const violations = collectOperationColumnViolations(columns)
+
+    expect(columns[0]).toMatchObject({ directActionCount: 2 })
+    expect(
+      violations.map((item) => item.kind),
+      formatOperationColumnViolations(violations),
+    ).toEqual(expect.arrayContaining([
+      'bare-operation-link',
+      'operation-column-full-panel',
+      'unregistered-composite-action',
+    ]))
+    expect(
+      violations,
+      formatOperationColumnViolations(violations),
+    ).toHaveLength(4)
+  })
+
+  it('阶段纳入治理的页面动作链接必须全部使用按钮承载', () => {
+    const inventory = buildPageSurfaceInventory() as ReturnType<typeof buildPageSurfaceInventory> & {
+      actionControlViolations?: unknown[]
+    }
+
+    expect(
+      inventory.actionControlViolations,
+      JSON.stringify(inventory.actionControlViolations, null, 2),
+    ).toHaveLength(0)
+  })
+
+  it('页面动作链接门禁用 fixture 捕获邻近合规按钮掩盖目标不合规入口', () => {
+    const violations = collectActionControlViolationsFromSource('apps/web/src/modules/platform/dataRepairs/DataRepairCreateView.vue', `
+      <template>
+        <RouterLink to="/platform/data-repairs" custom v-slot="{ navigate }">
+          <a class="action-button-link" href="/platform/data-repairs" @click="navigate">
+            <el-button tag="span" size="small" text>返回列表</el-button>
+          </a>
+        </RouterLink>
+        <RouterLink to="/platform/data-repairs" custom v-slot="{ navigate }">
+          <a data-test="back-data-repair-list" href="/platform/data-repairs" @click="navigate">
+            返回列表
+          </a>
+        </RouterLink>
+      </template>
+    `)
+
+    expect(violations.map((item) => item.kind)).toEqual(['ordinary-page-action-link'])
+    expect(violations[0]).toMatchObject({
+      sourceFile: 'apps/web/src/modules/platform/dataRepairs/DataRepairCreateView.vue',
+      testId: 'back-data-repair-list',
+    })
+  })
+
+  it('页面动作候选门禁用 fixture 捕获标题区和详情区普通链接动作', () => {
+    const violations = collectActionControlViolationsFromSource('apps/web/src/modules/demo/DemoView.vue', `
+      <template>
+        <header class="page-header">
+          <RouterLink to="/demo/create">新增</RouterLink>
+          <a href="/demo/export">下载</a>
+        </header>
+        <section class="detail-actions">
+          <router-link to="/demo/submit">提交处理</router-link>
+        </section>
+        <RouterLink to="/reports/sales">销售报表</RouterLink>
+      </template>
+    `)
+
+    expect(violations.map((item) => item.evidence)).toEqual([
+      '<RouterLink to="/demo/create">新增</RouterLink>',
+      '<a href="/demo/export">下载</a>',
+      '<router-link to="/demo/submit">提交处理</router-link>',
+    ])
   })
 
   it('非路由状态标签、抽屉、面板、追溯、编辑器和选择器进入清单', () => {

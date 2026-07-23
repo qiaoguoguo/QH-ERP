@@ -170,7 +170,21 @@ onMounted(() => {
             >
               标记已读
             </el-button>
-            <RouterLink v-if="whitelistedBusinessRoute(row)" :to="whitelistedBusinessRoute(row) || ''">查看业务</RouterLink>
+            <RouterLink
+              v-if="whitelistedBusinessRoute(row)"
+              :to="whitelistedBusinessRoute(row) || ''"
+              custom
+              v-slot="{ navigate }"
+            >
+              <a
+                data-test="message-business-link"
+                class="action-button-link"
+                :href="whitelistedBusinessRoute(row) || ''"
+                @click="navigate"
+              >
+                <el-button tag="span" size="small" text>查看业务</el-button>
+              </a>
+            </RouterLink>
             <span v-else>业务受限</span>
           </template>
         </el-table-column>

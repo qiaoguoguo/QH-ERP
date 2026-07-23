@@ -109,6 +109,16 @@ function expectDefaultTableKeepsStatusScannable(wrapper: ReturnType<typeof mount
   expect(columns.at(-1)?.minWidth).toBeFalsy()
 }
 
+function expectHistoryImportButton(wrapper: ReturnType<typeof mountSuppliers>) {
+  const link = wrapper.find('[data-test="supplier-history-import-entry"]')
+  expect(link.exists()).toBe(true)
+  expect(link.element.tagName).toBe('A')
+  expect(link.attributes('href')).toBe('/platform/history-imports?adapterCode=SUPPLIER_MASTER_V1')
+  const button = link.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+}
+
 describe('供应商列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -201,7 +211,7 @@ describe('供应商列表页', () => {
 
     expectQueryFormsUseStandardGrid(wrapper)
     expectDefaultTableKeepsStatusScannable(wrapper)
-    expect(wrapper.find('[data-test="supplier-history-import-entry"]').exists()).toBe(true)
+    expectHistoryImportButton(wrapper)
     expect(wrapper.find('[data-test="supplier-batch-status-entry"]').exists()).toBe(true)
   })
 })

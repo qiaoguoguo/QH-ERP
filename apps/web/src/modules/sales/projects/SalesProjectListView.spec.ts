@@ -224,4 +224,19 @@ describe('销售项目列表页', () => {
     expect(wrapper.findComponent({ name: 'ElPagination' }).exists()).toBe(false)
     expect(wrapper.text().match(/暂无销售项目/g)).toHaveLength(1)
   })
+
+  it('标题区历史导入入口使用按钮语义且保留销售项目草稿适配器', async () => {
+    const { wrapper } = await mountList([
+      'sales:project:view',
+      'platform:history-import:view',
+    ])
+
+    const entry = wrapper.find('[data-test="sales-project-history-import-entry"]')
+    expect(entry.exists()).toBe(true)
+    expect(entry.element.tagName).toBe('A')
+    expect(entry.attributes('href')).toBe('/platform/history-imports?adapterCode=SALES_PROJECT_DRAFT_V1')
+    const button = entry.findComponent({ name: 'ElButton' })
+    expect(button.exists()).toBe(true)
+    expect(button.props('tag')).toBe('span')
+  })
 })

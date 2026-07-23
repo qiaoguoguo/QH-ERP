@@ -230,7 +230,16 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
-            <RouterLink data-test="history-import-detail-link" :to="detailRoute(row)">查看详情</RouterLink>
+            <RouterLink :to="detailRoute(row)" custom v-slot="{ navigate }">
+              <a
+                data-test="history-import-detail-link"
+                class="action-button-link"
+                :href="detailRoute(row)"
+                @click="navigate"
+              >
+                <el-button tag="span" size="small" text>查看详情</el-button>
+              </a>
+            </RouterLink>
           </template>
         </el-table-column>
       </el-table>

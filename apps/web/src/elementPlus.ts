@@ -18,6 +18,7 @@ import { ElLoading } from 'element-plus/es/components/loading/index.mjs'
 import { ElMenu, ElMenuItem, ElSubMenu } from 'element-plus/es/components/menu/index.mjs'
 import { ElOption } from 'element-plus/es/components/select/index.mjs'
 import { ElPagination } from 'element-plus/es/components/pagination/index.mjs'
+import { ElPopover } from 'element-plus/es/components/popover/index.mjs'
 import { ElProgress } from 'element-plus/es/components/progress/index.mjs'
 import { ElRadio, ElRadioButton, ElRadioGroup } from 'element-plus/es/components/radio/index.mjs'
 import { ElResult } from 'element-plus/es/components/result/index.mjs'
@@ -65,6 +66,7 @@ import 'element-plus/theme-chalk/el-message-box.css'
 import 'element-plus/theme-chalk/el-option.css'
 import 'element-plus/theme-chalk/el-overlay.css'
 import 'element-plus/theme-chalk/el-pagination.css'
+import 'element-plus/theme-chalk/el-popover.css'
 import 'element-plus/theme-chalk/el-popper.css'
 import 'element-plus/theme-chalk/el-progress.css'
 import 'element-plus/theme-chalk/el-radio.css'
@@ -116,6 +118,7 @@ const elementPlusComponents = [
   ElMenuItem,
   ElOption,
   ElPagination,
+  ElPopover,
   ElProgress,
   ElRadio,
   ElRadioButton,

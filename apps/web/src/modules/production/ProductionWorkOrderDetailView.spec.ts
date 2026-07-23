@@ -70,8 +70,8 @@ vi.mock('../../shared/api/costCollectionApi', () => ({
 vi.mock('../platform/components/FixedPrintAction.vue', () => ({
   default: {
     name: 'FixedPrintAction',
-    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title'],
-    template: '<section data-test="fixed-print-entry">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
+    props: ['objectType', 'objectId', 'objectNo', 'objectStatus', 'allowedObjectStatuses', 'title', 'variant'],
+    template: '<section data-test="fixed-print-entry" :data-variant="variant || \'panel\'">{{ objectType }} {{ objectId }} {{ objectNo }} {{ title }}</section>',
   },
 }))
 
@@ -480,6 +480,16 @@ function buttonsByText(wrapper: VueWrapper, text: string): VueWrapper[] {
   return wrapper.findAllComponents({ name: 'ElButton' }).filter((button) => button.text().trim() === text)
 }
 
+async function openWorkOrderActionMore(wrapper: VueWrapper) {
+  await wrapper.find('[data-test="production-work-order-action-more"]').trigger('click')
+  await flushPromises()
+}
+
+function teleportedWorkOrderMoreActionText() {
+  return Array.from(document.body.querySelectorAll<HTMLElement>('[data-action-test^="production-work-order-more-action-"]'))
+    .map((item) => item.textContent?.trim() ?? '')
+}
+
 async function mountDetail(
   record: ProductionWorkOrderDetailRecord | ProjectProductionWorkOrderDetailRecord,
   permissions = [
@@ -556,6 +566,7 @@ describe('生产工单详情页', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    document.body.innerHTML = ''
   })
 
   it('展示状态标签、数量摘要和工单基础信息', async () => {
@@ -620,6 +631,7 @@ describe('生产工单详情页', () => {
         objectStatus: 'IN_PROGRESS',
         allowedObjectStatuses: ['RELEASED', 'IN_PROGRESS', 'COMPLETED', 'CLOSED'],
         title: '生产工单固定打印',
+        variant: undefined,
       }),
       expect.objectContaining({
         objectType: 'PRODUCTION_MATERIAL_ISSUE',
@@ -628,6 +640,7 @@ describe('生产工单详情页', () => {
         objectStatus: 'POSTED',
         allowedObjectStatuses: ['POSTED'],
         title: '生产领料固定打印',
+        variant: 'compact',
       }),
       expect.objectContaining({
         objectType: 'PRODUCTION_COMPLETION_RECEIPT',
@@ -636,6 +649,7 @@ describe('生产工单详情页', () => {
         objectStatus: 'POSTED',
         allowedObjectStatuses: ['POSTED'],
         title: '完工入库固定打印',
+        variant: 'compact',
       }),
     ]))
   })
@@ -702,8 +716,8 @@ describe('生产工单详情页', () => {
     const { wrapper } = await mountDetail(releasedWithoutWorkOrderActions)
 
     expect(buttonsByText(wrapper, '领料')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '报工')).toHaveLength(1)
-    expect(buttonsByText(wrapper, '完工入库')).toHaveLength(1)
+    await openWorkOrderActionMore(wrapper)
+    expect(teleportedWorkOrderMoreActionText()).toEqual(expect.arrayContaining(['报工', '完工入库']))
 
     const draftWithLegacyPrivateActions = {
       ...projectDetailRecord,

@@ -32,6 +32,15 @@ describe('Element Plus 共享注册', () => {
     expect(app.component('ElDropdownItem')).toBeTruthy()
   })
 
+  it('注册固定打印紧凑入口使用的弹出承载组件，避免生产入口未解析告警', () => {
+    const app = createApp({ render: () => null })
+
+    installElementPlus(app)
+
+    expect(app.component('ElPopover')).toBeTruthy()
+    expect(elementPlusSource).toContain("element-plus/theme-chalk/el-popover.css")
+  })
+
   it('通过官方中文区域设置统一 Element Plus 内置用户文案', async () => {
     const app = createApp({ render: () => null })
     const { elementPlusLocale } = await import('./elementPlus')

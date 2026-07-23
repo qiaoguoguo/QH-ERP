@@ -167,6 +167,16 @@ function expectDefaultTableKeepsStatusScannable(wrapper: VueWrapper) {
   expect(columns.at(-1)?.minWidth).toBeFalsy()
 }
 
+function expectHistoryImportButton(wrapper: VueWrapper) {
+  const link = wrapper.find('[data-test="material-history-import-entry"]')
+  expect(link.exists()).toBe(true)
+  expect(link.element.tagName).toBe('A')
+  expect(link.attributes('href')).toBe('/platform/history-imports?adapterCode=MATERIAL_MASTER_V1')
+  const button = link.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+}
+
 async function fillValidMaterialForm(wrapper: VueWrapper) {
   await wrapper.find('input[name="material-code"]').setValue('MAT-RAW-001')
   await wrapper.find('input[name="material-name"]').setValue('冷轧钢板')
@@ -483,7 +493,7 @@ describe('物料档案页', () => {
 
     expectQueryFormsUseStandardGrid(wrapper)
     expectDefaultTableKeepsStatusScannable(wrapper)
-    expect(wrapper.find('[data-test="material-history-import-entry"]').exists()).toBe(true)
+    expectHistoryImportButton(wrapper)
     expect(wrapper.find('[data-test="material-batch-status-entry"]').exists()).toBe(true)
   })
 })

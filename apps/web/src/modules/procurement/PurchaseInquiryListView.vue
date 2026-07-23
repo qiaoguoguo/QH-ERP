@@ -197,7 +197,20 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
-            <router-link :to="{ name: 'procurement-inquiry-detail', params: { id: String(row.id) } }">详情</router-link>
+            <router-link
+              :to="{ name: 'procurement-inquiry-detail', params: { id: String(row.id) } }"
+              custom
+              v-slot="{ navigate }"
+            >
+              <a
+                data-test="purchase-inquiry-detail-link"
+                class="action-button-link"
+                :href="`/procurement/inquiries/${encodeURIComponent(String(row.id))}`"
+                @click="navigate"
+              >
+                <el-button tag="span" size="small" text>详情</el-button>
+              </a>
+            </router-link>
           </template>
         </el-table-column>
       </el-table>

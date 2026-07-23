@@ -114,11 +114,18 @@ onMounted(async () => {
     <template #actions>
       <RouterLink
         v-if="canCreate"
-        data-test="create-data-repair"
-        class="inline-action-link"
         :to="`/platform/data-repairs/create?returnTo=${encodeURIComponent('/platform/data-repairs')}`"
+        custom
+        v-slot="{ navigate }"
       >
-        新增修复申请
+        <a
+          data-test="create-data-repair"
+          class="action-button-link"
+          :href="`/platform/data-repairs/create?returnTo=${encodeURIComponent('/platform/data-repairs')}`"
+          @click="navigate"
+        >
+          <el-button tag="span" type="primary">新增修复申请</el-button>
+        </a>
       </RouterLink>
     </template>
 
@@ -179,7 +186,11 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
-            <RouterLink data-test="data-repair-detail-link" :to="detailRoute(row)">查看详情</RouterLink>
+            <RouterLink :to="detailRoute(row)" custom v-slot="{ navigate }">
+              <a data-test="data-repair-detail-link" class="action-button-link" :href="detailRoute(row)" @click="navigate">
+                <el-button tag="span" size="small" text>查看详情</el-button>
+              </a>
+            </RouterLink>
           </template>
         </el-table-column>
       </el-table>

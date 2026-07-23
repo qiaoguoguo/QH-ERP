@@ -517,10 +517,10 @@ onMounted(() => {
       <a
         v-if="authStore.hasPermission('platform:history-import:view') || authStore.hasPermission('platform:history-import:create')"
         data-test="material-history-import-entry"
-        class="inline-action-link"
+        class="action-button-link"
         href="/platform/history-imports?adapterCode=MATERIAL_MASTER_V1"
       >
-        历史导入
+        <el-button tag="span">历史导入</el-button>
       </a>
       <BatchStatusToolPanel
         v-if="authStore.hasPermission('platform:batch-tool:view')"

@@ -108,8 +108,21 @@ function mountWithAuth(component: Component, permissions: string[], props: Recor
       plugins: [pinia, ElementPlus],
       stubs: {
         RouterLink: {
-          props: ['to'],
-          template: '<a :data-to="to"><slot /></a>',
+          props: ['to', 'custom'],
+          emits: ['navigate'],
+          methods: {
+            navigate(event: Event) {
+              this.$emit('navigate', event)
+            },
+          },
+          template: `
+            <slot
+              v-if="custom"
+              :href="typeof to === 'string' ? to : ((to && to.path) || '')"
+              :navigate="navigate"
+            />
+            <a v-else :data-to="to"><slot /></a>
+          `,
         },
       },
     },
@@ -121,6 +134,25 @@ function buttonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string)
     .find((item) => item.attributes('data-test') === testId)
   expect(button?.exists()).toBe(true)
   return button!
+}
+
+function expectActionLinkButton(
+  wrapper: ReturnType<typeof mountWithAuth>,
+  testId: string,
+  href: string,
+  expectedProps: Record<string, unknown> = {},
+) {
+  const link = wrapper.find(`[data-test="${testId}"]`)
+  expect(link.exists()).toBe(true)
+  expect(link.element.tagName).toBe('A')
+  expect(link.attributes('href')).toBe(href)
+  const button = link.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+  Object.entries(expectedProps).forEach(([key, value]) => {
+    expect(button.props(key)).toBe(value)
+  })
+  return { link, button }
 }
 
 function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountWithAuth>) {
@@ -430,8 +462,13 @@ describe('034 平台治理页面', () => {
     expect(wrapper.text()).toContain('物料资料修复')
     expect(wrapper.text()).toContain('修正物料规格说明')
     expect(wrapper.text()).toContain('待执行')
-    expect(wrapper.find('[data-test="create-data-repair"]').exists()).toBe(true)
-    expect(wrapper.find('[data-to="/platform/data-repairs/501?returnTo=%2Fplatform%2Fdata-repairs"]').exists()).toBe(true)
+    expectActionLinkButton(wrapper, 'create-data-repair', '/platform/data-repairs/create?returnTo=%2Fplatform%2Fdata-repairs', {
+      type: 'primary',
+    })
+    expectActionLinkButton(wrapper, 'data-repair-detail-link', '/platform/data-repairs/501?returnTo=%2Fplatform%2Fdata-repairs', {
+      text: true,
+      size: 'small',
+    })
 
     const vm = wrapper.vm as unknown as {
       filters: { keyword: string; adapterCode: string; status: string }
@@ -461,6 +498,7 @@ describe('034 平台治理页面', () => {
 
     expectStandardFormPage(wrapper)
     expect(wrapper.text()).toContain('新增修复申请')
+    expectActionLinkButton(wrapper, 'back-data-repair-list', '/platform/data-repairs')
     expect(wrapper.text()).toContain('物料资料修复')
     expect(wrapper.text()).not.toMatch(/SQL|脚本|自定义表达式|自由字段/)
     expect(wrapper.find('input[name="data-repair-target-object-version"]').exists()).toBe(false)
@@ -736,6 +774,10 @@ describe('034 平台治理页面', () => {
     expect(wrapper.text()).toContain('HI-202607-0001')
     expect(wrapper.text()).not.toContain('字段映射设计')
     expect(wrapper.find('[data-test="upload-history-file"]').exists()).toBe(true)
+    expectActionLinkButton(wrapper, 'history-import-detail-link', '/platform/history-imports/601?returnTo=%2Fplatform%2Fhistory-imports', {
+      text: true,
+      size: 'small',
+    })
 
     await clickButtonByTest(wrapper, 'download-history-template')
     expect(platformGovernanceApiMock.historyImportAdapters.downloadTemplate).toHaveBeenCalledWith('CUSTOMER_MASTER_V1')
@@ -793,6 +835,7 @@ describe('034 平台治理页面', () => {
     expect(wrapper.text()).toContain('预检通过')
     expect(wrapper.text()).toContain('结果过期')
     expect(wrapper.text()).toContain('关联任务')
+    expectActionLinkButton(wrapper, 'history-import-task-link', '/platform/document-tasks?taskId=601&returnTo=%2Fplatform%2Fhistory-imports')
 
     await clickButtonByTest(wrapper, 'view-history-import-errors')
     expect(platformGovernanceApiMock.historyImports.errors).toHaveBeenCalledWith(601, { page: 1, pageSize: 10 })
@@ -808,6 +851,20 @@ describe('034 平台治理页面', () => {
       version: 4,
       idempotencyKey: expect.stringContaining('history-import-confirm-'),
     })
+  })
+
+  it('历史导入详情按真实后端响应 id 兜底展示关联文档任务入口', async () => {
+    platformGovernanceApiMock.historyImports.get.mockResolvedValueOnce({
+      ...historyImportDetail,
+      id: 601,
+      taskId: undefined,
+      relatedTaskId: undefined,
+    })
+    const wrapper = mountWithAuth(HistoryImportDetailView, ['platform:history-import:view'], { taskId: 601 })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('关联任务')
+    expectActionLinkButton(wrapper, 'history-import-task-link', '/platform/document-tasks?taskId=601&returnTo=%2Fplatform%2Fhistory-imports')
   })
 
   it('历史导入错误明细支持稳定多页浏览器样本', async () => {

@@ -1,5 +1,5 @@
 import ElementPlus from 'element-plus'
-import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -187,6 +187,20 @@ async function setSelectValue(wrapper: ReturnType<typeof mount>, index: number, 
   await flushPromises()
 }
 
+function expectActionLinkButton(wrapper: VueWrapper, testId: string, href: string, label: string) {
+  const link = wrapper.find(`[data-test="${testId}"]`)
+  expect(link.exists()).toBe(true)
+  expect(link.element.tagName).toBe('A')
+  expect(link.classes()).toContain('action-button-link')
+  expect(link.attributes('href')).toBe(href)
+  const button = link.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+  expect(button.props('text')).toBe(true)
+  expect(button.props('size')).toBe('small')
+  expect(button.text()).toContain(label)
+}
+
 describe('采购价格协议页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -259,6 +273,7 @@ describe('采购价格协议页面', () => {
     expect(wrapper.text()).toContain('税率 0.13')
     expect(wrapper.text()).toContain('CNY')
     expect(wrapper.text()).toContain('提交激活审批')
+    expectActionLinkButton(wrapper, 'price-agreement-detail-link', '/procurement/price-agreements/401', '详情')
 
     await wrapper.find('[data-test="export-price-agreements"]').trigger('click')
     await flushPromises()

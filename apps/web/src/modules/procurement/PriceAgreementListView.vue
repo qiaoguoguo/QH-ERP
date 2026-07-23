@@ -302,7 +302,20 @@ onMounted(() => {
             >
               提交激活审批
             </el-button>
-            <router-link :to="{ name: 'procurement-price-agreement-detail', params: { id: String(row.id) } }">详情</router-link>
+            <router-link
+              :to="{ name: 'procurement-price-agreement-detail', params: { id: String(row.id) } }"
+              custom
+              v-slot="{ navigate }"
+            >
+              <a
+                data-test="price-agreement-detail-link"
+                class="action-button-link"
+                :href="`/procurement/price-agreements/${encodeURIComponent(String(row.id))}`"
+                @click="navigate"
+              >
+                <el-button tag="span" size="small" text>详情</el-button>
+              </a>
+            </router-link>
           </template>
         </el-table-column>
       </el-table>

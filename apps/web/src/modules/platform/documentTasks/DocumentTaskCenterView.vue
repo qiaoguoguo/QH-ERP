@@ -120,6 +120,7 @@ const domainOptions = [
   { value: 'HISTORY_IMPORT', label: '历史导入' },
   { value: 'BATCH_TOOL', label: '批量工具' },
 ]
+const createdAtRangeInputNames = ['document-task-created-at-from', 'document-task-created-at-to']
 
 function queryValue(name: string): string | undefined {
   const routeValue = routeProxy?.$route?.query?.[name]
@@ -352,7 +353,7 @@ watch(routeQuerySignature, () => {
         <el-form-item label="创建日期">
           <el-date-picker
             v-model="filters.createdAtRange"
-            name="document-task-created-at-range"
+            :name="createdAtRangeInputNames"
             type="daterange"
             range-separator="至"
             start-placeholder="开始日期"

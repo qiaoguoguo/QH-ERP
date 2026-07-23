@@ -50,13 +50,13 @@ const emit = defineEmits<{
               过账
             </el-button>
             <FixedPrintAction
-              class="execution-print-entry"
               object-type="PRODUCTION_MATERIAL_ISSUE"
               :object-id="row.id"
               :object-no="row.issueNo || row.documentNo"
               :object-status="row.status"
               :allowed-object-statuses="['POSTED']"
               title="生产领料固定打印"
+              variant="compact"
             />
           </template>
         </el-table-column>
@@ -129,13 +129,13 @@ const emit = defineEmits<{
               过账
             </el-button>
             <FixedPrintAction
-              class="execution-print-entry"
               object-type="PRODUCTION_COMPLETION_RECEIPT"
               :object-id="row.id"
               :object-no="row.receiptNo || row.documentNo"
               :object-status="row.status"
               :allowed-object-statuses="['POSTED']"
               title="完工入库固定打印"
+              variant="compact"
             />
           </template>
         </el-table-column>
@@ -143,9 +143,3 @@ const emit = defineEmits<{
     </div>
   </section>
 </template>
-
-<style scoped>
-.execution-print-entry {
-  margin-top: 4px;
-}
-</style>

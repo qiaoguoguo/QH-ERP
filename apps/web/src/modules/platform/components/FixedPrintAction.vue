@@ -10,14 +10,17 @@ import {
 import { useAuthStore } from '../../../stores/authStore'
 import { platformErrorMessage } from '../platformPageHelpers'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   objectType: string
   objectId?: ResourceId | null
   objectNo?: string | null
   objectStatus?: string | null
   allowedObjectStatuses?: string[]
   title: string
-}>()
+  variant?: 'panel' | 'compact'
+}>(), {
+  variant: 'panel',
+})
 
 const authStore = useAuthStore()
 const canGeneratePrint = computed(() => authStore.hasPermission('platform:print:generate'))
@@ -135,37 +138,85 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="platform-panel">
-    <h3>{{ title }}</h3>
-    <el-alert v-if="error" class="form-alert" type="error" :title="error" :closable="false" />
-    <el-alert v-if="latestTaskNo" class="form-alert" type="success" :title="`已创建打印任务 ${latestTaskNo}`" :closable="false" />
-    <el-alert v-if="!canGeneratePrint" class="form-alert" type="info" title="无固定打印权限" :closable="false" />
-    <el-alert v-if="objectStatusMessage" class="form-alert" type="warning" :title="objectStatusMessage" :closable="false" />
-
-    <div v-if="canGeneratePrint" class="print-template-actions">
-      <template v-for="template in templates" :key="template.templateCode">
-        <el-button
-          data-test="preview-fixed-print"
-          :loading="actionLoading"
-          :disabled="!objectId || actionLoading || !isObjectStatusAllowed"
-          @click="previewPrint(template)"
-        >
-          预览 {{ template.name }}
-        </el-button>
-        <el-button
-          data-test="create-fixed-print-task"
-          type="primary"
-          :loading="actionLoading"
-          :disabled="!objectId || actionLoading || !isObjectStatusAllowed || previewedTemplateCode !== template.templateCode"
-          @click="createPrintTask(template)"
-        >
-          生成 PDF
+  <div class="fixed-print-action">
+    <el-popover
+      v-if="variant === 'compact'"
+      trigger="click"
+      placement="bottom-end"
+      :width="320"
+      popper-class="fixed-print-popover"
+    >
+      <template #reference>
+        <el-button data-test="open-fixed-print-action" size="small" text>
+          固定打印
         </el-button>
       </template>
-      <span v-if="!templates.length && !loading">暂无固定模板</span>
-    </div>
+      <div class="fixed-print-action-compact">
+        <h3>{{ title }}</h3>
+        <el-alert v-if="error" class="form-alert" type="error" :title="error" :closable="false" />
+        <el-alert v-if="latestTaskNo" class="form-alert" type="success" :title="`已创建打印任务 ${latestTaskNo}`" :closable="false" />
+        <el-alert v-if="!canGeneratePrint" class="form-alert" type="info" title="无固定打印权限" :closable="false" />
+        <el-alert v-if="objectStatusMessage" class="form-alert" type="warning" :title="objectStatusMessage" :closable="false" />
 
-    <el-drawer v-model="previewVisible" title="固定模板预览" size="min(720px, 92vw)" :teleported="false">
+        <div v-if="canGeneratePrint" class="print-template-actions compact">
+          <template v-for="template in templates" :key="template.templateCode">
+            <el-button
+              data-test="preview-fixed-print"
+              size="small"
+              :loading="actionLoading"
+              :disabled="!objectId || actionLoading || !isObjectStatusAllowed"
+              @click="previewPrint(template)"
+            >
+              预览 {{ template.name }}
+            </el-button>
+            <el-button
+              data-test="create-fixed-print-task"
+              size="small"
+              type="primary"
+              :loading="actionLoading"
+              :disabled="!objectId || actionLoading || !isObjectStatusAllowed || previewedTemplateCode !== template.templateCode"
+              @click="createPrintTask(template)"
+            >
+              生成 PDF
+            </el-button>
+          </template>
+          <span v-if="!templates.length && !loading">暂无固定模板</span>
+        </div>
+      </div>
+    </el-popover>
+
+    <section v-else class="platform-panel">
+      <h3>{{ title }}</h3>
+      <el-alert v-if="error" class="form-alert" type="error" :title="error" :closable="false" />
+      <el-alert v-if="latestTaskNo" class="form-alert" type="success" :title="`已创建打印任务 ${latestTaskNo}`" :closable="false" />
+      <el-alert v-if="!canGeneratePrint" class="form-alert" type="info" title="无固定打印权限" :closable="false" />
+      <el-alert v-if="objectStatusMessage" class="form-alert" type="warning" :title="objectStatusMessage" :closable="false" />
+
+      <div v-if="canGeneratePrint" class="print-template-actions">
+        <template v-for="template in templates" :key="template.templateCode">
+          <el-button
+            data-test="preview-fixed-print"
+            :loading="actionLoading"
+            :disabled="!objectId || actionLoading || !isObjectStatusAllowed"
+            @click="previewPrint(template)"
+          >
+            预览 {{ template.name }}
+          </el-button>
+          <el-button
+            data-test="create-fixed-print-task"
+            type="primary"
+            :loading="actionLoading"
+            :disabled="!objectId || actionLoading || !isObjectStatusAllowed || previewedTemplateCode !== template.templateCode"
+            @click="createPrintTask(template)"
+          >
+            生成 PDF
+          </el-button>
+        </template>
+        <span v-if="!templates.length && !loading">暂无固定模板</span>
+      </div>
+    </section>
+
+    <el-drawer v-model="previewVisible" title="固定模板预览" size="min(720px, 92vw)">
       <template v-if="preview">
         <section class="print-preview-section">
           <dl class="platform-panel-list">
@@ -190,5 +241,27 @@ onMounted(() => {
         </section>
       </template>
     </el-drawer>
-  </section>
+  </div>
 </template>
+
+<style scoped>
+.fixed-print-action-compact {
+  max-width: min(320px, calc(100vw - 32px));
+}
+
+.fixed-print-action-compact h3 {
+  font-size: 14px;
+  margin: 0 0 10px;
+}
+
+.print-template-actions.compact {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.print-template-actions.compact :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+</style>

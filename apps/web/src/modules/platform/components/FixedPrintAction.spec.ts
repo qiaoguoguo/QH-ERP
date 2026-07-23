@@ -1,10 +1,10 @@
-import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ResourceId } from '../../../shared/api/documentPlatformApi'
 import FixedPrintAction from './FixedPrintAction.vue'
 import { useAuthStore } from '../../../stores/authStore'
+import { installElementPlus } from '../../../elementPlus'
 
 const documentPlatformApiMock = vi.hoisted(() => ({
   printTemplates: { list: vi.fn() },
@@ -24,6 +24,7 @@ interface FixedPrintActionProps {
   objectStatus?: string | null
   allowedObjectStatuses?: string[]
   title: string
+  variant?: 'panel' | 'compact'
 }
 
 function mountWithAuth(props: FixedPrintActionProps, permissions = ['platform:print:generate']) {
@@ -37,8 +38,31 @@ function mountWithAuth(props: FixedPrintActionProps, permissions = ['platform:pr
   return mount(FixedPrintAction, {
     props,
     global: {
-      plugins: [pinia, ElementPlus],
+      plugins: [pinia, installElementPlus],
     },
+    attachTo: document.body,
+  })
+}
+
+function mountWithAuthAndAttrs(
+  props: FixedPrintActionProps,
+  attrs: Record<string, unknown>,
+  permissions = ['platform:print:generate'],
+) {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setSession({
+    user: { id: 1, username: 'admin', displayName: '管理员', status: 'ENABLED' },
+    menus: [],
+    permissions,
+  })
+  return mount(FixedPrintAction, {
+    props,
+    attrs,
+    global: {
+      plugins: [pinia, installElementPlus],
+    },
+    attachTo: document.body,
   })
 }
 
@@ -60,8 +84,20 @@ async function clickButtonByTest(wrapper: ReturnType<typeof mountWithAuth>, test
   await flushPromises()
 }
 
+async function openCompactPrint(wrapper: ReturnType<typeof mountWithAuth>) {
+  await wrapper.find('[data-test="open-fixed-print-action"]').trigger('click')
+  await flushPromises()
+}
+
+function teleportedButtonByTest(testId: string): HTMLButtonElement {
+  const button = document.body.querySelector<HTMLButtonElement>(`button[data-test="${testId}"]`)
+  expect(button).not.toBeNull()
+  return button!
+}
+
 describe('034 对象级固定打印入口', () => {
   beforeEach(() => {
+    document.body.innerHTML = ''
     vi.clearAllMocks()
     documentPlatformApiMock.printTemplates.list.mockResolvedValue([
       {
@@ -184,5 +220,57 @@ describe('034 对象级固定打印入口', () => {
 
     expect(documentPlatformApiMock.printPreviews.previewObject).not.toHaveBeenCalled()
     expect(documentPlatformApiMock.printTasks.create).not.toHaveBeenCalled()
+  })
+
+  it('行级紧凑入口只直显固定打印，预览和生成 PDF 留在弹出承载内', async () => {
+    const wrapper = mountWithAuth({
+      objectType: 'PRODUCTION_MATERIAL_ISSUE',
+      objectId: 301,
+      objectNo: 'MI-001',
+      objectStatus: 'POSTED',
+      allowedObjectStatuses: ['POSTED'],
+      title: '生产领料固定打印',
+      variant: 'compact',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="open-fixed-print-action"]').text()).toBe('固定打印')
+    expect(wrapper.find('.platform-panel').exists()).toBe(false)
+    await openCompactPrint(wrapper)
+    expect(teleportedButtonByTest('preview-fixed-print').textContent).toContain('预览')
+    expect(teleportedButtonByTest('create-fixed-print-task').textContent).toContain('生成 PDF')
+    expect(teleportedButtonByTest('create-fixed-print-task').disabled).toBe(true)
+
+    teleportedButtonByTest('preview-fixed-print').click()
+    await flushPromises()
+    teleportedButtonByTest('create-fixed-print-task').click()
+    await flushPromises()
+
+    expect(documentPlatformApiMock.printPreviews.previewObject).toHaveBeenCalledWith({
+      objectType: 'PRODUCTION_MATERIAL_ISSUE',
+      objectId: 301,
+      templateCode: 'SALES_ORDER_V1',
+    })
+    expect(documentPlatformApiMock.printTasks.create).toHaveBeenCalledWith({
+      objectType: 'PRODUCTION_MATERIAL_ISSUE',
+      objectId: 301,
+      templateCode: 'SALES_ORDER_V1',
+      idempotencyKey: expect.stringContaining('fixed-print-'),
+    })
+  })
+
+  it('页面级固定打印入口透传调用方 class 且不产生多根属性告警', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const wrapper = mountWithAuthAndAttrs({
+      objectType: 'SALES_ORDER',
+      objectId: 88,
+      objectNo: 'SO-001',
+      title: '固定打印',
+    }, { class: 'section-block' })
+    await flushPromises()
+
+    expect(wrapper.find('.fixed-print-action.section-block').exists()).toBe(true)
+    expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('Extraneous non-props attributes'))).toBe(false)
+    warnSpy.mockRestore()
   })
 })

@@ -149,10 +149,10 @@ onMounted(() => {
       <a
         v-if="authStore.hasPermission('platform:history-import:view') || authStore.hasPermission('platform:history-import:create')"
         data-test="sales-project-history-import-entry"
-        class="inline-action-link"
+        class="action-button-link"
         href="/platform/history-imports?adapterCode=SALES_PROJECT_DRAFT_V1"
       >
-        历史导入
+        <el-button tag="span">历史导入</el-button>
       </a>
       <el-button v-if="canCreate" data-test="create-sales-project" type="primary" @click="createProject">
         新建销售项目

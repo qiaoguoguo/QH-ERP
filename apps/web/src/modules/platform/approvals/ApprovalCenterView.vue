@@ -336,14 +336,6 @@ onMounted(() => {
         <el-table-column label="对象" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
             <span>{{ row.objectNo || '-' }} {{ row.objectName || '' }}</span>
-            <RouterLink
-              v-if="businessObjectRoute(row)"
-              class="inline-action-link"
-              data-test="approval-business-link"
-              :to="businessObjectRoute(row) || ''"
-            >
-              查看业务单据<span v-if="businessObjectLabel(row.objectType)">（{{ businessObjectLabel(row.objectType) }}）</span>
-            </RouterLink>
           </template>
         </el-table-column>
         <el-table-column prop="currentStepName" label="当前步骤" width="130" show-overflow-tooltip />
@@ -359,6 +351,28 @@ onMounted(() => {
         <el-table-column label="操作" fixed="right" width="184">
           <template #default="{ row }">
             <el-button data-test="open-approval-detail" size="small" text @click="openDetail(row)">详情</el-button>
+            <RouterLink
+              v-if="businessObjectRoute(row)"
+              :to="businessObjectRoute(row) || ''"
+              custom
+              v-slot="{ navigate }"
+            >
+              <a
+                data-test="approval-business-link"
+                class="action-button-link"
+                :href="businessObjectRoute(row) || ''"
+                @click="navigate"
+              >
+                <el-button
+                  tag="span"
+                  size="small"
+                  text
+                  :title="businessObjectLabel(row.objectType) ? `查看${businessObjectLabel(row.objectType)}` : '查看业务单据'"
+                >
+                  查看业务单据
+                </el-button>
+              </a>
+            </RouterLink>
           </template>
         </el-table-column>
       </el-table>
@@ -390,10 +404,20 @@ onMounted(() => {
         <dd>
           <RouterLink
             v-if="businessObjectRoute(detail)"
-            data-test="approval-detail-business-link"
             :to="businessObjectRoute(detail) || ''"
+            custom
+            v-slot="{ navigate }"
           >
-            查看业务单据<span v-if="businessObjectLabel(detail.objectType)">（{{ businessObjectLabel(detail.objectType) }}）</span>
+            <a
+              data-test="approval-detail-business-link"
+              class="action-button-link"
+              :href="businessObjectRoute(detail) || ''"
+              @click="navigate"
+            >
+              <el-button tag="span" size="small" text>
+                查看业务单据<span v-if="businessObjectLabel(detail.objectType)">（{{ businessObjectLabel(detail.objectType) }}）</span>
+              </el-button>
+            </a>
           </RouterLink>
           <span v-else>无可跳转业务单据</span>
         </dd>

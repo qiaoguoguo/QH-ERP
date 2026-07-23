@@ -1,6 +1,12 @@
 import ElementPlus from 'element-plus'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
+// @ts-expect-error 当前前端 tsconfig 不包含 Node 类型，本测试只读取本地源码。
+import { readFileSync } from 'node:fs'
+// @ts-expect-error 当前前端 tsconfig 不包含 Node 类型，本测试只解析本地文件路径。
+import { dirname, resolve } from 'node:path'
+// @ts-expect-error 当前前端 tsconfig 不包含 Node 类型，本测试只解析本地文件路径。
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import ApprovalCenterView from './approvals/ApprovalCenterView.vue'
 import MessageCenterView from './messages/MessageCenterView.vue'
@@ -8,6 +14,9 @@ import DocumentTaskCenterView from './documentTasks/DocumentTaskCenterView.vue'
 import AttachmentPanel from './components/AttachmentPanel.vue'
 import PrintAction from './components/PrintAction.vue'
 import { useAuthStore } from '../../stores/authStore'
+
+const currentDir = dirname(fileURLToPath(import.meta.url))
+const approvalCenterSource = readFileSync(resolve(currentDir, 'approvals/ApprovalCenterView.vue'), 'utf8')
 
 const documentPlatformApiMock = vi.hoisted(() => ({
   approvalTasks: {
@@ -84,8 +93,21 @@ function mountWithAuth(component: unknown, permissions = [
       plugins: [pinia, ElementPlus],
       stubs: {
         RouterLink: {
-          props: ['to'],
-          template: '<a :data-to="to"><slot /></a>',
+          props: ['to', 'custom'],
+          emits: ['navigate'],
+          methods: {
+            navigate(event: Event) {
+              this.$emit('navigate', event)
+            },
+          },
+          template: `
+            <slot
+              v-if="custom"
+              :href="typeof to === 'string' ? to : ((to && to.path) || '')"
+              :navigate="navigate"
+            />
+            <a v-else :data-to="to"><slot /></a>
+          `,
         },
       },
     },
@@ -99,6 +121,29 @@ function buttonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string)
   return button!
 }
 
+function actionLinkByHref(wrapper: ReturnType<typeof mountWithAuth>, testId: string, href: string) {
+  return wrapper.findAll(`[data-test="${testId}"]`)
+    .find((item) => item.element.tagName === 'A' && item.attributes('href') === href)
+}
+
+function expectActionLinkButton(
+  wrapper: ReturnType<typeof mountWithAuth>,
+  testId: string,
+  href: string,
+  label = '查看业务单据',
+) {
+  const link = actionLinkByHref(wrapper, testId, href)
+  expect(link?.exists()).toBe(true)
+  expect(link?.classes()).toContain('action-button-link')
+  const button = link!.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+  expect(button.props('text')).toBe(true)
+  expect(button.props('size')).toBe('small')
+  expect(button.text()).toContain(label)
+  return { link: link!, button }
+}
+
 function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountWithAuth>) {
   const queryForms = wrapper.findAllComponents({ name: 'ElForm' })
     .filter((form) => String(form.attributes('class') ?? '').split(/\s+/).includes('query-form'))
@@ -107,6 +152,13 @@ function expectQueryFormsUseStandardGrid(wrapper: ReturnType<typeof mountWithAut
     expect(form.props('inline')).not.toBe(true)
     expect(form.props('labelPosition')).toBe('top')
   })
+}
+
+function tableColumnBlockByLabel(source: string, label: string, occurrence = 0) {
+  const matches = Array.from(source.matchAll(new RegExp(`<el-table-column\\b(?=[^>]*\\blabel\\s*=\\s*["']${label}["'])[^>]*>[\\s\\S]*?<\\/el-table-column>`, 'g')))
+  const block = matches[occurrence]?.[0]
+  expect(block).toBeTruthy()
+  return block!
 }
 
 async function clickButtonByTest(wrapper: ReturnType<typeof mountWithAuth>, testId: string) {
@@ -372,11 +424,23 @@ describe('022 平台页面', () => {
     const wrapper = mountWithAuth(ApprovalCenterView)
     await flushPromises()
 
-    expect(wrapper.find('[data-to="/inventory/stocktakes/1"]').text()).toContain('查看业务单据')
-    expect(wrapper.find('[data-to="/inventory/ownership-conversions/2"]').text()).toContain('查看业务单据')
-    expect(wrapper.find('[data-to="/inventory/valuation-adjustments/3"]').text()).toContain('查看业务单据')
+    expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/stocktakes/1')
+    expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/ownership-conversions/2')
+    expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/valuation-adjustments/3')
     expect(wrapper.text()).toContain('UNKNOWN-001')
-    expect(wrapper.find('[data-to="/inventory/unknown/4"]').exists()).toBe(false)
+    expect(actionLinkByHref(wrapper, 'approval-business-link', '/inventory/unknown/4')).toBeUndefined()
+  })
+
+  it('审批列表业务单据入口必须在右固定操作列直显，不能留在对象列被裁剪', () => {
+    const objectColumnBlock = tableColumnBlockByLabel(approvalCenterSource, '对象')
+    const operationColumnBlock = tableColumnBlockByLabel(approvalCenterSource, '操作')
+
+    expect(objectColumnBlock).not.toContain('approval-business-link')
+    expect(operationColumnBlock).toContain('fixed="right"')
+    expect(operationColumnBlock).toContain('width="184"')
+    expect(operationColumnBlock).toContain('open-approval-detail')
+    expect(operationColumnBlock).toContain('approval-business-link')
+    expect(operationColumnBlock.match(/data-test="(?:open-approval-detail|approval-business-link)"/g)).toHaveLength(2)
   })
 
   it.each([
@@ -431,16 +495,13 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
 
-    const link = wrapper.find('[data-test="approval-detail-business-link"]')
-    expect(link.exists()).toBe(true)
-    expect(link.text()).toContain('查看业务单据')
+    const { link } = expectActionLinkButton(wrapper, 'approval-detail-business-link', expectedPath)
     if (objectType === 'SALES_QUOTE') {
       expect(link.text()).toContain('销售报价')
     }
     if (objectType === 'GL_VOUCHER') {
       expect(link.text()).toContain('会计凭证')
     }
-    expect(link.attributes('data-to')).toBe(expectedPath)
   })
 
   it('审批中心提供数据修复真实待办的稳定浏览器跳转样本', async () => {
@@ -487,10 +548,10 @@ describe('022 平台页面', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('DR-202607-0001')
-    expect(wrapper.find('[data-to="/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals"]').exists()).toBe(true)
+    expectActionLinkButton(wrapper, 'approval-business-link', '/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals')
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
-    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals')
+    expectActionLinkButton(wrapper, 'approval-detail-business-link', '/platform/data-repairs/501?returnTo=%2Fplatform%2Fapprovals')
     expect(wrapper.find('[data-test="approve-task"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="reject-task"]').exists()).toBe(true)
   })
@@ -542,7 +603,7 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/vouchers/91?returnTo=%2Fplatform%2Fapprovals')
+    expectActionLinkButton(wrapper, 'approval-detail-business-link', '/gl/vouchers/91?returnTo=%2Fplatform%2Fapprovals')
     expect(wrapper.text()).toContain('会计凭证')
     expect(wrapper.text()).toContain('通过并记账')
     expect(wrapper.text()).not.toContain('编辑凭证')
@@ -606,7 +667,7 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="open-approval-detail"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
+    expectActionLinkButton(wrapper, 'approval-detail-business-link', '/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
     expect(wrapper.text()).toContain('反结账申请')
     expect(wrapper.text()).toContain('通过并反结账')
     expect(wrapper.text()).toContain('金额和来源受限')
@@ -660,7 +721,7 @@ describe('022 平台页面', () => {
     await flushPromises()
 
     expect(wrapper.text()).not.toContain('无可跳转业务单据')
-    expect(wrapper.find('[data-test="approval-detail-business-link"]').attributes('data-to')).toBe('/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
+    expectActionLinkButton(wrapper, 'approval-detail-business-link', '/gl/financial-close?returnTo=%2Fplatform%2Fapprovals')
   })
 
   it('审批详情当前任务 version 为 0 时仍显示通过和驳回并按 0 提交', async () => {
@@ -822,8 +883,8 @@ describe('022 平台页面', () => {
     await wrapper.find('[data-test="mark-message-read"]').trigger('click')
     await flushPromises()
     expect(documentPlatformApiMock.messages.markRead).toHaveBeenCalledWith(11, { version: 2 })
-    expect(wrapper.find('[data-to="https://example.invalid/leak"]').exists()).toBe(false)
-    expect(wrapper.find('[data-to="/sales/projects?contractId=55"]').exists()).toBe(true)
+    expect(actionLinkByHref(wrapper, 'message-business-link', 'https://example.invalid/leak')).toBeUndefined()
+    expectActionLinkButton(wrapper, 'message-business-link', '/sales/projects?contractId=55', '查看业务')
 
     await wrapper.find('[data-test="mark-all-messages-read"]').trigger('click')
     await flushPromises()
@@ -939,6 +1000,21 @@ describe('022 平台页面', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="view-task-errors"]').exists()).toBe(false)
+  })
+
+  it('任务中心创建日期范围为两个原生输入提供稳定 name', async () => {
+    const wrapper = mountWithAuth(DocumentTaskCenterView)
+    await flushPromises()
+
+    const createdAtRangePicker = wrapper.findAllComponents({ name: 'ElDatePicker' })
+      .find((picker) => picker.props('type') === 'daterange')
+    expect(createdAtRangePicker?.exists()).toBe(true)
+    expect(createdAtRangePicker?.props('name')).toEqual([
+      'document-task-created-at-from',
+      'document-task-created-at-to',
+    ])
+    expect(createdAtRangePicker?.props('modelValue')).toEqual([])
+    expect(createdAtRangePicker?.props('valueOnClear')).toBe('')
   })
 
   it('任务中心会轮询所有当前可见的非终态任务', async () => {

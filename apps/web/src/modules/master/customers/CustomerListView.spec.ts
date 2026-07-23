@@ -109,6 +109,16 @@ function expectDefaultTableKeepsStatusScannable(wrapper: ReturnType<typeof mount
   expect(columns.at(-1)?.minWidth).toBeFalsy()
 }
 
+function expectHistoryImportButton(wrapper: ReturnType<typeof mountCustomers>) {
+  const link = wrapper.find('[data-test="customer-history-import-entry"]')
+  expect(link.exists()).toBe(true)
+  expect(link.element.tagName).toBe('A')
+  expect(link.attributes('href')).toBe('/platform/history-imports?adapterCode=CUSTOMER_MASTER_V1')
+  const button = link.findComponent({ name: 'ElButton' })
+  expect(button.exists()).toBe(true)
+  expect(button.props('tag')).toBe('span')
+}
+
 describe('客户列表页', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -202,7 +212,7 @@ describe('客户列表页', () => {
 
     expectQueryFormsUseStandardGrid(wrapper)
     expectDefaultTableKeepsStatusScannable(wrapper)
-    expect(wrapper.find('[data-test="customer-history-import-entry"]').exists()).toBe(true)
+    expectHistoryImportButton(wrapper)
     expect(wrapper.find('[data-test="customer-batch-status-entry"]').exists()).toBe(true)
   })
 })
