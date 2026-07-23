@@ -166,7 +166,7 @@ git commit -m "功能：新增工作台数据适配"
 - 消费 `useAuthStore()`、`documentPlatformApi`、`businessReportingApi`。
 - 对外仅提供 Vue 页面组件，不导出业务写操作。
 
-- [ ] **步骤 1：先写全权限加载与页面结构的失败测试**
+- [x] **步骤 1：先写全权限加载与页面结构的失败测试**
 
 测试准备：
 
@@ -204,7 +204,7 @@ expect(wrapper.text()).not.toContain('RUNNING')
 expect(wrapper.text()).not.toContain('CRITICAL')
 ```
 
-- [ ] **步骤 2：运行页面测试并确认因组件不存在而失败**
+- [x] **步骤 2：运行页面测试并确认因组件不存在而失败**
 
 运行：
 
@@ -214,7 +214,7 @@ npm test -- src/modules/workbench/RootWorkbenchView.spec.ts
 
 预期：失败，原因是 `RootWorkbenchView.vue` 尚不存在。
 
-- [ ] **步骤 3：实现页面状态和权限化并行加载**
+- [x] **步骤 3：实现页面状态和权限化并行加载**
 
 页面脚本使用明确的分区状态：
 
@@ -235,7 +235,7 @@ interface SectionState<T> {
 - 刷新时保留旧数据，只更新加载标识。
 - 每轮至少一个授权分区完成后更新 `lastUpdatedAt`。
 
-- [ ] **步骤 4：实现选定方案的页面结构与作用域样式**
+- [x] **步骤 4：实现选定方案的页面结构与作用域样式**
 
 根节点：
 
@@ -266,7 +266,7 @@ interface SectionState<T> {
 - 断点小于等于 `1100px` 时主网格转单列，避免 `1280×720` 在侧栏存在时发生挤压。
 - 所有按钮保持单行，最小点击高度不低于 32px。
 
-- [ ] **步骤 5：运行页面测试并确认第一组转绿**
+- [x] **步骤 5：运行页面测试并确认第一组转绿**
 
 运行：
 
@@ -276,7 +276,7 @@ npm test -- src/modules/workbench/RootWorkbenchView.spec.ts
 
 预期：全权限结构与数据加载测试通过。
 
-- [ ] **步骤 6：先写部分权限、空态和失败隔离的失败测试**
+- [x] **步骤 6：先写部分权限、空态和失败隔离的失败测试**
 
 部分权限会话只授予 `platform:todo:view` 与 `sales:project:create`：
 
@@ -305,7 +305,7 @@ expect(wrapper.text()).toContain('当前期间暂无经营概况')
 expect(wrapper.text()).toContain('当前没有需要关注的经营异常')
 ```
 
-- [ ] **步骤 7：运行页面测试并确认新增场景失败**
+- [x] **步骤 7：运行页面测试并确认新增场景失败**
 
 运行：
 
@@ -315,7 +315,7 @@ npm test -- src/modules/workbench/RootWorkbenchView.spec.ts
 
 预期：至少一个部分权限、失败隔离或空态断言失败。
 
-- [ ] **步骤 8：补齐部分权限、失败隔离、空态和刷新交互**
+- [x] **步骤 8：补齐部分权限、失败隔离、空态和刷新交互**
 
 实现要求：
 
@@ -325,7 +325,7 @@ npm test -- src/modules/workbench/RootWorkbenchView.spec.ts
 - 点击页面 `刷新` 后，各授权接口调用次数增加一次。
 - 单分区 `重新加载` 只重试对应分区。
 
-- [ ] **步骤 9：运行页面测试并确认全部通过**
+- [x] **步骤 9：运行页面测试并确认全部通过**
 
 运行：
 
@@ -335,7 +335,7 @@ npm test -- src/modules/workbench/RootWorkbenchView.spec.ts
 
 预期：全部通过，无未处理 Promise 或控制台告警。
 
-- [ ] **步骤 10：提交工作台页面**
+- [x] **步骤 10：提交工作台页面**
 
 ```powershell
 git add apps/web/src/modules/workbench/RootWorkbenchView.vue apps/web/src/modules/workbench/RootWorkbenchView.spec.ts
