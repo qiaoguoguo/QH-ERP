@@ -100,7 +100,8 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'home',
-    component: placeholder('工作台', '账号与权限基础已接入，后续承接物料、BOM、库存和生产模块。'),
+    meta: { requiresAuth: true },
+    component: () => import('../modules/workbench/RootWorkbenchView.vue'),
   },
   {
     path: '/accounts',

@@ -2,6 +2,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AuthSession, UserProfile } from '../shared/api/accountPermissionApi'
 import { useAuthStore } from '../stores/authStore'
+import RootWorkbenchView from '../modules/workbench/RootWorkbenchView.vue'
 import BusinessPeriodListView from '../modules/system/businessPeriods/BusinessPeriodListView.vue'
 import MaterialCategoryView from '../modules/materials/categories/MaterialCategoryView.vue'
 import MaterialItemListView from '../modules/materials/items/MaterialItemListView.vue'
@@ -174,16 +175,15 @@ describe('账号权限路由守卫', () => {
     expect(router.currentRoute.value.query.redirect).toBe('/accounts/users')
   })
 
-  it('根路径工作台占位组件不依赖运行时 template 编译', async () => {
+  it('根路径加载真实工作台并要求登录', async () => {
     const router = createQhErpRouter()
+    const route = router.getRoutes().find((item) => item.name === 'home')
+    const component = route?.components?.default as (() => Promise<unknown>) | undefined
 
-    await router.push('/')
-    await router.isReady()
-
-    const homeComponent = router.currentRoute.value.matched[0].components?.default as { render?: unknown; template?: unknown }
-    expect(homeComponent.template).toBeUndefined()
-    expect(homeComponent.render).toBeTypeOf('function')
-    expect(router.currentRoute.value.name).toBe('home')
+    expect(route?.path).toBe('/')
+    expect(route?.meta.requiresAuth).toBe(true)
+    expect(component).toBeTypeOf('function')
+    await expect(component?.()).resolves.toHaveProperty('default', RootWorkbenchView)
   })
 
   it('业务期间路由加载真实页面并配置系统期间查看权限', async () => {
