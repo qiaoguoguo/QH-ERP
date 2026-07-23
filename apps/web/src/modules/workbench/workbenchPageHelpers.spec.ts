@@ -69,7 +69,11 @@ describe('工作台页面辅助函数', () => {
     expect(taskStatusText('VALIDATION_FAILED')).toBe('校验失败')
     expect(taskStatusText('FUTURE_STATUS')).toBe('未知任务状态')
     expect(taskDisplayName(documentTask())).toBe('物料导入')
-    expect(taskDisplayName(documentTask({ taskType: 'FUTURE_TASK' }))).toBe('未知任务')
+    const futureTask = {
+      ...documentTask(),
+      taskType: 'FUTURE_TASK',
+    } as unknown as DocumentTaskRecord
+    expect(taskDisplayName(futureTask)).toBe('未知任务')
     expect(exceptionTypeText('INVENTORY_SHORTAGE')).toBe('库存不足')
     expect(exceptionTypeText('FUTURE_EXCEPTION')).toBe('未知异常类型')
     expect(exceptionSeverityText('CRITICAL')).toBe('严重')
