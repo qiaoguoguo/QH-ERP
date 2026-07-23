@@ -83,8 +83,8 @@ describe('页面治理路由清单门禁', () => {
     const inventory = buildRouteInventory()
     const directRouteComponentImports = inventory.routes.filter((route) => route.componentImport)
 
-    expect(directRouteComponentImports, summarizeRouteInventory(inventory)).toHaveLength(201)
-    expect(inventory.dynamicImports, summarizeRouteInventory(inventory)).toHaveLength(217)
+    expect(directRouteComponentImports, summarizeRouteInventory(inventory)).toHaveLength(202)
+    expect(inventory.dynamicImports, summarizeRouteInventory(inventory)).toHaveLength(218)
     expect(inventory.missingDynamicImports).toEqual([])
   })
 

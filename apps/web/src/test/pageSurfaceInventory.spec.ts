@@ -17,12 +17,12 @@ const productionReversalTraceDrawerSourceFile = 'apps/web/src/modules/reversal/P
 const outsourcingTraceLinksTableSourceFile = 'apps/web/src/modules/production/outsourcing/ProductionOutsourcingOrderDetailView.vue'
 
 describe('页面治理表面清单门禁', () => {
-  it('统计 175 个 View 页面和模块分布', () => {
+  it('统计 176 个 View 页面和模块分布', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(242)
+    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(243)
     expect(inventory.moduleVueFiles).toContain(productionReversalTraceDrawerSourceFile)
-    expect(inventory.viewFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(175)
+    expect(inventory.viewFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(176)
     expect(inventory.viewModuleCounts).toEqual({
       auth: 1,
       cost: 10,
@@ -42,6 +42,7 @@ describe('页面治理表面清单门禁', () => {
       reversal: 15,
       sales: 15,
       system: 4,
+      workbench: 1,
     })
   })
 

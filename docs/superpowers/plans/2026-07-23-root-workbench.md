@@ -357,7 +357,7 @@ git commit -m "功能：实现综合工作台页面"
 - 根路由 `meta.requiresAuth=true`。
 - 根路由组件懒加载 `../modules/workbench/RootWorkbenchView.vue`。
 
-- [ ] **步骤 1：先把旧占位测试改为真实组件失败测试**
+- [x] **步骤 1：先把旧占位测试改为真实组件失败测试**
 
 测试内容：
 
@@ -374,7 +374,7 @@ it('根路径加载真实工作台并要求登录', async () => {
 })
 ```
 
-- [ ] **步骤 2：运行路由测试并确认仍为占位组件而失败**
+- [x] **步骤 2：运行路由测试并确认仍为占位组件而失败**
 
 运行：
 
@@ -384,7 +384,7 @@ npm test -- src/router/permissionGuard.spec.ts
 
 预期：失败，原因是根路由仍是同步占位渲染函数且没有 `requiresAuth`。
 
-- [ ] **步骤 3：替换根路由配置**
+- [x] **步骤 3：替换根路由配置**
 
 目标配置：
 
@@ -397,7 +397,7 @@ npm test -- src/router/permissionGuard.spec.ts
 },
 ```
 
-- [ ] **步骤 4：运行路由与工作台定向测试**
+- [x] **步骤 4：运行路由与工作台定向测试**
 
 运行：
 
@@ -407,7 +407,7 @@ npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts src/modules/workb
 
 预期：全部通过。
 
-- [ ] **步骤 5：提交路由接入**
+- [x] **步骤 5：提交路由接入**
 
 ```powershell
 git add apps/web/src/router/index.ts apps/web/src/router/permissionGuard.spec.ts
@@ -425,7 +425,7 @@ git commit -m "功能：将根路由接入综合工作台"
 - 如行为发生变化，先修改：`apps/web/src/modules/workbench/RootWorkbenchView.spec.ts`
 - 更新：`docs/superpowers/plans/2026-07-23-root-workbench.md`
 
-- [ ] **步骤 1：运行受影响前端验证**
+- [x] **步骤 1：运行受影响前端验证**
 
 ```powershell
 npm test -- src/modules/workbench/workbenchPageHelpers.spec.ts src/modules/workbench/RootWorkbenchView.spec.ts src/router/permissionGuard.spec.ts src/App.spec.ts
@@ -435,7 +435,7 @@ npm run build
 
 预期：全部通过。
 
-- [ ] **步骤 2：从当前分支启动前后端验收服务**
+- [x] **步骤 2：从当前分支启动前后端验收服务**
 
 使用仓库现有启动方式和现有数据库，不创建演示性替代页面。确认：
 
@@ -443,7 +443,7 @@ npm run build
 - 前端根路径可访问。
 - 使用真实超级管理员会话进入 `/`。
 
-- [ ] **步骤 3：按选定视觉方案执行第一次同视口对比**
+- [x] **步骤 3：按选定视觉方案执行第一次同视口对比**
 
 在 `1440×900` 和 `1280×720` 打开真实工作台，逐项比较：
 
@@ -456,17 +456,17 @@ npm run build
 
 将差异、严重级别和结论写入 `design-qa.md`。
 
-- [ ] **步骤 4：对设计差异进行一次集中修正**
+- [x] **步骤 4：对设计差异进行一次集中修正**
 
 - 行为或权限差异：先补失败测试，再修代码。
 - 纯排版收敛：在现有通过测试保护下调整作用域样式。
 - 修复 P0、P1、P2；P3 只记录，不反复阻断。
 
-- [ ] **步骤 5：执行差异复验并将设计结论改为通过**
+- [x] **步骤 5：执行差异复验并将设计结论改为通过**
 
 重新打开相同视口和相同数据状态，对比选定视觉方案。只有 `design-qa.md` 明确包含 `final result: passed` 才继续。
 
-- [ ] **步骤 6：执行唯一交付前全量验证窗口**
+- [x] **步骤 6：执行唯一交付前全量验证窗口**
 
 按仓库既有命令一次性完成：
 
@@ -480,7 +480,7 @@ npm run build
 
 先统一记录全部结果；如发现缺陷，汇总后集中修复，只复验差异和受影响路径。
 
-- [ ] **步骤 7：提交设计验证和必要修正**
+- [x] **步骤 7：提交设计验证和必要修正**
 
 ```powershell
 git add design-qa.md docs/superpowers/plans/2026-07-23-root-workbench.md apps/web/src/modules/workbench/RootWorkbenchView.vue apps/web/src/modules/workbench/RootWorkbenchView.spec.ts
@@ -488,6 +488,14 @@ git commit -m "验证：完成工作台设计与交付检查"
 ```
 
 只暂存实际发生变化的文件。
+
+验证结果：
+
+- 受影响测试共 `113/113` 通过。
+- 前端全量测试共 `159/159` 个测试文件、`1292/1292` 个用例通过；全量首轮发现的两处页面清单基线已按新增工作台页面更新，销售订单单例在独立进程连续三轮均为 `8/8` 通过，最终全量复验通过。
+- 后端全量测试共 `786/786` 通过，前端类型检查和生产构建通过。
+- 数据库迁移为 `V36`，数据库与对象存储校验共 `42/42` 通过。
+- 真实浏览器已在 `1440×900`、`1280×720` 和设计图原始视口完成检查，无横向溢出、按钮裁切、文字堆叠、控制台错误或警告；`design-qa.md` 结论为通过。
 
 ---
 
