@@ -165,7 +165,7 @@
 
 ### 2026-07-23 039 正式交付核验（当前有效）
 
-- 当前稳定验收分支为 `main`，远端为 `origin/main`，两者均为 `7fb3e3a66871bd4126a6a31e07177b51bfd37b5d`。039 来源工作区为 `F:\zhangqiao\AI-study\qherp-039-action-control-governance`，分支为 `codex/039-action-control-governance`，实现基线为 `origin/main@248895faf9ce3e004b745ee8a0dc203ce9c6b6c1`。阶段冻结与功能提交已纯快进合入并推送；正式主工作区两份用户文档仍未暂存，039 未读取其差异、未编辑、未覆盖。
+- 当前稳定验收分支为 `main`，远端为 `origin/main`；039 功能交付节点为 `7fb3e3a66871bd4126a6a31e07177b51bfd37b5d`，其后只增加本阶段与交接记录。039 来源工作区为 `F:\zhangqiao\AI-study\qherp-039-action-control-governance`，分支为 `codex/039-action-control-governance`，实现基线为 `origin/main@248895faf9ce3e004b745ee8a0dc203ce9c6b6c1`。阶段冻结与功能提交已纯快进合入并推送；正式主工作区两份用户文档仍未暂存，039 未读取其差异、未编辑、未覆盖。
 - 当前正式入口为 `http://127.0.0.1:45173/`。`qherp035` Web/API/PostgreSQL/MinIO 健康，secret-store 运行；Web/API 镜像均为 `035-7fb3e3a66871`，OCI revision 精确匹配功能提交。Web/API 200、Flyway V36、成功 36、失败 0、数据库与 MinIO 41/41。
 - 039 全量证据：后端 786/786；前端 157 个测试文件、1281/1281；类型检查、生产构建、页面表面门禁和 `git diff --check` 通过。固定测试角色完成代码评审、35 个页面/交互和 49 个真实操作列检查；正式部署差异验收阻断 0、严重 0。
 - 固定 UI 设计师在正式 1280×720 浏览器复验生产工单、数据修复、供应商历史导入、历史导入、审批、消息和采购相关表面，保存 16 张正式截图，结论阻断 0、严重 0、一般 0；控制台错误/警告、失败请求和页面级横向溢出均为 0。采购询价与价格协议正式数据各为 0 行，只保留空态与结构证据，不虚构真实行级视觉通过。
