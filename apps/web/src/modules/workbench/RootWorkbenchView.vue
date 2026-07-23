@@ -36,6 +36,7 @@ import {
   approvalTitle,
   clampProgress,
   documentTaskRoute,
+  exceptionRowKey,
   exceptionSeverityText,
   exceptionTypeText,
   formatWorkbenchDateTime,
@@ -619,7 +620,11 @@ onBeforeUnmount(() => {
       </div>
       <div v-else-if="exceptionItems.length === 0" class="workbench-inline-empty">当前没有需要关注的经营异常</div>
       <div v-else class="workbench-attention-list">
-        <article v-for="item in exceptionItems" :key="item.traceKey || `${item.exceptionType}-${item.sourceId}`" class="workbench-attention-row">
+        <article
+          v-for="(item, index) in exceptionItems"
+          :key="exceptionRowKey(item, index)"
+          class="workbench-attention-row"
+        >
           <div class="workbench-attention-row__type">
             <el-tag size="small" :type="exceptionTagType(item.severity)">{{ exceptionSeverityText(item.severity) }}</el-tag>
             <strong>{{ exceptionTypeText(item.exceptionType) }}</strong>

@@ -1,4 +1,5 @@
 import type { PageResult } from '../../shared/api/accountPermissionApi'
+import type { ExceptionReportRow } from '../../shared/api/businessReportingApi'
 import type { ApprovalTaskRecord, DocumentTaskRecord } from '../../shared/api/documentPlatformApi'
 import {
   documentTaskStatusLabel,
@@ -93,6 +94,14 @@ export function exceptionSeverityText(severity: string | null | undefined): stri
   return severity && exceptionSeverityLabels[severity]
     ? exceptionSeverityLabels[severity]
     : '未知严重程度'
+}
+
+export function exceptionRowKey(
+  record: Pick<ExceptionReportRow, 'traceKey' | 'exceptionType' | 'sourceId'>,
+  index: number,
+): string {
+  const traceKey = record.traceKey?.trim()
+  return traceKey || `${record.exceptionType || 'UNKNOWN'}-${record.sourceId ?? 'restricted'}-${index}`
 }
 
 function taskTimestamp(record: DocumentTaskRecord): string {

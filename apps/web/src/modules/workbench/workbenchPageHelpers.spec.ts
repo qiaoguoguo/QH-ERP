@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import type { PageResult } from '../../shared/api/accountPermissionApi'
+import type { ExceptionReportRow } from '../../shared/api/businessReportingApi'
 import type { ApprovalTaskRecord, DocumentTaskRecord } from '../../shared/api/documentPlatformApi'
 import {
   approvalTitle,
   clampProgress,
   documentTaskRoute,
+  exceptionRowKey,
   exceptionSeverityText,
   exceptionTypeText,
   formatWorkbenchDateTime,
@@ -78,6 +80,24 @@ describe('工作台页面辅助函数', () => {
     expect(exceptionTypeText('FUTURE_EXCEPTION')).toBe('未知异常类型')
     expect(exceptionSeverityText('CRITICAL')).toBe('严重')
     expect(exceptionSeverityText('FUTURE_SEVERITY')).toBe('未知严重程度')
+  })
+
+  it('为多条来源受限的同类异常生成互不重复的列表键', () => {
+    const restrictedException = {
+      exceptionType: 'INVENTORY_SHORTAGE',
+      severity: 'CRITICAL',
+      sourceType: 'INVENTORY_BALANCE',
+      sourceId: null,
+      sourceNo: null,
+      businessDate: null,
+      objectName: null,
+      description: '当前账号无权查看异常来源',
+      sourceCount: 1,
+      canViewResource: false,
+      traceKey: null,
+    } as unknown as ExceptionReportRow
+
+    expect(exceptionRowKey(restrictedException, 0)).not.toBe(exceptionRowKey(restrictedException, 1))
   })
 
   it('汇总不同状态任务总数并按最近业务时间倒序截取', () => {
