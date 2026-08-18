@@ -183,7 +183,7 @@ watch(contextRoute, () => {
     </button>
 
     <section
-      v-else
+      v-show="!collapsed"
       class="assistant-widget"
       :class="{ 'assistant-widget--maximized': maximized }"
       aria-label="AI 助手对话框"
