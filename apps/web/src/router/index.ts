@@ -9,6 +9,7 @@ import { firstGlRouteByPermission, glRoutes } from './modules/glRoutes'
 import { firstPeriodCloseRouteByPermission, periodCloseRoutes } from './modules/periodCloseRoutes'
 import { firstPlanningRouteByPermission, planningRoutes } from './modules/planningRoutes'
 import { firstProductionRouteByPermission, productionRoutes } from './modules/productionRoutes'
+import { knowledgeRoutes } from './modules/knowledgeRoutes'
 
 const history = import.meta.env.MODE === 'test' ? createMemoryHistory() : createWebHistory()
 
@@ -103,6 +104,7 @@ const routes: RouteRecordRaw[] = [
     meta: { requiresAuth: true },
     component: () => import('../modules/workbench/RootWorkbenchView.vue'),
   },
+  ...knowledgeRoutes,
   {
     path: '/accounts',
     name: 'accounts',
@@ -394,7 +396,7 @@ const routes: RouteRecordRaw[] = [
     path: '/procurement',
     name: 'procurement-root',
     meta: { requiresAuth: true },
-    component: placeholder('采购管理', '采购请购、询价比价、价格协议、采购订单、入库、退货和有效供给入口。'),
+    component: placeholder('采购管理', '采购请购、询价比价、价格协议、采购订单、入库、退货和采购在途供给入口。'),
   },
   {
     path: '/procurement/requisitions',

@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "knowledge:index": "node scripts/generate-system-logic-index.mjs",
+    "knowledge:index:check": "node scripts/generate-system-logic-index.mjs --check",
+    "knowledge:index:test": "node --test scripts/generate-system-logic-index.spec.mjs",
     "dev": "vite",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",

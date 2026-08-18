@@ -14,6 +14,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.util.CellRangeAddressList;
+import org.apache.poi.ss.usermodel.DataValidation;
+import org.apache.poi.ss.usermodel.DataValidationConstraint;
+import org.apache.poi.ss.usermodel.DataValidationHelper;
 import org.apache.poi.ss.usermodel.CellType;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
@@ -38,6 +42,7 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HexFormat;
@@ -57,6 +62,69 @@ public class PlatformHistoryImportService {
 	private static final AtomicInteger TASK_SEQUENCE = new AtomicInteger();
 
 	private static final DateTimeFormatter TASK_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+
+	private static final String[] MATERIAL_TEMPLATE_HEADERS = { "code", "name", "specification", "materialType",
+			"sourceType", "trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
+			"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark" };
+
+	private static final int TEMPLATE_ENUM_DROPDOWN_DATA_ROWS = 10000;
+
+	private static final Map<String, String[]> MATERIAL_IMPORT_TEMPLATE_ENUM_OPTIONS = Map.ofEntries(
+			Map.entry("物料类型", new String[] { "原材料", "半成品", "成品", "辅料" }),
+			Map.entry("来源类型", new String[] { "外购", "自制", "外协" }),
+			Map.entry("跟踪方式", new String[] { "不追踪", "批次", "序列号" }),
+			Map.entry("状态", new String[] { "启用", "停用" }),
+			Map.entry("成本分类", new String[] { "直接材料", "辅助材料", "半成品", "产成品", "委外", "服务", "未分类" }),
+			Map.entry("库存计价类别", new String[] { "计价物料", "非计价消耗品", "服务非库存", "未分类" }));
+
+	private static final Map<String, String> MATERIAL_TEMPLATE_HEADER_ALIASES = Map.ofEntries(
+			Map.entry("code", "code"),
+			Map.entry("物料编码", "code"),
+			Map.entry("name", "name"),
+			Map.entry("物料名称", "name"),
+			Map.entry("specification", "specification"),
+			Map.entry("规格型号", "specification"),
+			Map.entry("materialType", "materialType"),
+			Map.entry("物料类型", "materialType"),
+			Map.entry("sourceType", "sourceType"),
+			Map.entry("来源类型", "sourceType"),
+			Map.entry("trackingMethod", "trackingMethod"),
+			Map.entry("跟踪方式", "trackingMethod"),
+			Map.entry("categoryCode", "categoryCode"),
+			Map.entry("物料分类编码", "categoryCode"),
+			Map.entry("unitCode", "unitCode"),
+			Map.entry("计量单位编码", "unitCode"),
+			Map.entry("status", "status"),
+			Map.entry("状态", "status"),
+			Map.entry("costCategory", "costCategory"),
+			Map.entry("成本分类", "costCategory"),
+			Map.entry("inventoryValuationCategory", "inventoryValuationCategory"),
+			Map.entry("库存计价类别", "inventoryValuationCategory"),
+			Map.entry("inventoryValueEnabled", "inventoryValueEnabled"),
+			Map.entry("是否启用库存计价", "inventoryValueEnabled"),
+			Map.entry("projectCostEnabled", "projectCostEnabled"),
+			Map.entry("是否启用项目成本", "projectCostEnabled"),
+			Map.entry("costRemark", "costRemark"),
+			Map.entry("成本备注", "costRemark"),
+			Map.entry("remark", "remark"),
+			Map.entry("备注", "remark"));
+
+	private static final Map<String, Integer> MATERIAL_TEMPLATE_HEADER_INDEX = Map.ofEntries(
+			Map.entry("code", 0),
+			Map.entry("name", 1),
+			Map.entry("specification", 2),
+			Map.entry("materialType", 3),
+			Map.entry("sourceType", 4),
+			Map.entry("trackingMethod", 5),
+			Map.entry("categoryCode", 6),
+			Map.entry("unitCode", 7),
+			Map.entry("status", 8),
+			Map.entry("costCategory", 9),
+			Map.entry("inventoryValuationCategory", 10),
+			Map.entry("inventoryValueEnabled", 11),
+			Map.entry("projectCostEnabled", 12),
+			Map.entry("costRemark", 13),
+			Map.entry("remark", 14));
 
 	private static final Set<String> MATERIAL_TYPE_VALUES = enumNames(MaterialType.values());
 
@@ -394,10 +462,7 @@ public class PlatformHistoryImportService {
 		try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(content))) {
 			validateWorkbookSheets(workbook, List.of("materials"));
 			Sheet sheet = workbook.getSheet("materials");
-			validateHeader(sheet, new String[] { "code", "name", "specification", "materialType", "sourceType",
-					"trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
-					"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
-					"remark" });
+			int[] headerIndexes = resolveMaterialTemplateColumns(sheet);
 			validateVisibleColumns(sheet, 15);
 			validateVisibleRows(sheet, 1);
 			for (int i = 1; i <= sheet.getLastRowNum(); i++) {
@@ -409,13 +474,25 @@ public class PlatformHistoryImportService {
 					errors.add(new ImportError(i + 1, "file", ApiErrorCode.IMPORT_FILE_INVALID.name(), "导入行数超过上限"));
 					continue;
 				}
-				Map<String, Object> payload = rowPayload("code", cellString(row, 0), "name", cellString(row, 1),
-						"specification", cellString(row, 2), "materialType", cellString(row, 3), "sourceType",
-						cellString(row, 4), "trackingMethod", cellString(row, 5), "categoryCode", cellString(row, 6),
-						"unitCode", cellString(row, 7), "status", cellString(row, 8), "costCategory",
-						cellString(row, 9), "inventoryValuationCategory", cellString(row, 10),
-						"inventoryValueEnabled", cellString(row, 11), "projectCostEnabled", cellString(row, 12),
-						"costRemark", cellString(row, 13), "remark", cellString(row, 14));
+				Map<String, Object> payload = rowPayload("code", cellString(row,
+								headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("code")]), "name",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("name")]), "specification",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("specification")]), "materialType",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("materialType")]), "sourceType",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("sourceType")]), "trackingMethod",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("trackingMethod")]), "categoryCode",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("categoryCode")]), "unitCode",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("unitCode")]), "status",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("status")]), "costCategory",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("costCategory")]),
+						"inventoryValuationCategory",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("inventoryValuationCategory")]),
+						"inventoryValueEnabled",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("inventoryValueEnabled")]),
+						"projectCostEnabled",
+						cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("projectCostEnabled")]),
+						"costRemark", cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("costRemark")]),
+						"remark", cellString(row, headerIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("remark")]));
 				validateMaterialRow(i + 1, payload, codes, errors);
 				rows.add(new ImportRow(i + 1, payload));
 			}
@@ -470,7 +547,7 @@ public class PlatformHistoryImportService {
 			}
 			return;
 		}
-		String normalized = value.trim().toUpperCase(Locale.ROOT);
+		String normalized = normalizeMaterialEnumValue(field, value);
 		row.put(field, normalized);
 		if (!allowedValues.contains(normalized)) {
 			errors.add(new ImportError(rowNo, field, ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "字段取值不合法"));
@@ -851,9 +928,127 @@ public class PlatformHistoryImportService {
 	}
 
 	private void assertMaterialValueAccepted(Map<String, Object> row, String field, Set<String> allowedValues) {
-		if (!allowedValues.contains(text(row, field))) {
+		String normalized = normalizeMaterialEnumValue(field, text(row, field));
+		if (normalized == null || !allowedValues.contains(normalized)) {
 			throw new BusinessException(ApiErrorCode.IMPORT_VALIDATION_FAILED);
 		}
+		row.put(field, normalized);
+	}
+
+	private String normalizeMaterialEnumValue(String field, String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		return switch (field) {
+			case "materialType" -> normalizeMaterialTypeValue(value);
+			case "sourceType" -> normalizeMaterialSourceTypeValue(value);
+			case "trackingMethod" -> normalizeTrackingMethodValue(value);
+			case "status" -> normalizeStatusValue(value);
+			case "costCategory" -> normalizeCostCategoryValue(value);
+			case "inventoryValuationCategory" -> normalizeInventoryValuationCategoryValue(value);
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeMaterialTypeValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "RAWMATERIAL" -> "RAW_MATERIAL";
+			case "SEMIFINISHED" -> "SEMI_FINISHED";
+			case "FINISHEDGOOD" -> "FINISHED_GOOD";
+			case "AUXILIARY" -> "AUXILIARY";
+			case "原材料" -> "RAW_MATERIAL";
+			case "半成品" -> "SEMI_FINISHED";
+			case "成品" -> "FINISHED_GOOD";
+			case "辅料" -> "AUXILIARY";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeMaterialSourceTypeValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "PURCHASED" -> "PURCHASED";
+			case "SELFMADE" -> "SELF_MADE";
+			case "OUTSOURCED" -> "OUTSOURCED";
+			case "外购" -> "PURCHASED";
+			case "自制" -> "SELF_MADE";
+			case "外协" -> "OUTSOURCED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeTrackingMethodValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "NONE" -> "NONE";
+			case "BATCH" -> "BATCH";
+			case "BATCHMANAGEMENT" -> "BATCH";
+			case "SERIAL" -> "SERIAL";
+			case "SERIALNUMBERMANAGEMENT" -> "SERIAL";
+			case "SERIALNUMBER" -> "SERIAL";
+			case "不追踪" -> "NONE";
+			case "批次" -> "BATCH";
+			case "序列号" -> "SERIAL";
+			case "批次管理" -> "BATCH";
+			case "序列号管理" -> "SERIAL";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeStatusValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "ENABLED" -> "ENABLED";
+			case "DISABLED" -> "DISABLED";
+			case "启用" -> "ENABLED";
+			case "停用" -> "DISABLED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeCostCategoryValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "DIRECTMATERIAL" -> "DIRECT_MATERIAL";
+			case "AUXILIARYMATERIAL" -> "AUXILIARY_MATERIAL";
+			case "SEMIFINISHED" -> "SEMI_FINISHED";
+			case "FINISHEDGOOD" -> "FINISHED_GOOD";
+			case "OUTSOURCING" -> "OUTSOURCING";
+			case "SERVICE" -> "SERVICE";
+			case "UNCLASSIFIED" -> "UNCLASSIFIED";
+			case "直接材料" -> "DIRECT_MATERIAL";
+			case "辅助材料" -> "AUXILIARY_MATERIAL";
+			case "半成品" -> "SEMI_FINISHED";
+			case "产成品" -> "FINISHED_GOOD";
+			case "委外" -> "OUTSOURCING";
+			case "服务" -> "SERVICE";
+			case "未分类" -> "UNCLASSIFIED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String normalizeInventoryValuationCategoryValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "VALUATEDMATERIAL" -> "VALUATED_MATERIAL";
+			case "NONVALUATEDCONSUMABLE" -> "NON_VALUATED_CONSUMABLE";
+			case "SERVICENONSTOCK" -> "SERVICE_NON_STOCK";
+			case "UNCLASSIFIED" -> "UNCLASSIFIED";
+			case "计价物料" -> "VALUATED_MATERIAL";
+			case "非计价消耗品" -> "NON_VALUATED_CONSUMABLE";
+			case "服务非库存" -> "SERVICE_NON_STOCK";
+			case "未分类" -> "UNCLASSIFIED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private String materialEnumToken(String value) {
+		return value.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
+	}
+
+	private String materialEnumStandardValue(String value) {
+		return value.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "_");
 	}
 
 	private void assertMaterialBooleanAccepted(Map<String, Object> row, String field) {
@@ -1253,10 +1448,12 @@ public class PlatformHistoryImportService {
 						"contactName", "contactPhone", "status", "remark"));
 				case "SUPPLIER_MASTER_V1" -> addSheet(workbook, "suppliers", List.of("code", "name",
 						"contactName", "contactPhone", "status", "remark"));
-				case "MATERIAL_MASTER_V1" -> addSheet(workbook, "materials", List.of("code", "name",
-						"specification", "materialType", "sourceType", "trackingMethod", "categoryCode",
-						"unitCode", "status", "costCategory", "inventoryValuationCategory",
-						"inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark"));
+				case "MATERIAL_MASTER_V1" -> {
+					addSheet(workbook, "materials", List.of("code", "name",
+							"specification", "物料类型", "来源类型", "跟踪方式", "物料分类编码", "计量单位编码", "状态", "成本分类",
+							"库存计价类别", "是否启用库存计价", "是否启用项目成本", "成本备注", "备注"));
+					applyMaterialTemplateValidation(workbook.getSheet("materials"));
+				}
 				case "BOM_DRAFT_V1" -> {
 					addSheet(workbook, "bom", List.of("mode", "bomId", "version", "bomCode",
 							"parentMaterialCode", "versionCode", "name", "baseQuantity", "baseUnit",
@@ -1282,6 +1479,33 @@ public class PlatformHistoryImportService {
 		Row row = sheet.createRow(0);
 		for (int i = 0; i < headers.size(); i++) {
 			row.createCell(i).setCellValue(headers.get(i));
+		}
+	}
+
+	private void applyMaterialTemplateValidation(Sheet sheet) {
+		Row header = sheet == null ? null : sheet.getRow(0);
+		if (header == null) {
+			return;
+		}
+		DataValidationHelper validationHelper = sheet.getDataValidationHelper();
+		for (int i = 0; i < header.getLastCellNum(); i++) {
+			Cell headerCell = header.getCell(i);
+			if (headerCell == null) {
+				continue;
+			}
+			String headerName = headerCell.getStringCellValue();
+			String[] options = MATERIAL_IMPORT_TEMPLATE_ENUM_OPTIONS.get(headerName);
+			if (options == null) {
+				continue;
+			}
+			CellRangeAddressList range = new CellRangeAddressList(1, TEMPLATE_ENUM_DROPDOWN_DATA_ROWS, i, i);
+			DataValidationConstraint constraint = validationHelper.createExplicitListConstraint(options);
+			DataValidation validation = validationHelper.createValidation(constraint, range);
+			validation.setSuppressDropDownArrow(false);
+			validation.setShowErrorBox(true);
+			validation.setErrorStyle(DataValidation.ErrorStyle.STOP);
+			validation.createErrorBox("请输入合法的枚举值", "请选择下拉列表中的枚举值");
+			sheet.addValidationData(validation);
 		}
 	}
 
@@ -1390,6 +1614,39 @@ public class PlatformHistoryImportService {
 		if (header.getLastCellNum() > expectedHeaders.length) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 		}
+	}
+
+	private int[] resolveMaterialTemplateColumns(Sheet sheet) {
+		Row header = sheet.getRow(0);
+		if (header == null) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		if (header.getLastCellNum() > MATERIAL_TEMPLATE_HEADERS.length) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		int[] indexes = new int[MATERIAL_TEMPLATE_HEADERS.length];
+		Arrays.fill(indexes, -1);
+		for (int i = 0; i < header.getLastCellNum(); i++) {
+			String sourceHeader = cellString(header, i);
+			if (sourceHeader == null) {
+				continue;
+			}
+			String canonical = MATERIAL_TEMPLATE_HEADER_ALIASES.get(sourceHeader.trim());
+			if (canonical == null) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+			Integer expectedIndex = MATERIAL_TEMPLATE_HEADER_INDEX.get(canonical);
+			if (expectedIndex == null || indexes[expectedIndex] != -1) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+			indexes[expectedIndex] = i;
+		}
+		for (int i = 0; i < MATERIAL_TEMPLATE_HEADERS.length; i++) {
+			if (indexes[i] < 0) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+		}
+		return indexes;
 	}
 
 	private void validateVisibleColumns(Sheet sheet, int columnCount) {

@@ -136,12 +136,16 @@ export interface SalesOrderLineRecord {
   unitPrice: string
   priceSourceType?: SalesPriceSourceType | null
   priceSourceNo?: string | null
+  sourceNo?: string | null
   quoteLineId?: ResourceId | null
+  sourceQuoteLineId?: ResourceId | null
   contractLineId?: ResourceId | null
   untaxedUnitPrice?: string | null
+  taxExcludedUnitPrice?: string | null
   taxIncludedUnitPrice?: string | null
   taxRate?: string | null
   untaxedAmount?: string | null
+  taxExcludedAmount?: string | null
   taxAmount?: string | null
   taxIncludedAmount?: string | null
   expectedShipDate?: string | null

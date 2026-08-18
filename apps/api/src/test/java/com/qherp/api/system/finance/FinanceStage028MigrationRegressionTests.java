@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @Testcontainers
 class FinanceStage028MigrationRegressionTests {
 
-	private static final String LATEST_MIGRATION_VERSION = "36";
+	private static final String LATEST_MIGRATION_VERSION = "42";
 
 	private static final int EXPECTED_V35_CHECKSUM = -82801719;
 

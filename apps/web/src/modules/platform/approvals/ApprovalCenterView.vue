@@ -2,6 +2,10 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
+  approvalDetailReturnTo,
+  approvalId,
+} from '../../../shared/navigation/navigationReturn'
+import {
   createIdempotencyKey,
   documentPlatformApi,
   type ApprovalInstanceDetail,
@@ -74,7 +78,12 @@ const businessObjectPaths: Record<string, string> = {
   INVENTORY_STOCKTAKE: '/inventory/stocktakes',
   INVENTORY_OWNERSHIP_CONVERSION: '/inventory/ownership-conversions',
   INVENTORY_VALUATION_ADJUSTMENT: '/inventory/valuation-adjustments',
+  PROCUREMENT_REQUISITION: '/procurement/requisitions',
+  PROCUREMENT_PRICE_AGREEMENT: '/procurement/price-agreements',
+  PROCUREMENT_ORDER: '/procurement/orders',
   SALES_QUOTE: '/sales/quotes',
+  SALES_ORDER: '/sales/orders',
+  PROJECT_COST_ADJUSTMENT: '/cost/project-cost-adjustments',
   GL_VOUCHER: '/gl/vouchers',
   FINANCIAL_PERIOD_REOPEN: '/gl/financial-close',
   DATA_REPAIR_REQUEST: '/platform/data-repairs',
@@ -86,16 +95,24 @@ const businessObjectLabels: Record<string, string> = {
   INVENTORY_STOCKTAKE: '库存盘点',
   INVENTORY_OWNERSHIP_CONVERSION: '库存权属转换',
   INVENTORY_VALUATION_ADJUSTMENT: '库存估值调整',
+  PROCUREMENT_REQUISITION: '采购请购',
+  PROCUREMENT_PRICE_AGREEMENT: '采购价格协议',
+  PROCUREMENT_ORDER: '采购订单',
   SALES_QUOTE: '销售报价',
+  SALES_ORDER: '销售订单',
+  PROJECT_COST_ADJUSTMENT: '项目成本调整',
   GL_VOUCHER: '会计凭证',
   FINANCIAL_PERIOD_REOPEN: '反结账申请',
+  FIN_CLOSE_REOPEN_REQUEST: '反结账申请',
   DATA_REPAIR_REQUEST: '数据修复',
   HISTORY_IMPORT_TASK: '历史导入',
   BATCH_OPERATION: '批量操作',
 }
 
-function businessObjectRoute(record: { sceneCode?: string | null, objectType?: string | null, objectId?: string | number | null }) {
-  if (record.sceneCode === 'FINANCIAL_PERIOD_REOPEN' || record.objectType === 'FINANCIAL_PERIOD_REOPEN') {
+function baseBusinessObjectRoute(record: { sceneCode?: string | null, objectType?: string | null, objectId?: string | number | null }) {
+  if (record.sceneCode === 'FINANCIAL_PERIOD_REOPEN'
+    || record.objectType === 'FINANCIAL_PERIOD_REOPEN'
+    || record.objectType === 'FIN_CLOSE_REOPEN_REQUEST') {
     return `/gl/financial-close?returnTo=${encodeURIComponent('/platform/approvals')}`
   }
   if (!record.objectType || record.objectId === null || record.objectId === undefined) {
@@ -118,6 +135,23 @@ function businessObjectRoute(record: { sceneCode?: string | null, objectType?: s
   return record.objectType === 'GL_VOUCHER'
     ? `${path}?returnTo=${encodeURIComponent('/platform/approvals')}`
     : path
+}
+
+function businessObjectRoute(record: {
+  id?: number | string | null
+  sceneCode?: string | null
+  objectType?: string | null
+  objectId?: string | number | null
+}) {
+  const target = baseBusinessObjectRoute(record)
+  if (!target) {
+    return null
+  }
+  const [pathAndQuery, hash = ''] = target.split('#', 2)
+  const [path, search = ''] = pathAndQuery.split('?', 2)
+  const query = new URLSearchParams(search)
+  query.set('returnTo', approvalDetailReturnTo(record.id))
+  return `${path}?${query.toString()}${hash ? `#${hash}` : ''}`
 }
 
 function businessObjectLabel(objectType?: string | null) {
@@ -297,7 +331,13 @@ function changePageSize(pageSize: number) {
 }
 
 onMounted(() => {
-  void loadRecords()
+  void (async () => {
+    await loadRecords()
+    const id = approvalId(new URLSearchParams(window.location.search).get('approvalId'))
+    if (id !== null) {
+      await openDetail({ id } as ApprovalTaskRecord)
+    }
+  })()
 })
 </script>
 

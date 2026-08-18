@@ -57,6 +57,132 @@ public class ProcurementAdminService {
 
 	private static final int MAX_NO_ATTEMPTS = 3;
 
+	private static final String ORDER_SUMMARY_SOURCE_JOIN = """
+			left join (
+			    select line_source.order_id,
+			           case
+			               when count(distinct line_source.requisition_no) = 0 then null
+			               when count(distinct line_source.requisition_no) = 1 then min(line_source.requisition_no)
+			               else 'MIXED'
+			           end as requisition_no,
+			           case
+			               when count(distinct line_source.quote_no) = 0 then null
+			               when count(distinct line_source.quote_no) = 1 then min(line_source.quote_no)
+			               else 'MIXED'
+			           end as quote_no,
+			           case
+			               when count(distinct line_source.agreement_no) = 0 then null
+			               when count(distinct line_source.agreement_no) = 1 then min(line_source.agreement_no)
+			               else 'MIXED'
+			           end as agreement_no,
+			           case
+			               when count(distinct line_source.price_source_type) = 0 then 'MANUAL'
+			               when count(distinct line_source.price_source_type) = 1 then min(line_source.price_source_type)
+			               else 'MIXED'
+			           end as price_source_type,
+			           case
+			               when count(distinct line_source.price_source_reason) = 0 then null
+			               when count(distinct line_source.price_source_reason) = 1 then min(line_source.price_source_reason)
+			               else 'MIXED'
+			           end as price_source_reason,
+			           coalesce(bool_or(line_source.exception_approval_required), false) as exception_approval_required
+			    from (
+			        select l.order_id,
+			               coalesce(rq.requisition_no, quote_rq.requisition_no) as requisition_no,
+			               sq.quote_no,
+			               pa.agreement_no,
+			               coalesce(nullif(l.price_source_type, ''), 'MANUAL') as price_source_type,
+			               case
+			                   when o.public_direct_reason is not null or l.price_source_type = 'PUBLIC_DIRECT'
+			                       then 'PUBLIC_DIRECT'
+			                   when l.price_source_type = 'QUOTE_SELECTION'
+			                       and ql.tax_excluded_unit_price > (
+			                           select min(other.tax_excluded_unit_price)
+			                           from proc_supplier_quote_line other
+			                           where other.inquiry_line_id = ql.inquiry_line_id
+			                       )
+			                       then 'NON_LOWEST_QUOTE'
+			                   when l.price_source_type = 'QUOTE_SELECTION' then 'LOWEST_QUOTE'
+			                   when l.price_source_type = 'AGREEMENT' then 'PRICE_AGREEMENT'
+			                   when l.price_source_type = 'REQUISITION_APPROVED' then 'REQUISITION_APPROVED'
+			                   when l.price_source_type = 'MANUAL' or l.price_source_type is null then 'MANUAL'
+			                   else l.price_source_type
+			               end as price_source_reason,
+			               (
+			                   o.public_direct_reason is not null
+			                   or l.price_source_type = 'PUBLIC_DIRECT'
+			                   or (
+			                       l.price_source_type = 'QUOTE_SELECTION'
+			                       and ql.tax_excluded_unit_price > (
+			                           select min(other.tax_excluded_unit_price)
+			                           from proc_supplier_quote_line other
+			                           where other.inquiry_line_id = ql.inquiry_line_id
+			                       )
+			                   )
+			                   or (
+			                       exists (
+			                           select 1
+			                           from proc_price_agreement active_agreement
+			                           join proc_price_agreement_line active_line
+			                             on active_line.agreement_id = active_agreement.id
+			                            and active_line.material_id = l.material_id
+			                           where active_agreement.status = 'ACTIVE'
+			                           and active_agreement.supplier_id = o.supplier_id
+			                           and active_agreement.purchase_mode = o.purchase_mode
+			                           and coalesce(active_agreement.project_id, 0) = coalesce(o.project_id, 0)
+			                           and active_agreement.valid_from <= o.order_date
+			                           and active_agreement.valid_to >= o.order_date
+			                           and (
+			                               l.price_agreement_line_id is null
+			                               or l.price_agreement_line_id <> active_line.id
+			                               or l.price_source_type <> 'AGREEMENT'
+			                               or l.tax_rate <> active_line.tax_rate
+			                               or l.tax_excluded_unit_price <> active_line.tax_excluded_unit_price
+			                           )
+			                       )
+			                       or (
+			                           l.price_agreement_line_id is not null
+			                           and not exists (
+			                               select 1
+			                               from proc_price_agreement referenced_agreement
+			                               join proc_price_agreement_line referenced_line
+			                                 on referenced_line.agreement_id = referenced_agreement.id
+			                               where referenced_line.id = l.price_agreement_line_id
+			                               and referenced_agreement.status = 'ACTIVE'
+			                               and referenced_agreement.supplier_id = o.supplier_id
+			                               and referenced_agreement.purchase_mode = o.purchase_mode
+			                               and coalesce(referenced_agreement.project_id, 0) = coalesce(o.project_id, 0)
+			                               and referenced_agreement.valid_from <= o.order_date
+			                               and referenced_agreement.valid_to >= o.order_date
+			                           )
+			                       )
+			                   )
+			               ) as exception_approval_required
+			        from proc_purchase_order_line l
+			        join proc_purchase_order o on o.id = l.order_id
+			        left join proc_purchase_requisition_line rl on rl.id = l.source_requisition_line_id
+			        left join proc_purchase_requisition rq on rq.id = rl.requisition_id
+			        left join proc_supplier_quote_line ql on ql.id = l.source_quote_line_id
+			        left join proc_supplier_quote sq on sq.id = ql.quote_id
+			        left join proc_purchase_inquiry_line qil on qil.id = ql.inquiry_line_id
+			        left join proc_purchase_requisition_line quote_rl on quote_rl.id = qil.requisition_line_id
+			        left join proc_purchase_requisition quote_rq on quote_rq.id = quote_rl.requisition_id
+			        left join proc_price_agreement_line pal on pal.id = l.price_agreement_line_id
+			        left join proc_price_agreement pa on pa.id = pal.agreement_id
+			    ) line_source
+			    group by line_source.order_id
+			) source_summary on source_summary.order_id = o.id
+			left join platform_approval_instance eai on eai.id = o.exception_approval_instance_id
+			left join (
+			    select ol.order_id, min(sch.planned_date) as next_arrival_date
+			    from proc_purchase_order_schedule sch
+			    join proc_purchase_order_line ol on ol.id = sch.order_line_id
+			    where sch.status <> 'CLOSED'
+			    and (sch.planned_quantity - sch.received_quantity) > 0
+			    group by ol.order_id
+			) schedule_summary on schedule_summary.order_id = o.id
+			""";
+
 	private static final AtomicInteger ORDER_NO_SEQUENCE = new AtomicInteger();
 
 	private static final AtomicInteger RECEIPT_NO_SEQUENCE = new AtomicInteger();
@@ -116,19 +242,35 @@ public class ProcurementAdminService {
 				       coalesce((select sum(l.quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as total_quantity,
 				       coalesce((select sum(l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as received_quantity,
 				       coalesce((select sum(l.quantity - l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as remaining_quantity,
-				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
-				            then coalesce((select sum(l.quantity - l.received_quantity)
-				                           from proc_purchase_order_line l where l.order_id = o.id), 0)
-				            else 0 end as in_transit_quantity,
-				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
+				        case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				             then coalesce((select sum(l.quantity - l.received_quantity)
+				                            from proc_purchase_order_line l where l.order_id = o.id), 0)
+				             else 0 end as in_transit_quantity,
+				       schedule_summary.next_arrival_date,
+				       source_summary.requisition_no, source_summary.quote_no, source_summary.agreement_no,
+				       coalesce(source_summary.price_source_type, 'MANUAL') as price_source_type,
+				       source_summary.price_source_reason,
+				       case
+				           when o.exception_approval_instance_id is not null then coalesce(eai.status, 'UNKNOWN')
+				           when coalesce(source_summary.exception_approval_required, false) then 'NOT_SUBMITTED'
+				           else 'NOT_REQUIRED'
+				       end as approval_status,
+				       coalesce(source_summary.exception_approval_required, false) as exception_approval_required,
+				       case
+				           when o.exception_approval_instance_id is not null then coalesce(eai.status, 'UNKNOWN')
+				           when coalesce(source_summary.exception_approval_required, false) then 'NOT_SUBMITTED'
+				           else 'NOT_REQUIRED'
+				       end as exception_approval_status,
+				       o.close_reason, o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
 				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at, o.version
 				from proc_purchase_order o
 				join mst_supplier s on s.id = o.supplier_id
 				left join sal_project p on p.id = o.project_id
 				%s
+				%s
 				order by o.updated_at desc, o.id desc
 				limit ? offset ?
-				""".formatted(queryParts.where()), this::mapOrderSummary, args.toArray());
+				""".formatted(ORDER_SUMMARY_SOURCE_JOIN, queryParts.where()), this::mapOrderSummary, args.toArray());
 		return PageResponse.of(items, page, limit(pageSize), total);
 	}
 
@@ -773,24 +915,24 @@ public class ProcurementAdminService {
 			BigDecimal quantity = validateQuantity(line.quantity());
 			BigDecimal unitPrice = validateUnitPrice(line.unitPrice() == null ? line.taxExcludedUnitPrice() : line.unitPrice());
 			Long sourceRequisitionLineId = line.sourceRequisitionLineId();
-			if (purchaseMode == PurchaseMode.PROJECT) {
-				if (sourceRequisitionLineId == null) {
-					throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_REQUISITION_REQUIRED);
-				}
+			if (sourceRequisitionLineId != null) {
 				ProcurementRequisitionService.RequisitionLineSource source = this.requisitionService
 					.sourceLine(sourceRequisitionLineId);
 				if (source.status() != PurchaseRequisitionStatus.APPROVED
 						&& source.status() != PurchaseRequisitionStatus.PARTIALLY_ORDERED) {
 					throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_REQUISITION_REQUIRED);
 				}
-				if (source.purchaseMode() != PurchaseMode.PROJECT || source.projectId() == null
-						|| !source.projectId().equals(projectId) || !source.materialId().equals(material.id())
+				if (source.purchaseMode() != purchaseMode || !java.util.Objects.equals(source.projectId(), projectId)
+						|| !source.materialId().equals(material.id())
 						|| !source.unitId().equals(unitId)) {
 					throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_PROJECT_MISMATCH);
 				}
 				if (source.orderedQuantity().add(quantity).compareTo(source.quantity()) > 0) {
 					throw new BusinessException(ApiErrorCode.PROCUREMENT_QUANTITY_INVALID);
 				}
+			}
+			else if (purchaseMode == PurchaseMode.PROJECT) {
+				throw new BusinessException(ApiErrorCode.PROCUREMENT_ORDER_REQUISITION_REQUIRED);
 			}
 			List<ValidatedSchedule> schedules = validateSchedules(line.schedules(), quantity, line.expectedArrivalDate());
 			BigDecimal taxRate = line.taxRate() == null ? ZERO : validateUnitPrice(line.taxRate());
@@ -800,6 +942,32 @@ public class ProcurementAdminService {
 					: validateUnitPrice(line.taxIncludedUnitPrice());
 			String requestedPriceSourceType = line.priceSourceType() == null ? request.priceSourceType()
 					: line.priceSourceType();
+			if (line.sourceQuoteLineId() != null && line.priceAgreementLineId() != null) {
+				throw new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_SOURCE_INVALID);
+			}
+			if (line.sourceQuoteLineId() != null) {
+				OrderPriceSource source = orderQuotePriceSource(line.sourceQuoteLineId());
+				requireOrderPriceSource(source, supplier.id(), purchaseMode, projectId, material.id(), unitId,
+						quantity, request.orderDate(), "SELECTED");
+				if (sourceRequisitionLineId != null && !sourceRequisitionLineId.equals(source.requisitionLineId())) {
+					throw new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_SOURCE_INVALID);
+				}
+				unitPrice = source.taxExcludedUnitPrice();
+				taxRate = source.taxRate();
+				taxExcludedUnitPrice = source.taxExcludedUnitPrice();
+				taxIncludedUnitPrice = source.taxIncludedUnitPrice();
+				requestedPriceSourceType = "QUOTE_SELECTION";
+			}
+			else if (line.priceAgreementLineId() != null) {
+				OrderPriceSource source = orderAgreementPriceSource(line.priceAgreementLineId());
+				requireOrderPriceSource(source, supplier.id(), purchaseMode, projectId, material.id(), unitId,
+						quantity, request.orderDate(), "ACTIVE");
+				unitPrice = source.taxExcludedUnitPrice();
+				taxRate = source.taxRate();
+				taxExcludedUnitPrice = source.taxExcludedUnitPrice();
+				taxIncludedUnitPrice = source.taxIncludedUnitPrice();
+				requestedPriceSourceType = "AGREEMENT";
+			}
 			lines.add(new ValidatedOrderLine(line.lineNo(), material.id(), unitId, quantity, unitPrice,
 					line.expectedArrivalDate(), validateOptionalText(line.remark(), 500), sourceRequisitionLineId,
 					line.sourceQuoteLineId(), line.priceAgreementLineId(), taxRate, taxExcludedUnitPrice,
@@ -819,6 +987,60 @@ public class ProcurementAdminService {
 		return new ValidatedOrder(supplier, request.orderDate(), request.expectedArrivalDate(), purchaseMode,
 				projectId, request.currency() == null ? "CNY" : request.currency(), publicDirectReason,
 				exceptionReason, remark, lines);
+	}
+
+	private OrderPriceSource orderQuotePriceSource(Long quoteLineId) {
+		return this.jdbcTemplate.query("""
+				select ql.id, q.supplier_id, q.status, q.valid_from, q.valid_to, q.currency,
+				       i.purchase_mode, i.project_id, ql.material_id, ql.unit_id,
+				       il.requisition_line_id, ql.min_purchase_quantity, ql.tax_rate,
+				       ql.tax_excluded_unit_price, ql.tax_included_unit_price
+				from proc_supplier_quote_line ql
+				join proc_supplier_quote q on q.id = ql.quote_id
+				join proc_purchase_inquiry i on i.id = q.inquiry_id
+				join proc_purchase_inquiry_line il on il.id = ql.inquiry_line_id
+				where ql.id = ?
+				""", (rs, rowNum) -> new OrderPriceSource(rs.getLong("id"), rs.getLong("supplier_id"),
+				rs.getString("status"), rs.getObject("valid_from", LocalDate.class),
+				rs.getObject("valid_to", LocalDate.class), rs.getString("currency"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getLong("material_id"),
+				rs.getLong("unit_id"), nullableLong(rs, "requisition_line_id"),
+				rs.getBigDecimal("min_purchase_quantity"), rs.getBigDecimal("tax_rate"),
+				rs.getBigDecimal("tax_excluded_unit_price"), rs.getBigDecimal("tax_included_unit_price")),
+				quoteLineId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_SOURCE_INVALID));
+	}
+
+	private OrderPriceSource orderAgreementPriceSource(Long agreementLineId) {
+		return this.jdbcTemplate.query("""
+				select l.id, a.supplier_id, a.status, a.valid_from, a.valid_to, a.currency,
+				       a.purchase_mode, a.project_id, l.material_id, l.unit_id,
+				       l.min_purchase_quantity, l.tax_rate, l.tax_excluded_unit_price,
+				       l.tax_included_unit_price
+				from proc_price_agreement_line l
+				join proc_price_agreement a on a.id = l.agreement_id
+				where l.id = ?
+				""", (rs, rowNum) -> new OrderPriceSource(rs.getLong("id"), rs.getLong("supplier_id"),
+				rs.getString("status"), rs.getObject("valid_from", LocalDate.class),
+				rs.getObject("valid_to", LocalDate.class), rs.getString("currency"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getLong("material_id"),
+				rs.getLong("unit_id"), null, rs.getBigDecimal("min_purchase_quantity"),
+				rs.getBigDecimal("tax_rate"), rs.getBigDecimal("tax_excluded_unit_price"),
+				rs.getBigDecimal("tax_included_unit_price")), agreementLineId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_SOURCE_INVALID));
+	}
+
+	private void requireOrderPriceSource(OrderPriceSource source, Long supplierId, PurchaseMode purchaseMode,
+			Long projectId, Long materialId, Long unitId, BigDecimal quantity, LocalDate orderDate,
+			String requiredStatus) {
+		if (!requiredStatus.equals(source.status()) || !supplierId.equals(source.supplierId())
+				|| !purchaseMode.name().equals(source.purchaseMode())
+				|| !java.util.Objects.equals(projectId, source.projectId()) || !materialId.equals(source.materialId())
+				|| !unitId.equals(source.unitId()) || !"CNY".equals(source.currency())
+				|| quantity.compareTo(source.minimumQuantity()) < 0 || orderDate.isBefore(source.validFrom())
+				|| orderDate.isAfter(source.validTo())) {
+			throw new BusinessException(ApiErrorCode.PROCUREMENT_PRICE_SOURCE_INVALID);
+		}
 	}
 
 	private void validateActiveProject(Long projectId) {
@@ -1509,17 +1731,33 @@ public class ProcurementAdminService {
 				       coalesce((select sum(l.quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as total_quantity,
 				       coalesce((select sum(l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as received_quantity,
 				       coalesce((select sum(l.quantity - l.received_quantity) from proc_purchase_order_line l where l.order_id = o.id), 0) as remaining_quantity,
-				       case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
-				            then coalesce((select sum(l.quantity - l.received_quantity)
-				                           from proc_purchase_order_line l where l.order_id = o.id), 0)
-				            else 0 end as in_transit_quantity,
-				       o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
+				        case when o.status in ('CONFIRMED', 'PARTIALLY_RECEIVED')
+				             then coalesce((select sum(l.quantity - l.received_quantity)
+				                            from proc_purchase_order_line l where l.order_id = o.id), 0)
+				             else 0 end as in_transit_quantity,
+				       schedule_summary.next_arrival_date,
+				       source_summary.requisition_no, source_summary.quote_no, source_summary.agreement_no,
+				       coalesce(source_summary.price_source_type, 'MANUAL') as price_source_type,
+				       source_summary.price_source_reason,
+				       case
+				           when o.exception_approval_instance_id is not null then coalesce(eai.status, 'UNKNOWN')
+				           when coalesce(source_summary.exception_approval_required, false) then 'NOT_SUBMITTED'
+				           else 'NOT_REQUIRED'
+				       end as approval_status,
+				       coalesce(source_summary.exception_approval_required, false) as exception_approval_required,
+				       case
+				           when o.exception_approval_instance_id is not null then coalesce(eai.status, 'UNKNOWN')
+				           when coalesce(source_summary.exception_approval_required, false) then 'NOT_SUBMITTED'
+				           else 'NOT_REQUIRED'
+				       end as exception_approval_status,
+				       o.close_reason, o.remark, o.created_by, o.created_at, o.updated_at, o.confirmed_by, o.confirmed_at,
 				       o.cancelled_by, o.cancelled_at, o.closed_by, o.closed_at, o.version
 				from proc_purchase_order o
 				join mst_supplier s on s.id = o.supplier_id
 				left join sal_project p on p.id = o.project_id
+				%s
 				where o.id = ?
-				""", this::mapOrderSummary, id).stream().findFirst();
+				""".formatted(ORDER_SUMMARY_SOURCE_JOIN), this::mapOrderSummary, id).stream().findFirst();
 	}
 
 	private OrderExceptionState orderExceptionState(Long id) {
@@ -2004,6 +2242,8 @@ public class ProcurementAdminService {
 		LocalDate expectedArrivalDate = rs.getObject("expected_arrival_date", LocalDate.class);
 		InTransitStatus inTransitStatus = inTransitStatus(inTransitQuantity, expectedArrivalDate);
 		PurchaseMode mode = PurchaseMode.valueOf(rs.getString("purchase_mode"));
+		String approvalStatus = rs.getString("approval_status");
+		String exceptionApprovalStatus = rs.getString("exception_approval_status");
 		return new PurchaseOrderSummaryResponse(rs.getLong("id"), rs.getString("order_no"),
 				rs.getLong("supplier_id"), rs.getString("supplier_code"), rs.getString("supplier_name"),
 				rs.getObject("order_date", LocalDate.class), expectedArrivalDate,
@@ -2012,12 +2252,34 @@ public class ProcurementAdminService {
 				rs.getInt("line_count"), decimalString(rs.getBigDecimal("total_quantity")),
 				decimalString(rs.getBigDecimal("received_quantity")), decimalString(rs.getBigDecimal("remaining_quantity")),
 				decimalString(inTransitQuantity),
-				inTransitStatus.code(), inTransitStatus.displayName(), rs.getString("remark"), rs.getString("created_by"),
+				inTransitStatus.code(), inTransitStatus.displayName(),
+				rs.getObject("next_arrival_date", LocalDate.class), rs.getString("requisition_no"),
+				rs.getString("quote_no"), rs.getString("agreement_no"), rs.getString("price_source_type"),
+				rs.getString("price_source_reason"), approvalStatus, approvalStatusName(approvalStatus),
+				rs.getBoolean("exception_approval_required"), exceptionApprovalStatus,
+				approvalStatusName(exceptionApprovalStatus), rs.getString("close_reason"),
+				rs.getString("remark"), rs.getString("created_by"),
 				rs.getObject("created_at", OffsetDateTime.class),
 				rs.getObject("updated_at", OffsetDateTime.class), rs.getString("confirmed_by"),
 				rs.getObject("confirmed_at", OffsetDateTime.class), rs.getString("cancelled_by"),
 				rs.getObject("cancelled_at", OffsetDateTime.class), rs.getString("closed_by"),
 				rs.getObject("closed_at", OffsetDateTime.class), orderAllowedActions(rs.getString("status")));
+	}
+
+	private String approvalStatusName(String status) {
+		if (status == null || status.isBlank()) {
+			return "未提交";
+		}
+		return switch (status) {
+			case "NOT_REQUIRED" -> "无需审批";
+			case "NOT_SUBMITTED" -> "未提交";
+			case "SUBMITTED", "PENDING", "IN_PROGRESS", "PROCESSING" -> "审批中";
+			case "APPROVED", "PASSED" -> "已通过";
+			case "REJECTED" -> "已驳回";
+			case "CANCELLED", "CANCELED", "REVOKED", "WITHDRAWN" -> "已撤回";
+			case "UNKNOWN" -> "未知状态";
+			default -> status;
+		};
 	}
 
 	private PurchaseOrderScheduleResponse mapScheduleResponse(ResultSet rs, int rowNum) throws SQLException {
@@ -2594,8 +2856,11 @@ public class ProcurementAdminService {
 			PurchaseMode purchaseMode, PurchaseMode procurementMode, String ownershipType, Long projectId,
 			String projectCode, String projectName, String currency, Long version, int lineCount, String totalQuantity,
 			String receivedQuantity, String remainingQuantity,
-			String inTransitQuantity, String inTransitStatus, String inTransitStatusName, String remark,
-			String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
+			String inTransitQuantity, String inTransitStatus, String inTransitStatusName, LocalDate nextArrivalDate,
+			String requisitionNo, String quoteNo, String agreementNo, String priceSourceType,
+			String priceSourceReason, String approvalStatus, String approvalStatusName,
+			Boolean exceptionApprovalRequired, String exceptionApprovalStatus, String exceptionApprovalStatusName,
+			String closeReason, String remark, String createdByName, OffsetDateTime createdAt, OffsetDateTime updatedAt, String confirmedByName,
 			OffsetDateTime confirmedAt, String cancelledByName, OffsetDateTime cancelledAt, String closedByName,
 			OffsetDateTime closedAt, List<String> allowedActions) {
 	}
@@ -2682,6 +2947,12 @@ public class ProcurementAdminService {
 	private record ValidatedOrder(SupplierRef supplier, LocalDate orderDate, LocalDate expectedArrivalDate,
 			PurchaseMode purchaseMode, Long projectId, String currency, String publicDirectReason,
 			String exceptionReason, String remark, List<ValidatedOrderLine> lines) {
+	}
+
+	private record OrderPriceSource(Long id, Long supplierId, String status, LocalDate validFrom,
+			LocalDate validTo, String currency, String purchaseMode, Long projectId, Long materialId, Long unitId,
+			Long requisitionLineId, BigDecimal minimumQuantity, BigDecimal taxRate,
+			BigDecimal taxExcludedUnitPrice, BigDecimal taxIncludedUnitPrice) {
 	}
 
 	private record ValidatedOrderLine(Integer lineNo, Long materialId, Long unitId, BigDecimal quantity,

@@ -496,79 +496,82 @@ onMounted(loadRecords)
       <el-table v-loading="loading" :data="records" row-key="id" :empty-text="loading ? '加载中' : '暂无销售报价'">
         <el-table-column label="报价与来源" min-width="260">
           <template #default="{ row }">
-            <strong>{{ row.quoteNo }}</strong>
-            <span>{{ projectSalesLabel(row) }}</span>
-            <span>{{ row.customerCode }} {{ row.customerName }}</span>
+            <div class="table-cell-stack">
+              <strong>{{ row.quoteNo }}</strong>
+              <span>{{ projectSalesLabel(row) }}</span>
+              <span>{{ row.customerCode }} {{ row.customerName }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" min-width="220">
           <template #default="{ row }">
-            <span>业务状态：{{ quoteStatusLabel(row.status) }}</span>
-            <span>审批状态：{{ approvalStatusLabel(row.approvalStatus) }}</span>
-            <span>有效期：{{ row.validUntil }}</span>
+            <div class="table-cell-stack">
+              <span>业务状态：{{ quoteStatusLabel(row.status) }}</span>
+              <span>审批状态：{{ approvalStatusLabel(row.approvalStatus) }}</span>
+              <span>有效期：{{ row.validUntil }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="税价金额" min-width="260">
           <template #default="{ row }">
-            <span>未税 {{ formatSalesDecimal(quoteUntaxedAmount(row)) }} / 税额 {{ formatSalesDecimal(quoteTaxAmount(row)) }}</span>
-            <span>含税 {{ formatSalesDecimal(quoteTaxIncludedAmount(row)) }} {{ row.currency }}</span>
-            <span v-if="row.amountRestricted">金额受限</span>
+            <div class="table-cell-stack">
+              <span>未税 {{ formatSalesDecimal(quoteUntaxedAmount(row)) }} / 税额 {{ formatSalesDecimal(quoteTaxAmount(row)) }}</span>
+              <span>含税 {{ formatSalesDecimal(quoteTaxIncludedAmount(row)) }} {{ row.currency }}</span>
+              <span v-if="row.amountRestricted">金额受限</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="184">
+        <el-table-column label="操作" fixed="right" width="196">
           <template #default="{ row }">
             <div class="row-actions">
-            <el-button text type="primary" @click="viewQuote(row)">详情</el-button>
-            <el-button v-if="allowed(row, 'UPDATE') && authStore.hasPermission('sales:quote:update')" text @click="editQuote(row)">
+              <el-button size="small" text type="primary" @click="viewQuote(row)">详情</el-button>
+              <el-button v-if="allowed(row, 'UPDATE') && authStore.hasPermission('sales:quote:update')" size="small" text @click="editQuote(row)">
                 编辑
               </el-button>
-            <el-dropdown trigger="click" class="table-actions-more" v-if="(allowed(row, 'SUBMIT_APPROVAL') && canSubmit) || (allowed(row, 'CANCEL') && canCancel) || (allowed(row, 'CONVERT_ORDER') && canConvert) || (allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId)">
-              <el-button size="small" text>更多</el-button>
-              <template #dropdown>
-                <el-dropdown-menu class="table-actions-more-menu">
-                  <el-button
-                    v-if="allowed(row, 'SUBMIT_APPROVAL') && canSubmit"
-                    :data-test="`submit-sales-quote-${row.id}`"
-                    text
-                    type="success"
-                    :disabled="actionLoading"
-                    @click="submitQuote(row)"
-                  >
-                    提交审批
-                  </el-button>
-                  <el-button
-                    v-if="allowed(row, 'CANCEL') && canCancel"
-                    :data-test="`cancel-sales-quote-${row.id}`"
-                    text
-                    type="danger"
-                    :disabled="actionLoading"
-                    @click="cancelQuote(row)"
-                  >
-                    取消
-                  </el-button>
-                  <el-button
-                    v-if="allowed(row, 'CONVERT_ORDER') && canConvert"
-                    :data-test="`convert-sales-quote-order-${row.id}`"
-                    text
-                    type="primary"
-                    :disabled="actionLoading"
-                    @click="convertQuoteOrder(row)"
-                  >
-                    转订单
-                  </el-button>
-                  <el-button
-                    v-if="allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId"
-                    :data-test="`convert-sales-quote-contract-${row.id}`"
-                    text
-                    :disabled="actionLoading"
-                    @click="convertQuoteContract(row)"
-                  >
-                    转合同
-                  </el-button>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-              <span v-if="row.actionDisabledReason">{{ row.actionDisabledReason }}</span>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(allowed(row, 'SUBMIT_APPROVAL') && canSubmit) || (allowed(row, 'CANCEL') && canCancel) || (allowed(row, 'CONVERT_ORDER') && canConvert) || (allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId)">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-dropdown-item
+                      v-if="allowed(row, 'SUBMIT_APPROVAL') && canSubmit"
+                      class="table-actions-more-item table-actions-more-item--success"
+                      :data-test="`submit-sales-quote-${row.id}`"
+                      :disabled="actionLoading"
+                      @click="submitQuote(row)"
+                    >
+                      提交审批
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      v-if="allowed(row, 'CANCEL') && canCancel"
+                      class="table-actions-more-item table-actions-more-item--danger"
+                      :data-test="`cancel-sales-quote-${row.id}`"
+                      :disabled="actionLoading"
+                      @click="cancelQuote(row)"
+                    >
+                      取消
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      v-if="allowed(row, 'CONVERT_ORDER') && canConvert"
+                      class="table-actions-more-item"
+                      :data-test="`convert-sales-quote-order-${row.id}`"
+                      :disabled="actionLoading"
+                      @click="convertQuoteOrder(row)"
+                    >
+                      转订单
+                    </el-dropdown-item>
+                    <el-dropdown-item
+                      v-if="allowed(row, 'CONVERT_CONTRACT') && canConvert && row.projectId"
+                      class="table-actions-more-item"
+                      :data-test="`convert-sales-quote-contract-${row.id}`"
+                      :disabled="actionLoading"
+                      @click="convertQuoteContract(row)"
+                    >
+                      转合同
+                    </el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+              <span v-if="row.actionDisabledReason" class="action-disabled-reason">{{ row.actionDisabledReason }}</span>
             </div>
           </template>
         </el-table-column>
@@ -699,7 +702,26 @@ onMounted(loadRecords)
   gap: 8px;
 }
 
-.table-scroll span {
+.table-cell-stack {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.table-cell-stack span {
+  color: var(--qherp-steel);
   display: block;
+  line-height: 1.45;
+}
+
+.table-cell-stack strong {
+  color: var(--qherp-text);
+  font-weight: 600;
+}
+
+.action-disabled-reason {
+  color: var(--qherp-muted);
+  font-size: 12px;
+  white-space: normal;
 }
 </style>

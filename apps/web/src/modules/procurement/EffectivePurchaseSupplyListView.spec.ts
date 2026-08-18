@@ -119,7 +119,7 @@ const supplies: EffectivePurchaseSupplyRecord[] = [
   },
 ]
 
-describe('有效采购供给页面', () => {
+describe('采购在途供给页面', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     procurementApiMock.effectiveSupplies.list.mockResolvedValue({
@@ -179,7 +179,7 @@ describe('有效采购供给页面', () => {
     expect(wrapper.text()).toContain('M-100 伺服电机')
     expect(wrapper.text()).toContain('预计到货 2026-07-25')
     expect(wrapper.text()).toContain('剩余 60')
-    expect(wrapper.text()).toContain('计入有效供给')
+    expect(wrapper.text()).toContain('计入在途供给')
     expect(wrapper.text()).toContain('订单已结案')
     expect(wrapper.text()).toContain('成本无权限')
     expect(wrapper.text()).not.toContain('缺料')

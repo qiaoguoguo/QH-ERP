@@ -1,0 +1,129 @@
+[
+  {
+    "slug": "platform-data-repairs",
+    "title": "数据修复能修什么，不能修什么",
+    "summary": "说明数据修复申请、审批、执行、验证和固定适配器白名单边界。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n数据修复用于受控修复少量主数据字段，必须经过申请、审批、执行和验证链路。\n# 页面入口\n平台工作台 > 数据修复，页面入口“数据修复记录”页面、“新增修复申请”页面、“数据修复详情”页面。\n# 当前支持\n首批适配器只覆盖客户、供应商和物料资料更正。编码、税务结算关键标识、追踪方式、计价成本关键属性、单位和已确认交易事实不允许修复。\n# 关键规则\n申请人不能审批自己提交的修复；执行人需同时具备平台执行权限和目标对象原维护权限；执行人不能验证自己执行的修复。\n# 禁止做法\n不得通过 SQL 直改、绕过审批、复活终态或静默改历史事实。",
+    "keywords": "数据修复,修复申请,审批,执行,验证,适配器,客户修复,供应商修复,物料修复,白名单字段,SQL修复,不能修",
+    "routePaths": "/platform/data-repairs\n/platform/data-repairs/create\n/platform/data-repairs/:id",
+    "pageNames": "数据修复记录\n新增修复申请\n数据修复详情",
+    "permissionNote": "查看、创建、审批、执行和验证需要平台数据修复及目标领域权限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "attachments-audit-source-chain"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "platform-history-imports",
+    "title": "历史导入固定适配器怎么使用",
+    "summary": "说明历史导入模板下载、上传预检、确认导入、固定适配器和全有全无规则。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "IMPORT_EXPORT",
+    "content": "# 功能用途\n历史导入用于通过固定模板批量导入主数据或草稿基础资料。\n# 页面入口\n平台工作台 > 历史导入，页面入口“历史导入”页面 和 “历史导入详情”页面。客户、供应商、物料、BOM 和销售项目页面也可能提供对应入口。\n# 当前适配器\n- 客户历史导入。\n- 供应商历史导入。\n- 物料历史导入。\n- BOM 草稿历史导入。\n- 销售项目草稿历史导入。\n# 操作步骤\n1. 下载当前模板。\n2. 填写 `.xlsx` 文件。\n3. 上传预检。\n4. 查看错误明细。\n5. 预检无错误后在详情页确认导入。\n# 边界\n历史导入不写库存期初、库存流水、成本层、正式凭证、账簿、审批终态或文件元数据。任一行失败时整批不写业务事实。",
+    "keywords": "历史导入,固定适配器,下载模板,上传预检,确认导入,错误明细,客户历史导入,供应商历史导入,物料历史导入,BOM草稿历史导入,销售项目草稿历史导入,全有全无",
+    "routePaths": "/platform/history-imports\n/platform/history-imports/:id",
+    "pageNames": "历史导入\n历史导入详情",
+    "permissionNote": "查看和确认需要平台历史导入权限，同时叠加目标对象领域权限。",
+    "relatedSlugs": [
+      "import-export-templates",
+      "master-suppliers-customers",
+      "material-import-export"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "platform-delivery-assets",
+    "title": "交付资料页能做什么",
+    "summary": "说明交付资料页只读展示固定模板、适配器、批量工具、手册和环境标识。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n交付资料页用于只读查看阶段版本、环境标识、操作手册、演示数据状态、固定打印模板、历史导入适配器和批量工具目录。\n# 页面入口\n平台工作台 > 交付资料，页面入口“交付资料”页面。\n# 当前边界\n页面不提供配置保存、模板编辑、脚本执行、数据库重建、对象存储清理、备份恢复或正式发布操作。\n# 风险提示\n发现页面环境标识与当前操作目的不一致时，应停止导入、修复、批量和打印操作，先确认运行资源。",
+    "keywords": "交付资料,环境标识,操作手册,演示数据,固定打印模板,历史导入适配器,批量工具,只读,不能执行脚本",
+    "routePaths": "/platform/delivery-assets",
+    "pageNames": "交付资料",
+    "permissionNote": "查看需要交付资料权限；页面只读，不提供写入动作。",
+    "relatedSlugs": [
+      "common-messages-tasks",
+      "platform-history-imports"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "import-export-templates",
+    "title": "导入导出模板和错误文件通用规则",
+    "summary": "说明系统导入导出、模板版本、文件限制、错误明细和任务中心处理方式。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "IMPORT_EXPORT",
+    "content": "# 适用范围\n适用于物料导入、BOM 草稿导入、历史导入、报价导入导出、普通业务导出和固定文档任务。\n# 通用规则\n- 先下载当前模板，再填写上传。\n- 模板版本、字段、枚举、必填和引用必须匹配当前系统。\n- 枚举字段优先使用模板下拉项。\n- 文件大小、行数、隐藏内容、公式、宏、外部链接和类型伪造会被系统拒绝。\n- 导入预检失败时整批不写业务事实。\n# 错误处理\n进入任务中心或历史导入详情查看错误文件、错误数量和行级错误。按错误文案修正模板后重新上传。\n# 边界\n导出和固定打印仍会重新鉴权；不能通过文件名、错误信息或下载结果反推无权查看的业务数据。",
+    "keywords": "导入,导出,模板下载,模板版本,错误文件,错误明细,行级错误,枚举下拉,宏,公式,文件过大,任务中心,预检失败",
+    "routePaths": "",
+    "pageNames": "导入导出通用规则",
+    "permissionNote": "导入、导出和下载需要对应业务权限及平台文档任务权限。",
+    "relatedSlugs": [
+      "common-messages-tasks",
+      "platform-history-imports"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "attachments-audit-source-chain",
+    "title": "附件、审计和来源链怎么理解",
+    "summary": "说明附件快照、审计记录和来源追溯的作用与只读边界。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "CONCEPT",
+    "content": "# 功能用途\n附件用于保存业务相关文件或审批快照；审计记录用于追踪维护和状态动作；来源链用于查看记录从哪里来、影响到哪里。\n# 关键规则\n- 附件不是业务事实本身，业务状态以后端单据为准。\n- 审计用于追责和追踪，不用于修改历史事实。\n- 来源链只读查看，不触发业务动作。\n# 权限边界\n没有业务对象权限时，不应通过附件、审计、错误文本、文件名或来源链反推出单号、金额、客户、供应商、银行账号或税务敏感信息。",
+    "keywords": "附件,附件快照,审计,来源链,来源追溯,关联单据,业务事实,脱敏,敏感字段",
+    "routePaths": "",
+    "pageNames": "附件、审计和来源链",
+    "permissionNote": "查看附件、审计和来源链需要对应平台或业务对象权限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "report-permissions-data-boundary"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "platform-current-boundaries",
+    "title": "帮助中心和后续 AI 助手当前边界",
+    "summary": "说明本阶段只建设知识库和帮助中心，AI 助手后置且只读咨询。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "CONCEPT",
+    "content": "# 当前阶段\n当前阶段建设系统操作知识库和帮助中心，不建设 AI 助手。\n# 后续边界\n后续只读 AI 助手只提供操作咨询和页面导航指引，不代替用户操作，不调用新增、编辑、删除、提交、审批、确认、入库、出库、过账、结账等业务写接口。\n# 数据边界\n帮助内容不包含真实客户、供应商、价格、单号、库存和财务数据。当前页面帮助只使用规范化页面入口或页面关键词，不上传表单值、金额、单号或业务对象详情。\n# 禁止误解\n帮助中心和 AI 助手不是自动流程机器人、在线客服工单系统或通用 ERP 顾问。",
+    "keywords": "帮助中心,知识库,AI助手,只读咨询,页面导航,不代操作,不调用写接口,不上传业务数据,当前未实现",
+    "routePaths": "/help",
+    "pageNames": "系统帮助中心",
+    "permissionNote": "所有登录用户可阅读启用知识；知识维护仅超级管理员。",
+    "relatedSlugs": [
+      "common-permission-menu-button"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "system-knowledge-management",
+    "title": "知识库管理怎么维护分类和文章",
+    "summary": "说明知识库管理的分类维护、文章新增编辑、路由绑定、权限说明、关联知识、启停删除和保存失败处理。",
+    "categoryCode": "PLATFORM_IMPORT_EXPORT",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n知识库管理用于由管理员维护帮助中心使用的知识分类和知识文章。普通登录用户可在帮助中心阅读启用文章，不能在这里维护内容。\n# 页面入口\n- 知识库管理列表：“知识库管理”页面。\n- 新增知识：“新增知识”页面。\n- 编辑知识：“编辑知识”页面。\n# 分类维护\n点击分类维护，可新增或编辑分类编码、分类名称、父级分类、排序和状态。分类已被子分类或文章使用时，删除会被阻止。\n# 新增和编辑文章\n文章需要填写知识标识、标题、摘要、分类、知识类型、状态和正文。正文按受控 Markdown 格式编写，保存后立即对帮助中心生效，不需要审核、发布或版本流程。\n# 检索和页面帮助\n关键词用于帮助中心搜索，应覆盖页面名、按钮名、字段名、状态、错误文案和常用口语。页面名称用于结果展示。关联页面用于页面帮助命中，多个页面入口换行填写，例如 “知识库管理”页面、“新增知识”页面、“编辑知识”页面。权限说明只写操作所需角色或权限，不写真实账号或敏感数据。\n# 关联知识\n当前维护页通过关联知识 ID 维护相关文章，多个 ID 用逗号分隔。保存后，用户在文章详情可看到关联知识入口。\n# 启停和删除\n停用文章后普通用户不可见；启用后恢复可见。删除知识或分类前会有确认，删除后不可恢复。分类仍被使用时不能删除。\n# 保存失败\n保存失败时留在当前表单，根据错误提示检查必填、分类、知识类型、知识标识唯一性、关联知识 ID 和权限。不要通过业务页面、导入或数据库绕过知识维护。\n# 边界\n知识库管理只维护帮助内容，不调用采购、销售、库存、财务等业务写接口，也不提供 AI 自动生成或代操作能力。",
+    "keywords": "知识库管理,帮助中心维护,新增知识,编辑知识,分类维护,知识标识,关键词,关联路由,权限说明,关联知识ID,启用,停用,删除,保存失败,保存即生效,无审核,无AI",
+    "routePaths": "/system/knowledge\n/system/knowledge/create\n/system/knowledge/:id/edit",
+    "pageNames": "知识库管理\n新增知识\n编辑知识",
+    "permissionNote": "所有登录用户可阅读启用知识；知识库管理仅管理员或具备知识库管理权限的账号可进入维护。",
+    "relatedSlugs": [
+      "platform-current-boundaries",
+      "common-permission-menu-button",
+      "import-export-templates"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  }
+]

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   activeMenuPath,
+  approvalDetailReturnTo,
+  approvalId,
+  approvalIdFromReturnTo,
   currentRouteReturnTo,
   queryWithReturnTo,
   routeReturnTo,
@@ -46,5 +49,14 @@ describe('导航返回上下文', () => {
       lineId: '8',
       returnTo: '/reports/sales?dateFrom=2026-07-01&dateTo=2026-07-31&customerId=20',
     })
+  })
+
+  it('生成并识别审批详情返回地址', () => {
+    expect(approvalDetailReturnTo(41)).toBe('/platform/approvals?approvalId=41')
+    expect(approvalId('41')).toBe(41)
+    expect(approvalId('0')).toBeNull()
+    expect(approvalIdFromReturnTo('/platform/approvals?approvalId=41')).toBe(41)
+    expect(approvalIdFromReturnTo('/platform/approvals')).toBeNull()
+    expect(approvalIdFromReturnTo('/procurement/requisitions?approvalId=41')).toBeNull()
   })
 })

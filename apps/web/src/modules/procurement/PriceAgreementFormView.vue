@@ -8,6 +8,7 @@ import {
   type PriceAgreementPayload,
   type ProcurementMode,
   type ResourceId,
+  type SupplierQuoteRecord,
 } from '../../shared/api/procurementApi'
 import { salesProjectApi, type SalesProjectSummary } from '../../shared/api/salesProjectApi'
 import {
@@ -30,11 +31,15 @@ const projects = ref<SalesProjectSummary[]>([])
 const suppliers = ref<PartnerRecord[]>([])
 const materials = ref<MaterialRecord[]>([])
 const editingRecord = ref<PriceAgreementDetailRecord | null>(null)
+const sourceQuote = ref<SupplierQuoteRecord | null>(null)
 const form = reactive({
   procurementMode: 'PROJECT' as ProcurementMode,
   projectId: '' as ResourceId | '',
   supplierId: '' as ResourceId | '',
   materialId: '' as ResourceId | '',
+  unitId: '' as ResourceId | '',
+  sourceQuoteId: '' as ResourceId | '',
+  minPurchaseQuantity: '0',
   taxRate: '',
   taxExcludedUnitPrice: '',
   taxIncludedUnitPrice: '',
@@ -45,6 +50,7 @@ const form = reactive({
 
 const isEdit = computed(() => Boolean(route.params.id))
 const pageTitle = computed(() => (isEdit.value ? '编辑价格协议' : '新建价格协议'))
+const fromSelectedQuote = computed(() => form.sourceQuoteId !== '')
 const selectedProject = computed(() => projects.value.find((project) => String(project.id) === String(form.projectId)))
 const selectedSupplier = computed(() => suppliers.value.find((supplier) => String(supplier.id) === String(form.supplierId)))
 const selectedMaterial = computed(() => materials.value.find((material) => String(material.id) === String(form.materialId)))
@@ -77,6 +83,9 @@ async function loadRecord() {
     form.projectId = detail.projectId ?? ''
     form.supplierId = detail.supplierId
     form.materialId = detail.materialId
+    form.unitId = detail.unitId ?? ''
+    form.sourceQuoteId = detail.sourceQuoteId ?? ''
+    form.minPurchaseQuantity = detail.minPurchaseQuantity ?? '0'
     form.taxRate = detail.taxRate ?? ''
     form.taxExcludedUnitPrice = detail.taxExcludedUnitPrice ?? ''
     form.taxIncludedUnitPrice = detail.taxIncludedUnitPrice ?? ''
@@ -91,23 +100,73 @@ async function loadRecord() {
   }
 }
 
+function queryId(value: unknown): ResourceId | null {
+  return normalizeRequiredId(Array.isArray(value) ? value[0] : value)
+}
+
+async function loadSelectedQuote() {
+  if (isEdit.value) {
+    return
+  }
+  const inquiryId = queryId(route.query.sourceInquiryId)
+  const quoteId = queryId(route.query.sourceQuoteId)
+  if (inquiryId === null && quoteId === null) {
+    return
+  }
+  if (inquiryId === null || quoteId === null) {
+    formError.value = '来源询价或中选报价参数不完整'
+    return
+  }
+  loading.value = true
+  formError.value = ''
+  try {
+    const detail = await procurementApi.quotes.get(inquiryId, quoteId)
+    if (detail.status !== 'SELECTED') {
+      formError.value = '只有已中选的供应商报价可以生成价格协议'
+      return
+    }
+    sourceQuote.value = detail
+    form.procurementMode = procurementModeFrom(detail) ?? 'PUBLIC'
+    form.projectId = detail.projectId ?? ''
+    form.supplierId = detail.supplierId
+    form.materialId = detail.materialId
+    form.unitId = detail.unitId ?? ''
+    form.sourceQuoteId = detail.id
+    form.minPurchaseQuantity = detail.minPurchaseQuantity ?? '0'
+    form.taxRate = detail.taxRate ?? ''
+    form.taxExcludedUnitPrice = detail.taxExcludedUnitPrice ?? ''
+    form.taxIncludedUnitPrice = detail.taxIncludedUnitPrice ?? ''
+    form.validFrom = detail.validFrom ?? ''
+    form.validTo = detail.validTo ?? ''
+  } catch (caught) {
+    formError.value = procurementErrorMessage(caught)
+  } finally {
+    loading.value = false
+  }
+}
+
 function buildPayload(): PriceAgreementPayload | null {
+  const minPurchaseQuantity = validateProcurementDecimal(form.minPurchaseQuantity, { label: '最小采购量', allowZero: true })
   const taxRate = validateProcurementDecimal(form.taxRate, { label: '税率', allowZero: true })
   const taxExcludedUnitPrice = validatePurchaseUnitPrice(form.taxExcludedUnitPrice)
   const taxIncludedUnitPrice = validatePurchaseUnitPrice(form.taxIncludedUnitPrice)
   const supplierId = normalizeRequiredId(form.supplierId)
   const materialId = normalizeRequiredId(form.materialId)
+  const unitId = normalizeRequiredId(form.unitId)
+  const sourceQuoteId = normalizeRequiredId(form.sourceQuoteId)
   const projectId = normalizeRequiredId(form.projectId)
   if (
     supplierId === null
     || materialId === null
     || !form.validFrom
     || !form.validTo
+    || minPurchaseQuantity.payloadValue === null
     || taxRate.payloadValue === null
     || taxExcludedUnitPrice.payloadValue === null
     || taxIncludedUnitPrice.payloadValue === null
   ) {
-    formError.value = taxRate.message
+    formError.value = minPurchaseQuantity.message
+      || taxRate.message
       || taxExcludedUnitPrice.message
       || taxIncludedUnitPrice.message
       || '请完整填写供应商、物料、税价和有效期'
@@ -122,6 +181,9 @@ function buildPayload(): PriceAgreementPayload | null {
     projectId: form.procurementMode === 'PROJECT' ? projectId : null,
     supplierId,
     materialId,
+    ...(unitId === null ? {} : { unitId }),
+    ...(sourceQuoteId === null ? {} : { sourceQuoteId }),
+    minPurchaseQuantity: minPurchaseQuantity.payloadValue,
     taxRate: taxRate.payloadValue,
     taxExcludedUnitPrice: taxExcludedUnitPrice.payloadValue,
     taxIncludedUnitPrice: taxIncludedUnitPrice.payloadValue,
@@ -162,7 +224,11 @@ watch(() => form.procurementMode, (mode) => {
 
 onMounted(async () => {
   await loadReferences()
-  await loadRecord()
+  if (isEdit.value) {
+    await loadRecord()
+  } else {
+    await loadSelectedQuote()
+  }
 })
 </script>
 
@@ -172,6 +238,14 @@ onMounted(async () => {
       <el-alert v-if="referenceError" class="page-alert" type="error" :title="referenceError" show-icon :closable="false" />
       <el-alert v-if="formError" class="page-alert" type="error" :title="formError" show-icon :closable="false" />
       <el-alert v-if="loading" class="page-alert" type="info" title="价格协议加载中" show-icon :closable="false" />
+      <el-alert
+        v-if="fromSelectedQuote"
+        class="page-alert"
+        type="info"
+        :title="`已从中选报价 ${sourceQuote?.quoteNo || editingRecord?.sourceQuoteNo || ''} 自动带入协议价格，来源字段不可修改`"
+        show-icon
+        :closable="false"
+      />
     </template>
     <section v-if="editLoadFailed" class="section-block">
       <h2>无法编辑价格协议</h2>
@@ -188,7 +262,7 @@ onMounted(async () => {
         <div class="form-grid">
           <label>
             采购模式
-            <el-select v-model="form.procurementMode" data-test="agreement-procurement-mode" style="width: 100%">
+            <el-select v-model="form.procurementMode" data-test="agreement-procurement-mode" style="width: 100%" :disabled="fromSelectedQuote">
               <el-option label="项目专采" value="PROJECT" />
               <el-option label="公共采购" value="PUBLIC" />
             </el-select>
@@ -201,7 +275,7 @@ onMounted(async () => {
               style="width: 100%"
               filterable
               clearable
-              :disabled="form.procurementMode === 'PUBLIC'"
+              :disabled="fromSelectedQuote || form.procurementMode === 'PUBLIC'"
               placeholder="选择项目"
             >
               <el-option
@@ -218,7 +292,7 @@ onMounted(async () => {
           </label>
           <label>
             供应商
-            <el-select v-model="form.supplierId" data-test="agreement-supplier-id" style="width: 100%" filterable placeholder="选择供应商">
+            <el-select v-model="form.supplierId" data-test="agreement-supplier-id" style="width: 100%" filterable :disabled="fromSelectedQuote" placeholder="选择供应商">
               <el-option
                 v-for="supplier in suppliers"
                 :key="supplier.id"
@@ -233,7 +307,7 @@ onMounted(async () => {
           </label>
           <label>
             物料
-            <el-select v-model="form.materialId" data-test="agreement-material-id" style="width: 100%" filterable placeholder="选择物料">
+            <el-select v-model="form.materialId" data-test="agreement-material-id" style="width: 100%" filterable :disabled="fromSelectedQuote" placeholder="选择物料">
               <el-option
                 v-for="material in materials"
                 :key="material.id"
@@ -247,16 +321,20 @@ onMounted(async () => {
             <span class="readonly-field">{{ selectedMaterial ? `${selectedMaterial.code} ${selectedMaterial.name}` : '未选择物料' }}</span>
           </label>
           <label>
+            最小采购量
+            <input v-model="form.minPurchaseQuantity" name="agreement-min-purchase-quantity" :disabled="fromSelectedQuote" autocomplete="off">
+          </label>
+          <label>
             税率
-            <input v-model="form.taxRate" name="agreement-tax-rate" autocomplete="off">
+            <input v-model="form.taxRate" name="agreement-tax-rate" :disabled="fromSelectedQuote" autocomplete="off">
           </label>
           <label>
             未税单价
-            <input v-model="form.taxExcludedUnitPrice" name="agreement-tax-excluded-unit-price" autocomplete="off">
+            <input v-model="form.taxExcludedUnitPrice" name="agreement-tax-excluded-unit-price" :disabled="fromSelectedQuote" autocomplete="off">
           </label>
           <label>
             含税单价
-            <input v-model="form.taxIncludedUnitPrice" name="agreement-tax-included-unit-price" autocomplete="off">
+            <input v-model="form.taxIncludedUnitPrice" name="agreement-tax-included-unit-price" :disabled="fromSelectedQuote" autocomplete="off">
           </label>
           <label>
             生效日期

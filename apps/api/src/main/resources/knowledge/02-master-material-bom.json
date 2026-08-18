@@ -1,0 +1,144 @@
+[
+  {
+    "slug": "master-units-conversions",
+    "title": "计量单位和物料单位换算怎么维护",
+    "summary": "说明计量单位、物料单位换算的用途、字段和启停影响。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n计量单位用于统一物料和单据数量口径；物料单位换算用于定义特定物料在主单位和辅助单位之间的换算关系。\n# 页面入口\n- 计量单位：“计量单位”页面。\n- 物料单位换算：“物料单位换算”页面。\n# 关键字段\n- 单位编码和单位名称用于唯一识别和展示。\n- 换算关系应绑定物料、主单位、辅助单位和换算比例。\n- 状态分为启用和停用。\n# 常见错误和处理\n单位编码重复、必填项缺失或换算比例不合法会保存失败。停用单位不应删除历史数据，但会影响后续新业务选择。",
+    "keywords": "计量单位,单位换算,物料单位换算,单位编码,单位名称,换算比例,启用,停用",
+    "routePaths": "/master/units\n/master/unit-conversions",
+    "pageNames": "计量单位\n物料单位换算",
+    "permissionNote": "查看、创建、更新和停用需要基础资料对应权限。",
+    "relatedSlugs": [
+      "material-categories-items"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "master-coding-rules",
+    "title": "编码规则字段怎么填写",
+    "summary": "说明编码规则的对象类型、前缀、日期模式、流水号长度和下一流水号含义。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "FIELD",
+    "content": "# 功能用途\n编码规则用于按对象类型生成业务编码，例如物料、供应商、客户、单据等。\n# 页面入口\n基础资料 > 编码规则，页面入口“编码规则”页面。\n# 关键字段\n- 规则编码：系统内唯一，不应重复。\n- 名称：业务可读名称。\n- 对象类型：决定规则用于物料、单据或其他对象。\n- 前缀：生成编码时固定拼接在前。\n- 日期模式：需要日期段时选择对应模式，不需要时选择无日期。\n- 流水长度：表示流水号位数，不是下一流水号的业务数量。\n- 下一流水号：表示下一次生成编码使用的序号。\n- 重置周期：决定流水号是否按周期重置。\n# 常见错误和处理\n参数校验失败通常来自必填缺失、唯一性冲突、对象类型不合法、流水长度填写成过大数值或起始流水号不符合规则。应按页面字段语义填写，不要把流水长度当成起始编号。",
+    "keywords": "编码规则,规则编码,对象类型,前缀,日期模式,流水长度,下一流水号,重置周期,参数校验失败,物料编码规则",
+    "routePaths": "/master/coding-rules",
+    "pageNames": "编码规则",
+    "permissionNote": "查看和维护需要编码规则相关权限。",
+    "relatedSlugs": [
+      "material-categories-items",
+      "master-suppliers-customers"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "master-warehouses",
+    "title": "仓库资料会影响哪些库存单据",
+    "summary": "说明仓库编码、类型、状态及其对库存收发存业务的影响。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n仓库资料用于库存余额、库存单据、采购入库、销售出库、生产领料、完工入库等业务的仓库选择。\n# 页面入口\n基础资料 > 仓库，页面入口“仓库”页面。\n# 关键字段\n- 仓库编码：唯一识别仓库。\n- 仓库名称：业务页面展示名称。\n- 仓库类型：区分原料、成品、半成品等管理场景。\n- 状态：启用仓库可用于新单据；停用仓库不应再作为新业务候选。\n# 上下游影响\n仓库状态会影响库存单据和来源候选范围，但不删除历史库存流水和历史单据。",
+    "keywords": "仓库,仓库编码,仓库类型,原料仓,成品仓,启用仓库,停用仓库,库存单据,采购入库,销售出库",
+    "routePaths": "/master/warehouses",
+    "pageNames": "仓库",
+    "permissionNote": "查看和维护需要仓库基础资料权限。",
+    "relatedSlugs": [
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "master-suppliers-customers",
+    "title": "供应商和客户档案怎么维护",
+    "summary": "说明供应商、客户基础资料的字段、启停和历史导入入口。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n供应商用于采购、外协、采购入库、退货和应付来源；客户用于销售项目、销售订单、出库、退货和应收来源。\n# 页面入口\n- 供应商：“供应商”页面。\n- 客户：“客户”页面。\n# 关键字段\n- 编码：唯一识别供应商或客户。\n- 名称、联系人、联系电话、地址和备注用于业务沟通记录。\n- 状态分为启用和停用。\n# 操作规则\n停用供应商或客户不删除历史业务记录，但会影响后续采购、销售和往来业务的候选范围。\n# 历史导入\n供应商和客户列表在具备权限时提供历史导入入口，导入只新增合法资料，不更新已有编码。",
+    "keywords": "供应商,客户,供应商档案,客户档案,联系人,联系电话,启用,停用,历史导入,采购,销售,应收,应付",
+    "routePaths": "/master/suppliers\n/master/customers",
+    "pageNames": "供应商\n客户",
+    "permissionNote": "查看和维护需要供应商或客户权限；历史导入还需要平台历史导入和领域创建权限。",
+    "relatedSlugs": [
+      "platform-history-imports",
+      "finance-ar-ap-overview"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "material-categories-items",
+    "title": "物料分类和物料档案怎么维护",
+    "summary": "说明物料分类、物料编码、物料类型、来源属性、单位和状态对业务的影响。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n物料分类用于组织物料；物料档案是采购、库存、生产、销售、成本的基础主数据。\n# 页面入口\n- 物料分类：“物料分类”页面。\n- 物料档案：“物料档案”页面。\n# 关键字段\n- 物料编码：唯一识别物料。\n- 物料名称、规格型号：用于业务单据展示。\n- 分类：决定物料归属和筛选。\n- 单位：决定数量口径。\n- 物料类型：区分原材料、半成品、成品等业务含义。\n- 来源属性：识别采购、生产或其他来源。\n- 状态：启用可用于新业务，停用不删除历史单据。\n# 权限和边界\n成本、计价等敏感字段可能受成本权限控制。停用物料前应检查开放业务引用，不能通过批量状态绕过原限制。",
+    "keywords": "物料分类,物料档案,物料编码,物料名称,规格型号,物料类型,来源属性,单位,启用,停用,成本字段,按钮没了",
+    "routePaths": "/materials/categories\n/materials/items",
+    "pageNames": "物料分类\n物料档案",
+    "permissionNote": "查看和维护需要物料相关权限；成本字段还需要成本敏感权限。",
+    "relatedSlugs": [
+      "master-units-conversions",
+      "material-import-export"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "material-import-export",
+    "title": "物料导入模板和导入失败怎么处理",
+    "summary": "说明物料导入导出的模板、中文表头、枚举下拉、兼容解析和错误处理。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "IMPORT_EXPORT",
+    "content": "# 功能用途\n物料导入用于批量新增物料资料，导出用于按筛选条件生成物料文件。\n# 页面入口\n物料档案“物料档案”页面 的导入、导出或历史导入入口。\n# 模板规则\n- 当前模板应直接在单元格展示中文表头。\n- 枚举字段应提供中文语义下拉，例如物料类型、来源属性、状态等。\n- 解析端应兼容中文表头和英文表头，避免旧模板失效。\n- 枚举中文语义应能正确解析为系统内部值。\n# 常见错误和处理\n- 字段必填缺失：补齐模板中的必填列。\n- 枚举不合法：使用下拉项，不手填英文编码。\n- 引用不存在：先维护单位、分类等基础资料。\n- 模板版本不匹配：重新下载当前模板后填写。\n# 边界\n历史导入只新增合法物料，不更新已有编码，不写入库存期初、成本层或正式交易事实。",
+    "keywords": "物料导入,物料导出,导入模板,中文表头,英文表头,枚举下拉,物料类型,来源属性,导入失败,模板版本,错误文件",
+    "routePaths": "/materials/items",
+    "pageNames": "物料档案\n物料导入模板",
+    "permissionNote": "导入需要物料创建权限和相关导入权限；所有登录用户可阅读导入规则。",
+    "relatedSlugs": [
+      "platform-history-imports",
+      "import-export-templates"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "bom-draft-basic",
+    "title": "BOM 草稿、明细和导入怎么使用",
+    "summary": "说明 BOM 列表、表单、详情、组件明细、草稿导入导出和启停规则。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\nBOM 维护产品或半成品的父项物料、版本和组件用量，供生产工单引用。\n# 页面入口\n物料管理 > BOM，页面入口“BOM”页面。\n# 关键字段\n- BOM 编码和版本共同标识一个 BOM 方案。\n- 父项物料表示被生产的目标物料。\n- 基准数量和基准单位决定组件用量计算基准。\n- 生效日期和失效日期用于判断可用期间。\n- 组件物料、用量、损耗和备注构成明细。\n# 操作规则\nBOM 可新增、编辑、复制、启用、停用和查看详情。BOM 草稿导入只处理草稿或更新草稿，不等于自动发布生产用 BOM。\n# 常见错误\n父项物料、组件物料、数量或单位缺失会保存失败。组件选择应基于当前已启用物料和单位资料。",
+    "keywords": "BOM,BOM草稿,BOM导入,BOM导出,父项物料,组件物料,基准数量,生效日期,失效日期,启用,停用,复制",
+    "routePaths": "/materials/boms",
+    "pageNames": "BOM",
+    "permissionNote": "查看和维护需要 BOM 权限；导入导出需要对应动作权限。",
+    "relatedSlugs": [
+      "production-work-orders",
+      "bom-eco-substitute"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "bom-eco-substitute",
+    "title": "BOM 工程变更和替代料当前怎么理解",
+    "summary": "说明 BOM 工程变更审批、应用和替代料范围的当前业务边界。",
+    "categoryCode": "MASTER_MATERIAL_BOM",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\nBOM 工程变更用于受控调整已使用的 BOM 方案；替代料用于在指定范围内声明可替换组件。\n# 页面入口\n当前能力归属 BOM 模块，入口以 BOM 页面实际展示为准，关联页面为 “BOM”页面。\n# 关键状态\n- 工程变更常见状态包括草稿、已应用、已取消。\n- 替代料状态分为启用和停用。\n# 关键规则\n- 工程变更应用需按当前审批或动作权限执行，不能跳过审批直接改历史事实。\n- 替代料范围可能为全局、父项物料或 BOM 范围，需按页面字段选择。\n# 当前边界\n知识库只说明当前页面已有入口和状态，不扩展为完整 ECO 平台。若页面未展示某个动作，不能通过接口绕过页面执行。",
+    "keywords": "BOM工程变更,ECO,替代料,应用BOM,审批,草稿,已应用,已取消,全局替代,父项物料",
+    "routePaths": "/materials/boms",
+    "pageNames": "BOM 工程变更\n替代料",
+    "permissionNote": "查看、维护、应用和审批需要 BOM 或 BOM ECO 对应权限。",
+    "relatedSlugs": [
+      "bom-draft-basic",
+      "common-approval-center"
+    ],
+    "sortOrder": 80,
+    "status": "ENABLED"
+  }
+]

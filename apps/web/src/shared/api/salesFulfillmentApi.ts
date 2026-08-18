@@ -290,6 +290,7 @@ export interface SalesCreditProfileRecord {
   customerCode?: string | null
   customerName: string
   creditLimit: DecimalString | null
+  status?: string | null
   frozen: boolean | null
   blockOverdue: boolean | null
   reviewDate?: string | null

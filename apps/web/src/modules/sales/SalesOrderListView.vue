@@ -194,7 +194,30 @@ function canCreateShipment(record: SalesOrderSummaryRecord) {
 }
 
 function sourceSummary(record: SalesOrderSummaryRecord) {
-  return salesPriceSourceLabel(record)
+  if (record.priceSourceType || record.priceSourceNo) {
+    return salesPriceSourceLabel(record)
+  }
+  if (record.sourceQuoteNo) {
+    return `报价带入 ${record.sourceQuoteNo}`
+  }
+  if (record.sourceQuoteId) {
+    return '报价带入'
+  }
+  return '手工录入'
+}
+
+function quoteSummary(record: SalesOrderSummaryRecord) {
+  if (record.sourceQuoteNo) {
+    return `报价单：${record.sourceQuoteNo}`
+  }
+  if (record.sourceQuoteId) {
+    return `报价单 ID：${record.sourceQuoteId}`
+  }
+  return ''
+}
+
+function sourceChainSummary(record: SalesOrderSummaryRecord) {
+  return salesSourceChainLabel(Boolean(record.sourceQuoteId))
 }
 
 function projectSummary(record: SalesOrderSummaryRecord) {
@@ -207,18 +230,61 @@ function projectSummary(record: SalesOrderSummaryRecord) {
   return '未关联项目'
 }
 
+function contractSummary(record: SalesOrderSummaryRecord) {
+  if (record.contractRestricted) {
+    return '合同信息受限'
+  }
+  const contractNo = record.externalContractNo || record.contractNo
+  return contractNo ? `合同 ${contractNo}` : '未关联合同'
+}
+
 function amountSummary(record: SalesOrderSummaryRecord) {
   if (record.amountRestricted) {
     return '金额受限'
   }
-  return `含税 ${formatSalesDecimal(salesOrderTaxIncludedAmount(record))} ${record.currency ?? 'CNY'}`
+  return `${formatSalesDecimal(salesOrderTaxIncludedAmount(record))} ${record.currency ?? 'CNY'}`
+}
+
+function taxSummary(record: SalesOrderSummaryRecord) {
+  if (record.amountRestricted) {
+    return '税额受限'
+  }
+  return `未税 ${formatSalesDecimal(record.taxExcludedAmount)} / 税额 ${formatSalesDecimal(record.taxAmount)}`
 }
 
 function creditSummary(record: SalesOrderSummaryRecord) {
   if (record.creditRestricted) {
     return '信用信息受限'
   }
-  return record.creditStatusName ?? '信用状态未返回'
+  if (record.creditStatusName) {
+    return record.creditStatusName
+  }
+  if (['CANCELLED', 'CLOSED', 'SHIPPED'].includes(record.status)) {
+    return '不占用信用'
+  }
+  if (record.status === 'DRAFT') {
+    return '待确认检查'
+  }
+  return '信用状态待同步'
+}
+
+function creditTagType(record: SalesOrderSummaryRecord) {
+  const text = creditSummary(record)
+  if (['信用正常', '额度充足', '不占用信用'].includes(text)) {
+    return 'success'
+  }
+  if (['信用档案缺失', '信用冻结或停用', '逾期阻断', '额度不足'].includes(text)) {
+    return 'danger'
+  }
+  return 'warning'
+}
+
+function shipmentProgressSummary(record: SalesOrderSummaryRecord) {
+  return `${formatSalesQuantity(record.shippedQuantity)} / ${formatSalesQuantity(record.totalQuantity)}`
+}
+
+function remainingSummary(record: SalesOrderSummaryRecord) {
+  return `未出库 ${formatSalesQuantity(record.remainingQuantity)}`
 }
 
 async function runOrderAction(record: SalesOrderSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -265,7 +331,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="销售订单" description="维护销售订单草稿、确认订单并追踪出库进度。">
+  <MasterDataTableView title="销售订单" description="维护销售订单草稿，确认后形成有效销售需求并追踪出库进度。">
     <template #actions>
       <el-button v-if="canCreate" data-test="create-sales-order" type="primary" @click="createOrder">
         新建销售订单
@@ -350,69 +416,65 @@ onMounted(() => {
 
     <el-empty v-if="!loading && records.length === 0" description="暂无销售订单" />
     <div class="table-scroll">
-      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无销售订单'" stripe>
-        <el-table-column prop="orderNo" label="订单号" min-width="170" show-overflow-tooltip />
-        <el-table-column label="客户" min-width="180" show-overflow-tooltip>
+      <el-table class="sales-order-table" :data="records" :empty-text="loading ? '加载中' : '暂无销售订单'" stripe>
+        <el-table-column label="订单 / 客户" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ row.customerCode }} {{ row.customerName }}
+            <div class="order-main-cell">
+              <strong>{{ row.orderNo }}</strong>
+              <span>{{ row.customerCode }} {{ row.customerName }}</span>
+              <small>创建人：{{ row.createdByName || '-' }}</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column prop="orderDate" label="订单日期" min-width="110" />
-        <el-table-column label="预计交付" min-width="110">
+        <el-table-column label="日期" min-width="150">
           <template #default="{ row }">
-            {{ row.expectedShipDate || '-' }}
+            <div class="stack-cell">
+              <span>订单：{{ row.orderDate || '-' }}</span>
+              <span>交付：{{ row.expectedShipDate || '-' }}</span>
+              <small>更新：{{ formatSalesDateTime(row.updatedAt) }}</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" min-width="105">
+        <el-table-column label="履约进度" min-width="180">
           <template #default="{ row }">
-            <SalesOrderStatusTag :status="row.status" />
+            <div class="stack-cell">
+              <SalesOrderStatusTag :status="row.status" />
+              <strong>{{ shipmentProgressSummary(row) }}</strong>
+              <small>{{ remainingSummary(row) }} / {{ row.lineCount }} 行</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="来源链" min-width="190" show-overflow-tooltip>
+        <el-table-column label="来源 / 价格" min-width="210" show-overflow-tooltip>
           <template #default="{ row }">
-            <div>{{ salesSourceChainLabel(Boolean(row.sourceQuoteId)) }}</div>
-            <small>{{ sourceSummary(row) }}</small>
+            <div class="stack-cell">
+              <strong>{{ sourceChainSummary(row) }}</strong>
+              <span>{{ sourceSummary(row) }}</span>
+              <small v-if="quoteSummary(row)">{{ quoteSummary(row) }}</small>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="项目/合同" min-width="170" show-overflow-tooltip>
+        <el-table-column label="项目 / 合同" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">
-            {{ projectSummary(row) }}
+            <div class="stack-cell">
+              <strong>{{ projectSummary(row) }}</strong>
+              <span>{{ contractSummary(row) }}</span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="税价" min-width="130" align="right">
+        <el-table-column label="金额 / 信用" min-width="220" align="right">
           <template #default="{ row }">
-            <span class="numeric-cell">{{ amountSummary(row) }}</span>
+            <div class="amount-credit-cell">
+              <strong>{{ amountSummary(row) }}</strong>
+              <small>{{ taxSummary(row) }}</small>
+              <el-tag size="small" :type="creditTagType(row)" effect="plain">
+                {{ creditSummary(row) }}
+              </el-tag>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="信用" min-width="120" show-overflow-tooltip>
+        <el-table-column label="操作" fixed="right" width="190">
           <template #default="{ row }">
-            {{ creditSummary(row) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="总数量" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatSalesQuantity(row.totalQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="已出库" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatSalesQuantity(row.shippedQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="未出库" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatSalesQuantity(row.remainingQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="lineCount" label="行数" min-width="80" />
-        <el-table-column prop="createdByName" label="创建人" min-width="100" />
-        <el-table-column label="更新时间" min-width="150">
-          <template #default="{ row }">
-            {{ formatSalesDateTime(row.updatedAt) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" fixed="right" width="184">
-          <template #default="{ row }">
+            <div class="actions-cell">
             <el-button size="small" text data-test="view-sales-order" @click="viewOrder(row)">详情</el-button>
             <el-button
               v-if="canUpdate && hasAllowedAction(row, 'UPDATE')"
@@ -427,44 +489,52 @@ onMounted(() => {
               <el-button size="small" text>更多</el-button>
               <template #dropdown>
                 <el-dropdown-menu class="table-actions-more-menu">
-                  <el-dropdown-item
+                  <el-button
                     v-if="canConfirm && hasAllowedAction(row, 'CONFIRM')"
-                    class="table-actions-more-item table-actions-more-item--success"
+                    size="small"
+                    text
+                    type="success"
                     data-test="confirm-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'confirm')"
                   >
                     确认
-                  </el-dropdown-item>
-                  <el-dropdown-item
+                  </el-button>
+                  <el-button
                     v-if="canCancelPermission && canCancel(row)"
-                    class="table-actions-more-item table-actions-more-item--danger"
+                    size="small"
+                    text
+                    type="danger"
                     data-test="cancel-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'cancel')"
                   >
                     取消
-                  </el-dropdown-item>
-                  <el-dropdown-item
+                  </el-button>
+                  <el-button
                     v-if="canClosePermission && canClose(row)"
-                    class="table-actions-more-item table-actions-more-item--warning"
+                    size="small"
+                    text
+                    type="warning"
                     data-test="close-sales-order"
                     :disabled="actionLoading"
                     @click="runOrderAction(row, 'close')"
                   >
                     关闭
-                  </el-dropdown-item>
-                  <el-dropdown-item
+                  </el-button>
+                  <el-button
                     v-if="canCreateShipmentPermission && canCreateShipment(row)"
-                    class="table-actions-more-item"
+                    size="small"
+                    text
                     data-test="create-sales-shipment"
                     @click="createShipment(row)"
                   >
                     创建出库
-                  </el-dropdown-item>
+                  </el-button>
                 </el-dropdown-menu>
               </template>
             </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -481,10 +551,43 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.numeric-cell {
-  display: inline-block;
-  min-width: 76px;
-  text-align: right;
+.sales-order-table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+.order-main-cell,
+.stack-cell,
+.amount-credit-cell {
+  display: grid;
+  gap: 4px;
+  line-height: 1.45;
+}
+
+.order-main-cell strong,
+.stack-cell strong,
+.amount-credit-cell strong {
+  color: #111827;
+  font-weight: 700;
+}
+
+.order-main-cell span,
+.stack-cell span,
+.order-main-cell small,
+.stack-cell small,
+.amount-credit-cell small {
+  color: #64748b;
+}
+
+.amount-credit-cell {
+  justify-items: end;
   font-variant-numeric: tabular-nums;
+}
+
+.actions-cell {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
 }
 </style>

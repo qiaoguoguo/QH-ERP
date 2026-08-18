@@ -101,7 +101,7 @@ describe('供应商报价比较视图', () => {
   it('按询价上下文加载报价并展示最低报价、非最低原因、有效期、交期和 CNY 税价', async () => {
     const pinia = setup(['procurement:quote:select'])
     const wrapper = mount(SupplierQuoteCompareView, {
-      props: { inquiryId: 201 },
+      props: { inquiryId: 201, inquiryStatus: 'COMPLETED' },
       global: { plugins: [pinia, ElementPlus] },
     })
     await flushPromises()
@@ -126,7 +126,7 @@ describe('供应商报价比较视图', () => {
   it('选择报价按 allowedActions 显示动作并提交 version、原因和幂等键', async () => {
     const pinia = setup(['procurement:quote:select'])
     const wrapper = mount(SupplierQuoteCompareView, {
-      props: { inquiryId: 201 },
+      props: { inquiryId: 201, inquiryStatus: 'COMPLETED' },
       global: { plugins: [pinia, ElementPlus] },
     })
     await flushPromises()
@@ -146,7 +146,7 @@ describe('供应商报价比较视图', () => {
   it('无选择权限时隐藏报价选择动作', async () => {
     const pinia = setup(['procurement:inquiry:view'])
     const wrapper = mount(SupplierQuoteCompareView, {
-      props: { inquiryId: 201 },
+      props: { inquiryId: 201, inquiryStatus: 'COMPLETED' },
       global: { plugins: [pinia, ElementPlus] },
     })
     await flushPromises()

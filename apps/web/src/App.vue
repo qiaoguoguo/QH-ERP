@@ -35,12 +35,22 @@ import {
   productionWorkOrderPath,
 } from './navigation/productionMenu'
 import { reportMenuChildren, reportRouteConfigs } from './modules/reports/reportPageHelpers'
-import { activeMenuPath } from './shared/navigation/navigationReturn'
+import {
+  activeMenuPath,
+  approvalIdFromReturnTo,
+  routeReturnTo,
+} from './shared/navigation/navigationReturn'
 import { useAuthStore } from './stores/authStore'
 import { elementPlusLocale } from './elementPlus'
 import qhLogoUrl from './assets/logo.ico'
+import AiAssistantView from './modules/assistant/AiAssistantView.vue'
 import { costChildren, costMenuPaths } from './navigation/costMenu'
-import { applyRegisteredModuleMenus, registeredModuleMenuPaths } from './navigation/appMenuRegistry'
+import {
+  applyRegisteredModuleMenus,
+  registeredModuleMenuPaths,
+  systemKnowledgeMenuChild,
+  systemKnowledgeMenuPath,
+} from './navigation/appMenuRegistry'
 
 const route = useRoute()
 const router = useRouter()
@@ -48,6 +58,10 @@ const authStore = useAuthStore()
 
 const isLogin = computed(() => route.name === 'login')
 const sideMenuActivePath = computed(() => activeMenuPath(route.path, route.query.returnTo))
+const approvalReturnTarget = computed(() => {
+  const target = routeReturnTo(route)
+  return approvalIdFromReturnTo(target) === null ? null : target
+})
 const businessPeriodPath = '/system/business-periods'
 const inventoryBalancePath = '/inventory/balances'
 const inventoryMovementPath = '/inventory/movements'
@@ -109,6 +123,7 @@ const supportedMenuPaths = new Set<string>(([
   platformHistoryImportPath,
   platformDeliveryAssetPath,
   businessPeriodPath,
+  systemKnowledgeMenuPath,
   masterUnitPath,
   masterUnitConversionPath,
   masterCodingRulePath,
@@ -248,6 +263,7 @@ const systemChildren: MenuNode[] = [
     name: '业务期间',
     routePath: businessPeriodPath,
   },
+  systemKnowledgeMenuChild,
 ]
 const systemMenuPaths = new Set(systemChildren.map((child) => child.routePath))
 const inventoryChildren: MenuNode[] = [
@@ -335,7 +351,7 @@ const procurementChildren: MenuNode[] = [
   {
     id: 'procurement-effective-supplies',
     code: 'procurement:supply:view',
-    name: '有效采购供给',
+    name: '采购在途供给',
     routePath: procurementEffectiveSupplyPath,
   },
 ]
@@ -1076,6 +1092,13 @@ async function logout() {
     logoutLoading.value = false
   }
 }
+
+async function returnToApproval() {
+  if (approvalReturnTarget.value) {
+    await router.push(approvalReturnTarget.value)
+  }
+}
+
 </script>
 
 <template>
@@ -1162,6 +1185,15 @@ async function logout() {
             <span>账号与权限基础</span>
           </div>
           <div class="header-user">
+            <el-button
+              v-if="approvalReturnTarget"
+              data-test="return-to-approval-button"
+              type="primary"
+              plain
+              @click="returnToApproval"
+            >
+              返回审批
+            </el-button>
             <span>{{ displayName }}</span>
             <el-button
               data-test="logout-button"
@@ -1181,5 +1213,6 @@ async function logout() {
         </el-main>
       </el-container>
     </el-container>
+    <AiAssistantView v-if="authStore.isAuthenticated" />
   </el-config-provider>
 </template>

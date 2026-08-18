@@ -18,6 +18,7 @@ const props = withDefaults(defineProps<{
   requisitionLineOptions?: PurchaseOrderSourceOption[]
   quoteLineOptions?: PurchaseOrderSourceOption[]
   priceAgreementLineOptions?: PurchaseOrderSourceOption[]
+  supplierId?: ResourceId | ''
   readOnly?: boolean
   errors?: Record<number, string>
 }>(), {
@@ -27,13 +28,14 @@ const props = withDefaults(defineProps<{
   requisitionLineOptions: () => [],
   quoteLineOptions: () => [],
   priceAgreementLineOptions: () => [],
+  supplierId: '',
   readOnly: false,
   errors: () => ({}),
 })
 
 const emit = defineEmits<{
   'update:lines': [lines: PurchaseOrderLineDraft[]]
-  'source-selected': [option: PurchaseOrderSourceOption]
+  'source-selected': [selection: { kind: 'REQUISITION' | 'QUOTE' | 'AGREEMENT', option: PurchaseOrderSourceOption }]
 }>()
 
 function valueOrEmpty(value: ResourceId | '' | null | undefined) {
@@ -76,7 +78,9 @@ function patchFromSource(option: PurchaseOrderSourceOption) {
     taxRate: option.taxRate ?? '',
     taxExcludedUnitPrice: option.taxExcludedUnitPrice ?? '',
     taxIncludedUnitPrice: option.taxIncludedUnitPrice ?? '',
+    unitPrice: option.taxExcludedUnitPrice ?? '',
     currency: option.currency ?? 'CNY',
+    expectedArrivalDate: option.requiredDate ?? '',
   }
   if (option.materialId !== undefined && option.materialId !== null) {
     patch.materialId = option.materialId
@@ -98,10 +102,17 @@ function selectRequisitionLine(index: number, value: ResourceId | '') {
   updateLine(index, {
     requisitionLineId: value === '' ? null : value,
     requisitionSourceLabel: option?.label ?? '',
+    quoteLineId: null,
+    quoteSourceLabel: '',
+    priceAgreementLineId: null,
+    priceAgreementSourceLabel: '',
+    priceSourceType: '',
+    sourceSupplierId: null,
+    sourceSupplierName: '',
     ...(option ? patchFromSource(option) : {}),
   })
   if (option) {
-    emit('source-selected', option)
+    emit('source-selected', { kind: 'REQUISITION', option })
   }
 }
 
@@ -110,10 +121,15 @@ function selectQuoteLine(index: number, value: ResourceId | '') {
   updateLine(index, {
     quoteLineId: value === '' ? null : value,
     quoteSourceLabel: option?.label ?? '',
+    priceAgreementLineId: null,
+    priceAgreementSourceLabel: '',
+    priceSourceType: 'QUOTE',
+    sourceSupplierId: option?.supplierId ?? null,
+    sourceSupplierName: option?.supplierName ?? '',
     ...(option ? patchFromSource(option) : {}),
   })
   if (option) {
-    emit('source-selected', option)
+    emit('source-selected', { kind: 'QUOTE', option })
   }
 }
 
@@ -122,11 +138,113 @@ function selectPriceAgreementLine(index: number, value: ResourceId | '') {
   updateLine(index, {
     priceAgreementLineId: value === '' ? null : value,
     priceAgreementSourceLabel: option?.label ?? '',
+    quoteLineId: null,
+    quoteSourceLabel: '',
+    priceSourceType: 'AGREEMENT',
+    sourceSupplierId: option?.supplierId ?? null,
+    sourceSupplierName: option?.supplierName ?? '',
     ...(option ? patchFromSource(option) : {}),
   })
   if (option) {
-    emit('source-selected', option)
+    emit('source-selected', { kind: 'AGREEMENT', option })
   }
+}
+
+function priceSourceType(line: PurchaseOrderLineDraft): '' | 'QUOTE' | 'AGREEMENT' {
+  if (line.priceSourceType) {
+    return line.priceSourceType
+  }
+  if (line.quoteLineId !== null && line.quoteLineId !== undefined && line.quoteLineId !== '') {
+    return 'QUOTE'
+  }
+  if (line.priceAgreementLineId !== null && line.priceAgreementLineId !== undefined && line.priceAgreementLineId !== '') {
+    return 'AGREEMENT'
+  }
+  return ''
+}
+
+function selectPriceSourceType(index: number, value: '' | 'QUOTE' | 'AGREEMENT') {
+  const currentLine = props.lines[index]
+  if (currentLine && priceSourceType(currentLine) === value) {
+    return
+  }
+  const clearPrice = {
+    taxRate: '',
+    taxExcludedUnitPrice: '',
+    taxIncludedUnitPrice: '',
+  }
+  if (value === 'QUOTE') {
+    updateLine(index, {
+      quoteLineId: null,
+      quoteSourceLabel: '',
+      priceAgreementLineId: null,
+      priceAgreementSourceLabel: '',
+      priceSourceType: 'QUOTE',
+      sourceSupplierId: null,
+      sourceSupplierName: '',
+      ...clearPrice,
+    })
+    return
+  }
+  if (value === 'AGREEMENT') {
+    updateLine(index, {
+      quoteLineId: null,
+      quoteSourceLabel: '',
+      priceAgreementLineId: null,
+      priceAgreementSourceLabel: '',
+      priceSourceType: 'AGREEMENT',
+      sourceSupplierId: null,
+      sourceSupplierName: '',
+      ...clearPrice,
+    })
+    return
+  }
+  updateLine(index, {
+    quoteLineId: null,
+    quoteSourceLabel: '',
+    priceAgreementLineId: null,
+    priceAgreementSourceLabel: '',
+    priceSourceType: '',
+    sourceSupplierId: null,
+    sourceSupplierName: '',
+    ...clearPrice,
+  })
+}
+
+function sameId(left: ResourceId | '' | null | undefined, right: ResourceId | '' | null | undefined): boolean {
+  return String(left ?? '') === String(right ?? '')
+}
+
+function compatibleOwnership(option: PurchaseOrderSourceOption, line: PurchaseOrderLineDraft): boolean {
+  const mode = line.procurementMode ?? props.procurementMode
+  if (mode && option.procurementMode && mode !== option.procurementMode) {
+    return false
+  }
+  if (mode === 'PROJECT' && !sameId(line.projectId, option.projectId)) {
+    return false
+  }
+  return true
+}
+
+function requisitionOptionsForLine(line: PurchaseOrderLineDraft, index: number): PurchaseOrderSourceOption[] {
+  const usedIds = new Set(props.lines
+    .filter((_, currentIndex) => currentIndex !== index)
+    .map((item) => String(item.requisitionLineId ?? '')))
+  return props.requisitionLineOptions.filter((option) => (
+    !usedIds.has(String(option.id)) && compatibleOwnership(option, line)
+  ))
+}
+
+function priceOptionsForLine(options: PurchaseOrderSourceOption[], line: PurchaseOrderLineDraft): PurchaseOrderSourceOption[] {
+  return options.filter((option) => {
+    if (line.materialId && option.materialId && !sameId(line.materialId, option.materialId)) {
+      return false
+    }
+    if (!compatibleOwnership(option, line)) {
+      return false
+    }
+    return !props.supplierId || !option.supplierId || sameId(props.supplierId, option.supplierId)
+  })
 }
 
 function lineModeText(line: PurchaseOrderLineDraft) {
@@ -183,9 +301,9 @@ function removeLine(index: number) {
             {{ lineModeText(row) }}
           </template>
         </el-table-column>
-        <el-table-column label="来源" min-width="360">
+        <el-table-column label="请购来源" min-width="300">
           <template #default="{ row, $index }">
-            <div class="source-cell">
+            <div class="source-cell requisition-source-cell">
               <el-select
                 :model-value="valueOrEmpty(row.requisitionLineId)"
                 :data-test="`purchase-order-line-requisition-line-id-${$index}`"
@@ -197,32 +315,51 @@ function removeLine(index: number) {
                 @update:model-value="selectRequisitionLine($index, $event)"
               >
                 <el-option
-                  v-for="option in requisitionLineOptions"
+                  v-for="option in requisitionOptionsForLine(row, $index)"
                   :key="option.id"
                   :label="option.label"
                   :value="option.id"
                 />
               </el-select>
-              <span>请购来源：{{ row.requisitionSourceLabel || '未选择' }}</span>
+              <span class="source-hint">用于确定需求、数量和项目归属</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="价格来源" min-width="330">
+          <template #default="{ row, $index }">
+            <div class="source-cell price-source-cell">
               <el-select
+                :model-value="priceSourceType(row)"
+                :data-test="`purchase-order-line-price-source-type-${$index}`"
+                clearable
+                placeholder="选择价格来源类型"
+                style="width: 100%"
+                :disabled="readOnly"
+                @update:model-value="selectPriceSourceType($index, $event)"
+              >
+                <el-option label="中选报价" value="QUOTE" :disabled="priceOptionsForLine(quoteLineOptions, row).length === 0" />
+                <el-option label="价格协议" value="AGREEMENT" :disabled="priceOptionsForLine(priceAgreementLineOptions, row).length === 0" />
+              </el-select>
+              <el-select
+                v-if="priceSourceType(row) === 'QUOTE'"
                 :model-value="valueOrEmpty(row.quoteLineId)"
                 :data-test="`purchase-order-line-quote-line-id-${$index}`"
                 clearable
                 filterable
-                placeholder="选择报价行"
+                placeholder="选择中选报价"
                 style="width: 100%"
                 :disabled="readOnly"
                 @update:model-value="selectQuoteLine($index, $event)"
               >
                 <el-option
-                  v-for="option in quoteLineOptions"
+                  v-for="option in priceOptionsForLine(quoteLineOptions, row)"
                   :key="option.id"
                   :label="option.label"
                   :value="option.id"
                 />
               </el-select>
-              <span>报价来源：{{ row.quoteSourceLabel || quoteLineOptions[0]?.label || '未选择' }}</span>
               <el-select
+                v-else-if="priceSourceType(row) === 'AGREEMENT'"
                 :model-value="valueOrEmpty(row.priceAgreementLineId)"
                 :data-test="`purchase-order-line-price-agreement-line-id-${$index}`"
                 clearable
@@ -233,13 +370,14 @@ function removeLine(index: number) {
                 @update:model-value="selectPriceAgreementLine($index, $event)"
               >
                 <el-option
-                  v-for="option in priceAgreementLineOptions"
+                  v-for="option in priceOptionsForLine(priceAgreementLineOptions, row)"
                   :key="option.id"
                   :label="option.label"
                   :value="option.id"
                 />
               </el-select>
-              <span>协议来源：{{ row.priceAgreementSourceLabel || priceAgreementLineOptions[0]?.label || '未选择' }}</span>
+              <span v-else class="source-placeholder">请先选择中选报价或价格协议</span>
+              <span v-if="row.sourceSupplierName" class="source-hint">供应商：{{ row.sourceSupplierName }}</span>
             </div>
           </template>
         </el-table-column>
@@ -272,25 +410,33 @@ function removeLine(index: number) {
             />
           </template>
         </el-table-column>
-        <el-table-column label="税价" min-width="300" align="right">
+        <el-table-column label="未税单价" width="150" align="right">
           <template #default="{ row, $index }">
-            <div class="tax-cell">
-              <el-input
-                :model-value="row.taxExcludedUnitPrice"
-                :name="`purchase-order-line-tax-excluded-unit-price-${$index}`"
-                inputmode="decimal"
-                placeholder="未税单价"
-                :disabled="readOnly"
-                @update:model-value="updateDecimalText($index, 'taxExcludedUnitPrice', $event)"
-              />
-              <el-input
-                :model-value="row.taxIncludedUnitPrice"
-                :name="`purchase-order-line-tax-included-unit-price-${$index}`"
-                inputmode="decimal"
-                placeholder="含税单价"
-                :disabled="readOnly"
-                @update:model-value="updateDecimalText($index, 'taxIncludedUnitPrice', $event)"
-              />
+            <el-input
+              :model-value="row.taxExcludedUnitPrice"
+              :name="`purchase-order-line-tax-excluded-unit-price-${$index}`"
+              inputmode="decimal"
+              placeholder="未税单价"
+              :disabled="readOnly"
+              @update:model-value="updateDecimalText($index, 'taxExcludedUnitPrice', $event)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="含税单价" width="150" align="right">
+          <template #default="{ row, $index }">
+            <el-input
+              :model-value="row.taxIncludedUnitPrice"
+              :name="`purchase-order-line-tax-included-unit-price-${$index}`"
+              inputmode="decimal"
+              placeholder="含税单价"
+              :disabled="readOnly"
+              @update:model-value="updateDecimalText($index, 'taxIncludedUnitPrice', $event)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="税率/币种" width="170" align="right">
+          <template #default="{ row, $index }">
+            <div class="tax-rate-cell">
               <el-input
                 :model-value="row.taxRate"
                 :name="`purchase-order-line-tax-rate-${$index}`"
@@ -329,7 +475,8 @@ function removeLine(index: number) {
           <template #default="{ $index }">
             <el-button
               data-test="remove-purchase-order-line"
-              text
+              size="small"
+              plain
               type="danger"
               :disabled="readOnly || lines.length <= 1"
               @click="removeLine($index)"
@@ -340,12 +487,15 @@ function removeLine(index: number) {
         </el-table-column>
       </el-table>
     </div>
-    <div v-for="line in lines" :key="line.lineNo" class="field-error">
-      {{ errors[line.lineNo] }}
+    <div v-for="line in lines" :key="line.lineNo">
+      <div v-if="errors[line.lineNo]" class="field-error">{{ errors[line.lineNo] }}</div>
     </div>
-    <el-button data-test="add-purchase-order-line" :disabled="readOnly" @click="addLine">
-      新增明细
-    </el-button>
+    <div class="line-toolbar">
+      <span>共 {{ lines.length }} 条采购明细</span>
+      <el-button data-test="add-purchase-order-line" plain :disabled="readOnly" @click="addLine">
+        新增直接采购明细
+      </el-button>
+    </div>
   </div>
 </template>
 
@@ -353,7 +503,15 @@ function removeLine(index: number) {
 .purchase-order-line-editor {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+}
+
+.table-scroll {
+  border: 1px solid var(--qherp-border);
+  border-radius: 6px;
+  overflow-x: auto;
 }
 
 .line-option-meta {
@@ -363,16 +521,53 @@ function removeLine(index: number) {
   margin-left: 12px;
 }
 
-.source-cell,
-.tax-cell {
+.source-cell {
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
-.source-cell span,
-.tax-cell span {
+.source-hint,
+.source-placeholder,
+.tax-rate-cell span {
   color: var(--qherp-muted);
   font-size: 12px;
   text-align: left;
+}
+
+.tax-rate-cell {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: minmax(90px, 1fr) auto;
+}
+
+.source-placeholder {
+  align-items: center;
+  background: var(--qherp-surface-soft, #f5f7fa);
+  border: 1px dashed var(--qherp-border);
+  border-radius: 4px;
+  box-sizing: border-box;
+  display: flex;
+  min-height: 32px;
+  padding: 6px 10px;
+}
+
+.line-toolbar {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.line-toolbar span {
+  color: var(--qherp-muted);
+  font-size: 13px;
+}
+
+:deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+:deep(.el-date-editor.el-input) {
+  width: 100%;
 }
 </style>

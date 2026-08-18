@@ -129,15 +129,18 @@ public class ProcurementSourcingService {
 		List<Map<String, Object>> items = this.jdbcTemplate.query("""
 				select i.id, i.inquiry_no, i.purchase_mode, i.project_id, i.status, i.title, i.version,
 				       i.created_by, i.created_at, i.updated_at,
-				       count(distinct q.supplier_id) as supplier_count,
-				       count(distinct q.id) as quote_count,
-				       count(distinct l.id) as line_count,
-				       coalesce(sum(l.quantity), 0) as total_quantity
+				       (select count(distinct q.supplier_id) from proc_supplier_quote q where q.inquiry_id = i.id)
+				           as supplier_count,
+				       (select count(*) from proc_supplier_quote q where q.inquiry_id = i.id) as quote_count,
+				       (select count(*) from proc_purchase_inquiry_line l where l.inquiry_id = i.id) as line_count,
+				       (select coalesce(sum(l.quantity), 0) from proc_purchase_inquiry_line l where l.inquiry_id = i.id)
+				           as total_quantity,
+				       (select string_agg(concat_ws(' ', m.code, m.name), '、' order by l.line_no)
+				        from proc_purchase_inquiry_line l
+				        join mst_material m on m.id = l.material_id
+				        where l.inquiry_id = i.id) as material_summary
 				from proc_purchase_inquiry i
-				left join proc_purchase_inquiry_line l on l.inquiry_id = i.id
-				left join proc_supplier_quote q on q.inquiry_id = i.id
 				%s
-				group by i.id
 				order by i.updated_at desc, i.id desc
 				limit ? offset ?
 				""".formatted(where), (rs, rowNum) -> {
@@ -154,6 +157,7 @@ public class ProcurementSourcingService {
 			row.put("status", rowStatus);
 			row.put("supplierCount", rs.getInt("supplier_count"));
 			row.put("quoteCount", rs.getInt("quote_count"));
+			row.put("materialSummary", rs.getString("material_summary"));
 			row.put("lineCount", rs.getInt("line_count"));
 			row.put("totalQuantity", decimalString(rs.getBigDecimal("total_quantity")));
 			row.put("allowedActions", inquiryAllowedActions(rowStatus));
@@ -291,10 +295,10 @@ public class ProcurementSourcingService {
 		OffsetDateTime now = OffsetDateTime.now();
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into proc_supplier_quote (
-					quote_no, inquiry_id, supplier_id, status, valid_from, valid_to, currency, remark,
+					quote_no, inquiry_id, supplier_id, status, entry_source_type, valid_from, valid_to, currency, remark,
 					created_by, created_at, updated_by, updated_at
 				)
-				values (?, ?, ?, 'VALID', ?, ?, 'CNY', ?, ?, ?, ?, ?)
+				values (?, ?, ?, 'VALID', 'MANUAL', ?, ?, 'CNY', ?, ?, ?, ?, ?)
 				returning id
 				""", Long.class, nextNo("PQT", QUOTE_NO_SEQUENCE), inquiryId, request.supplierId(),
 				request.validFrom(), request.validTo(), blankToNull(request.remark()), operator.username(), now,
@@ -362,12 +366,16 @@ public class ProcurementSourcingService {
 		response.put("validFrom", row.validFrom());
 		response.put("validTo", row.validTo());
 		response.put("status", row.status());
+		response.put("entrySourceType", row.entrySourceType());
+		response.put("selectedReason", row.selectedReason());
 		response.put("version", row.version());
 		List<Map<String, Object>> lines = quoteLines(id);
 		response.put("lines", lines);
 		if (!lines.isEmpty()) {
 			Map<String, Object> first = lines.getFirst();
+			response.put("quoteLineId", first.get("id"));
 			response.put("materialId", first.get("materialId"));
+			response.put("unitId", first.get("unitId"));
 			response.put("materialCode", first.get("materialCode"));
 			response.put("materialName", first.get("materialName"));
 			response.put("quantity", first.get("quantity"));
@@ -486,9 +494,9 @@ public class ProcurementSourcingService {
 				""", inquiryId, selected.quoteId());
 		this.jdbcTemplate.update("""
 				update proc_supplier_quote
-				set status = 'SELECTED', updated_at = now(), version = version + 1
+				set status = 'SELECTED', selected_reason = ?, updated_at = now(), version = version + 1
 				where id = ?
-				""", selected.quoteId());
+				""", requiresException ? request.nonLowestReason().trim() : null, selected.quoteId());
 		this.jdbcTemplate.update("""
 				update proc_purchase_inquiry
 				set status = 'AWARDED', updated_by = ?, updated_at = now(), version = version + 1
@@ -518,16 +526,20 @@ public class ProcurementSourcingService {
 		validateCurrency(request.currency());
 		requireEnabledSupplier(request.supplierId());
 		List<PriceAgreementLineRequest> lines = agreementLineRequests(request);
+		AgreementQuoteSource source = request.sourceQuoteId() == null ? null : agreementQuoteSource(request.sourceQuoteId());
+		if (source != null) {
+			requireAgreementQuoteSource(request, mode, projectId, lines, source);
+		}
 		OffsetDateTime now = OffsetDateTime.now();
 		Long id = this.jdbcTemplate.queryForObject("""
 				insert into proc_price_agreement (
-					agreement_no, supplier_id, purchase_mode, project_id, status, currency,
+					agreement_no, supplier_id, source_quote_id, purchase_mode, project_id, status, currency,
 					valid_from, valid_to, priority, remark, created_by, created_at, updated_by, updated_at
 				)
-				values (?, ?, ?, ?, 'DRAFT', 'CNY', ?, ?, 0, ?, ?, ?, ?, ?)
+				values (?, ?, ?, ?, ?, 'DRAFT', 'CNY', ?, ?, 0, ?, ?, ?, ?, ?)
 				returning id
-				""", Long.class, nextNo("PAG", AGREEMENT_NO_SEQUENCE), request.supplierId(), mode.name(),
-				projectId, request.validFrom(), request.validTo(), blankToNull(request.remark()),
+				""", Long.class, nextNo("PAG", AGREEMENT_NO_SEQUENCE), request.supplierId(), request.sourceQuoteId(),
+				mode.name(), projectId, request.validFrom(), request.validTo(), blankToNull(request.remark()),
 				operator.username(), now, operator.username(), now);
 		for (PriceAgreementLineRequest line : lines) {
 			insertAgreementLine(id, line, now);
@@ -607,11 +619,25 @@ public class ProcurementSourcingService {
 		response.put("approvalInstanceId", row.approvalInstanceId());
 		response.put("approvalStatus", approvalStatus(row.status(), row.approvalInstanceId()));
 		response.put("version", row.version());
+		this.jdbcTemplate.query("""
+				select a.source_quote_id, q.quote_no, q.inquiry_id, i.inquiry_no
+				from proc_price_agreement a
+				left join proc_supplier_quote q on q.id = a.source_quote_id
+				left join proc_purchase_inquiry i on i.id = q.inquiry_id
+				where a.id = ?
+				""", rs -> {
+			response.put("sourceQuoteId", nullableLong(rs, "source_quote_id"));
+			response.put("sourceQuoteNo", rs.getString("quote_no"));
+			response.put("sourceInquiryId", nullableLong(rs, "inquiry_id"));
+			response.put("sourceInquiryNo", rs.getString("inquiry_no"));
+		}, id);
 		List<Map<String, Object>> lines = agreementLines(row);
 		response.put("lines", lines);
 		if (!lines.isEmpty()) {
 			Map<String, Object> first = lines.getFirst();
+			response.put("priceAgreementLineId", first.get("id"));
 			response.put("materialId", first.get("materialId"));
+			response.put("unitId", first.get("unitId"));
 			response.put("materialCode", first.get("materialCode"));
 			response.put("materialName", first.get("materialName"));
 			response.put("minPurchaseQuantity", first.get("minimumQuantity"));
@@ -1227,7 +1253,8 @@ public class ProcurementSourcingService {
 		return this.jdbcTemplate.query("""
 				select q.id, q.quote_no, q.inquiry_id, i.inquiry_no, q.supplier_id, s.code as supplier_code,
 				       s.name as supplier_name, q.status, q.valid_from, q.valid_to, q.currency, q.remark,
-				       q.version, i.purchase_mode, i.project_id, p.project_no as project_code, p.name as project_name
+				       q.entry_source_type, q.selected_reason, q.version, i.purchase_mode, i.project_id,
+				       p.project_no as project_code, p.name as project_name
 				from proc_supplier_quote q
 				join proc_purchase_inquiry i on i.id = q.inquiry_id
 				join mst_supplier s on s.id = q.supplier_id
@@ -1242,7 +1269,8 @@ public class ProcurementSourcingService {
 		return this.jdbcTemplate.query("""
 				select q.id, q.quote_no, q.inquiry_id, i.inquiry_no, q.supplier_id, s.code as supplier_code,
 				       s.name as supplier_name, q.status, q.valid_from, q.valid_to, q.currency, q.remark,
-				       q.version, i.purchase_mode, i.project_id, p.project_no as project_code, p.name as project_name
+				       q.entry_source_type, q.selected_reason, q.version, i.purchase_mode, i.project_id,
+				       p.project_no as project_code, p.name as project_name
 				from proc_supplier_quote q
 				join proc_purchase_inquiry i on i.id = q.inquiry_id
 				join mst_supplier s on s.id = q.supplier_id
@@ -1349,8 +1377,9 @@ public class ProcurementSourcingService {
 				rs.getString("inquiry_no"), rs.getLong("supplier_id"), rs.getString("supplier_code"),
 				rs.getString("supplier_name"), rs.getString("status"), rs.getObject("valid_from", LocalDate.class),
 				rs.getObject("valid_to", LocalDate.class), rs.getString("currency"), rs.getString("remark"),
-				rs.getLong("version"), rs.getString("purchase_mode"), nullableLong(rs, "project_id"),
-				rs.getString("project_code"), rs.getString("project_name"));
+				rs.getString("entry_source_type"), rs.getString("selected_reason"), rs.getLong("version"),
+				rs.getString("purchase_mode"), nullableLong(rs, "project_id"), rs.getString("project_code"),
+				rs.getString("project_name"));
 	}
 
 	private QuoteSelection mapQuoteSelection(ResultSet rs, int rowNum) throws SQLException {
@@ -1390,6 +1419,51 @@ public class ProcurementSourcingService {
 		Long unitId = request.unitId() == null ? materialUnitId(request.materialId()) : request.unitId();
 		return List.of(new PriceAgreementLineRequest(1, request.materialId(), unitId, request.minimumQuantity(),
 				request.taxRate(), request.taxExcludedUnitPrice(), request.taxIncludedUnitPrice(), request.currency()));
+	}
+
+	private AgreementQuoteSource agreementQuoteSource(Long quoteId) {
+		return this.jdbcTemplate.query("""
+				select q.id, q.quote_no, q.inquiry_id, q.supplier_id, q.status, q.valid_from, q.valid_to,
+				       q.currency, i.purchase_mode, i.project_id, ql.material_id, ql.unit_id,
+				       ql.min_purchase_quantity, ql.tax_rate, ql.tax_excluded_unit_price,
+				       ql.tax_included_unit_price,
+				       (select count(*) from proc_supplier_quote_line counted where counted.quote_id = q.id) as line_count
+				from proc_supplier_quote q
+				join proc_purchase_inquiry i on i.id = q.inquiry_id
+				join proc_supplier_quote_line ql on ql.quote_id = q.id
+				where q.id = ?
+				order by ql.line_no, ql.id
+				limit 1
+				""", (rs, rowNum) -> new AgreementQuoteSource(rs.getLong("id"), rs.getString("quote_no"),
+				rs.getLong("inquiry_id"), rs.getLong("supplier_id"), rs.getString("status"),
+				rs.getObject("valid_from", LocalDate.class), rs.getObject("valid_to", LocalDate.class),
+				rs.getString("currency"), rs.getString("purchase_mode"), nullableLong(rs, "project_id"),
+				rs.getLong("material_id"), rs.getLong("unit_id"), rs.getBigDecimal("min_purchase_quantity"),
+				rs.getBigDecimal("tax_rate"), rs.getBigDecimal("tax_excluded_unit_price"),
+				rs.getBigDecimal("tax_included_unit_price"), rs.getInt("line_count")), quoteId).stream().findFirst()
+			.orElseThrow(() -> new BusinessException(ApiErrorCode.PROCUREMENT_QUOTE_NOT_FOUND));
+	}
+
+	private void requireAgreementQuoteSource(PriceAgreementRequest request, PurchaseMode mode, Long projectId,
+			List<PriceAgreementLineRequest> lines, AgreementQuoteSource source) {
+		if (!"SELECTED".equals(source.status()) || source.lineCount() != 1 || lines.size() != 1
+				|| !source.supplierId().equals(request.supplierId()) || !source.purchaseMode().equals(mode.name())
+				|| !java.util.Objects.equals(source.projectId(), projectId) || !"CNY".equals(source.currency())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+		PriceAgreementLineRequest line = lines.getFirst();
+		if (!source.materialId().equals(line.materialId()) || !source.unitId().equals(line.unitId())
+				|| !sameDecimal(source.minimumQuantity(), line.minimumQuantity())
+				|| !sameDecimal(source.taxRate(), line.taxRate())
+				|| !sameDecimal(source.taxExcludedUnitPrice(), line.taxExcludedUnitPrice())
+				|| !sameDecimal(source.taxIncludedUnitPrice(), line.taxIncludedUnitPrice())
+				|| request.validFrom().isBefore(source.validFrom()) || request.validTo().isAfter(source.validTo())) {
+			throw new BusinessException(ApiErrorCode.VALIDATION_ERROR);
+		}
+	}
+
+	private boolean sameDecimal(BigDecimal left, BigDecimal right) {
+		return left != null && right != null && left.compareTo(right) == 0;
 	}
 
 	private Long inquiryLineIdByMaterial(Long inquiryId, Long materialId) {
@@ -1453,7 +1527,10 @@ public class ProcurementSourcingService {
 	}
 
 	private String approvalStatus(String status, Long approvalInstanceId) {
-		return approvalInstanceId == null ? null : status;
+		if (approvalInstanceId == null) {
+			return null;
+		}
+		return "ACTIVE".equals(status) ? "APPROVED" : status;
 	}
 
 	private Map<String, Object> idempotentAction(String action, String resourceType, Long resourceId,
@@ -1629,7 +1706,7 @@ public class ProcurementSourcingService {
 	public record PriceAwardRequest(@NotNull Long selectedQuoteLineId, String nonLowestReason, String idempotencyKey) {
 	}
 
-	public record PriceAgreementRequest(@NotNull Long supplierId, Long materialId, Long unitId,
+	public record PriceAgreementRequest(@NotNull Long supplierId, Long materialId, Long unitId, Long sourceQuoteId,
 			BigDecimal minimumQuantity, BigDecimal minPurchaseQuantity, BigDecimal taxRate,
 			BigDecimal taxExcludedUnitPrice, BigDecimal taxIncludedUnitPrice, String purchaseMode,
 			String procurementMode, String ownershipType, Long projectId, String currency, @NotNull LocalDate validFrom,
@@ -1670,8 +1747,8 @@ public class ProcurementSourcingService {
 
 	private record QuoteRow(Long id, String quoteNo, Long inquiryId, String inquiryNo, Long supplierId,
 			String supplierCode, String supplierName, String status, LocalDate validFrom, LocalDate validTo,
-			String currency, String remark, Long version, String purchaseMode, Long projectId, String projectCode,
-			String projectName) {
+			String currency, String remark, String entrySourceType, String selectedReason, Long version,
+			String purchaseMode, Long projectId, String projectCode, String projectName) {
 	}
 
 	private record AgreementRow(Long id, String agreementNo, Long supplierId, String supplierCode,
@@ -1682,6 +1759,12 @@ public class ProcurementSourcingService {
 
 	private record QuoteSelection(Long quoteLineId, Long quoteId, Long inquiryId, Long inquiryLineId,
 			Long supplierId, BigDecimal taxExcludedUnitPrice) {
+	}
+
+	private record AgreementQuoteSource(Long id, String quoteNo, Long inquiryId, Long supplierId, String status,
+			LocalDate validFrom, LocalDate validTo, String currency, String purchaseMode, Long projectId,
+			Long materialId, Long unitId, BigDecimal minimumQuantity, BigDecimal taxRate,
+			BigDecimal taxExcludedUnitPrice, BigDecimal taxIncludedUnitPrice, int lineCount) {
 	}
 
 }

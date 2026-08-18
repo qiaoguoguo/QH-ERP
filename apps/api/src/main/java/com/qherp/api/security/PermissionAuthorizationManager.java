@@ -70,6 +70,11 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 			return platformPermissionCode;
 		}
 
+		String knowledgePermissionCode = knowledgePermissionCode(method, path);
+		if (knowledgePermissionCode != null) {
+			return knowledgePermissionCode;
+		}
+
 		String businessPeriodPermissionCode = businessPeriodPermissionCode(method, path);
 		if (businessPeriodPermissionCode != null) {
 			return businessPeriodPermissionCode;
@@ -361,6 +366,13 @@ public class PermissionAuthorizationManager extends OncePerRequestFilter {
 		}
 		if ("POST".equals(method) && "/api/admin/print-tasks".equals(path)) {
 			return "platform:print:generate";
+		}
+		return null;
+	}
+
+	private String knowledgePermissionCode(String method, String path) {
+		if (matchesBasePath(path, "/api/admin/system/knowledge")) {
+			return "system:knowledge:manage";
 		}
 		return null;
 	}

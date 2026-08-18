@@ -32,16 +32,22 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
+import org.apache.poi.ss.usermodel.DataValidation;
 import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -880,6 +886,129 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void materialImportTemplateUsesChineseHeadersCommentsAndVisibleDropdowns() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+
+		ResponseEntity<byte[]> template = downloadBytes(admin, "/api/admin/import-templates/materials");
+		assertThat(template.getStatusCode()).isEqualTo(HttpStatus.OK);
+		byte[] content = template.getBody();
+		assertThat(content).isNotEmpty();
+
+		try (Workbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+			assertThat(workbook.getNumberOfSheets()).isOne();
+			assertThat(workbook.getSheetName(0)).isEqualTo("template");
+			Sheet sheet = workbook.getSheet("template");
+			assertThat(headerValues(sheet)).containsExactly("物料编码", "物料名称", "规格型号", "物料类型", "来源类型",
+					"跟踪方式", "物料分类编码", "计量单位编码", "状态", "成本分类", "库存计价类别", "是否启用库存计价",
+					"是否启用项目成本", "成本备注", "备注");
+			assertHeaderCommentsContain(sheet, "code", "name", "specification", "materialType", "sourceType",
+					"trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
+					"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
+					"remark");
+			assertThat(sheet.getPaneInformation()).isNotNull();
+			assertWorksheetXmlContains(content, 1, "<autoFilter ref=\"A1:O1\"");
+			assertThat(sheet.getDataValidations()).hasSize(8);
+			assertListValidation(sheet, "D2:D10001", "原材料", "半成品", "成品", "辅料");
+			assertListValidation(sheet, "E2:E10001", "外购", "自制", "外协");
+			assertListValidation(sheet, "F2:F10001", "不追踪", "批次", "序列号");
+			assertListValidation(sheet, "I2:I10001", "启用", "停用");
+			assertListValidation(sheet, "J2:J10001", "直接材料", "辅助材料", "半成品", "产成品", "委外", "服务", "未分类");
+			assertListValidation(sheet, "K2:K10001", "计价物料", "非计价消耗品", "服务非库存", "未分类");
+			assertListValidation(sheet, "L2:L10001", "是", "否");
+			assertListValidation(sheet, "M2:M10001", "是", "否");
+		}
+		for (String range : List.of("D2:D10001", "E2:E10001", "F2:F10001", "I2:I10001", "J2:J10001",
+				"K2:K10001", "L2:L10001", "M2:M10001")) {
+			assertDropdownArrowVisible(content, 1, range);
+		}
+	}
+
+	@Test
+	void materialImportAcceptsChineseTemplateAndRejectsUnknownBooleanValue() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String unitCode = "S22_CN_BOOL_UNIT_" + SEQUENCE.incrementAndGet();
+		String categoryCode = "S22_CN_BOOL_CAT_" + SEQUENCE.incrementAndGet();
+		createUnit(admin, unitCode, "二十二中文布尔单位");
+		createCategory(admin, categoryCode, "二十二中文布尔分类");
+
+		String chineseCode = "S22_CN_BOOL_MAT_" + SEQUENCE.incrementAndGet();
+		JsonNode chineseTask = data(uploadImport(admin, "/api/admin/imports/materials", "materials-cn.xlsx",
+				materialImportWorkbookWithHeaders("template", materialChineseHeaders(),
+						new String[] { chineseCode, "中文布尔导入物料", "CN", "原材料", "外购", "批次",
+								categoryCode, unitCode, "启用", "直接材料", "计价物料", "是", "否", "中文成本", "中文备注" }),
+				"material-import-cn-bool-" + chineseCode));
+		JsonNode chineseReady = processTaskUntilStatus(admin, chineseTask.get("id").longValue(),
+				"READY_TO_COMMIT", 8);
+		assertThat(chineseReady.get("status").asText()).as(chineseReady.toString()).isEqualTo("READY_TO_COMMIT");
+		data(postWithIdempotency(admin, "/api/admin/imports/" + chineseTask.get("id").longValue() + "/confirm",
+				Map.of("version", chineseReady.get("version").longValue()), "material-import-cn-confirm-" + chineseCode));
+		JsonNode chineseSucceeded = processTaskUntilStatus(admin, chineseTask.get("id").longValue(), "SUCCEEDED", 8);
+		assertThat(chineseSucceeded.get("status").asText()).as(chineseSucceeded.toString()).isEqualTo("SUCCEEDED");
+		Map<String, Object> chineseMaterial = this.jdbcTemplate.queryForMap("""
+				select material_type, source_type, tracking_method, status, cost_category,
+				       inventory_valuation_category, inventory_value_enabled, project_cost_enabled
+				from mst_material
+				where code = ?
+				""", chineseCode);
+		assertThat(chineseMaterial)
+			.containsEntry("material_type", "RAW_MATERIAL")
+			.containsEntry("source_type", "PURCHASED")
+			.containsEntry("tracking_method", "BATCH")
+			.containsEntry("status", "ENABLED")
+			.containsEntry("cost_category", "DIRECT_MATERIAL")
+			.containsEntry("inventory_valuation_category", "VALUATED_MATERIAL")
+			.containsEntry("inventory_value_enabled", true)
+			.containsEntry("project_cost_enabled", false);
+
+		String legacyCode = "S22_LEG_BOOL_MAT_" + SEQUENCE.incrementAndGet();
+		JsonNode legacyTask = data(uploadImport(admin, "/api/admin/imports/materials", "materials-legacy.xlsx",
+				materialImportWorkbookWithHeaders("materials", materialLegacyHeaders(),
+						new String[] { legacyCode, "Legacy Boolean Material", "LEG", "RAW_MATERIAL", "PURCHASED",
+								"BATCH", categoryCode, unitCode, "ENABLED", "DIRECT_MATERIAL", "VALUATED_MATERIAL",
+								"true", "false", "legacy cost", "legacy remark" }),
+				"material-import-legacy-bool-" + legacyCode));
+		JsonNode legacyReady = processTaskUntilStatus(admin, legacyTask.get("id").longValue(),
+				"READY_TO_COMMIT", 8);
+		assertThat(legacyReady.get("status").asText()).as(legacyReady.toString()).isEqualTo("READY_TO_COMMIT");
+
+		String badCode = "S22_BAD_BOOL_MAT_" + SEQUENCE.incrementAndGet();
+		JsonNode badTask = data(uploadImport(admin, "/api/admin/imports/materials", "materials-bad-bool.xlsx",
+				materialImportWorkbookWithHeaders("materials", materialChineseHeaders(),
+						new String[] { badCode, "未知布尔物料", "BAD", "原材料", "外购", "不追踪",
+								categoryCode, unitCode, "启用", "直接材料", "计价物料", "也许", "否", "", "" }),
+				"material-import-bad-bool-" + badCode));
+		JsonNode badFailed = processTaskUntilStatus(admin, badTask.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(badFailed.get("status").asText()).as(badFailed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(data(get(admin, "/api/admin/document-tasks/" + badTask.get("id").longValue()
+				+ "/errors?page=1&pageSize=20")).get("items").toString())
+			.contains("inventoryValueEnabled", "IMPORT_VALIDATION_FAILED");
+		assertThat(countMaterial(badCode)).isZero();
+	}
+
+	@Test
+	void materialImportRejectsReorderedTemplateColumns() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String unitCode = "S22_REORDER_UNIT_" + SEQUENCE.incrementAndGet();
+		String categoryCode = "S22_REORDER_CAT_" + SEQUENCE.incrementAndGet();
+		createUnit(admin, unitCode, "二十二列序单位");
+		createCategory(admin, categoryCode, "二十二列序分类");
+
+		String code = "S22_REORDER_MAT_" + SEQUENCE.incrementAndGet();
+		JsonNode task = data(uploadImport(admin, "/api/admin/imports/materials", "materials-reordered.xlsx",
+				materialImportWorkbookWithHeaders("template", swapped(materialChineseHeaders(), 0, 1),
+						new String[] { "列序物料", code, "CN", "原材料", "外购", "不追踪",
+								categoryCode, unitCode, "启用", "直接材料", "计价物料", "是", "否", "", "" }),
+				"material-import-reordered-" + code));
+
+		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(data(get(admin, "/api/admin/document-tasks/" + task.get("id").longValue()
+				+ "/errors?page=1&pageSize=20")).get("items").toString())
+			.contains("IMPORT_FILE_INVALID");
+		assertThat(countMaterial(code)).isZero();
+	}
+
+	@Test
 	void materialImportValidationFailureIsAtomicAndIdempotencyKeyRejectsDifferentFile() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		String unitCode = "S22_ATOMIC_UNIT_" + SEQUENCE.incrementAndGet();
@@ -940,6 +1069,158 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	}
 
 	@Test
+	void bomDraftImportTemplateUsesChineseSheetsCommentsAndVisibleModeDropdown() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+
+		ResponseEntity<byte[]> template = downloadBytes(admin, "/api/admin/import-templates/bom-drafts");
+		assertThat(template.getStatusCode()).isEqualTo(HttpStatus.OK);
+		byte[] content = template.getBody();
+		assertThat(content).isNotEmpty();
+
+		try (Workbook workbook = new XSSFWorkbook(new ByteArrayInputStream(content))) {
+			assertThat(workbook.getNumberOfSheets()).isEqualTo(2);
+			assertThat(workbook.getSheetName(0)).isEqualTo("bom");
+			assertThat(workbook.getSheetName(1)).isEqualTo("items");
+			Sheet bom = workbook.getSheet("bom");
+			Sheet items = workbook.getSheet("items");
+			assertThat(headerValues(bom)).containsExactly("操作模式", "BOM ID", "版本", "BOM 编码", "父项物料编码",
+					"版本编码", "名称", "基准数量", "基准单位编码", "生效日期", "失效日期", "备注");
+			assertThat(headerValues(items)).containsExactly("行号", "子项物料编码", "业务单位编码", "业务用量",
+					"损耗率", "仓库编码", "备注");
+			assertHeaderCommentsContain(bom, "mode", "bomId", "version", "bomCode", "parentMaterialCode",
+					"versionCode", "name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark");
+			assertHeaderCommentsContain(items, "lineNo", "childMaterialCode", "businessUnit", "businessQuantity",
+					"lossRate", "warehouse", "remark");
+			assertThat(bom.getRow(0).getCell(0).getCellComment().getString().getString())
+				.contains("CREATE", "UPDATE_DRAFT");
+			assertThat(bom.getPaneInformation()).isNotNull();
+			assertThat(items.getPaneInformation()).isNotNull();
+			assertWorksheetXmlContains(content, 1, "<autoFilter ref=\"A1:L1\"");
+			assertWorksheetXmlContains(content, 2, "<autoFilter ref=\"A1:G1\"");
+			assertListValidation(bom, "A2:A10001", "创建草稿", "更新草稿");
+			for (int i = 0; i < 12; i++) {
+				assertThat(bom.getColumnWidth(i)).isGreaterThanOrEqualTo(2560);
+			}
+			for (int i = 0; i < 7; i++) {
+				assertThat(items.getColumnWidth(i)).isGreaterThanOrEqualTo(2560);
+			}
+		}
+		assertDropdownArrowVisible(content, 1, "A2:A10001");
+	}
+
+	@Test
+	void bomDraftImportAcceptsChineseTemplateAndRejectsUnknownModeValue() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		long unitId = createUnit(admin, "S22_BOM_CN_UNIT_" + SEQUENCE.incrementAndGet(), "二十二中文 BOM 单位");
+		long categoryId = createCategory(admin, "S22_BOM_CN_CAT_" + SEQUENCE.incrementAndGet(), "二十二中文 BOM 分类");
+		String parentCode = "S22_BOM_CN_PARENT_" + SEQUENCE.incrementAndGet();
+		String childCode = "S22_BOM_CN_CHILD_" + SEQUENCE.incrementAndGet();
+		createMaterial(admin, parentCode, "中文 BOM 父项", categoryId, unitId, "FINISHED_GOOD", "SELF_MADE");
+		createMaterial(admin, childCode, "中文 BOM 子项", categoryId, unitId);
+
+		String bomCode = "S22_BOM_CN_IMP_" + SEQUENCE.incrementAndGet();
+		JsonNode chineseTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-cn.xlsx",
+				bomDraftImportWorkbookWithHeaders(bomChineseHeaders(), "创建草稿", null, null, bomCode, parentCode,
+						"V-CN", childCode, bomItemChineseHeaders(), "", false),
+				"bom-import-cn-" + bomCode));
+		JsonNode chineseReady = processTaskUntilStatus(admin, chineseTask.get("id").longValue(),
+				"READY_TO_COMMIT", 8);
+		assertThat(chineseReady.get("status").asText()).as(chineseReady.toString()).isEqualTo("READY_TO_COMMIT");
+		data(postWithIdempotency(admin, "/api/admin/imports/" + chineseTask.get("id").longValue() + "/confirm",
+				Map.of("version", chineseReady.get("version").longValue()), "bom-import-cn-confirm-" + bomCode));
+		JsonNode chineseSucceeded = processTaskUntilStatus(admin, chineseTask.get("id").longValue(), "SUCCEEDED", 8);
+		assertThat(chineseSucceeded.get("status").asText()).as(chineseSucceeded.toString()).isEqualTo("SUCCEEDED");
+		assertThat(this.jdbcTemplate.queryForObject("select count(*) from mfg_bom where bom_code = ?", Long.class,
+				bomCode)).isOne();
+
+		String legacyBomCode = "S22_BOM_LEG_IMP_" + SEQUENCE.incrementAndGet();
+		JsonNode legacyTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-legacy.xlsx",
+				bomDraftImportWorkbook("CREATE", null, null, legacyBomCode, parentCode, "V-LEG", childCode),
+				"bom-import-legacy-" + legacyBomCode));
+		JsonNode legacyReady = processTaskUntilStatus(admin, legacyTask.get("id").longValue(),
+				"READY_TO_COMMIT", 8);
+		assertThat(legacyReady.get("status").asText()).as(legacyReady.toString()).isEqualTo("READY_TO_COMMIT");
+
+		String updateBomCode = "S22_BOM_CN_UPD_" + SEQUENCE.incrementAndGet();
+		JsonNode updateTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-cn-update.xlsx",
+				bomDraftImportWorkbookWithHeaders(bomChineseHeaders(), "更新草稿", 999999L, 1L, updateBomCode,
+						parentCode, "V-UPD", childCode, bomItemChineseHeaders(), "", false),
+				"bom-import-cn-update-" + updateBomCode));
+		JsonNode updateReady = processTaskUntilStatus(admin, updateTask.get("id").longValue(),
+				"READY_TO_COMMIT", 8);
+		assertThat(updateReady.get("status").asText()).as(updateReady.toString()).isEqualTo("READY_TO_COMMIT");
+		assertThat(importBatchMode(updateTask.get("id").longValue())).isEqualTo("UPDATE_DRAFT");
+
+		String badBomCode = "S22_BOM_BAD_MODE_" + SEQUENCE.incrementAndGet();
+		JsonNode badTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-bad-mode.xlsx",
+				bomDraftImportWorkbookWithHeaders(bomChineseHeaders(), "发布草稿", null, null, badBomCode, parentCode,
+						"V-BAD", childCode, bomItemChineseHeaders(), "", false),
+				"bom-import-bad-mode-" + badBomCode));
+		JsonNode badFailed = processTaskUntilStatus(admin, badTask.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(badFailed.get("status").asText()).as(badFailed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(data(get(admin, "/api/admin/document-tasks/" + badTask.get("id").longValue()
+				+ "/errors?page=1&pageSize=20")).get("items").toString())
+			.contains("mode", "IMPORT_VALIDATION_FAILED");
+	}
+
+	@Test
+	void bomDraftImportRejectsReorderedBomColumns() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String unitCode = "S22_BOM_REORDER_UNIT_" + SEQUENCE.incrementAndGet();
+		long unitId = createUnit(admin, unitCode, "二十二 BOM 列序单位");
+		long categoryId = createCategory(admin, "S22_BOM_REORDER_CAT_" + SEQUENCE.incrementAndGet(),
+				"二十二 BOM 列序分类");
+		String parentCode = "S22_BOM_REORDER_PARENT_" + SEQUENCE.incrementAndGet();
+		String childCode = "S22_BOM_REORDER_CHILD_" + SEQUENCE.incrementAndGet();
+		createMaterial(admin, parentCode, "BOM 列序父项", categoryId, unitId, "FINISHED_GOOD", "SELF_MADE");
+		createMaterial(admin, childCode, "BOM 列序子项", categoryId, unitId);
+
+		String bomCode = "S22_BOM_REORDER_" + SEQUENCE.incrementAndGet();
+		JsonNode task = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-reordered.xlsx",
+				bomDraftImportWorkbookWithRows(swapped(bomChineseHeaders(), 0, 3),
+						new String[] { bomCode, "", "", "创建草稿", parentCode, "V-REORDER", "列序 BOM", "1",
+								unitCode, LocalDate.now().toString(), LocalDate.now().plusDays(30).toString(), "" },
+						bomItemChineseHeaders(),
+						new String[] { "10", childCode, unitCode, "1", "0", "", "" }, false),
+				"bom-import-reordered-bom-" + bomCode));
+
+		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(data(get(admin, "/api/admin/document-tasks/" + task.get("id").longValue()
+				+ "/errors?page=1&pageSize=20")).get("items").toString())
+			.contains("IMPORT_FILE_INVALID");
+	}
+
+	@Test
+	void bomDraftImportRejectsReorderedItemColumns() throws Exception {
+		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
+		String unitCode = "S22_BOM_ITEM_REORDER_UNIT_" + SEQUENCE.incrementAndGet();
+		long unitId = createUnit(admin, unitCode, "二十二 BOM 明细列序单位");
+		long categoryId = createCategory(admin, "S22_BOM_ITEM_REORDER_CAT_" + SEQUENCE.incrementAndGet(),
+				"二十二 BOM 明细列序分类");
+		String parentCode = "S22_BOM_ITEM_REORDER_PARENT_" + SEQUENCE.incrementAndGet();
+		String childCode = "S22_BOM_ITEM_REORDER_CHILD_" + SEQUENCE.incrementAndGet();
+		createMaterial(admin, parentCode, "BOM 明细列序父项", categoryId, unitId, "FINISHED_GOOD", "SELF_MADE");
+		createMaterial(admin, childCode, "BOM 明细列序子项", categoryId, unitId);
+
+		String bomCode = "S22_BOM_ITEM_REORDER_" + SEQUENCE.incrementAndGet();
+		JsonNode task = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-items-reordered.xlsx",
+				bomDraftImportWorkbookWithRows(bomChineseHeaders(),
+						new String[] { "创建草稿", "", "", bomCode, parentCode, "V-ITEM-REORDER", "明细列序 BOM",
+								"1", unitCode, LocalDate.now().toString(), LocalDate.now().plusDays(30).toString(),
+								"" },
+						swapped(bomItemChineseHeaders(), 0, 1),
+						new String[] { childCode, "10", unitCode, "1", "0", "", "" }, false),
+				"bom-import-reordered-items-" + bomCode));
+
+		JsonNode failed = processTaskUntilStatus(admin, task.get("id").longValue(), "VALIDATION_FAILED", 8);
+		assertThat(failed.get("status").asText()).as(failed.toString()).isEqualTo("VALIDATION_FAILED");
+		assertThat(data(get(admin, "/api/admin/document-tasks/" + task.get("id").longValue()
+				+ "/errors?page=1&pageSize=20")).get("items").toString())
+			.contains("IMPORT_FILE_INVALID");
+	}
+
+	@Test
 	void bomDraftImportAndExportUseDocumentWorker() throws Exception {
 		AuthenticatedSession admin = login("admin", ADMIN_PASSWORD);
 		long unitId = createUnit(admin, "S22_BOM_UNIT_" + SEQUENCE.incrementAndGet(), "二十二 BOM 单位");
@@ -952,7 +1233,7 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 
 		ResponseEntity<byte[]> template = downloadBytes(admin, "/api/admin/import-templates/bom-drafts");
 		String templateText = workbookText(template.getBody());
-		assertThat(templateText).contains("businessUnit", "businessQuantity", "warehouse");
+		assertThat(templateText).contains("业务单位编码", "业务用量", "仓库编码");
 
 		JsonNode importTask = data(uploadImport(admin, "/api/admin/imports/bom-drafts", "bom-draft.xlsx",
 				bomDraftImportWorkbook("CREATE", null, null, bomCode, parentCode, "V1", childCode),
@@ -1316,6 +1597,37 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		}
 	}
 
+	private byte[] materialImportWorkbookWithHeaders(String sheetName, String[] headers, String[] values)
+			throws Exception {
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet sheet = workbook.createSheet(sheetName);
+			Row header = sheet.createRow(0);
+			for (int i = 0; i < headers.length; i++) {
+				header.createCell(i).setCellValue(headers[i]);
+			}
+			Row row = sheet.createRow(1);
+			for (int i = 0; i < values.length; i++) {
+				if (values[i] != null) {
+					row.createCell(i).setCellValue(values[i]);
+				}
+			}
+			workbook.write(output);
+			return output.toByteArray();
+		}
+	}
+
+	private String[] materialChineseHeaders() {
+		return new String[] { "物料编码", "物料名称", "规格型号", "物料类型", "来源类型", "跟踪方式",
+				"物料分类编码", "计量单位编码", "状态", "成本分类", "库存计价类别", "是否启用库存计价",
+				"是否启用项目成本", "成本备注", "备注" };
+	}
+
+	private String[] materialLegacyHeaders() {
+		return new String[] { "code", "name", "specification", "materialType", "sourceType", "trackingMethod",
+				"categoryCode", "unitCode", "status", "costCategory", "inventoryValuationCategory",
+				"inventoryValueEnabled", "projectCostEnabled", "costRemark", "remark" };
+	}
+
 	private byte[] materialImportWorkbookWithFormula(String code) throws Exception {
 		String categoryCode = this.jdbcTemplate.queryForObject(
 				"select code from mst_material_category where code like ? order by id desc limit 1", String.class,
@@ -1415,6 +1727,13 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 	private byte[] bomDraftImportWorkbook(String mode, Long bomId, Long bomVersion, String bomCode,
 			String parentMaterialCode, String versionCode, String childMaterialCode, String warehouse,
 			boolean hiddenItemRow) throws Exception {
+		return bomDraftImportWorkbookWithHeaders(bomLegacyHeaders(), mode, bomId, bomVersion, bomCode,
+				parentMaterialCode, versionCode, childMaterialCode, bomItemLegacyHeaders(), warehouse, hiddenItemRow);
+	}
+
+	private byte[] bomDraftImportWorkbookWithHeaders(String[] bomHeaders, String mode, Long bomId, Long bomVersion,
+			String bomCode, String parentMaterialCode, String versionCode, String childMaterialCode,
+			String[] itemHeaders, String warehouse, boolean hiddenItemRow) throws Exception {
 		String parentUnitCode = this.jdbcTemplate.queryForObject("""
 				select u.code
 				from mst_material m
@@ -1430,10 +1749,8 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
 			Sheet headerSheet = workbook.createSheet("bom");
 			Row header = headerSheet.createRow(0);
-			String[] headerNames = { "mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode",
-					"name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark" };
-			for (int i = 0; i < headerNames.length; i++) {
-				header.createCell(i).setCellValue(headerNames[i]);
+			for (int i = 0; i < bomHeaders.length; i++) {
+				header.createCell(i).setCellValue(bomHeaders[i]);
 			}
 			Row row = headerSheet.createRow(1);
 			row.createCell(0).setCellValue(mode);
@@ -1455,8 +1772,6 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 
 			Sheet itemsSheet = workbook.createSheet("items");
 			Row itemHeader = itemsSheet.createRow(0);
-			String[] itemHeaders = { "lineNo", "childMaterialCode", "businessUnit", "businessQuantity", "lossRate",
-					"warehouse", "remark" };
 			for (int i = 0; i < itemHeaders.length; i++) {
 				itemHeader.createCell(i).setCellValue(itemHeaders[i]);
 			}
@@ -1474,6 +1789,60 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 			workbook.write(output);
 			return output.toByteArray();
 		}
+	}
+
+	private byte[] bomDraftImportWorkbookWithRows(String[] bomHeaders, String[] bomValues, String[] itemHeaders,
+			String[] itemValues, boolean hiddenItemRow) throws Exception {
+		try (Workbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+			Sheet headerSheet = workbook.createSheet("bom");
+			writeCells(headerSheet.createRow(0), bomHeaders);
+			writeCells(headerSheet.createRow(1), bomValues);
+
+			Sheet itemsSheet = workbook.createSheet("items");
+			writeCells(itemsSheet.createRow(0), itemHeaders);
+			Row item = itemsSheet.createRow(1);
+			writeCells(item, itemValues);
+			if (hiddenItemRow) {
+				item.setZeroHeight(true);
+			}
+			workbook.write(output);
+			return output.toByteArray();
+		}
+	}
+
+	private static void writeCells(Row row, String[] values) {
+		for (int i = 0; i < values.length; i++) {
+			if (values[i] != null) {
+				row.createCell(i).setCellValue(values[i]);
+			}
+		}
+	}
+
+	private static String[] swapped(String[] values, int first, int second) {
+		String[] copy = Arrays.copyOf(values, values.length);
+		String value = copy[first];
+		copy[first] = copy[second];
+		copy[second] = value;
+		return copy;
+	}
+
+	private String[] bomChineseHeaders() {
+		return new String[] { "操作模式", "BOM ID", "版本", "BOM 编码", "父项物料编码", "版本编码",
+				"名称", "基准数量", "基准单位编码", "生效日期", "失效日期", "备注" };
+	}
+
+	private String[] bomLegacyHeaders() {
+		return new String[] { "mode", "bomId", "version", "bomCode", "parentMaterialCode", "versionCode",
+				"name", "baseQuantity", "baseUnit", "effectiveFrom", "effectiveTo", "remark" };
+	}
+
+	private String[] bomItemChineseHeaders() {
+		return new String[] { "行号", "子项物料编码", "业务单位编码", "业务用量", "损耗率", "仓库编码", "备注" };
+	}
+
+	private String[] bomItemLegacyHeaders() {
+		return new String[] { "lineNo", "childMaterialCode", "businessUnit", "businessQuantity", "lossRate",
+				"warehouse", "remark" };
 	}
 
 	private long insertUnsupportedDocumentTask(long userId) {
@@ -1499,6 +1868,102 @@ class Stage022BackendControllerTests extends PostgresIntegrationTest {
 			}
 		}
 		return text.toString();
+	}
+
+	private List<String> headerValues(Sheet sheet) {
+		Row header = sheet.getRow(0);
+		assertThat(header).isNotNull();
+		List<String> values = new java.util.ArrayList<>();
+		for (int i = 0; i < header.getLastCellNum(); i++) {
+			values.add(header.getCell(i).getStringCellValue());
+		}
+		return values;
+	}
+
+	private void assertHeaderCommentsContain(Sheet sheet, String... expectedFragments) {
+		Row header = sheet.getRow(0);
+		assertThat(header).isNotNull();
+		for (int i = 0; i < expectedFragments.length; i++) {
+			assertThat(header.getCell(i).getCellComment()).as("header comment " + i).isNotNull();
+			assertThat(header.getCell(i).getCellComment().getString().getString())
+				.as("header comment " + i)
+				.contains(expectedFragments[i]);
+		}
+	}
+
+	private void assertListValidation(Sheet sheet, String range, String... expectedOptions) {
+		List<? extends DataValidation> matches = sheet.getDataValidations()
+			.stream()
+			.filter((validation) -> validationHasRange(validation, range))
+			.toList();
+		assertThat(matches).as(range).hasSize(1);
+		DataValidation validation = matches.getFirst();
+		assertThat(validation.getValidationConstraint().getExplicitListValues()).as(range)
+			.containsExactly(expectedOptions);
+		assertThat(validation.getErrorStyle()).as(range).isEqualTo(DataValidation.ErrorStyle.STOP);
+	}
+
+	private boolean validationHasRange(DataValidation validation, String range) {
+		CellRangeAddress expected = CellRangeAddress.valueOf(range);
+		for (CellRangeAddress actual : validation.getRegions().getCellRangeAddresses()) {
+			if (actual.getFirstRow() == expected.getFirstRow()
+					&& actual.getLastRow() == expected.getLastRow()
+					&& actual.getFirstColumn() == expected.getFirstColumn()
+					&& actual.getLastColumn() == expected.getLastColumn()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void assertDropdownArrowVisible(byte[] content, int sheetIndex, String range) throws Exception {
+		String tag = dataValidationTag(worksheetXml(content, sheetIndex), range);
+		assertThat(tag).as("data validation " + range).isNotNull();
+		assertThat(tag).as("data validation " + range)
+			.doesNotContain("showDropDown=\"true\"", "showDropDown=\"1\"");
+	}
+
+	private void assertWorksheetXmlContains(byte[] content, int sheetIndex, String expected) throws Exception {
+		assertThat(worksheetXml(content, sheetIndex)).contains(expected);
+	}
+
+	private String dataValidationTag(String worksheetXml, String range) {
+		String sqref = "sqref=\"" + range + "\"";
+		int position = 0;
+		while (position >= 0 && position < worksheetXml.length()) {
+			int start = worksheetXml.indexOf("<dataValidation", position);
+			if (start < 0) {
+				return null;
+			}
+			int end = worksheetXml.indexOf('>', start);
+			if (end < 0) {
+				return null;
+			}
+			String tag = worksheetXml.substring(start, end + 1);
+			if (tag.contains(sqref)) {
+				return tag;
+			}
+			position = end + 1;
+		}
+		return null;
+	}
+
+	private String worksheetXml(byte[] content, int sheetIndex) throws Exception {
+		String entryName = "xl/worksheets/sheet" + sheetIndex + ".xml";
+		try (ZipInputStream input = new ZipInputStream(new ByteArrayInputStream(content))) {
+			ZipEntry entry;
+			while ((entry = input.getNextEntry()) != null) {
+				if (entryName.equals(entry.getName())) {
+					return new String(input.readAllBytes(), StandardCharsets.UTF_8);
+				}
+			}
+		}
+		throw new AssertionError("缺少工作表 XML：" + entryName);
+	}
+
+	private String importBatchMode(long taskId) {
+		return this.jdbcTemplate.queryForObject("select mode from platform_import_batch where task_id = ?",
+				String.class, taskId);
 	}
 
 	private long insertDocumentTask(long userId, String taskType) {

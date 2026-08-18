@@ -1,6 +1,8 @@
 import type { LocationQueryRaw, RouteLocationRaw } from 'vue-router'
 
 export const returnToQueryKey = 'returnTo'
+export const approvalCenterPath = '/platform/approvals'
+export const approvalIdQueryKey = 'approvalId'
 
 interface RouteLike {
   fullPath?: string
@@ -48,4 +50,30 @@ export function queryWithReturnTo(
     next[returnToQueryKey] = path
   }
   return next
+}
+
+export function approvalId(value: unknown): number | null {
+  const normalized = typeof value === 'number' ? String(value) : value
+  if (typeof normalized !== 'string' || !/^[1-9]\d*$/.test(normalized)) {
+    return null
+  }
+  const id = Number(normalized)
+  return Number.isSafeInteger(id) ? id : null
+}
+
+export function approvalDetailReturnTo(value: unknown): string {
+  const id = approvalId(value)
+  return id === null ? approvalCenterPath : `${approvalCenterPath}?${approvalIdQueryKey}=${id}`
+}
+
+export function approvalIdFromReturnTo(value: unknown): number | null {
+  const path = safeReturnTo(value)
+  if (!path) {
+    return null
+  }
+  const [pathname, search = ''] = path.split('?', 2)
+  if (pathname !== approvalCenterPath) {
+    return null
+  }
+  return approvalId(new URLSearchParams(search).get(approvalIdQueryKey))
 }

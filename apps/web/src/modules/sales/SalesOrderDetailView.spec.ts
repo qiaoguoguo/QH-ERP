@@ -504,7 +504,7 @@ describe('销售订单详情页', () => {
     await wrapper.find('[data-test="confirm-sales-order-detail"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('销售订单确认前每行必须选择预留仓库，确认只会按预留仓库现货库存预留，不使用采购在途')
+    expect(wrapper.text()).toContain('销售订单确认前每行必须选择预留仓库；确认后进入有效销售需求，库存不足在销售出库前处理')
     expect(salesApiMock.orders.confirm).not.toHaveBeenCalled()
   })
 

@@ -182,6 +182,20 @@ public enum ApiErrorCode {
 
 	BATCH_OPERATION_OBJECT_CHANGED(HttpStatus.CONFLICT, "批量操作对象已变化，请重新预检"),
 
+	KNOWLEDGE_CATEGORY_NOT_FOUND(HttpStatus.NOT_FOUND, "知识分类不存在"),
+
+	KNOWLEDGE_CATEGORY_IN_USE(HttpStatus.CONFLICT, "知识分类仍被文章或子分类使用"),
+
+	KNOWLEDGE_CATEGORY_CODE_EXISTS(HttpStatus.CONFLICT, "知识分类编码已存在"),
+
+	KNOWLEDGE_ARTICLE_NOT_FOUND(HttpStatus.NOT_FOUND, "知识内容不存在或已停用"),
+
+	KNOWLEDGE_ARTICLE_SLUG_EXISTS(HttpStatus.CONFLICT, "知识标识已存在"),
+
+	KNOWLEDGE_RELATION_INVALID(HttpStatus.BAD_REQUEST, "关联知识不正确"),
+
+	KNOWLEDGE_REQUEST_INVALID(HttpStatus.BAD_REQUEST, "知识内容参数不正确"),
+
 	DELIVERY_ASSET_NOT_AVAILABLE(HttpStatus.NOT_FOUND, "交付资料不可用"),
 
 	MATERIAL_SUBSTITUTE_NOT_FOUND(HttpStatus.NOT_FOUND, "替代料关系不存在"),

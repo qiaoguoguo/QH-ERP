@@ -18,14 +18,11 @@ import MasterDataTableView from '../master/shared/MasterDataTableView.vue'
 import { pageItems } from '../system/shared/pageHelpers'
 import PurchaseOrderStatusTag from './PurchaseOrderStatusTag.vue'
 import {
-  formatProcurementAmount,
   formatProcurementDateTime,
   formatProcurementQuantity,
   normalizeOptionalId,
-  procurementApprovalStatusLabel,
   procurementErrorMessage,
   procurementOwnershipDisplay,
-  procurementPriceSourceDisplay,
   purchaseInTransitStatusLabel,
 } from './procurementPageHelpers'
 import { confirmAction } from '../../shared/ui/confirmDialog'
@@ -202,53 +199,263 @@ function allowed(record: PurchaseOrderSummaryRecord, action: string) {
 
 function exceptionApprovalText(record: PurchaseOrderSummaryRecord) {
   if (record.exceptionApprovalStatus === 'NOT_REQUIRED') {
-    return '不需要'
+    return ''
   }
-  return record.exceptionApprovalStatus || record.exceptionReason || '未提交'
+  const labels: Record<string, string> = {
+    NOT_SUBMITTED: '未提交',
+    SUBMITTED: '审批中',
+    PENDING: '审批中',
+    APPROVED: '已通过',
+    REJECTED: '已驳回',
+    CANCELLED: '已取消',
+    CANCELED: '已取消',
+  }
+  const status = textValue(record.exceptionApprovalStatus)
+  return labels[status] || status || '未提交'
 }
 
-function sourceText(record: PurchaseOrderSummaryRecord) {
+type TextRecord = Record<string, unknown>
+type PurchaseBasisKind = 'agreement' | 'quote' | 'direct' | 'manual' | 'mixed' | 'unknown'
+type PurchaseBasisItem = {
+  kind: PurchaseBasisKind
+  text: string
+}
+
+const purchaseBasisLabels: Record<PurchaseBasisKind, string> = {
+  agreement: '价格协议',
+  quote: '询价选价',
+  direct: '公共直采',
+  manual: '手工录价',
+  mixed: '混合来源',
+  unknown: '采购依据未返回',
+}
+
+function textValue(value: unknown) {
+  if (value === null || value === undefined) {
+    return ''
+  }
+  return String(value).trim()
+}
+
+function fieldText(source: TextRecord, keys: string[]) {
+  for (const key of keys) {
+    const value = textValue(source[key])
+    if (value) {
+      return value
+    }
+  }
+  return ''
+}
+
+function isMixedValue(value: unknown) {
+  return textValue(value).toUpperCase() === 'MIXED'
+}
+
+function hasMixedPurchaseBasis(source: TextRecord) {
   return [
-    `请购 ${record.requisitionNo || '-'}`,
-    `报价 ${record.quoteNo || '-'}`,
-    `协议 ${record.agreementNo || '-'}`,
-  ].join(' / ')
+    'requisitionNo',
+    'purchaseRequisitionNo',
+    'sourceRequisitionNo',
+    'quoteNo',
+    'quotationNo',
+    'inquiryNo',
+    'selectedQuoteNo',
+    'agreementNo',
+    'priceAgreementNo',
+    'agreementCode',
+    'priceSourceType',
+  ].some((key) => isMixedValue(source[key]))
 }
 
-function priceSourceText(record: PurchaseOrderSummaryRecord) {
-  return procurementPriceSourceDisplay(record)
+function sourceKind(value: string): PurchaseBasisKind | '' {
+  const source = value.toUpperCase()
+  if (source === 'MIXED') {
+    return 'mixed'
+  }
+  if (source === 'PUBLIC_DIRECT' || source === '公共直采') {
+    return 'direct'
+  }
+  if (source === 'MANUAL' || source === '手工录价' || source === '手工录入') {
+    return 'manual'
+  }
+  if (source.includes('AGREEMENT') || source.includes('协议')) {
+    return 'agreement'
+  }
+  if (
+    source.includes('QUOTE')
+    || source.includes('QUOTATION')
+    || source.includes('INQUIRY')
+    || source.includes('询价')
+    || source.includes('报价')
+  ) {
+    return 'quote'
+  }
+  return ''
 }
 
-function orderLineTaxText(
-  line: NonNullable<PurchaseOrderSummaryRecord['lines']>[number],
-  fallbackCurrency?: string | null,
-) {
-  if (!line.taxExcludedUnitPrice && !line.taxIncludedUnitPrice && !line.taxRate) {
-    return ['税价未返回']
+function purchaseBasisItem(kind: PurchaseBasisKind, no = ''): PurchaseBasisItem {
+  const label = purchaseBasisLabels[kind]
+  return {
+    kind,
+    text: no && kind !== 'mixed' && kind !== 'unknown' ? `${label} ${no}` : label,
   }
-  return [
-    `未税单价 ${formatProcurementAmount(line.taxExcludedUnitPrice)}`,
-    `含税单价 ${formatProcurementAmount(line.taxIncludedUnitPrice)}`,
-    `税率 ${formatProcurementAmount(line.taxRate)} / ${line.currency || fallbackCurrency || 'CNY'}`,
-  ]
 }
 
-function taxSummaryLines(record: PurchaseOrderSummaryRecord): string[] {
-  const lines = record.lines ?? []
-  if (lines.length === 1) {
-    return orderLineTaxText(lines[0], record.currency)
+function purchaseBasisItemFrom(source: TextRecord): PurchaseBasisItem | null {
+  if (hasMixedPurchaseBasis(source)) {
+    return purchaseBasisItem('mixed')
   }
-  if (lines.length > 1) {
-    return [`${lines.length} 行税价见明细`]
+
+  const agreementNo = fieldText(source, ['agreementNo', 'priceAgreementNo', 'agreementCode'])
+  const quoteNo = fieldText(source, ['quoteNo', 'quotationNo', 'inquiryNo', 'selectedQuoteNo'])
+  const requisitionNo = fieldText(source, ['requisitionNo', 'purchaseRequisitionNo', 'sourceRequisitionNo'])
+  const kind = sourceKind(fieldText(source, ['priceSourceType', 'priceSource', 'sourceType', 'basisType']))
+
+  if (kind === 'mixed') {
+    return purchaseBasisItem('mixed')
   }
-  if (!record.taxExcludedUnitPrice && !record.taxIncludedUnitPrice && !record.taxRate) {
-    return ['税价见明细']
+  if (kind === 'manual') {
+    return purchaseBasisItem('manual')
   }
-  return [
-    `未税单价 ${formatProcurementAmount(record.taxExcludedUnitPrice)}`,
-    `含税单价 ${formatProcurementAmount(record.taxIncludedUnitPrice)}`,
-    `税率 ${formatProcurementAmount(record.taxRate)} / ${record.currency || 'CNY'}`,
-  ]
+  if (kind === 'direct') {
+    return purchaseBasisItem('direct', requisitionNo)
+  }
+  if (kind === 'agreement' || agreementNo) {
+    return purchaseBasisItem('agreement', agreementNo)
+  }
+  if (kind === 'quote' || quoteNo) {
+    return purchaseBasisItem('quote', quoteNo)
+  }
+  return null
+}
+
+function uniqueBasisItems(items: PurchaseBasisItem[]) {
+  const seen = new Set<string>()
+  return items.filter((item) => {
+    if (seen.has(item.text)) {
+      return false
+    }
+    seen.add(item.text)
+    return true
+  })
+}
+
+function purchaseBasisItems(record: PurchaseOrderSummaryRecord) {
+  const items = [purchaseBasisItemFrom(record as unknown as TextRecord) || purchaseBasisItem('unknown')]
+  return uniqueBasisItems(items)
+}
+
+function purchaseBasisTitle(record: PurchaseOrderSummaryRecord) {
+  const items = purchaseBasisItems(record)
+  if (items.some((item) => item.kind === 'mixed') || items.length > 1) {
+    return '混合来源'
+  }
+  return items[0]?.text || purchaseBasisLabels.unknown
+}
+
+function purchaseBasisDetailLines(record: PurchaseOrderSummaryRecord) {
+  const items = purchaseBasisItems(record)
+  const lines: string[] = []
+  if (items.some((item) => item.kind === 'mixed')) {
+    lines.push('包含多个采购依据，详见明细')
+  } else if (items.length > 1) {
+    const labels = Array.from(new Set(items.map((item) => purchaseBasisLabels[item.kind])))
+    lines.push(`包含：${labels.join('、')}`)
+    lines.push(`${items.length} 个依据，详见明细`)
+  }
+  const reason = fieldText(record as unknown as TextRecord, ['priceSourceReason', 'selectionReason', 'sourceReason'])
+  if (reason) {
+    lines.push(`选价原因：${reason}`)
+  }
+  return lines
+}
+
+function orderLineCount(record: PurchaseOrderSummaryRecord) {
+  const lineCount = Number(record.lineCount)
+  if (Number.isFinite(lineCount) && lineCount >= 0) {
+    return lineCount
+  }
+  return null
+}
+
+function orderLineCountText(record: PurchaseOrderSummaryRecord) {
+  const lineCount = orderLineCount(record)
+  return lineCount === null ? '明细数未返回' : `${lineCount}条明细`
+}
+
+function quantityValue(value: unknown) {
+  const quantity = Number(value)
+  return Number.isFinite(quantity) ? quantity : 0
+}
+
+function hasRemainingQuantity(record: PurchaseOrderSummaryRecord) {
+  return quantityValue(record.remainingQuantity) > 0
+}
+
+function isFullyReceived(record: PurchaseOrderSummaryRecord) {
+  const status = String(record.status || '').toUpperCase()
+  if (status === 'FULLY_RECEIVED' || status === 'RECEIVED') {
+    return true
+  }
+  const totalQuantity = quantityValue(record.totalQuantity)
+  return totalQuantity > 0
+    && quantityValue(record.remainingQuantity) <= 0
+    && quantityValue(record.receivedQuantity) >= totalQuantity
+}
+
+function isClosed(record: PurchaseOrderSummaryRecord) {
+  return String(record.status || '').toUpperCase() === 'CLOSED'
+}
+
+function closeReasonText(record: PurchaseOrderSummaryRecord) {
+  return fieldText(record as unknown as TextRecord, ['closeReason'])
+}
+
+function arrivalLines(record: PurchaseOrderSummaryRecord) {
+  if (isClosed(record)) {
+    const lines = ['已关闭']
+    const reason = closeReasonText(record)
+    if (reason) {
+      lines.push(`关闭原因：${reason}`)
+    }
+    return lines
+  }
+  if (isFullyReceived(record)) {
+    return ['已全部入库']
+  }
+  const lines = [`计划到货：${record.expectedArrivalDate || '未设置'}`]
+  if (hasRemainingQuantity(record)) {
+    const nextArrival = record.nextArrivalDate
+    lines.push(`下一到货：${nextArrival || '待排期'}`)
+  }
+  return lines
+}
+
+function shouldShowExceptionApproval(record: PurchaseOrderSummaryRecord) {
+  const status = textValue(record.exceptionApprovalStatus)
+  return Boolean(status && status !== 'NOT_REQUIRED')
+}
+
+function statusExceptionLines(record: PurchaseOrderSummaryRecord) {
+  const lines: string[] = []
+  if (isClosed(record)) {
+    const reason = closeReasonText(record)
+    if (reason) {
+      lines.push(`关闭原因：${reason}`)
+    }
+  } else if (isFullyReceived(record)) {
+    lines.push('已全部入库')
+  }
+  if (shouldShowExceptionApproval(record)) {
+    lines.push(`例外审批：${exceptionApprovalText(record)}`)
+    if (record.exceptionReason) {
+      lines.push(`例外原因：${record.exceptionReason}`)
+    }
+  }
+  if (lines.length === 0) {
+    lines.push('无例外')
+  }
+  return lines
 }
 
 async function runOrderAction(record: PurchaseOrderSummaryRecord, action: 'confirm' | 'cancel' | 'close') {
@@ -372,154 +579,136 @@ onMounted(() => {
 
     <el-empty v-if="!loading && records.length === 0" description="暂无采购订单" />
     <div class="table-scroll">
-      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无采购订单'" stripe>
-        <el-table-column prop="orderNo" label="订单号" min-width="170" show-overflow-tooltip />
-        <el-table-column label="供应商" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ row.supplierCode }} {{ row.supplierName }}
-          </template>
-        </el-table-column>
-        <el-table-column label="采购模式/项目" min-width="210" show-overflow-tooltip>
-          <template #default="{ row }">
-            {{ procurementOwnershipDisplay(row) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="来源/价格" min-width="320" show-overflow-tooltip>
+      <el-table class="purchase-order-table" :data="records" :empty-text="loading ? '加载中' : '暂无采购订单'" stripe>
+        <el-table-column label="订单信息" min-width="230" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="stacked-cell">
-              <span>{{ sourceText(row) }}</span>
-              <span>价格来源：{{ priceSourceText(row) }}</span>
-              <span>价格原因：{{ row.priceSourceReason || '-' }}</span>
+              <span class="cell-primary">{{ row.orderNo }}</span>
+              <span class="cell-muted">订单日期：{{ row.orderDate || '未设置' }}</span>
+              <span class="cell-muted">明细：{{ orderLineCountText(row) }}</span>
+              <span class="cell-muted">更新：{{ formatProcurementDateTime(row.updatedAt) }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="审批/例外" min-width="190" show-overflow-tooltip>
+        <el-table-column label="供应商" min-width="190" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="stacked-cell">
-              <span>审批状态：{{ procurementApprovalStatusLabel(row.approvalStatus, row.approvalStatusName) }}</span>
-              <span>例外审批：{{ exceptionApprovalText(row) }}</span>
+              <span class="cell-primary">{{ row.supplierName || row.supplierCode || '未指定供应商' }}</span>
+              <span v-if="row.supplierCode" class="cell-muted">{{ row.supplierCode }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="税价" min-width="230" show-overflow-tooltip>
+        <el-table-column label="采购范围" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="stacked-cell">
-              <span v-for="line in taxSummaryLines(row)" :key="line">{{ line }}</span>
+              <span class="cell-primary">{{ procurementOwnershipDisplay(row) }}</span>
+              <span class="cell-muted">采购明细：{{ orderLineCountText(row) }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="orderDate" label="订单日期" min-width="110" />
-        <el-table-column label="预计到货" min-width="110">
-          <template #default="{ row }">
-            {{ row.expectedArrivalDate || '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" min-width="105">
-          <template #default="{ row }">
-            <PurchaseOrderStatusTag :status="row.status" />
-          </template>
-        </el-table-column>
-        <el-table-column label="总数量" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatProcurementQuantity(row.totalQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="已入库" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatProcurementQuantity(row.receivedQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="未入库" min-width="100" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatProcurementQuantity(row.remainingQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="采购在途参考" min-width="130" align="right">
-          <template #default="{ row }">
-            <span class="numeric-cell">{{ formatProcurementQuantity(row.inTransitQuantity) }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="在途状态" min-width="120">
-          <template #default="{ row }">
-            {{ purchaseInTransitStatusLabel(row.inTransitStatus, row.inTransitStatusName) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="到货/结案" min-width="220" show-overflow-tooltip>
+        <el-table-column label="采购依据" min-width="260" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="stacked-cell">
-              <span>下一到货：{{ row.nextArrivalDate || row.expectedArrivalDate || '-' }}</span>
-              <span>结案原因：{{ row.closeReason || '未结案' }}</span>
+              <span class="cell-primary">{{ purchaseBasisTitle(row) }}</span>
+              <span v-for="line in purchaseBasisDetailLines(row)" :key="line" class="cell-muted">
+                {{ line }}
+              </span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="lineCount" label="行数" min-width="80" />
-        <el-table-column prop="createdByName" label="创建人" min-width="100" />
-        <el-table-column label="更新时间" min-width="150">
+        <el-table-column label="履约进度" min-width="260">
           <template #default="{ row }">
-            {{ formatProcurementDateTime(row.updatedAt) }}
+            <div class="progress-cell">
+              <span class="metric-chip">总量 <strong>{{ formatProcurementQuantity(row.totalQuantity) }}</strong></span>
+              <span class="metric-chip">已入库 <strong>{{ formatProcurementQuantity(row.receivedQuantity) }}</strong></span>
+              <span class="metric-chip">未入库 <strong>{{ formatProcurementQuantity(row.remainingQuantity) }}</strong></span>
+              <span class="metric-chip">在途 <strong>{{ formatProcurementQuantity(row.inTransitQuantity) }}</strong></span>
+              <span class="progress-status">
+                {{ purchaseInTransitStatusLabel(row.inTransitStatus, row.inTransitStatusName) }}
+              </span>
+            </div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" fixed="right" width="184">
+        <el-table-column label="计划到货" min-width="170" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-button size="small" text data-test="view-purchase-order" @click="viewOrder(row)">详情</el-button>
-            <el-button
-              v-if="canUpdate && allowed(row, 'UPDATE')"
-              size="small"
-              text
-              data-test="edit-purchase-order"
-              @click="editOrder(row)"
-            >
-              编辑
-            </el-button>
-            <el-dropdown trigger="click" class="table-actions-more" v-if="(canConfirm && allowed(row, 'CONFIRM')) || (canCancelPermission && allowed(row, 'CANCEL')) || (canClosePermission && allowed(row, 'CLOSE')) || (canCreateReceiptPermission && allowed(row, 'CREATE_RECEIPT'))">
-              <el-button size="small" text>更多</el-button>
-              <template #dropdown>
-                <el-dropdown-menu class="table-actions-more-menu">
-                  <el-button
-                    v-if="canConfirm && allowed(row, 'CONFIRM')"
-                    size="small"
-                    text
-                    type="success"
-                    data-test="confirm-purchase-order"
-                    :disabled="actionLoading"
-                    @click="runOrderAction(row, 'confirm')"
-                  >
-                    确认
-                  </el-button>
-                  <el-button
-                    v-if="canCancelPermission && allowed(row, 'CANCEL')"
-                    size="small"
-                    text
-                    type="danger"
-                    data-test="cancel-purchase-order"
-                    :disabled="actionLoading"
-                    @click="runOrderAction(row, 'cancel')"
-                  >
-                    取消
-                  </el-button>
-                  <el-button
-                    v-if="canClosePermission && allowed(row, 'CLOSE')"
-                    size="small"
-                    text
-                    type="warning"
-                    data-test="close-purchase-order"
-                    :disabled="actionLoading"
-                    @click="runOrderAction(row, 'close')"
-                  >
-                    关闭
-                  </el-button>
-                  <el-button
-                    v-if="canCreateReceiptPermission && allowed(row, 'CREATE_RECEIPT')"
-                    size="small"
-                    text
-                    data-test="create-purchase-receipt"
-                    @click="createReceipt(row)"
-                  >
-                    创建入库
-                  </el-button>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            <div class="stacked-cell">
+              <span v-for="line in arrivalLines(row)" :key="line">{{ line }}</span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态/例外" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="stacked-cell">
+              <PurchaseOrderStatusTag :status="row.status" />
+              <span v-for="line in statusExceptionLines(row)" :key="line" class="cell-muted">
+                {{ line }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" fixed="right" width="190">
+          <template #default="{ row }">
+            <div class="actions-cell">
+              <el-button size="small" text data-test="view-purchase-order" @click="viewOrder(row)">详情</el-button>
+              <el-button
+                v-if="canUpdate && allowed(row, 'UPDATE')"
+                size="small"
+                text
+                data-test="edit-purchase-order"
+                @click="editOrder(row)"
+              >
+                编辑
+              </el-button>
+              <el-dropdown trigger="click" class="table-actions-more" v-if="(canConfirm && allowed(row, 'CONFIRM')) || (canCancelPermission && allowed(row, 'CANCEL')) || (canClosePermission && allowed(row, 'CLOSE')) || (canCreateReceiptPermission && allowed(row, 'CREATE_RECEIPT'))">
+                <el-button size="small" text>更多</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu class="table-actions-more-menu">
+                    <el-button
+                      v-if="canConfirm && allowed(row, 'CONFIRM')"
+                      size="small"
+                      text
+                      type="success"
+                      data-test="confirm-purchase-order"
+                      :disabled="actionLoading"
+                      @click="runOrderAction(row, 'confirm')"
+                    >
+                      确认
+                    </el-button>
+                    <el-button
+                      v-if="canCancelPermission && allowed(row, 'CANCEL')"
+                      size="small"
+                      text
+                      type="danger"
+                      data-test="cancel-purchase-order"
+                      :disabled="actionLoading"
+                      @click="runOrderAction(row, 'cancel')"
+                    >
+                      取消
+                    </el-button>
+                    <el-button
+                      v-if="canClosePermission && allowed(row, 'CLOSE')"
+                      size="small"
+                      text
+                      type="warning"
+                      data-test="close-purchase-order"
+                      :disabled="actionLoading"
+                      @click="runOrderAction(row, 'close')"
+                    >
+                      关闭
+                    </el-button>
+                    <el-button
+                      v-if="canCreateReceiptPermission && allowed(row, 'CREATE_RECEIPT')"
+                      size="small"
+                      text
+                      data-test="create-purchase-receipt"
+                      @click="createReceipt(row)"
+                    >
+                      创建入库
+                    </el-button>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -536,16 +725,60 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.numeric-cell {
-  display: inline-block;
-  min-width: 76px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
 .stacked-cell {
   display: grid;
   gap: 2px;
   line-height: 1.35;
+}
+
+.purchase-order-table :deep(.el-table__cell) {
+  vertical-align: top;
+}
+
+.cell-primary {
+  color: #111827;
+  font-weight: 600;
+}
+
+.cell-muted {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.progress-cell {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.metric-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: #374151;
+  background: #f9fafb;
+  font-size: 12px;
+}
+
+.metric-chip strong {
+  color: #111827;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-status {
+  grid-column: 1 / -1;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.actions-cell {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 </style>

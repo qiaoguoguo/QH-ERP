@@ -1,0 +1,58 @@
+[
+  {
+    "code": "COMMON_SYSTEM",
+    "name": "通用系统与账号权限",
+    "parentCode": null,
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "code": "MASTER_MATERIAL_BOM",
+    "name": "基础资料、物料与 BOM",
+    "parentCode": null,
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "code": "INVENTORY_QUALITY",
+    "name": "库存与质量",
+    "parentCode": null,
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "code": "PROCUREMENT",
+    "name": "采购管理",
+    "parentCode": null,
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "code": "SALES",
+    "name": "销售管理",
+    "parentCode": null,
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "code": "PLANNING_PRODUCTION",
+    "name": "计划与生产",
+    "parentCode": null,
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "code": "COST_FINANCE_REPORTS",
+    "name": "成本、财务、会计与报表",
+    "parentCode": null,
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "code": "PLATFORM_IMPORT_EXPORT",
+    "name": "平台治理、导入导出与边界",
+    "parentCode": null,
+    "sortOrder": 80,
+    "status": "ENABLED"
+  }
+]

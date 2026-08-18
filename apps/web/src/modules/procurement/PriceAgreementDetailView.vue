@@ -96,53 +96,66 @@ async function submitActivation() {
       <el-alert v-if="actionError" class="page-alert" type="error" :title="actionError" show-icon :closable="false" />
       <el-alert v-if="loading" class="page-alert" type="info" title="价格协议详情加载中" show-icon :closable="false" />
     </template>
-    <template v-if="record">
+    <div v-if="record" class="detail-stack">
       <section class="section-block">
-        <h2>协议税价明细</h2>
+        <div class="section-heading">
+          <div>
+            <h2>协议税价明细</h2>
+            <p>展示协议适用的供应商、物料、税价及有效期限。</p>
+          </div>
+        </div>
         <div class="table-scroll">
           <el-table :data="detailRows" empty-text="暂无价格协议明细" stripe>
-            <el-table-column label="供应商" min-width="160" show-overflow-tooltip>
+            <el-table-column label="供应商" min-width="180" show-overflow-tooltip>
               <template #default="{ row }">{{ row.supplierName }}</template>
             </el-table-column>
-            <el-table-column label="物料" min-width="190" show-overflow-tooltip>
+            <el-table-column label="物料" min-width="220" show-overflow-tooltip>
               <template #default="{ row }">{{ row.materialCode }} {{ row.materialName }}</template>
             </el-table-column>
             <el-table-column label="未税单价" min-width="120" align="right">
-              <template #default="{ row }">未税单价 {{ formatProcurementAmount(row.taxExcludedUnitPrice) }}</template>
+              <template #default="{ row }">{{ formatProcurementAmount(row.taxExcludedUnitPrice) }}</template>
             </el-table-column>
             <el-table-column label="含税单价" min-width="120" align="right">
-              <template #default="{ row }">含税单价 {{ formatProcurementAmount(row.taxIncludedUnitPrice) }}</template>
+              <template #default="{ row }">{{ formatProcurementAmount(row.taxIncludedUnitPrice) }}</template>
             </el-table-column>
             <el-table-column label="税率/币种" min-width="130">
-              <template #default="{ row }">税率 {{ formatProcurementAmount(row.taxRate) }} / {{ row.currency }}</template>
+              <template #default="{ row }">{{ formatProcurementAmount(row.taxRate) }} / {{ row.currency }}</template>
             </el-table-column>
-            <el-table-column label="有效期" min-width="190">
-              <template #default="{ row }">有效期：{{ row.validFrom }} 至 {{ row.validTo }}</template>
+            <el-table-column label="有效期" min-width="210">
+              <template #default="{ row }">{{ row.validFrom }} 至 {{ row.validTo }}</template>
             </el-table-column>
           </el-table>
         </div>
       </section>
-      <section class="trace-grid">
-        <div>
+      <section class="trace-grid" aria-label="协议关联信息">
+        <article class="trace-card">
           <h2>来源链</h2>
-          <p v-for="source in record.sourceChain ?? []" :key="`${source.sourceType}-${source.sourceNo}`">
-            {{ source.sourceNo }} {{ source.summary }}
-          </p>
-        </div>
-        <div>
+          <div v-if="record.sourceChain?.length" class="trace-list">
+            <p v-for="source in record.sourceChain" :key="`${source.sourceType}-${source.sourceNo}`">
+              <strong>{{ source.sourceNo }}</strong>
+              <span>{{ source.summary }}</span>
+            </p>
+          </div>
+          <p v-else class="empty-text">暂无来源记录</p>
+        </article>
+        <article class="trace-card">
           <h2>审批</h2>
-          <p>审批状态：{{ procurementApprovalStatusLabel(record.approvalStatus, record.approvalStatusName) }}</p>
-        </div>
-        <div>
+          <p class="info-row">
+            <span>审批状态</span>
+            <strong>{{ procurementApprovalStatusLabel(record.approvalStatus, record.approvalStatusName) }}</strong>
+          </p>
+        </article>
+        <article class="trace-card">
           <h2>附件</h2>
-          <p>协议附件复用 022 平台附件。</p>
-        </div>
-        <div>
+          <p class="empty-text">协议附件复用平台附件能力。</p>
+        </article>
+        <article class="trace-card">
           <h2>审计</h2>
-          <p>创建人：{{ record.createdByName }}，更新时间：{{ record.updatedAt }}</p>
-        </div>
+          <p class="info-row"><span>创建人</span><strong>{{ record.createdByName || '-' }}</strong></p>
+          <p class="info-row"><span>更新时间</span><strong>{{ record.updatedAt || '-' }}</strong></p>
+        </article>
       </section>
-    </template>
+    </div>
   </MasterDataTableView>
 </template>
 
@@ -153,10 +166,75 @@ async function submitActivation() {
   grid-template-columns: repeat(4, minmax(180px, 1fr));
 }
 
+.detail-stack {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.trace-card {
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  min-width: 0;
+  padding: 14px;
+}
+
+.trace-card h2 {
+  font-size: 16px;
+  margin: 0 0 12px;
+}
+
+.trace-card p {
+  margin: 0;
+}
+
+.trace-list {
+  display: grid;
+  gap: 8px;
+}
+
+.trace-list p {
+  display: grid;
+  gap: 3px;
+}
+
+.trace-list span,
+.empty-text,
+.section-heading p {
+  color: #606266;
+}
+
+.info-row {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.info-row + .info-row {
+  margin-top: 8px;
+}
+
+.info-row span {
+  color: #606266;
+  flex: 0 0 auto;
+}
+
+.info-row strong {
+  min-width: 0;
+  text-align: right;
+  word-break: break-word;
+}
+
 .state-box {
+  background: #f5f7fa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
   display: flex;
   flex-direction: column;
   gap: 6px;
+  padding: 8px 12px;
   text-align: right;
 }
 
@@ -171,5 +249,25 @@ async function submitActivation() {
 .section-block h2 {
   font-size: 16px;
   margin: 0;
+}
+
+.section-heading p {
+  margin: 6px 0 0;
+}
+
+@media (max-width: 1200px) {
+  .trace-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .trace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .state-box {
+    text-align: left;
+  }
 }
 </style>

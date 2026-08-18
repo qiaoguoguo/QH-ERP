@@ -39,11 +39,13 @@ import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Arrays;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -56,6 +58,147 @@ public class PlatformDocumentTaskService {
 	private static final AtomicInteger TASK_SEQUENCE = new AtomicInteger();
 
 	private static final DateTimeFormatter TASK_NO_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMddHHmmssSSS");
+
+	private static final String[] MATERIAL_TEMPLATE_HEADERS = { "code", "name", "specification", "materialType",
+			"sourceType", "trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
+			"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
+			"remark" };
+
+	private static final Map<String, String> MATERIAL_TEMPLATE_HEADER_ALIASES = Map.ofEntries(
+			Map.entry("code", "code"),
+			Map.entry("物料编码", "code"),
+			Map.entry("name", "name"),
+			Map.entry("物料名称", "name"),
+			Map.entry("specification", "specification"),
+			Map.entry("规格型号", "specification"),
+			Map.entry("materialType", "materialType"),
+			Map.entry("物料类型", "materialType"),
+			Map.entry("sourceType", "sourceType"),
+			Map.entry("来源类型", "sourceType"),
+			Map.entry("trackingMethod", "trackingMethod"),
+			Map.entry("跟踪方式", "trackingMethod"),
+			Map.entry("categoryCode", "categoryCode"),
+			Map.entry("物料分类编码", "categoryCode"),
+			Map.entry("unitCode", "unitCode"),
+			Map.entry("计量单位编码", "unitCode"),
+			Map.entry("status", "status"),
+			Map.entry("状态", "status"),
+			Map.entry("costCategory", "costCategory"),
+			Map.entry("成本分类", "costCategory"),
+			Map.entry("inventoryValuationCategory", "inventoryValuationCategory"),
+			Map.entry("库存计价类别", "inventoryValuationCategory"),
+			Map.entry("inventoryValueEnabled", "inventoryValueEnabled"),
+			Map.entry("是否启用库存计价", "inventoryValueEnabled"),
+			Map.entry("projectCostEnabled", "projectCostEnabled"),
+			Map.entry("是否启用项目成本", "projectCostEnabled"),
+			Map.entry("costRemark", "costRemark"),
+			Map.entry("成本备注", "costRemark"),
+			Map.entry("remark", "remark"),
+			Map.entry("备注", "remark"));
+
+	private static final Map<String, Integer> MATERIAL_TEMPLATE_HEADER_INDEX = Map.ofEntries(
+			Map.entry("code", 0),
+			Map.entry("name", 1),
+			Map.entry("specification", 2),
+			Map.entry("materialType", 3),
+			Map.entry("sourceType", 4),
+			Map.entry("trackingMethod", 5),
+			Map.entry("categoryCode", 6),
+			Map.entry("unitCode", 7),
+			Map.entry("status", 8),
+			Map.entry("costCategory", 9),
+			Map.entry("inventoryValuationCategory", 10),
+			Map.entry("inventoryValueEnabled", 11),
+			Map.entry("projectCostEnabled", 12),
+			Map.entry("costRemark", 13),
+			Map.entry("remark", 14));
+
+	private static final String[] BOM_TEMPLATE_HEADERS = { "mode", "bomId", "version", "bomCode",
+			"parentMaterialCode", "versionCode", "name", "baseQuantity", "baseUnit", "effectiveFrom",
+			"effectiveTo", "remark" };
+
+	private static final Map<String, String> BOM_TEMPLATE_HEADER_ALIASES = Map.ofEntries(
+			Map.entry("mode", "mode"),
+			Map.entry("操作模式", "mode"),
+			Map.entry("bomId", "bomId"),
+			Map.entry("BOM ID", "bomId"),
+			Map.entry("version", "version"),
+			Map.entry("版本", "version"),
+			Map.entry("bomCode", "bomCode"),
+			Map.entry("BOM 编码", "bomCode"),
+			Map.entry("parentMaterialCode", "parentMaterialCode"),
+			Map.entry("父项物料编码", "parentMaterialCode"),
+			Map.entry("versionCode", "versionCode"),
+			Map.entry("版本编码", "versionCode"),
+			Map.entry("name", "name"),
+			Map.entry("名称", "name"),
+			Map.entry("baseQuantity", "baseQuantity"),
+			Map.entry("基准数量", "baseQuantity"),
+			Map.entry("baseUnit", "baseUnit"),
+			Map.entry("基准单位编码", "baseUnit"),
+			Map.entry("effectiveFrom", "effectiveFrom"),
+			Map.entry("生效日期", "effectiveFrom"),
+			Map.entry("effectiveTo", "effectiveTo"),
+			Map.entry("失效日期", "effectiveTo"),
+			Map.entry("remark", "remark"),
+			Map.entry("备注", "remark"));
+
+	private static final Map<String, Integer> BOM_TEMPLATE_HEADER_INDEX = Map.ofEntries(
+			Map.entry("mode", 0),
+			Map.entry("bomId", 1),
+			Map.entry("version", 2),
+			Map.entry("bomCode", 3),
+			Map.entry("parentMaterialCode", 4),
+			Map.entry("versionCode", 5),
+			Map.entry("name", 6),
+			Map.entry("baseQuantity", 7),
+			Map.entry("baseUnit", 8),
+			Map.entry("effectiveFrom", 9),
+			Map.entry("effectiveTo", 10),
+			Map.entry("remark", 11));
+
+	private static final String[] BOM_ITEM_TEMPLATE_HEADERS = { "lineNo", "childMaterialCode", "businessUnit",
+			"businessQuantity", "lossRate", "warehouse", "remark" };
+
+	private static final Map<String, String> BOM_ITEM_TEMPLATE_HEADER_ALIASES = Map.ofEntries(
+			Map.entry("lineNo", "lineNo"),
+			Map.entry("行号", "lineNo"),
+			Map.entry("childMaterialCode", "childMaterialCode"),
+			Map.entry("子项物料编码", "childMaterialCode"),
+			Map.entry("businessUnit", "businessUnit"),
+			Map.entry("业务单位编码", "businessUnit"),
+			Map.entry("businessQuantity", "businessQuantity"),
+			Map.entry("业务用量", "businessQuantity"),
+			Map.entry("lossRate", "lossRate"),
+			Map.entry("损耗率", "lossRate"),
+			Map.entry("warehouse", "warehouse"),
+			Map.entry("仓库编码", "warehouse"),
+			Map.entry("remark", "remark"),
+			Map.entry("备注", "remark"));
+
+	private static final Map<String, Integer> BOM_ITEM_TEMPLATE_HEADER_INDEX = Map.ofEntries(
+			Map.entry("lineNo", 0),
+			Map.entry("childMaterialCode", 1),
+			Map.entry("businessUnit", 2),
+			Map.entry("businessQuantity", 3),
+			Map.entry("lossRate", 4),
+			Map.entry("warehouse", 5),
+			Map.entry("remark", 6));
+
+	private static final Set<String> MATERIAL_TYPE_VALUES = Set.of("RAW_MATERIAL", "SEMI_FINISHED", "FINISHED_GOOD",
+			"AUXILIARY");
+
+	private static final Set<String> MATERIAL_SOURCE_TYPE_VALUES = Set.of("PURCHASED", "SELF_MADE", "OUTSOURCED");
+
+	private static final Set<String> MATERIAL_TRACKING_METHOD_VALUES = Set.of("NONE", "BATCH", "SERIAL");
+
+	private static final Set<String> MATERIAL_STATUS_VALUES = Set.of("ENABLED", "DISABLED");
+
+	private static final Set<String> MATERIAL_COST_CATEGORY_VALUES = Set.of("DIRECT_MATERIAL", "AUXILIARY_MATERIAL",
+			"SEMI_FINISHED", "FINISHED_GOOD", "OUTSOURCING", "SERVICE", "UNCLASSIFIED");
+
+	private static final Set<String> MATERIAL_INVENTORY_VALUATION_CATEGORY_VALUES = Set.of("VALUATED_MATERIAL",
+			"NON_VALUATED_CONSUMABLE", "SERVICE_NON_STOCK", "UNCLASSIFIED");
 
 	private static final Set<String> PROCUREMENT_EXPORT_TASK_TYPES = Set.of("PROCUREMENT_REQUISITION_EXPORT",
 			"PROCUREMENT_INQUIRY_EXPORT", "PROCUREMENT_QUOTE_EXPORT", "PROCUREMENT_PRICE_AGREEMENT_EXPORT",
@@ -1781,7 +1924,7 @@ public class PlatformDocumentTaskService {
 			case "PROCUREMENT_SCHEDULE_EXPORT" -> new ProcurementExportDataset("到货计划",
 					List.of("ID", "订单号", "订单行", "计划序号", "计划日期", "计划数量", "已收数量", "状态"),
 					procurementScheduleRows(request, keyword));
-			case "PROCUREMENT_SUPPLY_EXPORT" -> new ProcurementExportDataset("有效供给",
+			case "PROCUREMENT_SUPPLY_EXPORT" -> new ProcurementExportDataset("在途供给",
 					List.of("订单号", "订单行ID", "计划ID", "采购模式", "项目ID", "物料", "预计到货日", "剩余数量",
 							"订单状态", "计划状态"),
 					procurementRows("""
@@ -2342,12 +2485,8 @@ public class PlatformDocumentTaskService {
 		List<ImportError> errors = new ArrayList<>();
 		int rowCount = 0;
 		try (Workbook workbook = new XSSFWorkbook(new java.io.ByteArrayInputStream(content))) {
-			validateWorkbookSheets(workbook, List.of("materials"));
-			Sheet sheet = workbook.getSheet("materials");
-			validateHeader(sheet, new String[] { "code", "name", "specification", "materialType", "sourceType",
-					"trackingMethod", "categoryCode", "unitCode", "status", "costCategory",
-					"inventoryValuationCategory", "inventoryValueEnabled", "projectCostEnabled", "costRemark",
-					"remark" });
+			Sheet sheet = materialImportSheet(workbook);
+			int[] materialHeaderIndexes = resolveMaterialTemplateColumns(sheet);
 			validateVisibleColumns(sheet, 15);
 			validateVisibleRows(sheet, 1);
 			for (int i = 1; i <= sheet.getLastRowNum(); i++) {
@@ -2359,13 +2498,28 @@ public class PlatformDocumentTaskService {
 				if (rowCount > 10000) {
 					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 				}
-				MaterialImportRow importRow = new MaterialImportRow(cellString(row, 0), cellString(row, 1),
-						cellString(row, 2), cellString(row, 3), cellString(row, 4), cellString(row, 5),
-						cellString(row, 6), cellString(row, 7), cellString(row, 8), cellString(row, 9),
-						cellString(row, 10), cellString(row, 11), cellString(row, 12), cellString(row, 13),
-						cellString(row, 14));
-				validateMaterialImportRow(i + 1, importRow, errors);
-				insertImportRow(batchId, i + 1, importRow);
+				MaterialImportRow importRow = new MaterialImportRow(
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("code")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("name")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("specification")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("materialType")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("sourceType")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("trackingMethod")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("categoryCode")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("unitCode")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("status")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("costCategory")]),
+						cellString(row,
+								materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("inventoryValuationCategory")]),
+						cellString(row,
+								materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("inventoryValueEnabled")]),
+						cellString(row,
+								materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("projectCostEnabled")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("costRemark")]),
+						cellString(row, materialHeaderIndexes[MATERIAL_TEMPLATE_HEADER_INDEX.get("remark")]));
+				MaterialImportRow normalizedRow = normalizeMaterialImportRow(importRow);
+				validateMaterialImportRow(i + 1, normalizedRow, errors);
+				insertImportRow(batchId, i + 1, normalizedRow);
 			}
 		}
 		catch (IOException exception) {
@@ -2399,11 +2553,8 @@ public class PlatformDocumentTaskService {
 				errors.add(new ImportError(1, "sheet", ApiErrorCode.IMPORT_FILE_INVALID.name(), "缺少 bom 或 items 工作表"));
 			}
 			else {
-				validateHeader(bomSheet, new String[] { "mode", "bomId", "version", "bomCode",
-						"parentMaterialCode", "versionCode", "name", "baseQuantity", "baseUnit", "effectiveFrom",
-						"effectiveTo", "remark" });
-				validateHeader(itemsSheet, new String[] { "lineNo", "childMaterialCode", "businessUnit",
-						"businessQuantity", "lossRate", "warehouse", "remark" });
+				int[] bomHeaderIndexes = resolveBomTemplateColumns(bomSheet);
+				int[] itemHeaderIndexes = resolveBomItemTemplateColumns(itemsSheet);
 				validateVisibleColumns(bomSheet, 12);
 				validateVisibleColumns(itemsSheet, 7);
 				validateVisibleRows(bomSheet, 1);
@@ -2412,10 +2563,8 @@ public class PlatformDocumentTaskService {
 					throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 				}
 				Row header = bomSheet.getRow(1);
-				BomDraftImportPayload bomPayload = new BomDraftImportPayload(cellString(header, 0),
-						longCell(header, 1), longCell(header, 2), cellString(header, 3), cellString(header, 4),
-						cellString(header, 5), cellString(header, 6), decimalCell(header, 7), cellString(header, 8),
-						dateCell(header, 9), dateCell(header, 10), cellString(header, 11), bomItems(itemsSheet, errors));
+				BomDraftImportPayload bomPayload = bomDraftImportPayload(header, bomHeaderIndexes,
+						bomItems(itemsSheet, itemHeaderIndexes, errors));
 				validateBomDraftPayload(bomPayload, errors);
 				insertImportRow(batchId, 2, bomPayload);
 				this.jdbcTemplate.update("""
@@ -2569,10 +2718,10 @@ public class PlatformDocumentTaskService {
 			for (SupplierQuoteImportRow row : rows) {
 				Long quoteId = this.jdbcTemplate.queryForObject("""
 						insert into proc_supplier_quote (
-							quote_no, inquiry_id, supplier_id, status, valid_from, valid_to, currency, remark,
+							quote_no, inquiry_id, supplier_id, status, entry_source_type, valid_from, valid_to, currency, remark,
 							created_by, created_at, updated_by, updated_at
 						)
-						values (?, ?, ?, 'VALID', ?, ?, 'CNY', ?, ?, now(), ?, now())
+						values (?, ?, ?, 'VALID', 'IMPORT', ?, ?, 'CNY', ?, ?, now(), ?, now())
 						returning id
 						""", Long.class, nextTaskNo("PQT"), payload.inquiryId(), row.supplierId(),
 						row.validFrom(), row.validTo(), blankToNull(row.remark()), operator.username(),
@@ -2608,11 +2757,14 @@ public class PlatformDocumentTaskService {
 			if (bomSheet == null || itemsSheet == null) {
 				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
 			}
+			int[] bomHeaderIndexes = resolveBomTemplateColumns(bomSheet);
+			int[] itemHeaderIndexes = resolveBomItemTemplateColumns(itemsSheet);
 			Row header = bomSheet.getRow(1);
-			return new BomDraftImportPayload(cellString(header, 0), longCell(header, 1), longCell(header, 2),
-					cellString(header, 3), cellString(header, 4), cellString(header, 5), cellString(header, 6),
-					decimalCell(header, 7), cellString(header, 8), dateCell(header, 9), dateCell(header, 10), cellString(header, 11),
-					bomItems(itemsSheet, errors));
+			List<BomDraftImportItem> items = bomItems(itemsSheet, itemHeaderIndexes, errors);
+			if (!errors.isEmpty()) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+			return bomDraftImportPayload(header, bomHeaderIndexes, items);
 		}
 		catch (IOException exception) {
 			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
@@ -2637,6 +2789,170 @@ public class PlatformDocumentTaskService {
 			errors.add(new ImportError(rowNo, "unitCode", ApiErrorCode.MASTER_DATA_REFERENCE_INVALID.name(),
 					"单位不存在或未启用"));
 		}
+		validateMaterialValue(rowNo, "materialType", row.materialType(), MATERIAL_TYPE_VALUES, errors);
+		validateMaterialValue(rowNo, "sourceType", row.sourceType(), MATERIAL_SOURCE_TYPE_VALUES, errors);
+		validateMaterialValue(rowNo, "trackingMethod", row.trackingMethod(), MATERIAL_TRACKING_METHOD_VALUES, errors);
+		validateMaterialValue(rowNo, "status", row.status(), MATERIAL_STATUS_VALUES, errors);
+		validateMaterialValue(rowNo, "costCategory", row.costCategory(), MATERIAL_COST_CATEGORY_VALUES, errors);
+		validateMaterialValue(rowNo, "inventoryValuationCategory", row.inventoryValuationCategory(),
+				MATERIAL_INVENTORY_VALUATION_CATEGORY_VALUES, errors);
+		validateMaterialBooleanValue(rowNo, "inventoryValueEnabled", row.inventoryValueEnabled(), errors);
+		validateMaterialBooleanValue(rowNo, "projectCostEnabled", row.projectCostEnabled(), errors);
+	}
+
+	private static MaterialImportRow normalizeMaterialImportRow(MaterialImportRow row) {
+		return new MaterialImportRow(row.code(), row.name(), row.specification(),
+				normalizeMaterialEnumValue("materialType", row.materialType()),
+				normalizeMaterialEnumValue("sourceType", row.sourceType()),
+				normalizeMaterialEnumValue("trackingMethod", row.trackingMethod()), row.categoryCode(), row.unitCode(),
+				normalizeMaterialEnumValue("status", row.status()),
+				normalizeMaterialEnumValue("costCategory", row.costCategory()),
+				normalizeMaterialEnumValue("inventoryValuationCategory", row.inventoryValuationCategory()),
+				normalizeMaterialBooleanValue(row.inventoryValueEnabled()),
+				normalizeMaterialBooleanValue(row.projectCostEnabled()), row.costRemark(), row.remark());
+	}
+
+	private static void validateMaterialValue(int rowNo, String field, String value, Set<String> allowedValues,
+			List<ImportError> errors) {
+		if (!hasText(value) || allowedValues.contains(value)) {
+			return;
+		}
+		errors.add(new ImportError(rowNo, field, ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "字段取值不合法"));
+	}
+
+	private static void validateMaterialBooleanValue(int rowNo, String field, String value, List<ImportError> errors) {
+		if (!hasText(value) || "true".equals(value) || "false".equals(value)) {
+			return;
+		}
+		errors.add(new ImportError(rowNo, field, ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "字段取值不合法"));
+	}
+
+	private static String normalizeMaterialEnumValue(String field, String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		return switch (field) {
+			case "materialType" -> normalizeMaterialTypeValue(value);
+			case "sourceType" -> normalizeMaterialSourceTypeValue(value);
+			case "trackingMethod" -> normalizeTrackingMethodValue(value);
+			case "status" -> normalizeStatusValue(value);
+			case "costCategory" -> normalizeCostCategoryValue(value);
+			case "inventoryValuationCategory" -> normalizeInventoryValuationCategoryValue(value);
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeMaterialTypeValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "RAWMATERIAL" -> "RAW_MATERIAL";
+			case "SEMIFINISHED" -> "SEMI_FINISHED";
+			case "FINISHEDGOOD" -> "FINISHED_GOOD";
+			case "AUXILIARY" -> "AUXILIARY";
+			case "原材料" -> "RAW_MATERIAL";
+			case "半成品" -> "SEMI_FINISHED";
+			case "成品" -> "FINISHED_GOOD";
+			case "辅料" -> "AUXILIARY";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeMaterialSourceTypeValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "PURCHASED" -> "PURCHASED";
+			case "SELFMADE" -> "SELF_MADE";
+			case "OUTSOURCED" -> "OUTSOURCED";
+			case "外购" -> "PURCHASED";
+			case "自制" -> "SELF_MADE";
+			case "外协" -> "OUTSOURCED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeTrackingMethodValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "NONE" -> "NONE";
+			case "BATCH" -> "BATCH";
+			case "BATCHMANAGEMENT" -> "BATCH";
+			case "SERIAL" -> "SERIAL";
+			case "SERIALNUMBERMANAGEMENT" -> "SERIAL";
+			case "SERIALNUMBER" -> "SERIAL";
+			case "不追踪" -> "NONE";
+			case "批次" -> "BATCH";
+			case "序列号" -> "SERIAL";
+			case "批次管理" -> "BATCH";
+			case "序列号管理" -> "SERIAL";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeStatusValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "ENABLED" -> "ENABLED";
+			case "DISABLED" -> "DISABLED";
+			case "启用" -> "ENABLED";
+			case "停用" -> "DISABLED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeCostCategoryValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "DIRECTMATERIAL" -> "DIRECT_MATERIAL";
+			case "AUXILIARYMATERIAL" -> "AUXILIARY_MATERIAL";
+			case "SEMIFINISHED" -> "SEMI_FINISHED";
+			case "FINISHEDGOOD" -> "FINISHED_GOOD";
+			case "OUTSOURCING" -> "OUTSOURCING";
+			case "SERVICE" -> "SERVICE";
+			case "UNCLASSIFIED" -> "UNCLASSIFIED";
+			case "直接材料" -> "DIRECT_MATERIAL";
+			case "辅助材料" -> "AUXILIARY_MATERIAL";
+			case "半成品" -> "SEMI_FINISHED";
+			case "产成品" -> "FINISHED_GOOD";
+			case "委外" -> "OUTSOURCING";
+			case "服务" -> "SERVICE";
+			case "未分类" -> "UNCLASSIFIED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String normalizeInventoryValuationCategoryValue(String value) {
+		String token = materialEnumToken(value);
+		return switch (token) {
+			case "VALUATEDMATERIAL" -> "VALUATED_MATERIAL";
+			case "NONVALUATEDCONSUMABLE" -> "NON_VALUATED_CONSUMABLE";
+			case "SERVICENONSTOCK" -> "SERVICE_NON_STOCK";
+			case "UNCLASSIFIED" -> "UNCLASSIFIED";
+			case "计价物料" -> "VALUATED_MATERIAL";
+			case "非计价消耗品" -> "NON_VALUATED_CONSUMABLE";
+			case "服务非库存" -> "SERVICE_NON_STOCK";
+			case "未分类" -> "UNCLASSIFIED";
+			default -> materialEnumStandardValue(value);
+		};
+	}
+
+	private static String materialEnumToken(String value) {
+		return value.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
+	}
+
+	private static String materialEnumStandardValue(String value) {
+		return value.trim().toUpperCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "_");
+	}
+
+	private static String normalizeMaterialBooleanValue(String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		String normalized = value.trim().toUpperCase(Locale.ROOT);
+		return switch (normalized) {
+			case "TRUE", "是" -> "true";
+			case "FALSE", "否" -> "false";
+			default -> value.trim();
+		};
 	}
 
 	private void validateSupplierQuoteImportRow(Long inquiryId, int rowNo, SupplierQuoteImportRow row,
@@ -3880,6 +4196,60 @@ public class PlatformDocumentTaskService {
 		}
 	}
 
+	private static Sheet materialImportSheet(Workbook workbook) {
+		if (workbook.getNumberOfSheets() != 1) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		Sheet sheet = workbook.getSheet("materials");
+		if (sheet == null) {
+			sheet = workbook.getSheet("template");
+		}
+		if (sheet == null) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		int index = workbook.getSheetIndex(sheet);
+		if (workbook.isSheetHidden(index) || workbook.isSheetVeryHidden(index)) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		return sheet;
+	}
+
+	private static int[] resolveMaterialTemplateColumns(Sheet sheet) {
+		return resolveTemplateColumns(sheet, MATERIAL_TEMPLATE_HEADERS, MATERIAL_TEMPLATE_HEADER_ALIASES);
+	}
+
+	private static int[] resolveBomTemplateColumns(Sheet sheet) {
+		return resolveTemplateColumns(sheet, BOM_TEMPLATE_HEADERS, BOM_TEMPLATE_HEADER_ALIASES);
+	}
+
+	private static int[] resolveBomItemTemplateColumns(Sheet sheet) {
+		return resolveTemplateColumns(sheet, BOM_ITEM_TEMPLATE_HEADERS, BOM_ITEM_TEMPLATE_HEADER_ALIASES);
+	}
+
+	private static int[] resolveTemplateColumns(Sheet sheet, String[] expectedHeaders,
+			Map<String, String> headerAliases) {
+		Row header = sheet.getRow(0);
+		if (header == null) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		if (header.getLastCellNum() > expectedHeaders.length) {
+			throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+		}
+		int[] indexes = new int[expectedHeaders.length];
+		for (int i = 0; i < expectedHeaders.length; i++) {
+			String sourceHeader = cellString(header, i);
+			if (sourceHeader == null) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+			String canonical = headerAliases.get(sourceHeader.trim());
+			if (!expectedHeaders[i].equals(canonical)) {
+				throw new BusinessException(ApiErrorCode.IMPORT_FILE_INVALID);
+			}
+			indexes[i] = i;
+		}
+		return indexes;
+	}
+
 	private static void validateVisibleColumns(Sheet sheet, int columnCount) {
 		for (int i = 0; i < columnCount; i++) {
 			if (sheet.isColumnHidden(i)) {
@@ -3933,7 +4303,14 @@ public class PlatformDocumentTaskService {
 	}
 
 	private static Boolean booleanValue(String value) {
-		return hasText(value) ? Boolean.valueOf(value) : null;
+		if (!hasText(value)) {
+			return null;
+		}
+		return switch (value.trim().toLowerCase(Locale.ROOT)) {
+			case "true" -> true;
+			case "false" -> false;
+			default -> throw new BusinessException(ApiErrorCode.IMPORT_VALIDATION_FAILED);
+		};
 	}
 
 	private static BigDecimal nonNullPositive(BigDecimal value) {
@@ -3943,7 +4320,8 @@ public class PlatformDocumentTaskService {
 		return value;
 	}
 
-	private static List<BomDraftImportItem> bomItems(Sheet itemsSheet, List<ImportError> errors) {
+	private static List<BomDraftImportItem> bomItems(Sheet itemsSheet, int[] itemHeaderIndexes,
+			List<ImportError> errors) {
 		List<BomDraftImportItem> items = new ArrayList<>();
 		for (int i = 1; i <= itemsSheet.getLastRowNum(); i++) {
 			Row row = itemsSheet.getRow(i);
@@ -3951,16 +4329,54 @@ public class PlatformDocumentTaskService {
 				continue;
 			}
 			try {
-				items.add(new BomDraftImportItem(Integer.valueOf(cellString(row, 0)), cellString(row, 1),
-						cellString(row, 2), decimalCell(row, 3),
-						decimalCell(row, 4) == null ? BigDecimal.ZERO : decimalCell(row, 4), cellString(row, 5),
-						cellString(row, 6)));
+				BigDecimal lossRate = decimalCell(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("lossRate")]);
+				items.add(new BomDraftImportItem(
+						Integer.valueOf(cellString(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("lineNo")])),
+						cellString(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("childMaterialCode")]),
+						cellString(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("businessUnit")]),
+						decimalCell(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("businessQuantity")]),
+						lossRate == null ? BigDecimal.ZERO : lossRate,
+						cellString(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("warehouse")]),
+						cellString(row, itemHeaderIndexes[BOM_ITEM_TEMPLATE_HEADER_INDEX.get("remark")])));
 			}
 			catch (RuntimeException exception) {
 				errors.add(new ImportError(i + 1, "items", ApiErrorCode.IMPORT_VALIDATION_FAILED.name(), "BOM 明细格式错误"));
 			}
 		}
 		return items;
+	}
+
+	private static BomDraftImportPayload bomDraftImportPayload(Row header, int[] bomHeaderIndexes,
+			List<BomDraftImportItem> items) {
+		return new BomDraftImportPayload(
+				normalizeBomDraftMode(cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("mode")])),
+				longCell(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("bomId")]),
+				longCell(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("version")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("bomCode")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("parentMaterialCode")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("versionCode")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("name")]),
+				decimalCell(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("baseQuantity")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("baseUnit")]),
+				dateCell(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("effectiveFrom")]),
+				dateCell(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("effectiveTo")]),
+				cellString(header, bomHeaderIndexes[BOM_TEMPLATE_HEADER_INDEX.get("remark")]), items);
+	}
+
+	private static String normalizeBomDraftMode(String value) {
+		if (!hasText(value)) {
+			return null;
+		}
+		String trimmed = value.trim();
+		return switch (trimmed.toUpperCase(Locale.ROOT)) {
+			case "CREATE" -> "CREATE";
+			case "UPDATE_DRAFT" -> "UPDATE_DRAFT";
+			default -> switch (trimmed) {
+				case "创建草稿" -> "CREATE";
+				case "更新草稿" -> "UPDATE_DRAFT";
+				default -> trimmed;
+			};
+		};
 	}
 
 	private static void writeRow(Row row, String[] values) {

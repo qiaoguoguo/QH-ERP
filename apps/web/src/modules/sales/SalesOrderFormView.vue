@@ -274,7 +274,7 @@ function validateForm(): SalesOrderCreatePayload | null {
     const unitId = normalizeRequiredId(line.unitId)
     const reservationWarehouseId = normalizeRequiredId(line.reservationWarehouseId)
     if (reservationWarehouseId === null) {
-      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择预留仓库，销售订单确认会按该仓库预留现货库存`
+      nextLineErrors[line.lineNo] = `第 ${line.lineNo} 行请选择预留仓库；该仓库作为计划出库仓库，不在确认时占用现货库存`
       continue
     }
     const untaxedUnitPriceResult = validateSalesUnitPrice(line.untaxedUnitPrice)

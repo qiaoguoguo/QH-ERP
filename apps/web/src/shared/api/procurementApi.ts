@@ -379,10 +379,12 @@ export interface SupplierQuoteRecord extends ProcurementOwnershipFields, Procure
   inquiryId: ResourceId
   inquiryNo: string
   quoteNo: string
+  quoteLineId?: ResourceId | null
   supplierId: ResourceId
   supplierCode?: string | null
   supplierName: string
   materialId: ResourceId
+  unitId?: ResourceId | null
   materialCode: string
   materialName: string
   quantity: string
@@ -392,6 +394,7 @@ export interface SupplierQuoteRecord extends ProcurementOwnershipFields, Procure
   validTo?: string | null
   status: SupplierQuoteStatus
   statusName?: string | null
+  entrySourceType?: 'MANUAL' | 'IMPORT' | string | null
   selectedReason?: string | null
   allowedActions?: ProcurementAllowedAction[]
   version: number
@@ -404,6 +407,8 @@ export interface PriceAgreementSummaryRecord extends ProcurementOwnershipFields,
   supplierCode?: string | null
   supplierName: string
   materialId: ResourceId
+  unitId?: ResourceId | null
+  priceAgreementLineId?: ResourceId | null
   materialCode: string
   materialName: string
   minPurchaseQuantity?: string | null
@@ -421,6 +426,11 @@ export interface PriceAgreementSummaryRecord extends ProcurementOwnershipFields,
 }
 
 export interface PriceAgreementDetailRecord extends PriceAgreementSummaryRecord {
+  unitId?: ResourceId | null
+  sourceQuoteId?: ResourceId | null
+  sourceQuoteNo?: string | null
+  sourceInquiryId?: ResourceId | null
+  sourceInquiryNo?: string | null
   sourceChain?: ProcurementSourceChainRecord[]
 }
 
@@ -618,6 +628,8 @@ export interface PriceAgreementPayload {
   projectId?: ResourceId | null
   supplierId: ResourceId
   materialId: ResourceId
+  unitId?: ResourceId
+  sourceQuoteId?: ResourceId
   taxRate: ProcurementTaxRatePayload
   taxIncludedUnitPrice: ProcurementUnitPricePayload
   taxExcludedUnitPrice: ProcurementUnitPricePayload

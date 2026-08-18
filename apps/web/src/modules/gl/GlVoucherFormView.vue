@@ -26,10 +26,16 @@ const auxCandidatePools = reactive<Record<string, {
   items: GlAuxCandidateRecord[]
   loading: boolean
 }>>({})
+function initialCreateVoucherType() {
+  const value = typeof route.query.voucherType === 'string' ? route.query.voucherType.trim().toUpperCase() : ''
+  return value === 'OPENING' ? 'OPENING' : 'GENERAL'
+}
+
+const initialVoucherType = initialCreateVoucherType()
 const form = reactive({
-  voucherType: 'GENERAL',
+  voucherType: initialVoucherType,
   voucherDate: '2026-07-20',
-  summary: '手工凭证',
+  summary: initialVoucherType === 'OPENING' ? '期初余额录入' : '手工凭证',
   lines: [
     { lineNo: 1, summary: '借方分录', accountId: 1002, debitAmount: '100.00', creditAmount: '0.00', auxiliaryItems: [] },
     { lineNo: 2, summary: '贷方分录', accountId: 6001, debitAmount: '0.00', creditAmount: '100.00', auxiliaryItems: [] },
@@ -37,6 +43,7 @@ const form = reactive({
 })
 
 const isEdit = computed(() => Boolean(route.params.id))
+const isOpeningVoucher = computed(() => form.voucherType === 'OPENING')
 const returnTo = computed(() => typeof route.query.returnTo === 'string' ? route.query.returnTo : '/gl/vouchers')
 const debitTotal = computed(() => addDecimalStrings(form.lines.map((line) => line.debitAmount)))
 const creditTotal = computed(() => addDecimalStrings(form.lines.map((line) => line.creditAmount)))
@@ -114,6 +121,28 @@ function subtractDecimalStrings(left: string, right: string) {
 
 function setVoucherDate(value: string | null) {
   form.voucherDate = value ?? ''
+}
+
+async function loadPeriodsAndApplyOpeningDefaults() {
+  await loadPeriods()
+  if (isEdit.value || !isOpeningVoucher.value) {
+    return
+  }
+  let startPeriodCode = ''
+  try {
+    const ledger = await glApi.ledger.get()
+    startPeriodCode = ledger.startPeriodCode ?? ''
+  } catch {
+    startPeriodCode = ''
+  }
+  const period = (startPeriodCode
+    ? openPeriods.value.find((item) => item.periodCode === startPeriodCode)
+    : null)
+    ?? openPeriods.value.find((item) => item.status === 'OPEN')
+    ?? openPeriods.value[0]
+  if (period?.startDate) {
+    form.voucherDate = period.startDate
+  }
 }
 
 async function loadRecord() {
@@ -448,7 +477,7 @@ async function saveVoucher() {
 }
 
 onMounted(() => {
-  void loadPeriods()
+  void loadPeriodsAndApplyOpeningDefaults()
   void loadAuxDimensions()
   void loadRecord().then(() => loadAccountCandidates())
 })
@@ -496,6 +525,12 @@ onMounted(() => {
         v-if="validationReasons.includes('请先选择凭证日期') || validationReasons.includes('凭证日期未匹配开放会计期间')"
         type="warning"
         :title="periodText"
+        :closable="false"
+      />
+      <el-alert
+        v-if="isOpeningVoucher"
+        type="info"
+        title="期初凭证只允许在账簿起始期间首日录入；已有普通凭证记账后，后端会拒绝新增期初凭证。"
         :closable="false"
       />
     </template>

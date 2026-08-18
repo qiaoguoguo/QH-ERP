@@ -23,7 +23,9 @@ import {
   projectSalesLabel,
   quoteLineRequiredDate,
   quoteLineUntaxedUnitPrice,
+  quoteTaxAmount,
   quoteTaxIncludedAmount,
+  quoteUntaxedAmount,
   quoteStatusLabel,
   salesFulfillmentErrorMessage,
   salesSourceChainLabel,
@@ -54,7 +56,7 @@ const canSubmit = computed(() => Boolean(record.value?.allowedActions.includes('
 const canCancel = computed(() => Boolean(record.value?.allowedActions.includes('CANCEL')) && authStore.hasPermission('sales:quote:cancel'))
 const canConvert = computed(() => authStore.hasPermission('sales:quote:convert'))
 const canConvertOrder = computed(() => Boolean(record.value?.allowedActions.includes('CONVERT_ORDER')) && canConvert.value)
-const canConvertContract = computed(() => Boolean(record.value?.allowedActions.includes('CONVERT_CONTRACT')) && canConvert.value)
+const canConvertContract = computed(() => Boolean(record.value?.projectId) && Boolean(record.value?.allowedActions.includes('CONVERT_CONTRACT')) && canConvert.value)
 const canPrint = computed(() => (
   Boolean(record.value?.allowedActions.includes('PRINT'))
   && authStore.hasPermission('platform:document-task:create')
@@ -210,7 +212,11 @@ async function submitOrderConversion(
 }
 
 async function convertContract() {
-  if (!record.value || !record.value.projectId || actionLoading.value) {
+  if (!record.value || actionLoading.value) {
+    return
+  }
+  if (!record.value.projectId) {
+    actionError.value = '普通报价未关联销售项目，不能直接转合同'
     return
   }
   conversionDialog.visible = true
@@ -293,6 +299,29 @@ async function printQuote() {
   }
 }
 
+function quoteStatusTagType(status: string) {
+  if (status === 'APPROVED' || status === 'CONVERTED') {
+    return 'success'
+  }
+  if (status === 'CANCELLED' || status === 'EXPIRED') {
+    return 'info'
+  }
+  return 'warning'
+}
+
+function approvalStatusTagType(status?: string | null) {
+  if (status === 'APPROVED') {
+    return 'success'
+  }
+  if (status === 'REJECTED') {
+    return 'danger'
+  }
+  if (status === 'SUBMITTED') {
+    return 'warning'
+  }
+  return 'info'
+}
+
 onMounted(loadRecord)
 </script>
 
@@ -329,26 +358,75 @@ onMounted(loadRecord)
       <SalesDocumentTaskPanel :task="latestDocumentTask" />
     </template>
 
-    <div v-if="record" class="detail-body">
-      <section class="summary-strip">
-        <div><span>报价号</span><strong>{{ record.quoteNo }}</strong></div>
-        <div><span>销售类型</span><strong>{{ projectSalesLabel(record) }}</strong></div>
-        <div><span>业务状态</span><strong>{{ quoteStatusLabel(record.status) }}</strong></div>
-        <div><span>审批状态</span><strong>{{ approvalStatusLabel(record.approvalStatus) }}</strong></div>
-        <div><span>含税金额</span><strong>{{ formatSalesDecimal(quoteTaxIncludedAmount(record)) }} {{ record.currency }}</strong></div>
+    <div v-if="record" class="quote-detail">
+      <section class="summary-grid" aria-label="销售报价状态摘要">
+        <div class="summary-item summary-item-wide">
+          <span>报价号</span>
+          <strong>{{ record.quoteNo }}</strong>
+        </div>
+        <div class="summary-item">
+          <span>业务状态</span>
+          <el-tag :type="quoteStatusTagType(record.status)">
+            {{ quoteStatusLabel(record.status) }}
+          </el-tag>
+        </div>
+        <div class="summary-item">
+          <span>审批状态</span>
+          <el-tag :type="approvalStatusTagType(record.approvalStatus)">
+            {{ approvalStatusLabel(record.approvalStatus) }}
+          </el-tag>
+        </div>
+        <div class="summary-item">
+          <span>含税金额</span>
+          <strong>{{ formatSalesDecimal(quoteTaxIncludedAmount(record)) }} {{ record.currency }}</strong>
+        </div>
       </section>
 
-      <dl class="detail-list">
-        <dt>客户</dt><dd>{{ record.customerCode }} {{ record.customerName }}</dd>
-        <dt>来源链</dt><dd>{{ salesSourceChainLabel(true) }}</dd>
-        <dt>结算</dt><dd>{{ record.settlementMethod || '-' }} / {{ record.paymentTerms || '未填写' }}</dd>
-        <dt>交付承诺</dt><dd>{{ record.deliveryCommitment || '-' }}</dd>
-      </dl>
+      <div class="detail-grid">
+        <section class="section-card section-block">
+          <div class="section-heading">
+            <div>
+              <h2>基础信息</h2>
+              <p>展示客户、项目和报价有效期。</p>
+            </div>
+          </div>
+          <dl class="detail-list">
+            <div><dt>客户</dt><dd>{{ record.customerCode }} {{ record.customerName }}</dd></div>
+            <div><dt>销售类型</dt><dd>{{ projectSalesLabel(record) }}</dd></div>
+            <div><dt>报价日期</dt><dd>{{ record.quoteDate }}</dd></div>
+            <div><dt>有效期至</dt><dd>{{ record.validUntil }}</dd></div>
+          </dl>
+        </section>
 
-      <section class="section-block">
-        <h2>报价明细</h2>
+        <section class="section-card section-block">
+          <div class="section-heading">
+            <div>
+              <h2>商务信息</h2>
+              <p>展示结算、交付和来源链。</p>
+            </div>
+          </div>
+          <dl class="detail-list">
+            <div><dt>来源链</dt><dd>{{ salesSourceChainLabel(true) }}</dd></div>
+            <div><dt>结算方式</dt><dd>{{ record.settlementMethod || '-' }}</dd></div>
+            <div><dt>付款条件</dt><dd>{{ record.paymentTerms || '未填写' }}</dd></div>
+            <div><dt>交付承诺</dt><dd>{{ record.deliveryCommitment || '-' }}</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <section class="section-card section-block">
+        <div class="section-heading">
+          <div>
+            <h2>报价明细</h2>
+            <p>展示物料、数量、税率、未税和含税金额。</p>
+          </div>
+          <div class="amount-summary">
+            <span>未税 {{ formatSalesDecimal(quoteUntaxedAmount(record)) }}</span>
+            <span>税额 {{ formatSalesDecimal(quoteTaxAmount(record)) }}</span>
+          </div>
+        </div>
         <div class="table-scroll">
-          <el-table :data="record.lines" row-key="id">
+          <el-table :data="record.lines" row-key="id" empty-text="暂无报价明细" stripe>
             <el-table-column label="物料" min-width="220">
               <template #default="{ row }">
                 <strong>{{ row.materialCode }} {{ row.materialName }}</strong>
@@ -388,9 +466,13 @@ onMounted(loadRecord)
         </div>
       </section>
 
-      <section class="section-block">
-        <h2>附件 / 审计 / 来源追溯</h2>
-        <p>附件沿用统一文档平台；审计记录报价创建、审批、取消、失效和转换；来源链固定追踪到合同/订单。</p>
+      <section class="section-card section-block">
+        <div class="section-heading">
+          <div>
+            <h2>附件 / 审计 / 来源追溯</h2>
+            <p>附件沿用统一文档平台；审计记录报价创建、审批、取消、失效和转换；来源链固定追踪到合同/订单。</p>
+          </div>
+        </div>
       </section>
     </div>
 
@@ -481,9 +563,9 @@ onMounted(loadRecord)
 </template>
 
 <style scoped>
-.detail-body {
+.quote-detail {
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .header-actions {
@@ -494,40 +576,114 @@ onMounted(loadRecord)
   justify-content: flex-end;
 }
 
-.summary-strip {
+.summary-grid {
   display: grid;
-  gap: 10px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  grid-template-columns: minmax(260px, 1.4fr) repeat(3, minmax(160px, 1fr));
 }
 
-.summary-strip div,
-.section-block {
-  border: 1px solid #dcdfe6;
-  border-radius: 6px;
-  padding: 10px 12px;
+.summary-item,
+.section-card {
+  background: #fff;
+  border: 1px solid #dfe5ec;
+  border-radius: 8px;
 }
 
-.summary-strip span,
-.detail-list dt {
-  color: #606266;
-  display: block;
-  font-size: 12px;
+.summary-item {
+  align-items: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 74px;
+  padding: 14px 16px;
+}
+
+.summary-item-wide {
+  border-left: 3px solid var(--el-color-primary);
+}
+
+.summary-item span {
+  color: #667085;
+  font-size: 13px;
+}
+
+.summary-item strong {
+  color: #101828;
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.section-card {
+  padding: 16px;
+}
+
+.section-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.section-heading h2 {
+  color: #101828;
+  font-size: 17px;
+  margin: 0;
+}
+
+.section-heading p {
+  color: #667085;
+  font-size: 13px;
+  margin: 5px 0 0;
+}
+
+.detail-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .detail-list {
   display: grid;
-  gap: 10px 14px;
-  grid-template-columns: 96px minmax(0, 1fr) 96px minmax(0, 1fr);
+  gap: 10px;
   margin: 0;
+}
+
+.detail-list > div {
+  border-bottom: 1px solid #eef1f5;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: 88px minmax(0, 1fr);
+  padding-bottom: 10px;
+}
+
+.detail-list > div:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.detail-list dt {
+  color: #667085;
 }
 
 .detail-list dd {
+  color: #101828;
   margin: 0;
+  min-width: 0;
+  text-align: right;
+  word-break: break-word;
 }
 
-.section-block h2 {
-  font-size: 16px;
-  margin: 0 0 10px;
+.amount-summary {
+  align-items: flex-end;
+  color: #667085;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  font-size: 13px;
+  gap: 4px;
 }
 
 .conversion-panel {
@@ -542,5 +698,27 @@ onMounted(loadRecord)
 
 .conversion-panel select {
   min-height: 34px;
+}
+
+@media (max-width: 1100px) {
+  .summary-grid,
+  .detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .summary-grid,
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .section-heading {
+    flex-direction: column;
+  }
+
+  .amount-summary {
+    align-items: flex-start;
+  }
 }
 </style>

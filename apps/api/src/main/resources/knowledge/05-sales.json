@@ -1,0 +1,147 @@
+[
+  {
+    "slug": "sales-projects-contract",
+    "title": "销售项目和合同激活怎么处理",
+    "summary": "说明销售项目、项目合同草稿、合同激活审批和历史导入边界。",
+    "categoryCode": "SALES",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n销售项目用于承载客户项目基础资料和后续销售业务。项目合同用于形成受控商务依据。\n# 页面入口\n销售管理 > 销售项目，页面入口“销售项目”页面。\n# 操作规则\n- 项目可创建草稿基础档案。\n- 合同草稿需要按页面动作提交激活审批。\n- 审批通过后合同成为后续销售报价或订单的依据之一。\n# 历史导入边界\n销售项目历史导入只创建草稿基础档案，不生成合同、报价、订单、履约、成本或财务事实。",
+    "keywords": "销售项目,项目合同,合同草稿,合同激活,提交审批,历史导入,客户项目",
+    "routePaths": "/sales/projects",
+    "pageNames": "销售项目",
+    "permissionNote": "查看、创建、维护合同和合同激活审批需要销售项目或合同相关权限。",
+    "relatedSlugs": [
+      "platform-history-imports",
+      "common-approval-center"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-quotes",
+    "title": "销售报价审批通过后有什么作用",
+    "summary": "说明销售报价草稿、提交审批和通过后的业务用途。",
+    "categoryCode": "SALES",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n销售报价用于向客户确认销售价格、物料、数量和商务条件。\n# 页面入口\n销售管理 > 销售报价，页面入口“销售报价”页面。\n# 操作步骤\n1. 创建报价草稿。\n2. 维护客户、项目、物料、数量、价格、税率和有效期。\n3. 提交销售报价审批。\n4. 审批通过后作为后续合同或销售订单商务依据。\n# 关键规则\n报价通过不等于自动生成订单、发货或应收。取消草稿不应影响已确认后续事实。",
+    "keywords": "销售报价,报价草稿,提交审批,审批通过,报价有效期,客户报价,销售价格",
+    "routePaths": "/sales/quotes",
+    "pageNames": "销售报价",
+    "permissionNote": "查看、创建、更新、提交、审批和取消需要销售报价相关权限。",
+    "relatedSlugs": [
+      "sales-orders",
+      "common-approval-center"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-orders",
+    "title": "销售订单确认、变更和短交关闭怎么理解",
+    "summary": "说明销售订单确认后的有效需求、预留、交付、信用例外和短交关闭。",
+    "categoryCode": "SALES",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n销售订单承接客户需求和商务依据，确认后形成有效销售需求、交付计划、库存预留和后续出库基础。\n# 页面入口\n销售管理 > 销售订单，页面入口“销售订单”页面。\n# 关键规则\n- 草稿订单可按权限维护。\n- 确认订单会影响有效销售需求和后续交付。\n- 信用额度或账期不满足时，可能需要信用例外审批。\n- 已确认订单如需变更，按销售订单变更审批处理。\n- 未全部交付时可按规则发起短交关闭审批。\n# 边界\n确认订单不等于自动出库、自动开票或自动收款。",
+    "keywords": "销售订单,订单确认,订单变更,信用例外,短交关闭,有效销售需求,预留,交付计划,不能确认",
+    "routePaths": "/sales/orders",
+    "pageNames": "销售订单",
+    "permissionNote": "查看、创建、更新、确认、变更、信用例外和短交关闭需要对应销售权限。",
+    "relatedSlugs": [
+      "sales-credit-profiles",
+      "sales-effective-demand",
+      "sales-delivery-plans-shipments"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-delivery-plans-shipments",
+    "title": "交付计划和销售出库是什么关系",
+    "summary": "说明交付计划安排和销售出库确认对库存和应收来源的影响。",
+    "categoryCode": "SALES",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n交付计划用于安排订单交付节奏；销售出库用于确认实际发货并扣减库存。\n# 页面入口\n- 交付计划：“交付计划”页面。\n- 销售出库：“销售出库”页面。\n# 操作前提\n销售订单已确认，库存和质量状态满足出库规则，客户、物料、仓库和业务日期合法。\n# 操作结果\n销售出库确认后扣减库存，形成销售出库事实，并可作为销售发票和应收来源。\n# 常见错误\n库存不足、冻结库存、客户或物料停用、业务期间锁定、缺少确认权限会阻断出库。",
+    "keywords": "交付计划,销售出库,发货,出库确认,库存扣减,应收来源,销售发票来源,冻结库存,库存不足",
+    "routePaths": "/sales/delivery-plans\n/sales/shipments",
+    "pageNames": "交付计划\n销售出库",
+    "permissionNote": "查看和执行交付、出库需要销售交付或销售出库权限；库存受库存和质量规则约束。",
+    "relatedSlugs": [
+      "inventory-balances-availability",
+      "finance-invoices-expenses"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-returns",
+    "title": "销售退货会怎样影响库存和应收",
+    "summary": "说明销售退货草稿、确认、库存回收和应收冲减影响。",
+    "categoryCode": "SALES",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n销售退货用于处理客户退回货物，形成反向库存和往来影响。\n# 页面入口\n销售管理 > 销售退货，页面入口“销售退货”页面。\n# 操作前提\n存在可退货的销售出库或订单来源，退货数量、仓库、物料和业务日期合法。\n# 操作结果\n确认退货后可能增加库存，形成销售退货记录，并影响应收、发票或后续核销来源。\n# 常见错误\n来源不可退、数量超限、业务期间锁定、草稿已取消或缺少确认权限会失败。",
+    "keywords": "销售退货,客户退货,退货草稿,确认退货,库存增加,应收冲减,业务期间锁定",
+    "routePaths": "/sales/returns",
+    "pageNames": "销售退货",
+    "permissionNote": "查看、创建、更新、确认和取消需要销售退货权限。",
+    "relatedSlugs": [
+      "sales-delivery-plans-shipments",
+      "finance-ar-ap-overview"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-credit-profiles",
+    "title": "信用档案和信用例外审批怎么使用",
+    "summary": "说明客户信用档案、额度控制、订单阻断和信用例外审批。",
+    "categoryCode": "SALES",
+    "knowledgeType": "STATUS",
+    "content": "# 功能用途\n信用档案用于维护客户授信和风险控制。销售订单确认时可能按信用状态阻断。\n# 页面入口\n销售管理 > 信用档案，页面入口“信用档案”页面。\n# 关键规则\n- 信用额度、账期、逾期和风险状态会影响销售订单确认。\n- 信用不满足时，按页面动作发起信用例外审批。\n- 审批通过只处理当前例外场景，不等于永久提高客户信用。\n# 常见问题\n如果订单不能确认，先查看页面返回的信用阻断原因，再决定是否补维护信用档案或发起例外审批。",
+    "keywords": "信用档案,授信额度,信用额度,信用例外,提交信用审批,客户信用,不能确认销售订单,逾期",
+    "routePaths": "/sales/credit-profiles",
+    "pageNames": "信用档案",
+    "permissionNote": "查看、维护信用和审批信用例外需要销售信用相关权限。",
+    "relatedSlugs": [
+      "sales-orders",
+      "common-approval-center"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-effective-demand",
+    "title": "有效销售需求是什么",
+    "summary": "说明销售订单确认后形成的有效需求、预留和计划引用口径。",
+    "categoryCode": "SALES",
+    "knowledgeType": "CONCEPT",
+    "content": "# 功能用途\n有效销售需求展示已确认销售订单形成的待交付需求，用于库存预留、缺料分析和交付计划判断。\n# 页面入口\n销售管理 > 有效销售需求，页面入口“有效销售需求”页面。\n# 关键规则\n- 有效需求来自已确认且未完全关闭或交付的销售订单。\n- 短交关闭或订单取消会影响需求剩余量。\n- 有效需求可被计划缺料分析引用，但不等同完整 MRP。\n# 常见问题\n有效需求不是新订单入口，不能在该页面绕过销售订单直接创建出库。",
+    "keywords": "有效销售需求,销售需求,订单需求,预留,缺料分析,短交关闭,交付需求",
+    "routePaths": "/sales/effective-demands",
+    "pageNames": "有效销售需求",
+    "permissionNote": "查看需要销售有效需求权限；相关订单和库存详情受对应权限限制。",
+    "relatedSlugs": [
+      "sales-orders",
+      "planning-material-requirements"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "sales-common-fields-errors",
+    "title": "销售页面常见状态和错误怎么处理",
+    "summary": "汇总销售项目、报价、订单、出库、退货常见状态、字段和错误处理口径。",
+    "categoryCode": "SALES",
+    "knowledgeType": "ERROR",
+    "content": "# 适用范围\n适用于销售项目、销售报价、销售订单、交付计划、销售出库、销售退货、信用档案和有效销售需求。\n# 常见状态\n- 草稿：可按权限编辑或取消。\n- 已提交或审批中：等待审批处理。\n- 已通过：审批通过，可进入下一业务步骤。\n- 已确认：业务事实已成立，后续通常通过变更、退货或关闭处理。\n- 已取消或已关闭：不能继续普通编辑。\n# 常见错误\n- 客户、物料、单位或仓库停用：先维护基础资料或换用启用对象。\n- 信用不足：处理信用档案或发起信用例外审批。\n- 库存不足或质量状态不允许：回到库存余额和质量确认核对。\n- 业务期间锁定：业务日期应处于开放期间。",
+    "keywords": "销售状态,草稿,审批中,已通过,已确认,已取消,已关闭,信用不足,库存不足,客户停用,物料停用,业务期间锁定",
+    "routePaths": "/sales/projects\n/sales/quotes\n/sales/orders\n/sales/shipments\n/sales/returns",
+    "pageNames": "销售常见错误",
+    "permissionNote": "具体查看和处理动作需要对应销售页面权限。",
+    "relatedSlugs": [
+      "common-business-periods",
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 80,
+    "status": "ENABLED"
+  }
+]

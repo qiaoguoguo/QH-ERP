@@ -17,18 +17,19 @@ const productionReversalTraceDrawerSourceFile = 'apps/web/src/modules/reversal/P
 const outsourcingTraceLinksTableSourceFile = 'apps/web/src/modules/production/outsourcing/ProductionOutsourcingOrderDetailView.vue'
 
 describe('页面治理表面清单门禁', () => {
-  it('统计 176 个 View 页面和模块分布', () => {
+  it('统计 180 个 View 页面和模块分布', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(243)
+    expect(inventory.moduleVueFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(249)
     expect(inventory.moduleVueFiles).toContain(productionReversalTraceDrawerSourceFile)
-    expect(inventory.viewFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(176)
+    expect(inventory.viewFiles, summarizePageSurfaceInventory(inventory)).toHaveLength(180)
     expect(inventory.viewModuleCounts).toEqual({
       auth: 1,
       cost: 10,
       finance: 33,
       financialClose: 9,
       gl: 11,
+      help: 2,
       inventory: 6,
       master: 7,
       materials: 3,
@@ -41,7 +42,7 @@ describe('页面治理表面清单门禁', () => {
       reports: 16,
       reversal: 15,
       sales: 15,
-      system: 4,
+      system: 6,
       workbench: 1,
     })
   })
@@ -49,12 +50,12 @@ describe('页面治理表面清单门禁', () => {
   it('记录全部表格实例且不以文件级滚动命中替代实例清单', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.tables, summarizePageSurfaceInventory(inventory)).toHaveLength(246)
+    expect(inventory.tables, summarizePageSurfaceInventory(inventory)).toHaveLength(249)
     expect(inventory.tables).toContainEqual(expect.objectContaining({
       sourceFile: outsourcingTraceLinksTableSourceFile,
       text: '<el-table :data="record.traceLinks ?? []" :empty-text="record.sourceSuggestionNo || \'暂无来源建议\'" stripe>',
     }))
-    expect(inventory.tableColumns).toHaveLength(2038)
+    expect(inventory.tableColumns).toHaveLength(2041)
     inventory.tables.forEach((table) => {
       expect(table.sourceFile).toMatch(/^apps\/web\/src\//)
       expect(table.line).toBeGreaterThan(0)
@@ -74,11 +75,11 @@ describe('页面治理表面清单门禁', () => {
     ).toHaveLength(0)
   })
 
-  it('分页、弹窗、抽屉、returnTo 表面全部有矩阵项，税务基础设置新增两个分页器后分页总数为 108', () => {
+  it('分页、弹窗、抽屉、returnTo 表面全部有矩阵项，税务基础设置新增两个分页器后分页总数为 110', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.paginations).toHaveLength(108)
-    expect(inventory.dialogs).toHaveLength(45)
+    expect(inventory.paginations).toHaveLength(110)
+    expect(inventory.dialogs).toHaveLength(49)
     expect(inventory.drawers).toHaveLength(35)
     expect(inventory.drawers).toContainEqual(expect.objectContaining({
       sourceFile: productionReversalTraceDrawerSourceFile,
@@ -118,26 +119,26 @@ describe('页面治理表面清单门禁', () => {
     ).toHaveLength(0)
   })
 
-  it('109 个操作列统一固定右侧、184 宽度、禁用 min-width 且第三个动作进入更多', () => {
+  it('111 个操作列统一固定右侧、184 宽度、禁用 min-width 且第三个动作进入更多', () => {
     const inventory = buildPageSurfaceInventory()
 
-    expect(inventory.operationColumns, summarizePageSurfaceInventory(inventory)).toHaveLength(109)
+    expect(inventory.operationColumns, summarizePageSurfaceInventory(inventory)).toHaveLength(111)
     expect(
       inventory.operationColumnViolations,
       formatOperationColumnViolations(inventory.operationColumnViolations),
     ).toHaveLength(0)
   })
 
-  it('含更多的 38 个操作列必须默认两个直显，仅允许凭证草稿长文案 1+更多例外', () => {
+  it('含更多的 40 个操作列必须默认两个直显，仅允许凭证草稿长文案 1+更多例外', () => {
     const inventory = buildPageSurfaceInventory()
     const moreColumns = inventory.operationColumns.filter((item) => item.hasMoreDropdown)
     const singleDirectMoreColumns = moreColumns.filter((item) => item.directActionCount === 1)
 
-    expect(moreColumns, formatOperationColumns(moreColumns)).toHaveLength(38)
+    expect(moreColumns, formatOperationColumns(moreColumns)).toHaveLength(40)
     expect(
       moreColumns.filter((item) => item.directActionCount === 2),
       formatOperationColumns(moreColumns),
-    ).toHaveLength(37)
+    ).toHaveLength(39)
     expect(
       singleDirectMoreColumns.map((item) => item.sourceFile),
       formatOperationColumns(singleDirectMoreColumns),

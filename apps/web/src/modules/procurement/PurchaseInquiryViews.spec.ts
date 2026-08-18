@@ -33,9 +33,13 @@ const procurementApiMock = vi.hoisted(() => ({
     create: vi.fn(),
     update: vi.fn(),
     release: vi.fn(),
+    complete: vi.fn(),
+    cancel: vi.fn(),
   },
   quotes: {
     list: vi.fn(),
+    create: vi.fn(),
+    update: vi.fn(),
     select: vi.fn(),
   },
 }))
@@ -56,6 +60,12 @@ const salesProjectApiMock = vi.hoisted(() => ({
 }))
 
 const documentPlatformApiMock = vi.hoisted(() => ({
+  attachments: {
+    list: vi.fn(),
+    upload: vi.fn(),
+    download: vi.fn(),
+    delete: vi.fn(),
+  },
   documentTasks: {
     get: vi.fn(),
     errors: vi.fn(),
@@ -88,6 +98,10 @@ vi.mock('../../shared/api/documentPlatformApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../shared/api/documentPlatformApi')>()),
   documentPlatformApi: documentPlatformApiMock,
   createIdempotencyKey: () => 'procurement-document-key',
+}))
+
+vi.mock('../../shared/ui/confirmDialog', () => ({
+  confirmAction: vi.fn(async () => true),
 }))
 
 const quoteA: SupplierQuoteRecord = {
@@ -333,6 +347,10 @@ describe('采购询价与报价页面', () => {
     procurementApiMock.inquiries.create.mockResolvedValue(detail)
     procurementApiMock.inquiries.update.mockResolvedValue({ ...detail, version: 5 })
     procurementApiMock.inquiries.release.mockResolvedValue({ ...detail, status: 'RELEASED' })
+    procurementApiMock.inquiries.complete.mockResolvedValue({ ...detail, status: 'COMPLETED' })
+    procurementApiMock.inquiries.cancel.mockResolvedValue({ ...detail, status: 'CANCELLED' })
+    procurementApiMock.quotes.create.mockResolvedValue(quoteA)
+    procurementApiMock.quotes.update.mockResolvedValue(quoteA)
     procurementApiMock.quotes.list.mockResolvedValue({
       items: [quoteA, quoteB],
       page: 1,
@@ -374,6 +392,12 @@ describe('采购询价与报价页面', () => {
       availableActions: ['DOWNLOAD'],
       version: 3,
     })
+    documentPlatformApiMock.attachments.list.mockResolvedValue({
+      items: [],
+      page: 1,
+      pageSize: 20,
+      total: 0,
+    })
   })
 
   it('询价列表展示项目、状态、供应商报价数量并按当前筛选创建导出任务', async () => {
@@ -410,7 +434,19 @@ describe('采购询价与报价页面', () => {
   })
 
   it('询价详情展示报价比较并在单个询价范围内创建报价导入导出任务', async () => {
-    const pinia = setup(['procurement:inquiry:view', 'procurement:quote:select', 'procurement:quote:import', 'procurement:quote:export'])
+    procurementApiMock.inquiries.get.mockResolvedValueOnce({
+      ...detail,
+      status: 'RELEASED',
+      allowedActions: ['COMPLETE', 'CANCEL'],
+    })
+    const pinia = setup([
+      'procurement:inquiry:view',
+      'procurement:inquiry:complete',
+      'procurement:quote:create',
+      'procurement:quote:import',
+      'procurement:quote:export',
+      'platform:document-task:create',
+    ])
     const router = await createTestRouter('/procurement/inquiries/201')
     const wrapper = mount(PurchaseInquiryDetailView, { global: { plugins: [pinia, router, ElementPlus] } })
     await flushPromises()
@@ -428,6 +464,8 @@ describe('采购询价与报价页面', () => {
     expect(wrapper.text()).toContain('来源链')
     expect(wrapper.text()).toContain('附件')
     expect(wrapper.text()).toContain('审计')
+    expect(wrapper.find('[data-test="complete-inquiry"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="create-supplier-quote"]').exists()).toBe(true)
 
     const fileInput = wrapper.find<HTMLInputElement>('[data-test="quote-import-file"]')
     Object.defineProperty(fileInput.element, 'files', {

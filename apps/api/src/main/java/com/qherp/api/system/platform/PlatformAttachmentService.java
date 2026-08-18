@@ -233,6 +233,7 @@ public class PlatformAttachmentService {
 			throw new BusinessException(ApiErrorCode.ATTACHMENT_FILE_SIZE_EXCEEDED);
 		}
 		if (!"SALES_PROJECT_CONTRACT".equals(upload.objectType())
+				&& !"PROCUREMENT_INQUIRY".equals(upload.objectType())
 				&& !"BOM_ENGINEERING_CHANGE".equals(upload.objectType())
 				&& !"INVENTORY_OWNERSHIP_CONVERSION".equals(upload.objectType())
 				&& !"INVENTORY_STOCKTAKE".equals(upload.objectType())
@@ -390,6 +391,14 @@ public class PlatformAttachmentService {
 
 	private void requireBusinessPermission(String objectType, Long objectId, CurrentUser currentUser,
 			AttachmentAccessMode mode) {
+		if ("PROCUREMENT_INQUIRY".equals(objectType)) {
+			requirePermission(currentUser, mode == AttachmentAccessMode.MANAGE ? "procurement:inquiry:update"
+					: "procurement:inquiry:view");
+			requireExists(mode == AttachmentAccessMode.MANAGE
+					? "select count(*) from proc_purchase_inquiry where id = ? and status in ('DRAFT', 'RELEASED')"
+					: "select count(*) from proc_purchase_inquiry where id = ?", objectId);
+			return;
+		}
 		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
 			requirePermission(currentUser, "sales:contract:view");
 			requireExists("select count(*) from sal_project_contract where id = ?", objectId);
@@ -442,6 +451,14 @@ public class PlatformAttachmentService {
 
 	private boolean hasBusinessPermission(String objectType, Long objectId, CurrentUser currentUser,
 			AttachmentAccessMode mode) {
+		if ("PROCUREMENT_INQUIRY".equals(objectType)) {
+			String permission = mode == AttachmentAccessMode.MANAGE ? "procurement:inquiry:update"
+					: "procurement:inquiry:view";
+			return currentUser.permissions().contains(permission)
+					&& exists(mode == AttachmentAccessMode.MANAGE
+							? "select count(*) from proc_purchase_inquiry where id = ? and status in ('DRAFT', 'RELEASED')"
+							: "select count(*) from proc_purchase_inquiry where id = ?", objectId);
+		}
 		if ("SALES_PROJECT_CONTRACT".equals(objectType)) {
 			return currentUser.permissions().contains("sales:contract:view")
 					&& exists("select count(*) from sal_project_contract where id = ?", objectId);

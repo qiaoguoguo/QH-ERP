@@ -1,0 +1,150 @@
+[
+  {
+    "slug": "planning-material-requirements",
+    "title": "订单缺料分析当前能做什么",
+    "summary": "说明订单缺料分析的来源、库存口径、采购在途参考和当前非完整 MRP 边界。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n订单缺料分析用于基于销售需求、库存余额和采购在途参考识别物料缺口。\n# 页面入口\n计划管理 > 订单缺料分析，页面入口“订单缺料分析”页面。\n# 关键口径\n- 现货参考来自库存余额、质量状态、占用和预留。\n- 采购在途来自未完成采购订单。\n- 销售需求来自有效销售需求。\n# 当前边界\n当前页面用于订单缺料分析，不等同完整 MRP、复杂 ATP 或自动采购建议系统。页面不替用户自动创建采购单或生产工单。",
+    "keywords": "订单缺料分析,缺料,MRP,ATP,采购在途,有效销售需求,可承诺,物料需求",
+    "routePaths": "/planning/material-requirements",
+    "pageNames": "订单缺料分析",
+    "permissionNote": "查看需要计划缺料分析权限；相关销售、库存和采购详情受对应权限限制。",
+    "relatedSlugs": [
+      "sales-effective-demand",
+      "procurement-effective-supplies",
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-work-orders",
+    "title": "生产工单从哪里开始",
+    "summary": "说明生产工单、BOM 引用、发布、领料、报工和完工入库入口。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n生产工单用于组织生产任务，承接产品、数量、BOM、计划日期和后续执行记录。\n# 页面入口\n生产管理 > 生产工单，页面入口“生产工单”页面、“生产工单”页面、“生产工单”页面。\n# 操作步骤\n1. 创建工单并选择生产物料、数量、BOM 和计划日期。\n2. 按页面允许动作保存、编辑或发布。\n3. 从工单详情进入领料、报工和完工入库。\n# 关键规则\nBOM、物料和单位必须有效。工单状态决定能否继续编辑、领料、报工或完工入库。",
+    "keywords": "生产工单,新建工单,BOM,发布工单,领料,报工,完工入库,生产物料",
+    "routePaths": "/production/work-orders\n/production/work-orders/create\n/production/work-orders/:id",
+    "pageNames": "生产工单\n生产工单详情",
+    "permissionNote": "查看、创建、更新、发布和执行需要生产工单相关权限。",
+    "relatedSlugs": [
+      "bom-draft-basic",
+      "production-material-issues",
+      "production-work-reports",
+      "production-completion-receipts"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-material-issues",
+    "title": "生产领料会怎样影响库存",
+    "summary": "说明生产工单领料入口、领料数量和库存扣减影响。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n生产领料用于按生产工单消耗组件物料。\n# 页面入口\n从生产工单详情进入，页面入口“生产领料”页面。\n# 操作前提\n工单状态允许领料，组件物料、仓库、质量状态和库存数量满足规则。\n# 操作结果\n确认领料后扣减库存，形成生产领料记录和库存流水，并可进入成本归集来源。\n# 常见错误\n库存不足、冻结库存、物料停用、业务期间锁定或缺少领料权限会失败。",
+    "keywords": "生产领料,工单领料,组件物料,库存扣减,冻结库存,库存不足,领料单,生产成本",
+    "routePaths": "/production/work-orders/:id/material-issues",
+    "pageNames": "生产领料",
+    "permissionNote": "查看和执行领料需要生产领料权限；库存查看和成本查看受对应权限限制。",
+    "relatedSlugs": [
+      "inventory-balances-availability",
+      "cost-project-costs"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-work-reports",
+    "title": "生产报工记录什么",
+    "summary": "说明生产报工的数量、工时、人员和成本来源作用。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n生产报工用于记录工单执行过程中的产量、工时或人工制造费用相关事实。\n# 页面入口\n从生产工单详情进入，页面入口“生产报工”页面。\n# 关键字段\n- 报工数量：本次完成或投入的数量口径，以页面字段为准。\n- 工时和人员：用于生产执行和成本来源参考。\n- 业务日期：必须处于开放业务期间。\n# 后续影响\n报工记录可参与生产进度和成本归集，但不等于完工入库。完工入库需要在对应页面单独处理。",
+    "keywords": "生产报工,报工数量,工时,人员,生产进度,人工成本,制造费用,业务日期",
+    "routePaths": "/production/work-orders/:id/reports",
+    "pageNames": "生产报工",
+    "permissionNote": "查看和维护报工需要生产报工权限；成本金额查看受成本权限限制。",
+    "relatedSlugs": [
+      "production-completion-receipts",
+      "cost-project-costs"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-completion-receipts",
+    "title": "完工入库后库存怎么变化",
+    "summary": "说明完工入库的生产来源、入库数量、仓库和质量状态影响。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n完工入库用于将生产工单完成的产成品或半成品入库。\n# 页面入口\n从生产工单详情进入，页面入口“完工入库”页面。\n# 操作前提\n工单允许完工入库，完工数量、仓库、物料和业务日期合法。\n# 操作结果\n确认完工入库后增加库存，形成库存流水，并影响生产工单履约和成本归集。\n# 质量边界\n入库后的质量状态以页面和质量规则为准，不应默认所有完工都可直接销售或领用。",
+    "keywords": "完工入库,生产入库,完工数量,成品入库,半成品入库,库存增加,质量状态,生产工单",
+    "routePaths": "/production/work-orders/:id/completion-receipts",
+    "pageNames": "完工入库",
+    "permissionNote": "查看和执行完工入库需要生产入库权限；质量确认另需质量权限。",
+    "relatedSlugs": [
+      "quality-inspections-status",
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-returns-supplements",
+    "title": "生产退料和生产补料有什么区别",
+    "summary": "说明生产退料、生产补料的入口、库存方向和常见限制。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n生产退料用于将已领未用或需退回的物料退回库存；生产补料用于在原领料不足或追加用料时补充领料。\n# 页面入口\n- 生产退料：“生产退料”页面。\n- 生产补料：“生产补料”页面。\n# 库存方向\n- 退料确认通常增加库存。\n- 补料确认通常扣减库存。\n# 常见限制\n物料、仓库、数量、业务日期、工单状态和权限都会影响是否可确认。冻结库存不能作为普通补料来源。",
+    "keywords": "生产退料,生产补料,退料确认,补料确认,库存增加,库存扣减,工单状态,冻结库存",
+    "routePaths": "/production/material-returns\n/production/material-supplements",
+    "pageNames": "生产退料\n生产补料",
+    "permissionNote": "查看、创建、更新、确认和取消需要生产退料或补料权限。",
+    "relatedSlugs": [
+      "inventory-balances-availability",
+      "common-business-periods"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-outsourcing",
+    "title": "外协执行当前覆盖哪些动作",
+    "summary": "说明外协订单、外协发料、外协收货和当前非完整委外结算边界。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n外协执行用于管理委外加工场景下的外协订单、发料和收货。\n# 页面入口\n- 外协订单：“外协执行”页面。\n- 外协发料：“外协发料”页面。\n- 外协收货：“外协收货”页面。\n# 操作规则\n外协发料会影响库存扣减，外协收货会形成收货或入库相关事实。具体动作以页面允许动作和权限为准。\n# 当前边界\n当前说明只覆盖外协执行页面已有能力，不扩展为完整委外合同、委外结算或供应商门户。",
+    "keywords": "外协执行,外协订单,外协发料,外协收货,委外,外协入库,外协结算,当前未实现",
+    "routePaths": "/production/outsourcing-orders\n/production/outsourcing-orders/:id/material-issues\n/production/outsourcing-orders/:id/receipts",
+    "pageNames": "外协执行\n外协发料\n外协收货",
+    "permissionNote": "查看、创建、更新和执行外协动作需要生产外协相关权限。",
+    "relatedSlugs": [
+      "inventory-balances-availability",
+      "procurement-receipts"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "production-status-boundaries",
+    "title": "生产状态、库存和成本边界怎么判断",
+    "summary": "汇总生产工单、领料、报工、完工、退补料和外协的状态边界。",
+    "categoryCode": "PLANNING_PRODUCTION",
+    "knowledgeType": "STATUS",
+    "content": "# 适用范围\n适用于生产工单、生产领料、生产报工、完工入库、生产退料、生产补料和外协执行。\n# 判断方法\n- 看页面显示的业务状态和后端允许动作，不按单号或经验推断。\n- 看业务日期是否处于开放期间。\n- 看库存质量状态和可用数量是否允许出入库。\n- 看成本或金额字段是否因权限被脱敏。\n# 禁止做法\n不得直接修改库存余额、成本记录或工单状态替代标准业务动作。页面未展示的动作不能通过接口绕过执行。",
+    "keywords": "生产状态,允许动作,业务期间,库存质量,成本权限,不能领料,不能报工,不能完工,按钮禁用",
+    "routePaths": "/production/work-orders\n/production/material-returns\n/production/material-supplements\n/production/outsourcing-orders",
+    "pageNames": "生产状态边界",
+    "permissionNote": "具体页面动作需要生产、库存、质量和成本对应权限。",
+    "relatedSlugs": [
+      "common-business-periods",
+      "quality-inspections-status",
+      "cost-project-costs"
+    ],
+    "sortOrder": 80,
+    "status": "ENABLED"
+  }
+]

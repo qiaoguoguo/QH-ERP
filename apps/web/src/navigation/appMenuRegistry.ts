@@ -2,6 +2,14 @@ import type { MenuNode } from '../shared/api/accountPermissionApi'
 import { glChildren, glMenuPaths } from './glMenu'
 import { periodCloseChildren, periodCloseMenuPaths } from './periodCloseMenu'
 
+export const systemKnowledgeMenuPath = '/system/knowledge'
+export const systemKnowledgeMenuChild: MenuNode = {
+  id: 'system-knowledge',
+  code: 'system:knowledge:manage',
+  name: '知识库管理',
+  routePath: systemKnowledgeMenuPath,
+}
+
 interface RegisteredModuleMenuGroup {
   id: string
   code: string

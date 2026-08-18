@@ -1,0 +1,200 @@
+[
+  {
+    "slug": "cost-project-costs",
+    "title": "项目成本核算看什么",
+    "summary": "说明项目成本核算页面的成本归集、来源、状态和权限边界。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n项目成本核算用于查看和管理项目维度的材料、人工、制造费用和其他成本归集结果。\n# 页面入口\n成本管理 > 项目成本核算，页面入口“项目成本核算”页面。\n# 关键规则\n- 成本来源可能来自生产领料、报工、完工入库、手工成本记录或调整分配。\n- 成本金額和来源可能受权限脱敏。\n- 页面不应用零或空白冒充受限金额。\n# 上下游影响\n成本归集结果可被项目成本差异、业务月结和经营报表引用。",
+    "keywords": "项目成本,成本核算,材料成本,人工成本,制造费用,成本来源,金额权限,受限金额",
+    "routePaths": "/cost/project-costs",
+    "pageNames": "项目成本核算",
+    "permissionNote": "查看需要项目成本权限；金额和来源字段可能受成本权限限制。",
+    "relatedSlugs": [
+      "production-material-issues",
+      "period-close-business-close",
+      "reports-overview"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "cost-adjustments-variances",
+    "title": "成本调整分配和成本差异怎么使用",
+    "summary": "说明成本调整/分配的审批、项目成本差异的只读分析和风险边界。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n成本调整/分配用于受控修正或分配项目成本；项目成本差异用于查看实际成本与目标、预算或来源之间的差异。\n# 页面入口\n- 成本调整/分配：“成本调整/分配”页面。\n- 项目成本差异：“项目成本差异”页面。\n# 关键规则\n- 成本调整通常需要提交审批，不能无痕修改已归集成本。\n- 差异页面以查询和分析为主，不直接改业务事实。\n- 调整、分配和差异均应保留来源和审计。",
+    "keywords": "成本调整,成本分配,项目成本差异,提交审批,成本审批,差异分析,已归集成本",
+    "routePaths": "/cost/project-cost-adjustments\n/cost/project-cost-variances",
+    "pageNames": "成本调整/分配\n项目成本差异",
+    "permissionNote": "查看、创建、提交审批和审批需要成本相关权限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "cost-project-costs"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "cost-records",
+    "title": "成本记录和作废边界是什么",
+    "summary": "说明成本记录的来源、状态和作废限制。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n成本记录用于查看或维护项目成本事件，承载来源类型、成本类型、业务日期和金额口径。\n# 页面入口\n成本管理 > 成本记录，页面入口“成本记录”页面。\n# 关键状态\n- 有效：参与后续成本统计和报表。\n- 已作废：保留历史审计，不再作为有效成本事实。\n# 关键规则\n作废应按页面动作和权限执行，不能直接删除历史成本事实。来源型记录不得随意改写来源业务事实。",
+    "keywords": "成本记录,成本事件,有效,已作废,作废,成本类型,来源类型,业务日期",
+    "routePaths": "/cost/records",
+    "pageNames": "成本记录",
+    "permissionNote": "查看、创建、作废和金额查看需要成本记录相关权限。",
+    "relatedSlugs": [
+      "cost-project-costs"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "finance-ar-ap-overview",
+    "title": "应收应付和收付款怎么对应",
+    "summary": "说明应收台账、应付台账、收款记录、付款记录和结算状态。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n应收和应付是客户或供应商往来的来源台账；收款和付款用于记录资金动作并影响结算状态。\n# 页面入口\n- 应收台账：“应收台账”页面。\n- 收款记录：“收款记录”页面。\n- 应付台账：“应付台账”页面。\n- 付款记录：“付款记录”页面。\n# 关键规则\n- 销售出库、销售发票等可形成应收来源。\n- 采购入库、采购发票、费用等可形成应付来源。\n- 收付款不等于自动开票或自动记账。\n- 核销后更新结算状态。",
+    "keywords": "应收,应付,收款,付款,结算状态,销售出库,采购入库,核销,往来台账",
+    "routePaths": "/finance/receivables\n/finance/receipts\n/finance/payables\n/finance/payments",
+    "pageNames": "应收台账\n收款记录\n应付台账\n付款记录",
+    "permissionNote": "查看和维护应收、应付、收款、付款分别需要财务往来权限；金额字段可能受限。",
+    "relatedSlugs": [
+      "finance-settlement-voucher-drafts"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "finance-invoices-expenses",
+    "title": "销售发票、采购发票和费用单怎么处理",
+    "summary": "说明发票确认、采购发票匹配、费用来源和后续应收应付影响。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n销售发票、采购发票和费用单用于沉淀开票、收票和费用事实，并与应收应付及凭证草稿衔接。\n# 页面入口\n- 销售发票：“销售发票”页面。\n- 采购发票：“采购发票”页面。\n- 费用单：“费用单”页面。\n# 关键状态\n发票和费用通常有草稿、已确认、已取消等状态；采购发票还可能有未匹配、已匹配、异常等匹配状态。\n# 常见错误\n来源候选不存在、金额税额不一致、匹配异常、业务期间锁定或缺少权限会导致确认失败。\n# 边界\n发票确认不等于正式总账记账，后续仍需凭证草稿和会计核算链路。",
+    "keywords": "销售发票,采购发票,费用单,草稿,已确认,已取消,未匹配,已匹配,匹配异常,税额,来源候选",
+    "routePaths": "/finance/sales-invoices\n/finance/purchase-invoices\n/finance/expenses",
+    "pageNames": "销售发票\n采购发票\n费用单",
+    "permissionNote": "查看、创建、更新、确认和取消需要对应财务权限；金额、来源和税务字段可能受限。",
+    "relatedSlugs": [
+      "finance-ar-ap-overview",
+      "finance-settlement-voucher-drafts"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "finance-settlement-voucher-drafts",
+    "title": "对账核销和凭证草稿怎么衔接",
+    "summary": "说明预收预付、对账核销、往来冲减和凭证草稿的只读/写入边界。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n对账核销用于将资金和往来目标进行匹配；凭证草稿用于把往来或发票费用事实准备进入会计凭证链路。\n# 页面入口\n- 预收款：“预收款”页面。\n- 预付款：“预付款”页面。\n- 对账核销：“对账核销”页面。\n- 往来冲减：“往来冲减”页面。\n- 凭证草稿：“凭证草稿”页面。\n# 关键规则\n凭证草稿置为就绪不等于正式记账。正式凭证仍需进入会计核算凭证流程和审批记账。\n# 常见问题\n如果核销目标看不到，检查客户/供应商、方向、权限、结算状态和来源对象权限。",
+    "keywords": "对账核销,预收款,预付款,往来冲减,凭证草稿,置为就绪,正式凭证,核销目标,结算",
+    "routePaths": "/finance/advance-receipts\n/finance/prepayments\n/finance/settlement-workbench\n/finance/settlement-adjustments\n/finance/voucher-drafts",
+    "pageNames": "预收款\n预付款\n对账核销\n往来冲减\n凭证草稿",
+    "permissionNote": "查看和维护需要财务往来和凭证草稿权限；正式凭证还需会计核算权限。",
+    "relatedSlugs": [
+      "gl-basic-vouchers-ledgers",
+      "finance-ar-ap-overview"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "period-close-business-close",
+    "title": "业务月结和期间快照是什么",
+    "summary": "说明业务月结检查、关闭、重开和快照口径，区分财务结账。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n业务月结用于冻结业务期间的库存、在制、项目成本和经营报表基线，不是财务关账。\n# 页面入口\n业务月结 > 月结工作台，页面入口“月结工作台”页面。\n# 操作规则\n- 月结前执行检查。\n- 满足条件后关闭业务期间并生成业务快照。\n- 需要补录时按规则重开。\n# 关键边界\n业务月结不同于会计核算下的财务结账。业务月结关闭经营事实基线，财务结账关闭会计期间。",
+    "keywords": "业务月结,月结工作台,期间快照,关闭业务期间,重开,经营报表基线,不是财务结账",
+    "routePaths": "/period-close/runs",
+    "pageNames": "月结工作台",
+    "permissionNote": "查看、检查、关闭和重开需要业务月结相关权限。",
+    "relatedSlugs": [
+      "common-business-periods",
+      "financial-close-funds-tax",
+      "reports-overview"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "gl-basic-vouchers-ledgers",
+    "title": "会计核算基础、正式凭证和账簿怎么看",
+    "summary": "说明会计期间、科目、辅助、规则、正式凭证、总账、明细账、余额和试算平衡。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n会计核算用于维护总账基础资料、提交正式凭证审批、记账并查看账簿和余额。\n# 页面入口\n- 会计期间：“会计期间”页面。\n- 会计科目：“会计科目”页面。\n- 辅助核算：“辅助核算”页面。\n- 自动制证规则：“会计期间”页面。\n- 正式凭证：“正式凭证”页面。\n- 总账、明细账、科目余额、试算平衡：“总账”页面、“明细账”页面、“科目余额”页面、“试算平衡”页面。\n# 关键规则\n正式凭证草稿提交后由审批中心非提交人审批，通过后生成连续正式号并写入总账。已记账凭证、分录和账簿不可修改，只能按规则冲销。\n# 权限边界\n无金额或来源权限时，页面应显示脱敏或受限说明，不得用 0 冒充真实金额。",
+    "keywords": "会计核算,会计期间,会计科目,辅助核算,自动制证规则,正式凭证,提交审批,记账,总账,明细账,科目余额,试算平衡,冲销",
+    "routePaths": "/gl/accounting-periods\n/gl/accounts\n/gl/auxiliaries\n/gl/posting-rules\n/gl/vouchers\n/gl/ledgers/general\n/gl/ledgers/detail\n/gl/account-balances\n/gl/trial-balance",
+    "pageNames": "会计期间\n会计科目\n辅助核算\n正式凭证\n总账\n明细账\n科目余额\n试算平衡",
+    "permissionNote": "查看和维护需要会计核算权限；金额、来源和敏感字段受对应权限限制。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "finance-settlement-voucher-drafts"
+    ],
+    "sortOrder": 80,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "financial-close-funds-tax",
+    "title": "财务结账、银行和税务页面当前边界",
+    "summary": "说明财务结账检查、银行账户、银行流水、银行对账、税务设置、税额汇总和税款缴纳。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n财务结账关闭会计期间；银行和税务页面用于资金、对账和税务基础汇总。\n# 页面入口\n- 财务结账：“财务结账”页面。\n- 期末损益结转：“期末损益结转”页面。\n- 银行账户、银行流水、银行对账：“银行账户”页面、“银行流水”页面、“银行对账”页面。\n- 税务基础设置、税额汇总、税款缴纳台账：“税务基础设置”页面、“税额汇总”页面、“税款缴纳台账”页面。\n# 关键规则\n财务结账需要前置检查，例如同月业务月结、未完成凭证、试算平衡、银行、税务和损益状态。检查阻断时不得强制关闭。\n# 当前边界\n税额汇总是基础汇总或估算，不是正式申报；系统当前不连接电子税务局或税控平台。",
+    "keywords": "财务结账,反结账,期末损益结转,银行账户,银行流水,银行对账,税务基础设置,税额汇总,税款缴纳,业务月结前置,阻断",
+    "routePaths": "/gl/financial-close\n/gl/profit-loss-carryforward\n/gl/bank-accounts\n/gl/bank-statements\n/gl/bank-reconciliation\n/gl/tax-settings\n/gl/tax-summary\n/gl/tax-payments",
+    "pageNames": "财务结账\n期末损益结转\n银行账户\n银行流水\n银行对账\n税务基础设置\n税额汇总\n税款缴纳台账",
+    "permissionNote": "查看和执行需要会计核算、财务结账、银行或税务相关权限；敏感字段按权限脱敏。",
+    "relatedSlugs": [
+      "period-close-business-close",
+      "gl-basic-vouchers-ledgers"
+    ],
+    "sortOrder": 90,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "reports-overview",
+    "title": "经营报表的数据口径怎么理解",
+    "summary": "说明经营报表入口、实时口径、业务月结快照、来源追溯和脱敏。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n经营报表用于查看销售、采购、库存、生产、成本、结算、异常、项目利润、合同回款、采购差异、库存资金、应收应付、经营会计对照和财务摘要等经营口径结果。\n# 页面入口\n- 报表概览：“报表概览”页面。\n- 销售、采购、库存、生产、成本、结算、异常报表：“销售报表”页面、“采购报表”页面、“库存报表”页面、“生产报表”页面、“成本报表”页面、“结算报表”页面、“异常报表”页面。\n- 项目利润与项目利润详情：“项目利润”页面、“项目利润详情”页面。\n- 专项报表：“合同回款”页面、“采购差异”页面、“库存资金”页面、“应收应付”页面、“经营会计对照”页面、“财务摘要”页面。\n# 关键口径\n- 实时经营口径：读取当前业务事实。\n- 业务月结快照：读取业务月结冻结的基线。\n- 来源追溯：用于解释报表数字来源，不改变业务数据。\n# 权限边界\n无金额、来源或敏感权限时，报表应显示受限、不可用或脱敏，不得把受限金额按 0 汇总。",
+    "keywords": "经营报表,报表概览,销售报表,采购报表,库存报表,生产报表,成本报表,结算报表,异常报表,项目利润,项目利润详情,合同回款,采购差异,库存资金,应收应付,财务摘要,经营会计对照,实时口径,业务月结快照,来源追溯,脱敏",
+    "routePaths": "/reports/overview\n/reports/sales\n/reports/procurement\n/reports/inventory\n/reports/production\n/reports/cost\n/reports/settlement\n/reports/exceptions\n/reports/project-profit\n/reports/project-profit/:projectId\n/reports/contract-collection\n/reports/procurement-variance\n/reports/inventory-capital\n/reports/receivable-payable\n/reports/operating-accounting\n/reports/financial-summary",
+    "pageNames": "报表概览\n销售报表\n采购报表\n库存报表\n生产报表\n成本报表\n结算报表\n异常报表\n项目利润\n项目利润详情\n合同回款\n采购差异\n库存资金\n应收应付\n经营会计对照\n财务摘要",
+    "permissionNote": "查看具体报表需要对应报表权限；金额和来源字段受权限控制。",
+    "relatedSlugs": [
+      "period-close-business-close",
+      "report-permissions-data-boundary"
+    ],
+    "sortOrder": 100,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "report-permissions-data-boundary",
+    "title": "报表受限、不可用和快照差异怎么处理",
+    "summary": "说明报表权限受限、来源不可用、快照口径和完整性状态的处理方式。",
+    "categoryCode": "COST_FINANCE_REPORTS",
+    "knowledgeType": "ERROR",
+    "content": "# 适用范围\n适用于报表概览、销售、采购、库存、生产、成本、结算、异常、项目利润、合同回款、采购差异、库存资金、应收应付、经营会计对照、财务摘要、业务月结快照和来源追溯页面。\n# 常见状态\n- 完整：来源数据满足当前报表口径。\n- 不完整：部分来源缺失或未完成。\n- 不可用：当前口径没有可展示事实或条件不满足。\n- 受限：当前账号无权查看金额、来源或敏感字段。\n- 过期或不新鲜：来源变化后旧快照或计算结果需要重新生成。\n# 处理方式\n先根据报表提示确认权限、期间、快照状态和来源状态。不要把受限或不可用理解为金额为零。",
+    "keywords": "报表受限,不可用,不完整,来源受限,金额受限,快照差异,实时口径,过期,不新鲜,报表概览,销售报表,采购报表,库存报表,生产报表,项目利润,合同回款,采购差异,库存资金,应收应付,财务摘要,不要按零汇总",
+    "routePaths": "/reports/overview\n/reports/sales\n/reports/procurement\n/reports/inventory\n/reports/production\n/reports/cost\n/reports/settlement\n/reports/exceptions\n/reports/project-profit\n/reports/project-profit/:projectId\n/reports/contract-collection\n/reports/procurement-variance\n/reports/inventory-capital\n/reports/receivable-payable\n/reports/operating-accounting\n/reports/financial-summary",
+    "pageNames": "报表权限和数据边界\n报表概览\n销售报表\n采购报表\n库存报表\n生产报表\n成本报表\n结算报表\n异常报表\n项目利润\n项目利润详情\n合同回款\n采购差异\n库存资金\n应收应付\n经营会计对照\n财务摘要",
+    "permissionNote": "查看报表和来源追溯需要对应报表权限；金额和来源字段按后端权限控制。",
+    "relatedSlugs": [
+      "reports-overview",
+      "common-permission-menu-button"
+    ],
+    "sortOrder": 110,
+    "status": "ENABLED"
+  }
+]

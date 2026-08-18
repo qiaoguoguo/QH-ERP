@@ -90,7 +90,7 @@ export function documentTaskTypeLabel(type: DocumentTaskType | string): string {
     PROCUREMENT_ORDER_EXPORT: '采购订单导出',
     PROCUREMENT_SCHEDULE_EXPORT: '到货计划导出',
     PROCUREMENT_ORDER_PRINT: '采购订单打印',
-    PROCUREMENT_SUPPLY_EXPORT: '有效采购供给导出',
+    PROCUREMENT_SUPPLY_EXPORT: '采购在途供给导出',
     SALES_QUOTE_PRINT: '销售报价打印',
     SALES_QUOTE_EXPORT: '销售报价导出',
     SALES_DELIVERY_PLAN_EXPORT: '交付计划导出',

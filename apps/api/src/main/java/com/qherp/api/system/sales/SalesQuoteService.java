@@ -569,19 +569,35 @@ public class SalesQuoteService {
 	private void insertOrderLinesFromQuote(Long orderId, QuoteHeader quote, List<QuoteLineRow> lines,
 			OffsetDateTime now) {
 		for (QuoteLineRow line : lines) {
+			Long reservationWarehouseId = defaultSalesReservationWarehouseId(line);
 			this.jdbcTemplate.update("""
 					insert into sal_sales_order_line (
 						order_id, line_no, material_id, unit_id, quantity, shipped_quantity, unit_price,
-						expected_ship_date, source_quote_line_id, price_source_type, source_no, currency, tax_rate,
-						tax_excluded_unit_price, tax_included_unit_price, tax_excluded_amount, tax_amount,
-						tax_included_amount, created_at, updated_at
+						reservation_warehouse_id, expected_ship_date, source_quote_line_id, price_source_type,
+						source_no, currency, tax_rate, tax_excluded_unit_price, tax_included_unit_price,
+						tax_excluded_amount, tax_amount, tax_included_amount, created_at, updated_at
 					)
-					values (?, ?, ?, ?, ?, 0, ?, ?, ?, 'QUOTE', ?, 'CNY', ?, ?, ?, ?, ?, ?, ?, ?)
+					values (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'QUOTE', ?, 'CNY', ?, ?, ?, ?, ?, ?, ?, ?)
 					""", orderId, line.lineNo(), line.materialId(), line.unitId(), line.quantity(),
-					line.taxExcludedUnitPrice(), line.requiredDate(), line.id(), quote.quoteNo(), line.taxRate(),
-					line.taxExcludedUnitPrice(), line.taxIncludedUnitPrice(), line.taxExcludedAmount(),
-					line.taxAmount(), line.taxIncludedAmount(), now, now);
+					line.taxExcludedUnitPrice(), reservationWarehouseId, line.requiredDate(), line.id(),
+					quote.quoteNo(), line.taxRate(), line.taxExcludedUnitPrice(), line.taxIncludedUnitPrice(),
+					line.taxExcludedAmount(), line.taxAmount(), line.taxIncludedAmount(), now, now);
 		}
+	}
+
+	private Long defaultSalesReservationWarehouseId(QuoteLineRow line) {
+		Material material = material(line.materialId());
+		String preferredCode = "SEMI_FINISHED".equals(material.materialType()) ? "CK-BCP" : "CK-CP";
+		String preferredName = "SEMI_FINISHED".equals(material.materialType()) ? "半成品" : "成品";
+		return this.jdbcTemplate.query("""
+				select id
+				from mst_warehouse
+				where status = 'ENABLED'
+				and (code = ? or name like ?)
+				order by case when code = ? then 0 else 1 end, id asc
+				limit 1
+				""", (rs, rowNum) -> rs.getLong("id"), preferredCode, "%" + preferredName + "%",
+				preferredCode).stream().findFirst().orElse(null);
 	}
 
 	private CreatedDocument insertContractFromQuote(QuoteHeader quote, ConvertContractRequest request,
@@ -989,7 +1005,10 @@ public class SalesQuoteService {
 					|| (quote.validUntil() != null && quote.validUntil().isBefore(LocalDate.now()))) {
 				return List.of();
 			}
-			return List.of("CONVERT_ORDER", "CONVERT_CONTRACT", "PRINT", "EXPORT");
+			if (quote.projectId() != null) {
+				return List.of("CONVERT_ORDER", "CONVERT_CONTRACT", "PRINT", "EXPORT");
+			}
+			return List.of("CONVERT_ORDER", "PRINT", "EXPORT");
 		}
 		return List.of();
 	}

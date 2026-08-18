@@ -1,0 +1,150 @@
+[
+  {
+    "slug": "procurement-requisition",
+    "title": "采购请购审批通过后怎么走",
+    "summary": "说明采购请购的提交审批、审批详情、业务单据查看和后续询价比价。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n采购请购用于提出采购需求，审批通过后作为询价比价和后续采购的来源。\n# 页面入口\n采购管理 > 采购请购，页面入口“采购请购”页面。\n# 操作步骤\n1. 新建请购并填写物料、数量、需求日期和用途。\n2. 保存草稿后提交采购请购审批。\n3. 审批人在审批待办查看业务单据详情并处理。\n4. 审批通过后，采购人员可基于请购明细创建询价。\n# 关键规则\n审批详情应能查看请购申请内容。跳转业务单据后应能返回审批详情继续处理。\n# 上下游影响\n请购本身不直接形成库存或采购订单。通过后进入询价、选价、价格协议和采购订单链路。",
+    "keywords": "采购请购,请购单,提交审批,审批通过,查看业务单据,返回审批,询价比价,采购需求",
+    "routePaths": "/procurement/requisitions",
+    "pageNames": "采购请购",
+    "permissionNote": "查看、创建、更新、提交和审批分别需要采购请购权限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "procurement-inquiry-quotation"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-inquiry-quotation",
+    "title": "询价和供应商报价怎么录入",
+    "summary": "说明询价创建、邀请供应商、报价录入、税率和单价自动换算。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n询价比价用于把已批准或可采购的需求发给供应商并收集报价。\n# 页面入口\n采购管理 > 询价比价，页面入口“询价比价”页面 和 “询价比价”页面。\n# 操作步骤\n1. 从请购来源或页面创建询价。\n2. 确认采购模式、物料、数量和邀请供应商。\n3. 保存询价后在详情页供应商报价区域录入或导入报价。\n4. 报价可维护供应商、报价物料、数量、税率、未税单价、含税单价、币种、有效期和交期。\n# 关键规则\n创建询价时不一定直接填写报价。报价属于供应商报价明细。未税单价和含税单价应根据税率互相换算，通常只需录入一个价格口径。\n# 常见错误\n供应商未选择、报价物料不匹配、税率不合法、有效期缺失或报价数量不合法会导致保存失败。",
+    "keywords": "询价比价,新建询价,供应商报价,报价录入,未税单价,含税单价,税率,自动换算,报价导入,报价导出,附件",
+    "routePaths": "/procurement/inquiries\n/procurement/inquiries/:id",
+    "pageNames": "询价比价\n询价详情\n供应商报价",
+    "permissionNote": "查看、创建询价、维护报价、导入导出分别需要采购询价相关权限。",
+    "relatedSlugs": [
+      "procurement-requisition",
+      "procurement-selection-reason"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-selection-reason",
+    "title": "选价原因和非最低选价怎么填写",
+    "summary": "说明供应商报价比较、选价、价格来源和非最低选价原因的语义。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "FIELD",
+    "content": "# 功能用途\n选价用于从供应商报价中选择最终采购价格依据。\n# 页面入口\n询价详情页 “询价比价”页面 的供应商报价比较区域。\n# 关键字段\n- 价格来源：说明报价来自手工录入、导入或其他系统来源。\n- 选价原因：说明为什么选择该报价。\n- 非最低选价：当选择的报价不是最低价时，应说明交期、质量、资质、供货稳定性、付款条件等原因。\n# 操作规则\n- 最低价中选可以使用“最低价中选”等常用原因。\n- 非最低价中选必须填写明确业务原因。\n- 页面不应把短横线当作默认选价原因展示。\n# 后续影响\n选中的报价可用于生成价格协议，价格、税率、供应商、物料和有效期应自动带入协议草稿。",
+    "keywords": "选价,选择报价,选价原因,非最低选价,价格来源,最低价中选,交期更优,质量稳定,供应商资质,短横线",
+    "routePaths": "/procurement/inquiries/:id",
+    "pageNames": "供应商报价比较",
+    "permissionNote": "选价需要采购询价维护或选价权限；所有登录用户可阅读原因口径。",
+    "relatedSlugs": [
+      "procurement-inquiry-quotation",
+      "procurement-price-agreement"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-price-agreement",
+    "title": "价格协议有什么作用",
+    "summary": "说明价格协议来源、审批、生效条件及其对采购订单价格的影响。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "CONCEPT",
+    "content": "# 功能用途\n价格协议用于沉淀经过选价确认的供应商、物料、税价和有效期，审批通过后作为采购订单价格来源。\n# 页面入口\n采购管理 > 价格协议，页面入口“价格协议”页面 和 “价格协议详情”页面。\n# 操作步骤\n1. 在询价详情中选择供应商报价。\n2. 生成价格协议草稿，报价信息应自动带入。\n3. 核对供应商、物料、税率、未税单价、含税单价、有效期和采购模式。\n4. 提交价格协议激活审批。\n5. 审批通过后协议可作为采购订单价格来源。\n# 关键规则\n未提交或未审批通过的协议不能作为正式采购价格来源。审批状态应显示明确中文语义，不应显示未知状态。\n# 后续影响\n采购订单选择协议来源时，应带出协议供应商、物料、价格和有效期信息。",
+    "keywords": "价格协议,协议价,采购协议价,生成价格协议,提交激活审批,审批通过,价格来源,税价,有效期,未知状态",
+    "routePaths": "/procurement/price-agreements\n/procurement/price-agreements/:id",
+    "pageNames": "价格协议\n价格协议详情",
+    "permissionNote": "查看、生成、提交审批和审批激活需要价格协议相关权限。",
+    "relatedSlugs": [
+      "procurement-selection-reason",
+      "procurement-orders",
+      "common-approval-center"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-orders",
+    "title": "采购订单列表和采购依据怎么看",
+    "summary": "说明采购订单创建来源、采购依据、供应商、履约进度、到货计划和例外审批。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n采购订单承接价格协议、询价选价或允许的手工来源，形成后续到货、入库、退货和应付来源。\n# 页面入口\n采购管理 > 采购订单，页面入口“采购订单”页面、“新建采购单”页面、“采购订单详情”页面。\n# 列表关键字段\n- 供应商：单供应商直接显示名称；如系统允许多供应商，应显示多供应商摘要并在详情查看。\n- 采购范围：展示订单覆盖的物料或明细摘要。\n- 采购依据：显示价格协议、询价选价或混合来源，不应显示技术兜底文案。\n- 履约进度：显示已入库/总量、未入库、在途。\n- 计划/到货：未完成时显示下一计划到货或待排到货，全部入库时显示已全部入库。\n# 审批规则\n普通采购订单不默认显示“审批状态：未提交”。只有触发例外审批时才展示审批中、已通过或已驳回等审批状态。\n# 上下游影响\n确认订单后形成采购在途供给和到货/入库基础。入库完成后影响库存和应付来源。",
+    "keywords": "采购订单,新建采购单,采购依据,价格协议,询价选价,混合来源,履约进度,已入库,未入库,在途,计划到货,例外审批,审批状态未提交",
+    "routePaths": "/procurement/orders\n/procurement/orders/create\n/procurement/orders/:id",
+    "pageNames": "采购订单\n新建采购单\n采购订单详情",
+    "permissionNote": "查看、创建、确认、关闭和例外审批分别需要采购订单权限。",
+    "relatedSlugs": [
+      "procurement-price-agreement",
+      "procurement-receipts",
+      "procurement-effective-supplies"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-receipts",
+    "title": "采购入库和到货计划有什么关系",
+    "summary": "说明采购订单确认后的到货计划、采购入库和库存影响。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n采购入库用于按采购订单或到货事实接收供应商物料，并形成库存入库和后续应付来源。\n# 页面入口\n采购管理 > 采购入库，页面入口“采购入库”页面。\n# 操作前提\n采购订单已确认且存在未入库数量；仓库、物料、数量、批次或质量要求符合页面规则。\n# 关键规则\n- 到货计划用于安排预计到货，不等同已入库。\n- 采购入库确认后才形成库存增加。\n- 入库数量不能超过后端允许范围。\n# 后续影响\n入库会更新采购订单履约进度、库存余额、库存流水，并可成为采购发票、应付或费用匹配来源。",
+    "keywords": "采购入库,到货计划,采购订单,已入库,未入库,库存增加,入库确认,应付来源,采购发票来源",
+    "routePaths": "/procurement/receipts",
+    "pageNames": "采购入库",
+    "permissionNote": "查看、创建和确认入库需要采购入库权限；库存和财务后续查看还需对应权限。",
+    "relatedSlugs": [
+      "procurement-orders",
+      "inventory-balances-availability",
+      "finance-invoices-expenses"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-returns",
+    "title": "采购退货会影响哪些数据",
+    "summary": "说明采购退货草稿、确认、库存扣减和应付来源影响。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n采购退货用于将已入库或可退货的采购物料退回供应商。\n# 页面入口\n采购管理 > 采购退货，页面入口“采购退货”页面。\n# 操作前提\n存在可退货来源，退货物料、数量、仓库和业务日期符合规则。\n# 操作结果\n确认退货后会形成库存扣减、采购退货记录和后续应付或发票匹配影响。\n# 常见错误\n库存不足、来源不可退、业务期间锁定、草稿已取消或缺少确认权限时，退货确认会失败。",
+    "keywords": "采购退货,退货草稿,确认退货,库存扣减,供应商退货,应付影响,业务期间锁定",
+    "routePaths": "/procurement/returns",
+    "pageNames": "采购退货",
+    "permissionNote": "查看、创建、更新、确认和取消需要采购退货权限。",
+    "relatedSlugs": [
+      "procurement-receipts",
+      "finance-ar-ap-overview"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "procurement-effective-supplies",
+    "title": "采购在途供给是什么",
+    "summary": "说明采购在途供给的来源、用途和不能当作现货的边界。",
+    "categoryCode": "PROCUREMENT",
+    "knowledgeType": "CONCEPT",
+    "content": "# 功能用途\n采购在途供给展示未完成采购订单形成的未来供给参考，用于库存余额、缺料分析和采购计划判断。\n# 页面入口\n采购管理 > 采购在途供给，页面入口“采购在途供给”页面。\n# 关键规则\n- 在途供给来自已确认且未完全入库的采购订单。\n- 在途数量不是当前仓库现货，不能直接用于销售出库或生产领料。\n- 入库后在途会转为实际库存并影响履约进度。\n# 常见问题\n库存余额里的采购在途参考只是物料级参考，不代表指定仓库已经可用。",
+    "keywords": "采购在途供给,在途数量,未入库,采购订单,缺料分析,可承诺,不是现货,未来供给",
+    "routePaths": "/procurement/effective-supplies",
+    "pageNames": "采购在途供给",
+    "permissionNote": "查看需要采购供给或采购订单相关权限。",
+    "relatedSlugs": [
+      "procurement-orders",
+      "planning-material-requirements",
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 80,
+    "status": "ENABLED"
+  }
+]

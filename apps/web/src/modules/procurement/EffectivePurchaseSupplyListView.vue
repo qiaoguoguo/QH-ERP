@@ -187,7 +187,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <MasterDataTableView title="有效采购供给" description="只读供给视图，供后续阶段消费；本页不做计算和推荐。">
+  <MasterDataTableView title="采购在途供给" description="只读展示已确认但尚未完成入库或结案的采购订单明细；已入库数量请到采购入库、库存余额查看。">
     <template #actions>
       <el-button v-if="canExport" data-test="export-effective-supplies" :loading="actionLoading" @click="exportEffectiveSupplies">
         当前筛选导出
@@ -235,7 +235,7 @@ onMounted(() => {
         <el-form-item label="预计截止">
           <el-date-picker v-model="filters.expectedDateTo" value-on-clear="" type="date" format="YYYY-MM-DD" value-format="YYYY-MM-DD" placeholder="截止日期" />
         </el-form-item>
-        <el-form-item label="计入有效供给">
+        <el-form-item label="计入在途供给">
           <el-select v-model="filters.countedOnly" placeholder="计入口径">
             <el-option label="仅计入" :value="true" />
             <el-option label="含排除项" :value="false" />
@@ -255,7 +255,7 @@ onMounted(() => {
     </template>
 
     <div class="table-scroll">
-      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无有效采购供给'" stripe v-loading="loading">
+      <el-table :data="records" :empty-text="loading ? '加载中' : '暂无采购在途供给'" stripe v-loading="loading">
         <el-table-column prop="orderNo" label="订单号" min-width="160" show-overflow-tooltip />
         <el-table-column label="采购模式/项目" min-width="220" show-overflow-tooltip>
           <template #default="{ row }">{{ procurementOwnershipDisplay(row) }}</template>
@@ -275,8 +275,8 @@ onMounted(() => {
         <el-table-column label="剩余数量" min-width="120" align="right">
           <template #default="{ row }">剩余 {{ formatProcurementQuantity(row.remainingQuantity) }}</template>
         </el-table-column>
-        <el-table-column label="有效供给" min-width="190" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.countedAsEffectiveSupply ? '计入有效供给' : (row.notCountedReason || '不计入有效供给') }}</template>
+        <el-table-column label="计入口径" min-width="190" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.countedAsEffectiveSupply ? '计入在途供给' : (row.notCountedReason || '不计入在途供给') }}</template>
         </el-table-column>
         <el-table-column label="成本" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ costText(row) }}</template>

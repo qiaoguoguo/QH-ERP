@@ -1,0 +1,125 @@
+[
+  {
+    "slug": "inventory-balances-availability",
+    "title": "库存余额、质量状态和可承诺量怎么看",
+    "summary": "说明库存余额页的账面库存、合格现存、冻结、占用、预留、采购在途和可承诺口径。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n库存余额用于查看仓库、物料和质量状态维度的账面库存、价值、占用预留、采购在途参考和可承诺口径。\n# 页面入口\n库存管理 > 库存余额与价值，页面入口“库存余额与价值”页面。\n# 关键字段\n- 账面库存：同仓库同物料库存合计。\n- 合格现存：当前可用质量状态的现存数量。\n- 冻结库存：质量冻结后暂不可使用的数量。\n- 占用和预留：已被销售、生产等业务占用的数量。\n- 采购在途参考：未完成采购订单形成的物料级参考，不等于当前仓库现货。\n- 可承诺量：合格现存扣除占用预留等后的参考口径。\n# 常见问题\n待检、不合格和冻结库存不应参与销售出库、生产领料或补料。缺料分析和销售承诺应同时看现货、预留和在途参考。",
+    "keywords": "库存余额,库存价值,账面库存,合格现存,冻结库存,占用库存,预留库存,可承诺量,采购在途,净可用,质量状态",
+    "routePaths": "/inventory/balances",
+    "pageNames": "库存余额与价值",
+    "permissionNote": "查看需要库存余额权限；成本金额和价值字段可能受成本或金额权限影响。",
+    "relatedSlugs": [
+      "quality-inspections-status",
+      "procurement-effective-supplies"
+    ],
+    "sortOrder": 10,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "inventory-movements-documents",
+    "title": "库存流水和库存单据怎么追溯",
+    "summary": "说明库存流水、库存单据的来源、方向、状态和只读追溯边界。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PAGE",
+    "content": "# 功能用途\n库存流水记录库存数量和价值变化，库存单据展示库存业务的单据化结果和来源关系。\n# 页面入口\n- 库存流水与价值：“库存流水与价值”页面。\n- 库存单据：“库存单据”页面。\n# 关键规则\n- 库存流水用于追溯已发生事实，不应直接编辑。\n- 库存单据状态以后端业务动作产生，页面查询不改变库存。\n- 来源链可用于定位采购入库、销售出库、生产领料、完工入库、退货、调拨等来源。\n# 常见问题\n如果流水看不到来源，先检查是否有来源对象权限。不要用手工改库存替代原业务单据的确认或冲销流程。",
+    "keywords": "库存流水,库存单据,来源追溯,出库,入库,方向,价值,只读,来源链",
+    "routePaths": "/inventory/movements\n/inventory/documents",
+    "pageNames": "库存流水与价值\n库存单据",
+    "permissionNote": "查看需要库存流水或库存单据权限；来源敏感字段受对应业务对象权限限制。",
+    "relatedSlugs": [
+      "attachments-audit-source-chain"
+    ],
+    "sortOrder": 20,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "inventory-warehouse-transfer",
+    "title": "仓库调拨会怎样影响库存",
+    "summary": "说明仓库调拨的来源仓、目标仓、确认和库存变化。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n仓库调拨用于同公司内部不同仓库之间移动库存。\n# 页面入口\n库存管理 > 仓库调拨，页面入口“仓库调拨”页面。\n# 操作前提\n调出仓库、调入仓库、物料、数量和业务日期必须合法；调出库存需要满足质量和可用规则。\n# 操作结果\n确认调拨后，系统从调出仓扣减库存，在调入仓增加库存，并形成库存流水和库存单据。\n# 常见错误\n库存不足、仓库停用、物料停用、业务期间锁定或缺少确认权限都会阻断调拨确认。",
+    "keywords": "仓库调拨,调出仓,调入仓,确认调拨,库存不足,业务期间锁定,库存流水",
+    "routePaths": "/inventory/warehouse-transfers",
+    "pageNames": "仓库调拨",
+    "permissionNote": "查看、创建、更新和确认需要仓库调拨相关权限。",
+    "relatedSlugs": [
+      "inventory-balances-availability",
+      "common-business-periods"
+    ],
+    "sortOrder": 30,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "inventory-ownership-conversion",
+    "title": "库存所有权转换什么时候使用",
+    "summary": "说明公共库存和项目库存之间转换的审批、过账和风险边界。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n所有权转换用于在公共库存和项目库存之间受控转换库存归属。\n# 页面入口\n库存管理 > 所有权转换，页面入口“所有权转换”页面。\n# 关键规则\n- 转换通常需要提交审批、审批通过后过账。\n- 转换不应改变物料本身，只改变库存所有权归属。\n- 过账后会形成库存事件和审计记录。\n# 常见错误\n缺少提交、撤回、审批或过账权限，库存数量不足，业务期间锁定，或对象版本过期时，动作会被拒绝。",
+    "keywords": "所有权转换,公共库存,项目库存,提交审批,撤回审批,审批,过账,库存归属",
+    "routePaths": "/inventory/ownership-conversions",
+    "pageNames": "所有权转换",
+    "permissionNote": "查看、创建、提交、撤回、审批和过账分别需要库存所有权转换权限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 40,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "inventory-stocktake",
+    "title": "库存盘点和盘差审批怎么理解",
+    "summary": "说明库存盘点、盘差、审批和过账对库存事实的影响。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n库存盘点用于核对账面数量与实盘数量，盘差需要按审批和过账流程形成库存调整事实。\n# 页面入口\n库存管理 > 库存盘点，页面入口“库存盘点”页面。\n# 操作步骤\n1. 创建盘点任务并选择仓库、物料或范围。\n2. 录入实盘数量。\n3. 提交盘差审批。\n4. 审批通过后按页面允许动作过账。\n# 关键规则\n盘点不是普通编辑库存余额。未审批或未过账的盘差不应改变正式库存事实。\n# 常见错误\n库存范围为空、业务日期在锁定期间、缺少审批或过账权限时，盘点动作会被拒绝。",
+    "keywords": "库存盘点,盘点任务,实盘数量,盘差,提交审批,审批盘差,过账,库存调整",
+    "routePaths": "/inventory/stocktakes",
+    "pageNames": "库存盘点",
+    "permissionNote": "查看、创建、提交、审批和过账需要库存盘点相关权限。",
+    "relatedSlugs": [
+      "common-approval-center"
+    ],
+    "sortOrder": 50,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "inventory-valuation-adjustment",
+    "title": "库存估值调整会影响什么",
+    "summary": "说明估值调整的用途、审批、过账和成本价值边界。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "PROCESS",
+    "content": "# 功能用途\n库存估值调整用于受控调整库存价值或成本口径，不用于直接修改库存数量。\n# 页面入口\n库存管理 > 估值调整，页面入口“估值调整”页面。\n# 关键规则\n- 估值调整通常需要创建、提交审批、审批通过和过账。\n- 调整影响库存价值和后续成本口径。\n- 已过账事实不能通过页面直接静默改写。\n# 常见错误\n缺少金额或成本权限、业务期间锁定、来源对象不可用或版本过期时，调整动作会被拒绝。",
+    "keywords": "估值调整,库存价值,成本,提交审批,撤回审批,审批估值,过账,金额权限",
+    "routePaths": "/inventory/valuation-adjustments",
+    "pageNames": "估值调整",
+    "permissionNote": "查看、创建、提交、撤回、审批和过账需要库存估值调整相关权限；金额字段可能受限。",
+    "relatedSlugs": [
+      "common-approval-center",
+      "cost-project-costs"
+    ],
+    "sortOrder": 60,
+    "status": "ENABLED"
+  },
+  {
+    "slug": "quality-inspections-status",
+    "title": "质量确认和库存质量状态有什么影响",
+    "summary": "说明质量确认、待检、合格、不合格、冻结和解冻对库存可用性的影响。",
+    "categoryCode": "INVENTORY_QUALITY",
+    "knowledgeType": "STATUS",
+    "content": "# 功能用途\n质量确认用于确认库存质量状态，决定库存是否可以参与销售出库、生产领料、生产补料和承诺计算。\n# 页面入口\n质量管理 > 质量确认，页面入口“质量确认”页面。\n# 关键状态\n- 待检：尚未完成质量确认。\n- 合格：可按业务规则参与可用库存。\n- 不合格：不能作为正常可用库存。\n- 冻结：暂不可使用，不参与承诺、出库或领料。\n# 操作规则\n质量确认、冻结和解冻必须按页面允许动作和权限执行。库存质量状态变化会影响库存余额、可承诺量和后续出入库候选。\n# 常见错误\n缺少质量确认、冻结或解冻权限，库存已被引用，或业务期间锁定时，动作可能被拒绝。",
+    "keywords": "质量确认,质量状态,待检,合格,不合格,冻结,解冻,可承诺,不能出库,不能领料",
+    "routePaths": "/quality/inspections",
+    "pageNames": "质量确认",
+    "permissionNote": "查看和确认需要质量检验权限；冻结和解冻需要质量状态动作权限。",
+    "relatedSlugs": [
+      "inventory-balances-availability"
+    ],
+    "sortOrder": 70,
+    "status": "ENABLED"
+  }
+]

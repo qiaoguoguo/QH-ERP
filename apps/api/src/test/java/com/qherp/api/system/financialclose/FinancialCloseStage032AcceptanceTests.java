@@ -41,7 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
 class FinancialCloseStage032AcceptanceTests extends PostgresIntegrationTest {
 
-	private static final String LATEST_MIGRATION_VERSION = "36";
+	private static final String LATEST_MIGRATION_VERSION = "42";
 
 	private static final String ADMIN_PASSWORD = "Qherp@2026!";
 

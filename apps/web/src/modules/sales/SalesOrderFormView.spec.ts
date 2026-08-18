@@ -330,7 +330,7 @@ describe('销售订单表单页', () => {
     }))
   })
 
-  it('销售明细必须选择预留仓库，确认预留口径使用清晰中文提示', async () => {
+  it('销售明细必须选择预留仓库，并说明不在确认时占用库存', async () => {
     const { wrapper } = await mountForm()
 
     await setSelectValue(wrapper, 0, 100)
@@ -341,7 +341,7 @@ describe('销售订单表单页', () => {
     await wrapper.find('[data-test="save-sales-order"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.text()).toContain('第 10 行请选择预留仓库，销售订单确认会按该仓库预留现货库存')
+    expect(wrapper.text()).toContain('第 10 行请选择预留仓库；该仓库作为计划出库仓库，不在确认时占用现货库存')
     expect(salesApiMock.orders.create).not.toHaveBeenCalled()
   })
 

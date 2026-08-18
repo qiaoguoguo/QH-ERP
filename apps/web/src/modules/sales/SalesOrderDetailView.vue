@@ -557,7 +557,16 @@ function creditSummary() {
   if (record.value.creditRestricted) {
     return '信用信息受限'
   }
-  return record.value.creditStatusName ?? '信用状态未返回'
+  if (record.value.creditStatusName) {
+    return record.value.creditStatusName
+  }
+  if (['CANCELLED', 'CLOSED', 'SHIPPED'].includes(record.value.status)) {
+    return '不占用信用'
+  }
+  if (record.value.status === 'DRAFT') {
+    return '待确认检查'
+  }
+  return '信用状态待同步'
 }
 
 function linePriceSource(line: SalesOrderLineRecord) {
@@ -633,7 +642,7 @@ async function runOrderAction(action: 'confirm' | 'cancel' | 'close') {
     return
   }
   if (action === 'confirm' && record.value.lines.some((line) => !line.reservationWarehouseId)) {
-    actionError.value = '销售订单确认前每行必须选择预留仓库，确认只会按预留仓库现货库存预留，不使用采购在途'
+      actionError.value = '销售订单确认前每行必须选择预留仓库；确认后进入有效销售需求，库存不足在销售出库前处理'
     return
   }
   const actionLabels = {

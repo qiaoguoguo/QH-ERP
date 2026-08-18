@@ -177,14 +177,20 @@ public class SalesFulfillmentService {
 	public CreditExposureResponse creditExposure(Long customerId) {
 		ensureCustomerExists(customerId);
 		CreditProfileResponse profile = creditProfileByCustomer(customerId);
+		return creditExposureForProfile(customerId, profile == null ? null : profile.creditLimit());
+	}
+
+	private CreditExposureResponse creditExposureForProfile(Long customerId, String creditLimit) {
 		BigDecimal orderCommitmentAmount = orderCommitmentAmount(customerId);
 		BigDecimal unsettledShipmentAmount = unsettledShipmentAmount(customerId);
 		BigDecimal receivableOutstandingAmount = receivableOutstandingAmount(customerId);
 		BigDecimal usedCredit = orderCommitmentAmount.add(unsettledShipmentAmount).add(receivableOutstandingAmount);
+		BigDecimal limit = creditLimit == null ? null : money(new BigDecimal(creditLimit));
+		String availableCredit = limit == null ? null : moneyString(limit.subtract(usedCredit));
 		return new CreditExposureResponse(customerId,
-				profile == null ? null : profile.creditLimit(),
+				creditLimit,
 				moneyString(orderCommitmentAmount), moneyString(unsettledShipmentAmount),
-				moneyString(receivableOutstandingAmount), moneyString(usedCredit), false, false);
+				moneyString(receivableOutstandingAmount), moneyString(usedCredit), availableCredit, false, false);
 	}
 
 	@Transactional
@@ -1108,7 +1114,6 @@ public class SalesFulfillmentService {
 				""", line.newQuantity(), line.newTaxExcludedUnitPrice(), line.newPlannedDate(), line.newTaxRate(),
 				line.newTaxExcludedUnitPrice(), taxIncludedUnitPrice, taxExcludedAmount, taxAmount,
 				taxIncludedAmount, now, line.orderLineId());
-		adjustSalesOrderReservation(current, line.newQuantity(), operator, servletRequest);
 		int updatedPlans = this.jdbcTemplate.update("""
 				update sal_sales_delivery_plan
 				set planned_quantity = ?, planned_date = ?,
@@ -1135,23 +1140,6 @@ public class SalesFulfillmentService {
 							? "PARTIALLY_SHIPPED" : "PLANNED",
 					operator.username(), now, operator.username(), now);
 		}
-	}
-
-	private void adjustSalesOrderReservation(OrderChangeLineBase current, BigDecimal newQuantity,
-			CurrentUser operator, HttpServletRequest servletRequest) {
-		this.inventoryAvailabilityService.releaseBySourceLine(InventoryReservationType.RESERVATION,
-				InventoryAvailabilityService.SALES_ORDER_SOURCE, current.id(), operator, servletRequest);
-		BigDecimal remainingQuantity = newQuantity.subtract(current.shippedQuantity());
-		if (remainingQuantity.compareTo(ZERO) <= 0) {
-			return;
-		}
-		this.inventoryAvailabilityService.reserveFromWarehouse(
-				new InventoryAvailabilityService.ReservationCommand(InventoryReservationType.RESERVATION,
-						current.reservationWarehouseId(), current.materialId(), current.unitId(), remainingQuantity,
-						InventoryAvailabilityService.SALES_ORDER_SOURCE, current.orderId(), current.id(),
-						current.orderNo(), current.orderDate(), "销售订单变更预留调整", null, "PUBLIC", null, null,
-						InventoryQualityStatus.QUALIFIED, null, null, null),
-				operator, servletRequest);
 	}
 
 	private void refreshChangedOrder(Long orderId, String operatorName, OffsetDateTime now) {
@@ -1342,11 +1330,14 @@ public class SalesFulfillmentService {
 	}
 
 	private CreditProfileResponse mapCreditProfile(ResultSet rs, int rowNum) throws SQLException {
-		return new CreditProfileResponse(rs.getLong("id"), rs.getLong("customer_id"), rs.getString("customer_code"),
-				rs.getString("customer_name"), moneyString(rs.getBigDecimal("credit_limit")),
+		Long customerId = rs.getLong("customer_id");
+		String creditLimit = moneyString(rs.getBigDecimal("credit_limit"));
+		return new CreditProfileResponse(rs.getLong("id"), customerId, rs.getString("customer_code"),
+				rs.getString("customer_name"), creditLimit,
 				rs.getString("status"), rs.getBoolean("frozen"), rs.getBoolean("overdue_blocked"),
 				rs.getString("remark"), rs.getObject("created_at", OffsetDateTime.class),
-				rs.getObject("updated_at", OffsetDateTime.class), rs.getLong("version"));
+				rs.getObject("updated_at", OffsetDateTime.class), rs.getLong("version"),
+				creditExposureForProfile(customerId, creditLimit), false, List.of("UPDATE"), null);
 	}
 
 	private BigDecimal orderCommitmentAmount(Long customerId) {
@@ -1684,12 +1675,13 @@ public class SalesFulfillmentService {
 
 	public record CreditProfileResponse(Long id, Long customerId, String customerCode, String customerName,
 			String creditLimit, String status, boolean frozen, boolean blockOverdue, String remark,
-			OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version) {
+			OffsetDateTime createdAt, OffsetDateTime updatedAt, Long version, CreditExposureResponse exposure,
+			boolean creditRestricted, List<String> allowedActions, String actionDisabledReason) {
 	}
 
 	public record CreditExposureResponse(Long customerId, String creditLimit, String orderCommitmentAmount,
 			String unsettledShipmentAmount, String receivableOutstandingAmount, String usedCredit,
-			boolean overdueRisk, boolean creditRestricted) {
+			String availableCredit, boolean overdueRisk, boolean creditRestricted) {
 	}
 
 	public record OrderChangeRequest(Long orderVersion, Long version, @NotNull String reason,

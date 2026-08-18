@@ -188,7 +188,7 @@ onMounted(loadRecords)
 <template>
   <MasterDataTableView
     title="有效销售需求"
-    description="026 只读消费视图，默认仅显示真实开放需求。"
+    description="只读展示已确认且尚未完成出库的销售订单需求，作为计划、生产和采购补货的需求来源。"
   >
     <template #actions>
       <div class="header-actions">
@@ -215,7 +215,7 @@ onMounted(loadRecords)
         v-if="!filters.countedOnly"
         class="page-alert"
         type="warning"
-        title="诊断模式：含未计入候选，不能作为 026 有效输入"
+        title="诊断模式：含未计入候选，仅用于排查，不作为有效需求输入"
         show-icon
         :closable="false"
       />

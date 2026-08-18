@@ -79,6 +79,13 @@ function openCreate() {
   return router.push({ name: 'gl-voucher-create', query: { returnTo: route.fullPath || '/gl/vouchers' } })
 }
 
+function openCreateOpening() {
+  return router.push({
+    name: 'gl-voucher-create',
+    query: { returnTo: route.fullPath || '/gl/vouchers', voucherType: 'OPENING' },
+  })
+}
+
 function search() {
   pagination.page = 1
   void loadRecords()
@@ -112,6 +119,7 @@ onMounted(loadRecords)
     <template #actions>
       <el-button @click="loadRecords">刷新</el-button>
       <el-button type="primary" @click="openCreate">新增手工凭证</el-button>
+      <el-button @click="openCreateOpening">录入期初凭证</el-button>
     </template>
     <template #filters>
       <el-form class="query-form" label-position="top">

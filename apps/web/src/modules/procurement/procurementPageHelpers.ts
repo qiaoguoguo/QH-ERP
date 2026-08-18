@@ -38,6 +38,9 @@ export interface PurchaseOrderLineDraft {
   quoteSourceLabel?: string
   priceAgreementLineId?: ResourceId | null
   priceAgreementSourceLabel?: string
+  priceSourceType?: '' | 'QUOTE' | 'AGREEMENT'
+  sourceSupplierId?: ResourceId | null
+  sourceSupplierName?: string
   taxRate: string
   taxIncludedUnitPrice: string
   taxExcludedUnitPrice: string
@@ -49,6 +52,9 @@ export interface PurchaseOrderLineDraft {
 export interface PurchaseOrderSourceOption {
   id: ResourceId
   label: string
+  requisitionId?: ResourceId | null
+  requisitionNo?: string | null
+  lineNo?: number | null
   materialId?: ResourceId | null
   materialCode?: string | null
   materialName?: string | null
@@ -56,6 +62,7 @@ export interface PurchaseOrderSourceOption {
   unitName?: string | null
   quantity?: string | null
   supplierId?: ResourceId | null
+  supplierName?: string | null
   procurementMode?: ProcurementMode | null
   projectId?: ResourceId | null
   projectCode?: string | null
@@ -64,6 +71,7 @@ export interface PurchaseOrderSourceOption {
   taxIncludedUnitPrice?: string | null
   taxExcludedUnitPrice?: string | null
   currency?: string | null
+  requiredDate?: string | null
 }
 
 export interface PurchaseReceiptSourceLine {
@@ -565,6 +573,9 @@ export function newPurchaseOrderLine(lineNo = 10): PurchaseOrderLineDraft {
     quoteSourceLabel: '',
     priceAgreementLineId: null,
     priceAgreementSourceLabel: '',
+    priceSourceType: '',
+    sourceSupplierId: null,
+    sourceSupplierName: '',
     taxRate: '',
     taxIncludedUnitPrice: '',
     taxExcludedUnitPrice: '',

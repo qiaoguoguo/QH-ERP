@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   createIdempotencyKey,
   documentPlatformApi,
@@ -24,6 +25,7 @@ import BusinessReferenceSelect from '../system/shared/BusinessReferenceSelect.vu
 import type { BusinessReferenceOption } from '../system/shared/businessReferenceSelectTypes'
 
 const authStore = useAuthStore()
+const router = useRouter()
 const loading = ref(false)
 const error = ref('')
 const actionError = ref('')
@@ -47,6 +49,7 @@ const canExport = computed(() => (
   && authStore.hasPermission('platform:document-task:create')
   && authStore.hasPermission('procurement:document:export')
 ))
+const canCreate = computed(() => authStore.hasPermission('procurement:price-agreement:create'))
 
 function allowed(record: PriceAgreementSummaryRecord, action: string): boolean {
   return (record.allowedActions ?? []).includes(action)
@@ -204,6 +207,14 @@ onMounted(() => {
 <template>
   <MasterDataTableView title="价格协议" description="价格协议激活审批后才可作为采购订单价格来源。">
     <template #actions>
+      <el-button
+        v-if="canCreate"
+        data-test="create-price-agreement"
+        type="primary"
+        @click="router.push({ name: 'procurement-price-agreement-create' })"
+      >
+        新建价格协议
+      </el-button>
       <el-button v-if="canExport" data-test="export-price-agreements" :loading="actionLoading" @click="exportPriceAgreements">
         当前筛选导出
       </el-button>
@@ -294,7 +305,7 @@ onMounted(() => {
             <el-button
               v-if="canSubmitActivation(row)"
               data-test="submit-price-agreement-activation-list"
-              text
+              size="small"
               type="primary"
               :loading="actionLoading"
               :disabled="actionLoading"
@@ -313,7 +324,7 @@ onMounted(() => {
                 :href="`/procurement/price-agreements/${encodeURIComponent(String(row.id))}`"
                 @click="navigate"
               >
-                <el-button tag="span" size="small" text>详情</el-button>
+                <el-button tag="span" size="small" plain>详情</el-button>
               </a>
             </router-link>
           </template>

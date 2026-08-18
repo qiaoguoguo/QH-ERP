@@ -160,7 +160,8 @@ public class SalesAdminService {
 				summary.projectId(), summary.projectNo(), summary.projectName(), summary.contractId(),
 				summary.contractNo(), summary.externalContractNo(), summary.currency(), summary.taxExcludedAmount(),
 				summary.taxAmount(), summary.taxIncludedAmount(), summary.sourceQuoteId(), summary.sourceQuoteNo(),
-				summary.sourceQuoteVersion(), summary.allowedActions(), summary.actionDisabledReason(),
+				summary.sourceQuoteVersion(), summary.creditStatusName(), summary.creditRestricted(),
+				summary.contractRestricted(), summary.amountRestricted(), summary.allowedActions(), summary.actionDisabledReason(),
 				orderLines(id), orderShipments(id));
 	}
 
@@ -272,7 +273,6 @@ public class SalesAdminService {
 		OffsetDateTime now = OffsetDateTime.now();
 		refreshOrderTaxTotals(id);
 		enforceCreditLimit(order, creditOverridden, operator);
-		reserveSalesOrder(order, operator, servletRequest);
 		this.jdbcTemplate.update("""
 				update sal_sales_order
 				set status = ?, confirmed_by = ?, confirmed_at = ?, updated_by = ?, updated_at = ?,
@@ -783,6 +783,43 @@ public class SalesAdminService {
 			.stream()
 			.findFirst()
 			.orElse(null);
+	}
+
+	private Optional<CreditProfile> customerCreditProfile(Long customerId) {
+		return this.jdbcTemplate.query("""
+				select id, customer_id, credit_limit, status, frozen, overdue_blocked
+				from sal_customer_credit_profile
+				where customer_id = ?
+				""", (rs, rowNum) -> new CreditProfile(rs.getLong("id"), rs.getLong("customer_id"),
+				rs.getBigDecimal("credit_limit"), rs.getString("status"), rs.getBoolean("frozen"),
+				rs.getBoolean("overdue_blocked")), customerId)
+			.stream()
+			.findFirst();
+	}
+
+	private String salesOrderCreditStatusName(Long customerId, Long orderId, String status,
+			BigDecimal taxIncludedAmount) {
+		if ("CANCELLED".equals(status) || "CLOSED".equals(status) || "SHIPPED".equals(status)) {
+			return "不占用信用";
+		}
+		Optional<CreditProfile> profile = customerCreditProfile(customerId);
+		if (profile.isEmpty()) {
+			return "信用档案缺失";
+		}
+		CreditProfile creditProfile = profile.get();
+		if (!"ACTIVE".equals(creditProfile.status()) || creditProfile.frozen()) {
+			return "信用冻结或停用";
+		}
+		if (creditProfile.overdueBlocked()) {
+			return "逾期阻断";
+		}
+		BigDecimal usedCredit = customerUsedCreditAmount(customerId);
+		BigDecimal orderAmount = taxIncludedAmount == null ? BigDecimal.ZERO : taxIncludedAmount;
+		BigDecimal exposureAmount = "DRAFT".equals(status) ? usedCredit.add(orderAmount) : usedCredit;
+		if (exposureAmount.compareTo(creditProfile.creditLimit()) > 0) {
+			return "额度不足";
+		}
+		return "DRAFT".equals(status) ? "额度充足" : "信用正常";
 	}
 
 	private void recordCreditCheck(OrderRow order, String result, BigDecimal creditLimit, BigDecimal usedCredit,
@@ -1876,10 +1913,14 @@ public class SalesAdminService {
 	}
 
 	private SalesOrderSummaryResponse mapOrderSummary(ResultSet rs, int rowNum) throws SQLException {
+		Long id = rs.getLong("id");
+		Long customerId = rs.getLong("customer_id");
+		String status = rs.getString("status");
+		BigDecimal taxIncludedAmount = rs.getBigDecimal("tax_included_amount");
 		return new SalesOrderSummaryResponse(rs.getLong("id"), rs.getString("order_no"), rs.getLong("customer_id"),
 				rs.getString("customer_code"), rs.getString("customer_name"),
 				rs.getObject("order_date", LocalDate.class), rs.getObject("expected_ship_date", LocalDate.class),
-				rs.getString("status"), rs.getInt("line_count"), quantityString(rs.getBigDecimal("total_quantity")),
+				status, rs.getInt("line_count"), quantityString(rs.getBigDecimal("total_quantity")),
 				quantityString(rs.getBigDecimal("shipped_quantity")),
 				quantityString(rs.getBigDecimal("remaining_quantity")), rs.getString("remark"),
 				rs.getString("created_by"), rs.getObject("created_at", OffsetDateTime.class),
@@ -1891,8 +1932,9 @@ public class SalesAdminService {
 				rs.getObject("contract_id", Long.class), rs.getString("contract_no"),
 				rs.getString("external_contract_no"), rs.getString("currency"),
 				moneyString(rs.getBigDecimal("tax_excluded_amount")), moneyString(rs.getBigDecimal("tax_amount")),
-				moneyString(rs.getBigDecimal("tax_included_amount")), rs.getObject("source_quote_id", Long.class),
+				moneyString(taxIncludedAmount), rs.getObject("source_quote_id", Long.class),
 				rs.getString("source_quote_no"), rs.getObject("source_quote_version", Long.class),
+				salesOrderCreditStatusName(customerId, id, status, taxIncludedAmount), false, false, false,
 				orderAllowedActions(rs.getString("status")), orderActionDisabledReason(rs.getString("status")));
 	}
 
@@ -2108,7 +2150,8 @@ public class SalesAdminService {
 			OffsetDateTime closedAt, Long version, Long projectId, String projectNo, String projectName,
 			Long contractId, String contractNo, String externalContractNo, String currency,
 			String taxExcludedAmount, String taxAmount, String taxIncludedAmount, Long sourceQuoteId,
-			String sourceQuoteNo, Long sourceQuoteVersion, List<String> allowedActions,
+			String sourceQuoteNo, Long sourceQuoteVersion, String creditStatusName, boolean creditRestricted,
+			boolean contractRestricted, boolean amountRestricted, List<String> allowedActions,
 			String actionDisabledReason) {
 	}
 
@@ -2131,7 +2174,8 @@ public class SalesAdminService {
 			OffsetDateTime closedAt, Long version, Long projectId, String projectNo, String projectName,
 			Long contractId, String contractNo, String externalContractNo, String currency,
 			String taxExcludedAmount, String taxAmount, String taxIncludedAmount, Long sourceQuoteId,
-			String sourceQuoteNo, Long sourceQuoteVersion, List<String> allowedActions,
+			String sourceQuoteNo, Long sourceQuoteVersion, String creditStatusName, boolean creditRestricted,
+			boolean contractRestricted, boolean amountRestricted, List<String> allowedActions,
 			String actionDisabledReason, List<SalesOrderLineResponse> lines,
 			List<SalesShipmentSummaryResponse> shipments) {
 	}

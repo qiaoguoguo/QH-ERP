@@ -17,6 +17,7 @@ export type ApprovalSceneCode =
   | 'BOM_ECO_APPLICATION'
 export type MessageStatus = 'UNREAD' | 'READ'
 export type AttachmentObjectType =
+  | 'PROCUREMENT_INQUIRY'
   | 'SALES_PROJECT'
   | 'SALES_PROJECT_CONTRACT'
   | 'SALES_QUOTE'

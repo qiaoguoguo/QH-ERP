@@ -403,6 +403,22 @@ describe('022 平台页面', () => {
         {
           id: 34,
           taskId: 734,
+          taskNo: 'AT-PRQ',
+          sceneCode: 'PROCUREMENT_REQUISITION_APPROVAL',
+          objectType: 'PROCUREMENT_REQUISITION',
+          objectId: 4,
+          objectNo: 'PRQ-001',
+          objectName: '采购请购',
+          status: 'PENDING',
+          currentStepName: '请购审批',
+          applicantName: '采购员',
+          assignedAt: '2026-07-14T10:00:00+08:00',
+          availableActions: [],
+          version: 1,
+        },
+        {
+          id: 35,
+          taskId: 735,
           taskNo: 'AT-UNK',
           sceneCode: 'UNKNOWN_SCENE',
           objectType: 'UNKNOWN_OBJECT',
@@ -417,7 +433,7 @@ describe('022 平台页面', () => {
           version: 1,
         },
       ],
-      total: 4,
+      total: 5,
       page: 1,
       pageSize: 10,
     })
@@ -427,6 +443,7 @@ describe('022 平台页面', () => {
     expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/stocktakes/1')
     expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/ownership-conversions/2')
     expectActionLinkButton(wrapper, 'approval-business-link', '/inventory/valuation-adjustments/3')
+    expectActionLinkButton(wrapper, 'approval-business-link', '/procurement/requisitions/4')
     expect(wrapper.text()).toContain('UNKNOWN-001')
     expect(actionLinkByHref(wrapper, 'approval-business-link', '/inventory/unknown/4')).toBeUndefined()
   })
@@ -447,7 +464,13 @@ describe('022 平台页面', () => {
     ['INVENTORY_STOCKTAKE', 1, '/inventory/stocktakes/1'],
     ['INVENTORY_OWNERSHIP_CONVERSION', 2, '/inventory/ownership-conversions/2'],
     ['INVENTORY_VALUATION_ADJUSTMENT', 3, '/inventory/valuation-adjustments/3'],
+    ['PROCUREMENT_REQUISITION', 4, '/procurement/requisitions/4'],
+    ['PROCUREMENT_PRICE_AGREEMENT', 5, '/procurement/price-agreements/5'],
+    ['PROCUREMENT_ORDER', 6, '/procurement/orders/6'],
     ['SALES_QUOTE', 9, '/sales/quotes/9'],
+    ['SALES_ORDER', 10, '/sales/orders/10'],
+    ['PROJECT_COST_ADJUSTMENT', 11, '/cost/project-cost-adjustments/11'],
+    ['FIN_CLOSE_REOPEN_REQUEST', 12, '/gl/financial-close?returnTo=%2Fplatform%2Fapprovals'],
     ['GL_VOUCHER', 91, '/gl/vouchers/91?returnTo=%2Fplatform%2Fapprovals'],
   ])('审批详情为 %s 提供业务单据入口', async (objectType, objectId, expectedPath) => {
     documentPlatformApiMock.approvalTasks.list.mockResolvedValueOnce({
